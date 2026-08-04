@@ -41,6 +41,24 @@ Direct-distribution work requires a separate user decision after:
 The graduation decision selects the first direct target and release tool. It
 does not activate every package channel.
 
+## Cost-bounded CI and release execution
+
+Do not make hosted GitHub Actions consumption an implicit prerequisite for
+Astra alpha. Keep canonical build and verification commands runnable locally
+and through Nix. Before adding hosted CI or release automation, record the
+expected run frequency, runner minutes, storage and artifact costs, cancellation
+policy, timeout, and the user's hard spending boundary.
+
+[Doodlestein Self Releaser](https://github.com/Dicklesworthstone/doodlestein_self_releaser)
+is a research reference for reusing GitHub Actions workflow YAML locally through
+`act` and then publishing verified release artifacts when hosted capacity is
+constrained. Its presence does not select Doodlestein or `act`. The tool gate
+must compare local owned commands, Nix-native execution, cost-bounded hosted
+Actions, Doodlestein, and any other credible shape. It must test workflow
+compatibility, artifact parity, secret and signing boundaries, provenance, and
+failure recovery rather than assuming a local container matches GitHub's
+runner.
+
 ## Canonical release input
 
 A versioned component manifest records each component's project, exact revision,

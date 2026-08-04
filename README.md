@@ -73,6 +73,6 @@ Beads data, lock files, and generated artifacts.
 | Agent policy | 182 |
 | README | 78 |
 | Architecture and contracts | 112 |
-| Distribution and references | 166 |
+| Distribution and references | 191 |
 | Changelog | 8 |
-| **Total** | **546** |
+| **Total** | **571** |

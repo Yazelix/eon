@@ -14,11 +14,18 @@ useful constraints, and rejected approaches in the implementation bead.
 Orbit owns the detailed research record and exact revisions. Astra consumes
 accepted Orbit contracts instead of repeating the engine decision.
 
+## Recovery experience
+
+| Question | Source | Use |
+|---|---|---|
+| How should Astra help a user recover an interrupted product session without guessing or silently reopening the wrong work? | [Power Failure Resumer](https://github.com/Dicklesworthstone/power_failure_resumer) | Study interrupted-session discovery, grouping, confidence and ambiguity, previewable recovery plans, idempotent actions, verified reopen, and partial-failure reporting. Preserve child ownership and reject Ghostty-, AppleScript-, coding-agent-, or macOS-specific mechanics as Astra architecture. Do not auto-resume unknown processes or claim recovery beyond the exact Orbit and Venus contracts. |
+
 ## Composition and releases
 
 | Question | Primary sources | Constraint to inspect |
 |---|---|---|
 | Can one release graph drive direct archives and package-manager outputs? | [dist documentation](https://axodotdev.github.io/cargo-dist/), [dist configuration](https://axodotdev.github.io/cargo-dist/book/reference/config.html) | Artifact matrices, installers, checksums, Homebrew support, custom build integration, and generated CI. Apply the crate and tool gate before adoption. |
+| Can local execution reuse the release workflow when hosted Actions minutes, queues, or spending are constrained? | [Doodlestein Self Releaser](https://github.com/Dicklesworthstone/doodlestein_self_releaser) | Study local `act` execution, workflow compatibility limits, artifact parity, verification, and release upload boundaries. Treat it as a research reference, not a selected tool; compare local owned commands, Nix builds, hosted Actions, and other credible execution shapes. A local run does not automatically prove hosted-run parity, signing isolation, or release provenance. |
 | How should GitHub-hosted artifacts preserve identity? | [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) | Tag protection, release attestations, and asset immutability. |
 | Which metadata does a macOS package need? | [Homebrew Cask Cookbook](https://docs.brew.sh/Cask-Cookbook) | Application bundles, checksums, architecture variants, quarantine, and upgrade behavior. |
 | Which macOS checks must release automation prove? | [Apple notarizing macOS software](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) | Signing, hardened runtime, notarization, stapling, and Gatekeeper. |
