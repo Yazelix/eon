@@ -97,17 +97,27 @@ save a few lines while adding a second owner for the same state.
 
 ## Composition and Distribution
 
-Treat relocatable child artifacts plus a versioned component manifest as the
-canonical composition interface. Astra must not require Nix store paths or a
-Nix evaluator at runtime.
+Use Nix as the sole installation and composition channel during Astra alpha and
+early dogfood. Keep the first path narrow enough to improve the product without
+maintaining installers, portable archives, signing, or a package matrix.
 
-Plan direct release bundles as the primary installation path. Keep Nix and Home
-Manager as optional first-class channels over the same artifacts and contracts.
-Do not implement a second composition graph for Nix.
+Keep runtime ownership distribution-neutral. Nix may supply store paths as
+opaque component launch inputs, but Astra code must not construct store paths,
+persist them as component identity, query the Nix store, or invoke a Nix
+evaluator during normal operation.
+
+Use a versioned component manifest as the canonical version and compatibility
+graph. Nix consumes that graph during alpha. Direct bundles and other channels
+must consume the same graph after the user approves distribution graduation.
+Do not implement a second composition graph for any channel.
+
+Direct release bundles remain the long-term primary adoption path. Begin that
+work only after sustained Nix dogfood proves the product contract and the user
+activates the distribution-graduation bead.
 
 `yazelix.com` may host documentation and installer entry points. Immutable
 release assets, checksums, signatures, and attestations remain the artifact
-authority.
+authority after direct distribution begins.
 
 ## Platform Discipline
 

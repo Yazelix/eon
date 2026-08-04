@@ -40,9 +40,10 @@ on its own architecture and keeps value independent of Astra's progress.
 
 - Orbit, Venus, and Astra advance through one active implementation frontier.
 - Indexed contracts define cross-repository behavior.
-- Exact child revisions and relocatable artifacts form the composition boundary.
-- Direct bundles provide the primary future installation path.
-- Nix and Home Manager remain optional first-class channels.
+- Exact child revisions and explicit component inputs form the composition boundary.
+- Nix provides the sole alpha and early-dogfood installation path.
+- Astra runtime code remains independent of Nix concepts and evaluation.
+- Direct bundles wait for sustained dogfood and an explicit graduation decision.
 - Linux and macOS constrain architecture from the start.
 - Astra owns product policy and avoids copying child behavior.
 
@@ -69,9 +70,9 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy | 172 |
-| README | 77 |
-| Architecture and contracts | 101 |
-| Distribution and references | 115 |
+| Agent policy | 182 |
+| README | 78 |
+| Architecture and contracts | 112 |
+| Distribution and references | 166 |
 | Changelog | 8 |
-| **Total** | **473** |
+| **Total** | **546** |

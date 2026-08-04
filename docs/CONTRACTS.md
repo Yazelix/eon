@@ -8,10 +8,10 @@ exact check, component revisions, platform, and artifact.
 |---|---|---|---|---|
 | AST-C1 | Astra launches one compatible component set and reports every exact component revision | Astra | Planned | None |
 | AST-C2 | One versioned manifest defines the component graph for every distribution channel | Astra | Planned | None |
-| AST-C3 | Each child supplies a relocatable artifact and explicit launch inputs without requiring a Nix evaluator at runtime | Child projects, integrated by Astra | Planned | None |
+| AST-C3 | Astra receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Astra | Planned | None |
 | AST-C4 | Astra preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Astra | Planned | None |
 | AST-C5 | A user can install, upgrade, inspect, and remove a direct Astra bundle without replacing an existing unrelated toolchain | Astra | Planned | None |
-| AST-C6 | The same accepted component set supports optional Nix and Home Manager packaging without changing runtime semantics | Astra | Planned | None |
+| AST-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Astra | Planned | None |
 | AST-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Astra and Venus | Planned | None |
 
 ## Proof record

@@ -27,12 +27,17 @@ therefore uses one active implementation frontier:
    protocol against a simple reference client.
 2. Venus proves native graphical interaction against an accepted Orbit revision.
 3. Astra composes accepted Orbit and Venus revisions with Helix, Yazi, and
-   Ratconfig into the smallest usable Yazelix slice.
+   Ratconfig into the smallest usable Yazelix slice through Nix.
 
 This order lets each project use a substitute peer. Orbit can use a small CLI or
 test client before Venus exists. Venus can use recorded protocol fixtures and a
 reference Orbit server before Astra exists. Astra can use pinned component
 artifacts and command-line checks before it gains a polished installer.
+
+Astra alpha and early dogfood use Nix as the sole composition and installation
+channel. Direct distribution starts after sustained dogfood and a separate user
+decision. This sequence keeps installer, archive, signing, and package-matrix
+work outside the product-discovery loop.
 
 ## Ownership rules
 
@@ -46,17 +51,22 @@ shims require an explicit user decision, a removal condition, and a bead.
 
 ## Composition unit
 
-Each release consumes:
+Each composed build consumes:
 
 - a versioned component manifest;
 - exact source or release revisions;
-- relocatable artifacts for the target platform;
-- checksums and provenance;
+- declared component artifacts or package outputs;
+- available checksums and provenance;
 - a small set of declared launch and configuration inputs.
 
-The component manifest provides the canonical graph for direct bundles, Nix,
-Home Manager, and later package-manager channels. Package definitions translate
-that graph instead of creating a second set of versions or policies.
+Nix provides those inputs during alpha. Astra code receives component paths as
+opaque launch inputs and does not invoke a Nix evaluator during normal use. It
+does not construct store paths or persist them as stable component identity.
+
+The component manifest provides the canonical graph for the Nix alpha, direct
+bundles, and later package-manager channels. Package definitions translate that
+graph instead of creating a second set of versions or policies. Relocatable
+artifact requirements activate with direct-distribution work.
 
 ## Activation boundary
 
@@ -64,4 +74,5 @@ Planning can refine contracts, references, and Beads. Runtime work begins after
 the user activates an implementation bead and its upstream proof revisions exist.
 The first Astra slice should launch one accepted Venus and Orbit pair, open the
 core tools, preserve one configuration path, and expose a diagnostic version
-report. Later slices earn their scope through dogfooding.
+report through one Nix-managed path. Later slices earn their scope through
+dogfooding. Direct distribution has its own activation gate.
