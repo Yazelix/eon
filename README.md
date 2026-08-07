@@ -5,17 +5,15 @@
 ![Yazelisk, the Yazelix basilisk mascot, standing before the Eon portal](assets/yazelisk-eon.png)
 
 Eon is a greenfield product built around Eon Sessions and Eon Desktop. Its
-orchestrator will compose them with the editor, file manager, and configuration
-tools into one small product without reimplementing its child projects.
+canonical component graph selects them with the editor, file manager, and
+configuration tools without reimplementing its child projects.
 
 ## Project status
 
-This repository contains planning contracts and Beads. It contains no runtime,
-installer, package, or release implementation. The user activated Eon as the
-active implementation frontier through `astra-db8.1` after exact Orbit and Venus
-handoff revisions were accepted for Eon dogfood. `astra-db8.2` is the next
-implementation unit and owns the canonical component manifest; `astra-db8.3`
-then owns the first Nix-only Linux composition.
+This repository contains the canonical alpha component manifest, its Rust
+validator, planning contracts, and Beads. It contains no runtime, installer,
+package, or release implementation. `astra-db8.2` owns the accepted component
+graph; `astra-db8.3` owns the first Nix-only Linux composition.
 
 ## Naming model
 
@@ -67,6 +65,32 @@ on its own architecture and keeps value independent of Eon's progress.
 - Linux and macOS constrain architecture from the start.
 - Eon owns product policy and avoids copying child behavior.
 
+## Implementation language
+
+Rust owns durable Eon behavior and repository tooling so schema, validation,
+tests, and later runtime code share one compiler and maintenance path. Nix owns
+package resolution and composition, and shell is reserved for irreducible
+process glue. Python remains suitable for disposable investigation, not checked-
+in product policy. A durable second language needs a concrete subsystem benefit
+that outweighs its toolchain and ownership cost; this validator has none.
+
+## Component manifest
+
+[`components/eon-alpha-v1.json`](components/eon-alpha-v1.json) is the one
+distribution-neutral source of component identity, compatibility, artifacts,
+and semantic launch inputs. Its activation list distinguishes required alpha
+contracts from additional recorded proof such as `ORB-C10`. It contains no
+resolved Nix store paths.
+
+Validate it with the pinned Rust dependency graph:
+
+```sh
+cargo run --locked -p eon-manifest -- components/eon-alpha-v1.json
+```
+
+The validator rejects malformed, incomplete, or incompatible graphs. The Nix
+composition that resolves artifact paths remains `astra-db8.3` work.
+
 The documents in [`docs/`](docs/) hold the current planning truth:
 
 - [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) defines naming, ownership, and sequencing.
@@ -90,9 +114,12 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy | 186 |
-| README | 98 |
+| Agent policy | 195 |
+| README | 122 |
 | Architecture and contracts | 129 |
 | Distribution and references | 197 |
 | Changelog | 8 |
-| **Total** | **618** |
+| Rust source and tests | 503 |
+| Cargo manifests | 13 |
+| Component manifest | 173 |
+| **Total** | **1,340** |

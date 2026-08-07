@@ -1,0 +1,173 @@
+{
+  "schema": 1,
+  "product": {
+    "id": "eon-alpha",
+    "target": "x86_64-linux"
+  },
+  "composition": {
+    "services": ["orbit"],
+    "clients": ["venus"],
+    "tools": ["helix", "yazi"],
+    "libraries": ["ratconfig"]
+  },
+  "activation": {
+    "required_contracts": [
+      { "component": "orbit", "contract": "ORB-C1" },
+      { "component": "orbit", "contract": "ORB-C2" },
+      { "component": "orbit", "contract": "ORB-C3" },
+      { "component": "orbit", "contract": "ORB-C4" },
+      { "component": "orbit", "contract": "ORB-C5" },
+      { "component": "orbit", "contract": "ORB-C6" },
+      { "component": "orbit", "contract": "ORB-C7" },
+      { "component": "orbit", "contract": "ORB-C8" },
+      { "component": "orbit", "contract": "ORB-C9" },
+      { "component": "venus", "contract": "VEN-C1" },
+      { "component": "venus", "contract": "VEN-C2" },
+      { "component": "venus", "contract": "VEN-C3" },
+      { "component": "venus", "contract": "VEN-C4" },
+      { "component": "venus", "contract": "VEN-C7" }
+    ],
+    "required_interfaces": [
+      { "component": "orbit", "interface": "ORBF", "version": 1 },
+      { "component": "orbit", "interface": "ORBS", "version": 2 }
+    ]
+  },
+  "components": [
+    {
+      "id": "orbit",
+      "project": "Eon Sessions",
+      "version": "0.1.0",
+      "revision": "00b136318bea13e3f08d490468f069de6f6b9bd2",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/Yazelix/eon-sessions.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/yazelix-orbit" },
+        { "id": "terminfo", "kind": "file", "path": "share/terminfo/e/eon" }
+      ],
+      "contracts": [
+        { "id": "ORB-C1", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+        { "id": "ORB-C2", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+        { "id": "ORB-C3", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+        { "id": "ORB-C4", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+        { "id": "ORB-C5", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+        { "id": "ORB-C6", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+        { "id": "ORB-C7", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+        { "id": "ORB-C8", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+        { "id": "ORB-C9", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+        { "id": "ORB-C10", "proof": "292b2451c9a1d99390334771a681c7f481c996f2" }
+      ],
+      "interfaces": [
+        { "id": "ORBF", "version": 1, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+        { "id": "ORBS", "version": 2, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" }
+      ],
+      "requires": [],
+      "launch": {
+        "artifact": "executable",
+        "arguments": ["serve"],
+        "inputs": ["runtime-directory", "terminfo-directory"]
+      }
+    },
+    {
+      "id": "venus",
+      "project": "Eon Desktop",
+      "version": "0.1.0",
+      "revision": "2d36c72dc87ca5416e22d6afdc35c6ab4e2fb832",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/Yazelix/eon-desktop.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/yazelix-venus" }
+      ],
+      "contracts": [
+        { "id": "VEN-C1", "proof": "6df14c7e2ca8c27d587d6c138200f4d39d6b12a9" },
+        { "id": "VEN-C2", "proof": "f84493781956a1f5c24be3dab148bef02748cdfe" },
+        { "id": "VEN-C3", "proof": "8929c9f9d151641a343813ddeb6005cb9c771286" },
+        { "id": "VEN-C4", "proof": "7d061b7207d280da0184e14389ef80578c3d37df" },
+        { "id": "VEN-C7", "proof": "3230c5820c821fd2437dcf0399d2ba921cec2c94" }
+      ],
+      "interfaces": [],
+      "requires": [
+        {
+          "component": "orbit",
+          "revision": "00b136318bea13e3f08d490468f069de6f6b9bd2",
+          "interfaces": [
+            { "id": "ORBF", "version": 1, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+            { "id": "ORBS", "version": 2, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" }
+          ]
+        }
+      ],
+      "launch": {
+        "artifact": "executable",
+        "arguments": [],
+        "inputs": ["orbit-socket"]
+      }
+    },
+    {
+      "id": "helix",
+      "project": "Helix",
+      "version": "25.7.1",
+      "revision": "7e6cd307d00783c16ad4cff99ed71936d34f6572",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/luccahuguet/yazelix-helix.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/hx" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": [],
+      "launch": {
+        "artifact": "executable",
+        "arguments": [],
+        "inputs": ["working-directory", "configuration-directory"]
+      }
+    },
+    {
+      "id": "yazi",
+      "project": "Yazi",
+      "version": "26.5.6",
+      "revision": "aa526434f00bb44e2e902d9a4ac5f810da1018b9",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/sxyazi/yazi.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/yazi" },
+        { "id": "companion", "kind": "file", "path": "bin/ya" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": [],
+      "launch": {
+        "artifact": "executable",
+        "arguments": [],
+        "inputs": ["working-directory", "configuration-directory"]
+      }
+    },
+    {
+      "id": "ratconfig",
+      "project": "Ratconfig",
+      "version": "6.0.0",
+      "revision": "e6ec2ebfe84b2358186410680cbcaf0564eb59a2",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/luccahuguet/ratconfig.git"
+      },
+      "artifacts": [
+        { "id": "crate", "kind": "cargo-package", "path": "ratconfig" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    }
+  ]
+}
