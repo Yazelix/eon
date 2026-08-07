@@ -284,12 +284,11 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
             (Some(_), "library") => return Err(Error("library cannot have a launch plan".into())),
             (None, _) => return Err(Error("executable component has no launch plan".into())),
             (Some(launch), _) => {
-                let artifact = component
-                    .artifacts
-                    .iter()
-                    .find(|artifact| artifact.id == launch.artifact);
                 required(
-                    artifact.is_some_and(|artifact| artifact.kind == "file"),
+                    component
+                        .artifacts
+                        .iter()
+                        .any(|artifact| artifact.id == launch.artifact && artifact.kind == "file"),
                     "launch artifact is not a declared file",
                 )?;
                 required(
@@ -397,6 +396,7 @@ fn revision(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        && value.bytes().any(|byte| byte != b'0')
 }
 
 fn token(value: &str) -> bool {
@@ -456,6 +456,8 @@ mod tests {
         component_mut(&mut incompatible, "venus")["requires"][0]["revision"] =
             Value::String("0".repeat(40));
         rejected("incompatible revision", &incompatible);
+        component_mut(&mut incompatible, "orbit")["revision"] = Value::String("0".repeat(40));
+        rejected("null revision", &incompatible);
 
         let mut incompatible_interface = canonical.clone();
         component_mut(&mut incompatible_interface, "venus")["requires"][0]["interfaces"][0]["version"] =
