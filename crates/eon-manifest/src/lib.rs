@@ -110,7 +110,8 @@ struct Requirement {
 #[serde(deny_unknown_fields)]
 struct Launch {
     artifact: String,
-    arguments: Vec<String>,
+    #[serde(rename = "arguments")]
+    _arguments: Vec<String>,
     inputs: Vec<String>,
 }
 
@@ -128,21 +129,24 @@ impl std::error::Error for Error {}
 pub fn parse_and_validate(input: &str) -> Result<(), Error> {
     let decoded: serde_json::Value = serde_json::from_str(input)
         .map_err(|error| Error(format!("invalid manifest JSON: {error}")))?;
-    required(
-        !contains_store_path(&decoded),
-        "Nix store paths are resolved inputs, not component identity",
-    )?;
+    validate_strings(&decoded)?;
     let manifest: Manifest = serde_json::from_str(input)
         .map_err(|error| Error(format!("invalid manifest JSON: {error}")))?;
     validate(&manifest)
 }
 
-fn contains_store_path(value: &serde_json::Value) -> bool {
+fn validate_strings(value: &serde_json::Value) -> Result<(), Error> {
     match value {
-        serde_json::Value::String(value) => value == "/nix/store" || value.contains("/nix/store/"),
-        serde_json::Value::Array(values) => values.iter().any(contains_store_path),
-        serde_json::Value::Object(values) => values.values().any(contains_store_path),
-        _ => false,
+        serde_json::Value::String(value) => {
+            required(
+                value != "/nix/store" && !value.contains("/nix/store/"),
+                "Nix store paths are resolved inputs, not component identity",
+            )?;
+            required(!value.contains('\0'), "manifest string contains NUL")
+        }
+        serde_json::Value::Array(values) => values.iter().try_for_each(validate_strings),
+        serde_json::Value::Object(values) => values.values().try_for_each(validate_strings),
+        _ => Ok(()),
     }
 }
 
@@ -290,13 +294,6 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
                         .iter()
                         .any(|artifact| artifact.id == launch.artifact && artifact.kind == "file"),
                     "launch artifact is not a declared file",
-                )?;
-                required(
-                    launch
-                        .arguments
-                        .iter()
-                        .all(|argument| !argument.contains('\0')),
-                    "launch argument contains NUL",
                 )?;
                 required(!launch.inputs.is_empty(), "launch plan has no inputs")?;
                 let mut inputs = HashSet::new();
@@ -468,6 +465,11 @@ mod tests {
         component_mut(&mut resolved_path, "helix")["artifacts"][0]["path"] =
             Value::String("/nix/store/example/bin/hx".into());
         rejected("resolved path", &resolved_path);
+
+        let mut nul_path = canonical.clone();
+        component_mut(&mut nul_path, "helix")["artifacts"][0]["path"] =
+            Value::String("bin/\0hx".into());
+        rejected("NUL artifact path", &nul_path);
 
         for path in [r"\u002fnix\/store\/escaped", r"\u002fnix\/store"] {
             let escaped_path = CANONICAL.replacen(

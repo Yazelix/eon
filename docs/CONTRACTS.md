@@ -8,8 +8,8 @@ check, component revisions, platform, and artifact.
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
 | EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Planned | None |
-| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Proven | `e74297635222cafcfc6518a792cf582329a215fe`; manifest proof below |
-| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Partially proved | `e74297635222cafcfc6518a792cf582329a215fe` proves stable identity and decoded-path rejection; runtime gap below |
+| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Proven | `0ecd6a90c838b9d8fc2cb36bd9b34cf25169f496`; manifest proof below |
+| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Partially proved | `0ecd6a90c838b9d8fc2cb36bd9b34cf25169f496` proves stable identity and decoded-path rejection; runtime gap below |
 | EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Planned | None |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
@@ -17,7 +17,7 @@ check, component revisions, platform, and artifact.
 
 ## Proof record
 
-### Manifest proof `e74297635222cafcfc6518a792cf582329a215fe`
+### Manifest proof `0ecd6a90c838b9d8fc2cb36bd9b34cf25169f496`
 
 - Contracts: EON-C2 is proved. EON-C3 is proved only for stable component
   identity, relative artifact declarations, semantic launch inputs, and
@@ -35,7 +35,7 @@ check, component revisions, platform, and artifact.
   `cargo test --locked --workspace`; `cargo clippy --locked --workspace
   --all-targets -- -D warnings`; validator CLI on the artifact; Nix
   `builtins.fromJSON` assertions for schema, components, contracts, and
-  interfaces; escaped store-root and descendant rejection; `git diff --check`.
+  interfaces; escaped store-path and null-OID rejection; `git diff --check`.
 - Remaining EON-C3 gap: no Eon runtime or Nix composition exists yet, so this
   proof does not cover resolved path injection or absence of Nix evaluation
   during normal operation. `astra-db8.3` owns that proof.
