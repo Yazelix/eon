@@ -6,13 +6,13 @@ exact check, component revisions, platform, and artifact.
 
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
-| AST-C1 | Astra launches one compatible component set and reports every exact component revision | Astra | Planned | None |
-| AST-C2 | One versioned manifest defines the component graph for every distribution channel | Astra | Planned | None |
-| AST-C3 | Astra receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Astra | Planned | None |
-| AST-C4 | Astra preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Astra | Planned | None |
-| AST-C5 | A user can install, upgrade, inspect, and remove a direct Astra bundle without replacing an existing unrelated toolchain | Astra | Planned | None |
-| AST-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Astra | Planned | None |
-| AST-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Astra and Venus | Planned | None |
+| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Planned | None |
+| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Planned | None |
+| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Planned | None |
+| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Planned | None |
+| EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
+| EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
+| EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 
 ## Proof record
 
@@ -31,4 +31,4 @@ Do not change a row to `Proven` from a design review, mock, or unexecuted test.
 A contract change needs an explicit bead. Record the user-visible consequence,
 affected owners, compatibility decision, test change, and rejected alternative.
 If another repository owns the contract, land and verify the owner change before
-Astra consumes it.
+Eon consumes it.

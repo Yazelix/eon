@@ -11,14 +11,20 @@ useful constraints, and rejected approaches in the implementation bead.
 | Which terminal responsibilities can an embeddable engine own? | [libghostty](https://github.com/ghostty-org/ghostty), [rio-vt and Rio](https://github.com/raphamorim/rio), [qwertty](https://github.com/joshka/qwertty) | Compare parser, grid, scrollback, images, PTY, selection, search, serialization, and platform support. |
 | Which interface belongs in a terminal test client? | [Ratatui](https://github.com/ratatui/ratatui) | Consider for diagnostics and reference clients. Do not make it the native Venus rendering foundation without a separate decision. |
 
-Orbit owns the detailed research record and exact revisions. Astra consumes
+Orbit owns the detailed research record and exact revisions. Eon consumes
 accepted Orbit contracts instead of repeating the engine decision.
+
+## Session workspace experience
+
+| Question | Sources | Use |
+|---|---|---|
+| How should Eon organize and switch among durable terminal sessions without absorbing terminal or rendering state? | [Canario](https://rapha.land/canario/) and its [frontend at Rio `3e41b8b19a1c`](https://github.com/raphamorim/rio/tree/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario) | Study spaces, command-driven navigation, CWD-based filing, the global quick terminal, and on-demand pane previews. Canario's [session store](https://github.com/raphamorim/rio/blob/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario/Sources/SessionStore.swift) restarts shells and restores layout plus plain-text scrollback, so it is workspace-UX evidence rather than a durable-session model. Eon must consume exact Orbit session identities and must not simulate process survival, copy Canario source, or move PTY lifetime into the UI process. |
 
 ## Recovery experience
 
 | Question | Source | Use |
 |---|---|---|
-| How should Astra help a user recover an interrupted product session without guessing or silently reopening the wrong work? | [Power Failure Resumer](https://github.com/Dicklesworthstone/power_failure_resumer) | Study interrupted-session discovery, grouping, confidence and ambiguity, previewable recovery plans, idempotent actions, verified reopen, and partial-failure reporting. Preserve child ownership and reject Ghostty-, AppleScript-, coding-agent-, or macOS-specific mechanics as Astra architecture. Do not auto-resume unknown processes or claim recovery beyond the exact Orbit and Venus contracts. |
+| How should Eon help a user recover an interrupted product session without guessing or silently reopening the wrong work? | [Power Failure Resumer](https://github.com/Dicklesworthstone/power_failure_resumer) | Study interrupted-session discovery, grouping, confidence and ambiguity, previewable recovery plans, idempotent actions, verified reopen, and partial-failure reporting. Preserve child ownership and reject Ghostty-, AppleScript-, coding-agent-, or macOS-specific mechanics as Eon architecture. Do not auto-resume unknown processes or claim recovery beyond the exact Orbit and Venus contracts. |
 
 ## Composition and releases
 

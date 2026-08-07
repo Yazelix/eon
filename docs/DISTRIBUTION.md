@@ -2,8 +2,8 @@
 
 ## Goals
 
-Astra alpha and early dogfood use Nix as the sole installation and composition
-channel. This phase spends project time on Orbit, Venus, and Astra product
+Eon alpha and early dogfood use Nix as the sole installation and composition
+channel. This phase spends project time on Eon Sessions, Eon Desktop, and Eon
 contracts instead of portable archives and installer maintenance.
 
 Direct installation remains the long-term adoption path. It begins after Nix
@@ -20,7 +20,7 @@ contract if the user activates it.
 
 The Nix-only phase follows these boundaries:
 
-- Astra code accepts component paths and versions through explicit inputs.
+- Eon code accepts component paths and versions through explicit inputs.
 - Nix store paths remain opaque launch values rather than stable identity.
 - Product state and user configuration contain stable component identities.
 - Normal runtime operation invokes no Nix command or evaluator.
@@ -33,7 +33,7 @@ Direct-distribution work requires a separate user decision after:
 
 - the Nix composition survives sustained fresh-session dogfood;
 - launch, configuration, diagnostics, upgrades, and failure behavior stabilize;
-- exact Orbit and Venus revisions have no open P0 or P1 integration defect;
+- exact Eon Sessions and Eon Desktop revisions have no open P0 or P1 integration defect;
 - the component manifest describes the accepted product without relying on
   derivation identity;
 - the team can maintain release artifacts and their verification checks.
@@ -44,7 +44,7 @@ does not activate every package channel.
 ## Cost-bounded CI and release execution
 
 Do not make hosted GitHub Actions consumption an implicit prerequisite for
-Astra alpha. Keep canonical build and verification commands runnable locally
+Eon alpha. Keep canonical build and verification commands runnable locally
 and through Nix. Before adding hosted CI or release automation, record the
 expected run frequency, runner minutes, storage and artifact costs, cancellation
 policy, timeout, and the user's hard spending boundary.
@@ -67,7 +67,7 @@ this manifest during alpha. Release tooling extends it with portable artifacts,
 checksums, and provenance after distribution graduation.
 
 The manifest should remain small enough for humans to review. Child repositories
-build and test their owned artifacts. Astra verifies compatibility and assembles
+build and test their owned artifacts. Eon verifies compatibility and assembles
 the product without rebuilding child behavior.
 
 ## Channel sequence
@@ -96,14 +96,14 @@ not need Nix, and Nix users receive the same accepted component set.
 
 ### macOS
 
-Venus determines the native application boundary. Astra should plan a signed and
-notarized application or disk image and a Homebrew Cask over the same release
-artifacts. Architecture reviews must reject process, path, PTY, or packaging
-foundations that prevent this channel.
+Eon Desktop determines the native application boundary through its Venus
+subsystem. Eon should plan a signed and notarized application or disk image and
+a Homebrew Cask over the same release artifacts. Architecture reviews must
+reject process, path, PTY, or packaging foundations that prevent this channel.
 
 ## Website
 
-During alpha, `yazelix.com` can explain Astra and label Nix as the required
+During alpha, `yazelix.com` can explain Eon and label Nix as the required
 dogfood path. After distribution graduation, the site can publish direct
 installation instructions and select a platform-specific installer. GitHub
 release assets or another immutable object store remain the authority for
