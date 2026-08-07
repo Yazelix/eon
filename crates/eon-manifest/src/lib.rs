@@ -437,9 +437,10 @@ mod tests {
             .unwrap()
     }
 
-    fn rejected(label: &str, manifest: &Value) {
+    fn rejected(expected: &str, manifest: &Value) {
         let input = serde_json::to_string(manifest).unwrap();
-        assert!(parse_and_validate(&input).is_err(), "accepted {label}");
+        let actual = parse_and_validate(&input).unwrap_err().to_string();
+        assert_eq!(actual, expected);
     }
 
     #[test]
@@ -456,37 +457,39 @@ mod tests {
             .as_array_mut()
             .unwrap()
             .remove(0);
-        rejected("missing component", &missing_component);
+        rejected("role references missing component", &missing_component);
 
         let mut incompatible = canonical.clone();
         component_mut(&mut incompatible, "venus")["requires"][0]["revision"] =
             Value::String("1".repeat(40));
-        rejected("incompatible revision", &incompatible);
+        rejected("required component revision is incompatible", &incompatible);
 
         let mut null_revision = canonical.clone();
         component_mut(&mut null_revision, "orbit")["revision"] = Value::String("0".repeat(40));
-        rejected("null revision", &null_revision);
+        rejected("invalid component revision", &null_revision);
 
-        let mut incompatible_interface = canonical.clone();
-        component_mut(&mut incompatible_interface, "venus")["requires"][0]["interfaces"][0]["version"] =
+        let mut bad_interface = canonical.clone();
+        component_mut(&mut bad_interface, "venus")["requires"][0]["interfaces"][0]["version"] =
             Value::from(9);
-        rejected("incompatible interface", &incompatible_interface);
+        rejected("required interface is incompatible", &bad_interface);
 
         let mut resolved_path = canonical.clone();
         component_mut(&mut resolved_path, "helix")["artifacts"][0]["path"] =
             Value::String("/nix/store/example/bin/hx".into());
-        rejected("resolved path", &resolved_path);
+        rejected(
+            "Nix store paths are resolved inputs, not component identity",
+            &resolved_path,
+        );
 
         let mut nul_path = canonical.clone();
         component_mut(&mut nul_path, "helix")["artifacts"][0]["path"] =
             Value::String("bin/\0hx".into());
-        rejected("NUL artifact path", &nul_path);
+        rejected("manifest string contains NUL", &nul_path);
 
         for url in ["https:///repo.git", "https://example.com/.git"] {
-            let mut malformed_source = canonical.clone();
-            component_mut(&mut malformed_source, "orbit")["source"]["url"] =
-                Value::String(url.into());
-            rejected("malformed source", &malformed_source);
+            let mut graph = canonical.clone();
+            component_mut(&mut graph, "orbit")["source"]["url"] = Value::String(url.into());
+            rejected("component source must be an HTTPS Git repository", &graph);
         }
 
         for path in [r"\u002fnix\/store\/escaped", r"\u002fnix\/store"] {
@@ -501,7 +504,7 @@ mod tests {
 
         let mut mutable_revision = canonical.clone();
         component_mut(&mut mutable_revision, "yazi")["revision"] = Value::String("v26.5.6".into());
-        rejected("mutable revision", &mutable_revision);
+        rejected("invalid component revision", &mutable_revision);
 
         let duplicate = CANONICAL.replacen(
             "{\n  \"schema\": 1,",
