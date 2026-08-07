@@ -115,11 +115,11 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 195 |
-| README | 122 |
-| Architecture and contracts | 129 |
+| README | 125 |
+| Architecture and contracts | 153 |
 | Distribution and references | 197 |
 | Changelog | 8 |
-| Rust source and tests | 503 |
+| Rust source and tests | 524 |
 | Cargo manifests | 13 |
 | Component manifest | 173 |
-| **Total** | **1,340** |
+| **Total** | **1,388** |

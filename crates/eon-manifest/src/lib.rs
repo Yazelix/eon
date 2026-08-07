@@ -4,7 +4,7 @@ use std::{
     fmt,
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
     schema: u32,
@@ -14,14 +14,14 @@ struct Manifest {
     components: Vec<Component>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Product {
     id: String,
     target: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Composition {
     services: Vec<String>,
@@ -30,21 +30,21 @@ struct Composition {
     libraries: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Activation {
     required_contracts: Vec<RequiredContract>,
     required_interfaces: Vec<RequiredInterface>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RequiredContract {
     component: String,
     contract: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RequiredInterface {
     component: String,
@@ -52,7 +52,7 @@ struct RequiredInterface {
     version: u32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Component {
     id: String,
@@ -68,14 +68,14 @@ struct Component {
     launch: Option<Launch>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Source {
     kind: String,
     url: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Artifact {
     id: String,
@@ -83,14 +83,14 @@ struct Artifact {
     path: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Contract {
     id: String,
     proof: String,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[derive(Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 struct Interface {
     id: String,
@@ -98,7 +98,7 @@ struct Interface {
     proof: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Requirement {
     component: String,
@@ -106,7 +106,7 @@ struct Requirement {
     interfaces: Vec<Interface>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Launch {
     artifact: String,
@@ -126,13 +126,24 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 pub fn parse_and_validate(input: &str) -> Result<(), Error> {
+    let decoded: serde_json::Value = serde_json::from_str(input)
+        .map_err(|error| Error(format!("invalid manifest JSON: {error}")))?;
     required(
-        !input.contains("/nix/store/"),
+        !contains_store_path(&decoded),
         "Nix store paths are resolved inputs, not component identity",
     )?;
     let manifest: Manifest = serde_json::from_str(input)
         .map_err(|error| Error(format!("invalid manifest JSON: {error}")))?;
     validate(&manifest)
+}
+
+fn contains_store_path(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(value) => value == "/nix/store" || value.contains("/nix/store/"),
+        serde_json::Value::Array(values) => values.iter().any(contains_store_path),
+        serde_json::Value::Object(values) => values.values().any(contains_store_path),
+        _ => false,
+    }
 }
 
 fn validate(manifest: &Manifest) -> Result<(), Error> {
@@ -455,6 +466,16 @@ mod tests {
         component_mut(&mut resolved_path, "helix")["artifacts"][0]["path"] =
             Value::String("/nix/store/example/bin/hx".into());
         rejected("resolved path", &resolved_path);
+
+        for path in [r"\u002fnix\/store\/escaped", r"\u002fnix\/store"] {
+            let escaped_path = CANONICAL.replacen(
+                "\"arguments\": [],",
+                &format!("\"arguments\": [\"{path}\"],"),
+                1,
+            );
+            assert!(!escaped_path.contains("/nix/store/"));
+            assert!(parse_and_validate(&escaped_path).is_err());
+        }
 
         let mut mutable_revision = canonical.clone();
         component_mut(&mut mutable_revision, "yazi")["revision"] = Value::String("v26.5.6".into());
