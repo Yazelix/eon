@@ -174,8 +174,17 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
         )?;
         required(
             component.source.kind == "git"
-                && component.source.url.starts_with("https://")
-                && component.source.url.ends_with(".git"),
+                && component
+                    .source
+                    .url
+                    .strip_prefix("https://")
+                    .and_then(|source| source.split_once('/'))
+                    .is_some_and(|(host, path)| {
+                        !host.is_empty()
+                            && path.rsplit('/').next().is_some_and(|repository| {
+                                repository != ".git" && repository.ends_with(".git")
+                            })
+                    }),
             "component source must be an HTTPS Git repository",
         )?;
         required(
@@ -439,7 +448,7 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_incompatible_and_resolved_graphs_are_rejected() {
+    fn invalid_graphs_are_rejected() {
         let canonical: Value = serde_json::from_str(CANONICAL).unwrap();
 
         let mut missing_component = canonical.clone();
@@ -470,6 +479,13 @@ mod tests {
         component_mut(&mut nul_path, "helix")["artifacts"][0]["path"] =
             Value::String("bin/\0hx".into());
         rejected("NUL artifact path", &nul_path);
+
+        for url in ["https:///repo.git", "https://example.com/.git"] {
+            let mut malformed_source = canonical.clone();
+            component_mut(&mut malformed_source, "orbit")["source"]["url"] =
+                Value::String(url.into());
+            rejected("malformed source", &malformed_source);
+        }
 
         for path in [r"\u002fnix\/store\/escaped", r"\u002fnix\/store"] {
             let escaped_path = CANONICAL.replacen(
