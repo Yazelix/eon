@@ -460,10 +460,12 @@ mod tests {
 
         let mut incompatible = canonical.clone();
         component_mut(&mut incompatible, "venus")["requires"][0]["revision"] =
-            Value::String("0".repeat(40));
+            Value::String("1".repeat(40));
         rejected("incompatible revision", &incompatible);
-        component_mut(&mut incompatible, "orbit")["revision"] = Value::String("0".repeat(40));
-        rejected("null revision", &incompatible);
+
+        let mut null_revision = canonical.clone();
+        component_mut(&mut null_revision, "orbit")["revision"] = Value::String("0".repeat(40));
+        rejected("null revision", &null_revision);
 
         let mut incompatible_interface = canonical.clone();
         component_mut(&mut incompatible_interface, "venus")["requires"][0]["interfaces"][0]["version"] =
