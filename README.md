@@ -11,11 +11,11 @@ tools into one small product without reimplementing its child projects.
 ## Project status
 
 This repository contains planning contracts and Beads. It contains no runtime,
-installer, package, or release implementation. Eon Sessions and its Orbit
-subsystem remain the active implementation frontier; Eon Desktop follows after
-Orbit proves the contracts needed by its Venus client. Eon implementation starts
-after those boundaries have working evidence and the user activates an
-implementation bead.
+installer, package, or release implementation. The user activated Eon as the
+active implementation frontier through `astra-db8.1` after exact Orbit and Venus
+handoff revisions were accepted for Eon dogfood. `astra-db8.2` is the next
+implementation unit and owns the canonical component manifest; `astra-db8.3`
+then owns the first Nix-only Linux composition.
 
 ## Naming model
 
@@ -90,9 +90,9 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy | 190 |
+| Agent policy | 186 |
 | README | 98 |
 | Architecture and contracts | 129 |
 | Distribution and references | 197 |
 | Changelog | 8 |
-| **Total** | **622** |
+| **Total** | **618** |

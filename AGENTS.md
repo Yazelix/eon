@@ -242,10 +242,10 @@ Eon owns orchestration, composition, product policy, and distribution.
 
 ## Status
 
-This repository holds plans and contracts. Eon Sessions and its Orbit subsystem
-are the active implementation frontier. Do not add runtime code, installers,
-package manifests, CI, or release automation until the user activates an Eon
-implementation bead.
+This repository holds plans and contracts. Through `astra-db8.1`, the user
+activated Eon as the active implementation frontier after exact Orbit and Venus
+handoffs. No runtime or package implementation exists; begin it only through a
+separately claimed Eon Bead, starting with `astra-db8.2`.
 
 ## Core Rule
 
