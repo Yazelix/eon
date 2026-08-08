@@ -2,7 +2,7 @@
 
 *Build for Eons.*
 
-![Yazelisk, the Yazelix basilisk mascot, standing before the Eon portal](assets/yazelisk-eon.png)
+![Glowing violet three-bend Eon portal](assets/eon.png)
 
 Eon is a greenfield product built around Eon Sessions and Eon Desktop. Its
 canonical component graph selects them with the editor, file manager, and
@@ -87,7 +87,7 @@ eon versions
 eon
 ```
 
-The package installs an `Eon` desktop entry and violet Möbius icon, with X11
+The package installs an `Eon` desktop entry and violet three-bend portal icon, with X11
 and Xwayland window grouping. Opening Eon starts a session or reconnects to the
 active session. Its Nix closure supplies Mesa's open-source Vulkan drivers; the
 current graphics proof uses Intel hardware, while proprietary NVIDIA remains
