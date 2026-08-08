@@ -29,6 +29,7 @@ fn main() -> ExitCode {
 
 fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
     match arguments.as_slice() {
+        [] if runtime_directory().join("orbit.sock").exists() => attach(),
         [] => run(&[]),
         [command] if command == "run" => run(&[]),
         [command, separator, child @ ..]

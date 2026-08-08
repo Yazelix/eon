@@ -149,7 +149,8 @@
           FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
           postFixup = ''
             wrapProgram "$out/bin/yazelix-venus" \
-              --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath venusRuntimeLibraries}"
+              --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath venusRuntimeLibraries}" \
+              --prefix XDG_DATA_DIRS : "${pkgs.mesa}/share"
           '';
         };
 
