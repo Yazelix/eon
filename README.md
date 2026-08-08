@@ -88,24 +88,27 @@ eon
 ```
 
 The package installs an `Eon` desktop entry and violet Möbius icon, with X11
-and Xwayland window grouping. Run Eon from a terminal when you need foreground
-lifecycle control. Closing the Eon Desktop window detaches the client while
-Sessions and its PTY keep running. Reconnect with:
+and Xwayland window grouping. Opening Eon starts a session or reconnects to the
+active session. Its Nix closure supplies Mesa's open-source Vulkan drivers; the
+current graphics proof uses Intel hardware, while proprietary NVIDIA remains
+unproved. Run Eon from a terminal when you need foreground lifecycle control.
+Closing the Eon Desktop window detaches the client while Sessions and its PTY
+keep running. Reconnect explicitly with:
 
 ```sh
 eon attach
 ```
 
 Press `Ctrl-C` in the original foreground `eon` process to stop that composed
-session. Orbit removes its socket during shutdown. Machine restart, Orbit
-restart, and Eon relaunch preserve no process state beyond the accepted child
-contracts.
+session. Orbit removes its socket during shutdown. Restarting Orbit or the
+machine preserves no process state beyond the accepted child contracts.
 
 The command surface is small:
 
 | Command | Result |
 |---|---|
-| `eon` or `eon run` | Start one Orbit session and one Venus window with the default shell |
+| `eon` | Attach to the active Orbit session, or start one with the default shell |
+| `eon run` | Explicitly start one Orbit session and one Venus window with the default shell |
 | `eon run -- COMMAND...` | Run one explicit command as the Orbit-owned PTY child |
 | `eon attach` | Open Venus against the active local Orbit socket |
 | `eon versions` | Print stable component versions and Git revisions from the canonical manifest |
@@ -163,13 +166,13 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 200 |
-| README | 175 |
+| README | 178 |
 | Repository ignore rules | 3 |
-| Architecture and contracts | 204 |
+| Architecture and contracts | 207 |
 | Distribution and references | 202 |
-| Changelog | 16 |
-| Rust source and tests | 1,025 |
+| Changelog | 20 |
+| Rust source and tests | 1,026 |
 | Cargo manifests | 23 |
 | Component manifest | 173 |
-| Nix composition | 253 |
-| **Total** | **2,274** |
+| Nix composition | 254 |
+| **Total** | **2,286** |

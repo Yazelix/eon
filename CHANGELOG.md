@@ -9,6 +9,10 @@ installation, and proven contract changes.
   entry that groups its X11/Xwayland window and uses the violet Möbius icon.
 - Add `eon`, `eon run -- COMMAND...`, `eon attach`, `eon versions`, and
   `eon config-path`.
+- Make bare `eon` and the desktop launcher reconnect to an active session;
+  keep `eon run` as the explicit start command.
+- Supply pinned Mesa Vulkan drivers to desktop-launched Venus instead of
+  depending on shell-only graphics environment variables.
 - Keep Orbit sessions alive across Venus exit and reconnect them through the
   same private local socket.
 - Ignore relative XDG base paths, create missing configuration and runtime
