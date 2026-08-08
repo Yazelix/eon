@@ -1,0 +1,179 @@
+{
+  "nodes": {
+    "ghostty": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1783806457,
+        "narHash": "sha256-1Zz65SCk3rkJ9+Q0MmyNOTNiDSLBRIHRd3IvFM4iNXw=",
+        "owner": "ghostty-org",
+        "repo": "ghostty",
+        "rev": "a887df42c56f6de86c0fe6da9c4eeca37931e083",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ghostty-org",
+        "repo": "ghostty",
+        "rev": "a887df42c56f6de86c0fe6da9c4eeca37931e083",
+        "type": "github"
+      }
+    },
+    "helix": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "rust-overlay": "rust-overlay"
+      },
+      "locked": {
+        "lastModified": 1785958158,
+        "narHash": "sha256-volN6L5Nbbtpl+EDPabRmR1DjgbfTt/yUwyAvBsleUU=",
+        "owner": "luccahuguet",
+        "repo": "yazelix-helix",
+        "rev": "7e6cd307d00783c16ad4cff99ed71936d34f6572",
+        "type": "github"
+      },
+      "original": {
+        "owner": "luccahuguet",
+        "repo": "yazelix-helix",
+        "rev": "7e6cd307d00783c16ad4cff99ed71936d34f6572",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1781577229,
+        "narHash": "sha256-lrp67w8AulE9Ks53n27I45ADSzbOCn4H+CNW1Ck8B+8=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+        "type": "github"
+      }
+    },
+    "orbit": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786123479,
+        "narHash": "sha256-YolyRLW2y2ewjPIypkFWfnk05wwIabRJIRp75KrOks0=",
+        "ref": "refs/heads/edge",
+        "rev": "00b136318bea13e3f08d490468f069de6f6b9bd2",
+        "revCount": 64,
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-sessions.git"
+      },
+      "original": {
+        "rev": "00b136318bea13e3f08d490468f069de6f6b9bd2",
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-sessions.git"
+      }
+    },
+    "protocol": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786077611,
+        "narHash": "sha256-v7DVfxTiqSYLnU1vRPm8I3hiqgAcqzZI0iNDNO0kNCc=",
+        "ref": "refs/heads/edge",
+        "rev": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757",
+        "revCount": 60,
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-sessions.git"
+      },
+      "original": {
+        "rev": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757",
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-sessions.git"
+      }
+    },
+    "ratconfig": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1785593744,
+        "narHash": "sha256-I9+pRyfLVq4QYcATNjNr1ix+dIk8WlYawt5HI13gaZo=",
+        "owner": "luccahuguet",
+        "repo": "ratconfig",
+        "rev": "e6ec2ebfe84b2358186410680cbcaf0564eb59a2",
+        "type": "github"
+      },
+      "original": {
+        "owner": "luccahuguet",
+        "repo": "ratconfig",
+        "rev": "e6ec2ebfe84b2358186410680cbcaf0564eb59a2",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "ghostty": "ghostty",
+        "helix": "helix",
+        "nixpkgs": "nixpkgs",
+        "orbit": "orbit",
+        "protocol": "protocol",
+        "ratconfig": "ratconfig",
+        "venus": "venus",
+        "yazi": "yazi"
+      }
+    },
+    "rust-overlay": {
+      "inputs": {
+        "nixpkgs": [
+          "helix",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1775358767,
+        "narHash": "sha256-f2eC+WIfhjevCPQILuV08i/kmKZzYZpUvkom/33VxCA=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "20fd44bc663daa53a2575e01293e24e681d62244",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "venus": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1786119262,
+        "narHash": "sha256-2WakvDqGgHj1rf7zlQo0x1gPumIlN0+M1Fa97vsNLGw=",
+        "ref": "refs/heads/edge",
+        "rev": "2d36c72dc87ca5416e22d6afdc35c6ab4e2fb832",
+        "revCount": 121,
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-desktop.git"
+      },
+      "original": {
+        "rev": "2d36c72dc87ca5416e22d6afdc35c6ab4e2fb832",
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-desktop.git"
+      }
+    },
+    "yazi": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1778004159,
+        "narHash": "sha256-sdaqZwLb+fBTg5Pd6WWfOWKCavsXWSSZrBEXuYuc8iM=",
+        "owner": "sxyazi",
+        "repo": "yazi",
+        "rev": "aa526434f00bb44e2e902d9a4ac5f810da1018b9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "sxyazi",
+        "repo": "yazi",
+        "rev": "aa526434f00bb44e2e902d9a4ac5f810da1018b9",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

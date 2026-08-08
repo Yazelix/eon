@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/eon-manifest"]
+members = ["crates/eon", "crates/eon-manifest"]
 resolver = "3"

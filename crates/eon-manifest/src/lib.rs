@@ -127,12 +127,30 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 pub fn parse_and_validate(input: &str) -> Result<(), Error> {
+    validate(&parse(input)?)
+}
+
+pub fn version_report(input: &str) -> Result<String, Error> {
+    let manifest = parse(input)?;
+    validate(&manifest)?;
+    let mut lines = vec![format!(
+        "{} {}",
+        manifest.product.id, manifest.product.target
+    )];
+    lines.extend(manifest.components.iter().map(|component| {
+        format!(
+            "{} {} {} {}",
+            component.id, component.version, component.revision, component.target
+        )
+    }));
+    Ok(lines.join("\n"))
+}
+
+fn parse(input: &str) -> Result<Manifest, Error> {
     let decoded: serde_json::Value = serde_json::from_str(input)
         .map_err(|error| Error(format!("invalid manifest JSON: {error}")))?;
     validate_strings(&decoded)?;
-    let manifest: Manifest = serde_json::from_str(input)
-        .map_err(|error| Error(format!("invalid manifest JSON: {error}")))?;
-    validate(&manifest)
+    serde_json::from_str(input).map_err(|error| Error(format!("invalid manifest JSON: {error}")))
 }
 
 fn validate_strings(value: &serde_json::Value) -> Result<(), Error> {
@@ -423,7 +441,7 @@ fn relative(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_and_validate;
+    use super::{parse_and_validate, version_report};
     use serde_json::Value;
 
     const CANONICAL: &str = include_str!("../../../components/eon-alpha-v1.json");
@@ -446,6 +464,22 @@ mod tests {
     #[test]
     fn canonical_manifest_is_valid() {
         parse_and_validate(CANONICAL).unwrap();
+    }
+
+    #[test]
+    fn version_report_contains_identity_without_resolved_paths() {
+        let report = version_report(CANONICAL).unwrap();
+
+        assert_eq!(
+            report,
+            "eon-alpha x86_64-linux\n\
+orbit 0.1.0 00b136318bea13e3f08d490468f069de6f6b9bd2 x86_64-linux\n\
+venus 0.1.0 2d36c72dc87ca5416e22d6afdc35c6ab4e2fb832 x86_64-linux\n\
+helix 25.7.1 7e6cd307d00783c16ad4cff99ed71936d34f6572 x86_64-linux\n\
+yazi 26.5.6 aa526434f00bb44e2e902d9a4ac5f810da1018b9 x86_64-linux\n\
+ratconfig 6.0.0 e6ec2ebfe84b2358186410680cbcaf0564eb59a2 x86_64-linux"
+        );
+        assert!(!report.contains("/nix/store"));
     }
 
     #[test]
