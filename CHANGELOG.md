@@ -6,7 +6,8 @@ installation, and proven contract changes.
 ## Unreleased
 
 - Ship the x86_64 Linux alpha through one locked Nix flake with an Eon desktop
-  entry that groups its X11/Xwayland window and uses the violet Möbius icon.
+  entry that groups its X11/Xwayland window and uses the violet three-bend
+  portal icon.
 - Add `eon`, `eon run -- COMMAND...`, `eon attach`, `eon versions`, and
   `eon config-path`.
 - Make bare `eon` and the desktop launcher reconnect to an active session;

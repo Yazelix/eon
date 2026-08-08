@@ -7,7 +7,7 @@ check, component revisions, platform, and artifact.
 
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
-| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Proven | `eae70e8d3ed4348b389f320dfd49d7db29478546`; Linux composition proof below |
+| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Proven | `712c0834691c58b07e56494de25f98670b6a882e`; selected-icon proof and preserved Linux composition proof below |
 | EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Proven | `c9e898c9ff889c2be4d4381a20676291bab65b49`; manifest proof below |
 | EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Proven | `c9e898c9ff889c2be4d4381a20676291bab65b49` manifest proof and `eae70e8d3ed4348b389f320dfd49d7db29478546` Linux composition proof below |
 | EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Proven | `eae70e8d3ed4348b389f320dfd49d7db29478546`; Linux composition proof below |
@@ -93,6 +93,23 @@ check, component revisions, platform, and artifact.
   survived, and a fresh Venus reattached. Some emoji and Yazi icon glyphs
   rendered as fallback boxes in the packaged font configuration. Packaged Mesa
   is proved on Intel Raptor Lake graphics; proprietary NVIDIA remains unproved.
+
+### Selected desktop icon proof `712c0834691c58b07e56494de25f98670b6a882e`
+
+- Contract: EON-C1 advances only the packaged desktop-icon identity. EON-C2,
+  EON-C3, EON-C4, runtime behavior, component revisions, and compatibility remain
+  proved by their earlier revisions above.
+- Artifact: `/nix/store/5v2i3wp7q52zmnl5p4y9m68wwrfmclsq-eon-0.1.0`,
+  NAR hash `sha256-otl7TOldLCDVHbiNfYjNHJoPx0P6JBCfyJJzcZz6p98=`, NAR size
+  2,973,512 bytes, closure size 1,457,883,088 bytes.
+- Desktop icon: `assets/eon.png`, a 1254 by 1254 RGBA PNG with SHA-256
+  `540d33604b703b69e80531d228d2bef9887ec561954c0ceecd59c2b9b511a9b7`.
+  The installed icon is byte-identical, and the desktop entry retains `Name=Eon`,
+  `Icon=eon`, and `StartupWMClass=yazelix-venus`.
+- Checks: canonical and installed icon byte/hash equality; image identity;
+  README target; locked Cargo format, check, test, manifest, and clippy commands;
+  `nix flake check --no-build`; exact package build; desktop-file validation;
+  live COSMIC launcher inspection; and `git diff --check`.
 
 When a bead proves a contract, update its row with:
 

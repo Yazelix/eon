@@ -168,11 +168,11 @@ Beads data, lock files, and generated artifacts.
 | Agent policy | 200 |
 | README | 178 |
 | Repository ignore rules | 3 |
-| Architecture and contracts | 207 |
+| Architecture and contracts | 224 |
 | Distribution and references | 202 |
-| Changelog | 20 |
+| Changelog | 21 |
 | Rust source and tests | 1,026 |
 | Cargo manifests | 23 |
 | Component manifest | 173 |
 | Nix composition | 254 |
-| **Total** | **2,286** |
+| **Total** | **2,304** |
