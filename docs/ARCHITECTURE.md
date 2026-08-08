@@ -89,7 +89,7 @@ artifact requirements activate with direct-distribution work.
 
 Planning can refine contracts, references, and Beads. Runtime work begins after
 the user activates an implementation bead and its upstream proof revisions exist.
-The first Eon slice should launch one accepted Eon Desktop and Eon Sessions
-pair, open the core tools, preserve one configuration path, and expose a
-diagnostic version report through one Nix-managed path. Later slices earn their
-scope through dogfooding. Direct distribution has its own activation gate.
+The first Eon slice launches one accepted Eon Desktop and Eon Sessions pair,
+exposes Helix and Yazi, preserves one configuration path, and reports component
+identity through one Nix-managed path. Later slices earn their scope through
+dogfooding. Direct distribution has its own activation gate.

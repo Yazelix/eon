@@ -10,10 +10,11 @@ configuration tools without reimplementing its child projects.
 
 ## Project status
 
-This repository contains the canonical alpha component manifest, its Rust
-validator, planning contracts, and Beads. It contains no runtime, installer,
-package, or release implementation. `astra-db8.2` owns the accepted component
-graph; `astra-db8.3` owns the first Nix-only Linux composition.
+This repository ships the first Nix-only Eon alpha for x86_64 Linux. One Rust
+supervisor launches the accepted Eon Sessions and Eon Desktop revisions,
+exposes the pinned Helix and Yazi tools, keeps one configuration root, and
+reports the canonical component identities. Direct bundles, Home Manager,
+updates, release automation, and macOS packaging remain outside this slice.
 
 ## Naming model
 
@@ -72,7 +73,52 @@ tests, and later runtime code share one compiler and maintenance path. Nix owns
 package resolution and composition, and shell is reserved for irreducible
 process glue. Python remains suitable for disposable investigation, not checked-
 in product policy. A durable second language needs a concrete subsystem benefit
-that outweighs its toolchain and ownership cost; this validator has none.
+that outweighs its toolchain and ownership cost; this composition has none.
+
+## Install and run
+
+The alpha builds from the locked flake and its exact private Eon child inputs.
+Clone the repository with GitHub credentials that can read those inputs, then
+install the package into your Nix profile:
+
+```sh
+nix profile add .#default
+eon versions
+eon
+```
+
+The package installs an `Eon` desktop entry and violet Möbius icon, with X11
+and Xwayland window grouping. Run Eon from a terminal when you need foreground
+lifecycle control. Closing the Eon Desktop window detaches the client while
+Sessions and its PTY keep running. Reconnect with:
+
+```sh
+eon attach
+```
+
+Press `Ctrl-C` in the original foreground `eon` process to stop that composed
+session. Orbit removes its socket during shutdown. Machine restart, Orbit
+restart, and Eon relaunch preserve no process state beyond the accepted child
+contracts.
+
+The command surface is small:
+
+| Command | Result |
+|---|---|
+| `eon` or `eon run` | Start one Orbit session and one Venus window with the default shell |
+| `eon run -- COMMAND...` | Run one explicit command as the Orbit-owned PTY child |
+| `eon attach` | Open Venus against the active local Orbit socket |
+| `eon versions` | Print stable component versions and Git revisions from the canonical manifest |
+| `eon config-path` | Create and print the Eon configuration root |
+
+`EON_CONFIG_HOME` selects the configuration root. Without it, Eon uses
+`$XDG_CONFIG_HOME/eon` or `$HOME/.config/eon`. `EON_RUNTIME_DIR` selects the
+socket directory; Eon otherwise uses `$XDG_RUNTIME_DIR/eon` or a private
+per-user temporary directory. Eon passes the configuration root to its child
+components as `XDG_CONFIG_HOME`. Eon ignores relative XDG base paths. It creates
+missing configuration and runtime directories with mode `0700`. It leaves
+existing configuration-directory permissions unchanged and rejects unsafe
+existing runtime directories without changing their permissions.
 
 ## Component manifest
 
@@ -88,13 +134,15 @@ Validate it with the pinned Rust dependency graph:
 cargo run --locked -p eon-manifest -- components/eon-alpha-v1.json
 ```
 
-The validator rejects malformed, incomplete, or incompatible graphs. The Nix
-composition that resolves artifact paths remains `astra-db8.3` work.
+The validator rejects malformed, incomplete, or incompatible graphs. The flake
+asserts each resolved source revision against this manifest before it builds a
+package. The installed wrapper injects resolved paths as opaque runtime inputs;
+`eon versions` prints stable identities and no Nix store path.
 
 The documents in [`docs/`](docs/) hold the current planning truth:
 
 - [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) defines naming, ownership, and sequencing.
-- [`CONTRACTS.md`](docs/CONTRACTS.md) indexes the planned product contracts.
+- [`CONTRACTS.md`](docs/CONTRACTS.md) indexes the product contracts and proofs.
 - [`DISTRIBUTION.md`](docs/DISTRIBUTION.md) defines composition and release policy.
 - [`REFERENCES.md`](docs/REFERENCES.md) routes design work to primary sources and
   comparable projects.
@@ -114,12 +162,14 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy | 195 |
-| README | 125 |
-| Architecture and contracts | 153 |
-| Distribution and references | 197 |
-| Changelog | 8 |
-| Rust source and tests | 549 |
-| Cargo manifests | 13 |
+| Agent policy | 200 |
+| README | 175 |
+| Repository ignore rules | 3 |
+| Architecture and contracts | 204 |
+| Distribution and references | 202 |
+| Changelog | 16 |
+| Rust source and tests | 1,025 |
+| Cargo manifests | 23 |
 | Component manifest | 173 |
-| **Total** | **1,413** |
+| Nix composition | 253 |
+| **Total** | **2,274** |

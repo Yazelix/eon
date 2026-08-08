@@ -18,6 +18,11 @@ One Nix flake path builds, composes, and installs the accepted component set.
 Home Manager remains separate work and must consume the same package and product
 contract if the user activates it.
 
+The canonical local installation command is `nix profile add .#default`. The
+package installs the `eon` command, an Eon desktop entry, and its icon. The
+runtime commands, configuration paths, and detach behavior live in the Eon
+binary rather than the Nix wrapper.
+
 The Nix-only phase follows these boundaries:
 
 - Eon code accepts component paths and versions through explicit inputs.
