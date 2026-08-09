@@ -242,8 +242,8 @@ Eon owns orchestration, composition, product policy, and distribution.
 
 ## Status
 
-This repository ships the accepted Nix-only x86_64 Linux alpha. `astra-db8.2`
-owns its canonical component graph, and `astra-db8.3` owns the first composed
+This repository ships the accepted Nix-only x86_64 Linux alpha. `eon-omq`
+owns its canonical component graph, and `eon-ax4` owns the first composed
 runtime and package. `docs/CONTRACTS.md` records the exact proofs for EON-C1
 through EON-C4. Further product expansion remains inactive until the user
 activates its Bead.

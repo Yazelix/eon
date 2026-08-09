@@ -15,6 +15,7 @@ check, component revisions, platform, and artifact.
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, and traverse the topology directly through Eon-owned semantic actions | Eon | Partially proved | `1a00a9f6de171e944c3c31a9f72ee2cc92d8fa15`; workspace-owner proof below |
+| EON-C9 | Eon supplies one exact managed interactive environment through prefixed external commands and Session-private unprefixed tool names without changing the user's global toolchain | Eon | Planned | None |
 
 ## Approved workspace contract EON-C8
 
@@ -43,6 +44,34 @@ check, component revisions, platform, and artifact.
 - Approval: explicitly approved by the user on 2026-08-08. The Eon-owned model,
   supervisor, and CLI action projection are partially proved. Native Venus
   materialization and cross-repository dogfood remain unproved.
+
+## Approved managed-environment contract EON-C9
+
+- Consumer: one local Eon user and subprocesses or agents launched inside an
+  Eon Session.
+- Trigger: the user starts a default interactive Session, invokes an
+  Eon-managed command outside Eon, or resolves a managed tool from inside an
+  Eon Session.
+- Result: Eon selects exact Nushell, Starship, Zoxide, Helix, Yazi, and LazyGit
+  artifacts. Stable `eon-*` commands expose them outside Eon without shadowing
+  the user toolchain. One Session-private PATH exposes the accepted unprefixed
+  executable names to processes inside Eon, managed Nushell supplies `lg`, and
+  the default no-command Session starts managed Nushell.
+- Important failures: a missing artifact, invalid private native
+  configuration, manifest mismatch, or launch failure returns a bounded
+  explicit error. Eon never mutates global user configuration, shell startup
+  files, aliases, or PATH.
+- Ownership: Eon owns component selection, exact versions, launch policy, its
+  private configuration root, managed command names, Session PATH projection,
+  and identity reporting. Each selected tool retains its native behavior and
+  configuration schema. Orbit retains process, PTY, terminal-state, and
+  Session authority; Venus owns no shell or tool policy.
+- Boundary: the first slice adds no global alias mode, ornamental wrappers,
+  shell framework, automatic Direnv or Mise activation, Carapace, plugin or
+  MCP surface, declarative profile, distribution channel, remote behavior, or
+  editor replacement. `eon run -- COMMAND...` remains the explicit child-command
+  escape hatch.
+- Approval: explicitly approved by the user on 2026-08-08 before implementation.
 
 ## Proof record
 
