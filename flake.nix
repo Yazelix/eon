@@ -61,9 +61,33 @@
           throw "Eon manifest must contain exactly one ${id} component";
       orbitIdentity = component "orbit";
       venusIdentity = component "venus";
+      nushellIdentity = component "nushell";
+      starshipIdentity = component "starship";
+      zoxideIdentity = component "zoxide";
       helixIdentity = component "helix";
       yaziIdentity = component "yazi";
+      lazygitIdentity = component "lazygit";
       ratconfigIdentity = component "ratconfig";
+
+      githubSource =
+        identity: hash:
+        let
+          match = builtins.match "https://github.com/([^/]+)/([^/]+)\\.git" identity.source.url;
+        in
+        assert identity.source.kind == "git";
+        assert match != null;
+        pkgs.fetchFromGitHub {
+          owner = builtins.elemAt match 0;
+          repo = builtins.elemAt match 1;
+          rev = identity.revision;
+          inherit hash;
+        };
+      managedPackage =
+        identity: package:
+        assert package.version == identity.version;
+        package.overrideAttrs (_: {
+          src = githubSource identity package.src.outputHash;
+        });
 
       ghosttyDeps = pkgs.zig_0_15.fetchDeps {
         pname = "ghostty";
@@ -171,6 +195,29 @@
         assert helix.rev == helixIdentity.revision;
         helix.packages.${system}.yazelix_helix;
 
+      nushellPackage = managedPackage nushellIdentity pkgs.nushell;
+      starshipPackage = managedPackage starshipIdentity pkgs.starship;
+      zoxidePackage = managedPackage zoxideIdentity pkgs.zoxide;
+      lazygitPackage = managedPackage lazygitIdentity pkgs.lazygit;
+
+      starshipInit = pkgs.runCommand "eon-starship.nu" { } ''
+        ${starshipPackage}/bin/starship init nu > "$out"
+      '';
+      zoxideInit = pkgs.runCommand "eon-zoxide.nu" { } ''
+        ${zoxidePackage}/bin/zoxide init nushell > "$out"
+        substituteInPlace "$out" \
+          --replace-fail '^zoxide' '^${zoxidePackage}/bin/zoxide'
+      '';
+      starshipConfig = pkgs.writeText "eon-starship.toml" (
+        builtins.readFile ./defaults/starship.toml
+      );
+      nuEnv = pkgs.replaceVars ./defaults/nushell/env.nu {
+        inherit starshipConfig;
+      };
+      nuConfig = pkgs.replaceVars ./defaults/nushell/config.nu {
+        inherit starshipInit zoxideInit;
+      };
+
       desktopItem = pkgs.makeDesktopItem {
         name = "eon";
         desktopName = "Eon";
@@ -222,17 +269,34 @@
           desktopItems = [ desktopItem ];
           postInstall = ''
             install -Dm444 ${./assets/eon.png} "$out/share/icons/hicolor/scalable/apps/eon.png"
+            for command in nu hx yazi ya lazygit lg; do
+              ln -s eon "$out/bin/eon-$command"
+            done
+            mkdir -p "$out/libexec/eon/bin"
+            for command in nu hx yazi ya lazygit; do
+              ln -s "../../../bin/eon-$command" "$out/libexec/eon/bin/$command"
+            done
+            install -Dm444 ${nushellPackage.src}/LICENSE "$out/share/licenses/eon/nushell/LICENSE"
+            install -Dm444 ${starshipPackage.src}/LICENSE "$out/share/licenses/eon/starship/LICENSE"
+            install -Dm444 ${zoxidePackage.src}/LICENSE "$out/share/licenses/eon/zoxide/LICENSE"
+            install -Dm444 ${helix}/LICENSE "$out/share/licenses/eon/helix/LICENSE"
+            install -Dm444 ${yazi}/LICENSE "$out/share/licenses/eon/yazi/LICENSE"
+            install -Dm444 ${lazygitPackage.src}/LICENSE "$out/share/licenses/eon/lazygit/LICENSE"
           '';
           postFixup = ''
             wrapProgram "$out/bin/eon" \
               --set EON_ORBIT "${orbitPackage}/bin/yazelix-orbit" \
               --set EON_VENUS "${venusPackage}/bin/yazelix-venus" \
-              --prefix PATH : "${
-                lib.makeBinPath [
-                  helixPackage
-                  yaziPackage
-                ]
-              }" \
+              --set EON_SHELL "$out/bin/eon-nu" \
+              --set EON_NU "${nushellPackage}/bin/nu" \
+              --set EON_HX "${helixPackage}/bin/hx" \
+              --set EON_YAZI "${yaziPackage}/bin/yazi" \
+              --set EON_YA "${yaziPackage}/bin/ya" \
+              --set EON_LAZYGIT "${lazygitPackage}/bin/lazygit" \
+              --set EON_LG "$out/bin/eon-lazygit" \
+              --set EON_NU_CONFIG "${nuConfig}" \
+              --set EON_NU_ENV "${nuEnv}" \
+              --set EON_SESSION_BIN "$out/libexec/eon/bin" \
               --prefix TERMINFO_DIRS : "${orbitPackage}/share/terminfo"
           '';
           meta = {

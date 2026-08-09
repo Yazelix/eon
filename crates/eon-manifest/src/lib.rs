@@ -475,8 +475,12 @@ mod tests {
             "eon-alpha x86_64-linux\n\
 orbit 0.1.0 00b136318bea13e3f08d490468f069de6f6b9bd2 x86_64-linux\n\
 venus 0.1.0 2d36c72dc87ca5416e22d6afdc35c6ab4e2fb832 x86_64-linux\n\
+nushell 0.113.1 7b7df4aa68e957cf38b9d8157c35fa7523f44a6d x86_64-linux\n\
+starship 1.25.1 8758daa7767d4e73874330b1e262fca66a7ffd30 x86_64-linux\n\
+zoxide 0.9.9 9cdc6aa3740b4d8a9d62406c99e84c5de49645e9 x86_64-linux\n\
 helix 25.7.1 7e6cd307d00783c16ad4cff99ed71936d34f6572 x86_64-linux\n\
 yazi 26.5.6 aa526434f00bb44e2e902d9a4ac5f810da1018b9 x86_64-linux\n\
+lazygit 0.62.2 009c8975beb322f9374789476ac65dfa02321fce x86_64-linux\n\
 ratconfig 6.0.0 e6ec2ebfe84b2358186410680cbcaf0564eb59a2 x86_64-linux"
         );
         assert!(!report.contains("/nix/store"));

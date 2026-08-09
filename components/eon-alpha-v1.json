@@ -7,7 +7,7 @@
   "composition": {
     "services": ["orbit"],
     "clients": ["venus"],
-    "tools": ["helix", "yazi"],
+    "tools": ["nushell", "starship", "zoxide", "helix", "yazi", "lazygit"],
     "libraries": ["ratconfig"]
   },
   "activation": {
@@ -108,6 +108,72 @@
       }
     },
     {
+      "id": "nushell",
+      "project": "Nushell",
+      "version": "0.113.1",
+      "revision": "7b7df4aa68e957cf38b9d8157c35fa7523f44a6d",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/nushell/nushell.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/nu" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": [],
+      "launch": {
+        "artifact": "executable",
+        "arguments": [],
+        "inputs": ["working-directory", "configuration-directory"]
+      }
+    },
+    {
+      "id": "starship",
+      "project": "Starship",
+      "version": "1.25.1",
+      "revision": "8758daa7767d4e73874330b1e262fca66a7ffd30",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/starship/starship.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/starship" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": [],
+      "launch": {
+        "artifact": "executable",
+        "arguments": [],
+        "inputs": ["shell", "configuration-file"]
+      }
+    },
+    {
+      "id": "zoxide",
+      "project": "Zoxide",
+      "version": "0.9.9",
+      "revision": "9cdc6aa3740b4d8a9d62406c99e84c5de49645e9",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/ajeetdsouza/zoxide.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/zoxide" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": [],
+      "launch": {
+        "artifact": "executable",
+        "arguments": [],
+        "inputs": ["shell", "working-directory"]
+      }
+    },
+    {
       "id": "helix",
       "project": "Helix",
       "version": "25.7.1",
@@ -142,6 +208,28 @@
       "artifacts": [
         { "id": "executable", "kind": "file", "path": "bin/yazi" },
         { "id": "companion", "kind": "file", "path": "bin/ya" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": [],
+      "launch": {
+        "artifact": "executable",
+        "arguments": [],
+        "inputs": ["working-directory", "configuration-directory"]
+      }
+    },
+    {
+      "id": "lazygit",
+      "project": "LazyGit",
+      "version": "0.62.2",
+      "revision": "009c8975beb322f9374789476ac65dfa02321fce",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/jesseduffield/lazygit.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/lazygit" }
       ],
       "contracts": [],
       "interfaces": [],

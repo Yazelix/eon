@@ -2,12 +2,13 @@ mod workspace;
 
 use std::{
     env,
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fs,
     io::{Read, Write},
     os::unix::{
         fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt},
         net::{UnixListener, UnixStream},
+        process::CommandExt,
     },
     path::{Path, PathBuf},
     process::{Child, Command, ExitCode, ExitStatus},
@@ -26,16 +27,110 @@ static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 struct Programs {
     orbit: PathBuf,
     venus: PathBuf,
+    shell: PathBuf,
+    session_bin: Option<PathBuf>,
+}
+
+struct ManagedPrograms {
+    nu: PathBuf,
+    helix: PathBuf,
+    yazi: PathBuf,
+    ya: PathBuf,
+    lazygit: PathBuf,
+    nu_config: PathBuf,
+    nu_env: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ManagedTool {
+    Nu,
+    Helix,
+    Yazi,
+    Ya,
+    LazyGit,
 }
 
 fn main() -> ExitCode {
-    match execute(env::args_os().skip(1).collect()) {
+    let mut arguments = env::args_os();
+    let invocation = arguments.next().unwrap_or_default();
+    let arguments = arguments.collect();
+    let result = match managed_tool(&invocation) {
+        Some(tool) => launch_managed(tool, arguments),
+        None => execute(arguments),
+    };
+    match result {
         Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
         Err(error) => {
             eprintln!("eon: {error}");
             ExitCode::FAILURE
         }
     }
+}
+
+fn managed_tool(invocation: &OsStr) -> Option<ManagedTool> {
+    let name = Path::new(invocation).file_name()?.to_str()?;
+    match name {
+        "eon-nu" | "nu" => Some(ManagedTool::Nu),
+        "eon-hx" | "hx" => Some(ManagedTool::Helix),
+        "eon-yazi" | "yazi" => Some(ManagedTool::Yazi),
+        "eon-ya" | "ya" => Some(ManagedTool::Ya),
+        "eon-lazygit" | "eon-lg" | "lazygit" => Some(ManagedTool::LazyGit),
+        _ => None,
+    }
+}
+
+fn launch_managed(tool: ManagedTool, arguments: Vec<OsString>) -> Result<i32, String> {
+    let config = configuration_directory()?;
+    prepare_configuration(&config)?;
+    let mut command = managed_command(tool, &managed_programs(), &config, &arguments);
+    let program = command.get_program().to_string_lossy().into_owned();
+    let error = command.exec();
+    Err(format!("cannot launch {program}: {error}"))
+}
+
+fn managed_command(
+    tool: ManagedTool,
+    programs: &ManagedPrograms,
+    config: &Path,
+    arguments: &[OsString],
+) -> Command {
+    let program = match tool {
+        ManagedTool::Nu => &programs.nu,
+        ManagedTool::Helix => &programs.helix,
+        ManagedTool::Yazi => &programs.yazi,
+        ManagedTool::Ya => &programs.ya,
+        ManagedTool::LazyGit => &programs.lazygit,
+    };
+    let mut command = Command::new(program);
+    match tool {
+        ManagedTool::Nu => {
+            command
+                .arg("--config")
+                .arg(&programs.nu_config)
+                .arg("--env-config")
+                .arg(&programs.nu_env);
+        }
+        ManagedTool::Yazi | ManagedTool::Ya => {
+            command.env_remove("YAZI_CONFIG_HOME");
+        }
+        ManagedTool::LazyGit => {
+            command
+                .env_remove("CONFIG_DIR")
+                .env_remove("LG_CONFIG_FILE")
+                .env("XDG_CONFIG_DIRS", config);
+        }
+        ManagedTool::Helix => {
+            command
+                .env_remove("CARGO_MANIFEST_DIR")
+                .env_remove("HELIX_RUNTIME")
+                .env_remove("HELIX_STEEL_CONFIG");
+        }
+    }
+    command
+        .args(arguments)
+        .env("EON_CONFIG_HOME", config)
+        .env("XDG_CONFIG_HOME", config);
+    command
 }
 
 fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
@@ -221,25 +316,40 @@ fn attach() -> Result<i32, String> {
 
 fn programs() -> Programs {
     Programs {
-        orbit: env::var_os("EON_ORBIT")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| "yazelix-orbit".into()),
-        venus: env::var_os("EON_VENUS")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| "yazelix-venus".into()),
+        orbit: configured_program("EON_ORBIT", "yazelix-orbit"),
+        venus: configured_program("EON_VENUS", "yazelix-venus"),
+        shell: configured_program("EON_SHELL", "eon-nu"),
+        session_bin: nonempty_environment_path("EON_SESSION_BIN"),
     }
 }
 
+fn managed_programs() -> ManagedPrograms {
+    ManagedPrograms {
+        nu: configured_program("EON_NU", "nu"),
+        helix: configured_program("EON_HX", "hx"),
+        yazi: configured_program("EON_YAZI", "yazi"),
+        ya: configured_program("EON_YA", "ya"),
+        lazygit: configured_program("EON_LAZYGIT", "lazygit"),
+        nu_config: configured_program("EON_NU_CONFIG", "config.nu"),
+        nu_env: configured_program("EON_NU_ENV", "env.nu"),
+    }
+}
+
+fn configured_program(variable: &str, fallback: &str) -> PathBuf {
+    env::var_os(variable)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| fallback.into())
+}
+
 fn configuration_directory() -> Result<PathBuf, String> {
-    if let Some(path) = nonempty_environment_path("EON_CONFIG_HOME") {
-        return Ok(path);
-    }
-    if let Some(path) = xdg_path(nonempty_environment_path("XDG_CONFIG_HOME")) {
-        return Ok(path.join("eon"));
-    }
-    nonempty_environment_path("HOME")
-        .map(|path| path.join(".config/eon"))
-        .ok_or_else(|| "HOME, XDG_CONFIG_HOME, and EON_CONFIG_HOME are unset".into())
+    let path = nonempty_environment_path("EON_CONFIG_HOME")
+        .or_else(|| {
+            xdg_path(nonempty_environment_path("XDG_CONFIG_HOME")).map(|path| path.join("eon"))
+        })
+        .or_else(|| nonempty_environment_path("HOME").map(|path| path.join(".config/eon")))
+        .ok_or_else(|| "HOME, XDG_CONFIG_HOME, and EON_CONFIG_HOME are unset".to_string())?;
+    std::path::absolute(path)
+        .map_err(|error| format!("cannot resolve Eon configuration root: {error}"))
 }
 
 fn prepare_configuration(path: &Path) -> Result<(), String> {
@@ -405,14 +515,7 @@ fn start_orbit(
     socket_timeout: Duration,
 ) -> Result<Child, String> {
     let previous_socket = socket_identity(socket)?;
-    let mut orbit_command = Command::new(&programs.orbit);
-    orbit_command
-        .arg("serve")
-        .arg(socket)
-        .env("XDG_CONFIG_HOME", config);
-    if !child.is_empty() {
-        orbit_command.arg("--").args(child);
-    }
+    let mut orbit_command = orbit_command(programs, config, socket, child)?;
     let mut orbit = orbit_command
         .spawn()
         .map_err(|error| format!("cannot launch Sessions: {error}"))?;
@@ -421,6 +524,38 @@ fn start_orbit(
         return Err(error);
     }
     Ok(orbit)
+}
+
+fn orbit_command(
+    programs: &Programs,
+    config: &Path,
+    socket: &Path,
+    child: &[OsString],
+) -> Result<Command, String> {
+    let mut orbit_command = Command::new(&programs.orbit);
+    orbit_command
+        .arg("serve")
+        .arg(socket)
+        .arg("--")
+        .env("EON_CONFIG_HOME", config)
+        .env("XDG_CONFIG_HOME", config);
+    if let Some(session_bin) = &programs.session_bin {
+        let mut paths = vec![session_bin.clone()];
+        if let Some(path) = env::var_os("PATH") {
+            paths.extend(env::split_paths(&path));
+        }
+        orbit_command.env(
+            "PATH",
+            env::join_paths(paths)
+                .map_err(|error| format!("cannot construct Eon Session PATH: {error}"))?,
+        );
+    }
+    if child.is_empty() {
+        orbit_command.arg(&programs.shell);
+    } else {
+        orbit_command.args(child);
+    }
+    Ok(orbit_command)
 }
 
 struct ControlListener {
@@ -725,13 +860,16 @@ fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, Programs, create_control_listener, effective_uid, parse_control_request,
-        prepare_configuration, prepare_runtime, supervise, xdg_path,
+        Action, ManagedPrograms, ManagedTool, Programs, create_control_listener, effective_uid,
+        managed_command, managed_tool, orbit_command, parse_control_request, prepare_configuration,
+        prepare_runtime, supervise, xdg_path,
     };
     use std::{
+        ffi::{OsStr, OsString},
         fs,
         os::unix::fs::{MetadataExt, PermissionsExt},
         path::{Path, PathBuf},
+        process::Command,
         sync::atomic::{AtomicU64, Ordering},
         thread,
         time::{Duration, Instant},
@@ -752,6 +890,164 @@ mod tests {
     fn executable(path: &Path, source: &str) {
         fs::write(path, source).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    fn command_environment<'a>(command: &'a Command, name: &str) -> Option<Option<&'a OsStr>> {
+        command
+            .get_envs()
+            .find(|(variable, _)| *variable == name)
+            .map(|(_, value)| value)
+    }
+
+    #[test]
+    fn managed_invocation_names_are_bounded() {
+        use ManagedTool::{Helix, LazyGit, Nu, Ya, Yazi};
+
+        for (name, expected) in [
+            ("eon-nu", Some(Nu)),
+            ("nu", Some(Nu)),
+            ("eon-hx", Some(Helix)),
+            ("hx", Some(Helix)),
+            ("eon-yazi", Some(Yazi)),
+            ("yazi", Some(Yazi)),
+            ("eon-ya", Some(Ya)),
+            ("ya", Some(Ya)),
+            ("eon-lazygit", Some(LazyGit)),
+            ("eon-lg", Some(LazyGit)),
+            ("lazygit", Some(LazyGit)),
+            ("lg", None),
+            ("eon-starship", None),
+            ("eon-zoxide", None),
+            ("eon", None),
+        ] {
+            assert_eq!(managed_tool(Path::new(name).as_os_str()), expected);
+        }
+        assert_eq!(
+            managed_tool(Path::new("/nix/store/example/bin/eon-nu").as_os_str()),
+            Some(Nu)
+        );
+    }
+
+    #[test]
+    fn managed_commands_use_exact_programs_and_private_configuration() {
+        use ManagedTool::{Helix, LazyGit, Nu, Ya, Yazi};
+
+        let programs = ManagedPrograms {
+            nu: "/managed/nu".into(),
+            helix: "/managed/hx".into(),
+            yazi: "/managed/yazi".into(),
+            ya: "/managed/ya".into(),
+            lazygit: "/managed/lazygit".into(),
+            nu_config: "/managed/config.nu".into(),
+            nu_env: "/managed/env.nu".into(),
+        };
+        let config = Path::new("/private/eon");
+        for (tool, program, removed_variables) in [
+            (
+                Helix,
+                "/managed/hx",
+                &["CARGO_MANIFEST_DIR", "HELIX_RUNTIME", "HELIX_STEEL_CONFIG"][..],
+            ),
+            (Yazi, "/managed/yazi", &["YAZI_CONFIG_HOME"][..]),
+            (Ya, "/managed/ya", &["YAZI_CONFIG_HOME"][..]),
+            (
+                LazyGit,
+                "/managed/lazygit",
+                &["CONFIG_DIR", "LG_CONFIG_FILE"][..],
+            ),
+        ] {
+            let command = managed_command(tool, &programs, config, &["--version".into()]);
+            assert_eq!(command.get_program(), program);
+            assert_eq!(
+                command.get_args().map(OsString::from).collect::<Vec<_>>(),
+                vec![OsString::from("--version")]
+            );
+            for variable in ["EON_CONFIG_HOME", "XDG_CONFIG_HOME"] {
+                assert_eq!(
+                    command_environment(&command, variable),
+                    Some(Some(config.as_os_str()))
+                );
+            }
+            for variable in removed_variables {
+                assert_eq!(command_environment(&command, variable), Some(None));
+            }
+            if tool == LazyGit {
+                assert_eq!(
+                    command_environment(&command, "XDG_CONFIG_DIRS"),
+                    Some(Some(config.as_os_str()))
+                );
+            }
+        }
+
+        let command = managed_command(Nu, &programs, config, &["--version".into()]);
+        assert_eq!(command.get_program(), "/managed/nu");
+        assert_eq!(
+            command.get_args().map(OsString::from).collect::<Vec<_>>(),
+            [
+                "--config",
+                "/managed/config.nu",
+                "--env-config",
+                "/managed/env.nu",
+                "--version",
+            ]
+            .map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn orbit_uses_managed_nu_only_for_default_sessions() {
+        let programs = Programs {
+            orbit: "/managed/orbit".into(),
+            venus: "/managed/venus".into(),
+            shell: "/managed/eon-nu".into(),
+            session_bin: Some("/managed/bin".into()),
+        };
+        let config = Path::new("/private/eon");
+        let socket = Path::new("/runtime/orbit.sock");
+
+        let default = orbit_command(&programs, config, socket, &[]).unwrap();
+        assert_eq!(
+            default.get_args().map(OsString::from).collect::<Vec<_>>(),
+            ["serve", "/runtime/orbit.sock", "--", "/managed/eon-nu"].map(OsString::from)
+        );
+        for variable in ["EON_CONFIG_HOME", "XDG_CONFIG_HOME"] {
+            assert_eq!(
+                command_environment(&default, variable),
+                Some(Some(config.as_os_str()))
+            );
+        }
+        assert_eq!(
+            std::env::split_paths(
+                default
+                    .get_envs()
+                    .find(|(name, _)| *name == "PATH")
+                    .unwrap()
+                    .1
+                    .unwrap(),
+            )
+            .next(),
+            Some(PathBuf::from("/managed/bin"))
+        );
+
+        let explicit = orbit_command(
+            &programs,
+            config,
+            socket,
+            &["codex".into(), "--model".into(), "test".into()],
+        )
+        .unwrap();
+        assert_eq!(
+            explicit.get_args().map(OsString::from).collect::<Vec<_>>(),
+            [
+                "serve",
+                "/runtime/orbit.sock",
+                "--",
+                "codex",
+                "--model",
+                "test",
+            ]
+            .map(OsString::from)
+        );
     }
 
     #[test]
@@ -800,7 +1096,12 @@ mod tests {
         });
 
         let status = supervise(
-            &Programs { orbit, venus },
+            &Programs {
+                orbit,
+                venus,
+                shell: root.join("eon-nu"),
+                session_bin: None,
+            },
             &config,
             &socket,
             &["codex".into(), "--model".into(), "test".into()],

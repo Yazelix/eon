@@ -63,6 +63,23 @@ fn stdout(output: &Output) -> &str {
 }
 
 #[test]
+fn relative_configuration_root_is_resolved_once() {
+    let root = temporary_directory();
+    let config = root.join("config");
+    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+        .arg("config-path")
+        .current_dir(&root)
+        .env("EON_CONFIG_HOME", "config")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(stdout(&output), format!("{}\n", config.display()));
+    assert!(config.is_dir());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn second_cli_controls_three_live_sessions_without_owning_them() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
