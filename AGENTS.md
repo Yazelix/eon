@@ -301,6 +301,14 @@ Eon Sessions proves Orbit's session and attachment contracts
 Research, contracts, and Beads may prepare a later frontier without adding
 production code.
 
+## Child Revision Freshness
+
+Before Eon implementation or a runtime refresh, compare the Orbit and Venus
+manifest pins with each child repository's latest accepted source revision.
+Warn the user immediately when either pin is stale, naming the pinned and
+accepted revisions. Update only from exact accepted revisions under the normal
+frontier and manifest gates.
+
 ## Contract-Driven Method
 
 Index durable product contracts as `EON-C<number>` in `docs/CONTRACTS.md`.

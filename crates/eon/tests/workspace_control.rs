@@ -5,7 +5,10 @@ use eon_workspace_protocol::{
 use std::{
     fs,
     io::{Read, Write},
-    os::unix::{fs::PermissionsExt, net::UnixStream},
+    os::unix::{
+        fs::PermissionsExt,
+        net::{UnixListener, UnixStream},
+    },
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
     sync::atomic::{AtomicU64, Ordering},
@@ -96,6 +99,41 @@ fn missing_supervisor_is_a_structured_workspace_failure() {
     assert_eq!(output.status.code(), Some(2));
     assert!(stdout(&output).contains("\"code\":\"missing-supervisor\""));
     assert!(output.stderr.is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn bare_eon_attaches_through_workspace_when_initial_session_is_gone() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let venus = root.join("venus");
+    let log = root.join("venus.log");
+    fs::create_dir(&runtime).unwrap();
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+    let _control = UnixListener::bind(runtime.join("eon.sock")).unwrap();
+    executable(
+        &venus,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$EON_TEST_LOG\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_LOG", &log)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        fs::read_to_string(log).unwrap(),
+        format!(
+            "{}\n{}\n",
+            runtime.join("orbit.sock").display(),
+            runtime.join("eon.sock").display()
+        )
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

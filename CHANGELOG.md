@@ -15,12 +15,14 @@ installation, and proven contract changes.
 - Expose those actions and complete accepted workspace snapshots through the
   bounded, versioned, dependency-free EONW v1 local protocol while preserving
   human and JSON CLI projections.
+- Render Eon workspace snapshots in Eon Desktop and keep reattachment available
+  when the initial Session has exited but another pane remains live.
 - Ship the x86_64 Linux alpha through one locked Nix flake with an Eon desktop
   entry that groups its X11/Xwayland window and uses a transparent violet
   three-fold loop icon rendered at native launcher sizes.
 - Add `eon`, `eon run -- COMMAND...`, `eon attach`, `eon versions`, and
   `eon config-path`.
-- Make bare `eon` and the desktop launcher reconnect to the initial session;
+- Make bare `eon` and the desktop launcher reconnect to the live workspace;
   keep `eon run` as the explicit start command.
 - Supply pinned Mesa Vulkan drivers to desktop-launched Venus instead of
   depending on shell-only graphics environment variables.

@@ -140,7 +140,7 @@ fn managed_command(
 
 fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
     match arguments.as_slice() {
-        [] if runtime_directory().join("orbit.sock").exists() => attach(),
+        [] if runtime_directory().join("eon.sock").exists() => attach(),
         [] => run(&[]),
         [command] if command == "run" => run(&[]),
         [command, separator, child @ ..]
@@ -298,16 +298,18 @@ fn attach() -> Result<i32, String> {
     let runtime = runtime_directory();
     prepare_runtime(&runtime)?;
     let socket = runtime.join("orbit.sock");
-    if !socket.exists() {
+    let workspace = runtime.join("eon.sock");
+    if !workspace.exists() {
         return Err(format!(
-            "no active Sessions socket at {}; run `eon` first",
-            socket.display()
+            "no active Eon supervisor at {}; run `eon` first",
+            workspace.display()
         ));
     }
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
     Command::new(programs().venus)
         .arg(socket)
+        .arg(workspace)
         .env("XDG_CONFIG_HOME", config)
         .status()
         .map(status_code)
@@ -428,6 +430,7 @@ fn supervise(
 
     let mut venus = match Command::new(&programs.venus)
         .arg(socket)
+        .arg(runtime.join("eon.sock"))
         .env("XDG_CONFIG_HOME", config)
         .spawn()
     {
@@ -1071,7 +1074,12 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(venus_log).unwrap(),
-            format!("{}\n{}\nnew\n", config.display(), socket.display())
+            format!(
+                "{}\n{}\n{}\nnew\n",
+                config.display(),
+                socket.display(),
+                root.join("eon.sock").display()
+            )
         );
         fs::remove_dir_all(root).unwrap();
     }

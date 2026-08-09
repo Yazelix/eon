@@ -8,7 +8,7 @@
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=2d36c72dc87ca5416e22d6afdc35c6ab4e2fb832";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=932be5ce68a42b72e8b0bf5953c74f7a8af51f1e";
       flake = false;
     };
     protocol = {
@@ -134,19 +134,29 @@
         pkgs.wayland
       ];
       protocolRevision = (builtins.head (builtins.head venusIdentity.requires).interfaces).proof;
+      workspaceProtocolRevision = "4af395aea06c230ee6b18cf0755ae25915c0b88d";
       venusSource =
         assert protocol.rev == protocolRevision;
         pkgs.runCommand "eon-desktop-${venusIdentity.revision}" { } ''
           cp -R ${venus}/. "$out"
           chmod -R u+w "$out"
           ln -s ${protocol}/crates/protocol "$out/orbit-protocol"
+          ln -s ${./crates/eon-workspace-protocol} "$out/eon-workspace-protocol"
           substituteInPlace "$out/Cargo.toml" \
             --replace-fail \
               'orbit-protocol = { git = "https://github.com/luccahuguet/orbit.git", rev = "${protocolRevision}" }' \
               'orbit-protocol = { path = "orbit-protocol" }'
+          substituteInPlace "$out/Cargo.toml" \
+            --replace-fail \
+              'eon-workspace-protocol = { git = "https://github.com/Yazelix/eon.git", rev = "${workspaceProtocolRevision}" }' \
+              'eon-workspace-protocol = { path = "eon-workspace-protocol" }'
           substituteInPlace "$out/Cargo.lock" \
             --replace-fail \
               'source = "git+https://github.com/luccahuguet/orbit.git?rev=${protocolRevision}#${protocolRevision}"' \
+              ""
+          substituteInPlace "$out/Cargo.lock" \
+            --replace-fail \
+              'source = "git+https://github.com/Yazelix/eon.git?rev=${workspaceProtocolRevision}#${workspaceProtocolRevision}"' \
               ""
         '';
       venusPackage =

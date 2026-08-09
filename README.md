@@ -88,7 +88,7 @@ eon
 
 The package installs one `Eon` desktop entry and a transparent violet three-fold
 loop icon at native launcher sizes, with X11 and Xwayland window grouping. Opening
-Eon starts a session or reconnects to the initial session. Its Nix closure supplies
+Eon starts a session or reconnects to its live workspace. Its Nix closure supplies
 Mesa's open-source Vulkan drivers; the current graphics proof uses Intel hardware,
 while proprietary NVIDIA remains unproved. Run Eon from a terminal when you need
 foreground lifecycle control.
@@ -108,18 +108,19 @@ one vertical pane selection per tab. Each pane starts and maps to a distinct
 Orbit session; changing focus never stops a session. The CLI reaches that owner
 through the private local Eon socket using EONW v1. Each accepted action returns
 one complete ordered workspace snapshot; incompatible or malformed requests
-receive a bounded structured failure. The selected Eon Desktop revision still
-attaches only to the initial session. A later exact Venus revision will consume
-the same Eon-owned protocol before it renders the tab and accordion topology.
+receive a bounded structured failure. Eon Desktop consumes that same protocol,
+renders the tabs and accordion panes, and follows the selected live Session.
+After creating a tab or pane from another CLI, reopen Eon Desktop to load the
+new snapshot; EONW v1 has no subscription or polling stream.
 
 The command surface is small:
 
 | Command | Result |
 |---|---|
-| `eon` | Attach to the initial Orbit session, or start one with the default shell |
+| `eon` | Attach to the live workspace, or start one with the default shell |
 | `eon run` | Explicitly start one Orbit session and one Venus window with the default shell |
 | `eon run -- COMMAND...` | Run one explicit command as the Orbit-owned PTY child |
-| `eon attach` | Open Venus against the initial local Orbit socket |
+| `eon attach` | Open Eon Desktop against the live Eon workspace |
 | `eon workspace [--json]` | Inspect the live Eon-owned tab, pane, and Session mapping |
 | `eon tab create [--json]` | Create and focus a tab containing a default-shell Session |
 | `eon pane create [--json]` | Create and select a default-shell Session in the active tab |
@@ -215,16 +216,16 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy | 451 |
-| README | 230 |
+| Agent policy | 459 |
+| README | 231 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 572 |
 | Distribution and references | 202 |
-| Changelog | 31 |
-| Rust source and tests | 3,123 |
+| Changelog | 33 |
+| Rust source and tests | 3,169 |
 | Cargo manifests | 33 |
-| Component manifest | 261 |
-| Nix composition | 324 |
+| Component manifest | 263 |
+| Nix composition | 334 |
 | Product defaults | 10 |
-| **Total** | **5,441** |
+| **Total** | **5,510** |

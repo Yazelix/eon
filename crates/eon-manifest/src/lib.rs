@@ -474,7 +474,7 @@ mod tests {
             report,
             "eon-alpha x86_64-linux\n\
 orbit 0.1.0 00b136318bea13e3f08d490468f069de6f6b9bd2 x86_64-linux\n\
-venus 0.1.0 2d36c72dc87ca5416e22d6afdc35c6ab4e2fb832 x86_64-linux\n\
+venus 0.1.0 932be5ce68a42b72e8b0bf5953c74f7a8af51f1e x86_64-linux\n\
 nushell 0.113.1 7b7df4aa68e957cf38b9d8157c35fa7523f44a6d x86_64-linux\n\
 starship 1.25.1 8758daa7767d4e73874330b1e262fca66a7ffd30 x86_64-linux\n\
 zoxide 0.9.9 9cdc6aa3740b4d8a9d62406c99e84c5de49645e9 x86_64-linux\n\
