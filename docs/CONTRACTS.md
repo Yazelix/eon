@@ -9,7 +9,7 @@ artifact.
 
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
-| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Proven | `712c0834691c58b07e56494de25f98670b6a882e`; selected-icon proof and preserved Linux composition proof below |
+| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Proven | `eae70e8d3ed4348b389f320dfd49d7db29478546`; Linux composition proof and uncommitted canonical icon 4 candidate below |
 | EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Proven | `c9e898c9ff889c2be4d4381a20676291bab65b49`; manifest proof below |
 | EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Proven | `c9e898c9ff889c2be4d4381a20676291bab65b49` manifest proof and `eae70e8d3ed4348b389f320dfd49d7db29478546` Linux composition proof below |
 | EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Proven | `eae70e8d3ed4348b389f320dfd49d7db29478546`; Linux composition proof below |
@@ -106,6 +106,22 @@ artifact.
   Venus revision remains unchanged until it actually consumes EONW.
 - Approval: explicitly approved by the user on 2026-08-09 by directing Eon to
   fix the named versioned workspace snapshot/action prerequisite.
+
+## Approved desktop-icon identity under EON-C1
+
+- Consumer: the Eon README, Linux desktop entry, launcher, dock, and app switcher.
+- Trigger: a surface displays Eon's canonical application icon.
+- Result: `assets/eon.png` is the clean transparent canonical master prepared from
+  `assets/icon-concepts/icon_eon_4.png`. Nix derives exact raster sizes for the
+  hicolor theme; other retained concepts are not runtime identities.
+- Important failures: the master contains an opaque background or isolated
+  off-palette edge pixels, a native launcher size gains a bright fringe, an
+  installed raster differs from its build output, or desktop metadata stops
+  naming the canonical `eon` icon.
+- Ownership: Eon owns the canonical master and product selection. Nix owns only
+  deterministic size derivation and installation from that master.
+- Approval: the user selected prepared `icon_eon_4.png` on 2026-08-09 after
+  native-size inspection found cleaner low-frequency geometry and edges.
 
 ## Proof record
 
@@ -321,7 +337,7 @@ artifact.
   rendered as fallback boxes in the packaged font configuration. Packaged Mesa
   is proved on Intel Raptor Lake graphics; proprietary NVIDIA remains unproved.
 
-### Selected desktop icon proof `712c0834691c58b07e56494de25f98670b6a882e`
+### Superseded desktop icon proof `712c0834691c58b07e56494de25f98670b6a882e`
 
 - Contract: EON-C1 advances only the packaged desktop-icon identity. EON-C2,
   EON-C3, EON-C4, runtime behavior, component revisions, and compatibility remain
@@ -329,7 +345,7 @@ artifact.
 - Artifact: `/nix/store/5v2i3wp7q52zmnl5p4y9m68wwrfmclsq-eon-0.1.0`,
   NAR hash `sha256-otl7TOldLCDVHbiNfYjNHJoPx0P6JBCfyJJzcZz6p98=`, NAR size
   2,973,512 bytes, closure size 1,457,883,088 bytes.
-- Desktop icon: `assets/eon.png`, a 1254 by 1254 RGBA PNG with SHA-256
+- Desktop icon at that revision: `assets/eon.png`, a 1254 by 1254 RGBA PNG with SHA-256
   `540d33604b703b69e80531d228d2bef9887ec561954c0ceecd59c2b9b511a9b7`.
   The installed icon is byte-identical, and the desktop entry retains `Name=Eon`,
   `Icon=eon`, and `StartupWMClass=yazelix-venus`.
@@ -337,6 +353,76 @@ artifact.
   README target; locked Cargo format, check, test, manifest, and clippy commands;
   `nix flake check --no-build`; exact package build; desktop-file validation;
   live COSMIC launcher inspection; and `git diff --check`.
+
+### Superseded V32 desktop icon proof
+
+- Contract: the user selected V32 as Eon's canonical desktop identity and
+  closed the icon comparison on 2026-08-09. This record proves icon identity
+  only; the separate managed-environment candidate records its runtime changes.
+- Artifact: `/nix/store/cj0pbmk9607893khiwl8wmy031x88a3x-eon-0.1.0`,
+  NAR hash `sha256-tn0Wrxr6rku4puzvvV+WPqTb5MMjo1EjwqWG06vgjCA=`, NAR size
+  2,343,344 bytes.
+- Desktop icon: the retained V32 source, `assets/eon.png`, and the installed
+  hicolor icon are byte-identical 1254 by 1254 sRGB RGB PNGs with SHA-256
+  `0972bed46f27b3123e17d8676fbde9da0d0b94877f3d2ffd131aa33f31ca6476`.
+  Retained concepts remain design options and are not runtime identities.
+- Checks: source/canonical/installed `cmp` and SHA-256 equality; image identity;
+  README target; `nix flake check --no-build`; exact package build;
+  `desktop-file-validate`; and exact `Name=Eon`, `Icon=eon`, and
+  `StartupWMClass=yazelix-venus` inspection.
+
+### Superseded icon 3 replacement candidate
+
+- Contract: the user replaced V32 after live COSMIC inspection exposed
+  small-size edge artifacts. This candidate changes only the EON-C1 canonical
+  desktop-icon identity and packaging; runtime behavior, component revisions,
+  commands, configuration, and compatibility remain unchanged.
+- Source and master: `assets/icon-concepts/icon_eon_3.png`, SHA-256
+  `1bc63f18c821520e9a3b5e09f1c8bd5e33b5a87da85179523cb22bc1fb0d9786`,
+  informed the rebuilt `assets/eon.png`, a 1254 by 1254 sRGB RGBA PNG with
+  SHA-256 `5c64ab628a60ba2108f23100abe5a61c4c1fe03822416b81392da4de6d3a2bf5`.
+  Its canvas corners and center aperture are transparent.
+- Package: `/nix/store/rl8l700ikh02d75dwbw6wfsbs9nwlfdx-eon-0.1.0`,
+  NAR hash `sha256-jmILqhnrrRdNFm5g0Mb5dkWR3vdoOPXXdfbN+x4pBdA=`, NAR size
+  1,316,912 bytes. Pinned ImageMagick derives 16, 24, 32, 48, 64, 128, 256,
+  and 512 pixel PNGs with Box downsampling under matching hicolor directories;
+  no raster is installed under `scalable`, and no alternate desktop entry remains.
+- Checks: all eight packaged sizes have alpha and contain zero visible white,
+  yellow, cyan, or green pixels. Integer-zoom inspection on light and dark
+  backgrounds found no isolated bright edge pixels at 16, 24, 32, or 48 pixels.
+  `nix flake check --no-build --no-update-lock-file path:.`, exact package build,
+  `desktop-file-validate`, installed desktop metadata inspection, user-local icon
+  cache refresh, and `git diff --check` passed.
+- Limit: no vector master exists, so Nix retains one build-only raster resizer.
+  The 16-pixel rendering is necessarily simpler than the larger source.
+
+### Canonical icon 4 replacement candidate
+
+- Contract: the user selected icon 4 after native-size inspection. This
+  candidate changes only the EON-C1 canonical desktop-icon identity; runtime
+  behavior, component revisions, commands, configuration, and compatibility
+  remain unchanged.
+- Source and master: `assets/icon-concepts/icon_eon_4.png`, SHA-256
+  `9a4149f59f91514562f44fec4718b3c0ef90f5d61d54237a42e53aa831b3250b`,
+  informed `assets/eon.png`, a 1254 by 1254 sRGB RGBA PNG with SHA-256
+  `33ec3062f72a732290dcd6c6f40a2d5f535d6a7cbfcaf7455a0a5c4f03a52e0d`.
+  Imagegen preserved the selected geometry and violet gradient while replacing
+  only the opaque background with a chroma matte; the imagegen skill helper
+  removed that matte with soft edges, despill, and one-pixel edge contraction.
+- Package: `/nix/store/najyqyv74fwmx2fz3rrzi552sq7jiicw-eon-0.1.0`,
+  NAR hash `sha256-uyPRRcPY7wpuxNNCW8huFRkLWnl6IcSJCz/PuOgoRd0=`, NAR size
+  1,257,936 bytes. The existing pinned ImageMagick path derives 16, 24, 32, 48,
+  64, 128, 256, and 512 pixel PNGs under matching hicolor directories; no
+  runtime resizer or alternate desktop entry is added.
+- Checks: all eight packaged sizes have alpha and contain zero visible white,
+  yellow, cyan, or green pixels. Inspection on light and dark backgrounds found
+  no isolated bright edge pixels at 16, 24, 32, or 48 pixels. `nix flake check
+  --no-build --no-update-lock-file .`, exact package build,
+  `desktop-file-validate`, installed desktop metadata inspection, byte equality
+  for all installed package rasters, user-local cache refresh, and `git diff
+  --check` passed.
+- Limit: no vector master exists, so Nix retains one build-only raster resizer.
+  The 16-pixel rendering is necessarily simpler than the larger source.
 
 When a bead proves a contract, update its row with:
 

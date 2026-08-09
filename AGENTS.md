@@ -32,7 +32,8 @@ or `.agent-protocols.exceptions.json`, then render from the pinned source.
 
 ### Local exceptions
 
-No local exceptions.
+- `AP-TEST-001` in Agent-instruction, prompt, and skill changes in the Eon repository: The user requires the active agent to reuse its existing context instead of invoking another agent for validation.
+  Approved by user on 2026-08-09; review condition: Review only if the user explicitly reauthorizes isolated agent trials.
 
 ## Canonical protocols
 
@@ -388,8 +389,25 @@ Use TDD for parsers, deterministic CLI behavior, manifest handling, and
 regression fixes. Use contract-first integration checks for process trees,
 terminal attachment, desktop behavior, packaging, and dogfooding.
 
+Do not invoke another coding agent merely to validate instructions, prompts, or
+skills. The active agent validates them directly with structural checks and
+repository evidence; use another agent only when the user explicitly asks.
+
 Do not add mirror tests for literals, defaults, or configuration values. Test
 the artifact or behavior that consumes the value.
+
+## Local Runtime Synchronization
+
+After any accepted change to this repository, refresh the active `eon` Nix
+profile element from the current working tree before handoff. Verify that the
+profile resolves to the just-built store artifact and that the changed installed
+behavior or artifact passes its cheapest exact check. A build or profile-update
+failure leaves the change incomplete.
+
+Do not stop or restart a running Eon supervisor automatically because that
+terminates its live Sessions. Update the profile, preserve the running
+processes, and report that restart is required unless the user explicitly
+authorizes interruption.
 
 ## Git Workflow
 

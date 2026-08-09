@@ -268,7 +268,12 @@
           ];
           desktopItems = [ desktopItem ];
           postInstall = ''
-            install -Dm444 ${./assets/eon.png} "$out/share/icons/hicolor/scalable/apps/eon.png"
+            for size in 16 24 32 48 64 128 256 512; do
+              icon_dir="$out/share/icons/hicolor/''${size}x''${size}/apps"
+              mkdir -p "$icon_dir"
+              ${pkgs.imagemagick}/bin/magick ${./assets/eon.png} \
+                -filter Box -resize "''${size}x''${size}" "$icon_dir/eon.png"
+            done
             for command in nu hx yazi ya lazygit lg; do
               ln -s eon "$out/bin/eon-$command"
             done
@@ -276,6 +281,7 @@
             for command in nu hx yazi ya lazygit; do
               ln -s "../../../bin/eon-$command" "$out/libexec/eon/bin/$command"
             done
+            install -Dm444 ${./LICENSE} "$out/share/licenses/eon/LICENSE"
             install -Dm444 ${nushellPackage.src}/LICENSE "$out/share/licenses/eon/nushell/LICENSE"
             install -Dm444 ${starshipPackage.src}/LICENSE "$out/share/licenses/eon/starship/LICENSE"
             install -Dm444 ${zoxidePackage.src}/LICENSE "$out/share/licenses/eon/zoxide/LICENSE"
@@ -301,7 +307,7 @@
           '';
           meta = {
             description = "Thin orchestrator for Eon for desktop and Sessions";
-            license = lib.licenses.mit;
+            license = lib.licenses.asl20;
             mainProgram = "eon";
             platforms = [ system ];
           };

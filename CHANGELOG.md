@@ -16,8 +16,8 @@ installation, and proven contract changes.
   bounded, versioned, dependency-free EONW v1 local protocol while preserving
   human and JSON CLI projections.
 - Ship the x86_64 Linux alpha through one locked Nix flake with an Eon desktop
-  entry that groups its X11/Xwayland window and uses the violet three-bend
-  portal icon.
+  entry that groups its X11/Xwayland window and uses a transparent violet
+  three-fold loop icon rendered at native launcher sizes.
 - Add `eon`, `eon run -- COMMAND...`, `eon attach`, `eon versions`, and
   `eon config-path`.
 - Make bare `eon` and the desktop launcher reconnect to the initial session;

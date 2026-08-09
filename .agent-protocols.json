@@ -85,8 +85,17 @@
       "sha256": "a2f5025bc7a10436b5c2f8f42c6002ccf1e361f05abbff3dea6507a3426394c0"
     }
   ],
-  "exceptions": [],
+  "exceptions": [
+    {
+      "approved_at": "2026-08-09",
+      "approved_by": "user",
+      "protocol": "AP-TEST-001",
+      "reason": "The user requires the active agent to reuse its existing context instead of invoking another agent for validation.",
+      "review_condition": "Review only if the user explicitly reauthorizes isolated agent trials.",
+      "scope": "Agent-instruction, prompt, and skill changes in the Eon repository"
+    }
+  ],
   "overlay": {
-    "sha256": "ee1232ad961dcf6821dfc76e368fbde84e186309ad666927e2006edeedd0b0c5"
+    "sha256": "05cf44be5e04fd750c6716b3e80a5d808e97eec1a9d4f904da2da07519af0fe1"
   }
 }

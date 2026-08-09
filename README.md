@@ -2,7 +2,7 @@
 
 *Build for Eons.*
 
-![Glowing violet three-bend Eon portal](assets/eon.png)
+![Glowing violet three-fold Eon loop](assets/eon.png)
 
 Eon is a greenfield product built around Eon Sessions and Eon Desktop. Its
 canonical component graph also selects the shell, prompt, directory navigator,
@@ -86,11 +86,12 @@ eon versions
 eon
 ```
 
-The package installs an `Eon` desktop entry and violet three-bend portal icon, with X11
-and Xwayland window grouping. Opening Eon starts a session or reconnects to the
-initial session. Its Nix closure supplies Mesa's open-source Vulkan drivers; the
-current graphics proof uses Intel hardware, while proprietary NVIDIA remains
-unproved. Run Eon from a terminal when you need foreground lifecycle control.
+The package installs one `Eon` desktop entry and a transparent violet three-fold
+loop icon at native launcher sizes, with X11 and Xwayland window grouping. Opening
+Eon starts a session or reconnects to the initial session. Its Nix closure supplies
+Mesa's open-source Vulkan drivers; the current graphics proof uses Intel hardware,
+while proprietary NVIDIA remains unproved. Run Eon from a terminal when you need
+foreground lifecycle control.
 Closing the Eon Desktop window detaches the client while Sessions and its PTY
 keep running. Reconnect explicitly with:
 
@@ -214,15 +215,16 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy | 433 |
-| README | 228 |
+| Agent policy | 451 |
+| README | 230 |
 | Repository ignore rules | 3 |
-| Architecture and contracts | 466 |
+| License | 201 |
+| Architecture and contracts | 572 |
 | Distribution and references | 202 |
 | Changelog | 31 |
 | Rust source and tests | 3,123 |
-| Cargo manifests | 30 |
+| Cargo manifests | 33 |
 | Component manifest | 261 |
-| Nix composition | 318 |
+| Nix composition | 324 |
 | Product defaults | 10 |
-| **Total** | **5,105** |
+| **Total** | **5,441** |

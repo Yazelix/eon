@@ -78,6 +78,26 @@ remains the only live topology and action owner; the CLI and Venus decode the
 same values and never infer state from each other, terminal output, or the wire
 format. EONW carries opaque Orbit endpoint bytes but no terminal content.
 
+## Repository subsystem boundaries
+
+Eon's internal boundaries follow owned invariants rather than delivery phases.
+They route changes and audits without creating additional product scope.
+
+| Subsystem | Owning surfaces | Owns | Does not own |
+|---|---|---|---|
+| Runtime and lifecycle | `crates/eon/src/main.rs` | CLI dispatch, private configuration and runtime roots, component launch and stop policy, child observation, and the supervisor control socket | PTYs, terminal state, native rendering, or managed-tool behavior |
+| Workspace state | `crates/eon/src/workspace.rs` | Live ordered tabs and panes, stable identities, active selection, Session-to-endpoint mapping, semantic action results, and complete snapshots | EONW encoding, Orbit state, or Venus geometry |
+| EONW boundary | `crates/eon-workspace-protocol` | Versioned values, bounded framing, validation, complete snapshots, and structured failures | Live topology, transport lifecycle, authorization, or rendering |
+| Component graph | `components/eon-alpha-v1.json` and `crates/eon-manifest` | Stable component identity, compatibility requirements, artifact declarations, graph validation, and version reporting | Resolved package paths or package construction |
+| Managed environment | Managed dispatch in `crates/eon/src/main.rs`, `defaults/`, and its `flake.nix` wiring | Stable managed command names, private configuration projection, exact tool selection, and default interactive policy | Shell, prompt, editor, file-manager, or Git-TUI native behavior |
+| Nix alpha composition | `flake.nix` | Exact source resolution, child builds, opaque launch-path injection, desktop packaging, and the sole alpha installation artifact | Runtime product semantics or a second component graph |
+
+The supervisor is the composition root for runtime policy. Workspace state
+crosses process boundaries only through EONW. Nix resolves the canonical
+component graph and injects paths without becoming a runtime owner. A
+subsystem review includes its direct callers and consumers; a separate
+repository integration review reconciles invariants that cross these rows.
+
 ## Composition unit
 
 Each composed build consumes:
