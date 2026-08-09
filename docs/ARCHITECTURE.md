@@ -10,8 +10,12 @@ composes.
 |---|---|---|---|
 | Eon Sessions | Orbit | Persistent sessions, PTYs, terminal state, attachment, transport | A versioned session and attachment contract |
 | Eon Desktop | Venus | Native windows, surfaces, input, rendering, desktop integration | A versioned client artifact and launch contract |
+| Nushell | Nushell | Shell language, execution, and native configuration | A pinned shell artifact and explicit configuration inputs |
+| Starship | Starship | Prompt rendering and native modules | A pinned prompt artifact and sparse native configuration |
+| Zoxide | Zoxide | Directory ranking, storage, and shell integration | A pinned artifact and generated Nushell initialization |
 | Helix | Helix | Editing, language integration, editor state | A relocatable editor artifact and explicit configuration inputs |
 | Yazi | Yazi | File management and navigation | A relocatable file-manager artifact and launch contract |
+| LazyGit | LazyGit | Git TUI behavior and configuration | A pinned executable and native configuration inputs |
 | Ratconfig | Ratconfig | User-facing configuration editing | A schema-aware configuration artifact and output contract |
 | Eon | Eon orchestrator | Product policy, component selection, launch, updates, integration checks, distribution | Exact child revisions and their declared artifacts |
 
@@ -43,8 +47,8 @@ therefore uses one active implementation frontier:
    client-facing protocol against a simple reference client.
 2. Eon Desktop proves Venus's native graphical interaction against an accepted
    Orbit revision.
-3. Eon composes accepted Eon Sessions and Eon Desktop revisions with Helix,
-   Yazi, and Ratconfig into the smallest usable product slice through Nix.
+3. Eon composes accepted Eon Sessions and Eon Desktop revisions with its
+   managed interactive environment and Ratconfig through Nix.
 
 This order lets each project use a substitute peer. Orbit can use a small CLI or
 test client before Venus exists. Venus can use recorded protocol fixtures and a
@@ -59,8 +63,9 @@ work outside the product-discovery loop.
 ## Ownership rules
 
 Eon may adapt paths, environment, configuration, and process launch at its
-boundary. It must not implement terminal parsing, multiplexer state, rendering,
-editor behavior, file management, or a second configuration schema.
+boundary. It must not implement shell behavior, prompt rendering, directory
+ranking, terminal parsing, multiplexer state, native rendering, editor behavior,
+file management, Git TUI behavior, or a second configuration schema.
 
 A cross-project defect belongs to the project that owns the violated contract.
 Eon may pin a known-good revision while the owner fixes the defect. Compatibility
@@ -90,6 +95,6 @@ artifact requirements activate with direct-distribution work.
 Planning can refine contracts, references, and Beads. Runtime work begins after
 the user activates an implementation bead and its upstream proof revisions exist.
 The first Eon slice launches one accepted Eon Desktop and Eon Sessions pair,
-exposes Helix and Yazi, preserves one configuration path, and reports component
-identity through one Nix-managed path. Later slices earn their scope through
-dogfooding. Direct distribution has its own activation gate.
+supplies the accepted managed environment, preserves one configuration path,
+and reports component identity through one Nix-managed path. Later slices earn
+their scope through dogfooding. Direct distribution has its own activation gate.

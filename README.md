@@ -5,17 +5,17 @@
 ![Glowing violet three-bend Eon portal](assets/eon.png)
 
 Eon is a greenfield product built around Eon Sessions and Eon Desktop. Its
-canonical component graph selects them with the editor, file manager, and
-configuration tools without reimplementing its child projects.
+canonical component graph also selects the shell, prompt, directory navigator,
+editor, file manager, and Git TUI without reimplementing its child projects.
 
 ## Project status
 
 This repository ships the first Nix-only Eon alpha for x86_64 Linux. One Rust
 supervisor launches the accepted Eon Sessions and Eon Desktop revisions, owns a
-live workspace of independent Sessions, exposes the pinned Helix and Yazi
-tools, keeps one configuration root, and reports the canonical component
-identities. Direct bundles, Home Manager, updates, release automation, and
-macOS packaging remain outside this slice.
+live workspace of independent Sessions, supplies one pinned interactive
+environment, keeps one configuration root, and reports the canonical component
+identities. Direct bundles, Home Manager, updates, release automation, and macOS
+packaging remain outside this slice.
 
 ## Naming model
 
@@ -37,15 +37,12 @@ for the web**. Those names create no implementation scope by themselves.
 
 ```text
 Eon / product orchestrator
-        |
-        v
-Eon Desktop / Venus client subsystem
-        |
-        v
-Eon Sessions / Orbit session subsystem
-        |
+        +---- Eon Desktop / Venus client subsystem
+        +---- Eon Sessions / Orbit session subsystem
+        +---- Nushell + Starship + Zoxide
         +---- Helix
         +---- Yazi
+        +---- LazyGit
         +---- Ratconfig
 ```
 
@@ -131,14 +128,44 @@ bounded to 64 tabs and 256 panes, is not restored after supervisor loss, and
 has no removal or session-stop action in this slice. `--json` reports the same
 accepted action result as the human view.
 
-`EON_CONFIG_HOME` selects the configuration root. Without it, Eon uses
-`$XDG_CONFIG_HOME/eon` or `$HOME/.config/eon`. `EON_RUNTIME_DIR` selects the
-socket directory; Eon otherwise uses `$XDG_RUNTIME_DIR/eon` or a private
-per-user temporary directory. Eon passes the configuration root to its child
-components as `XDG_CONFIG_HOME`. Eon ignores relative XDG base paths. It creates
-missing configuration and runtime directories with mode `0700`. It leaves
-existing configuration-directory permissions unchanged and rejects unsafe
-existing runtime directories without changing their permissions.
+## Managed environment
+
+A Session without an explicit command starts Eon's pinned Nushell. Starship
+supplies its native modules with a violet `∴` prompt marker and no leading blank
+line, while Zoxide supplies its native `z` integration. The package exposes the
+managed tools outside Eon only through these names:
+
+| Command | Managed tool |
+|---|---|
+| `eon-nu` | Nushell |
+| `eon-hx` | Helix |
+| `eon-yazi` | Yazi |
+| `eon-ya` | Yazi companion CLI |
+| `eon-lazygit`, `eon-lg` | LazyGit |
+
+Outside a Session, the prefixed commands inherit the ambient PATH. Inside a
+Session, one private PATH resolves `nu`, `hx`, `yazi`, `ya`, and `lazygit` to
+those same artifacts; managed Nushell also defines `lg`. Eon does not alter the
+parent process's PATH, aliases, or shell startup files. Each tool keeps its
+native configuration schema, data, and cache behavior. At launch, Eon ignores
+ambient Helix runtime and Steel configuration paths and Yazi or LazyGit
+configuration paths that would bypass its private root; explicit Helix and
+LazyGit configuration arguments remain available. LazyGit uses the Git
+executable already available from the user's environment. The current packaged
+font set does not guarantee every emoji, Powerline, or Yazi icon glyph, so
+unsupported symbols may render as fallback boxes.
+
+`EON_CONFIG_HOME` selects the configuration root; Eon resolves a relative value
+once against the launch directory. Without it, Eon uses `$XDG_CONFIG_HOME/eon`
+or `$HOME/.config/eon`. `EON_RUNTIME_DIR` selects the socket directory; Eon
+otherwise uses `$XDG_RUNTIME_DIR/eon` or a private per-user temporary directory.
+Eon passes the absolute root as `XDG_CONFIG_HOME` to child components and
+managed tools; it additionally preserves `EON_CONFIG_HOME` through Sessions and
+managed dispatch so nested commands keep the same root. Eon ignores relative
+XDG base paths. It creates missing configuration and runtime directories with
+mode `0700`. It leaves existing configuration-directory permissions unchanged
+and rejects unsafe existing runtime directories without changing their
+permissions.
 
 ## Component manifest
 
@@ -183,13 +210,14 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 433 |
-| README | 195 |
+| README | 223 |
 | Repository ignore rules | 3 |
-| Architecture and contracts | 318 |
+| Architecture and contracts | 390 |
 | Distribution and references | 202 |
-| Changelog | 23 |
-| Rust source and tests | 2,182 |
+| Changelog | 28 |
+| Rust source and tests | 2,504 |
 | Cargo manifests | 23 |
-| Component manifest | 173 |
-| Nix composition | 254 |
-| **Total** | **3,806** |
+| Component manifest | 261 |
+| Nix composition | 318 |
+| Product defaults | 10 |
+| **Total** | **4,395** |

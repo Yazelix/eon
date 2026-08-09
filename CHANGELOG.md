@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Supply pinned Nushell, Starship, Zoxide, Helix, Yazi, and LazyGit defaults;
+  expose them through bounded `eon-*` commands and a Session-private PATH
+  without changing the user's global shell environment or importing ambient
+  Helix, Yazi, or LazyGit configuration-path overrides; resolve a relative Eon
+  configuration root once before passing it to child tools.
 - Add Eon-owned live tabs and vertical pane stacks with stable-ID and direct
   directional CLI actions, deterministic JSON output, and one Orbit process per pane.
 - Ship the x86_64 Linux alpha through one locked Nix flake with an Eon desktop
