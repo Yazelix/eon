@@ -7,4 +7,5 @@ publish = false
 
 [dependencies]
 eon-manifest = { path = "../eon-manifest" }
+eon-workspace-protocol = { path = "../eon-workspace-protocol" }
 libc = "=0.2.189"

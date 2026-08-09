@@ -13,9 +13,10 @@ editor, file manager, and Git TUI without reimplementing its child projects.
 This repository ships the first Nix-only Eon alpha for x86_64 Linux. One Rust
 supervisor launches the accepted Eon Sessions and Eon Desktop revisions, owns a
 live workspace of independent Sessions, supplies one pinned interactive
-environment, keeps one configuration root, and reports the canonical component
-identities. Direct bundles, Home Manager, updates, release automation, and macOS
-packaging remain outside this slice.
+environment, exposes that workspace through EONW v1, keeps one configuration
+root, and reports the canonical component identities. Direct bundles, Home
+Manager, updates, release automation, and macOS packaging remain outside this
+slice.
 
 ## Naming model
 
@@ -103,9 +104,12 @@ machine preserves no process state beyond the accepted child contracts.
 
 While the foreground supervisor is running, Eon owns horizontal tab order and
 one vertical pane selection per tab. Each pane starts and maps to a distinct
-Orbit session; changing focus never stops a session. This first owner slice is
-visible through the CLI. Eon Desktop still attaches to the initial session and
-does not yet render the tab and accordion-pane topology.
+Orbit session; changing focus never stops a session. The CLI reaches that owner
+through the private local Eon socket using EONW v1. Each accepted action returns
+one complete ordered workspace snapshot; incompatible or malformed requests
+receive a bounded structured failure. The selected Eon Desktop revision still
+attaches only to the initial session. A later exact Venus revision will consume
+the same Eon-owned protocol before it renders the tab and accordion topology.
 
 The command surface is small:
 
@@ -126,7 +130,8 @@ The command surface is small:
 Workspace commands require the live foreground supervisor. The topology is
 bounded to 64 tabs and 256 panes, is not restored after supervisor loss, and
 has no removal or session-stop action in this slice. `--json` reports the same
-accepted action result as the human view.
+accepted EONW result as the human view; neither output format is the protocol
+schema.
 
 ## Managed environment
 
@@ -210,14 +215,14 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 433 |
-| README | 223 |
+| README | 228 |
 | Repository ignore rules | 3 |
-| Architecture and contracts | 390 |
+| Architecture and contracts | 464 |
 | Distribution and references | 202 |
-| Changelog | 28 |
-| Rust source and tests | 2,504 |
-| Cargo manifests | 23 |
+| Changelog | 31 |
+| Rust source and tests | 3,123 |
+| Cargo manifests | 30 |
 | Component manifest | 261 |
 | Nix composition | 318 |
 | Product defaults | 10 |
-| **Total** | **4,395** |
+| **Total** | **5,103** |

@@ -1,9 +1,11 @@
 # Contract Index
 
 Contract IDs give cross-repository decisions stable names. `Planned` means the
-repository records intent without implementation evidence. `Partially proved`
-names an exact verified slice and its remaining gap. `Proven` requires an exact
-check, component revisions, platform, and artifact.
+repository records intent without implementation evidence. `Candidate` means
+the working tree is implemented and verified but has no proof-bearing Git
+revision. `Partially proved` names an exact verified slice and its remaining
+gap. `Proven` requires an exact check, component revisions, platform, and
+artifact.
 
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
@@ -16,6 +18,7 @@ check, component revisions, platform, and artifact.
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, and traverse the topology directly through Eon-owned semantic actions | Eon | Partially proved | `1a00a9f6de171e944c3c31a9f72ee2cc92d8fa15`; workspace-owner proof below |
 | EON-C9 | Eon supplies one exact managed interactive environment through prefixed external commands and Session-private unprefixed tool names without changing the user's global toolchain | Eon | Proven | `99c410a1081b88dd8db2b7f9e26394a38acd175a`; managed-environment proof below |
+| EON-C10 | A local client can submit versioned Eon workspace actions and receive one complete accepted workspace snapshot without reconstructing topology or terminal state | Eon | Candidate | Working tree; EONW v1 producer candidate below |
 
 ## Approved workspace contract EON-C8
 
@@ -73,7 +76,68 @@ check, component revisions, platform, and artifact.
   escape hatch.
 - Approval: explicitly approved by the user on 2026-08-08 before implementation.
 
+## Approved workspace protocol contract EON-C10
+
+- Consumer: the canonical `eon` CLI and an independently released Venus client
+  at an exact revision that explicitly consumes EONW v1.
+- Trigger: a local client connects to Eon's private workspace endpoint and sends
+  a versioned inspect request or one of EON-C8's accepted semantic actions.
+- Result: the running Eon supervisor validates the request, remains the sole
+  live action and topology owner, and returns one complete accepted snapshot.
+  The snapshot carries stable ordered tab, pane, and Session identities; active
+  and selected identities; Session liveness; and exact opaque Orbit endpoint
+  bytes.
+- Important failures: an unsupported version, malformed or oversized message,
+  invalid snapshot shape, unavailable action, unknown identity, unrepresentable
+  accepted state, or missing supervisor returns a bounded structured failure. A
+  rejected action leaves the prior accepted workspace unchanged.
+- Ownership: Eon owns EONW v1, the semantic action vocabulary, topology,
+  mappings, acceptance, and complete snapshot. Orbit retains process, PTY,
+  terminal-state, and Session authority. The CLI and Venus decode the same
+  Eon-owned values and never mirror the schema or reconstruct hidden state.
+- Boundary: EONW v1 reuses the private local Eon socket. Each connection carries
+  one length-delimited request and response; neither depends on EOF to delimit a
+  message. It adds no event stream, subscription or polling policy, remote
+  transport, general plugin or MCP surface, authorization framework, durable
+  restoration, AgentRun state, raw terminal content, or Venus rendering.
+- Update order: prove the Eon producer first; update Venus against that exact
+  revision; only then update Eon's canonical component requirement and explicit
+  Venus launch input against the exact consumer revision. The currently selected
+  Venus revision remains unchanged until it actually consumes EONW.
+- Approval: explicitly approved by the user on 2026-08-09 by directing Eon to
+  fix the named versioned workspace snapshot/action prerequisite.
+
 ## Proof record
+
+### EONW v1 producer candidate
+
+- Contract: EON-C10 is implemented and mechanically verified in the working
+  tree. It remains a candidate until an exact proof-bearing Git revision exists.
+- Owner: `eon-workspace-protocol` is the only EONW v1 schema and codec owner.
+  It defines dependency-free bounded framing, semantic workspace actions,
+  complete snapshots, exact opaque endpoint bytes, structured failures, and
+  validation of version, size, identities, ordering references, uniqueness,
+  liveness tags, and trailing data.
+- Runtime: the existing mode-`0600` `eon.sock` carries one length-delimited EONW
+  request and response per connection without using EOF as a message delimiter.
+  The CLI encodes the same shared actions, decodes the complete response, and
+  then renders the preserved human or JSON projection. The supervisor alone
+  calls `Workspace::dispatch`; every accepted action and inspect returns a
+  complete snapshot.
+- Checks: `cargo fmt --all --check`; `cargo check --locked --workspace`; `cargo
+  test --locked --workspace` with 16 tests; `cargo clippy --locked --workspace
+  --all-targets -- -D warnings`; canonical manifest validation; and `git diff
+  --check`; plus `nix flake check --no-update-lock-file --print-build-logs
+  path:.`. The real three-Session control test sends complete requests without
+  half-closing the socket, decodes `unsupported-version`, then proves the
+  accepted workspace is still available. A focused process test proves missing
+  supervisors retain the structured JSON failure and exit-2 contract.
+- Limits: this candidate adds no event stream, subscription, polling policy,
+  remote transport, authorization layer, plugin surface, AgentRun state,
+  persistence, terminal content, or Venus rendering. The canonical manifest
+  still truthfully selects Venus `2d36c72dc87ca5416e22d6afdc35c6ab4e2fb832`
+  with one Orbit socket. EONW graph registration waits for the producer proof;
+  Venus requirement and launch wiring wait for its exact consumer proof.
 
 ### Managed-environment proof `99c410a1081b88dd8db2b7f9e26394a38acd175a`
 

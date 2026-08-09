@@ -1,5 +1,10 @@
 mod workspace;
 
+use eon_workspace_protocol::{
+    Action, Direction, Error as ProtocolError, Failure, HEADER_BYTES, MAX_DETAIL_BYTES, Request,
+    Response, declared_message_len, decode_request, decode_response, encode_request,
+    encode_response,
+};
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -16,12 +21,12 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use workspace::{Action, ActionError, Direction, Workspace};
+use workspace::{
+    Workspace, failure_human, failure_json, human as human_output, json as json_output,
+};
 
 const MANIFEST: &str = include_str!("../../../components/eon-alpha-v1.json");
 const USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
-const MAX_CONTROL_REQUEST_BYTES: u64 = 4_096;
-const MAX_CONTROL_RESPONSE_BYTES: u64 = 128 * 1_024;
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 
 struct Programs {
@@ -188,53 +193,65 @@ fn control(arguments: &[OsString]) -> Result<i32, String> {
     let runtime = runtime_directory();
     prepare_runtime(&runtime)?;
     let socket = runtime.join("eon.sock");
-    let mut stream = UnixStream::connect(&socket).map_err(|error| {
-        format!(
-            "no active Eon supervisor at {}: {error}; run `eon` first",
-            socket.display()
-        )
-    })?;
+    let mut stream = match UnixStream::connect(&socket) {
+        Ok(stream) => stream,
+        Err(error) => {
+            return Ok(report_failure(
+                &failure(
+                    "missing-supervisor",
+                    format!(
+                        "no active Eon supervisor at {}: {error}; run `eon` first",
+                        socket.display()
+                    ),
+                ),
+                json,
+            ));
+        }
+    };
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|error| format!("cannot configure Eon control client: {error}"))?;
     stream
         .set_write_timeout(Some(Duration::from_secs(5)))
         .map_err(|error| format!("cannot configure Eon control client: {error}"))?;
-    let request = encode_control_request(&request_id(), json, &action);
+    let request = match encode_request(&Request {
+        id: request_id(),
+        action,
+    }) {
+        Ok(request) => request,
+        Err(error) => {
+            return Ok(report_failure(&protocol_failure(error), json));
+        }
+    };
     stream
-        .write_all(request.as_bytes())
+        .write_all(&request)
         .map_err(|error| format!("cannot send Eon action: {error}"))?;
-    stream
-        .shutdown(std::net::Shutdown::Write)
-        .map_err(|error| format!("cannot finish Eon action: {error}"))?;
 
-    let mut response = Vec::new();
+    let mut response = vec![0; HEADER_BYTES];
     stream
-        .take(MAX_CONTROL_RESPONSE_BYTES + 1)
-        .read_to_end(&mut response)
+        .read_exact(&mut response)
         .map_err(|error| format!("cannot read Eon action result: {error}"))?;
-    if response.len() as u64 > MAX_CONTROL_RESPONSE_BYTES {
-        return Err("Eon action result exceeded its size limit".into());
-    }
-    let response = String::from_utf8(response)
-        .map_err(|_| "Eon supervisor returned non-UTF-8 output".to_string())?;
-    let (status, output) = response
-        .split_once('\n')
-        .ok_or_else(|| "Eon supervisor returned a malformed result".to_string())?;
-    match status {
-        "ok" => {
-            print!("{output}");
+    let length = declared_message_len(&response)
+        .map_err(|error| format!("Eon supervisor returned a malformed result: {error}"))?;
+    response.resize(length, 0);
+    stream
+        .read_exact(&mut response[HEADER_BYTES..])
+        .map_err(|error| format!("cannot read Eon action result: {error}"))?;
+    match decode_response(&response)
+        .map_err(|error| format!("Eon supervisor returned a malformed result: {error}"))?
+    {
+        Response::Snapshot(snapshot) => {
+            print!(
+                "{}",
+                if json {
+                    json_output(&snapshot)
+                } else {
+                    human_output(&snapshot)
+                }
+            );
             Ok(0)
         }
-        "error" => {
-            if json {
-                print!("{output}");
-            } else {
-                eprint!("{output}");
-            }
-            Ok(2)
-        }
-        _ => Err("Eon supervisor returned a malformed result".into()),
+        Response::Failure(failure) => Ok(report_failure(&failure, json)),
     }
 }
 
@@ -275,23 +292,6 @@ fn request_id() -> String {
         .unwrap_or_default()
         .as_nanos();
     format!("{}-{nanos}-{sequence}", std::process::id())
-}
-
-fn encode_control_request(request_id: &str, json: bool, action: &Action) -> String {
-    let action = match action {
-        Action::Inspect => "inspect".into(),
-        Action::CreateTab => "tab-create".into(),
-        Action::CreatePane => "pane-create".into(),
-        Action::FocusId(id) => format!("focus-id\t{id}"),
-        Action::Focus(Direction::Left) => "focus-left".into(),
-        Action::Focus(Direction::Right) => "focus-right".into(),
-        Action::Focus(Direction::Up) => "focus-up".into(),
-        Action::Focus(Direction::Down) => "focus-down".into(),
-    };
-    format!(
-        "{request_id}\t{}\t{action}\n",
-        if json { "json" } else { "human" }
-    )
 }
 
 fn attach() -> Result<i32, String> {
@@ -675,125 +675,75 @@ fn handle_control_client(
     if stream.set_read_timeout(timeout).is_err() || stream.set_write_timeout(timeout).is_err() {
         return;
     }
-    let mut bytes = Vec::new();
-    let read = Read::by_ref(&mut stream)
-        .take(MAX_CONTROL_REQUEST_BYTES + 1)
-        .read_to_end(&mut bytes);
-    let json_hint = bytes
-        .split(|byte| *byte == b'\t')
-        .nth(1)
-        .is_some_and(|value| value == b"json");
-    let request = match read {
-        Ok(_) if bytes.len() as u64 <= MAX_CONTROL_REQUEST_BYTES => parse_control_request(&bytes),
-        Ok(_) => Err(ActionError::new(
-            "malformed-action",
-            "control request exceeded 4096 bytes",
-        )),
-        Err(error) => Err(ActionError::new(
-            "malformed-action",
-            format!("cannot read complete control request: {error}"),
-        )),
-    };
-    let response = match request {
-        Ok(request) => {
-            let result = workspace.dispatch(&request.id, request.action, |session| {
-                let child = start_orbit(programs, config, &session.endpoint, &[], socket_timeout)?;
-                sessions.push(RunningSession {
-                    id: session.id.clone(),
-                    child: Some(child),
-                });
-                Ok(())
+    let response = match read_control_request(&mut stream) {
+        Ok(request) => match workspace.dispatch(&request.id, request.action, |session| {
+            let child = start_orbit(programs, config, &session.endpoint, &[], socket_timeout)?;
+            sessions.push(RunningSession {
+                id: session.id.clone(),
+                child: Some(child),
             });
-            match result {
-                Ok(()) => format!(
-                    "ok\n{}",
-                    if request.json {
-                        workspace.json()
-                    } else {
-                        workspace.human()
-                    }
-                ),
-                Err(error) => control_error(&error, request.json),
-            }
-        }
-        Err(error) => control_error(&error, json_hint),
+            Ok(())
+        }) {
+            Ok(()) => Response::Snapshot(workspace.snapshot()),
+            Err(error) => Response::Failure(failure(error.code, error.detail)),
+        },
+        Err(error) => Response::Failure(error),
     };
-    debug_assert!(response.len() as u64 <= MAX_CONTROL_RESPONSE_BYTES);
-    let _ = stream.write_all(response.as_bytes());
+    if let Ok(encoded) = encode_response(&response).or_else(|error| {
+        encode_response(&Response::Failure(failure(
+            "unrepresentable-state",
+            format!("cannot encode Eon workspace result: {error}"),
+        )))
+    }) {
+        let _ = stream.write_all(&encoded);
+    }
 }
 
-#[derive(Debug)]
-struct ControlRequest {
-    id: String,
-    json: bool,
-    action: Action,
-}
-
-fn parse_control_request(bytes: &[u8]) -> Result<ControlRequest, ActionError> {
-    let request = std::str::from_utf8(bytes)
-        .map_err(|_| ActionError::new("malformed-action", "control request is not UTF-8"))?;
-    let request = request.strip_suffix('\n').ok_or_else(|| {
-        ActionError::new(
+fn read_control_request(stream: &mut impl Read) -> Result<Request, Failure> {
+    let incomplete = |error| {
+        failure(
             "malformed-action",
-            "control request is not newline terminated",
+            format!("cannot read complete EONW request: {error}"),
         )
-    })?;
-    if request.contains('\n') || request.contains('\r') {
-        return Err(ActionError::new(
-            "malformed-action",
-            "control request contains multiple lines",
-        ));
-    }
-    let fields: Vec<&str> = request.split('\t').collect();
-    let id = fields[0];
-    if id.is_empty()
-        || id.len() > 128
-        || !id
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
-    {
-        return Err(ActionError::new(
-            "malformed-action",
-            "control request identity is invalid",
-        ));
-    }
-    let json = match fields.get(1).copied() {
-        Some("human") => false,
-        Some("json") => true,
-        _ => {
-            return Err(ActionError::new(
-                "malformed-action",
-                "control output must be human or json",
-            ));
-        }
     };
-    let action = match fields.get(2).copied() {
-        Some("inspect") if fields.len() == 3 => Action::Inspect,
-        Some("tab-create") if fields.len() == 3 => Action::CreateTab,
-        Some("pane-create") if fields.len() == 3 => Action::CreatePane,
-        Some("focus-left") if fields.len() == 3 => Action::Focus(Direction::Left),
-        Some("focus-right") if fields.len() == 3 => Action::Focus(Direction::Right),
-        Some("focus-up") if fields.len() == 3 => Action::Focus(Direction::Up),
-        Some("focus-down") if fields.len() == 3 => Action::Focus(Direction::Down),
-        Some("focus-id") if fields.len() == 4 && !fields[3].is_empty() => {
-            Action::FocusId(fields[3].into())
-        }
-        _ => {
-            return Err(ActionError::new(
-                "malformed-action",
-                "unknown or invalid control action",
-            ));
-        }
-    };
-    Ok(ControlRequest {
-        id: id.into(),
-        json,
-        action,
-    })
+    let mut message = vec![0; HEADER_BYTES];
+    stream.read_exact(&mut message).map_err(&incomplete)?;
+    let length = declared_message_len(&message).map_err(protocol_failure)?;
+    message.resize(length, 0);
+    stream
+        .read_exact(&mut message[HEADER_BYTES..])
+        .map_err(incomplete)?;
+    decode_request(&message).map_err(protocol_failure)
 }
 
-fn control_error(error: &ActionError, json: bool) -> String {
-    format!("error\n{}", if json { error.json() } else { error.human() })
+fn protocol_failure(error: ProtocolError) -> Failure {
+    let code = if matches!(error, ProtocolError::UnsupportedVersion { .. }) {
+        "unsupported-version"
+    } else {
+        "malformed-action"
+    };
+    failure(code, error.to_string())
+}
+
+fn report_failure(failure: &Failure, json: bool) -> i32 {
+    if json {
+        print!("{}", failure_json(failure));
+    } else {
+        eprint!("{}", failure_human(failure));
+    }
+    2
+}
+
+fn failure(code: impl Into<String>, detail: impl Into<String>) -> Failure {
+    let mut detail = detail.into();
+    detail.truncate(detail.floor_char_boundary(MAX_DETAIL_BYTES));
+    if detail.is_empty() {
+        detail = "unspecified Eon workspace failure".into();
+    }
+    Failure {
+        code: code.into(),
+        detail,
+    }
 }
 
 type SocketIdentity = (u64, u64, i64, i64);
@@ -860,9 +810,9 @@ fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, ManagedPrograms, ManagedTool, Programs, create_control_listener, effective_uid,
-        managed_command, managed_tool, orbit_command, parse_control_request, prepare_configuration,
-        prepare_runtime, supervise, xdg_path,
+        ManagedPrograms, ManagedTool, Programs, create_control_listener, effective_uid,
+        managed_command, managed_tool, orbit_command, prepare_configuration, prepare_runtime,
+        supervise, xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -1169,24 +1119,6 @@ mod tests {
 
         let absolute = PathBuf::from("/absolute");
         assert_eq!(xdg_path(Some(absolute.clone())), Some(absolute));
-    }
-
-    #[test]
-    fn private_control_parser_rejects_malformed_actions() {
-        let request = parse_control_request(b"request-1\tjson\tfocus-id\tpane-1\n").unwrap();
-        assert!(matches!(request.action, Action::FocusId(id) if id == "pane-1"));
-
-        for malformed in [
-            b"request-1\tjson\tunknown\n".as_slice(),
-            b"request-1\tjson\tinspect\nsecond\n".as_slice(),
-            b"request 1\tjson\tinspect\n".as_slice(),
-            b"request-1\tjson\tinspect".as_slice(),
-        ] {
-            assert_eq!(
-                parse_control_request(malformed).unwrap_err().code,
-                "malformed-action"
-            );
-        }
     }
 
     #[test]

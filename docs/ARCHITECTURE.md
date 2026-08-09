@@ -17,7 +17,7 @@ composes.
 | Yazi | Yazi | File management and navigation | A relocatable file-manager artifact and launch contract |
 | LazyGit | LazyGit | Git TUI behavior and configuration | A pinned executable and native configuration inputs |
 | Ratconfig | Ratconfig | User-facing configuration editing | A schema-aware configuration artifact and output contract |
-| Eon | Eon orchestrator | Product policy, component selection, launch, updates, integration checks, distribution | Exact child revisions and their declared artifacts |
+| Eon | Eon orchestrator | Product policy, workspace topology and EONW, component selection, launch, updates, integration checks, distribution | Exact child revisions and their declared artifacts |
 
 Nova stays independent. Eon may reuse proven ideas from Nova through explicit
 contracts, but the repositories do not share release identity or require each
@@ -71,6 +71,13 @@ A cross-project defect belongs to the project that owns the violated contract.
 Eon may pin a known-good revision while the owner fixes the defect. Compatibility
 shims require an explicit user decision, a removal condition, and a bead.
 
+EONW is the one versioned workspace boundary for independently released Eon
+clients. Its dependency-free owner crate defines semantic actions, complete
+snapshots, structured failures, and bounded framing. The running Eon supervisor
+remains the only live topology and action owner; the CLI and Venus decode the
+same values and never infer state from each other, terminal output, or the wire
+format. EONW carries opaque Orbit endpoint bytes but no terminal content.
+
 ## Composition unit
 
 Each composed build consumes:
@@ -96,5 +103,8 @@ Planning can refine contracts, references, and Beads. Runtime work begins after
 the user activates an implementation bead and its upstream proof revisions exist.
 The first Eon slice launches one accepted Eon Desktop and Eon Sessions pair,
 supplies the accepted managed environment, preserves one configuration path,
-and reports component identity through one Nix-managed path. Later slices earn
-their scope through dogfooding. Direct distribution has its own activation gate.
+reports component identity through one Nix-managed path, and exposes its live
+workspace through EONW v1. Venus consumption follows an exact Eon producer
+proof; the canonical composition graph changes only after an exact consumer
+proof exists. Later slices earn their scope through dogfooding. Direct
+distribution has its own activation gate.

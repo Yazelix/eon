@@ -1,6 +1,10 @@
+use eon_workspace_protocol::{
+    Action, HEADER_BYTES, Request, Response, VERSION, declared_message_len, decode_response,
+    encode_request,
+};
 use std::{
     fs,
-    io::Write,
+    io::{Read, Write},
     os::unix::{fs::PermissionsExt, net::UnixStream},
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
@@ -80,6 +84,22 @@ fn relative_configuration_root_is_resolved_once() {
 }
 
 #[test]
+fn missing_supervisor_is_a_structured_workspace_failure() {
+    let root = temporary_directory();
+    let output = invoke(
+        Path::new(env!("CARGO_BIN_EXE_eon")),
+        &root.join("runtime"),
+        &root.join("config"),
+        &["workspace", "--json"],
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stdout(&output).contains("\"code\":\"missing-supervisor\""));
+    assert!(output.stderr.is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn second_cli_controls_three_live_sessions_without_owning_them() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
@@ -152,11 +172,23 @@ fn second_cli_controls_three_live_sessions_without_owning_them() {
     assert!(stdout(&human).contains("active tab-1\n"));
     assert_eq!(stdout(&human).matches("  pane ").count(), 3);
 
-    let mut abandoned = UnixStream::connect(&control).unwrap();
-    abandoned
-        .write_all(b"abandoned-1\thuman\tinspect\n")
-        .unwrap();
-    drop(abandoned);
+    let mut incompatible = encode_request(&Request {
+        id: "incompatible-1".into(),
+        action: Action::Inspect,
+    })
+    .unwrap();
+    incompatible[4..6].copy_from_slice(&(VERSION + 1).to_le_bytes());
+    let mut client = UnixStream::connect(&control).unwrap();
+    client.write_all(&incompatible).unwrap();
+    let mut response = vec![0; HEADER_BYTES];
+    client.read_exact(&mut response).unwrap();
+    let length = declared_message_len(&response).unwrap();
+    response.resize(length, 0);
+    client.read_exact(&mut response[HEADER_BYTES..]).unwrap();
+    assert!(matches!(
+        decode_response(&response).unwrap(),
+        Response::Failure(failure) if failure.code == "unsupported-version"
+    ));
 
     let snapshot = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert!(snapshot.status.success());
