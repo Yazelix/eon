@@ -18,7 +18,7 @@ artifact.
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, and traverse the topology directly through Eon-owned semantic actions | Eon | Partially proved | `1a00a9f6de171e944c3c31a9f72ee2cc92d8fa15`; workspace-owner proof below |
 | EON-C9 | Eon supplies one exact managed interactive environment through prefixed external commands and Session-private unprefixed tool names without changing the user's global toolchain | Eon | Proven | `99c410a1081b88dd8db2b7f9e26394a38acd175a`; managed-environment proof below |
-| EON-C10 | A local client can submit versioned Eon workspace actions and receive one complete accepted workspace snapshot without reconstructing topology or terminal state | Eon | Candidate | Working tree; EONW v1 producer candidate below |
+| EON-C10 | A local client can submit versioned Eon workspace actions and receive one complete accepted workspace snapshot without reconstructing topology or terminal state | Eon | Proven | `4af395aea06c230ee6b18cf0755ae25915c0b88d`; EONW v1 producer proof below |
 
 ## Approved workspace contract EON-C8
 
@@ -109,10 +109,10 @@ artifact.
 
 ## Proof record
 
-### EONW v1 producer candidate
+### EONW v1 producer proof `4af395aea06c230ee6b18cf0755ae25915c0b88d`
 
-- Contract: EON-C10 is implemented and mechanically verified in the working
-  tree. It remains a candidate until an exact proof-bearing Git revision exists.
+- Contract: EON-C10 is proved at this exact revision on x86_64 Linux. It
+  preserves EON-C1 through EON-C4, EON-C9, and the partial EON-C8 owner slice.
 - Owner: `eon-workspace-protocol` is the only EONW v1 schema and codec owner.
   It defines dependency-free bounded framing, semantic workspace actions,
   complete snapshots, exact opaque endpoint bytes, structured failures, and
@@ -128,16 +128,18 @@ artifact.
   test --locked --workspace` with 16 tests; `cargo clippy --locked --workspace
   --all-targets -- -D warnings`; canonical manifest validation; and `git diff
   --check`; plus `nix flake check --no-update-lock-file --print-build-logs
-  path:.`. The real three-Session control test sends complete requests without
-  half-closing the socket, decodes `unsupported-version`, then proves the
-  accepted workspace is still available. A focused process test proves missing
-  supervisors retain the structured JSON failure and exit-2 contract.
-- Limits: this candidate adds no event stream, subscription, polling policy,
+  path:.`. The exact package output is
+  `/nix/store/905hr7d4912i75rzhcrzv3hhqciph04h-eon-0.1.0`. The real
+  three-Session control test sends complete requests without half-closing the
+  socket, decodes `unsupported-version`, then proves the accepted workspace is
+  still available. A focused process test proves missing supervisors retain the
+  structured JSON failure and exit-2 contract.
+- Limits: this revision adds no event stream, subscription, polling policy,
   remote transport, authorization layer, plugin surface, AgentRun state,
   persistence, terminal content, or Venus rendering. The canonical manifest
   still truthfully selects Venus `2d36c72dc87ca5416e22d6afdc35c6ab4e2fb832`
-  with one Orbit socket. EONW graph registration waits for the producer proof;
-  Venus requirement and launch wiring wait for its exact consumer proof.
+  with one Orbit socket. EONW requirement and launch wiring wait for an exact
+  Venus consumer proof.
 
 ### Managed-environment proof `99c410a1081b88dd8db2b7f9e26394a38acd175a`
 
