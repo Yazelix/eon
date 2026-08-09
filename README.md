@@ -11,10 +11,11 @@ configuration tools without reimplementing its child projects.
 ## Project status
 
 This repository ships the first Nix-only Eon alpha for x86_64 Linux. One Rust
-supervisor launches the accepted Eon Sessions and Eon Desktop revisions,
-exposes the pinned Helix and Yazi tools, keeps one configuration root, and
-reports the canonical component identities. Direct bundles, Home Manager,
-updates, release automation, and macOS packaging remain outside this slice.
+supervisor launches the accepted Eon Sessions and Eon Desktop revisions, owns a
+live workspace of independent Sessions, exposes the pinned Helix and Yazi
+tools, keeps one configuration root, and reports the canonical component
+identities. Direct bundles, Home Manager, updates, release automation, and
+macOS packaging remain outside this slice.
 
 ## Naming model
 
@@ -89,7 +90,7 @@ eon
 
 The package installs an `Eon` desktop entry and violet three-bend portal icon, with X11
 and Xwayland window grouping. Opening Eon starts a session or reconnects to the
-active session. Its Nix closure supplies Mesa's open-source Vulkan drivers; the
+initial session. Its Nix closure supplies Mesa's open-source Vulkan drivers; the
 current graphics proof uses Intel hardware, while proprietary NVIDIA remains
 unproved. Run Eon from a terminal when you need foreground lifecycle control.
 Closing the Eon Desktop window detaches the client while Sessions and its PTY
@@ -103,16 +104,32 @@ Press `Ctrl-C` in the original foreground `eon` process to stop that composed
 session. Orbit removes its socket during shutdown. Restarting Orbit or the
 machine preserves no process state beyond the accepted child contracts.
 
+While the foreground supervisor is running, Eon owns horizontal tab order and
+one vertical pane selection per tab. Each pane starts and maps to a distinct
+Orbit session; changing focus never stops a session. This first owner slice is
+visible through the CLI. Eon Desktop still attaches to the initial session and
+does not yet render the tab and accordion-pane topology.
+
 The command surface is small:
 
 | Command | Result |
 |---|---|
-| `eon` | Attach to the active Orbit session, or start one with the default shell |
+| `eon` | Attach to the initial Orbit session, or start one with the default shell |
 | `eon run` | Explicitly start one Orbit session and one Venus window with the default shell |
 | `eon run -- COMMAND...` | Run one explicit command as the Orbit-owned PTY child |
-| `eon attach` | Open Venus against the active local Orbit socket |
+| `eon attach` | Open Venus against the initial local Orbit socket |
+| `eon workspace [--json]` | Inspect the live Eon-owned tab, pane, and Session mapping |
+| `eon tab create [--json]` | Create and focus a tab containing a default-shell Session |
+| `eon pane create [--json]` | Create and select a default-shell Session in the active tab |
+| `eon focus ID [--json]` | Focus a stable tab or pane identity |
+| `eon focus left\|right\|up\|down [--json]` | Traverse tabs or panes directly without wrapping |
 | `eon versions` | Print stable component versions and Git revisions from the canonical manifest |
 | `eon config-path` | Create and print the Eon configuration root |
+
+Workspace commands require the live foreground supervisor. The topology is
+bounded to 64 tabs and 256 panes, is not restored after supervisor loss, and
+has no removal or session-stop action in this slice. `--json` reports the same
+accepted action result as the human view.
 
 `EON_CONFIG_HOME` selects the configuration root. Without it, Eon uses
 `$XDG_CONFIG_HOME/eon` or `$HOME/.config/eon`. `EON_RUNTIME_DIR` selects the
@@ -166,13 +183,13 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 200 |
-| README | 178 |
+| README | 195 |
 | Repository ignore rules | 3 |
-| Architecture and contracts | 224 |
+| Architecture and contracts | 289 |
 | Distribution and references | 202 |
-| Changelog | 21 |
-| Rust source and tests | 1,026 |
+| Changelog | 23 |
+| Rust source and tests | 2,182 |
 | Cargo manifests | 23 |
 | Component manifest | 173 |
 | Nix composition | 254 |
-| **Total** | **2,304** |
+| **Total** | **3,544** |

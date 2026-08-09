@@ -14,8 +14,73 @@ check, component revisions, platform, and artifact.
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
+| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, and traverse the topology directly through Eon-owned semantic actions | Eon | Partially proved | `1a00a9f6de171e944c3c31a9f72ee2cc92d8fa15`; workspace-owner proof below |
+
+## Approved workspace contract EON-C8
+
+- Consumer: one local Eon user, the canonical `eon` action projection, and a
+  separately approved Venus consumer.
+- Trigger: the user creates or focuses a tab or pane, or invokes direct left,
+  right, up, or down workspace traversal.
+- Result: Eon owns one live ordered topology of stable tab and pane identities
+  and explicit mappings from panes to independent Orbit session identities.
+  Tabs form the horizontal axis; each tab contains one ordered vertical pane
+  stack. Eon selects one pane in the active tab, and Venus materializes that
+  selection as the only expanded accordion pane.
+- Important failures: an unknown or stale identity, unavailable Orbit session,
+  invalid transition, or direction without a target returns a bounded explicit
+  failure and leaves the last accepted topology unchanged. Removing or losing a
+  view never silently stops or substitutes another Orbit session.
+- Ownership: Eon owns topology, selection, mappings, and semantic workspace
+  actions. Orbit remains the sole owner of each process, PTY, terminal state,
+  and session lifetime. Venus owns native geometry, rendering, focus,
+  accessibility, hit testing, and accordion materialization without
+  reconstructing Eon state.
+- Boundary: the first slice adds no arbitrary split tree, picker-based ordinary
+  traversal, simultaneous expanded panes, durable layout restoration, AgentRun
+  or provider semantics, terminal observation, managed tool defaults, plugin or
+  MCP surface, isolation target, remote access, or appearance effect.
+- Approval: explicitly approved by the user on 2026-08-08. The Eon-owned model,
+  supervisor, and CLI action projection are partially proved. Native Venus
+  materialization and cross-repository dogfood remain unproved.
 
 ## Proof record
+
+### Workspace-owner proof `1a00a9f6de171e944c3c31a9f72ee2cc92d8fa15`
+
+- Contract: EON-C8 is partially proved for the Eon-owned live topology,
+  semantic actions, private control boundary, and independent child-process
+  mapping. EON-C1 through EON-C4 and the component manifest are unchanged.
+- Owner behavior: one foreground Eon supervisor owns stable tab, pane, and
+  Session identities; horizontal tab and vertical pane order; active and
+  selected identities; explicit Orbit endpoint mappings; and bounded semantic
+  action results. Directions do not wrap. Rejected, malformed, duplicate, or
+  unavailable actions leave the accepted topology unchanged.
+- Process evidence: `second_cli_controls_three_live_sessions_without_owning_them`
+  drove one live supervisor from separate `eon` processes, created two tabs and
+  three distinct substitute Orbit processes/endpoints, traversed both axes,
+  compared human and deterministic JSON projections, rejected a boundary move
+  without mutation, dropped a control client, and observed all three children
+  still alive. It also proved control-socket mode `0600` while live and removal
+  on supervisor exit. `control_listener_preserves_a_replacement_socket` proved
+  that cleanup leaves a replacement socket untouched. Focus never signaled a child.
+- Consumed Orbit evidence: artifact source
+  `00b136318bea13e3f08d490468f069de6f6b9bd2`, ORB-C1 and ORB-C3 proof
+  `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`. Each pane starts one independent
+  `serve` process with an explicit private endpoint; no Orbit protocol or
+  multi-session daemon was added.
+- Environment: Linux 7.0.11 x86_64, Rust 1.96.0, Nix 2.34.7.
+- Checks at the proof commit: `cargo fmt --all --check`; `cargo check --locked`;
+  `cargo test --locked`; `cargo clippy --locked --all-targets -- -D warnings`;
+  `nix flake check --no-build`; `git diff --check`.
+- Limits: topology is live only and bounded to 64 tabs and 256 panes. The
+  private Unix control transport is not a public compatibility surface. This
+  slice has no removal, stop, persistence, picker, arbitrary layout, defaults,
+  plugin, provider, observation, remote, isolation, or appearance behavior.
+  Venus still attaches only to the initial Orbit endpoint and does not yet
+  render horizontal tabs or vertical accordion panes; native materialization,
+  accessibility, interaction, and fresh composed dogfood remain required for
+  full EON-C8 proof.
 
 ### Manifest proof `c9e898c9ff889c2be4d4381a20676291bab65b49`
 
