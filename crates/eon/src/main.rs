@@ -1,16 +1,27 @@
+mod workspace;
+
 use std::{
     env,
     ffi::OsString,
     fs,
-    os::unix::fs::{DirBuilderExt, MetadataExt},
+    io::{Read, Write},
+    os::unix::{
+        fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt},
+        net::{UnixListener, UnixStream},
+    },
     path::{Path, PathBuf},
     process::{Child, Command, ExitCode, ExitStatus},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+use workspace::{Action, ActionError, Direction, Workspace};
 
 const MANIFEST: &str = include_str!("../../../components/eon-alpha-v1.json");
-const USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach | versions | config-path";
+const USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
+const MAX_CONTROL_REQUEST_BYTES: u64 = 4_096;
+const MAX_CONTROL_RESPONSE_BYTES: u64 = 128 * 1_024;
+static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 
 struct Programs {
     orbit: PathBuf,
@@ -38,6 +49,14 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
             run(child)
         }
         [command] if command == "attach" => attach(),
+        [command, ..]
+            if command == "workspace"
+                || command == "tab"
+                || command == "pane"
+                || command == "focus" =>
+        {
+            control(&arguments)
+        }
         [command] if command == "versions" => {
             println!(
                 "{}",
@@ -66,6 +85,117 @@ fn run(child: &[OsString]) -> Result<i32, String> {
         &runtime.join("orbit.sock"),
         child,
         Duration::from_secs(5),
+    )
+}
+
+fn control(arguments: &[OsString]) -> Result<i32, String> {
+    let (action, json) = parse_control_arguments(arguments)?;
+    let runtime = runtime_directory();
+    prepare_runtime(&runtime)?;
+    let socket = runtime.join("eon.sock");
+    let mut stream = UnixStream::connect(&socket).map_err(|error| {
+        format!(
+            "no active Eon supervisor at {}: {error}; run `eon` first",
+            socket.display()
+        )
+    })?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| format!("cannot configure Eon control client: {error}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| format!("cannot configure Eon control client: {error}"))?;
+    let request = encode_control_request(&request_id(), json, &action);
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| format!("cannot send Eon action: {error}"))?;
+    stream
+        .shutdown(std::net::Shutdown::Write)
+        .map_err(|error| format!("cannot finish Eon action: {error}"))?;
+
+    let mut response = Vec::new();
+    stream
+        .take(MAX_CONTROL_RESPONSE_BYTES + 1)
+        .read_to_end(&mut response)
+        .map_err(|error| format!("cannot read Eon action result: {error}"))?;
+    if response.len() as u64 > MAX_CONTROL_RESPONSE_BYTES {
+        return Err("Eon action result exceeded its size limit".into());
+    }
+    let response = String::from_utf8(response)
+        .map_err(|_| "Eon supervisor returned non-UTF-8 output".to_string())?;
+    let (status, output) = response
+        .split_once('\n')
+        .ok_or_else(|| "Eon supervisor returned a malformed result".to_string())?;
+    match status {
+        "ok" => {
+            print!("{output}");
+            Ok(0)
+        }
+        "error" => {
+            if json {
+                print!("{output}");
+            } else {
+                eprint!("{output}");
+            }
+            Ok(2)
+        }
+        _ => Err("Eon supervisor returned a malformed result".into()),
+    }
+}
+
+fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), String> {
+    let mut json = false;
+    let mut values = Vec::new();
+    for argument in arguments {
+        let argument = argument
+            .to_str()
+            .ok_or_else(|| "Eon workspace actions require UTF-8 arguments".to_string())?;
+        if argument == "--json" {
+            if json {
+                return Err(USAGE.into());
+            }
+            json = true;
+        } else {
+            values.push(argument);
+        }
+    }
+    let action = match values.as_slice() {
+        ["workspace"] => Action::Inspect,
+        ["tab", "create"] => Action::CreateTab,
+        ["pane", "create"] => Action::CreatePane,
+        ["focus", "left"] => Action::Focus(Direction::Left),
+        ["focus", "right"] => Action::Focus(Direction::Right),
+        ["focus", "up"] => Action::Focus(Direction::Up),
+        ["focus", "down"] => Action::Focus(Direction::Down),
+        ["focus", id] => Action::FocusId((*id).into()),
+        _ => return Err(USAGE.into()),
+    };
+    Ok((action, json))
+}
+
+fn request_id() -> String {
+    let sequence = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{}-{nanos}-{sequence}", std::process::id())
+}
+
+fn encode_control_request(request_id: &str, json: bool, action: &Action) -> String {
+    let action = match action {
+        Action::Inspect => "inspect".into(),
+        Action::CreateTab => "tab-create".into(),
+        Action::CreatePane => "pane-create".into(),
+        Action::FocusId(id) => format!("focus-id\t{id}"),
+        Action::Focus(Direction::Left) => "focus-left".into(),
+        Action::Focus(Direction::Right) => "focus-right".into(),
+        Action::Focus(Direction::Up) => "focus-up".into(),
+        Action::Focus(Direction::Down) => "focus-down".into(),
+    };
+    format!(
+        "{request_id}\t{}\t{action}\n",
+        if json { "json" } else { "human" }
     )
 }
 
@@ -179,6 +309,101 @@ fn supervise(
     child: &[OsString],
     socket_timeout: Duration,
 ) -> Result<i32, String> {
+    let runtime = socket
+        .parent()
+        .ok_or_else(|| format!("Sessions socket {} has no parent", socket.display()))?;
+    let mut initial = start_orbit(programs, config, socket, child, socket_timeout)?;
+    let control_listener =
+        create_control_listener(&runtime.join("eon.sock")).inspect_err(|_| stop(&mut initial))?;
+
+    let mut venus = match Command::new(&programs.venus)
+        .arg(socket)
+        .env("XDG_CONFIG_HOME", config)
+        .spawn()
+    {
+        Ok(venus) => Some(venus),
+        Err(error) => {
+            stop(&mut initial);
+            return Err(format!("cannot launch Eon Desktop: {error}"));
+        }
+    };
+    let mut workspace =
+        Workspace::with_initial_session(runtime.to_path_buf(), socket.to_path_buf());
+    let mut sessions = vec![RunningSession {
+        id: "session-1".into(),
+        child: Some(initial),
+    }];
+    let mut initial_status = None;
+
+    loop {
+        for session in &mut sessions {
+            let Some(process) = session.child.as_mut() else {
+                continue;
+            };
+            if let Some(status) = process
+                .try_wait()
+                .map_err(|error| format!("cannot observe Sessions: {error}"))?
+            {
+                let code = status_code(status);
+                session.child = None;
+                workspace
+                    .session_exited(&session.id)
+                    .map_err(|error| error.detail)?;
+                if session.id == "session-1" {
+                    initial_status = Some(code);
+                    if let Some(mut process) = venus.take() {
+                        stop(&mut process);
+                    }
+                }
+            }
+        }
+
+        if sessions.iter().all(|session| session.child.is_none()) {
+            if let Some(mut process) = venus.take() {
+                stop(&mut process);
+            }
+            return initial_status.ok_or("initial Sessions exit status is unavailable".into());
+        }
+
+        let venus_exited = if let Some(process) = venus.as_mut() {
+            process
+                .try_wait()
+                .map_err(|error| format!("cannot observe Eon Desktop: {error}"))?
+                .is_some()
+        } else {
+            false
+        };
+        if venus_exited {
+            venus = None;
+            eprintln!(
+                "Eon Desktop exited; Sessions remains active. Run `eon attach` to reconnect."
+            );
+        }
+
+        accept_control_client(
+            &control_listener.listener,
+            &mut workspace,
+            &mut sessions,
+            programs,
+            config,
+            socket_timeout,
+        )?;
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+struct RunningSession {
+    id: String,
+    child: Option<Child>,
+}
+
+fn start_orbit(
+    programs: &Programs,
+    config: &Path,
+    socket: &Path,
+    child: &[OsString],
+    socket_timeout: Duration,
+) -> Result<Child, String> {
     let previous_socket = socket_identity(socket)?;
     let mut orbit_command = Command::new(&programs.orbit);
     orbit_command
@@ -195,42 +420,245 @@ fn supervise(
         stop(&mut orbit);
         return Err(error);
     }
+    Ok(orbit)
+}
 
-    let mut venus = match Command::new(&programs.venus)
-        .arg(socket)
-        .env("XDG_CONFIG_HOME", config)
-        .spawn()
-    {
-        Ok(venus) => venus,
+struct ControlListener {
+    listener: UnixListener,
+    path: PathBuf,
+    identity: (u64, u64),
+}
+
+impl Drop for ControlListener {
+    fn drop(&mut self) {
+        // The open listener prevents inode reuse; chmod may legitimately change ctime.
+        if socket_identity(&self.path)
+            .ok()
+            .flatten()
+            .is_some_and(|identity| (identity.0, identity.1) == self.identity)
+        {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn create_control_listener(path: &Path) -> Result<ControlListener, String> {
+    match UnixStream::connect(path) {
+        Ok(_) => {
+            return Err(format!(
+                "an Eon supervisor is already active at {}",
+                path.display()
+            ));
+        }
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound
+                || error.kind() == std::io::ErrorKind::ConnectionRefused => {}
         Err(error) => {
-            stop(&mut orbit);
-            return Err(format!("cannot launch Eon Desktop: {error}"));
+            return Err(format!(
+                "cannot inspect Eon control socket {}: {error}",
+                path.display()
+            ));
+        }
+    }
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_socket() && metadata.uid() == effective_uid() => {
+            fs::remove_file(path).map_err(|error| {
+                format!(
+                    "cannot remove stale Eon control socket {}: {error}",
+                    path.display()
+                )
+            })?;
+        }
+        Ok(_) => {
+            return Err(format!(
+                "Eon control path {} must be an owned Unix socket",
+                path.display()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect Eon control path {}: {error}",
+                path.display()
+            ));
+        }
+    }
+    let listener = UnixListener::bind(path)
+        .map_err(|error| format!("cannot bind Eon control socket {}: {error}", path.display()))?;
+    let identity = socket_identity(path)?
+        .ok_or_else(|| format!("Eon control socket {} disappeared", path.display()))?;
+    let control = ControlListener {
+        listener,
+        path: path.into(),
+        identity: (identity.0, identity.1),
+    };
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| {
+        format!(
+            "cannot protect Eon control socket {}: {error}",
+            path.display()
+        )
+    })?;
+    control
+        .listener
+        .set_nonblocking(true)
+        .map_err(|error| format!("cannot configure Eon control socket: {error}"))?;
+    Ok(control)
+}
+
+fn accept_control_client(
+    listener: &UnixListener,
+    workspace: &mut Workspace,
+    sessions: &mut Vec<RunningSession>,
+    programs: &Programs,
+    config: &Path,
+    socket_timeout: Duration,
+) -> Result<(), String> {
+    match listener.accept() {
+        Ok((stream, _)) => handle_control_client(
+            stream,
+            workspace,
+            sessions,
+            programs,
+            config,
+            socket_timeout,
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+        Err(error) => return Err(format!("cannot accept Eon control client: {error}")),
+    }
+    Ok(())
+}
+
+fn handle_control_client(
+    mut stream: UnixStream,
+    workspace: &mut Workspace,
+    sessions: &mut Vec<RunningSession>,
+    programs: &Programs,
+    config: &Path,
+    socket_timeout: Duration,
+) {
+    let timeout = Some(Duration::from_millis(250));
+    if stream.set_read_timeout(timeout).is_err() || stream.set_write_timeout(timeout).is_err() {
+        return;
+    }
+    let mut bytes = Vec::new();
+    let read = Read::by_ref(&mut stream)
+        .take(MAX_CONTROL_REQUEST_BYTES + 1)
+        .read_to_end(&mut bytes);
+    let json_hint = bytes
+        .split(|byte| *byte == b'\t')
+        .nth(1)
+        .is_some_and(|value| value == b"json");
+    let request = match read {
+        Ok(_) if bytes.len() as u64 <= MAX_CONTROL_REQUEST_BYTES => parse_control_request(&bytes),
+        Ok(_) => Err(ActionError::new(
+            "malformed-action",
+            "control request exceeded 4096 bytes",
+        )),
+        Err(error) => Err(ActionError::new(
+            "malformed-action",
+            format!("cannot read complete control request: {error}"),
+        )),
+    };
+    let response = match request {
+        Ok(request) => {
+            let result = workspace.dispatch(&request.id, request.action, |session| {
+                let child = start_orbit(programs, config, &session.endpoint, &[], socket_timeout)?;
+                sessions.push(RunningSession {
+                    id: session.id.clone(),
+                    child: Some(child),
+                });
+                Ok(())
+            });
+            match result {
+                Ok(()) => format!(
+                    "ok\n{}",
+                    if request.json {
+                        workspace.json()
+                    } else {
+                        workspace.human()
+                    }
+                ),
+                Err(error) => control_error(&error, request.json),
+            }
+        }
+        Err(error) => control_error(&error, json_hint),
+    };
+    debug_assert!(response.len() as u64 <= MAX_CONTROL_RESPONSE_BYTES);
+    let _ = stream.write_all(response.as_bytes());
+}
+
+#[derive(Debug)]
+struct ControlRequest {
+    id: String,
+    json: bool,
+    action: Action,
+}
+
+fn parse_control_request(bytes: &[u8]) -> Result<ControlRequest, ActionError> {
+    let request = std::str::from_utf8(bytes)
+        .map_err(|_| ActionError::new("malformed-action", "control request is not UTF-8"))?;
+    let request = request.strip_suffix('\n').ok_or_else(|| {
+        ActionError::new(
+            "malformed-action",
+            "control request is not newline terminated",
+        )
+    })?;
+    if request.contains('\n') || request.contains('\r') {
+        return Err(ActionError::new(
+            "malformed-action",
+            "control request contains multiple lines",
+        ));
+    }
+    let fields: Vec<&str> = request.split('\t').collect();
+    let id = fields[0];
+    if id.is_empty()
+        || id.len() > 128
+        || !id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+    {
+        return Err(ActionError::new(
+            "malformed-action",
+            "control request identity is invalid",
+        ));
+    }
+    let json = match fields.get(1).copied() {
+        Some("human") => false,
+        Some("json") => true,
+        _ => {
+            return Err(ActionError::new(
+                "malformed-action",
+                "control output must be human or json",
+            ));
         }
     };
+    let action = match fields.get(2).copied() {
+        Some("inspect") if fields.len() == 3 => Action::Inspect,
+        Some("tab-create") if fields.len() == 3 => Action::CreateTab,
+        Some("pane-create") if fields.len() == 3 => Action::CreatePane,
+        Some("focus-left") if fields.len() == 3 => Action::Focus(Direction::Left),
+        Some("focus-right") if fields.len() == 3 => Action::Focus(Direction::Right),
+        Some("focus-up") if fields.len() == 3 => Action::Focus(Direction::Up),
+        Some("focus-down") if fields.len() == 3 => Action::Focus(Direction::Down),
+        Some("focus-id") if fields.len() == 4 && !fields[3].is_empty() => {
+            Action::FocusId(fields[3].into())
+        }
+        _ => {
+            return Err(ActionError::new(
+                "malformed-action",
+                "unknown or invalid control action",
+            ));
+        }
+    };
+    Ok(ControlRequest {
+        id: id.into(),
+        json,
+        action,
+    })
+}
 
-    loop {
-        if let Some(status) = orbit
-            .try_wait()
-            .map_err(|error| format!("cannot observe Sessions: {error}"))?
-        {
-            stop(&mut venus);
-            return Ok(status_code(status));
-        }
-        if venus
-            .try_wait()
-            .map_err(|error| format!("cannot observe Eon Desktop: {error}"))?
-            .is_some()
-        {
-            eprintln!(
-                "Eon Desktop exited; Sessions remains active. Run `eon attach` to reconnect."
-            );
-            return orbit
-                .wait()
-                .map(status_code)
-                .map_err(|error| format!("cannot wait for Sessions: {error}"));
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
+fn control_error(error: &ActionError, json: bool) -> String {
+    format!("error\n{}", if json { error.json() } else { error.human() })
 }
 
 type SocketIdentity = (u64, u64, i64, i64);
@@ -245,7 +673,7 @@ fn socket_identity(socket: &Path) -> Result<Option<SocketIdentity>, String> {
         ))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!(
-            "cannot inspect Sessions socket {}: {error}",
+            "cannot inspect socket {}: {error}",
             socket.display()
         )),
     }
@@ -297,7 +725,8 @@ fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Programs, effective_uid, prepare_configuration, prepare_runtime, supervise, xdg_path,
+        Action, Programs, create_control_listener, effective_uid, parse_control_request,
+        prepare_configuration, prepare_runtime, supervise, xdg_path,
     };
     use std::{
         fs,
@@ -439,5 +868,37 @@ mod tests {
 
         let absolute = PathBuf::from("/absolute");
         assert_eq!(xdg_path(Some(absolute.clone())), Some(absolute));
+    }
+
+    #[test]
+    fn private_control_parser_rejects_malformed_actions() {
+        let request = parse_control_request(b"request-1\tjson\tfocus-id\tpane-1\n").unwrap();
+        assert!(matches!(request.action, Action::FocusId(id) if id == "pane-1"));
+
+        for malformed in [
+            b"request-1\tjson\tunknown\n".as_slice(),
+            b"request-1\tjson\tinspect\nsecond\n".as_slice(),
+            b"request 1\tjson\tinspect\n".as_slice(),
+            b"request-1\tjson\tinspect".as_slice(),
+        ] {
+            assert_eq!(
+                parse_control_request(malformed).unwrap_err().code,
+                "malformed-action"
+            );
+        }
+    }
+
+    #[test]
+    fn control_listener_preserves_a_replacement_socket() {
+        let root = temporary_directory();
+        let socket = root.join("eon.sock");
+        let control = create_control_listener(&socket).unwrap();
+        fs::remove_file(&socket).unwrap();
+        let _replacement = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+        drop(control);
+
+        assert!(socket.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 }
