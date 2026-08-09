@@ -9,14 +9,14 @@ artifact.
 
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
-| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Proven | `eae70e8d3ed4348b389f320dfd49d7db29478546`; Linux composition proof and uncommitted canonical icon 4 candidate below |
-| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Proven | `c9e898c9ff889c2be4d4381a20676291bab65b49`; manifest proof below |
-| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Proven | `c9e898c9ff889c2be4d4381a20676291bab65b49` manifest proof and `eae70e8d3ed4348b389f320dfd49d7db29478546` Linux composition proof below |
-| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Proven | `eae70e8d3ed4348b389f320dfd49d7db29478546`; Linux composition proof below |
+| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Proven | `89823e5eb308e2b27a03eafdee25ce55112038b4`; workspace-aware composition proof below |
+| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Proven | `89823e5eb308e2b27a03eafdee25ce55112038b4`; workspace-aware composition proof below |
+| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Proven | `89823e5eb308e2b27a03eafdee25ce55112038b4`; workspace-aware composition proof below |
+| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Proven | `89823e5eb308e2b27a03eafdee25ce55112038b4`; workspace-aware composition proof below |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
-| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, and traverse the topology directly through Eon-owned semantic actions | Eon | Partially proved | `1a00a9f6de171e944c3c31a9f72ee2cc92d8fa15`; workspace-owner proof below |
+| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, and traverse the topology directly through Eon-owned semantic actions | Eon | Partially proved | Eon owner `1a00a9f6de171e944c3c31a9f72ee2cc92d8fa15`, Venus consumer `932be5ce68a42b72e8b0bf5953c74f7a8af51f1e`, and composition `89823e5eb308e2b27a03eafdee25ce55112038b4`; refresh gap below |
 | EON-C9 | Eon supplies one exact managed interactive environment through prefixed external commands and Session-private unprefixed tool names without changing the user's global toolchain | Eon | Proven | `99c410a1081b88dd8db2b7f9e26394a38acd175a`; managed-environment proof below |
 | EON-C10 | A local client can submit versioned Eon workspace actions and receive one complete accepted workspace snapshot without reconstructing topology or terminal state | Eon | Proven | `4af395aea06c230ee6b18cf0755ae25915c0b88d`; EONW v1 producer proof below |
 
@@ -44,9 +44,9 @@ artifact.
   traversal, simultaneous expanded panes, durable layout restoration, AgentRun
   or provider semantics, terminal observation, managed tool defaults, plugin or
   MCP surface, isolation target, remote access, or appearance effect.
-- Approval: explicitly approved by the user on 2026-08-08. The Eon-owned model,
-  supervisor, and CLI action projection are partially proved. Native Venus
-  materialization and cross-repository dogfood remain unproved.
+- Approval: explicitly approved by the user on 2026-08-08. Eon ownership,
+  native Venus materialization, and exact composition are proved separately.
+  Refresh after an independently invoked CLI mutation remains unproved.
 
 ## Approved managed-environment contract EON-C9
 
@@ -100,10 +100,10 @@ artifact.
   message. It adds no event stream, subscription or polling policy, remote
   transport, general plugin or MCP surface, authorization framework, durable
   restoration, AgentRun state, raw terminal content, or Venus rendering.
-- Update order: prove the Eon producer first; update Venus against that exact
-  revision; only then update Eon's canonical component requirement and explicit
-  Venus launch input against the exact consumer revision. The currently selected
-  Venus revision remains unchanged until it actually consumes EONW.
+- Update order: Eon producer `4af395aea06c230ee6b18cf0755ae25915c0b88d`
+  preceded Venus consumer `932be5ce68a42b72e8b0bf5953c74f7a8af51f1e`;
+  Eon composition `89823e5eb308e2b27a03eafdee25ce55112038b4`
+  selects that consumer and supplies its workspace socket.
 - Approval: explicitly approved by the user on 2026-08-09 by directing Eon to
   fix the named versioned workspace snapshot/action prerequisite.
 
@@ -124,6 +124,40 @@ artifact.
   native-size inspection found cleaner low-frequency geometry and edges.
 
 ## Proof record
+
+### Workspace-aware composition proof `89823e5eb308e2b27a03eafdee25ce55112038b4`
+
+- Contracts: EON-C1 through EON-C4 remain proved. EON-C8 advances its exact
+  composition slice while remaining partially proved. EON-C9 and EON-C10 keep
+  their existing owner proofs.
+- Component graph: `components/eon-alpha-v1.json`, SHA-256
+  `aad379ed82b630be782f42b51f45c680fd37800c29b3ce7bea829df2be176214`,
+  selects Venus `932be5ce68a42b72e8b0bf5953c74f7a8af51f1e` with VEN-C8 at that
+  proof revision and records both the Orbit and Eon workspace socket inputs.
+  Orbit remains `00b136318bea13e3f08d490468f069de6f6b9bd2` with ORBF v1 and ORBS
+  v2 proof `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`.
+- Launch behavior: supervisor startup and `eon attach` pass the initial Orbit
+  endpoint followed by `eon.sock`. Bare `eon` reconnects through the live Eon
+  supervisor even if the initial Orbit Session has exited, allowing Venus to
+  select another live pane through EONW v1.
+- Package: `/nix/store/skbp88k9k016qxqhypa7q81iphmzx8x5-eon-0.1.0`, NAR
+  hash `sha256-8j3D7TcfVxZD5rOGF8l/qZxQg8oFQrwTrgJ0RkMSHQ8=`, NAR size
+  1,301,496 bytes, closure size 1,559,511,376 bytes. Its Venus artifact is
+  `/nix/store/hkknqslwjg7fnzsw0wrqc209wmjpg3nw-yazelix-venus-0.1.0`.
+- Checks: canonical locked Rust format, check, 17-test, and clippy suites;
+  manifest validation; source-backed agent-policy validation; locked Nix build
+  and flake evaluation; `git diff --check`. The Nix build also ran 53 locked
+  Venus tests.
+- Native dogfood: isolated Linux/Wayland composition launched two tabs, three
+  live independent Orbit Sessions, and Venus with both exact socket inputs.
+  Venus rendered the workspace chrome, switched to pane 1, and managed Nushell
+  accepted `ls`. The user's existing runtime was not interrupted.
+- Limits: EONW v1 intentionally has no event stream, subscription, or polling
+  policy. A tab or pane created by another CLI after Venus reads its snapshot
+  requires reopening Eon Desktop; a separately approved refresh mechanism and
+  its composed proof are required before EON-C8 becomes fully proved. Public
+  Venus distribution also waits for Eon Desktop to record the user-approved
+  Apache-2.0 license in that source repository.
 
 ### EONW v1 producer proof `4af395aea06c230ee6b18cf0755ae25915c0b88d`
 
