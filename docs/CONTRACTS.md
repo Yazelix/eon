@@ -19,7 +19,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
-| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Working tree; locked Rust checks and Nix build passed; proof revision pending |
+| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Proven | Composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21` |
 | EON-C9 | Eon supplies one exact managed interactive environment through prefixed external commands and Session-private unprefixed tool names without changing the user's global toolchain | Eon | Proven | `99c410a1081b88dd8db2b7f9e26394a38acd175a`; managed-environment proof below |
 | EON-C10 | A local client can submit versioned Eon workspace actions and receive one complete accepted workspace snapshot without reconstructing topology or terminal state | Eon | Proven | `4af395aea06c230ee6b18cf0755ae25915c0b88d`; EONW v1 producer proof below |
 
@@ -155,6 +155,17 @@ detailed execution evidence, and Git history retains superseded states.
   pane with Alt+M and a tab with Ctrl+T; renders every fitting pane header around
   one selected body; and reflects external workspace actions within one second.
 
+### EON-C8 — Session-exit pruning
+
+- Proof revision: `7ede475992528be1b6643035abe4da9560d50a21` on x86_64 Linux.
+- Artifact: Nix alpha package `eon-0.1.0`, NAR hash
+  `sha256:1948aw0vwgi8yyjkx18g0q9gdh30idzwfzrsddr84bzqkjh1j2fq`.
+- Checks: locked Rust format, check, 19-test, and clippy suites; exact Nix build
+  and flake evaluation; profile artifact comparison; and `git diff --check`.
+- Exercised behavior: ended Sessions remove their panes without identity reuse;
+  selection moves to the nearest survivor; empty tabs disappear; later Sessions
+  survive the initial Session; and the final Session closes Venus and Eon.
+
 ### EON-C9 — managed environment
 
 - Proof revision: `99c410a1081b88dd8db2b7f9e26394a38acd175a` on x86_64 Linux.
@@ -189,10 +200,9 @@ detailed execution evidence, and Git history retains superseded states.
   unproved, and the packaged font set can show fallback boxes for some emoji and
   native tool glyphs.
 - Workspace topology is live only and bounded to 64 tabs and 256 panes. It has
-  no explicit pane, tab, or Session-stop action. Automatic pruning after Session
-  exit is implemented and mechanically verified in the working tree; its
-  proof-bearing commit remains pending. Machine restart does not preserve
-  undeclared process or layout state, and EONW v1 provides no event stream,
-  remote transport, authorization layer, plugin surface, or durable restoration.
+  no explicit pane, tab, or Session-stop action. Machine restart does not
+  preserve undeclared process or layout state, and EONW v1 provides no event
+  stream, remote transport, authorization layer, plugin surface, or durable
+  restoration.
 - Closing Venus detaches the client while Orbit and its PTY remain alive. Bare
   `eon` and `eon attach` reconnect through the running Eon supervisor.
