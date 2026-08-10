@@ -218,15 +218,16 @@
         substituteInPlace "$out" \
           --replace-fail '^zoxide' '^${zoxidePackage}/bin/zoxide'
       '';
-      starshipConfig = pkgs.writeText "eon-starship.toml" (
-        builtins.readFile ./defaults/starship.toml
-      );
-      nuEnv = pkgs.replaceVars ./defaults/nushell/env.nu {
-        inherit starshipConfig;
-      };
-      nuConfig = pkgs.replaceVars ./defaults/nushell/config.nu {
-        inherit starshipInit zoxideInit;
-      };
+      nuVendorAutoload = pkgs.writeTextDir "eon.nu" ''
+        if (match ($env.PROMPT_COMMAND? | describe) {
+          "nothing" => true
+          "closure" => ((view source $env.PROMPT_COMMAND | metadata).source == "default_env.nu")
+          _ => false
+        }) {
+          overlay use ${starshipInit}
+        }
+        source ${zoxideInit}
+      '';
 
       desktopItem = pkgs.makeDesktopItem {
         name = "eon";
@@ -309,9 +310,7 @@
               --set EON_YAZI "${yaziPackage}/bin/yazi" \
               --set EON_YA "${yaziPackage}/bin/ya" \
               --set EON_LAZYGIT "${lazygitPackage}/bin/lazygit" \
-              --set EON_LG "$out/bin/eon-lazygit" \
-              --set EON_NU_CONFIG "${nuConfig}" \
-              --set EON_NU_ENV "${nuEnv}" \
+              --set EON_NU_VENDOR_AUTOLOAD "${nuVendorAutoload}" \
               --set EON_SESSION_BIN "$out/libexec/eon/bin" \
               --prefix TERMINFO_DIRS : "${orbitPackage}/share/terminfo"
           '';

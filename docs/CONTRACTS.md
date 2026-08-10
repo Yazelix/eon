@@ -20,7 +20,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Proven | Composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21` |
-| EON-C9 | Eon supplies one exact managed interactive environment through prefixed external commands and Session-private unprefixed tool names, with packaged-before-user native Nushell configuration, without changing the user's global toolchain | Eon | Proven | `fec6824a99625bd040aeacbba81621aca84cfd06`; exact artifact and checks below |
+| EON-C9 | Eon supplies one exact managed interactive environment through prefixed external commands and Session-private unprefixed tool names, while native Nushell and Starship configuration remain user-owned | Eon | Candidate | Working tree; exact artifact and checks below |
 | EON-C10 | A local client can submit versioned Eon workspace actions and receive one complete accepted workspace snapshot without reconstructing topology or terminal state | Eon | Proven | `4af395aea06c230ee6b18cf0755ae25915c0b88d`; EONW v1 producer proof below |
 
 ## Approved workspace contract EON-C8
@@ -68,30 +68,36 @@ detailed execution evidence, and Git history retains superseded states.
 - Result: Eon selects exact Nushell, Starship, Zoxide, Helix, Yazi, and LazyGit
   artifacts. Stable `eon-*` commands expose them outside Eon without shadowing
   the user toolchain. One Session-private PATH exposes the accepted unprefixed
-  executable names to processes inside Eon, managed Nushell supplies `lg`, and
-  the default no-command Session starts managed Nushell without its startup
-  banner. Managed Nushell loads Eon's packaged `env.nu` and `config.nu` before
-  optional native user sources at `<EON_CONFIG_HOME>/nu/env.nu` and
-  `<EON_CONFIG_HOME>/nu/config.nu`; missing user sources are ignored.
-- Important failures: a missing artifact, invalid private native
-  configuration, manifest mismatch, or launch failure returns a bounded
-  explicit error. Eon never mutates global user configuration, shell startup
-  files, aliases, or PATH, and never creates or rewrites the optional Nushell
-  user sources.
+  executable names to processes inside Eon, and the default no-command Session
+  starts managed Nushell. Nushell loads its normal native configuration and
+  then one Eon vendor-autoload file. The file initializes pinned Starship only
+  when the user has not replaced Nushell's built-in `PROMPT_COMMAND`, and it
+  initializes pinned Zoxide. Nushell's native user autoload remains last and
+  may replace either integration.
+  Eon does not set `STARSHIP_CONFIG`, so Starship retains its normal
+  `~/.config/starship.toml` discovery.
+- Important failures: a missing artifact, invalid native configuration,
+  manifest mismatch, generated integration failure, or launch failure remains
+  explicit. Eon never mutates global user configuration, shell startup files,
+  aliases, or PATH, and does not redirect Session child processes through its
+  private XDG configuration root.
 - Ownership: Eon owns component selection, exact versions, launch policy, its
   private configuration root, managed command names, Session PATH projection,
-  Nushell source order and packaged defaults, and identity reporting. Nushell
-  owns source evaluation and its configuration schema; each other selected tool
-  retains its native behavior and configuration schema. Orbit retains process,
-  PTY, terminal-state, and Session authority; Venus owns no shell or tool
-  policy.
+  guarded fallback activation, and identity reporting. Nushell owns native
+  configuration and autoload order; Starship owns prompt behavior and
+  configuration discovery; Zoxide owns directory ranking, hooks, and commands.
+  Each other selected tool retains its native behavior and configuration
+  schema. Orbit retains process, PTY, terminal-state, and Session authority;
+  Venus owns no shell or tool policy.
 - Boundary: the accepted slice adds no global alias mode, ornamental wrappers,
-  shell framework, automatic Direnv or Mise activation, Carapace, plugin or MCP
+  Eon-owned shell configuration directory, prompt preset, banner policy, shell
+  framework, automatic Direnv or Mise activation, Carapace, plugin or MCP
   surface, declarative profile, distribution channel, remote behavior, or
-  editor replacement. `eon run -- COMMAND...` remains the explicit
-  child-command escape hatch.
-- Approval: the managed environment was approved on 2026-08-08; native user
-  Nushell layering and the banner default were approved on 2026-08-10.
+  editor replacement. `eon run -- COMMAND...` remains the explicit child-command
+  escape hatch.
+- Approval: the managed environment was approved on 2026-08-08; native
+  Nushell and Starship configuration with guarded Starship and Zoxide fallback
+  activation was approved on 2026-08-10.
 
 ## Approved workspace protocol contract EON-C10
 
@@ -173,22 +179,22 @@ detailed execution evidence, and Git history retains superseded states.
   selection moves to the nearest survivor; empty tabs disappear; later Sessions
   survive the initial Session; and the final Session closes Venus and Eon.
 
-### EON-C9 — managed environment
+### EON-C9 — managed environment candidate
 
-- Proof revision: `fec6824a99625bd040aeacbba81621aca84cfd06` on
-  x86_64 Linux.
-- Artifact: `/nix/store/pa5ksqs4s9dxlabkjia2pga8brd5dmg3-eon-0.1.0`, NAR hash
-  `sha256-1jXIgPVCHb/QCatKXEAkjY78buTibyrldqHy4MUiqcc=`, NAR size 1,316,096
-  bytes, closure size 1,559,526,400 bytes.
-- Checks: locked Rust format, check, 20-test workspace suite, and clippy; exact
-  Nix flake check and package build; native managed-Nushell configuration and
-  interactive startup dogfood; and `git diff --check`.
-- Exercised behavior: prefixed managed commands preserve the ambient toolchain
-  outside Eon; Session-private unprefixed commands and configuration remain
-  rooted under Eon; packaged Nushell configuration precedes optional native
-  user sources; nested managed Nushell retains the same root; missing sources
-  are ignored; invalid source text exits explicitly; the startup banner is
-  absent; and explicit child argv and native configuration overrides win.
+- Candidate revision: working tree atop
+  `5e2f31f342b4fb5ac3201f09bfd735fc79d8caf8` on x86_64 Linux. No
+  proof-bearing Git revision yet.
+- Artifact: `/nix/store/jiy3v8qln45rcxlvavhcwsgk6q1gqd41-eon-0.1.0`, NAR hash
+  `sha256-87mvDatabjg/J4yUfkvXkHvla9P2tHAUxhShOin9FB8=`, NAR size 1,301,600
+  bytes, closure size 1,559,511,768 bytes.
+- Checks: locked Rust format, check, 19-test workspace suite, and clippy; exact
+  Nix flake check and package build; exact built-artifact native configuration
+  checks; and `git diff --check`.
+- Exercised behavior: Nushell loads normal native `env.nu` and `config.nu`;
+  preserves a user prompt; otherwise initializes pinned Starship from normal
+  `~/.config/starship.toml`; leaves `STARSHIP_CONFIG` unset; initializes pinned
+  Zoxide; permits native user autoload to replace the prompt and `z`; and keeps
+  Session XDG configuration ambient.
 
 ### EON-C10 — EONW v1 producer
 

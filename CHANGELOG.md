@@ -9,9 +9,10 @@ installation, and proven contract changes.
   expose them through bounded `eon-*` commands and a Session-private PATH
   without changing the user's global shell environment or importing ambient
   Helix, Yazi, or LazyGit configuration-path overrides; resolve a relative Eon
-  configuration root once before passing it to child tools; load optional
-  native `nu/env.nu` and `nu/config.nu` after packaged Nushell defaults; and
-  disable the packaged Nushell startup banner.
+  configuration root once before passing it to owned component configuration;
+  let Nushell and Starship load their normal user configuration; initialize
+  pinned Starship only while Nushell retains its built-in prompt; initialize
+  pinned Zoxide through vendor autoload; and leave native user autoload last.
 - Add Eon-owned live tabs and vertical pane stacks with stable-ID and direct
   directional CLI actions, deterministic JSON output, and one Orbit process per pane.
 - Remove a pane when its Orbit Session exits, select the nearest survivor,

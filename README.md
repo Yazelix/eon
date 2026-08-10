@@ -140,11 +140,14 @@ protocol schema.
 
 ## Managed environment
 
-A Session without an explicit command starts Eon's pinned Nushell without its
-startup banner. Starship supplies its native modules with a violet `∴` prompt
-marker and no leading blank line, while Zoxide supplies its native `z`
-integration. The package exposes the managed tools outside Eon only through
-these names:
+A Session without an explicit command starts Eon's pinned Nushell. Nushell
+loads its normal `~/.config/nushell/env.nu` and `config.nu`; when they do not
+exist, Nushell retains its native first-run files and startup banner. Eon's
+vendor autoload initializes pinned Starship only when the user has not replaced
+Nushell's built-in prompt, and initializes pinned Zoxide. Starship reads normal
+`~/.config/starship.toml` or uses its built-in defaults; Eon does not set
+`STARSHIP_CONFIG`. The package exposes the managed tools outside Eon only
+through these names:
 
 | Command | Managed tool |
 |---|---|
@@ -156,9 +159,10 @@ these names:
 
 Outside a Session, the prefixed commands inherit the ambient PATH. Inside a
 Session, one private PATH resolves `nu`, `hx`, `yazi`, `ya`, and `lazygit` to
-those same artifacts; managed Nushell also defines `lg`. Eon does not alter the
-parent process's PATH, aliases, or shell startup files. Each tool keeps its
-native configuration schema, data, and cache behavior. At launch, Eon ignores
+those same artifacts. Eon does not alter the parent process's PATH, aliases, or
+shell startup files. Each tool keeps its native configuration schema, data, and
+cache behavior. Nushell's native `autoload/*.nu` files run after Eon's vendor
+file and may override its prompt or `z` integration. At launch, Eon ignores
 ambient Helix runtime and Steel configuration paths and Yazi or LazyGit
 configuration paths that would bypass its private root; explicit Helix and
 LazyGit configuration arguments remain available. LazyGit uses the Git
@@ -166,23 +170,17 @@ executable already available from the user's environment. The current packaged
 font set does not guarantee every emoji, Powerline, or Yazi icon glyph, so
 unsupported symbols may render as fallback boxes.
 
-Managed Nushell loads Eon's packaged defaults before optional native user
-sources at `~/.config/eon/nu/env.nu` and `~/.config/eon/nu/config.nu`. Under a
-custom configuration root, those files live at `$EON_CONFIG_HOME/nu/`. Eon
-does not create or rewrite them; missing files are ignored. The user sources
-remain executable Nushell configuration and may override packaged defaults.
-
 `EON_CONFIG_HOME` selects the configuration root; Eon resolves a relative value
 once against the launch directory. Without it, Eon uses `$XDG_CONFIG_HOME/eon`
 or `$HOME/.config/eon`. `EON_RUNTIME_DIR` selects the socket directory; Eon
 otherwise uses `$XDG_RUNTIME_DIR/eon` or a private per-user temporary directory.
-Eon passes the absolute root as `XDG_CONFIG_HOME` to child components and
-managed tools; it additionally preserves `EON_CONFIG_HOME` through Sessions and
-managed dispatch so nested commands keep the same root. Eon ignores relative
-XDG base paths. It creates missing configuration and runtime directories with
-mode `0700`. It leaves existing configuration-directory permissions unchanged
-and rejects unsafe existing runtime directories without changing their
-permissions.
+Eon passes the absolute root as `XDG_CONFIG_HOME` to Venus and non-Nushell
+managed tools. Sessions and managed Nushell inherit ambient XDG configuration;
+Eon preserves `EON_CONFIG_HOME` separately through Sessions and managed
+dispatch. Eon ignores relative XDG base paths. It creates missing configuration
+and runtime directories with mode `0700`. It leaves existing
+configuration-directory permissions unchanged and rejects unsafe existing
+runtime directories without changing their permissions.
 
 ## Component manifest
 
@@ -227,15 +225,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 241 |
+| README | 239 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 350 |
-| Distribution and references | 202 |
-| Changelog | 39 |
-| Rust source and tests | 3,401 |
+| Architecture and contracts | 356 |
+| Distribution and references | 214 |
+| Changelog | 40 |
+| Rust source and tests | 3,284 |
 | Cargo manifests | 33 |
 | Component manifest | 263 |
-| Nix composition | 334 |
-| Product defaults | 12 |
-| **Total** | **5,538** |
+| Nix composition | 333 |
+| Product defaults | 0 |
+| **Total** | **5,425** |

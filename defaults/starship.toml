@@ -1,5 +1,0 @@
-add_newline = false
-
-[character]
-success_symbol = "[∴](bold #AF0BFA) "
-error_symbol = "[∴](bold #AF0BFA) "

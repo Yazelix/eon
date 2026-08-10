@@ -9,7 +9,6 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
-    hash::{DefaultHasher, Hash, Hasher},
     io::{Read, Write},
     os::unix::{
         fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt},
@@ -43,8 +42,7 @@ struct ManagedPrograms {
     yazi: PathBuf,
     ya: PathBuf,
     lazygit: PathBuf,
-    nu_config: PathBuf,
-    nu_env: PathBuf,
+    nu_vendor_autoload: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,10 +86,7 @@ fn managed_tool(invocation: &OsStr) -> Option<ManagedTool> {
 fn launch_managed(tool: ManagedTool, arguments: Vec<OsString>) -> Result<i32, String> {
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
-    let mut programs = managed_programs();
-    if tool == ManagedTool::Nu {
-        prepare_nu_configuration(&mut programs, &config, &runtime_directory())?;
-    }
+    let programs = managed_programs();
     let mut command = managed_command(tool, &programs, &config, &arguments);
     let program = command.get_program().to_string_lossy().into_owned();
     let error = command.exec();
@@ -114,11 +109,9 @@ fn managed_command(
     let mut command = Command::new(program);
     match tool {
         ManagedTool::Nu => {
-            command
-                .arg("--config")
-                .arg(&programs.nu_config)
-                .arg("--env-config")
-                .arg(&programs.nu_env);
+            if let Some(path) = &programs.nu_vendor_autoload {
+                command.env("NU_VENDOR_AUTOLOAD_DIR", path);
+            }
         }
         ManagedTool::Yazi | ManagedTool::Ya => {
             command.env_remove("YAZI_CONFIG_HOME");
@@ -136,10 +129,10 @@ fn managed_command(
                 .env_remove("HELIX_STEEL_CONFIG");
         }
     }
-    command
-        .args(arguments)
-        .env("EON_CONFIG_HOME", config)
-        .env("XDG_CONFIG_HOME", config);
+    command.args(arguments).env("EON_CONFIG_HOME", config);
+    if tool != ManagedTool::Nu {
+        command.env("XDG_CONFIG_HOME", config);
+    }
     command
 }
 
@@ -337,8 +330,7 @@ fn managed_programs() -> ManagedPrograms {
         yazi: configured_program("EON_YAZI", "yazi"),
         ya: configured_program("EON_YA", "ya"),
         lazygit: configured_program("EON_LAZYGIT", "lazygit"),
-        nu_config: configured_program("EON_NU_CONFIG", "config.nu"),
-        nu_env: configured_program("EON_NU_ENV", "env.nu"),
+        nu_vendor_autoload: nonempty_environment_path("EON_NU_VENDOR_AUTOLOAD"),
     }
 }
 
@@ -365,64 +357,6 @@ fn prepare_configuration(path: &Path) -> Result<(), String> {
         .mode(0o700)
         .create(path)
         .map_err(|error| format!("cannot create {}: {error}", path.display()))
-}
-
-fn prepare_nu_configuration(
-    programs: &mut ManagedPrograms,
-    config: &Path,
-    runtime: &Path,
-) -> Result<(), String> {
-    prepare_runtime(runtime)?;
-    let mut hasher = DefaultHasher::new();
-    config.hash(&mut hasher);
-    let directory = runtime.join(format!("nushell-{:016x}", hasher.finish()));
-    prepare_runtime(&directory)?;
-    let directory = fs::canonicalize(&directory)
-        .map_err(|error| format!("cannot resolve {}: {error}", directory.display()))?;
-    let packaged_env = programs.nu_env.clone();
-    let packaged_config = programs.nu_config.clone();
-    let user = config.join("nu");
-
-    for (name, command, packaged, user) in [
-        ("env.nu", "source-env", packaged_env, user.join("env.nu")),
-        (
-            "config.nu",
-            "source",
-            packaged_config,
-            user.join("config.nu"),
-        ),
-    ] {
-        let mut source = format!("{command} {}\n", nu_quote(&packaged)?);
-        if user.is_file() {
-            source.push_str(&format!("{command} {}\n", nu_quote(&user)?));
-        }
-        atomic_write(&directory.join(name), source.as_bytes())?;
-    }
-
-    programs.nu_env = directory.join("env.nu");
-    programs.nu_config = directory.join("config.nu");
-    Ok(())
-}
-
-fn nu_quote(path: &Path) -> Result<String, String> {
-    let path = path.to_str().ok_or_else(|| {
-        format!(
-            "Nushell configuration path is not UTF-8: {}",
-            path.display()
-        )
-    })?;
-    Ok(format!(
-        "\"{}\"",
-        path.replace('\\', "\\\\").replace('"', "\\\"")
-    ))
-}
-
-fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
-    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
-    fs::write(&temporary, contents)
-        .map_err(|error| format!("cannot write {}: {error}", temporary.display()))?;
-    fs::rename(&temporary, path)
-        .map_err(|error| format!("cannot install {}: {error}", path.display()))
 }
 
 fn runtime_directory() -> PathBuf {
@@ -601,8 +535,7 @@ fn orbit_command(
         .arg("serve")
         .arg(socket)
         .arg("--")
-        .env("EON_CONFIG_HOME", config)
-        .env("XDG_CONFIG_HOME", config);
+        .env("EON_CONFIG_HOME", config);
     if let Some(session_bin) = &programs.session_bin {
         let mut paths = vec![session_bin.clone()];
         if let Some(path) = env::var_os("PATH") {
@@ -875,8 +808,8 @@ fn status_code(status: ExitStatus) -> i32 {
 mod tests {
     use super::{
         ManagedPrograms, ManagedTool, Programs, create_control_listener, effective_uid,
-        managed_command, managed_tool, orbit_command, prepare_configuration,
-        prepare_nu_configuration, prepare_runtime, supervise, xdg_path,
+        managed_command, managed_tool, orbit_command, prepare_configuration, prepare_runtime,
+        supervise, xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -952,8 +885,7 @@ mod tests {
             yazi: "/managed/yazi".into(),
             ya: "/managed/ya".into(),
             lazygit: "/managed/lazygit".into(),
-            nu_config: "/managed/config.nu".into(),
-            nu_env: "/managed/env.nu".into(),
+            nu_vendor_autoload: Some("/managed/autoload".into()),
         };
         let config = Path::new("/private/eon");
         for (tool, program, removed_variables) in [
@@ -997,66 +929,18 @@ mod tests {
         assert_eq!(command.get_program(), "/managed/nu");
         assert_eq!(
             command.get_args().map(OsString::from).collect::<Vec<_>>(),
-            [
-                "--config",
-                "/managed/config.nu",
-                "--env-config",
-                "/managed/env.nu",
-                "--version",
-            ]
-            .map(OsString::from)
-        );
-    }
-
-    #[test]
-    fn managed_nu_layers_packaged_config_before_optional_user_sources() {
-        let root = temporary_directory();
-        let runtime = root.join("runtime");
-        let config = root.join("config");
-        let user_nu = config.join("nu");
-        fs::create_dir_all(&user_nu).unwrap();
-        fs::write(user_nu.join("env.nu"), "$env.USER_ENV = true\n").unwrap();
-        fs::write(user_nu.join("config.nu"), "$env.USER_CONFIG = true\n").unwrap();
-        let mut programs = ManagedPrograms {
-            nu: "/managed/nu".into(),
-            helix: "/managed/hx".into(),
-            yazi: "/managed/yazi".into(),
-            ya: "/managed/ya".into(),
-            lazygit: "/managed/lazygit".into(),
-            nu_config: "/managed/config.nu".into(),
-            nu_env: "/managed/env.nu".into(),
-        };
-
-        prepare_nu_configuration(&mut programs, &config, &runtime).unwrap();
-        assert_eq!(
-            fs::read_to_string(&programs.nu_env).unwrap(),
-            format!(
-                "source-env \"/managed/env.nu\"\nsource-env \"{}\"\n",
-                user_nu.join("env.nu").display()
-            )
+            ["--version"].map(OsString::from)
         );
         assert_eq!(
-            fs::read_to_string(&programs.nu_config).unwrap(),
-            format!(
-                "source \"/managed/config.nu\"\nsource \"{}\"\n",
-                user_nu.join("config.nu").display()
-            )
-        );
-
-        fs::remove_file(user_nu.join("env.nu")).unwrap();
-        fs::remove_file(user_nu.join("config.nu")).unwrap();
-        programs.nu_config = "/managed/config.nu".into();
-        programs.nu_env = "/managed/env.nu".into();
-        prepare_nu_configuration(&mut programs, &config, &runtime).unwrap();
-        assert_eq!(
-            fs::read_to_string(&programs.nu_env).unwrap(),
-            "source-env \"/managed/env.nu\"\n"
+            command_environment(&command, "EON_CONFIG_HOME"),
+            Some(Some(config.as_os_str()))
         );
         assert_eq!(
-            fs::read_to_string(&programs.nu_config).unwrap(),
-            "source \"/managed/config.nu\"\n"
+            command_environment(&command, "NU_VENDOR_AUTOLOAD_DIR"),
+            Some(Some(OsStr::new("/managed/autoload")))
         );
-        fs::remove_dir_all(root).unwrap();
+        assert_eq!(command_environment(&command, "XDG_CONFIG_HOME"), None);
+        assert_eq!(command_environment(&command, "STARSHIP_CONFIG"), None);
     }
 
     #[test]
@@ -1075,12 +959,11 @@ mod tests {
             default.get_args().map(OsString::from).collect::<Vec<_>>(),
             ["serve", "/runtime/orbit.sock", "--", "/managed/eon-nu"].map(OsString::from)
         );
-        for variable in ["EON_CONFIG_HOME", "XDG_CONFIG_HOME"] {
-            assert_eq!(
-                command_environment(&default, variable),
-                Some(Some(config.as_os_str()))
-            );
-        }
+        assert_eq!(
+            command_environment(&default, "EON_CONFIG_HOME"),
+            Some(Some(config.as_os_str()))
+        );
+        assert_eq!(command_environment(&default, "XDG_CONFIG_HOME"), None);
         assert_eq!(
             std::env::split_paths(
                 default
@@ -1131,7 +1014,7 @@ mod tests {
         executable(
             &orbit,
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$XDG_CONFIG_HOME\" \"$@\" > '{}'\nsleep 0.05\nmv \"$2\" \"$2.old\"\nprintf new > \"$2\"\nwhile test ! -e '{}'; do sleep 0.01; done\nexit 23\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$EON_CONFIG_HOME\" \"$@\" > '{}'\nsleep 0.05\nmv \"$2\" \"$2.old\"\nprintf new > \"$2\"\nwhile test ! -e '{}'; do sleep 0.01; done\nexit 23\n",
                 orbit_log.display(),
                 stop.display()
             ),

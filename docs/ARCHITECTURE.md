@@ -10,8 +10,8 @@ composes.
 |---|---|---|---|
 | Eon Sessions | Orbit | Persistent sessions, PTYs, terminal state, attachment, transport | A versioned session and attachment contract |
 | Eon Desktop | Venus | Native windows, surfaces, input, rendering, desktop integration | A versioned client artifact and launch contract |
-| Nushell | Nushell | Shell language, execution, and native configuration | A pinned shell artifact and explicit configuration inputs |
-| Starship | Starship | Prompt rendering and native modules | A pinned prompt artifact and sparse native configuration |
+| Nushell | Nushell | Shell language, execution, and native configuration | A pinned shell artifact and vendor-autoload input |
+| Starship | Starship | Prompt rendering, native modules, and configuration discovery | A pinned prompt artifact and guarded native initialization |
 | Zoxide | Zoxide | Directory ranking, storage, and shell integration | A pinned artifact and generated Nushell initialization |
 | Helix | Helix | Editing, language integration, editor state | A relocatable editor artifact and explicit configuration inputs |
 | Yazi | Yazi | File management and navigation | A relocatable file-manager artifact and launch contract |
@@ -122,9 +122,9 @@ artifact requirements activate with direct-distribution work.
 Planning can refine contracts, references, and Beads. Runtime work begins after
 the user activates an implementation bead and its upstream proof revisions exist.
 The first Eon slice launches one accepted Eon Desktop and Eon Sessions pair,
-supplies the accepted managed environment, preserves one configuration path,
-reports component identity through one Nix-managed path, and exposes its live
-workspace through EONW v1. Venus consumption follows an exact Eon producer
-proof; the canonical composition graph changes only after an exact consumer
-proof exists. Later slices earn their scope through dogfooding. Direct
-distribution has its own activation gate.
+supplies the accepted managed environment, preserves Eon component and native
+shell configuration boundaries, reports component identity through one
+Nix-managed path, and exposes its live workspace through EONW v1. Venus
+consumption follows an exact Eon producer proof; the canonical composition graph
+changes only after an exact consumer proof exists. Later slices earn their scope
+through dogfooding. Direct distribution has its own activation gate.
