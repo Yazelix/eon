@@ -21,8 +21,8 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Proven | Composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21` |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | `6dfcb473beccadd6e145235009240c81dd570fe5`; proof below |
-| EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Partially proved | Workspace actions at `4af395aea06c230ee6b18cf0755ae25915c0b88d`; runtime identity and stop unproved |
-| EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly attachable when compatible, and explicitly stoppable through their supervisor | Eon | Planned | None |
+| EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Workspace actions at `4af395aea06c230ee6b18cf0755ae25915c0b88d`; lifecycle actions at `fd6b348494111a0d18e241787da14ea99ee117a9` |
+| EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly attachable when compatible, and explicitly stoppable through their supervisor | Eon | Proven | `fd6b348494111a0d18e241787da14ea99ee117a9`; proof below |
 
 ## Approved workspace contract EON-C8
 
@@ -141,10 +141,11 @@ detailed execution evidence, and Git history retains superseded states.
   It adds no event stream, subscription or polling policy, remote transport,
   general plugin or MCP surface, authorization framework, durable restoration,
   AgentRun state, raw terminal content, or Venus rendering.
-- Update order: producer `4af395aea06c230ee6b18cf0755ae25915c0b88d`
-  precedes current consumer `33a3d9af9f4c6015301ad6829fe733413c5b683d`;
-  composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2` selects the consumer and
-  supplies its workspace socket.
+- Update order: workspace producer `4af395aea06c230ee6b18cf0755ae25915c0b88d`
+  precedes consumer `33a3d9af9f4c6015301ad6829fe733413c5b683d`;
+  composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2` selects that consumer.
+  Lifecycle producer `fd6b348494111a0d18e241787da14ea99ee117a9`
+  retains the workspace response type consumed by pinned Venus.
 - Approval: workspace actions were approved on 2026-08-09; additive runtime
   identity and stop actions were approved on 2026-08-10.
 
@@ -282,6 +283,22 @@ detailed execution evidence, and Git history retains superseded states.
   requests and responses; the shared codec rejects incompatible or malformed
   input; every accepted inspect or semantic action returns a complete snapshot;
   rejected input preserves the accepted workspace.
+
+### EON-C10 lifecycle and EON-C11 — runtime generations
+
+- Proof revision: `fd6b348494111a0d18e241787da14ea99ee117a9` on
+  x86_64 Linux.
+- Artifact: `/nix/store/yx3wzmnfk3ixw3dp7z133w2blz3ndi7f-eon-0.1.0`,
+  generation `g1-e0746599c988562cb4e729215c8ad6e9`, NAR hash
+  `sha256-wEqD+hZA3omGO2UOsQfTxcd/9MRdIBkSY0Y/g3Ep0yQ=`.
+- Checks: locked format, check, 25-test, and Clippy suites; canonical manifest
+  validation; exact Nix build and flake check; pinned Venus compilation; live
+  two-generation attach, stop, cleanup, and process-survival dogfood; profile
+  artifact and revision comparison; and `git diff --check`.
+- Exercised behavior: bare launch selects only the exact current generation;
+  current and fixed-namespace legacy work coexist and attach explicitly;
+  supervisor-routed stop names and removes only the selected current generation;
+  profile refresh leaves the older supervisor and Orbit Sessions running.
 
 ## Current gaps
 
