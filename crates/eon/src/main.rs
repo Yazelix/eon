@@ -268,60 +268,36 @@ fn probe_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
 fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationRecord>, String> {
     let component_report =
         eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?;
-    match fs::symlink_metadata(root) {
-        Ok(_) => validate_private_directory(root)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(vec![dead_generation(
-                current,
-                "current",
-                generation_directory(root, current),
-                "current generation has not started",
-            )]);
-        }
-        Err(error) => {
-            return Err(format!(
-                "cannot inspect runtime directory {}: {error}",
-                root.display()
-            ));
-        }
+    if !private_directory_exists(root, "runtime directory")? {
+        return Ok(vec![unstarted_current_generation(root, current)]);
     }
 
     let parent = root.join("generations");
     let mut candidates = Vec::new();
-    match fs::symlink_metadata(&parent) {
-        Ok(_) => {
-            validate_private_directory(&parent)?;
-            for entry in fs::read_dir(&parent).map_err(|error| {
+    if private_directory_exists(&parent, "generation directory")? {
+        for entry in fs::read_dir(&parent).map_err(|error| {
+            format!(
+                "cannot list generation directory {}: {error}",
+                parent.display()
+            )
+        })? {
+            let entry = entry.map_err(|error| {
                 format!(
-                    "cannot list generation directory {}: {error}",
+                    "cannot read generation entry in {}: {error}",
                     parent.display()
                 )
-            })? {
-                let entry = entry.map_err(|error| {
-                    format!(
-                        "cannot read generation entry in {}: {error}",
-                        parent.display()
-                    )
-                })?;
-                candidates.push((
-                    entry.file_name().as_bytes().to_vec(),
-                    entry.file_name().to_string_lossy().into_owned(),
-                    entry.path(),
-                ));
-                if candidates.len() > MAX_GENERATIONS {
-                    return Err(format!(
-                        "generation directory {} exceeds the {MAX_GENERATIONS}-entry inspection limit",
-                        parent.display()
-                    ));
-                }
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(format!(
-                "cannot inspect generation directory {}: {error}",
-                parent.display()
+            })?;
+            candidates.push((
+                entry.file_name().as_bytes().to_vec(),
+                entry.file_name().to_string_lossy().into_owned(),
+                entry.path(),
             ));
+            if candidates.len() > MAX_GENERATIONS {
+                return Err(format!(
+                    "generation directory {} exceeds the {MAX_GENERATIONS}-entry inspection limit",
+                    parent.display()
+                ));
+            }
         }
     }
     candidates.sort_by(|left, right| left.0.cmp(&right.0));
@@ -342,6 +318,50 @@ fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationReco
         records.push(inspect_legacy(root));
     }
     Ok(records)
+}
+
+fn inspect_selected_generation(
+    root: &Path,
+    current: &str,
+    target: &str,
+) -> Result<Option<GenerationRecord>, String> {
+    let missing_current =
+        || (target == current).then(|| unstarted_current_generation(root, current));
+    if !private_directory_exists(root, "runtime directory")? {
+        return Ok(missing_current());
+    }
+    if target == "legacy" {
+        return Ok(
+            (path_exists(&root.join("eon.sock")) || path_exists(&root.join("orbit.sock")))
+                .then(|| inspect_legacy(root)),
+        );
+    }
+
+    let parent = root.join("generations");
+    if !private_directory_exists(&parent, "generation directory")? {
+        return Ok(missing_current());
+    }
+    let runtime = generation_directory(root, target);
+    if target != current
+        && matches!(
+            fs::symlink_metadata(&runtime),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        )
+    {
+        return Ok(None);
+    }
+    let component_report =
+        eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?;
+    Ok(Some(inspect_generation(
+        target,
+        if target == current {
+            "current"
+        } else {
+            "previous"
+        },
+        runtime,
+        &component_report,
+    )))
 }
 
 fn inspect_generation(
@@ -515,6 +535,15 @@ fn dead_generation(
     )
 }
 
+fn unstarted_current_generation(root: &Path, current: &str) -> GenerationRecord {
+    dead_generation(
+        current,
+        "current",
+        generation_directory(root, current),
+        "current generation has not started",
+    )
+}
+
 fn failed_generation(
     id: &str,
     kind: &'static str,
@@ -561,6 +590,17 @@ fn validate_private_directory(path: &Path) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+fn private_directory_exists(path: &Path, description: &str) -> Result<bool, String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => validate_private_directory(path).map(|()| true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!(
+            "cannot inspect {description} {}: {error}",
+            path.display()
+        )),
+    }
 }
 
 fn path_exists(path: &Path) -> bool {
@@ -683,10 +723,8 @@ fn json_option(value: Option<&str>) -> String {
 
 fn attach_generation(target: &str) -> Result<i32, String> {
     let root = runtime_directory();
-    let records = discover_generations(&root, &current_generation())?;
-    let record = records
-        .into_iter()
-        .find(|record| record.id == target)
+    let current = current_generation();
+    let record = inspect_selected_generation(&root, &current, target)?
         .ok_or_else(|| format!("generation {target} was not found"))?;
     if !record.attach.available {
         return Err(format!(
@@ -699,8 +737,8 @@ fn attach_generation(target: &str) -> Result<i32, String> {
 
 fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
     let root = runtime_directory();
-    let records = discover_generations(&root, &current_generation())?;
-    let record = match records.into_iter().find(|record| record.id == target) {
+    let current = current_generation();
+    let record = match inspect_selected_generation(&root, &current, target)? {
         Some(record) => record,
         None => {
             return Ok(report_failure(

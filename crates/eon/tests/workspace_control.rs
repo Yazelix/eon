@@ -78,6 +78,12 @@ fn generation_runtime(root: &Path) -> PathBuf {
     }
 }
 
+fn overfill_generation_directory(root: &Path) {
+    for index in 0..256 {
+        fs::create_dir(root.join("generations").join(format!("g1-{index:032x}"))).unwrap();
+    }
+}
+
 fn wait_for_successful_exit(child: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -192,10 +198,28 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
         .unwrap();
 
     assert!(output.status.success());
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    overfill_generation_directory(&runtime);
+    let exact = Command::new(&binary)
+        .args(["attach", generation_id])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_LOG", &log)
+        .output()
+        .unwrap();
+    assert!(
+        exact.status.success(),
+        "stdout={} stderr={}",
+        stdout(&exact),
+        String::from_utf8_lossy(&exact.stderr)
+    );
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "{}\n{}\n{}\n{}\n",
+            "{}\n{}\n{}\n{}\n{}\n{}\n",
+            generation.join("orbit.sock").display(),
+            control.display(),
             generation.join("orbit.sock").display(),
             control.display(),
             generation.join("orbit.sock").display(),
@@ -466,6 +490,7 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
     assert!(stdout(&listed).contains("\"sessions\":[\"session-1\"]"));
     assert!(stdout(&listed).contains("\"stop\":{\"available\":true"));
 
+    overfill_generation_directory(&runtime);
     let stopped = invoke(
         &binary,
         &runtime,
