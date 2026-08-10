@@ -768,7 +768,7 @@ fn attach_generation(target: &str) -> Result<i32, String> {
     } else {
         probe_launch_mode(&record.runtime.join("eon.sock")).map_err(|error| error.detail)?
     };
-    attach_at(&record.runtime, mode)
+    attach_at(&record.runtime, mode, target != "legacy")
 }
 
 fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
@@ -1186,7 +1186,7 @@ fn launch_current(
                 ));
             }
             return if attach_existing {
-                attach_at(&runtime, mode)
+                attach_at(&runtime, mode, true)
             } else {
                 Err(format!(
                     "generation {generation} already has a live Eon supervisor"
@@ -1236,7 +1236,7 @@ fn attach_competing_supervisor(
                         mode.name()
                     ));
                 }
-                return attach_at(runtime, mode);
+                return attach_at(runtime, mode, true);
             }
             Err(error)
                 if matches!(
@@ -1350,13 +1350,58 @@ fn request_id() -> String {
     format!("{}-{nanos}-{sequence}", std::process::id())
 }
 
-fn attach_at(runtime: &Path, mode: LaunchMode) -> Result<i32, String> {
+fn attach_at(runtime: &Path, mode: LaunchMode, watch_supervisor: bool) -> Result<i32, String> {
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
-    venus_command(&programs(), &config, &runtime.join("orbit.sock"), mode)
-        .status()
-        .map(status_code)
-        .map_err(|error| format!("cannot launch Eon Desktop: {error}"))
+    let generation = watch_supervisor
+        .then(|| {
+            runtime
+                .file_name()
+                .and_then(OsStr::to_str)
+                .ok_or_else(|| format!("runtime {} has no generation identity", runtime.display()))
+        })
+        .transpose()?;
+    let mut desktop = venus_command(&programs(), &config, &runtime.join("orbit.sock"), mode)
+        .spawn()
+        .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?;
+    if !watch_supervisor {
+        return desktop
+            .wait()
+            .map(status_code)
+            .map_err(|error| format!("cannot observe Eon Desktop: {error}"));
+    }
+    let generation = generation.unwrap();
+
+    let mut invalid_probe = false;
+    loop {
+        if let Some(status) = desktop
+            .try_wait()
+            .map_err(|error| format!("cannot observe Eon Desktop: {error}"))?
+        {
+            return Ok(status_code(status));
+        }
+        let probe = probe_runtime(&runtime.join("eon.sock")).and_then(|info| {
+            validate_current_runtime(&info, generation)
+                .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))
+        });
+        match probe {
+            Ok(()) => invalid_probe = false,
+            Err(error) if error.kind == EndpointFailureKind::Unreachable => {}
+            Err(error) if error.kind == EndpointFailureKind::Dead => {
+                stop(&mut desktop);
+                return Ok(0);
+            }
+            Err(_) if !invalid_probe => invalid_probe = true,
+            Err(error) => {
+                stop(&mut desktop);
+                return Err(format!(
+                    "attached supervisor became invalid: {}",
+                    error.detail
+                ));
+            }
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn venus_command(programs: &Programs, config: &Path, socket: &Path, mode: LaunchMode) -> Command {

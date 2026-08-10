@@ -88,7 +88,7 @@ fn wait_for_successful_exit(child: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
-            assert!(status.success());
+            assert!(status.success(), "process exited with {status}");
             return;
         }
         assert!(Instant::now() < deadline, "Eon supervisor did not exit");
@@ -268,7 +268,7 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
     );
     executable(
         &venus,
-        "#!/bin/sh\nprintf '%s\\n' \"$#\" \"$@\" >> \"$EON_TEST_VENUS_LOG\"\n",
+        "#!/bin/sh\nprintf '%s|%s|%s|%s\\n' \"$$\" \"$#\" \"$1\" \"${2-}\" >> \"$EON_TEST_VENUS_LOG\"\nwhile :; do sleep 0.01; done\n",
     );
     executable(
         &command,
@@ -299,7 +299,7 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
     wait_for(&control);
     wait_for(&venus_log);
 
-    let reopened = Command::new(&binary)
+    let mut reopened = Command::new(&binary)
         .args(["terminal", "--", "/bin/false"])
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
@@ -308,22 +308,27 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
         .env("EON_TEST_CHILD_EXIT", &child_exit)
         .env("EON_TEST_ORBIT_LOG", &orbit_log)
         .env("EON_TEST_VENUS_LOG", &venus_log)
-        .output()
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
         .unwrap();
-    assert!(
-        reopened.status.success(),
-        "stdout={} stderr={}",
-        stdout(&reopened),
-        String::from_utf8_lossy(&reopened.stderr)
-    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while fs::read_to_string(&venus_log).unwrap().lines().count() != 2 {
+        assert!(Instant::now() < deadline, "terminal host did not reopen");
+        thread::sleep(Duration::from_millis(10));
+    }
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
+    let venus_log = fs::read_to_string(&venus_log).unwrap();
+    let venus_pids = venus_log
+        .lines()
+        .map(|line| line.split('|').next().unwrap().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(venus_log.matches("|1|").count(), 2);
     assert_eq!(
-        fs::read_to_string(&venus_log).unwrap(),
-        format!(
-            "1\n{}\n1\n{}\n",
-            generation.join("orbit.sock").display(),
-            generation.join("orbit.sock").display()
-        )
+        venus_log
+            .matches(&format!("|{}|", generation.join("orbit.sock").display()))
+            .count(),
+        2
     );
 
     let workspace = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
@@ -335,6 +340,10 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
 
     fs::write(&child_exit, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
+    wait_for_successful_exit(&mut reopened);
+    for pid in venus_pids {
+        assert!(!Path::new("/proc").join(pid).exists());
+    }
     assert!(!generation.exists());
     fs::remove_dir_all(root).unwrap();
 }
