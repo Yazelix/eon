@@ -110,8 +110,8 @@ through the private local Eon socket using EONW v1. Each accepted action returns
 one complete ordered workspace snapshot; incompatible or malformed requests
 receive a bounded structured failure. Eon Desktop consumes that same protocol,
 renders the tabs and accordion panes, and follows the selected live Session.
-After creating a tab or pane from another CLI, reopen Eon Desktop to load the
-new snapshot; EONW v1 has no subscription or polling stream.
+External tab, pane, and focus changes appear within one second because Eon
+Desktop re-inspects EONW v1 every 250 ms; the protocol adds no event stream.
 
 The command surface is small:
 
@@ -220,7 +220,7 @@ Beads data, lock files, and generated artifacts.
 | README | 231 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 606 |
+| Architecture and contracts | 607 |
 | Distribution and references | 202 |
 | Changelog | 33 |
 | Rust source and tests | 3,169 |
@@ -228,4 +228,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 263 |
 | Nix composition | 334 |
 | Product defaults | 10 |
-| **Total** | **5,544** |
+| **Total** | **5,545** |

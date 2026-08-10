@@ -15,8 +15,8 @@ installation, and proven contract changes.
 - Expose those actions and complete accepted workspace snapshots through the
   bounded, versioned, dependency-free EONW v1 local protocol while preserving
   human and JSON CLI projections.
-- Render Eon workspace snapshots in Eon Desktop and keep reattachment available
-  when the initial Session has exited but another pane remains live.
+- Render Eon workspace snapshots, refresh external actions within one second,
+  and keep reattachment available while another pane remains live.
 - Ship the x86_64 Linux alpha through one locked Nix flake with an Eon desktop
   entry that groups its X11/Xwayland window and uses a transparent violet
   three-fold loop icon rendered at native launcher sizes.

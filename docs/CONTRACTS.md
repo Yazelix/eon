@@ -16,7 +16,7 @@ artifact.
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
-| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, and traverse the topology directly through Eon-owned semantic actions | Eon | Partially proved | Eon owner `1a00a9f6de171e944c3c31a9f72ee2cc92d8fa15`, Venus consumer `932be5ce68a42b72e8b0bf5953c74f7a8af51f1e`, and composition `89823e5eb308e2b27a03eafdee25ce55112038b4`; refresh gap below |
+| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, and traverse the topology directly through Eon-owned semantic actions | Eon | Candidate | Eon owner `1a00a9f6de171e944c3c31a9f72ee2cc92d8fa15` and Venus consumer `2dfe364fdc6a86ec183bf846d1b233e7a64de0dd`; exact composed proof pending |
 | EON-C9 | Eon supplies one exact managed interactive environment through prefixed external commands and Session-private unprefixed tool names without changing the user's global toolchain | Eon | Proven | `99c410a1081b88dd8db2b7f9e26394a38acd175a`; managed-environment proof below |
 | EON-C10 | A local client can submit versioned Eon workspace actions and receive one complete accepted workspace snapshot without reconstructing topology or terminal state | Eon | Proven | `4af395aea06c230ee6b18cf0755ae25915c0b88d`; EONW v1 producer proof below |
 
@@ -46,7 +46,8 @@ artifact.
   MCP surface, isolation target, remote access, or appearance effect.
 - Approval: explicitly approved by the user on 2026-08-08. Eon ownership,
   native Venus materialization, and exact composition are proved separately.
-  Refresh after an independently invoked CLI mutation remains unproved.
+  The current candidate pins Venus's accepted bounded external-mutation refresh;
+  exact composed proof remains pending.
 
 ## Approved managed-environment contract EON-C9
 
@@ -101,9 +102,9 @@ artifact.
   transport, general plugin or MCP surface, authorization framework, durable
   restoration, AgentRun state, raw terminal content, or Venus rendering.
 - Update order: Eon producer `4af395aea06c230ee6b18cf0755ae25915c0b88d`
-  preceded Venus consumer `932be5ce68a42b72e8b0bf5953c74f7a8af51f1e`;
-  Eon composition `89823e5eb308e2b27a03eafdee25ce55112038b4`
-  selects that consumer and supplies its workspace socket.
+  preceded base consumer `932be5ce68a42b72e8b0bf5953c74f7a8af51f1e`
+  and refresh consumer `2dfe364fdc6a86ec183bf846d1b233e7a64de0dd`;
+  the current Eon candidate selects the latter and supplies its workspace socket.
 - Approval: explicitly approved by the user on 2026-08-09 by directing Eon to
   fix the named versioned workspace snapshot/action prerequisite.
 
