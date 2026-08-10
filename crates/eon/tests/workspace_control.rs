@@ -91,7 +91,7 @@ fn wait_for_successful_exit(child: &mut Child) {
             assert!(status.success(), "process exited with {status}");
             return;
         }
-        assert!(Instant::now() < deadline, "Eon supervisor did not exit");
+        assert!(Instant::now() < deadline, "Eon process did not exit");
         thread::sleep(Duration::from_millis(10));
     }
 }
@@ -338,9 +338,15 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
     assert!(!wrong_mode.status.success());
     assert!(String::from_utf8_lossy(&wrong_mode.stderr).contains("terminal mode"));
 
+    fs::remove_file(&control).unwrap();
+    let replacement = UnixListener::bind(&control).unwrap();
+    fs::set_permissions(&control, fs::Permissions::from_mode(0o600)).unwrap();
+    wait_for_successful_exit(&mut reopened);
+
+    drop(replacement);
+    fs::remove_file(&control).unwrap();
     fs::write(&child_exit, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
-    wait_for_successful_exit(&mut reopened);
     for pid in venus_pids {
         assert!(!Path::new("/proc").join(pid).exists());
     }

@@ -291,6 +291,34 @@ fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFailure> {
     }
 }
 
+fn probe_supervisor(
+    socket: &Path,
+    generation: &str,
+) -> Result<(LaunchMode, SocketIdentity), EndpointFailure> {
+    let identity = socket_identity(socket)
+        .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?
+        .ok_or_else(|| {
+            EndpointFailure::new(
+                EndpointFailureKind::Dead,
+                format!("endpoint {} is missing", socket.display()),
+            )
+        })?;
+    let info = probe_runtime(socket)?;
+    validate_runtime(&info, generation)
+        .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?;
+    let mode = probe_launch_mode(socket)?;
+    if socket_identity(socket)
+        .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?
+        != Some(identity)
+    {
+        return Err(EndpointFailure::new(
+            EndpointFailureKind::Dead,
+            "supervisor endpoint changed while it was being validated",
+        ));
+    }
+    Ok((mode, identity))
+}
+
 fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationRecord>, String> {
     let component_report =
         eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?;
@@ -763,12 +791,14 @@ fn attach_generation(target: &str) -> Result<i32, String> {
             record.attach.reason
         ));
     }
-    let mode = if target == "legacy" {
-        LaunchMode::Workspace
+    let (mode, supervisor) = if target == "legacy" {
+        (LaunchMode::Workspace, None)
     } else {
-        probe_launch_mode(&record.runtime.join("eon.sock")).map_err(|error| error.detail)?
+        let (mode, identity) = probe_supervisor(&record.runtime.join("eon.sock"), target)
+            .map_err(|error| error.detail)?;
+        (mode, Some(identity))
     };
-    attach_at(&record.runtime, mode, target != "legacy")
+    attach_at(&record.runtime, mode, supervisor)
 }
 
 fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
@@ -1174,10 +1204,8 @@ fn launch_current(
     let generation = current_generation();
     let runtime = prepare_generation_runtime(&root, &generation)?;
     let socket = runtime.join("eon.sock");
-    match probe_runtime(&socket) {
-        Ok(info) => {
-            validate_current_runtime(&info, &generation)?;
-            let active_mode = probe_launch_mode(&socket).map_err(|error| error.detail)?;
+    match probe_supervisor(&socket, &generation) {
+        Ok((active_mode, supervisor)) => {
             if active_mode != mode {
                 return Err(format!(
                     "generation {generation} already has a live {} mode; requested {} mode",
@@ -1186,7 +1214,7 @@ fn launch_current(
                 ));
             }
             return if attach_existing {
-                attach_at(&runtime, mode, true)
+                attach_at(&runtime, mode, Some(supervisor))
             } else {
                 Err(format!(
                     "generation {generation} already has a live Eon supervisor"
@@ -1225,10 +1253,8 @@ fn attach_competing_supervisor(
 ) -> Result<i32, String> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        match probe_runtime(socket) {
-            Ok(info) => {
-                validate_current_runtime(&info, generation)?;
-                let active_mode = probe_launch_mode(socket).map_err(|error| error.detail)?;
+        match probe_supervisor(socket, generation) {
+            Ok((active_mode, supervisor)) => {
                 if active_mode != mode {
                     return Err(format!(
                         "{launch_error}; competing supervisor started in {} mode, requested {} mode",
@@ -1236,7 +1262,7 @@ fn attach_competing_supervisor(
                         mode.name()
                     ));
                 }
-                return attach_at(runtime, mode, true);
+                return attach_at(runtime, mode, Some(supervisor));
             }
             Err(error)
                 if matches!(
@@ -1256,22 +1282,22 @@ fn attach_competing_supervisor(
     }
 }
 
-fn validate_current_runtime(info: &Runtime, generation: &str) -> Result<(), String> {
+fn validate_runtime(info: &Runtime, generation: &str) -> Result<(), String> {
     if info.generation != generation {
         return Err(format!(
-            "current runtime directory contains generation {}, expected {generation}",
+            "runtime directory contains generation {}, expected {generation}",
             info.generation
         ));
     }
     if info.workspace_protocol != VERSION {
         return Err(format!(
-            "current supervisor uses EONW {}, expected EONW {VERSION}",
+            "supervisor uses EONW {}, expected EONW {VERSION}",
             info.workspace_protocol
         ));
     }
     let components = eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?;
     if info.component_report != components {
-        return Err("current supervisor reports a different component graph".into());
+        return Err("supervisor reports a different component graph".into());
     }
     Ok(())
 }
@@ -1350,10 +1376,16 @@ fn request_id() -> String {
     format!("{}-{nanos}-{sequence}", std::process::id())
 }
 
-fn attach_at(runtime: &Path, mode: LaunchMode, watch_supervisor: bool) -> Result<i32, String> {
+fn attach_at(
+    runtime: &Path,
+    mode: LaunchMode,
+    supervisor: Option<SocketIdentity>,
+) -> Result<i32, String> {
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
-    let generation = watch_supervisor
+    let control = runtime.join("eon.sock");
+    let generation = supervisor
+        .is_some()
         .then(|| {
             runtime
                 .file_name()
@@ -1361,15 +1393,18 @@ fn attach_at(runtime: &Path, mode: LaunchMode, watch_supervisor: bool) -> Result
                 .ok_or_else(|| format!("runtime {} has no generation identity", runtime.display()))
         })
         .transpose()?;
+    if supervisor.is_some() && socket_identity(&control)? != supervisor {
+        return Err("supervisor changed before Eon Desktop could attach".into());
+    }
     let mut desktop = venus_command(&programs(), &config, &runtime.join("orbit.sock"), mode)
         .spawn()
         .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?;
-    if !watch_supervisor {
+    let Some(supervisor) = supervisor else {
         return desktop
             .wait()
             .map(status_code)
             .map_err(|error| format!("cannot observe Eon Desktop: {error}"));
-    }
+    };
     let generation = generation.unwrap();
 
     let mut invalid_probe = false;
@@ -1380,8 +1415,19 @@ fn attach_at(runtime: &Path, mode: LaunchMode, watch_supervisor: bool) -> Result
         {
             return Ok(status_code(status));
         }
-        let probe = probe_runtime(&runtime.join("eon.sock")).and_then(|info| {
-            validate_current_runtime(&info, generation)
+        match socket_identity(&control) {
+            Ok(Some(identity)) if identity == supervisor => {}
+            Ok(_) => {
+                stop(&mut desktop);
+                return Ok(0);
+            }
+            Err(error) => {
+                stop(&mut desktop);
+                return Err(error);
+            }
+        }
+        let probe = probe_runtime(&control).and_then(|info| {
+            validate_runtime(&info, generation)
                 .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))
         });
         match probe {
