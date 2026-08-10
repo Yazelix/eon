@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Exit quietly when a downstream reader closes piped CLI output while keeping
+  other stdout failures explicit.
 - Isolate supervisors by a deterministic runtime-generation identity. Bare
   `eon` attaches only to the exact current generation while older live and
   fixed-namespace legacy workspaces remain discoverable. Add deterministic
