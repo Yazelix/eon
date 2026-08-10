@@ -160,27 +160,27 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C1 through EON-C4 and the current EON-C8 topology — composition
 
-- Proof revision: `86d2a3515c72025f517bf6c273d7b998be0f8d11` on x86_64
+- Proof revision: `1ffd6b3c852fc6420d265d00fd4598854d1fb10b` on x86_64
   Linux through the Nix alpha package `eon-0.1.0` at
-  `/nix/store/rc93abgd12kb8ps8m4p284ylqhvxfcva-eon-0.1.0`, NAR hash
-  `sha256-19QazdM8Be7l9xyJCFoKVOtfmdC06a49flWYUDzNX0E=`.
+  `/nix/store/syjk4m39vxi51263zab65x7ff0p5vbcf-eon-0.1.0`, NAR hash
+  `sha256-zX5Y+wkVaiclq2SiGgw06EHBshCM4xEhu+L3ZGRtp4k=`.
 - Component graph: `components/eon-alpha-v1.json`, SHA-256
-  `5a2bab65c8cb56a4d0234683f2af0e9cd03539195827683519c3e9a18a88f553`.
+  `d2a3d2de2984dd7080f33df728b31ee50d0088cf5d6ef0189215c58ada19f35f`.
   It selects Orbit source `64db581445bafca1a08a6530f8e44f9c1edbc169`,
   ORBF v1 and ORBS v2 proof `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`,
   ORB-C10 proof `292b2451c9a1d99390334771a681c7f481c996f2`, and Venus source
-  `e7bda96822274727faacb51731ae19181295e1cd` with VEN-C1 proof at that
-  revision and unchanged VEN-C8 proof
-  `33a3d9af9f4c6015301ad6829fe733413c5b683d`.
+  `6ef19afddaedcbe2b9ed0996e31bc02df5d854ac` with VEN-C1 proof
+  `e7bda96822274727faacb51731ae19181295e1cd`, VEN-C3 and VEN-C4 proof at
+  the selected revision, and VEN-C8 proof `33a3d9af9f4c6015301ad6829fe733413c5b683d`.
 - Checks: canonical manifest validation; locked Rust format, check, 21-test, and
-  clippy suites; exact Nix build with 58 Venus tests; flake evaluation; installed
+  clippy suites; exact Nix build with 62 Venus tests; flake evaluation; installed
   version and store-path comparison; live-process survival; and
   `git diff --check`.
 - Exercised behavior: native Eon topology proof remains at
-  `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; the selected Venus proof adds
-  exact cell-grid and preedit placement with native COSMIC Wayland dogfood at
-  100% scale. The active profile selects this package without restarting the
-  existing supervisor or Orbit Sessions.
+  `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; the selected Venus retains the
+  last coherent frame and retries a lost selected live endpoint until a fresh
+  frame arrives. The active profile selects this package without restarting
+  the existing supervisor or Orbit Sessions.
 
 ### EON-C8 — Session-exit pruning
 
