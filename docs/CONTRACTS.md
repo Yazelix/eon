@@ -12,18 +12,18 @@ detailed execution evidence, and Git history retains superseded states.
 
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
-| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Candidate | Pending `eon-4is.1` reproof |
-| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Candidate | Pending `eon-4is.1` reproof |
-| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Candidate | Pending `eon-4is.1` reproof |
-| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Candidate | Pending `eon-4is.1` reproof |
+| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Proven | `4353e94ebc015453c77914a2be013a950f49c8cc`; current composition proof below |
+| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Proven | `4353e94ebc015453c77914a2be013a950f49c8cc`; current composition proof below |
+| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Proven | `4353e94ebc015453c77914a2be013a950f49c8cc`; current composition proof below |
+| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Proven | `4353e94ebc015453c77914a2be013a950f49c8cc`; current composition proof below |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
-| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Proven | Composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21` |
+| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Proven | Composition `4353e94ebc015453c77914a2be013a950f49c8cc`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21` |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; proof below |
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Workspace actions at `4af395aea06c230ee6b18cf0755ae25915c0b88d`; lifecycle actions at `fd6b348494111a0d18e241787da14ea99ee117a9` |
 | EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly attachable when compatible, and explicitly stoppable through their supervisor | Eon | Proven | `3b84d83d807c6249efa340fabf9e3d0d0d3ef310`; proof below |
-| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Candidate | Pending `eon-4is.1` proof commit |
+| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | `4353e94ebc015453c77914a2be013a950f49c8cc`; proof below |
 
 ## Approved terminal-host contract EON-C12
 
@@ -237,27 +237,42 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C1 through EON-C4 and the current EON-C8 topology — composition
 
-- Proof revision: `1ffd6b3c852fc6420d265d00fd4598854d1fb10b` on x86_64
+- Proof revision: `4353e94ebc015453c77914a2be013a950f49c8cc` on x86_64
   Linux through the Nix alpha package `eon-0.1.0` at
-  `/nix/store/syjk4m39vxi51263zab65x7ff0p5vbcf-eon-0.1.0`, NAR hash
-  `sha256-zX5Y+wkVaiclq2SiGgw06EHBshCM4xEhu+L3ZGRtp4k=`.
+  `/nix/store/881sbk8fkyg110sic9m9d4cg8hy6lz2c-eon-0.1.0`, NAR hash
+  `sha256-UL8aJvFWO6rKti7bFhe8aE3U639MGI5MnE2u7OCAs6U=`.
 - Component graph: `components/eon-alpha-v1.json`, SHA-256
-  `d2a3d2de2984dd7080f33df728b31ee50d0088cf5d6ef0189215c58ada19f35f`.
+  `036992de61e047f76c1bd9ec56cd74483a6a5af0dab7971d3fb44f43e99566e7`.
   It selects Orbit source `64db581445bafca1a08a6530f8e44f9c1edbc169`,
   ORBF v1 and ORBS v2 proof `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`,
   ORB-C10 proof `292b2451c9a1d99390334771a681c7f481c996f2`, and Venus source
-  `6ef19afddaedcbe2b9ed0996e31bc02df5d854ac` with VEN-C1 proof
-  `e7bda96822274727faacb51731ae19181295e1cd`, VEN-C3 and VEN-C4 proof at
-  the selected revision, and VEN-C8 proof `33a3d9af9f4c6015301ad6829fe733413c5b683d`.
-- Checks: canonical manifest validation; locked Rust format, check, 21-test, and
-  clippy suites; exact Nix build with 62 Venus tests; flake evaluation; installed
-  version and store-path comparison; live-process survival; and
-  `git diff --check`.
-- Exercised behavior: native Eon topology proof remains at
-  `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; the selected Venus retains the
-  last coherent frame and retries a lost selected live endpoint until a fresh
-  frame arrives. The active profile selects this package without restarting
-  the existing supervisor or Orbit Sessions.
+  `690b038e2b58a0e7761023ac7e004e92327ac901` with VEN-C1 proof
+  `e7bda96822274727faacb51731ae19181295e1cd`, VEN-C3 and VEN-C4 proof
+  `6ef19afddaedcbe2b9ed0996e31bc02df5d854ac`, and VEN-C8 proof
+  `33a3d9af9f4c6015301ad6829fe733413c5b683d`.
+- Checks: canonical manifest validation; locked Rust format, check, 29-test, and
+  Clippy suites; exact Nix build and flake check; installed version, commit, and
+  store-path comparison; workspace regression checks; native standalone key
+  input; live-process survival; README LOC checks; and `git diff --check`.
+- Exercised behavior: the workspace topology and Session-exit rules remain
+  intact. The active profile selects the proof artifact at the proof revision
+  without restarting the previous three-Session generation or legacy workspace.
+
+### EON-C12 — single-surface terminal host
+
+- Proof revision and artifact: `4353e94ebc015453c77914a2be013a950f49c8cc`
+  and `/nix/store/881sbk8fkyg110sic9m9d4cg8hy6lz2c-eon-0.1.0` on
+  x86_64 Linux, with the NAR hash above.
+- Checks: deterministic workspace-versus-terminal Venus argv; real-process
+  exact-command startup, same-namespace reopen, one-Session invariant,
+  wrong-mode rejection, structured unavailable actions, partial-startup cleanup,
+  concurrent launch, attached-surface cleanup, and command-exit cleanup.
+- Native dogfood: one COSMIC Wayland standalone surface forwarded Alt-h/j/k/l/m
+  and Ctrl-t as exact bytes `1b 68 1b 6a 1b 6b 1b 6c 1b 6d 14`. After the
+  supervisor-owned client detached, a second invocation reopened the same
+  Session; command exit closed both invocations, removed the generation, and
+  left no Venus process.
+- Remaining gap: this proof makes no macOS claim.
 
 ### EON-C8 — Session-exit pruning
 
