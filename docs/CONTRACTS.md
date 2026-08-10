@@ -20,7 +20,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Proven | Composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21` |
-| EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | `6dfcb473beccadd6e145235009240c81dd570fe5`; proof below |
+| EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; proof below |
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Workspace actions at `4af395aea06c230ee6b18cf0755ae25915c0b88d`; lifecycle actions at `fd6b348494111a0d18e241787da14ea99ee117a9` |
 | EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly attachable when compatible, and explicitly stoppable through their supervisor | Eon | Proven | `3b84d83d807c6249efa340fabf9e3d0d0d3ef310`; proof below |
 
@@ -270,6 +270,14 @@ detailed execution evidence, and Git history retains superseded states.
   Bash resolves `~/.bashrc` natively, Eon's Zsh completion fallback writes no
   dump file, Fish Carapace changes only the current PATH, and a Session PATH
   contains one Eon private-bin entry.
+- Tool-glyph proof revision: `fb95671d855fa944c3717103cb13bd0135f8aec8`
+  on x86_64 Linux. Artifact
+  `/nix/store/dirnp4ri16smqcr2vd00wkp454b27kcg-eon-0.1.0` has NAR hash
+  `sha256-u6Q8XqSXdzsqe+v2mJfUD0CMVTBKFuCQ5O2a4uXW+j0=`, NAR size 1,880,008
+  bytes, and closure size 1,824,211,920 bytes.
+- Tool-glyph checks: exact Nix build and flake check; installed wrapper,
+  fontconfig, closure, face, and representative private-use charset inspection;
+  fresh managed Yazi dogfood; and `git diff --check`.
 
 ### EON-C10 — EONW v1 producer
 
