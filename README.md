@@ -109,8 +109,9 @@ Orbit session; changing focus never stops a session. The CLI reaches that owner
 through the private local Eon socket using EONW v1. Each accepted action returns
 one complete ordered workspace snapshot; incompatible or malformed requests
 receive a bounded structured failure. Eon Desktop consumes that same protocol,
-renders the tabs and accordion panes, and follows the selected live Session.
-External tab, pane, and focus changes appear within one second because Eon
+shows every fitting pane header around one selected live Session, and binds
+Alt+H/L to tabs, Alt+K/J to panes, Alt+M to pane creation, and Ctrl+T to tab
+creation. External workspace changes appear within one second because Eon
 Desktop re-inspects EONW v1 every 250 ms; the protocol adds no event stream.
 
 The command surface is small:
@@ -217,15 +218,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 231 |
+| README | 232 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 633 |
 | Distribution and references | 202 |
-| Changelog | 33 |
+| Changelog | 35 |
 | Rust source and tests | 3,169 |
 | Cargo manifests | 33 |
 | Component manifest | 263 |
 | Nix composition | 334 |
 | Product defaults | 10 |
-| **Total** | **5,571** |
+| **Total** | **5,574** |
