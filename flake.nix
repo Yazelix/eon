@@ -8,7 +8,7 @@
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=33a3d9af9f4c6015301ad6829fe733413c5b683d";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=e7bda96822274727faacb51731ae19181295e1cd";
       flake = false;
     };
     protocol = {

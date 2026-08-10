@@ -75,7 +75,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "33a3d9af9f4c6015301ad6829fe733413c5b683d",
+      "revision": "e7bda96822274727faacb51731ae19181295e1cd",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -85,7 +85,7 @@
         { "id": "executable", "kind": "file", "path": "bin/yazelix-venus" }
       ],
       "contracts": [
-        { "id": "VEN-C1", "proof": "6df14c7e2ca8c27d587d6c138200f4d39d6b12a9" },
+        { "id": "VEN-C1", "proof": "e7bda96822274727faacb51731ae19181295e1cd" },
         { "id": "VEN-C2", "proof": "f84493781956a1f5c24be3dab148bef02748cdfe" },
         { "id": "VEN-C3", "proof": "8929c9f9d151641a343813ddeb6005cb9c771286" },
         { "id": "VEN-C4", "proof": "7d061b7207d280da0184e14389ef80578c3d37df" },

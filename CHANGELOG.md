@@ -25,6 +25,8 @@ installation, and proven contract changes.
   Alt+K/J traversal plus Alt+M and Ctrl+T creation, refresh external actions
   within one second, and keep reattachment available while another pane remains
   live.
+- Keep terminal text and Unicode table borders on the authoritative Venus cell
+  grid, and anchor shaped input-method preedit text and underlines at the cursor.
 - Ship the x86_64 Linux alpha through one locked Nix flake with an Eon desktop
   entry that groups its X11/Xwayland window and uses a transparent violet
   three-fold loop icon rendered at native launcher sizes.
