@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Supply Symbols Nerd Font Mono to packaged Venus so Yazi can render its
+  supported private-use icons without an ambient font.
 - Exit quietly when a downstream reader closes piped CLI output while keeping
   other detected stdout write failures explicit.
 - Isolate supervisors by a deterministic runtime-generation identity. Bare

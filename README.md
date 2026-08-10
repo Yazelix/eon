@@ -210,9 +210,10 @@ aliases, or shell startup files. At launch, Eon ignores
 ambient Helix runtime and Steel configuration paths and Yazi or LazyGit
 configuration paths that would bypass its private root; explicit Helix and
 LazyGit configuration arguments remain available. LazyGit uses the Git
-executable available from the user's environment. The packaged font set does
-not guarantee each emoji, Powerline, or Yazi icon glyph, so unsupported symbols
-may render as fallback boxes.
+executable available from the user's environment. The package supplies Symbols
+Nerd Font Mono for Yazi's supported private-use icons without relying on an
+ambient font installation. Other unsupported symbols may render as fallback
+boxes.
 
 `EON_CONFIG_HOME` selects the configuration root; Eon resolves a relative value
 once against the launch directory. Without it, Eon uses `$XDG_CONFIG_HOME/eon`
@@ -273,15 +274,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 287 |
+| README | 288 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 460 |
+| Architecture and contracts | 461 |
 | Distribution and references | 230 |
-| Changelog | 54 |
+| Changelog | 56 |
 | Rust source and tests | 5,096 |
 | Cargo manifests | 35 |
 | Component manifest | 373 |
-| Nix composition | 605 |
+| Nix composition | 606 |
 | Product defaults | 0 |
-| **Total** | **7,803** |
+| **Total** | **7,808** |

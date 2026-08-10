@@ -185,9 +185,10 @@
             pkgs.libxkbcommon
             pkgs.wayland
           ];
-          FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
+          FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts pkgs.nerd-fonts.symbols-only ]; };
           postFixup = ''
             wrapProgram "$out/bin/yazelix-venus" \
+              --set FONTCONFIG_FILE "$FONTCONFIG_FILE" \
               --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath venusRuntimeLibraries}" \
               --prefix XDG_DATA_DIRS : "${pkgs.mesa}/share"
           '';

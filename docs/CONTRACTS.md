@@ -308,8 +308,9 @@ detailed execution evidence, and Git history retains superseded states.
   x86_64 Linux alpha; direct bundles and native signed and notarized macOS
   distribution are unproved.
 - Packaged graphics are proved on Intel Mesa. Proprietary NVIDIA remains
-  unproved, and the packaged font set can show fallback boxes for some emoji and
-  native tool glyphs.
+  unproved. The packaged font set supplies Symbols Nerd Font Mono for Yazi's
+  supported private-use icons; unsupported emoji and symbols may still render
+  as fallback boxes.
 - Workspace topology is live only and bounded to 64 tabs and 256 panes. It has
   no explicit pane, tab, or individual Session-stop action. Whole-generation
   stop remains deliberately all-or-nothing. Machine restart does not preserve
