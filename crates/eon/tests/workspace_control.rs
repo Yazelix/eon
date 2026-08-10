@@ -110,6 +110,26 @@ fn stdout(output: &Output) -> &str {
 }
 
 #[test]
+fn closed_stdout_pipe_is_not_a_panic() {
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+        .arg("versions")
+        .stdout(writer)
+        .stderr(Stdio::piped())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "status={} stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+}
+
+#[test]
 fn relative_configuration_root_is_resolved_once() {
     let root = temporary_directory();
     let config = root.join("config");

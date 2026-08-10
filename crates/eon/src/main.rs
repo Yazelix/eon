@@ -626,6 +626,14 @@ fn remove_dead_socket(path: &Path) {
     }
 }
 
+fn write_stdout(output: impl AsRef<[u8]>) -> Result<(), String> {
+    match std::io::stdout().lock().write_all(output.as_ref()) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(format!("cannot write stdout: {error}")),
+    }
+}
+
 fn generations_command(arguments: &[OsString]) -> Result<i32, String> {
     let json = match arguments {
         [] => false,
@@ -633,14 +641,11 @@ fn generations_command(arguments: &[OsString]) -> Result<i32, String> {
         _ => return Err(USAGE.into()),
     };
     let records = discover_generations(&runtime_directory(), &current_generation())?;
-    print!(
-        "{}",
-        if json {
-            generations_json(&records)
-        } else {
-            generations_human(&records)
-        }
-    );
+    write_stdout(if json {
+        generations_json(&records)
+    } else {
+        generations_human(&records)
+    })?;
     Ok(0)
 }
 
@@ -741,23 +746,23 @@ fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
     let record = match inspect_selected_generation(&root, &current, target)? {
         Some(record) => record,
         None => {
-            return Ok(report_failure(
+            return report_failure(
                 &failure(
                     "unknown-generation",
                     format!("generation {target} was not found"),
                 ),
                 json,
-            ));
+            );
         }
     };
     if !record.stop.available {
-        return Ok(report_failure(
+        return report_failure(
             &failure(
                 "stop-unavailable",
                 format!("generation {target}: {}", record.stop.reason),
             ),
             json,
-        ));
+        );
     }
     if !json {
         eprint!(
@@ -771,7 +776,7 @@ fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
             .read_line(&mut answer)
             .map_err(|error| format!("cannot read stop confirmation: {error}"))?;
         if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
-            println!("cancelled; no Sessions stopped");
+            write_stdout("cancelled; no Sessions stopped\n")?;
             return Ok(0);
         }
     }
@@ -784,7 +789,7 @@ fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
     ) {
         Ok(response) => response,
         Err(error) => {
-            return Ok(report_failure(&failure("stop-failed", error.detail), json));
+            return report_failure(&failure("stop-failed", error.detail), json);
         }
     };
     match response {
@@ -792,26 +797,26 @@ fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
             if stopped.generation == target =>
         {
             if json {
-                print!("{}", stopped_json(&stopped));
+                write_stdout(stopped_json(&stopped))?;
             } else {
-                println!(
-                    "stopped generation {}: {}",
+                write_stdout(format!(
+                    "stopped generation {}: {}\n",
                     stopped.generation,
                     stopped.sessions.join(", ")
-                );
+                ))?;
             }
             Ok(0)
         }
         ControlResponse::Lifecycle(LifecycleResponse::Failure(failure)) => {
-            Ok(report_failure(&failure, json))
+            report_failure(&failure, json)
         }
-        _ => Ok(report_failure(
+        _ => report_failure(
             &failure(
                 "stop-failed",
                 "supervisor returned the wrong EONW result for stop",
             ),
             json,
-        )),
+        ),
     }
 }
 
@@ -1078,22 +1083,19 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
             control(&arguments)
         }
         [command] if command == "versions" => {
-            println!(
-                "eon {} {}\neonw {}",
+            write_stdout(format!(
+                "eon {} {}\neonw {}\n{}\n",
                 env!("CARGO_PKG_VERSION"),
                 current_generation(),
-                VERSION
-            );
-            println!(
-                "{}",
+                VERSION,
                 eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?
-            );
+            ))?;
             Ok(0)
         }
         [command] if command == "config-path" => {
             let path = configuration_directory()?;
             prepare_configuration(&path)?;
-            println!("{}", path.display());
+            write_stdout(format!("{}\n", path.display()))?;
             Ok(0)
         }
         _ => Err(USAGE.into()),
@@ -1214,27 +1216,22 @@ fn control(arguments: &[OsString]) -> Result<i32, String> {
             } else {
                 "supervisor-unavailable"
             };
-            return Ok(report_failure(
+            return report_failure(
                 &failure(code, format!("{}; run `eon` first", error.detail)),
                 json,
-            ));
+            );
         }
     };
     match response {
         ControlResponse::Workspace(Response::Snapshot(snapshot)) => {
-            print!(
-                "{}",
-                if json {
-                    json_output(&snapshot)
-                } else {
-                    human_output(&snapshot)
-                }
-            );
+            write_stdout(if json {
+                json_output(&snapshot)
+            } else {
+                human_output(&snapshot)
+            })?;
             Ok(0)
         }
-        ControlResponse::Workspace(Response::Failure(failure)) => {
-            Ok(report_failure(&failure, json))
-        }
+        ControlResponse::Workspace(Response::Failure(failure)) => report_failure(&failure, json),
         ControlResponse::Lifecycle(_) => {
             Err("Eon supervisor returned a lifecycle result for a workspace action".into())
         }
@@ -1840,13 +1837,13 @@ fn protocol_failure(error: ProtocolError) -> Failure {
     failure(code, error.to_string())
 }
 
-fn report_failure(failure: &Failure, json: bool) -> i32 {
+fn report_failure(failure: &Failure, json: bool) -> Result<i32, String> {
     if json {
-        print!("{}", failure_json(failure));
+        write_stdout(failure_json(failure))?;
     } else {
         eprint!("{}", failure_human(failure));
     }
-    2
+    Ok(2)
 }
 
 fn failure(code: impl Into<String>, detail: impl Into<String>) -> Failure {
