@@ -252,6 +252,94 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
 }
 
 #[test]
+fn terminal_host_reopens_without_workspace_or_a_second_session() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let child_exit = root.join("child-exit");
+    let orbit_log = root.join("orbit.log");
+    let venus_log = root.join("venus.log");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    let command = root.join("command");
+    executable(
+        &orbit,
+        "#!/bin/sh\nprintf '%s\\n' \"$$\" >> \"$EON_TEST_ORBIT_LOG\"\nendpoint=$2\nprintf '%s' \"$$\" > \"$endpoint\"\nshift 3\n\"$@\"\nstatus=$?\nrm -f \"$endpoint\"\nexit $status\n",
+    );
+    executable(
+        &venus,
+        "#!/bin/sh\nprintf '%s\\n' \"$#\" \"$@\" >> \"$EON_TEST_VENUS_LOG\"\n",
+    );
+    executable(
+        &command,
+        "#!/bin/sh\nwhile test ! -e \"$EON_TEST_CHILD_EXIT\"; do sleep 0.01; done\n",
+    );
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = Command::new(&binary)
+        .args(["terminal", "--"])
+        .arg(&command)
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_CHILD_EXIT", &child_exit)
+        .env("EON_TEST_ORBIT_LOG", &orbit_log)
+        .env("EON_TEST_VENUS_LOG", &venus_log)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: child_exit.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for(&control);
+    wait_for(&venus_log);
+
+    let reopened = Command::new(&binary)
+        .args(["terminal", "--", "/bin/false"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_CHILD_EXIT", &child_exit)
+        .env("EON_TEST_ORBIT_LOG", &orbit_log)
+        .env("EON_TEST_VENUS_LOG", &venus_log)
+        .output()
+        .unwrap();
+    assert!(
+        reopened.status.success(),
+        "stdout={} stderr={}",
+        stdout(&reopened),
+        String::from_utf8_lossy(&reopened.stderr)
+    );
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
+    assert_eq!(
+        fs::read_to_string(&venus_log).unwrap(),
+        format!(
+            "1\n{}\n1\n{}\n",
+            generation.join("orbit.sock").display(),
+            generation.join("orbit.sock").display()
+        )
+    );
+
+    let workspace = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    assert_eq!(workspace.status.code(), Some(2));
+    assert!(stdout(&workspace).contains("\"code\":\"workspace-unavailable\""));
+    let wrong_mode = invoke(&binary, &runtime, &config, &[]);
+    assert!(!wrong_mode.status.success());
+    assert!(String::from_utf8_lossy(&wrong_mode.stderr).contains("terminal mode"));
+
+    fs::write(&child_exit, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    assert!(!generation.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn second_cli_controls_three_live_sessions_without_owning_them() {
     let root = temporary_directory();
     let runtime = root.join("runtime");

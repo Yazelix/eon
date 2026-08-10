@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Add `eon terminal -- COMMAND...` to host one exact Orbit-owned command in a
+  native Venus surface without Eon workspace actions while retaining generation,
+  attach, stop, concurrent-launch, child-exit, and cleanup ownership.
 - Supply Symbols Nerd Font Mono to packaged Venus so Yazi can render its
   supported private-use icons without an ambient font.
 - Exit quietly when a downstream reader closes piped CLI output while keeping

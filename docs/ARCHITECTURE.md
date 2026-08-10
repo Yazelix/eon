@@ -17,7 +17,7 @@ composes.
 | Yazi | Yazi | File management and navigation | A relocatable file-manager artifact and launch contract |
 | LazyGit | LazyGit | Git TUI behavior and configuration | A pinned executable and native configuration inputs |
 | Ratconfig | Ratconfig | User-facing configuration editing | A schema-aware configuration artifact and output contract |
-| Eon | Eon orchestrator | Product policy, workspace topology and EONW, component selection, launch, updates, integration checks, distribution | Exact child revisions and their declared artifacts |
+| Eon | Eon orchestrator | Product policy, launch mode, workspace topology and EONW, component selection, launch, updates, integration checks, distribution | Exact child revisions and their declared artifacts |
 
 Nova stays independent. Eon may reuse proven ideas from Nova through explicit
 contracts, but the repositories do not share release identity or require each
@@ -77,9 +77,12 @@ snapshots, supervisor lifecycle results, structured failures, and bounded
 framing. Workspace and lifecycle results are separate types, so the pinned
 Venus consumer remains source- and wire-compatible with additive lifecycle
 tags it never requests. The running Eon supervisor remains the only live
-topology, action, and generation-lifecycle owner; the CLI and Venus never infer
-state from each other, terminal output, or the wire format. EONW carries opaque
-Orbit endpoint bytes but no terminal content.
+topology, action, launch-mode, and generation-lifecycle owner; the CLI and Venus
+never infer state from each other, terminal output, or the wire format. In
+terminal-host mode the same private EONW endpoint retains lifecycle authority
+but returns `workspace-unavailable` to topology actions, while Venus receives
+only Orbit's endpoint. EONW carries opaque Orbit endpoint bytes but no terminal
+content.
 
 ## Repository subsystem boundaries
 
@@ -88,7 +91,7 @@ They route changes and audits without creating additional product scope.
 
 | Subsystem | Owning surfaces | Owns | Does not own |
 |---|---|---|---|
-| Runtime and lifecycle | `crates/eon/src/main.rs` | CLI dispatch, private configuration and per-generation runtime roots, generation identity and discovery, exact attach, supervisor-routed stop, component launch policy, child observation, and the control socket | PTYs, terminal state, native rendering, persistent topology, or managed-tool behavior |
+| Runtime and lifecycle | `crates/eon/src/main.rs` | CLI dispatch, launch mode, private configuration and per-generation runtime roots, generation identity and discovery, exact attach, supervisor-routed stop, component launch policy, child observation, and the control socket | PTYs, terminal state, native rendering, persistent topology, or managed-tool behavior |
 | Workspace state | `crates/eon/src/workspace.rs` | Live ordered tabs and panes, stable identities, active selection, Session-to-endpoint mapping, semantic action results, and complete snapshots | EONW encoding, Orbit state, or Venus geometry |
 | EONW boundary | `crates/eon-workspace-protocol` | Versioned values, bounded framing, validation, complete workspace snapshots, supervisor identity, stop results, and structured failures | Live topology, lifecycle policy, transport ownership, authorization, or rendering |
 | Component graph | `components/eon-alpha-v1.json` and `crates/eon-manifest` | Stable component identity, compatibility requirements, artifact declarations, graph validation, and version reporting | Resolved package paths or package construction |
@@ -113,7 +116,8 @@ Each composed build consumes:
 - exact source or release revisions;
 - declared component artifacts or package outputs;
 - available checksums and provenance;
-- a small set of declared launch and configuration inputs.
+- a small set of declared launch and configuration inputs, including Venus's
+  optional Eon workspace endpoint.
 
 Nix provides those inputs during alpha. Eon code receives component paths as
 opaque launch inputs and does not invoke a Nix evaluator during normal use. It

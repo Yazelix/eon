@@ -11,12 +11,12 @@ editor, file manager, and Git TUI without reimplementing its child projects.
 ## Project status
 
 This repository ships the first Nix-only Eon alpha for x86_64 Linux. One Rust
-supervisor launches the accepted Eon Sessions and Eon Desktop revisions, owns a
-live workspace of independent Sessions, supplies one pinned interactive
-environment, exposes that workspace through EONW v1, keeps one configuration
-root, isolates live runtime generations, and reports the canonical component
-identities. Direct bundles, Home Manager, background updates, release
-automation, and macOS packaging remain outside this slice.
+supervisor launches the accepted Eon Sessions and Eon Desktop revisions, owns
+either a live workspace of independent Sessions or one terminal-host Session,
+supplies one pinned interactive environment, exposes control through EONW v1,
+keeps one configuration root, isolates live runtime generations, and reports
+the canonical component identities. Direct bundles, Home Manager, background
+updates, release automation, and macOS packaging remain outside this slice.
 
 ## Naming model
 
@@ -96,7 +96,7 @@ drivers; the current graphics proof uses Intel hardware, while proprietary
 NVIDIA remains unproved. Run Eon from a terminal when you need foreground
 lifecycle control.
 Closing the Eon Desktop window detaches the client while Sessions and its PTY
-keep running. Reconnect explicitly with:
+keep running. Reconnect to the current launch mode explicitly with:
 
 ```sh
 eon attach
@@ -109,6 +109,19 @@ shows its live Session identities and asks for confirmation; `--json` is the
 explicit non-interactive form. Pressing `Ctrl-C` in the original foreground
 `eon` process also stops that composed generation. Restarting the machine
 preserves no process state beyond the accepted child contracts.
+
+Use terminal-host mode when one command should receive the terminal key stream
+without Eon's tab and pane shortcuts:
+
+```sh
+eon terminal -- COMMAND...
+```
+
+This mode hosts exactly one Orbit Session, gives Venus only the Orbit endpoint,
+and keeps Eon's generation, attach, stop, child-exit, and cleanup lifecycle. A
+second invocation attaches to the compatible live terminal host. Workspace
+actions are unavailable, and a live workspace and terminal host cannot share
+one generation namespace.
 
 While the foreground supervisor is running, Eon owns horizontal tab order and
 one vertical pane selection per tab. Each pane starts and maps to a distinct
@@ -132,7 +145,8 @@ The command surface is small:
 | `eon` | Attach to the exact current-generation workspace, or start it with the default shell |
 | `eon run` | Explicitly start one Orbit session and one Venus window with the default shell |
 | `eon run -- COMMAND...` | Run one explicit command as the Orbit-owned PTY child |
-| `eon attach` | Open Eon Desktop against the exact current-generation workspace |
+| `eon terminal -- COMMAND...` | Start or attach one command in a native terminal surface without Eon workspace actions |
+| `eon attach` | Open Eon Desktop against the exact current-generation launch mode |
 | `eon attach GENERATION` | Open one explicitly selected compatible generation, including `legacy` |
 | `eon generations [--json]` | List validated current, previous, legacy, dead, incompatible, unreachable, and corrupt generations |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor; human mode confirms first |
@@ -144,9 +158,10 @@ The command surface is small:
 | `eon versions` | Print the runtime generation, EONW version, and stable component identities |
 | `eon config-path` | Create and print the Eon configuration root |
 
-Workspace commands target the exact current-generation supervisor. The topology
-is bounded to 64 tabs and 256 panes, is not restored after supervisor loss, and
-has no per-pane or per-Session removal action. Whole-generation stop names and
+Workspace commands target the exact current-generation supervisor and return
+`workspace-unavailable` in terminal-host mode. The workspace topology is bounded
+to 64 tabs and 256 panes, is not restored after supervisor loss, and has no
+per-pane or per-Session removal action. Whole-generation stop names and
 terminates every Session through that supervisor. `--json` reports the same
 accepted EONW result as the human view; neither output format is the protocol
 schema.
@@ -274,15 +289,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 288 |
+| README | 303 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 469 |
+| Architecture and contracts | 499 |
 | Distribution and references | 230 |
-| Changelog | 56 |
-| Rust source and tests | 5,096 |
+| Changelog | 59 |
+| Rust source and tests | 5,347 |
 | Cargo manifests | 35 |
 | Component manifest | 373 |
 | Nix composition | 606 |
 | Product defaults | 0 |
-| **Total** | **7,816** |
+| **Total** | **8,115** |

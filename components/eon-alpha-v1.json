@@ -75,7 +75,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "6ef19afddaedcbe2b9ed0996e31bc02df5d854ac",
+      "revision": "690b038e2b58a0e7761023ac7e004e92327ac901",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -106,7 +106,7 @@
       "launch": {
         "artifact": "executable",
         "arguments": [],
-        "inputs": ["orbit-socket", "eon-workspace-socket"]
+        "inputs": ["orbit-socket", "optional-eon-workspace-socket"]
       }
     },
     {

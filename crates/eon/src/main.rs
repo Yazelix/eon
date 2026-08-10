@@ -29,7 +29,7 @@ use workspace::{
 };
 
 const MANIFEST: &str = include_str!("../../../components/eon-alpha-v1.json");
-const USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
+const USAGE: &str = "usage: eon [run [-- COMMAND...]] | terminal -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 
 fn current_generation() -> String {
@@ -261,6 +261,32 @@ fn probe_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
         _ => Err(EndpointFailure::new(
             EndpointFailureKind::Corrupt,
             "supervisor returned the wrong EONW result for generation inspection",
+        )),
+    }
+}
+
+fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFailure> {
+    match send_action(socket, Action::Inspect)? {
+        ControlResponse::Workspace(Response::Snapshot(_)) => Ok(LaunchMode::Workspace),
+        ControlResponse::Workspace(Response::Failure(failure))
+            if failure.code == "workspace-unavailable" =>
+        {
+            Ok(LaunchMode::Terminal)
+        }
+        ControlResponse::Workspace(Response::Failure(failure)) => Err(EndpointFailure::new(
+            if failure.code == "unsupported-version" {
+                EndpointFailureKind::Incompatible
+            } else {
+                EndpointFailureKind::Corrupt
+            },
+            format!(
+                "supervisor rejected launch-mode inspection: {}",
+                failure.detail
+            ),
+        )),
+        ControlResponse::Lifecycle(_) => Err(EndpointFailure::new(
+            EndpointFailureKind::Corrupt,
+            "supervisor returned the wrong EONW result for launch-mode inspection",
         )),
     }
 }
@@ -737,7 +763,12 @@ fn attach_generation(target: &str) -> Result<i32, String> {
             record.attach.reason
         ));
     }
-    attach_at(&record.runtime)
+    let mode = if target == "legacy" {
+        LaunchMode::Workspace
+    } else {
+        probe_launch_mode(&record.runtime.join("eon.sock")).map_err(|error| error.detail)?
+    };
+    attach_at(&record.runtime, mode)
 }
 
 fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
@@ -867,6 +898,21 @@ struct Programs {
     orbit: PathBuf,
     venus: PathBuf,
     session_bin: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LaunchMode {
+    Workspace,
+    Terminal,
+}
+
+impl LaunchMode {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Workspace => "workspace",
+            Self::Terminal => "terminal",
+        }
+    }
 }
 
 struct ManagedPrograms {
@@ -1053,12 +1099,17 @@ fn integration_mask(shell: &ShellConfig, atuin_nobind: bool) -> u8 {
 
 fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
     match arguments.as_slice() {
-        [] => launch_current(&[], true),
-        [command] if command == "run" => launch_current(&[], false),
+        [] => launch_current(LaunchMode::Workspace, &[], true),
+        [command] if command == "run" => launch_current(LaunchMode::Workspace, &[], false),
         [command, separator, child @ ..]
             if command == "run" && separator == "--" && !child.is_empty() =>
         {
-            launch_current(child, false)
+            launch_current(LaunchMode::Workspace, child, false)
+        }
+        [command, separator, child @ ..]
+            if command == "terminal" && separator == "--" && !child.is_empty() =>
+        {
+            launch_current(LaunchMode::Terminal, child, true)
         }
         [command] if command == "attach" => attach_generation(&current_generation()),
         [command, generation] if command == "attach" => {
@@ -1112,7 +1163,11 @@ fn generation_argument(argument: &OsStr) -> Result<&str, String> {
     Ok(generation)
 }
 
-fn launch_current(child: &[OsString], attach_existing: bool) -> Result<i32, String> {
+fn launch_current(
+    mode: LaunchMode,
+    child: &[OsString],
+    attach_existing: bool,
+) -> Result<i32, String> {
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
     let root = runtime_directory();
@@ -1122,8 +1177,16 @@ fn launch_current(child: &[OsString], attach_existing: bool) -> Result<i32, Stri
     match probe_runtime(&socket) {
         Ok(info) => {
             validate_current_runtime(&info, &generation)?;
-            return if attach_existing && child.is_empty() {
-                attach_at(&runtime)
+            let active_mode = probe_launch_mode(&socket).map_err(|error| error.detail)?;
+            if active_mode != mode {
+                return Err(format!(
+                    "generation {generation} already has a live {} mode; requested {} mode",
+                    active_mode.name(),
+                    mode.name()
+                ));
+            }
+            return if attach_existing {
+                attach_at(&runtime, mode)
             } else {
                 Err(format!(
                     "generation {generation} already has a live Eon supervisor"
@@ -1140,11 +1203,12 @@ fn launch_current(child: &[OsString], attach_existing: bool) -> Result<i32, Stri
         child,
         Duration::from_secs(5),
         &generation,
+        mode,
     ) {
         Ok(code) => Ok(code),
         Err(error) => {
-            if attach_existing && child.is_empty() && path_exists(&socket) {
-                attach_competing_supervisor(&socket, &runtime, &generation, error)
+            if attach_existing && path_exists(&socket) {
+                attach_competing_supervisor(&socket, &runtime, &generation, mode, error)
             } else {
                 Err(error)
             }
@@ -1156,6 +1220,7 @@ fn attach_competing_supervisor(
     socket: &Path,
     runtime: &Path,
     generation: &str,
+    mode: LaunchMode,
     launch_error: String,
 ) -> Result<i32, String> {
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -1163,7 +1228,15 @@ fn attach_competing_supervisor(
         match probe_runtime(socket) {
             Ok(info) => {
                 validate_current_runtime(&info, generation)?;
-                return attach_at(runtime);
+                let active_mode = probe_launch_mode(socket).map_err(|error| error.detail)?;
+                if active_mode != mode {
+                    return Err(format!(
+                        "{launch_error}; competing supervisor started in {} mode, requested {} mode",
+                        active_mode.name(),
+                        mode.name()
+                    ));
+                }
+                return attach_at(runtime, mode);
             }
             Err(error)
                 if matches!(
@@ -1277,18 +1350,23 @@ fn request_id() -> String {
     format!("{}-{nanos}-{sequence}", std::process::id())
 }
 
-fn attach_at(runtime: &Path) -> Result<i32, String> {
-    let socket = runtime.join("orbit.sock");
-    let workspace = runtime.join("eon.sock");
+fn attach_at(runtime: &Path, mode: LaunchMode) -> Result<i32, String> {
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
-    Command::new(programs().venus)
-        .arg(socket)
-        .arg(workspace)
-        .env("XDG_CONFIG_HOME", config)
+    venus_command(&programs(), &config, &runtime.join("orbit.sock"), mode)
         .status()
         .map(status_code)
         .map_err(|error| format!("cannot launch Eon Desktop: {error}"))
+}
+
+fn venus_command(programs: &Programs, config: &Path, socket: &Path, mode: LaunchMode) -> Command {
+    let mut command = Command::new(&programs.venus);
+    command.arg(socket);
+    if mode == LaunchMode::Workspace {
+        command.arg(socket.with_file_name("eon.sock"));
+    }
+    command.env("XDG_CONFIG_HOME", config);
+    command
 }
 
 fn programs() -> Programs {
@@ -1452,6 +1530,7 @@ fn supervise(
     child: &[OsString],
     socket_timeout: Duration,
     generation: &str,
+    mode: LaunchMode,
 ) -> Result<i32, String> {
     let runtime = socket
         .parent()
@@ -1459,20 +1538,18 @@ fn supervise(
     let control_listener = create_control_listener(&runtime.join("eon.sock"))?;
     let mut initial = start_orbit(programs, config, socket, child, socket_timeout)?;
 
-    let mut venus = match Command::new(&programs.venus)
-        .arg(socket)
-        .arg(runtime.join("eon.sock"))
-        .env("XDG_CONFIG_HOME", config)
-        .spawn()
-    {
+    let mut venus = match venus_command(programs, config, socket, mode).spawn() {
         Ok(venus) => Some(venus),
         Err(error) => {
             stop(&mut initial);
+            remove_dead_socket(socket);
+            drop(control_listener);
+            let _ = fs::remove_dir(runtime);
             return Err(format!("cannot launch Eon Desktop: {error}"));
         }
     };
-    let mut workspace =
-        Workspace::with_initial_session(runtime.to_path_buf(), socket.to_path_buf());
+    let mut workspace = (mode == LaunchMode::Workspace)
+        .then(|| Workspace::with_initial_session(runtime.to_path_buf(), socket.to_path_buf()));
     let mut sessions = vec![RunningSession {
         id: "session-1".into(),
         endpoint: socket.into(),
@@ -1490,9 +1567,12 @@ fn supervise(
             {
                 let session = sessions.remove(index);
                 let code = status_code(status);
-                workspace
-                    .session_exited(&session.id)
-                    .map_err(|error| error.detail)?;
+                remove_dead_socket(&session.endpoint);
+                if let Some(workspace) = &mut workspace {
+                    workspace
+                        .session_exited(&session.id)
+                        .map_err(|error| error.detail)?;
+                }
                 if session.id == "session-1" {
                     initial_status = Some(code);
                 }
@@ -1527,7 +1607,7 @@ fn supervise(
 
         if accept_control_client(
             &control_listener.listener,
-            &mut workspace,
+            workspace.as_mut(),
             &mut sessions,
             programs,
             config,
@@ -1684,7 +1764,7 @@ fn create_control_listener(path: &Path) -> Result<ControlListener, String> {
 
 fn accept_control_client(
     listener: &UnixListener,
-    workspace: &mut Workspace,
+    workspace: Option<&mut Workspace>,
     sessions: &mut Vec<RunningSession>,
     programs: &Programs,
     config: &Path,
@@ -1708,13 +1788,18 @@ fn accept_control_client(
 
 fn handle_control_client(
     mut stream: UnixStream,
-    workspace: &mut Workspace,
+    workspace: Option<&mut Workspace>,
     sessions: &mut Vec<RunningSession>,
     programs: &Programs,
     config: &Path,
     socket_timeout: Duration,
     generation: &str,
 ) -> bool {
+    let mode = if workspace.is_some() {
+        LaunchMode::Workspace
+    } else {
+        LaunchMode::Terminal
+    };
     let timeout = Some(Duration::from_millis(250));
     if stream.set_read_timeout(timeout).is_err() || stream.set_write_timeout(timeout).is_err() {
         return false;
@@ -1723,7 +1808,7 @@ fn handle_control_client(
         Ok(Request {
             action: Action::InspectRuntime,
             ..
-        }) => match runtime_status(generation, sessions) {
+        }) => match runtime_status(generation, sessions, mode) {
             Ok(runtime) => (
                 ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)),
                 false,
@@ -1756,21 +1841,33 @@ fn handle_control_client(
             ))),
             false,
         ),
-        Ok(request) => match workspace.dispatch(&request.id, request.action, |session| {
-            let child = start_orbit(programs, config, &session.endpoint, &[], socket_timeout)?;
-            sessions.push(RunningSession {
-                id: session.id.clone(),
-                endpoint: session.endpoint.clone(),
-                child,
-            });
-            Ok(())
-        }) {
-            Ok(()) => (
-                ControlResponse::Workspace(Response::Snapshot(workspace.snapshot())),
-                false,
-            ),
-            Err(error) => (
-                ControlResponse::Workspace(Response::Failure(failure(error.code, error.detail))),
+        Ok(request) => match workspace {
+            Some(workspace) => match workspace.dispatch(&request.id, request.action, |session| {
+                let child = start_orbit(programs, config, &session.endpoint, &[], socket_timeout)?;
+                sessions.push(RunningSession {
+                    id: session.id.clone(),
+                    endpoint: session.endpoint.clone(),
+                    child,
+                });
+                Ok(())
+            }) {
+                Ok(()) => (
+                    ControlResponse::Workspace(Response::Snapshot(workspace.snapshot())),
+                    false,
+                ),
+                Err(error) => (
+                    ControlResponse::Workspace(Response::Failure(failure(
+                        error.code,
+                        error.detail,
+                    ))),
+                    false,
+                ),
+            },
+            None => (
+                ControlResponse::Workspace(Response::Failure(failure(
+                    "workspace-unavailable",
+                    "terminal mode has no Eon workspace",
+                ))),
                 false,
             ),
         },
@@ -1792,7 +1889,11 @@ fn handle_control_client(
     false
 }
 
-fn runtime_status(generation: &str, sessions: &[RunningSession]) -> Result<Runtime, String> {
+fn runtime_status(
+    generation: &str,
+    sessions: &[RunningSession],
+    mode: LaunchMode,
+) -> Result<Runtime, String> {
     Ok(Runtime {
         generation: generation.into(),
         eon_version: env!("CARGO_PKG_VERSION").into(),
@@ -1802,7 +1903,11 @@ fn runtime_status(generation: &str, sessions: &[RunningSession]) -> Result<Runti
         sessions: sessions.iter().map(|session| session.id.clone()).collect(),
         attach: Availability {
             available: true,
-            reason: "supervisor accepts EONW v1 workspace clients".into(),
+            reason: match mode {
+                LaunchMode::Workspace => "supervisor accepts EONW v1 workspace clients",
+                LaunchMode::Terminal => "supervisor owns one terminal host",
+            }
+            .into(),
         },
         stop: Availability {
             available: true,
@@ -1922,10 +2027,11 @@ fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ManagedPrograms, ManagedTool, Programs, create_control_listener, current_generation,
-        discover_generations, effective_uid, generation_directory, generation_id, integration_mask,
-        managed_command, managed_tool, orbit_command, prepare_configuration, prepare_runtime,
-        prepend_path, read_shell_config, supervise, valid_generation, xdg_path,
+        LaunchMode, ManagedPrograms, ManagedTool, Programs, create_control_listener,
+        current_generation, discover_generations, effective_uid, generation_directory,
+        generation_id, integration_mask, managed_command, managed_tool, orbit_command,
+        prepare_configuration, prepare_runtime, prepend_path, read_shell_config, supervise,
+        valid_generation, venus_command, xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -2272,6 +2378,62 @@ mod tests {
     }
 
     #[test]
+    fn venus_receives_workspace_endpoint_only_in_workspace_mode() {
+        let programs = Programs {
+            orbit: "/managed/orbit".into(),
+            venus: "/managed/venus".into(),
+            session_bin: None,
+        };
+        let config = Path::new("/config/eon");
+        let socket = Path::new("/runtime/orbit.sock");
+
+        let workspace = venus_command(&programs, config, socket, LaunchMode::Workspace);
+        assert_eq!(
+            workspace.get_args().map(OsString::from).collect::<Vec<_>>(),
+            ["/runtime/orbit.sock", "/runtime/eon.sock"].map(OsString::from)
+        );
+
+        let terminal = venus_command(&programs, config, socket, LaunchMode::Terminal);
+        assert_eq!(
+            terminal.get_args().map(OsString::from).collect::<Vec<_>>(),
+            ["/runtime/orbit.sock"].map(OsString::from)
+        );
+    }
+
+    #[test]
+    fn failed_terminal_surface_stops_its_new_session_and_control_endpoint() {
+        let root = temporary_directory();
+        let orbit = root.join("orbit");
+        let socket = root.join("orbit.sock");
+        let config = root.join("config");
+        executable(
+            &orbit,
+            "#!/bin/sh\nprintf '%s' \"$$\" > \"$2\"\nwhile :; do sleep 0.01; done\n",
+        );
+
+        let error = supervise(
+            &Programs {
+                orbit,
+                venus: root.join("missing-venus"),
+                session_bin: None,
+            },
+            &config,
+            &socket,
+            &["ignored".into()],
+            Duration::from_secs(2),
+            "g1-0123456789abcdef0123456789abcdef",
+            LaunchMode::Terminal,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("cannot launch Eon Desktop"));
+        let pid = fs::read_to_string(&socket).unwrap();
+        assert!(!Path::new("/proc").join(pid).exists());
+        assert!(!root.join("eon.sock").exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn venus_exit_leaves_orbit_and_its_command_running() {
         let root = temporary_directory();
         let orbit = root.join("orbit");
@@ -2327,6 +2489,7 @@ mod tests {
             &["codex".into(), "--model".into(), "test".into()],
             Duration::from_secs(2),
             "g1-0123456789abcdef0123456789abcdef",
+            LaunchMode::Workspace,
         )
         .unwrap();
         stop_after_venus.join().unwrap();

@@ -12,10 +12,10 @@ detailed execution evidence, and Git history retains superseded states.
 
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
-| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Proven | `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; current composition proof below |
-| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Proven | `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; current composition proof below |
-| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Proven | `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; current composition proof below |
-| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Proven | `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; current composition proof below |
+| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Candidate | Pending `eon-4is.1` reproof |
+| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Candidate | Pending `eon-4is.1` reproof |
+| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Candidate | Pending `eon-4is.1` reproof |
+| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Candidate | Pending `eon-4is.1` reproof |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
@@ -23,6 +23,32 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; proof below |
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Workspace actions at `4af395aea06c230ee6b18cf0755ae25915c0b88d`; lifecycle actions at `fd6b348494111a0d18e241787da14ea99ee117a9` |
 | EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly attachable when compatible, and explicitly stoppable through their supervisor | Eon | Proven | `3b84d83d807c6249efa340fabf9e3d0d0d3ef310`; proof below |
+| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Candidate | Pending `eon-4is.1` proof commit |
+
+## Approved terminal-host contract EON-C12
+
+- Consumer: one local Eon user or an explicitly approved composition that needs
+  one native terminal surface without Eon's tab and pane model.
+- Trigger: the consumer invokes `eon terminal -- COMMAND...` with one non-empty
+  exact argv.
+- Result: Eon starts one Orbit-owned Session for the exact command and launches
+  Venus with only that Session endpoint. The current runtime generation remains
+  authoritative for attach, inspection, stop, concurrent-launch convergence,
+  child exit, and cleanup. A repeated terminal invocation attaches to the live
+  terminal instead of starting another Session.
+- Important failures: a missing command, incompatible or corrupt supervisor,
+  component mismatch, partial startup, or a live supervisor in the other launch
+  mode fails explicitly. Workspace actions against terminal mode return the
+  bounded `workspace-unavailable` failure and create no hidden topology.
+- Ownership: Eon owns launch mode, generation, composition, and lifecycle.
+  Orbit remains the sole owner of the process, PTY, terminal state, Session,
+  and transport. Venus remains a transient native presentation and input client.
+- Boundary: terminal mode adds no Workspace value, tabs, panes, key remapping,
+  preset, wrapper process, persisted mode marker, protocol field, remote access,
+  second app identity, or Zellij policy. Bare `eon` and `eon run` retain their
+  workspace meanings.
+- Approval: the user approved this contract and the exact command spelling on
+  2026-08-10 for `eon-4is.1`.
 
 ## Approved workspace contract EON-C8
 
