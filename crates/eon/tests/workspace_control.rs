@@ -56,6 +56,18 @@ fn wait_for(path: &Path) {
     assert!(path.exists(), "{} was not created", path.display());
 }
 
+fn wait_for_successful_exit(child: &mut Child) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success());
+            return;
+        }
+        assert!(Instant::now() < deadline, "Eon supervisor did not exit");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn invoke(binary: &Path, runtime: &Path, config: &Path, arguments: &[&str]) -> Output {
     Command::new(binary)
         .args(arguments)
@@ -245,15 +257,77 @@ fn second_cli_controls_three_live_sessions_without_owning_them() {
     }
 
     fs::write(&stop, "").unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let status = loop {
-        if let Some(status) = supervisor.child.try_wait().unwrap() {
-            break status;
-        }
-        assert!(Instant::now() < deadline, "Eon supervisor did not exit");
-        thread::sleep(Duration::from_millis(10));
+    wait_for_successful_exit(&mut supervisor.child);
+    assert!(!control.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let stop = root.join("stop");
+    let exit_initial = root.join("exit-initial");
+    let venus_pid = root.join("venus.pid");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    executable(
+        &orbit,
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$2\"\ncase \"$2\" in\n  */orbit.sock) while test ! -e \"$EON_TEST_EXIT_INITIAL\"; do sleep 0.01; done ;;\n  *) while test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done ;;\nesac\n",
+    );
+    executable(
+        &venus,
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\nwhile :; do sleep 0.01; done\n",
+    );
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = Command::new(&binary)
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_EXIT_INITIAL", &exit_initial)
+        .env("EON_TEST_VENUS_PID", &venus_pid)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: stop.clone(),
     };
-    assert!(status.success());
+    let control = runtime.join("eon.sock");
+    wait_for(&control);
+    wait_for(&venus_pid);
+    assert!(
+        invoke(&binary, &runtime, &config, &["pane", "create", "--json"])
+            .status
+            .success()
+    );
+
+    fs::write(&exit_initial, "").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshot = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+        if snapshot.status.success()
+            && !stdout(&snapshot).contains("pane-1")
+            && stdout(&snapshot).contains("pane-2")
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "initial pane was not removed");
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    let pid: i32 = fs::read_to_string(&venus_pid).unwrap().parse().unwrap();
+    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
+    assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
+
+    fs::write(&stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
     assert!(!control.exists());
     fs::remove_dir_all(root).unwrap();
 }

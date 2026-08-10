@@ -113,6 +113,8 @@ shows every fitting pane header around one selected live Session, and binds
 Alt+H/L to tabs, Alt+K/J to panes, Alt+M to pane creation, and Ctrl+T to tab
 creation. External workspace changes appear within one second because Eon
 Desktop re-inspects EONW v1 every 250 ms; the protocol adds no event stream.
+When a shell exits, Eon removes its pane, selects the nearest surviving pane,
+removes an empty tab, and closes when the final pane exits.
 
 The command surface is small:
 
@@ -132,9 +134,9 @@ The command surface is small:
 
 Workspace commands require the live foreground supervisor. The topology is
 bounded to 64 tabs and 256 panes, is not restored after supervisor loss, and
-has no removal or session-stop action in this slice. `--json` reports the same
-accepted EONW result as the human view; neither output format is the protocol
-schema.
+has no explicit removal or session-stop action in this slice. `--json` reports
+the same accepted EONW result as the human view; neither output format is the
+protocol schema.
 
 ## Managed environment
 
@@ -218,15 +220,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 232 |
+| README | 234 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 669 |
+| Architecture and contracts | 328 |
 | Distribution and references | 202 |
-| Changelog | 35 |
-| Rust source and tests | 3,169 |
+| Changelog | 37 |
+| Rust source and tests | 3,287 |
 | Cargo manifests | 33 |
 | Component manifest | 263 |
 | Nix composition | 334 |
 | Product defaults | 10 |
-| **Total** | **5,610** |
+| **Total** | **5,391** |

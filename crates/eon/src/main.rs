@@ -444,34 +444,32 @@ fn supervise(
         Workspace::with_initial_session(runtime.to_path_buf(), socket.to_path_buf());
     let mut sessions = vec![RunningSession {
         id: "session-1".into(),
-        child: Some(initial),
+        child: initial,
     }];
     let mut initial_status = None;
 
     loop {
-        for session in &mut sessions {
-            let Some(process) = session.child.as_mut() else {
-                continue;
-            };
-            if let Some(status) = process
+        let mut index = 0;
+        while index < sessions.len() {
+            if let Some(status) = sessions[index]
+                .child
                 .try_wait()
                 .map_err(|error| format!("cannot observe Sessions: {error}"))?
             {
+                let session = sessions.remove(index);
                 let code = status_code(status);
-                session.child = None;
                 workspace
                     .session_exited(&session.id)
                     .map_err(|error| error.detail)?;
                 if session.id == "session-1" {
                     initial_status = Some(code);
-                    if let Some(mut process) = venus.take() {
-                        stop(&mut process);
-                    }
                 }
+            } else {
+                index += 1;
             }
         }
 
-        if sessions.iter().all(|session| session.child.is_none()) {
+        if sessions.is_empty() {
             if let Some(mut process) = venus.take() {
                 stop(&mut process);
             }
@@ -507,7 +505,7 @@ fn supervise(
 
 struct RunningSession {
     id: String,
-    child: Option<Child>,
+    child: Child,
 }
 
 fn start_orbit(
@@ -683,7 +681,7 @@ fn handle_control_client(
             let child = start_orbit(programs, config, &session.endpoint, &[], socket_timeout)?;
             sessions.push(RunningSession {
                 id: session.id.clone(),
-                child: Some(child),
+                child,
             });
             Ok(())
         }) {

@@ -10,7 +10,6 @@ const MAX_RECENT_REQUESTS: usize = 256;
 pub(crate) struct Session {
     pub(crate) id: String,
     pub(crate) endpoint: PathBuf,
-    live: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,6 +30,8 @@ pub(crate) struct Workspace {
     runtime: PathBuf,
     tabs: Vec<Tab>,
     active: usize,
+    next_tab: usize,
+    next_pane: usize,
     recent_requests: VecDeque<String>,
 }
 
@@ -51,7 +52,7 @@ impl Workspace {
                             id: pane.id.clone(),
                             session: pane.session.id.clone(),
                             endpoint: pane.session.endpoint.as_os_str().as_bytes().to_vec(),
-                            live: pane.session.live,
+                            live: true,
                         })
                         .collect(),
                 })
@@ -144,6 +145,8 @@ impl Workspace {
             runtime,
             tabs: Vec::new(),
             active: 0,
+            next_tab: 1,
+            next_pane: 1,
             recent_requests: VecDeque::new(),
         };
         let (tab, mut pane) = workspace.next_tab_and_pane();
@@ -153,6 +156,8 @@ impl Workspace {
             panes: vec![pane],
             selected: 0,
         });
+        workspace.next_tab += 1;
+        workspace.next_pane += 1;
         workspace
     }
 
@@ -181,18 +186,33 @@ impl Workspace {
     }
 
     pub(crate) fn session_exited(&mut self, session_id: &str) -> Result<(), Failure> {
-        for tab in &mut self.tabs {
-            for pane in &mut tab.panes {
-                if pane.session.id == session_id {
-                    pane.session.live = false;
-                    return Ok(());
-                }
-            }
+        let (tab_index, pane_index) = self
+            .tabs
+            .iter()
+            .enumerate()
+            .find_map(|(tab_index, tab)| {
+                tab.panes
+                    .iter()
+                    .position(|pane| pane.session.id == session_id)
+                    .map(|pane_index| (tab_index, pane_index))
+            })
+            .ok_or_else(|| {
+                action_error(
+                    "unknown-session",
+                    format!("session {session_id} is not in the workspace"),
+                )
+            })?;
+
+        let tab = &mut self.tabs[tab_index];
+        tab.panes.remove(pane_index);
+        tab.selected = index_after_removal(tab.selected, pane_index, tab.panes.len());
+        if !tab.panes.is_empty() {
+            return Ok(());
         }
-        Err(action_error(
-            "unknown-session",
-            format!("session {session_id} is not in the workspace"),
-        ))
+
+        self.tabs.remove(tab_index);
+        self.active = index_after_removal(self.active, tab_index, self.tabs.len());
+        Ok(())
     }
 
     fn create_tab(
@@ -208,6 +228,8 @@ impl Workspace {
         self.check_pane_capacity()?;
         let (tab_id, pane) = self.next_tab_and_pane();
         start(&pane.session).map_err(|detail| action_error("session-start", detail))?;
+        self.next_tab += 1;
+        self.next_pane += 1;
         self.tabs.push(Tab {
             id: tab_id,
             panes: vec![pane],
@@ -224,6 +246,7 @@ impl Workspace {
         self.check_pane_capacity()?;
         let pane = self.next_pane();
         start(&pane.session).map_err(|detail| action_error("session-start", detail))?;
+        self.next_pane += 1;
         let active = &mut self.tabs[self.active];
         active.panes.push(pane);
         active.selected = active.panes.len() - 1;
@@ -232,7 +255,6 @@ impl Workspace {
 
     fn focus_id(&mut self, id: &str) -> Result<(), Failure> {
         if let Some(tab_index) = self.tabs.iter().position(|tab| tab.id == id) {
-            self.ensure_selected_session_live(tab_index)?;
             if tab_index == self.active {
                 return Err(action_error(
                     "already-focused",
@@ -249,7 +271,6 @@ impl Workspace {
                 .iter()
                 .position(|pane| pane.id == id)
             {
-                self.ensure_pane_live(tab_index, pane_index)?;
                 if tab_index == self.active && pane_index == self.tabs[tab_index].selected {
                     return Err(action_error(
                         "already-focused",
@@ -275,7 +296,6 @@ impl Workspace {
                     .active
                     .checked_sub(1)
                     .ok_or_else(|| action_error("unavailable", "no tab exists to the left"))?;
-                self.ensure_selected_session_live(target)?;
                 self.active = target;
             }
             Direction::Right => {
@@ -283,7 +303,6 @@ impl Workspace {
                 if target >= self.tabs.len() {
                     return Err(action_error("unavailable", "no tab exists to the right"));
                 }
-                self.ensure_selected_session_live(target)?;
                 self.active = target;
             }
             Direction::Up => {
@@ -291,7 +310,6 @@ impl Workspace {
                     .selected
                     .checked_sub(1)
                     .ok_or_else(|| action_error("unavailable", "no pane exists above"))?;
-                self.ensure_pane_live(self.active, target)?;
                 self.tabs[self.active].selected = target;
             }
             Direction::Down => {
@@ -299,7 +317,6 @@ impl Workspace {
                 if target >= self.tabs[self.active].panes.len() {
                     return Err(action_error("unavailable", "no pane exists below"));
                 }
-                self.ensure_pane_live(self.active, target)?;
                 self.tabs[self.active].selected = target;
             }
         }
@@ -316,29 +333,13 @@ impl Workspace {
         Ok(())
     }
 
-    fn ensure_selected_session_live(&self, tab: usize) -> Result<(), Failure> {
-        self.ensure_pane_live(tab, self.tabs[tab].selected)
-    }
-
-    fn ensure_pane_live(&self, tab: usize, pane: usize) -> Result<(), Failure> {
-        let pane = &self.tabs[tab].panes[pane];
-        if pane.session.live {
-            Ok(())
-        } else {
-            Err(action_error(
-                "missing-session",
-                format!("pane {} has no live Orbit session", pane.id),
-            ))
-        }
-    }
-
     fn next_tab_and_pane(&self) -> (String, Pane) {
-        let tab = format!("tab-{}", self.tabs.len() + 1);
+        let tab = format!("tab-{}", self.next_tab);
         (tab, self.next_pane())
     }
 
     fn next_pane(&self) -> Pane {
-        let next = self.pane_count() + 1;
+        let next = self.next_pane;
         let pane_id = format!("pane-{next}");
         let session_id = format!("session-{next}");
         let endpoint = self.runtime.join(format!("{session_id}.sock"));
@@ -347,7 +348,6 @@ impl Workspace {
             session: Session {
                 id: session_id,
                 endpoint,
-                live: true,
             },
         }
     }
@@ -361,6 +361,14 @@ impl Workspace {
             self.recent_requests.pop_front();
         }
         self.recent_requests.push_back(request_id.into());
+    }
+}
+
+fn index_after_removal(selected: usize, removed: usize, remaining: usize) -> usize {
+    if removed < selected {
+        selected - 1
+    } else {
+        selected.min(remaining.saturating_sub(1))
     }
 }
 
@@ -490,21 +498,59 @@ mod tests {
             "error unknown-id: pane\\nforged is not a live tab or pane identity\n"
         );
         assert_eq!(workspace, before);
+    }
+
+    #[test]
+    fn session_exit_removes_panes_and_empty_tabs_without_reusing_ids() {
+        let mut workspace =
+            Workspace::with_initial_session("/runtime".into(), "/runtime/orbit.sock".into());
+        let mut start = |_: &Session| Ok(());
 
         workspace
-            .dispatch("request-13", Action::FocusId("pane-2".into()), &mut start)
+            .dispatch("request-1", Action::CreatePane, &mut start)
+            .unwrap();
+        workspace
+            .dispatch("request-2", Action::CreatePane, &mut start)
+            .unwrap();
+        workspace
+            .dispatch("request-3", Action::FocusId("pane-2".into()), &mut start)
             .unwrap();
         workspace.session_exited("session-2").unwrap();
-        for (request, id) in [("request-14", "pane-2"), ("request-15", "tab-1")] {
-            let before = workspace.clone();
-            assert_eq!(
-                workspace
-                    .dispatch(request, Action::FocusId(id.into()), &mut start)
-                    .unwrap_err()
-                    .code,
-                "missing-session"
-            );
-            assert_eq!(workspace, before);
-        }
+
+        let snapshot = workspace.snapshot();
+        assert_eq!(snapshot.tabs[0].selected_pane, "pane-3");
+        assert_eq!(
+            snapshot.tabs[0]
+                .panes
+                .iter()
+                .map(|pane| pane.id.as_str())
+                .collect::<Vec<_>>(),
+            ["pane-1", "pane-3"]
+        );
+
+        workspace
+            .dispatch("request-4", Action::CreateTab, &mut start)
+            .unwrap();
+        workspace
+            .dispatch("request-5", Action::CreatePane, &mut start)
+            .unwrap();
+        workspace.session_exited("session-5").unwrap();
+        assert_eq!(workspace.snapshot().tabs[1].selected_pane, "pane-4");
+        workspace.session_exited("session-4").unwrap();
+        assert_eq!(workspace.snapshot().active_tab, "tab-1");
+
+        let before = workspace.clone();
+        assert_eq!(
+            workspace.session_exited("session-4").unwrap_err().code,
+            "unknown-session"
+        );
+        assert_eq!(workspace, before);
+
+        workspace
+            .dispatch("request-6", Action::CreateTab, &mut start)
+            .unwrap();
+        let snapshot = workspace.snapshot();
+        assert_eq!(snapshot.active_tab, "tab-3");
+        assert_eq!(snapshot.tabs[1].panes[0].id, "pane-6");
     }
 }

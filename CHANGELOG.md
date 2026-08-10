@@ -12,6 +12,8 @@ installation, and proven contract changes.
   configuration root once before passing it to child tools.
 - Add Eon-owned live tabs and vertical pane stacks with stable-ID and direct
   directional CLI actions, deterministic JSON output, and one Orbit process per pane.
+- Remove a pane when its Orbit Session exits, select the nearest survivor,
+  remove an empty tab, and close Eon when the final pane exits.
 - Expose those actions and complete accepted workspace snapshots through the
   bounded, versioned, dependency-free EONW v1 local protocol while preserving
   human and JSON CLI projections.
