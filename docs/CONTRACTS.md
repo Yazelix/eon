@@ -22,7 +22,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Proven | Composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21` |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | `6dfcb473beccadd6e145235009240c81dd570fe5`; proof below |
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Workspace actions at `4af395aea06c230ee6b18cf0755ae25915c0b88d`; lifecycle actions at `fd6b348494111a0d18e241787da14ea99ee117a9` |
-| EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly attachable when compatible, and explicitly stoppable through their supervisor | Eon | Proven | `fd6b348494111a0d18e241787da14ea99ee117a9`; proof below |
+| EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly attachable when compatible, and explicitly stoppable through their supervisor | Eon | Proven | `3b84d83d807c6249efa340fabf9e3d0d0d3ef310`; proof below |
 
 ## Approved workspace contract EON-C8
 
@@ -286,11 +286,12 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C10 lifecycle and EON-C11 — runtime generations
 
-- Proof revision: `fd6b348494111a0d18e241787da14ea99ee117a9` on
-  x86_64 Linux.
-- Artifact: `/nix/store/yx3wzmnfk3ixw3dp7z133w2blz3ndi7f-eon-0.1.0`,
-  generation `g1-e0746599c988562cb4e729215c8ad6e9`, NAR hash
-  `sha256-wEqD+hZA3omGO2UOsQfTxcd/9MRdIBkSY0Y/g3Ep0yQ=`.
+- Lifecycle protocol proof: `fd6b348494111a0d18e241787da14ea99ee117a9`.
+  Current EON-C11 proof: `3b84d83d807c6249efa340fabf9e3d0d0d3ef310`
+  on x86_64 Linux.
+- Artifact: `/nix/store/8wwzwqyzvcgcwkajvnp36x1qkrcd5ggk-eon-0.1.0`,
+  generation `g1-562c6a3e4f1da16d0c9d3ac5e6e5b859`, NAR hash
+  `sha256-PKbNlLE8pBr2jT6nuCsPnl9lThWZPEwrn8vqcTBvEt8=`.
 - Checks: locked format, check, 25-test, and Clippy suites; canonical manifest
   validation; exact Nix build and flake check; pinned Venus compilation; live
   two-generation attach, stop, cleanup, and process-survival dogfood; profile
@@ -298,7 +299,8 @@ detailed execution evidence, and Git history retains superseded states.
 - Exercised behavior: bare launch selects only the exact current generation;
   current and fixed-namespace legacy work coexist and attach explicitly;
   supervisor-routed stop names and removes only the selected current generation;
-  profile refresh leaves the older supervisor and Orbit Sessions running.
+  exact attach and stop ignore unrelated over-limit generation entries; profile
+  refresh leaves the older supervisor and Orbit Sessions running.
 
 ## Current gaps
 
