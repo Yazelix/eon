@@ -20,7 +20,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Proven | Composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21` |
-| EON-C9 | Eon supplies one exact managed interactive environment through prefixed external commands and Session-private unprefixed tool names, with packaged-before-user native Nushell configuration, without changing the user's global toolchain | Eon | Candidate | Current working tree and exact artifact below; prior managed-environment proof `99c410a1081b88dd8db2b7f9e26394a38acd175a` |
+| EON-C9 | Eon supplies one exact managed interactive environment through prefixed external commands and Session-private unprefixed tool names, with packaged-before-user native Nushell configuration, without changing the user's global toolchain | Eon | Proven | `fec6824a99625bd040aeacbba81621aca84cfd06`; exact artifact and checks below |
 | EON-C10 | A local client can submit versioned Eon workspace actions and receive one complete accepted workspace snapshot without reconstructing topology or terminal state | Eon | Proven | `4af395aea06c230ee6b18cf0755ae25915c0b88d`; EONW v1 producer proof below |
 
 ## Approved workspace contract EON-C8
@@ -175,8 +175,8 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C9 — managed environment
 
-- Proof candidate: current working tree on x86_64 Linux; no proof-bearing Git
-  revision yet.
+- Proof revision: `fec6824a99625bd040aeacbba81621aca84cfd06` on
+  x86_64 Linux.
 - Artifact: `/nix/store/pa5ksqs4s9dxlabkjia2pga8brd5dmg3-eon-0.1.0`, NAR hash
   `sha256-1jXIgPVCHb/QCatKXEAkjY78buTibyrldqHy4MUiqcc=`, NAR size 1,316,096
   bytes, closure size 1,559,526,400 bytes.
