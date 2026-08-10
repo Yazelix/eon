@@ -27,6 +27,8 @@ installation, and proven contract changes.
   live.
 - Keep terminal text and Unicode table borders on the authoritative Venus cell
   grid, and anchor shaped input-method preedit text and underlines at the cursor.
+- Recover the selected live Session automatically after retryable local socket
+  loss while retaining its last coherent presentation until a fresh frame.
 - Ship the x86_64 Linux alpha through one locked Nix flake with an Eon desktop
   entry that groups its X11/Xwayland window and uses a transparent violet
   three-fold loop icon rendered at native launcher sizes.
