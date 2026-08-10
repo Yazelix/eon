@@ -73,10 +73,13 @@ shims require an explicit user decision, a removal condition, and a bead.
 
 EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
-snapshots, structured failures, and bounded framing. The running Eon supervisor
-remains the only live topology and action owner; the CLI and Venus decode the
-same values and never infer state from each other, terminal output, or the wire
-format. EONW carries opaque Orbit endpoint bytes but no terminal content.
+snapshots, supervisor lifecycle results, structured failures, and bounded
+framing. Workspace and lifecycle results are separate types, so the pinned
+Venus consumer remains source- and wire-compatible with additive lifecycle
+tags it never requests. The running Eon supervisor remains the only live
+topology, action, and generation-lifecycle owner; the CLI and Venus never infer
+state from each other, terminal output, or the wire format. EONW carries opaque
+Orbit endpoint bytes but no terminal content.
 
 ## Repository subsystem boundaries
 
@@ -85,18 +88,22 @@ They route changes and audits without creating additional product scope.
 
 | Subsystem | Owning surfaces | Owns | Does not own |
 |---|---|---|---|
-| Runtime and lifecycle | `crates/eon/src/main.rs` | CLI dispatch, private configuration and runtime roots, component launch and stop policy, child observation, and the supervisor control socket | PTYs, terminal state, native rendering, or managed-tool behavior |
+| Runtime and lifecycle | `crates/eon/src/main.rs` | CLI dispatch, private configuration and per-generation runtime roots, generation identity and discovery, exact attach, supervisor-routed stop, component launch policy, child observation, and the control socket | PTYs, terminal state, native rendering, persistent topology, or managed-tool behavior |
 | Workspace state | `crates/eon/src/workspace.rs` | Live ordered tabs and panes, stable identities, active selection, Session-to-endpoint mapping, semantic action results, and complete snapshots | EONW encoding, Orbit state, or Venus geometry |
-| EONW boundary | `crates/eon-workspace-protocol` | Versioned values, bounded framing, validation, complete snapshots, and structured failures | Live topology, transport lifecycle, authorization, or rendering |
+| EONW boundary | `crates/eon-workspace-protocol` | Versioned values, bounded framing, validation, complete workspace snapshots, supervisor identity, stop results, and structured failures | Live topology, lifecycle policy, transport ownership, authorization, or rendering |
 | Component graph | `components/eon-alpha-v1.json` and `crates/eon-manifest` | Stable component identity, compatibility requirements, artifact declarations, graph validation, and version reporting | Resolved package paths or package construction |
 | Managed environment | Managed dispatch in `crates/eon/src/main.rs`, `defaults/`, and its `flake.nix` wiring | Stable managed command names, private configuration projection, exact tool selection, and default interactive policy | Shell, prompt, editor, file-manager, or Git-TUI native behavior |
 | Nix alpha composition | `flake.nix` | Exact source resolution, child builds, opaque launch-path injection, desktop packaging, and the sole alpha installation artifact | Runtime product semantics or a second component graph |
 
-The supervisor is the composition root for runtime policy. Workspace state
-crosses process boundaries only through EONW. Nix resolves the canonical
-component graph and injects paths without becoming a runtime owner. A
-subsystem review includes its direct callers and consumers; a separate
-repository integration review reconciles invariants that cross these rows.
+The supervisor is the composition root for runtime policy. An opaque source-
+and-graph digest selects its private generation namespace. Candidate directories
+locate control endpoints, but only a bounded EONW response establishes live
+identity and capabilities. A bare launch never adopts or stops a different
+generation. Workspace and lifecycle state cross process boundaries only through
+EONW. Nix resolves the canonical component graph and injects paths without
+becoming a runtime owner. A subsystem review includes its direct callers and
+consumers; a separate repository integration review reconciles invariants that
+cross these rows.
 
 ## Composition unit
 

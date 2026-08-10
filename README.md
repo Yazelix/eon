@@ -14,9 +14,9 @@ This repository ships the first Nix-only Eon alpha for x86_64 Linux. One Rust
 supervisor launches the accepted Eon Sessions and Eon Desktop revisions, owns a
 live workspace of independent Sessions, supplies one pinned interactive
 environment, exposes that workspace through EONW v1, keeps one configuration
-root, and reports the canonical component identities. Direct bundles, Home
-Manager, updates, release automation, and macOS packaging remain outside this
-slice.
+root, isolates live runtime generations, and reports the canonical component
+identities. Direct bundles, Home Manager, background updates, release
+automation, and macOS packaging remain outside this slice.
 
 ## Naming model
 
@@ -88,11 +88,13 @@ eon
 ```
 
 The package installs one `Eon` desktop entry and a transparent violet three-fold
-loop icon at native launcher sizes, with X11 and Xwayland window grouping. Opening
-Eon starts a session or reconnects to its live workspace. Its Nix closure supplies
-Mesa's open-source Vulkan drivers; the current graphics proof uses Intel hardware,
-while proprietary NVIDIA remains unproved. Run Eon from a terminal when you need
-foreground lifecycle control.
+loop icon at native launcher sizes, with X11 and Xwayland window grouping.
+Opening Eon reconnects only to the exact installed runtime generation or starts
+that generation in its own private namespace. Older live generations and their
+Sessions remain running. Its Nix closure supplies Mesa's open-source Vulkan
+drivers; the current graphics proof uses Intel hardware, while proprietary
+NVIDIA remains unproved. Run Eon from a terminal when you need foreground
+lifecycle control.
 Closing the Eon Desktop window detaches the client while Sessions and its PTY
 keep running. Reconnect explicitly with:
 
@@ -100,44 +102,54 @@ keep running. Reconnect explicitly with:
 eon attach
 ```
 
-Press `Ctrl-C` in the original foreground `eon` process to stop that composed
-session. Orbit removes its socket during shutdown. Restarting Orbit or the
-machine preserves no process state beyond the accepted child contracts.
+`eon generations` lists the current, previous, and fixed-namespace legacy
+workspaces after validating their live supervisors. `eon attach GENERATION`
+selects one compatible generation without fallback. `eon stop GENERATION`
+shows its live Session identities and asks for confirmation; `--json` is the
+explicit non-interactive form. Pressing `Ctrl-C` in the original foreground
+`eon` process also stops that composed generation. Restarting the machine
+preserves no process state beyond the accepted child contracts.
 
 While the foreground supervisor is running, Eon owns horizontal tab order and
 one vertical pane selection per tab. Each pane starts and maps to a distinct
 Orbit session; changing focus never stops a session. The CLI reaches that owner
 through the private local Eon socket using EONW v1. Each accepted action returns
 one complete ordered workspace snapshot; incompatible or malformed requests
-receive a bounded structured failure. Eon Desktop consumes that same protocol,
-shows every fitting pane header around one selected live Session, and binds
-Alt+H/L to tabs, Alt+K/J to panes, Alt+M to pane creation, and Ctrl+T to tab
-creation. External workspace changes appear within one second because Eon
-Desktop re-inspects EONW v1 every 250 ms; the protocol adds no event stream.
-When a shell exits, Eon removes its pane, selects the nearest surviving pane,
-removes an empty tab, and closes when the final pane exits.
+receive a bounded structured failure. Additive EONW lifecycle actions report a
+supervisor's generation, component graph, live Sessions, and stop result through
+a separate result type that Eon Desktop never receives. Eon Desktop consumes
+the workspace result, shows every fitting pane header around one selected live
+Session, and binds Alt+H/L to tabs, Alt+K/J to panes, Alt+M to pane creation, and
+Ctrl+T to tab creation. External workspace changes appear within one second
+because Eon Desktop re-inspects EONW v1 every 250 ms; the protocol adds no event
+stream. When a shell exits, Eon removes its pane, selects the nearest surviving
+pane, removes an empty tab, and closes when the final pane exits.
 
 The command surface is small:
 
 | Command | Result |
 |---|---|
-| `eon` | Attach to the live workspace, or start one with the default shell |
+| `eon` | Attach to the exact current-generation workspace, or start it with the default shell |
 | `eon run` | Explicitly start one Orbit session and one Venus window with the default shell |
 | `eon run -- COMMAND...` | Run one explicit command as the Orbit-owned PTY child |
-| `eon attach` | Open Eon Desktop against the live Eon workspace |
+| `eon attach` | Open Eon Desktop against the exact current-generation workspace |
+| `eon attach GENERATION` | Open one explicitly selected compatible generation, including `legacy` |
+| `eon generations [--json]` | List validated current, previous, legacy, dead, incompatible, unreachable, and corrupt generations |
+| `eon stop GENERATION [--json]` | Stop one generation through its supervisor; human mode confirms first |
 | `eon workspace [--json]` | Inspect the live Eon-owned tab, pane, and Session mapping |
 | `eon tab create [--json]` | Create and focus a tab containing a default-shell Session |
 | `eon pane create [--json]` | Create and select a default-shell Session in the active tab |
 | `eon focus ID [--json]` | Focus a stable tab or pane identity |
 | `eon focus left\|right\|up\|down [--json]` | Traverse tabs or panes directly without wrapping |
-| `eon versions` | Print stable component versions and Git revisions from the canonical manifest |
+| `eon versions` | Print the runtime generation, EONW version, and stable component identities |
 | `eon config-path` | Create and print the Eon configuration root |
 
-Workspace commands require the live foreground supervisor. The topology is
-bounded to 64 tabs and 256 panes, is not restored after supervisor loss, and
-has no explicit removal or session-stop action in this slice. `--json` reports
-the same accepted EONW result as the human view; neither output format is the
-protocol schema.
+Workspace commands target the exact current-generation supervisor. The topology
+is bounded to 64 tabs and 256 panes, is not restored after supervisor loss, and
+has no per-pane or per-Session removal action. Whole-generation stop names and
+terminates every Session through that supervisor. `--json` reports the same
+accepted EONW result as the human view; neither output format is the protocol
+schema.
 
 ## Managed environment
 
@@ -209,10 +221,14 @@ otherwise uses `$XDG_RUNTIME_DIR/eon` or a private per-user temporary directory.
 Eon passes the absolute root as `XDG_CONFIG_HOME` to Venus and managed tools
 other than shells. Sessions and managed shells inherit ambient XDG
 configuration; Eon preserves `EON_CONFIG_HOME` through Sessions and managed
-dispatch. Eon ignores relative XDG base paths. It creates missing configuration
-and runtime directories with mode `0700`. It leaves existing
-configuration-directory permissions unchanged and rejects unsafe existing
-runtime directories without changing their permissions.
+dispatch. Eon ignores relative XDG base paths. Each opaque `g1-…` identity is a
+deterministic digest of Eon's runtime source, dependency lock, EONW source, and
+canonical component manifest. Runtime endpoints live below
+`$EON_RUNTIME_DIR/generations/<GENERATION>/`; a pre-generation supervisor remains
+discoverable as `legacy` at the root. Eon creates missing configuration and
+runtime directories with mode `0700`, leaves existing configuration-directory
+permissions unchanged, and rejects unsafe directories or endpoints without
+changing them.
 
 ## Component manifest
 
@@ -257,15 +273,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 271 |
+| README | 287 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 380 |
-| Distribution and references | 220 |
-| Changelog | 45 |
-| Rust source and tests | 3,557 |
+| Architecture and contracts | 441 |
+| Distribution and references | 221 |
+| Changelog | 52 |
+| Rust source and tests | 5,016 |
 | Cargo manifests | 35 |
 | Component manifest | 373 |
 | Nix composition | 605 |
 | Product defaults | 0 |
-| **Total** | **6,149** |
+| **Total** | **7,693** |

@@ -10,6 +10,8 @@ pub const HEADER_BYTES: usize = 12;
 const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 const MAX_ID_BYTES: usize = 128;
 const MAX_ENDPOINT_BYTES: usize = 4096;
+const MAX_VERSION_BYTES: usize = 128;
+const MAX_COMPONENT_REPORT_BYTES: usize = 32 * 1024;
 pub const MAX_DETAIL_BYTES: usize = 1024;
 pub const MAX_TABS: usize = 64;
 pub const MAX_PANES: usize = 256;
@@ -17,6 +19,8 @@ pub const MAX_PANES: usize = 256;
 const REQUEST: u8 = 1;
 const SNAPSHOT: u8 = 129;
 const FAILURE: u8 = 130;
+const RUNTIME: u8 = 131;
+const STOPPED: u8 = 132;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
@@ -29,10 +33,12 @@ pub enum Direction {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Inspect,
+    InspectRuntime,
     CreateTab,
     CreatePane,
     FocusId(String),
     Focus(Direction),
+    Stop { generation: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,8 +75,38 @@ pub struct Failure {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Availability {
+    pub available: bool,
+    pub reason: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Runtime {
+    pub generation: String,
+    pub eon_version: String,
+    pub workspace_protocol: u16,
+    pub component_report: String,
+    pub sessions: Vec<String>,
+    pub attach: Availability,
+    pub stop: Availability,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Stopped {
+    pub generation: String,
+    pub sessions: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Response {
     Snapshot(Snapshot),
+    Failure(Failure),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LifecycleResponse {
+    Runtime(Runtime),
+    Stopped(Stopped),
     Failure(Failure),
 }
 
@@ -133,6 +169,7 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
     payload.string(&request.id);
     match &request.action {
         Action::Inspect => payload.byte(0),
+        Action::InspectRuntime => payload.byte(8),
         Action::CreateTab => payload.byte(1),
         Action::CreatePane => payload.byte(2),
         Action::FocusId(id) => {
@@ -144,6 +181,11 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
         Action::Focus(Direction::Right) => payload.byte(5),
         Action::Focus(Direction::Up) => payload.byte(6),
         Action::Focus(Direction::Down) => payload.byte(7),
+        Action::Stop { generation } => {
+            identity("generation", generation)?;
+            payload.byte(9);
+            payload.string(generation);
+        }
     }
     frame(REQUEST, payload.bytes)
 }
@@ -169,6 +211,12 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
         5 => Action::Focus(Direction::Right),
         6 => Action::Focus(Direction::Up),
         7 => Action::Focus(Direction::Down),
+        8 => Action::InspectRuntime,
+        9 => {
+            let generation = decoder.string("generation", MAX_ID_BYTES)?;
+            identity("generation", &generation)?;
+            Action::Stop { generation }
+        }
         value => {
             return Err(Error::InvalidTag {
                 field: "action",
@@ -201,6 +249,37 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             SNAPSHOT
         }
         Response::Failure(failure) => {
+            identity("failure code", &failure.code)?;
+            nonempty("failure detail", &failure.detail, MAX_DETAIL_BYTES)?;
+            payload.string(&failure.code);
+            payload.string(&failure.detail);
+            FAILURE
+        }
+    };
+    frame(kind, payload.bytes)
+}
+
+pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>> {
+    let mut payload = Encoder::default();
+    let kind = match response {
+        LifecycleResponse::Runtime(runtime) => {
+            validate_runtime(runtime)?;
+            payload.string(&runtime.generation);
+            payload.string(&runtime.eon_version);
+            payload.number(runtime.workspace_protocol);
+            payload.string(&runtime.component_report);
+            encode_sessions(&mut payload, &runtime.sessions);
+            encode_availability(&mut payload, &runtime.attach);
+            encode_availability(&mut payload, &runtime.stop);
+            RUNTIME
+        }
+        LifecycleResponse::Stopped(stopped) => {
+            validate_stopped(stopped)?;
+            payload.string(&stopped.generation);
+            encode_sessions(&mut payload, &stopped.sessions);
+            STOPPED
+        }
+        LifecycleResponse::Failure(failure) => {
             identity("failure code", &failure.code)?;
             nonempty("failure detail", &failure.detail, MAX_DETAIL_BYTES)?;
             payload.string(&failure.code);
@@ -257,6 +336,44 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
             let detail = decoder.string("failure detail", MAX_DETAIL_BYTES)?;
             nonempty("failure detail", &detail, MAX_DETAIL_BYTES)?;
             Response::Failure(Failure { code, detail })
+        }
+        value => return Err(Error::InvalidKind { value }),
+    };
+    decoder.finish()?;
+    Ok(response)
+}
+
+pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
+    let (kind, payload) = unframe(bytes)?;
+    let mut decoder = Decoder::new(payload);
+    let response = match kind {
+        RUNTIME => {
+            let runtime = Runtime {
+                generation: decoder.string("generation", MAX_ID_BYTES)?,
+                eon_version: decoder.string("Eon version", MAX_VERSION_BYTES)?,
+                workspace_protocol: decoder.number()?,
+                component_report: decoder.string("component report", MAX_COMPONENT_REPORT_BYTES)?,
+                sessions: decode_sessions(&mut decoder)?,
+                attach: decode_availability(&mut decoder, "attach reason")?,
+                stop: decode_availability(&mut decoder, "stop reason")?,
+            };
+            validate_runtime(&runtime)?;
+            LifecycleResponse::Runtime(runtime)
+        }
+        STOPPED => {
+            let stopped = Stopped {
+                generation: decoder.string("generation", MAX_ID_BYTES)?,
+                sessions: decode_sessions(&mut decoder)?,
+            };
+            validate_stopped(&stopped)?;
+            LifecycleResponse::Stopped(stopped)
+        }
+        FAILURE => {
+            let code = decoder.string("failure code", MAX_ID_BYTES)?;
+            identity("failure code", &code)?;
+            let detail = decoder.string("failure detail", MAX_DETAIL_BYTES)?;
+            nonempty("failure detail", &detail, MAX_DETAIL_BYTES)?;
+            LifecycleResponse::Failure(Failure { code, detail })
         }
         value => return Err(Error::InvalidKind { value }),
     };
@@ -344,6 +461,82 @@ fn validate_snapshot(snapshot: &Snapshot) -> Result<()> {
     Ok(())
 }
 
+fn validate_runtime(runtime: &Runtime) -> Result<()> {
+    identity("generation", &runtime.generation)?;
+    nonempty("Eon version", &runtime.eon_version, MAX_VERSION_BYTES)?;
+    if runtime.workspace_protocol == 0 {
+        return Err(Error::InvalidValue {
+            field: "workspace protocol",
+        });
+    }
+    nonempty(
+        "component report",
+        &runtime.component_report,
+        MAX_COMPONENT_REPORT_BYTES,
+    )?;
+    validate_sessions(&runtime.sessions)?;
+    validate_availability(&runtime.attach, "attach reason")?;
+    validate_availability(&runtime.stop, "stop reason")
+}
+
+fn validate_stopped(stopped: &Stopped) -> Result<()> {
+    identity("generation", &stopped.generation)?;
+    validate_sessions(&stopped.sessions)
+}
+
+fn validate_sessions(sessions: &[String]) -> Result<()> {
+    if sessions.is_empty() || sessions.len() > MAX_PANES {
+        return Err(Error::InvalidValue { field: "sessions" });
+    }
+    let mut identities = HashSet::new();
+    for session in sessions {
+        identity("session id", session)?;
+        if !identities.insert(session) {
+            return Err(Error::InvalidValue { field: "sessions" });
+        }
+    }
+    Ok(())
+}
+
+fn validate_availability(availability: &Availability, field: &'static str) -> Result<()> {
+    nonempty(field, &availability.reason, MAX_DETAIL_BYTES)
+}
+
+fn encode_sessions(encoder: &mut Encoder, sessions: &[String]) {
+    encoder.count(sessions.len());
+    for session in sessions {
+        encoder.string(session);
+    }
+}
+
+fn decode_sessions(decoder: &mut Decoder<'_>) -> Result<Vec<String>> {
+    let count = decoder.count("sessions", MAX_PANES)?;
+    (0..count)
+        .map(|_| decoder.string("session id", MAX_ID_BYTES))
+        .collect()
+}
+
+fn encode_availability(encoder: &mut Encoder, availability: &Availability) {
+    encoder.byte(u8::from(availability.available));
+    encoder.string(&availability.reason);
+}
+
+fn decode_availability(decoder: &mut Decoder<'_>, field: &'static str) -> Result<Availability> {
+    let available = match decoder.byte()? {
+        0 => false,
+        1 => true,
+        _ => {
+            return Err(Error::InvalidValue {
+                field: "availability",
+            });
+        }
+    };
+    Ok(Availability {
+        available,
+        reason: decoder.string(field, MAX_DETAIL_BYTES)?,
+    })
+}
+
 fn identity(field: &'static str, value: &str) -> Result<()> {
     nonempty(field, value, MAX_ID_BYTES)?;
     if !value
@@ -424,6 +617,10 @@ impl Encoder {
 
     fn count(&mut self, value: usize) {
         let value = u16::try_from(value).expect("validated EONW count");
+        self.number(value);
+    }
+
+    fn number(&mut self, value: u16) {
         self.bytes.extend_from_slice(&value.to_le_bytes());
     }
 
@@ -453,12 +650,16 @@ impl<'a> Decoder<'a> {
     }
 
     fn count(&mut self, field: &'static str, maximum: usize) -> Result<usize> {
-        let bytes = self.take(2)?;
-        let value = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
+        let value = self.number()? as usize;
         if value > maximum {
             return Err(Error::InvalidSnapshot { field });
         }
         Ok(value)
+    }
+
+    fn number(&mut self) -> Result<u16> {
+        let bytes = self.take(2)?;
+        Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
     fn string(&mut self, field: &'static str, maximum: usize) -> Result<String> {
@@ -538,6 +739,7 @@ mod tests {
     fn eonw_round_trips_complete_values_and_rejects_bad_frames() {
         for action in [
             Action::Inspect,
+            Action::InspectRuntime,
             Action::CreateTab,
             Action::CreatePane,
             Action::FocusId("pane-2".into()),
@@ -545,6 +747,9 @@ mod tests {
             Action::Focus(Direction::Right),
             Action::Focus(Direction::Up),
             Action::Focus(Direction::Down),
+            Action::Stop {
+                generation: "g1-0123456789abcdef0123456789abcdef".into(),
+            },
         ] {
             let request = Request {
                 id: "client-1.2".into(),
@@ -563,6 +768,35 @@ mod tests {
             encoded.len()
         );
         assert_eq!(decode_response(&encoded).unwrap(), response);
+
+        let runtime = LifecycleResponse::Runtime(Runtime {
+            generation: "g1-0123456789abcdef0123456789abcdef".into(),
+            eon_version: "0.1.0".into(),
+            workspace_protocol: VERSION,
+            component_report: "eon-alpha x86_64-linux\norbit 0.1.0 abc x86_64-linux".into(),
+            sessions: vec!["session-1".into(), "session-2".into()],
+            attach: Availability {
+                available: true,
+                reason: "compatible EONW v1 supervisor".into(),
+            },
+            stop: Availability {
+                available: true,
+                reason: "generation-aware supervisor".into(),
+            },
+        });
+        assert_eq!(
+            decode_lifecycle_response(&encode_lifecycle_response(&runtime).unwrap()).unwrap(),
+            runtime
+        );
+
+        let stopped = LifecycleResponse::Stopped(Stopped {
+            generation: "g1-0123456789abcdef0123456789abcdef".into(),
+            sessions: vec!["session-1".into(), "session-2".into()],
+        });
+        assert_eq!(
+            decode_lifecycle_response(&encode_lifecycle_response(&stopped).unwrap()).unwrap(),
+            stopped
+        );
 
         let failure = Response::Failure(Failure {
             code: "unknown-id".into(),

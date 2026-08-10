@@ -1,9 +1,10 @@
 mod workspace;
 
 use eon_workspace_protocol::{
-    Action, Direction, Error as ProtocolError, Failure, HEADER_BYTES, MAX_DETAIL_BYTES, Request,
-    Response, declared_message_len, decode_request, decode_response, encode_request,
-    encode_response,
+    Action, Availability, Direction, Error as ProtocolError, Failure, HEADER_BYTES,
+    LifecycleResponse, MAX_DETAIL_BYTES, Request, Response, Runtime, Stopped, VERSION,
+    declared_message_len, decode_lifecycle_response, decode_request, decode_response,
+    encode_lifecycle_response, encode_request, encode_response,
 };
 use serde::Deserialize;
 use std::{
@@ -12,6 +13,7 @@ use std::{
     fs,
     io::{Read, Write},
     os::unix::{
+        ffi::OsStrExt,
         fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt},
         net::{UnixListener, UnixStream},
         process::CommandExt,
@@ -23,12 +25,772 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use workspace::{
-    Workspace, failure_human, failure_json, human as human_output, json as json_output,
+    Workspace, failure_human, failure_json, human as human_output, json as json_output, json_escape,
 };
 
 const MANIFEST: &str = include_str!("../../../components/eon-alpha-v1.json");
-const USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
+const USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
+
+fn current_generation() -> String {
+    generation_id(&[
+        include_bytes!("main.rs"),
+        include_bytes!("workspace.rs"),
+        include_bytes!("../../eon-workspace-protocol/src/lib.rs"),
+        include_bytes!("../../eon-workspace-protocol/Cargo.toml"),
+        include_bytes!("../../eon-manifest/src/lib.rs"),
+        include_bytes!("../../eon-manifest/Cargo.toml"),
+        include_bytes!("../Cargo.toml"),
+        include_bytes!("../../../Cargo.toml"),
+        include_bytes!("../../../Cargo.lock"),
+        MANIFEST.as_bytes(),
+    ])
+}
+
+fn generation_id(inputs: &[&[u8]]) -> String {
+    const OFFSET: u128 = 0x6c62272e07bb014262b821756295c58d;
+    const PRIME: u128 = 0x0000000001000000000000000000013b;
+    let mut hash = OFFSET;
+    for input in inputs {
+        for byte in (input.len() as u64).to_le_bytes().iter().chain(*input) {
+            hash ^= u128::from(*byte);
+            hash = hash.wrapping_mul(PRIME);
+        }
+    }
+    format!("g1-{hash:032x}")
+}
+
+fn valid_generation(value: &str) -> bool {
+    value.len() == 35
+        && value.starts_with("g1-")
+        && value[3..]
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn generation_directory(root: &Path, generation: &str) -> PathBuf {
+    root.join("generations").join(generation)
+}
+
+const MAX_GENERATIONS: usize = 256;
+const CONTROL_TIMEOUT: Duration = Duration::from_secs(2);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EndpointFailureKind {
+    Dead,
+    Incompatible,
+    Unreachable,
+    Corrupt,
+}
+
+#[derive(Debug)]
+struct EndpointFailure {
+    kind: EndpointFailureKind,
+    detail: String,
+}
+
+impl EndpointFailure {
+    fn new(kind: EndpointFailureKind, detail: impl Into<String>) -> Self {
+        Self {
+            kind,
+            detail: detail.into(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct GenerationRecord {
+    id: String,
+    kind: &'static str,
+    state: &'static str,
+    runtime: PathBuf,
+    eon_version: Option<String>,
+    workspace_protocol: Option<u16>,
+    component_report: Option<String>,
+    sessions: Vec<String>,
+    attach: Availability,
+    stop: Availability,
+    detail: String,
+}
+
+enum ControlResponse {
+    Workspace(Response),
+    Lifecycle(LifecycleResponse),
+}
+
+fn send_action(socket: &Path, action: Action) -> Result<ControlResponse, EndpointFailure> {
+    let metadata = match fs::symlink_metadata(socket) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(EndpointFailure::new(
+                EndpointFailureKind::Dead,
+                format!("endpoint {} is missing", socket.display()),
+            ));
+        }
+        Err(error) => {
+            return Err(EndpointFailure::new(
+                EndpointFailureKind::Corrupt,
+                format!("cannot inspect endpoint {}: {error}", socket.display()),
+            ));
+        }
+    };
+    if !metadata.file_type().is_socket()
+        || metadata.uid() != effective_uid()
+        || metadata.mode() & 0o777 != 0o600
+    {
+        return Err(EndpointFailure::new(
+            EndpointFailureKind::Corrupt,
+            format!(
+                "endpoint {} must be an owned mode-0600 Unix socket",
+                socket.display()
+            ),
+        ));
+    }
+
+    let mut stream = UnixStream::connect(socket).map_err(|error| {
+        let kind = match error.kind() {
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
+                EndpointFailureKind::Dead
+            }
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
+                EndpointFailureKind::Unreachable
+            }
+            _ => EndpointFailureKind::Corrupt,
+        };
+        EndpointFailure::new(
+            kind,
+            format!(
+                "cannot connect to supervisor at {}: {error}",
+                socket.display()
+            ),
+        )
+    })?;
+    stream
+        .set_read_timeout(Some(CONTROL_TIMEOUT))
+        .and_then(|()| stream.set_write_timeout(Some(CONTROL_TIMEOUT)))
+        .map_err(|error| {
+            EndpointFailure::new(
+                EndpointFailureKind::Corrupt,
+                format!("cannot configure supervisor connection: {error}"),
+            )
+        })?;
+    let lifecycle = matches!(action, Action::InspectRuntime | Action::Stop { .. });
+    let request = encode_request(&Request {
+        id: request_id(),
+        action,
+    })
+    .map_err(|error| {
+        EndpointFailure::new(
+            EndpointFailureKind::Corrupt,
+            format!("cannot encode Eon action: {error}"),
+        )
+    })?;
+    stream
+        .write_all(&request)
+        .map_err(|error| io_endpoint_failure(error, "cannot send Eon action"))?;
+
+    let mut response = vec![0; HEADER_BYTES];
+    stream
+        .read_exact(&mut response)
+        .map_err(|error| io_endpoint_failure(error, "cannot read Eon action result"))?;
+    let length = declared_message_len(&response).map_err(protocol_endpoint_failure)?;
+    response.resize(length, 0);
+    stream
+        .read_exact(&mut response[HEADER_BYTES..])
+        .map_err(|error| io_endpoint_failure(error, "cannot read complete Eon result"))?;
+    if lifecycle {
+        decode_lifecycle_response(&response)
+            .map(ControlResponse::Lifecycle)
+            .map_err(protocol_endpoint_failure)
+    } else {
+        decode_response(&response)
+            .map(ControlResponse::Workspace)
+            .map_err(protocol_endpoint_failure)
+    }
+}
+
+fn io_endpoint_failure(error: std::io::Error, context: &str) -> EndpointFailure {
+    let kind = if matches!(
+        error.kind(),
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+    ) {
+        EndpointFailureKind::Unreachable
+    } else {
+        EndpointFailureKind::Corrupt
+    };
+    EndpointFailure::new(kind, format!("{context}: {error}"))
+}
+
+fn protocol_endpoint_failure(error: ProtocolError) -> EndpointFailure {
+    EndpointFailure::new(
+        if matches!(error, ProtocolError::UnsupportedVersion { .. }) {
+            EndpointFailureKind::Incompatible
+        } else {
+            EndpointFailureKind::Corrupt
+        },
+        format!("invalid EONW response: {error}"),
+    )
+}
+
+fn probe_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
+    match send_action(socket, Action::InspectRuntime)? {
+        ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)) => Ok(runtime),
+        ControlResponse::Lifecycle(LifecycleResponse::Failure(failure))
+            if matches!(
+                failure.code.as_str(),
+                "unsupported-version" | "malformed-action"
+            ) =>
+        {
+            Err(EndpointFailure::new(
+                EndpointFailureKind::Incompatible,
+                format!(
+                    "supervisor does not support generation inspection: {}",
+                    failure.detail
+                ),
+            ))
+        }
+        ControlResponse::Lifecycle(LifecycleResponse::Failure(failure)) => {
+            Err(EndpointFailure::new(
+                EndpointFailureKind::Corrupt,
+                format!(
+                    "supervisor rejected generation inspection: {}",
+                    failure.detail
+                ),
+            ))
+        }
+        _ => Err(EndpointFailure::new(
+            EndpointFailureKind::Corrupt,
+            "supervisor returned the wrong EONW result for generation inspection",
+        )),
+    }
+}
+
+fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationRecord>, String> {
+    let component_report =
+        eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?;
+    match fs::symlink_metadata(root) {
+        Ok(_) => validate_private_directory(root)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(vec![dead_generation(
+                current,
+                "current",
+                generation_directory(root, current),
+                "current generation has not started",
+            )]);
+        }
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect runtime directory {}: {error}",
+                root.display()
+            ));
+        }
+    }
+
+    let parent = root.join("generations");
+    let mut candidates = Vec::new();
+    match fs::symlink_metadata(&parent) {
+        Ok(_) => {
+            validate_private_directory(&parent)?;
+            for entry in fs::read_dir(&parent).map_err(|error| {
+                format!(
+                    "cannot list generation directory {}: {error}",
+                    parent.display()
+                )
+            })? {
+                let entry = entry.map_err(|error| {
+                    format!(
+                        "cannot read generation entry in {}: {error}",
+                        parent.display()
+                    )
+                })?;
+                candidates.push((
+                    entry.file_name().as_bytes().to_vec(),
+                    entry.file_name().to_string_lossy().into_owned(),
+                    entry.path(),
+                ));
+                if candidates.len() > MAX_GENERATIONS {
+                    return Err(format!(
+                        "generation directory {} exceeds the {MAX_GENERATIONS}-entry inspection limit",
+                        parent.display()
+                    ));
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect generation directory {}: {error}",
+                parent.display()
+            ));
+        }
+    }
+    candidates.sort_by(|left, right| left.0.cmp(&right.0));
+
+    let current_path = generation_directory(root, current);
+    let mut records = vec![inspect_generation(
+        current,
+        "current",
+        current_path,
+        &component_report,
+    )];
+    for (_, id, path) in candidates {
+        if id != current {
+            records.push(inspect_generation(&id, "previous", path, &component_report));
+        }
+    }
+    if path_exists(&root.join("eon.sock")) || path_exists(&root.join("orbit.sock")) {
+        records.push(inspect_legacy(root));
+    }
+    Ok(records)
+}
+
+fn inspect_generation(
+    id: &str,
+    kind: &'static str,
+    runtime: PathBuf,
+    current_components: &str,
+) -> GenerationRecord {
+    if !valid_generation(id) {
+        return failed_generation(
+            id,
+            kind,
+            runtime,
+            EndpointFailure::new(
+                EndpointFailureKind::Corrupt,
+                "generation directory name is not a valid Eon identity",
+            ),
+        );
+    }
+    if let Err(detail) = validate_private_directory(&runtime) {
+        return if matches!(
+            fs::symlink_metadata(&runtime),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+        ) {
+            dead_generation(id, kind, runtime, "generation has not started")
+        } else {
+            failed_generation(
+                id,
+                kind,
+                runtime,
+                EndpointFailure::new(EndpointFailureKind::Corrupt, detail),
+            )
+        };
+    }
+
+    let socket = runtime.join("eon.sock");
+    match probe_runtime(&socket) {
+        Ok(info) if info.generation != id => failed_generation(
+            id,
+            kind,
+            runtime,
+            EndpointFailure::new(
+                EndpointFailureKind::Corrupt,
+                format!(
+                    "supervisor reports generation {} from directory {id}",
+                    info.generation
+                ),
+            ),
+        ),
+        Ok(mut info) => {
+            if info.workspace_protocol != VERSION {
+                return failed_generation(
+                    id,
+                    kind,
+                    runtime,
+                    EndpointFailure::new(
+                        EndpointFailureKind::Incompatible,
+                        format!(
+                            "supervisor reports EONW {}, current Eon requires EONW {VERSION}",
+                            info.workspace_protocol
+                        ),
+                    ),
+                );
+            }
+            if info.component_report != current_components {
+                info.attach = Availability {
+                    available: false,
+                    reason: "component graph differs from the current Eon build".into(),
+                };
+            }
+            GenerationRecord {
+                id: id.into(),
+                kind,
+                state: "live",
+                runtime,
+                eon_version: Some(info.eon_version),
+                workspace_protocol: Some(info.workspace_protocol),
+                component_report: Some(info.component_report),
+                sessions: info.sessions,
+                attach: info.attach,
+                stop: info.stop,
+                detail: "live supervisor validated its generation identity".into(),
+            }
+        }
+        Err(error) => {
+            let dead = error.kind == EndpointFailureKind::Dead;
+            let record = failed_generation(id, kind, runtime.clone(), error);
+            if dead {
+                remove_dead_socket(&socket);
+                let _ = fs::remove_dir(&runtime);
+            }
+            record
+        }
+    }
+}
+
+fn inspect_legacy(root: &Path) -> GenerationRecord {
+    let runtime = root.to_path_buf();
+    let socket = root.join("eon.sock");
+    match send_action(&socket, Action::Inspect) {
+        Ok(ControlResponse::Workspace(Response::Snapshot(snapshot))) => GenerationRecord {
+            id: "legacy".into(),
+            kind: "legacy",
+            state: "live",
+            runtime,
+            eon_version: None,
+            workspace_protocol: Some(VERSION),
+            component_report: None,
+            sessions: snapshot
+                .tabs
+                .iter()
+                .flat_map(|tab| tab.panes.iter().map(|pane| pane.session.clone()))
+                .collect(),
+            attach: Availability {
+                available: true,
+                reason: "legacy supervisor returned a valid EONW v1 workspace".into(),
+            },
+            stop: Availability {
+                available: false,
+                reason: "legacy supervisor has no authoritative stop action".into(),
+            },
+            detail: "live fixed-namespace supervisor; component identity unavailable".into(),
+        },
+        Ok(ControlResponse::Workspace(Response::Failure(failure))) => failed_generation(
+            "legacy",
+            "legacy",
+            runtime,
+            EndpointFailure::new(
+                if failure.code == "unsupported-version" {
+                    EndpointFailureKind::Incompatible
+                } else {
+                    EndpointFailureKind::Corrupt
+                },
+                format!(
+                    "legacy supervisor rejected EONW inspection: {}",
+                    failure.detail
+                ),
+            ),
+        ),
+        Ok(_) => failed_generation(
+            "legacy",
+            "legacy",
+            runtime,
+            EndpointFailure::new(
+                EndpointFailureKind::Corrupt,
+                "legacy supervisor returned the wrong EONW result",
+            ),
+        ),
+        Err(error) => {
+            let dead = error.kind == EndpointFailureKind::Dead;
+            let record = failed_generation("legacy", "legacy", runtime, error);
+            if dead {
+                remove_dead_socket(&socket);
+            }
+            record
+        }
+    }
+}
+
+fn dead_generation(
+    id: &str,
+    kind: &'static str,
+    runtime: PathBuf,
+    detail: impl Into<String>,
+) -> GenerationRecord {
+    failed_generation(
+        id,
+        kind,
+        runtime,
+        EndpointFailure::new(EndpointFailureKind::Dead, detail),
+    )
+}
+
+fn failed_generation(
+    id: &str,
+    kind: &'static str,
+    runtime: PathBuf,
+    error: EndpointFailure,
+) -> GenerationRecord {
+    let state = match error.kind {
+        EndpointFailureKind::Dead => "dead",
+        EndpointFailureKind::Incompatible => "incompatible",
+        EndpointFailureKind::Unreachable => "unreachable",
+        EndpointFailureKind::Corrupt => "corrupt",
+    };
+    GenerationRecord {
+        id: id.into(),
+        kind,
+        state,
+        runtime,
+        eon_version: None,
+        workspace_protocol: None,
+        component_report: None,
+        sessions: Vec::new(),
+        attach: Availability {
+            available: false,
+            reason: error.detail.clone(),
+        },
+        stop: Availability {
+            available: false,
+            reason: error.detail.clone(),
+        },
+        detail: error.detail,
+    }
+}
+
+fn validate_private_directory(path: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("cannot inspect directory {}: {error}", path.display()))?;
+    if !metadata.file_type().is_dir()
+        || metadata.uid() != effective_uid()
+        || metadata.mode() & 0o7777 != 0o700
+    {
+        return Err(format!(
+            "directory {} must be an owned private directory",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn path_exists(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok()
+}
+
+fn remove_dead_socket(path: &Path) {
+    let Ok(metadata) = fs::symlink_metadata(path) else {
+        return;
+    };
+    if !metadata.file_type().is_socket() || metadata.uid() != effective_uid() {
+        return;
+    }
+    if matches!(
+        UnixStream::connect(path),
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
+            )
+    ) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+fn generations_command(arguments: &[OsString]) -> Result<i32, String> {
+    let json = match arguments {
+        [] => false,
+        [flag] if flag == "--json" => true,
+        _ => return Err(USAGE.into()),
+    };
+    let records = discover_generations(&runtime_directory(), &current_generation())?;
+    print!(
+        "{}",
+        if json {
+            generations_json(&records)
+        } else {
+            generations_human(&records)
+        }
+    );
+    Ok(0)
+}
+
+fn generations_human(records: &[GenerationRecord]) -> String {
+    let mut output = String::new();
+    for record in records {
+        output.push_str(&format!(
+            "{} {} {} sessions={}\n",
+            record.kind,
+            record.id.escape_debug(),
+            record.state,
+            record.sessions.len()
+        ));
+        output.push_str(&format!(
+            "  attach={} {}\n  stop={} {}\n  {}\n",
+            record.attach.available,
+            record.attach.reason.escape_debug(),
+            record.stop.available,
+            record.stop.reason.escape_debug(),
+            record.detail.escape_debug()
+        ));
+        if let (Some(version), Some(protocol)) = (&record.eon_version, record.workspace_protocol) {
+            output.push_str(&format!(
+                "  eon={} eonw={protocol}\n",
+                version.escape_debug()
+            ));
+        }
+        for session in &record.sessions {
+            output.push_str(&format!("  session {session}\n"));
+        }
+        if let Some(report) = &record.component_report {
+            for line in report.lines() {
+                output.push_str(&format!("  component {}\n", line.escape_debug()));
+            }
+        }
+    }
+    output
+}
+
+fn generations_json(records: &[GenerationRecord]) -> String {
+    let mut output = String::from("{\"generations\":[");
+    for (index, record) in records.iter().enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        output.push_str(&format!(
+            "{{\"id\":\"{}\",\"kind\":\"{}\",\"state\":\"{}\",\"eon_version\":{},\"workspace_protocol\":{},\"component_report\":{},\"sessions\":[",
+            json_escape(&record.id),
+            record.kind,
+            record.state,
+            json_option(record.eon_version.as_deref()),
+            record.workspace_protocol.map_or_else(|| "null".into(), |value| value.to_string()),
+            json_option(record.component_report.as_deref()),
+        ));
+        for (session_index, session) in record.sessions.iter().enumerate() {
+            if session_index != 0 {
+                output.push(',');
+            }
+            output.push_str(&format!("\"{}\"", json_escape(session)));
+        }
+        output.push_str(&format!(
+            "],\"attach\":{{\"available\":{},\"reason\":\"{}\"}},\"stop\":{{\"available\":{},\"reason\":\"{}\"}},\"detail\":\"{}\"}}",
+            record.attach.available,
+            json_escape(&record.attach.reason),
+            record.stop.available,
+            json_escape(&record.stop.reason),
+            json_escape(&record.detail),
+        ));
+    }
+    output.push_str("]}\n");
+    output
+}
+
+fn json_option(value: Option<&str>) -> String {
+    value.map_or_else(
+        || "null".into(),
+        |value| format!("\"{}\"", json_escape(value)),
+    )
+}
+
+fn attach_generation(target: &str) -> Result<i32, String> {
+    let root = runtime_directory();
+    let records = discover_generations(&root, &current_generation())?;
+    let record = records
+        .into_iter()
+        .find(|record| record.id == target)
+        .ok_or_else(|| format!("generation {target} was not found"))?;
+    if !record.attach.available {
+        return Err(format!(
+            "generation {target} is not attachable: {}",
+            record.attach.reason
+        ));
+    }
+    attach_at(&record.runtime)
+}
+
+fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
+    let root = runtime_directory();
+    let records = discover_generations(&root, &current_generation())?;
+    let record = match records.into_iter().find(|record| record.id == target) {
+        Some(record) => record,
+        None => {
+            return Ok(report_failure(
+                &failure(
+                    "unknown-generation",
+                    format!("generation {target} was not found"),
+                ),
+                json,
+            ));
+        }
+    };
+    if !record.stop.available {
+        return Ok(report_failure(
+            &failure(
+                "stop-unavailable",
+                format!("generation {target}: {}", record.stop.reason),
+            ),
+            json,
+        ));
+    }
+    if !json {
+        eprint!(
+            "Stop generation {target} and {} live Session{} [{}]? [y/N] ",
+            record.sessions.len(),
+            if record.sessions.len() == 1 { "" } else { "s" },
+            record.sessions.join(", ")
+        );
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|error| format!("cannot read stop confirmation: {error}"))?;
+        if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
+            println!("cancelled; no Sessions stopped");
+            return Ok(0);
+        }
+    }
+
+    let response = match send_action(
+        &record.runtime.join("eon.sock"),
+        Action::Stop {
+            generation: target.into(),
+        },
+    ) {
+        Ok(response) => response,
+        Err(error) => {
+            return Ok(report_failure(&failure("stop-failed", error.detail), json));
+        }
+    };
+    match response {
+        ControlResponse::Lifecycle(LifecycleResponse::Stopped(stopped))
+            if stopped.generation == target =>
+        {
+            if json {
+                print!("{}", stopped_json(&stopped));
+            } else {
+                println!(
+                    "stopped generation {}: {}",
+                    stopped.generation,
+                    stopped.sessions.join(", ")
+                );
+            }
+            Ok(0)
+        }
+        ControlResponse::Lifecycle(LifecycleResponse::Failure(failure)) => {
+            Ok(report_failure(&failure, json))
+        }
+        _ => Ok(report_failure(
+            &failure(
+                "stop-failed",
+                "supervisor returned the wrong EONW result for stop",
+            ),
+            json,
+        )),
+    }
+}
+
+fn stopped_json(stopped: &Stopped) -> String {
+    let mut output = format!(
+        "{{\"stopped\":{{\"generation\":\"{}\",\"sessions\":[",
+        json_escape(&stopped.generation)
+    );
+    for (index, session) in stopped.sessions.iter().enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        output.push_str(&format!("\"{}\"", json_escape(session)));
+    }
+    output.push_str("]}}\n");
+    output
+}
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -248,15 +1010,27 @@ fn integration_mask(shell: &ShellConfig, atuin_nobind: bool) -> u8 {
 
 fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
     match arguments.as_slice() {
-        [] if runtime_directory().join("eon.sock").exists() => attach(),
-        [] => run(&[]),
-        [command] if command == "run" => run(&[]),
+        [] => launch_current(&[], true),
+        [command] if command == "run" => launch_current(&[], false),
         [command, separator, child @ ..]
             if command == "run" && separator == "--" && !child.is_empty() =>
         {
-            run(child)
+            launch_current(child, false)
         }
-        [command] if command == "attach" => attach(),
+        [command] if command == "attach" => attach_generation(&current_generation()),
+        [command, generation] if command == "attach" => {
+            attach_generation(generation_argument(generation)?)
+        }
+        [command, rest @ ..] if command == "generations" => generations_command(rest),
+        [command, generation] if command == "stop" => {
+            stop_generation(generation_argument(generation)?, false)
+        }
+        [command, generation, flag] if command == "stop" && flag == "--json" => {
+            stop_generation(generation_argument(generation)?, true)
+        }
+        [command, flag, generation] if command == "stop" && flag == "--json" => {
+            stop_generation(generation_argument(generation)?, true)
+        }
         [command, ..]
             if command == "workspace"
                 || command == "tab"
@@ -266,6 +1040,12 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
             control(&arguments)
         }
         [command] if command == "versions" => {
+            println!(
+                "eon {} {}\neonw {}",
+                env!("CARGO_PKG_VERSION"),
+                current_generation(),
+                VERSION
+            );
             println!(
                 "{}",
                 eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?
@@ -282,73 +1062,128 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
     }
 }
 
-fn run(child: &[OsString]) -> Result<i32, String> {
+fn generation_argument(argument: &OsStr) -> Result<&str, String> {
+    let generation = argument
+        .to_str()
+        .ok_or_else(|| "Eon generation identities must be UTF-8".to_string())?;
+    if generation != "legacy" && !valid_generation(generation) {
+        return Err(format!("invalid Eon generation identity {generation:?}"));
+    }
+    Ok(generation)
+}
+
+fn launch_current(child: &[OsString], attach_existing: bool) -> Result<i32, String> {
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
-    let runtime = runtime_directory();
-    prepare_runtime(&runtime)?;
-    supervise(
+    let root = runtime_directory();
+    let generation = current_generation();
+    let runtime = prepare_generation_runtime(&root, &generation)?;
+    let socket = runtime.join("eon.sock");
+    match probe_runtime(&socket) {
+        Ok(info) => {
+            validate_current_runtime(&info, &generation)?;
+            return if attach_existing && child.is_empty() {
+                attach_at(&runtime)
+            } else {
+                Err(format!(
+                    "generation {generation} already has a live Eon supervisor"
+                ))
+            };
+        }
+        Err(error) if error.kind == EndpointFailureKind::Dead => {}
+        Err(error) => return Err(error.detail),
+    }
+    match supervise(
         &programs(),
         &config,
         &runtime.join("orbit.sock"),
         child,
         Duration::from_secs(5),
-    )
+        &generation,
+    ) {
+        Ok(code) => Ok(code),
+        Err(error) => {
+            if attach_existing && child.is_empty() && path_exists(&socket) {
+                attach_competing_supervisor(&socket, &runtime, &generation, error)
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+fn attach_competing_supervisor(
+    socket: &Path,
+    runtime: &Path,
+    generation: &str,
+    launch_error: String,
+) -> Result<i32, String> {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match probe_runtime(socket) {
+            Ok(info) => {
+                validate_current_runtime(&info, generation)?;
+                return attach_at(runtime);
+            }
+            Err(error)
+                if matches!(
+                    error.kind,
+                    EndpointFailureKind::Dead | EndpointFailureKind::Unreachable
+                ) && Instant::now() < deadline =>
+            {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "{launch_error}; competing supervisor did not become attachable: {}",
+                    error.detail
+                ));
+            }
+        }
+    }
+}
+
+fn validate_current_runtime(info: &Runtime, generation: &str) -> Result<(), String> {
+    if info.generation != generation {
+        return Err(format!(
+            "current runtime directory contains generation {}, expected {generation}",
+            info.generation
+        ));
+    }
+    if info.workspace_protocol != VERSION {
+        return Err(format!(
+            "current supervisor uses EONW {}, expected EONW {VERSION}",
+            info.workspace_protocol
+        ));
+    }
+    let components = eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?;
+    if info.component_report != components {
+        return Err("current supervisor reports a different component graph".into());
+    }
+    Ok(())
 }
 
 fn control(arguments: &[OsString]) -> Result<i32, String> {
     let (action, json) = parse_control_arguments(arguments)?;
-    let runtime = runtime_directory();
-    prepare_runtime(&runtime)?;
+    let root = runtime_directory();
+    let runtime = prepare_generation_runtime(&root, &current_generation())?;
     let socket = runtime.join("eon.sock");
-    let mut stream = match UnixStream::connect(&socket) {
-        Ok(stream) => stream,
+    let response = match send_action(&socket, action) {
+        Ok(response) => response,
         Err(error) => {
+            let code = if error.kind == EndpointFailureKind::Dead {
+                "missing-supervisor"
+            } else {
+                "supervisor-unavailable"
+            };
             return Ok(report_failure(
-                &failure(
-                    "missing-supervisor",
-                    format!(
-                        "no active Eon supervisor at {}: {error}; run `eon` first",
-                        socket.display()
-                    ),
-                ),
+                &failure(code, format!("{}; run `eon` first", error.detail)),
                 json,
             ));
         }
     };
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|error| format!("cannot configure Eon control client: {error}"))?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(|error| format!("cannot configure Eon control client: {error}"))?;
-    let request = match encode_request(&Request {
-        id: request_id(),
-        action,
-    }) {
-        Ok(request) => request,
-        Err(error) => {
-            return Ok(report_failure(&protocol_failure(error), json));
-        }
-    };
-    stream
-        .write_all(&request)
-        .map_err(|error| format!("cannot send Eon action: {error}"))?;
-
-    let mut response = vec![0; HEADER_BYTES];
-    stream
-        .read_exact(&mut response)
-        .map_err(|error| format!("cannot read Eon action result: {error}"))?;
-    let length = declared_message_len(&response)
-        .map_err(|error| format!("Eon supervisor returned a malformed result: {error}"))?;
-    response.resize(length, 0);
-    stream
-        .read_exact(&mut response[HEADER_BYTES..])
-        .map_err(|error| format!("cannot read Eon action result: {error}"))?;
-    match decode_response(&response)
-        .map_err(|error| format!("Eon supervisor returned a malformed result: {error}"))?
-    {
-        Response::Snapshot(snapshot) => {
+    match response {
+        ControlResponse::Workspace(Response::Snapshot(snapshot)) => {
             print!(
                 "{}",
                 if json {
@@ -359,7 +1194,12 @@ fn control(arguments: &[OsString]) -> Result<i32, String> {
             );
             Ok(0)
         }
-        Response::Failure(failure) => Ok(report_failure(&failure, json)),
+        ControlResponse::Workspace(Response::Failure(failure)) => {
+            Ok(report_failure(&failure, json))
+        }
+        ControlResponse::Lifecycle(_) => {
+            Err("Eon supervisor returned a lifecycle result for a workspace action".into())
+        }
     }
 }
 
@@ -402,17 +1242,9 @@ fn request_id() -> String {
     format!("{}-{nanos}-{sequence}", std::process::id())
 }
 
-fn attach() -> Result<i32, String> {
-    let runtime = runtime_directory();
-    prepare_runtime(&runtime)?;
+fn attach_at(runtime: &Path) -> Result<i32, String> {
     let socket = runtime.join("orbit.sock");
     let workspace = runtime.join("eon.sock");
-    if !workspace.exists() {
-        return Err(format!(
-            "no active Eon supervisor at {}; run `eon` first",
-            workspace.display()
-        ));
-    }
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
     Command::new(programs().venus)
@@ -507,7 +1339,20 @@ fn runtime_directory() -> PathBuf {
         .or_else(|| {
             xdg_path(nonempty_environment_path("XDG_RUNTIME_DIR")).map(|path| path.join("eon"))
         })
-        .unwrap_or_else(|| env::temp_dir().join(format!("eon-{}", effective_uid())))
+        .unwrap_or_else(|| {
+            eprintln!(
+                "eon: warning: XDG_RUNTIME_DIR is unset; using a private temporary runtime root"
+            );
+            env::temp_dir().join(format!("eon-{}", effective_uid()))
+        })
+}
+
+fn prepare_generation_runtime(root: &Path, generation: &str) -> Result<PathBuf, String> {
+    prepare_runtime(root)?;
+    prepare_runtime(&root.join("generations"))?;
+    let runtime = generation_directory(root, generation);
+    prepare_runtime(&runtime)?;
+    Ok(runtime)
 }
 
 fn nonempty_environment_path(name: &str) -> Option<PathBuf> {
@@ -571,13 +1416,13 @@ fn supervise(
     socket: &Path,
     child: &[OsString],
     socket_timeout: Duration,
+    generation: &str,
 ) -> Result<i32, String> {
     let runtime = socket
         .parent()
         .ok_or_else(|| format!("Sessions socket {} has no parent", socket.display()))?;
+    let control_listener = create_control_listener(&runtime.join("eon.sock"))?;
     let mut initial = start_orbit(programs, config, socket, child, socket_timeout)?;
-    let control_listener =
-        create_control_listener(&runtime.join("eon.sock")).inspect_err(|_| stop(&mut initial))?;
 
     let mut venus = match Command::new(&programs.venus)
         .arg(socket)
@@ -595,6 +1440,7 @@ fn supervise(
         Workspace::with_initial_session(runtime.to_path_buf(), socket.to_path_buf());
     let mut sessions = vec![RunningSession {
         id: "session-1".into(),
+        endpoint: socket.into(),
         child: initial,
     }];
     let mut initial_status = None;
@@ -624,6 +1470,8 @@ fn supervise(
             if let Some(mut process) = venus.take() {
                 stop(&mut process);
             }
+            drop(control_listener);
+            let _ = fs::remove_dir(runtime);
             return initial_status.ok_or("initial Sessions exit status is unavailable".into());
         }
 
@@ -642,20 +1490,33 @@ fn supervise(
             );
         }
 
-        accept_control_client(
+        if accept_control_client(
             &control_listener.listener,
             &mut workspace,
             &mut sessions,
             programs,
             config,
             socket_timeout,
-        )?;
+            generation,
+        )? {
+            if let Some(mut process) = venus.take() {
+                stop(&mut process);
+            }
+            for session in &mut sessions {
+                stop(&mut session.child);
+                remove_dead_socket(&session.endpoint);
+            }
+            drop(control_listener);
+            let _ = fs::remove_dir(runtime);
+            return Ok(0);
+        }
         thread::sleep(Duration::from_millis(25));
     }
 }
 
 struct RunningSession {
     id: String,
+    endpoint: PathBuf,
     child: Child,
 }
 
@@ -793,20 +1654,21 @@ fn accept_control_client(
     programs: &Programs,
     config: &Path,
     socket_timeout: Duration,
-) -> Result<(), String> {
+    generation: &str,
+) -> Result<bool, String> {
     match listener.accept() {
-        Ok((stream, _)) => handle_control_client(
+        Ok((stream, _)) => Ok(handle_control_client(
             stream,
             workspace,
             sessions,
             programs,
             config,
             socket_timeout,
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-        Err(error) => return Err(format!("cannot accept Eon control client: {error}")),
+            generation,
+        )),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(false),
+        Err(error) => Err(format!("cannot accept Eon control client: {error}")),
     }
-    Ok(())
 }
 
 fn handle_control_client(
@@ -816,33 +1678,102 @@ fn handle_control_client(
     programs: &Programs,
     config: &Path,
     socket_timeout: Duration,
-) {
+    generation: &str,
+) -> bool {
     let timeout = Some(Duration::from_millis(250));
     if stream.set_read_timeout(timeout).is_err() || stream.set_write_timeout(timeout).is_err() {
-        return;
+        return false;
     }
-    let response = match read_control_request(&mut stream) {
+    let (response, stop_requested) = match read_control_request(&mut stream) {
+        Ok(Request {
+            action: Action::InspectRuntime,
+            ..
+        }) => match runtime_status(generation, sessions) {
+            Ok(runtime) => (
+                ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)),
+                false,
+            ),
+            Err(detail) => (
+                ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
+                    "unrepresentable-state",
+                    detail,
+                ))),
+                false,
+            ),
+        },
+        Ok(Request {
+            action: Action::Stop { generation: target },
+            ..
+        }) if target == generation => (
+            ControlResponse::Lifecycle(LifecycleResponse::Stopped(Stopped {
+                generation: generation.into(),
+                sessions: sessions.iter().map(|session| session.id.clone()).collect(),
+            })),
+            true,
+        ),
+        Ok(Request {
+            action: Action::Stop { generation: target },
+            ..
+        }) => (
+            ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
+                "generation-mismatch",
+                format!("supervisor owns generation {generation}, not {target}"),
+            ))),
+            false,
+        ),
         Ok(request) => match workspace.dispatch(&request.id, request.action, |session| {
             let child = start_orbit(programs, config, &session.endpoint, &[], socket_timeout)?;
             sessions.push(RunningSession {
                 id: session.id.clone(),
+                endpoint: session.endpoint.clone(),
                 child,
             });
             Ok(())
         }) {
-            Ok(()) => Response::Snapshot(workspace.snapshot()),
-            Err(error) => Response::Failure(failure(error.code, error.detail)),
+            Ok(()) => (
+                ControlResponse::Workspace(Response::Snapshot(workspace.snapshot())),
+                false,
+            ),
+            Err(error) => (
+                ControlResponse::Workspace(Response::Failure(failure(error.code, error.detail))),
+                false,
+            ),
         },
-        Err(error) => Response::Failure(error),
+        Err(error) => (ControlResponse::Workspace(Response::Failure(error)), false),
     };
-    if let Ok(encoded) = encode_response(&response).or_else(|error| {
+    let encoded = match &response {
+        ControlResponse::Workspace(response) => encode_response(response),
+        ControlResponse::Lifecycle(response) => encode_lifecycle_response(response),
+    };
+    if let Ok(encoded) = encoded.or_else(|error| {
         encode_response(&Response::Failure(failure(
             "unrepresentable-state",
             format!("cannot encode Eon workspace result: {error}"),
         )))
     }) {
-        let _ = stream.write_all(&encoded);
+        let written = stream.write_all(&encoded).is_ok();
+        return stop_requested && written;
     }
+    false
+}
+
+fn runtime_status(generation: &str, sessions: &[RunningSession]) -> Result<Runtime, String> {
+    Ok(Runtime {
+        generation: generation.into(),
+        eon_version: env!("CARGO_PKG_VERSION").into(),
+        workspace_protocol: VERSION,
+        component_report: eon_manifest::version_report(MANIFEST)
+            .map_err(|error| error.to_string())?,
+        sessions: sessions.iter().map(|session| session.id.clone()).collect(),
+        attach: Availability {
+            available: true,
+            reason: "supervisor accepts EONW v1 workspace clients".into(),
+        },
+        stop: Availability {
+            available: true,
+            reason: "generation-aware supervisor owns these Sessions".into(),
+        },
+    })
 }
 
 fn read_control_request(stream: &mut impl Read) -> Result<Request, Failure> {
@@ -956,14 +1887,18 @@ fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ManagedPrograms, ManagedTool, Programs, create_control_listener, effective_uid,
-        integration_mask, managed_command, managed_tool, orbit_command, prepare_configuration,
-        prepare_runtime, prepend_path, read_shell_config, supervise, xdg_path,
+        ManagedPrograms, ManagedTool, Programs, create_control_listener, current_generation,
+        discover_generations, effective_uid, generation_directory, generation_id, integration_mask,
+        managed_command, managed_tool, orbit_command, prepare_configuration, prepare_runtime,
+        prepend_path, read_shell_config, supervise, valid_generation, xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
         fs,
-        os::unix::fs::{MetadataExt, PermissionsExt},
+        os::unix::{
+            fs::{MetadataExt, PermissionsExt, symlink},
+            net::UnixListener,
+        },
         path::{Path, PathBuf},
         process::Command,
         sync::atomic::{AtomicU64, Ordering},
@@ -981,6 +1916,55 @@ mod tests {
         ));
         fs::create_dir(&path).unwrap();
         path
+    }
+
+    #[test]
+    fn generation_identity_is_stable_bounded_and_namespaced() {
+        let first = generation_id(&[b"ab".as_slice(), b"c".as_slice()]);
+        assert_eq!(first, generation_id(&[b"ab".as_slice(), b"c".as_slice()]));
+        assert_ne!(first, generation_id(&[b"a".as_slice(), b"bc".as_slice()]));
+        assert!(valid_generation(&first));
+        assert!(!valid_generation("legacy"));
+        assert!(!valid_generation("g1-0123456789ABCDEF0123456789ABCDEF"));
+        assert_eq!(
+            generation_directory(Path::new("/runtime/eon"), &first),
+            Path::new("/runtime/eon/generations").join(first)
+        );
+    }
+
+    #[test]
+    fn discovery_rejects_symlinks_and_removes_only_dead_owned_control_metadata() {
+        let root = temporary_directory();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let generations = root.join("generations");
+        fs::create_dir(&generations).unwrap();
+        fs::set_permissions(&generations, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let outside = temporary_directory();
+        let linked_id = "g1-00000000000000000000000000000000";
+        symlink(&outside, generations.join(linked_id)).unwrap();
+
+        let dead_id = "g1-11111111111111111111111111111111";
+        let dead = generations.join(dead_id);
+        fs::create_dir(&dead).unwrap();
+        fs::set_permissions(&dead, fs::Permissions::from_mode(0o700)).unwrap();
+        let listener = UnixListener::bind(dead.join("eon.sock")).unwrap();
+        fs::set_permissions(dead.join("eon.sock"), fs::Permissions::from_mode(0o600)).unwrap();
+        drop(listener);
+
+        let records = discover_generations(&root, &current_generation()).unwrap();
+        assert!(records.iter().any(|record| {
+            record.id == linked_id && record.kind == "previous" && record.state == "corrupt"
+        }));
+        assert!(records.iter().any(|record| {
+            record.id == dead_id && record.kind == "previous" && record.state == "dead"
+        }));
+        assert!(outside.is_dir());
+        assert!(!dead.exists());
+
+        fs::remove_file(generations.join(linked_id)).unwrap();
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 
     fn executable(path: &Path, source: &str) {
@@ -1307,6 +2291,7 @@ mod tests {
             &socket,
             &["codex".into(), "--model".into(), "test".into()],
             Duration::from_secs(2),
+            "g1-0123456789abcdef0123456789abcdef",
         )
         .unwrap();
         stop_after_venus.join().unwrap();

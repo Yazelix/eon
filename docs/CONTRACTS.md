@@ -21,7 +21,8 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Proven | Composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21` |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | `6dfcb473beccadd6e145235009240c81dd570fe5`; proof below |
-| EON-C10 | A local client can submit versioned Eon workspace actions and receive one complete accepted workspace snapshot without reconstructing topology or terminal state | Eon | Proven | `4af395aea06c230ee6b18cf0755ae25915c0b88d`; EONW v1 producer proof below |
+| EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Partially proved | Workspace actions at `4af395aea06c230ee6b18cf0755ae25915c0b88d`; runtime identity and stop unproved |
+| EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly attachable when compatible, and explicitly stoppable through their supervisor | Eon | Planned | None |
 
 ## Approved workspace contract EON-C8
 
@@ -51,9 +52,10 @@ detailed execution evidence, and Git history retains superseded states.
 - Boundary: the accepted slice adds no arbitrary split tree, picker-based
   ordinary traversal, simultaneous expanded panes, durable layout restoration,
   AgentRun or provider semantics, terminal observation, managed-tool defaults,
-  explicit close or stop action, exit-status persistence, restart or reopen
-  action, plugin or MCP surface, isolation target, remote access, or appearance
-  effect.
+  per-pane or per-Session close or stop action, exit-status persistence,
+  restart or reopen action, plugin or MCP surface, isolation target, remote
+  access, or appearance effect. EON-C11 separately owns explicit whole-
+  generation stop.
 - Approval: topology was approved on 2026-08-08; Session-exit pruning was
   approved on 2026-08-10. Eon composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`
   consumes Venus's direct navigation, creation, pane headers, and bounded refresh.
@@ -113,30 +115,78 @@ detailed execution evidence, and Git history retains superseded states.
 - Consumer: the canonical `eon` CLI and an independently released Venus client
   at an exact revision that explicitly consumes EONW v1.
 - Trigger: a local client connects to Eon's private workspace endpoint and sends
-  a versioned inspect request or one of EON-C8's accepted semantic actions.
+  a versioned inspect request, one of EON-C8's accepted semantic actions, or an
+  EON-C11 runtime identity or whole-generation stop action.
 - Result: the running Eon supervisor validates the request, remains the sole
-  live action and topology owner, and returns one complete accepted snapshot.
-  The snapshot carries stable ordered tab, pane, and Session identities; active
-  and selected identities; Session liveness; and exact opaque Orbit endpoint
-  bytes.
+  live action and topology owner, and returns one complete typed result.
+  Workspace results carry stable ordered tab, pane, and Session identities;
+  active and selected identities; Session liveness; and exact opaque Orbit
+  endpoint bytes. Lifecycle results carry the supervisor's stable generation,
+  component report, protocol identity, exact live Session identities, and
+  owner-authored attach and stop availability.
 - Important failures: an unsupported version, malformed or oversized message,
-  invalid snapshot shape, unavailable action, unknown identity, unrepresentable
-  accepted state, or missing supervisor returns a bounded structured failure. A
-  rejected action leaves the prior accepted workspace unchanged.
+  invalid result shape, unavailable action, unknown or mismatched generation,
+  unrepresentable accepted state, missing supervisor, or an unconfirmed stop
+  returns a bounded structured failure. A rejected action leaves the prior
+  accepted workspace and every Session unchanged. An accepted stop names the
+  affected live Sessions before the supervisor terminates only its own children.
 - Ownership: Eon owns EONW v1, the semantic action vocabulary, topology,
   mappings, acceptance, and complete snapshot. Orbit retains process, PTY,
   terminal-state, and Session authority. The CLI and Venus decode the same
   Eon-owned values and never mirror the schema or reconstruct hidden state.
-- Boundary: EONW v1 reuses the private local Eon socket. Each connection carries
-  one length-delimited request and response; neither depends on EOF to delimit a
-  message. It adds no event stream, subscription or polling policy, remote
-  transport, general plugin or MCP surface, authorization framework, durable
-  restoration, AgentRun state, raw terminal content, or Venus rendering.
+- Boundary: EONW v1 reuses the private local Eon socket. Its lifecycle tags are
+  additive: the accepted Venus consumer continues to send only workspace tags
+  and can never receive a lifecycle result. Each connection carries one length-
+  delimited request and response; neither depends on EOF to delimit a message.
+  It adds no event stream, subscription or polling policy, remote transport,
+  general plugin or MCP surface, authorization framework, durable restoration,
+  AgentRun state, raw terminal content, or Venus rendering.
 - Update order: producer `4af395aea06c230ee6b18cf0755ae25915c0b88d`
   precedes current consumer `33a3d9af9f4c6015301ad6829fe733413c5b683d`;
   composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2` selects the consumer and
   supplies its workspace socket.
-- Approval: explicitly approved by the user on 2026-08-09.
+- Approval: workspace actions were approved on 2026-08-09; additive runtime
+  identity and stop actions were approved on 2026-08-10.
+
+## Approved runtime-generation contract EON-C11
+
+- Consumer: one local Eon user, the bare launcher, and the explicit generation
+  inspection, attach, and stop commands.
+- Trigger: Eon launches without a subcommand, or the user lists, attaches to, or
+  stops one exact runtime generation.
+- Result: Eon derives one opaque distribution-neutral identity from its runtime
+  source, dependency lock, canonical component manifest, and EONW source. Each
+  generation owns a separate private directory below Eon's runtime root. A bare
+  launch attaches only to a live supervisor that authoritatively reports the
+  exact current identity; otherwise it starts the current generation without
+  stopping older work. Discovery deterministically distinguishes current,
+  previous, legacy, dead, incompatible, and corrupt candidates. Explicit attach
+  never substitutes another generation. Explicit stop is sent through the
+  selected generation's EONW owner and names every affected live Session.
+- Important failures: unsafe permissions, symlinks, invalid names, corrupt or
+  oversized responses, unsupported EONW, identity mismatch, unavailable legacy
+  lifecycle support, timeout, partial startup, or a concurrent launch produces
+  a bounded explanation. Failure or cancelled confirmation preserves every
+  Session. Eon removes only its own dead control socket or an empty stopped
+  generation directory and never kills a process inferred from a PID, pathname,
+  or process tree.
+- Ownership: Eon owns generation identity, namespace selection, discovery,
+  compatibility policy, supervisor-routed stop, and bounded cleanup. Each live
+  supervisor remains authoritative for its topology and lifecycle response.
+  Orbit retains process, PTY, terminal-state, and Session authority. Venus is a
+  transient client of one explicitly compatible Eon/Orbit endpoint pair. A
+  distributor injects artifacts but does not define runtime identity or policy.
+- Boundary: the accepted slice adds no manager daemon, persisted topology,
+  machine-restart recovery, live supervisor or PTY handoff, background updater,
+  Nix evaluation, package-channel identity, compatibility window, remote
+  runtime, plugin API, or automatic age/count eviction. A fixed-namespace legacy
+  supervisor may be inspected and attached through accepted EONW v1, but reports
+  generation identity and stop as unavailable.
+- Checks: protocol round trips; deterministic identity, discovery, selection,
+  validation, and cleanup tests; concurrent process and A-to-B upgrade tests;
+  locked Rust and Nix checks; and live profile-upgrade dogfood that preserves the
+  older workspace.
+- Approval: explicitly approved by the user on 2026-08-10.
 
 ## Approved desktop-icon identity under EON-C1
 
@@ -242,9 +292,13 @@ detailed execution evidence, and Git history retains superseded states.
   unproved, and the packaged font set can show fallback boxes for some emoji and
   native tool glyphs.
 - Workspace topology is live only and bounded to 64 tabs and 256 panes. It has
-  no explicit pane, tab, or Session-stop action. Machine restart does not
-  preserve undeclared process or layout state, and EONW v1 provides no event
-  stream, remote transport, authorization layer, plugin surface, or durable
-  restoration.
+  no explicit pane, tab, or individual Session-stop action. Whole-generation
+  stop remains deliberately all-or-nothing. Machine restart does not preserve
+  undeclared process or layout state, and EONW v1 provides no event stream,
+  remote transport, authorization layer, plugin surface, or durable restoration.
+- Generation discovery retains no manager, durable registry, compatibility
+  window, live handoff, automatic eviction, or machine-restart recovery. Legacy
+  workspaces expose no authoritative component identity or stop action.
 - Closing Venus detaches the client while Orbit and its PTY remain alive. Bare
-  `eon` and `eon attach` reconnect through the running Eon supervisor.
+  `eon` and `eon attach` reconnect only to the exact current generation;
+  `eon attach GENERATION` explicitly selects another compatible generation.

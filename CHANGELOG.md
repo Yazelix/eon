@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Isolate supervisors by a deterministic runtime-generation identity. Bare
+  `eon` attaches only to the exact current generation while older live and
+  fixed-namespace legacy workspaces remain discoverable. Add deterministic
+  human and JSON generation listing, explicit compatible attach, and confirmed
+  owner-routed whole-generation stop without PID or process-tree inference.
+- Extend EONW v1 with additive supervisor identity and stop actions whose result
+  type remains separate from the pinned Venus workspace response.
 - Supply pinned Nushell, Bash, Zsh, Fish, Starship, Zoxide, Atuin, Carapace,
   Helix, Yazi, and LazyGit through bounded `eon-*` commands and a
   Session-private PATH. Let users select one direct shell argv and disable each

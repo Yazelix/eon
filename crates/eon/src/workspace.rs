@@ -176,6 +176,12 @@ impl Workspace {
 
         match action {
             Action::Inspect => {}
+            Action::InspectRuntime | Action::Stop { .. } => {
+                return Err(action_error(
+                    "unavailable",
+                    "supervisor lifecycle actions do not mutate workspace topology",
+                ));
+            }
             Action::CreateTab => self.create_tab(&mut start)?,
             Action::CreatePane => self.create_pane(&mut start)?,
             Action::FocusId(id) => self.focus_id(&id)?,
@@ -372,7 +378,7 @@ fn index_after_removal(selected: usize, removed: usize, remaining: usize) -> usi
     }
 }
 
-fn json_escape(value: &str) -> String {
+pub(crate) fn json_escape(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
         match character {

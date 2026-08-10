@@ -1,6 +1,6 @@
 use eon_workspace_protocol::{
-    Action, HEADER_BYTES, Request, Response, VERSION, declared_message_len, decode_response,
-    encode_request,
+    Action, HEADER_BYTES, Pane, Request, Response, Snapshot, Tab, VERSION, declared_message_len,
+    decode_request, decode_response, encode_request, encode_response,
 };
 use std::{
     fs,
@@ -56,6 +56,28 @@ fn wait_for(path: &Path) {
     assert!(path.exists(), "{} was not created", path.display());
 }
 
+fn generation_runtime(root: &Path) -> PathBuf {
+    let parent = root.join("generations");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(entries) = fs::read_dir(&parent) {
+            let directories = entries
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.is_dir())
+                .collect::<Vec<_>>();
+            if directories.len() == 1 {
+                return directories.into_iter().next().unwrap();
+            }
+        }
+        assert!(
+            Instant::now() < deadline,
+            "one generation directory was not created in {}",
+            parent.display()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn wait_for_successful_exit(child: &mut Child) {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -92,7 +114,12 @@ fn relative_configuration_root_is_resolved_once() {
         .output()
         .unwrap();
 
-    assert!(output.status.success());
+    assert!(
+        output.status.success(),
+        "stdout={} stderr={}",
+        stdout(&output),
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert_eq!(stdout(&output), format!("{}\n", config.display()));
     assert!(config.is_dir());
     fs::remove_dir_all(root).unwrap();
@@ -115,24 +142,51 @@ fn missing_supervisor_is_a_structured_workspace_failure() {
 }
 
 #[test]
-fn bare_eon_attaches_through_workspace_when_initial_session_is_gone() {
+fn bare_eon_attaches_only_to_the_live_current_generation() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
     let venus = root.join("venus");
     let log = root.join("venus.log");
-    fs::create_dir(&runtime).unwrap();
-    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
-    let _control = UnixListener::bind(runtime.join("eon.sock")).unwrap();
+    executable(
+        &orbit,
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$2\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
+    );
     executable(
         &venus,
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$EON_TEST_LOG\"\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$EON_TEST_LOG\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = Command::new(&binary)
+        .arg("run")
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
         .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_LOG", &log)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for(&control);
+    wait_for(&log);
+
+    let output = Command::new(&binary)
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
         .env("EON_TEST_LOG", &log)
         .output()
         .unwrap();
@@ -141,11 +195,15 @@ fn bare_eon_attaches_through_workspace_when_initial_session_is_gone() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "{}\n{}\n",
-            runtime.join("orbit.sock").display(),
-            runtime.join("eon.sock").display()
+            "{}\n{}\n{}\n{}\n",
+            generation.join("orbit.sock").display(),
+            control.display(),
+            generation.join("orbit.sock").display(),
+            control.display(),
         )
     );
+    fs::write(&stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -179,13 +237,16 @@ fn second_cli_controls_three_live_sessions_without_owning_them() {
         child,
         stop: stop.clone(),
     };
-    let control = runtime.join("eon.sock");
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
     wait_for(&control);
 
+    let pane = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
     assert!(
-        invoke(&binary, &runtime, &config, &["pane", "create", "--json"])
-            .status
-            .success()
+        pane.status.success(),
+        "stdout={} stderr={}",
+        stdout(&pane),
+        String::from_utf8_lossy(&pane.stderr)
     );
     assert_eq!(
         fs::metadata(&control).unwrap().permissions().mode() & 0o777,
@@ -249,7 +310,7 @@ fn second_cli_controls_three_live_sessions_without_owning_them() {
     assert_eq!(snapshot.matches("\"session\":").count(), 3);
 
     for endpoint in ["orbit.sock", "session-2.sock", "session-3.sock"] {
-        let endpoint = runtime.join(endpoint);
+        let endpoint = generation.join(endpoint);
         wait_for(&endpoint);
         let pid: i32 = fs::read_to_string(endpoint).unwrap().parse().unwrap();
         // SAFETY: signal 0 performs existence/permission checking without sending a signal.
@@ -299,13 +360,16 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
         child,
         stop: stop.clone(),
     };
-    let control = runtime.join("eon.sock");
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
     wait_for(&control);
     wait_for(&venus_pid);
+    let pane = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
     assert!(
-        invoke(&binary, &runtime, &config, &["pane", "create", "--json"])
-            .status
-            .success()
+        pane.status.success(),
+        "stdout={} stderr={}",
+        stdout(&pane),
+        String::from_utf8_lossy(&pane.stderr)
     );
 
     fs::write(&exit_initial, "").unwrap();
@@ -329,5 +393,175 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
     fs::write(&stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!control.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let fallback_stop = root.join("fallback-stop");
+    let orbit_log = root.join("orbit.log");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    executable(
+        &orbit,
+        "#!/bin/sh\nprintf '%s\\n' \"$$\" >> \"$EON_TEST_ORBIT_LOG\"\nsleep 0.25\nprintf '%s' \"$$\" > \"$2\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
+    );
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let launch = || {
+        Command::new(&binary)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &fallback_stop)
+            .env("EON_TEST_ORBIT_LOG", &orbit_log)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+    let mut first = TestProcess {
+        child: launch(),
+        stop: fallback_stop.clone(),
+    };
+    let mut second = TestProcess {
+        child: launch(),
+        stop: fallback_stop.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    wait_for(&generation.join("eon.sock"));
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let first_is_supervisor = loop {
+        let first_status = first.child.try_wait().unwrap();
+        let second_status = second.child.try_wait().unwrap();
+        match (first_status, second_status) {
+            (None, Some(status)) => {
+                assert!(status.success());
+                break true;
+            }
+            (Some(status), None) => {
+                assert!(status.success());
+                break false;
+            }
+            (Some(_), Some(_)) => panic!("both concurrent Eon launches exited"),
+            (None, None) => {
+                assert!(Instant::now() < deadline, "neither Eon launch attached");
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+    };
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
+
+    let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
+    assert!(listed.status.success());
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    assert!(stdout(&listed).contains(&format!("\"id\":\"{generation_id}\"")));
+    assert!(stdout(&listed).contains("\"kind\":\"current\",\"state\":\"live\""));
+    assert!(stdout(&listed).contains("\"sessions\":[\"session-1\"]"));
+    assert!(stdout(&listed).contains("\"stop\":{\"available\":true"));
+
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["stop", generation_id, "--json"],
+    );
+    assert!(
+        stopped.status.success(),
+        "stdout={} stderr={}",
+        stdout(&stopped),
+        String::from_utf8_lossy(&stopped.stderr)
+    );
+    assert!(stdout(&stopped).contains(&format!(
+        "\"generation\":\"{generation_id}\",\"sessions\":[\"session-1\"]"
+    )));
+    if first_is_supervisor {
+        wait_for_successful_exit(&mut first.child);
+    } else {
+        wait_for_successful_exit(&mut second.child);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let venus = root.join("venus");
+    let venus_log = root.join("venus.log");
+    fs::create_dir(&runtime).unwrap();
+    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(runtime.join("orbit.sock"), "legacy-orbit").unwrap();
+    let listener = UnixListener::bind(runtime.join("eon.sock")).unwrap();
+    fs::set_permissions(runtime.join("eon.sock"), fs::Permissions::from_mode(0o600)).unwrap();
+    executable(
+        &venus,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$EON_TEST_LOG\"\n",
+    );
+    let server = thread::spawn(move || {
+        for _ in 0..3 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = vec![0; HEADER_BYTES];
+            stream.read_exact(&mut request).unwrap();
+            let length = declared_message_len(&request).unwrap();
+            request.resize(length, 0);
+            stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
+            assert!(matches!(
+                decode_request(&request).unwrap().action,
+                Action::Inspect
+            ));
+            let response = encode_response(&Response::Snapshot(Snapshot {
+                active_tab: "tab-1".into(),
+                tabs: vec![Tab {
+                    id: "tab-1".into(),
+                    selected_pane: "pane-1".into(),
+                    panes: vec![Pane {
+                        id: "pane-1".into(),
+                        session: "session-1".into(),
+                        endpoint: b"/legacy/orbit.sock".to_vec(),
+                        live: true,
+                    }],
+                }],
+            }))
+            .unwrap();
+            stream.write_all(&response).unwrap();
+        }
+    });
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
+    assert!(listed.status.success());
+    assert!(stdout(&listed).contains("\"id\":\"legacy\",\"kind\":\"legacy\",\"state\":\"live\""));
+    assert!(stdout(&listed).contains("legacy supervisor has no authoritative stop action"));
+
+    let attached = Command::new(&binary)
+        .args(["attach", "legacy"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_LOG", &venus_log)
+        .output()
+        .unwrap();
+    assert!(attached.status.success());
+    assert_eq!(
+        fs::read_to_string(&venus_log).unwrap(),
+        format!(
+            "{}\n{}\n",
+            runtime.join("orbit.sock").display(),
+            runtime.join("eon.sock").display()
+        )
+    );
+
+    let stopped = invoke(&binary, &runtime, &config, &["stop", "legacy", "--json"]);
+    assert_eq!(stopped.status.code(), Some(2));
+    assert!(stdout(&stopped).contains("\"code\":\"stop-unavailable\""));
+    server.join().unwrap();
     fs::remove_dir_all(root).unwrap();
 }
