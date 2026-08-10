@@ -40,7 +40,8 @@ for the web**. Those names create no implementation scope by themselves.
 Eon / product orchestrator
         +---- Eon Desktop / Venus client subsystem
         +---- Eon Sessions / Orbit session subsystem
-        +---- Nushell + Starship + Zoxide
+        +---- Nushell + Bash + Zsh + Fish
+        |       +---- Starship + Zoxide + Atuin + Carapace
         +---- Helix
         +---- Yazi
         +---- LazyGit
@@ -140,43 +141,74 @@ protocol schema.
 
 ## Managed environment
 
-A Session without an explicit command starts Eon's pinned Nushell. Nushell
-loads its normal `~/.config/nushell/env.nu` and `config.nu`; when they do not
-exist, Nushell retains its native first-run files and startup banner. Eon's
-vendor autoload initializes pinned Starship only when the user has not replaced
-Nushell's built-in prompt, and initializes pinned Zoxide. Starship reads normal
-`~/.config/starship.toml` or uses its built-in defaults; Eon does not set
-`STARSHIP_CONFIG`. The package exposes the managed tools outside Eon only
-through these names:
+A Session without an explicit command starts Eon's pinned Nushell. Configure
+the command and Eon-provided shell integrations in
+`$EON_CONFIG_HOME/config.toml`, normally `~/.config/eon/config.toml`:
+
+```toml
+[shell]
+command = ["eon-nu"]
+starship = true
+zoxide = true
+atuin = true
+carapace = true
+```
+
+Eon reads these settings for each new Session. `command` is a direct argv array;
+`["eon-nu"]`, `["eon-bash"]`, `["eon-zsh"]`, and `["eon-fish"]` select the
+managed shells. Their unprefixed aliases do the same from Eon's private PATH;
+any other command remains unmanaged. Each boolean defaults to `true`; `false`
+disables Eon's activation without disabling a user-owned setup.
+
+Managed shells load native user configuration before Eon's integrations:
+
+| Shell | Native configuration |
+|---|---|
+| Nushell | `$XDG_CONFIG_HOME/nushell/env.nu`, `config.nu`, then Eon's vendor file, then native `autoload/*.nu` |
+| Bash | `~/.bashrc` |
+| Zsh | `${ZDOTDIR:-$HOME}/.zshenv` and `.zshrc` |
+| Fish | `$XDG_CONFIG_HOME/fish/config.fish` |
+
+Eon preserves an existing prompt, external completer, or same-tool hook. It
+supplies Starship, Zoxide, Atuin, and Carapace only where the native config has
+left room for them. Managed Nushell suppresses its stock startup banner while
+keeping native first-run config creation. `ATUIN_NOBIND` disables Atuin's key
+bindings without disabling history integration. Starship reads normal
+`~/.config/starship.toml`; Eon leaves `STARSHIP_CONFIG` unset. The other tools
+keep their native configuration, data, and cache paths.
+
+The package exposes managed tools outside Eon through these names:
 
 | Command | Managed tool |
 |---|---|
 | `eon-nu` | Nushell |
+| `eon-bash` | Bash |
+| `eon-zsh` | Zsh |
+| `eon-fish` | Fish |
 | `eon-hx` | Helix |
 | `eon-yazi` | Yazi |
 | `eon-ya` | Yazi companion CLI |
 | `eon-lazygit`, `eon-lg` | LazyGit |
 
-Outside a Session, the prefixed commands inherit the ambient PATH. Inside a
-Session, one private PATH resolves `nu`, `hx`, `yazi`, `ya`, and `lazygit` to
-those same artifacts. Eon does not alter the parent process's PATH, aliases, or
-shell startup files. Each tool keeps its native configuration schema, data, and
-cache behavior. Nushell's native `autoload/*.nu` files run after Eon's vendor
-file and may override its prompt or `z` integration. At launch, Eon ignores
+Outside a Session, prefixed non-shell commands inherit the ambient PATH.
+Managed shell launchers and Sessions prepend one process-local private PATH
+that resolves the four shells, four integrations, `hx`, `yazi`, `ya`, and
+`lazygit` to pinned artifacts. Eon does not alter the parent process's PATH,
+aliases, or shell startup files. At launch, Eon ignores
 ambient Helix runtime and Steel configuration paths and Yazi or LazyGit
 configuration paths that would bypass its private root; explicit Helix and
 LazyGit configuration arguments remain available. LazyGit uses the Git
-executable already available from the user's environment. The current packaged
-font set does not guarantee every emoji, Powerline, or Yazi icon glyph, so
-unsupported symbols may render as fallback boxes.
+executable available from the user's environment. The packaged font set does
+not guarantee each emoji, Powerline, or Yazi icon glyph, so unsupported symbols
+may render as fallback boxes.
 
 `EON_CONFIG_HOME` selects the configuration root; Eon resolves a relative value
 once against the launch directory. Without it, Eon uses `$XDG_CONFIG_HOME/eon`
 or `$HOME/.config/eon`. `EON_RUNTIME_DIR` selects the socket directory; Eon
 otherwise uses `$XDG_RUNTIME_DIR/eon` or a private per-user temporary directory.
-Eon passes the absolute root as `XDG_CONFIG_HOME` to Venus and non-Nushell
-managed tools. Sessions and managed Nushell inherit ambient XDG configuration;
-Eon preserves `EON_CONFIG_HOME` separately through Sessions and managed
+Eon passes the absolute root as `XDG_CONFIG_HOME` to Venus and managed tools
+other than shells. Sessions and managed shells inherit ambient XDG
+configuration; Eon preserves `EON_CONFIG_HOME` through Sessions and managed
 dispatch. Eon ignores relative XDG base paths. It creates missing configuration
 and runtime directories with mode `0700`. It leaves existing
 configuration-directory permissions unchanged and rejects unsafe existing
@@ -225,15 +257,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 239 |
+| README | 271 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 355 |
-| Distribution and references | 202 |
-| Changelog | 40 |
-| Rust source and tests | 3,284 |
-| Cargo manifests | 33 |
-| Component manifest | 263 |
-| Nix composition | 333 |
+| Architecture and contracts | 374 |
+| Distribution and references | 208 |
+| Changelog | 41 |
+| Rust source and tests | 3,557 |
+| Cargo manifests | 35 |
+| Component manifest | 373 |
+| Nix composition | 605 |
 | Product defaults | 0 |
-| **Total** | **5,412** |
+| **Total** | **6,127** |

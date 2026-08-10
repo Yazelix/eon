@@ -7,7 +7,7 @@
   "composition": {
     "services": ["orbit"],
     "clients": ["venus"],
-    "tools": ["nushell", "starship", "zoxide", "helix", "yazi", "lazygit"],
+    "tools": ["nushell", "bash", "zsh", "fish", "starship", "zoxide", "atuin", "carapace", "helix", "yazi", "lazygit"],
     "libraries": ["ratconfig"]
   },
   "activation": {
@@ -132,6 +132,72 @@
       }
     },
     {
+      "id": "bash",
+      "project": "GNU Bash",
+      "version": "5.3p9",
+      "revision": "b8c60bc9ca365f8261fa97900b6fa939f6ebc303",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://git.savannah.gnu.org/git/bash.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/bash" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": [],
+      "launch": {
+        "artifact": "executable",
+        "arguments": [],
+        "inputs": ["working-directory", "configuration-directory"]
+      }
+    },
+    {
+      "id": "zsh",
+      "project": "Zsh",
+      "version": "5.9.1",
+      "revision": "0e0d4ea11731c47f57bad042fbe75e3979d8a1d2",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/zsh-users/zsh.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/zsh" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": [],
+      "launch": {
+        "artifact": "executable",
+        "arguments": [],
+        "inputs": ["working-directory", "configuration-directory"]
+      }
+    },
+    {
+      "id": "fish",
+      "project": "Fish",
+      "version": "4.7.1",
+      "revision": "efb0223da10367031b7c887a3e40eccdf9bf7b06",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/fish-shell/fish-shell.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/fish" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": [],
+      "launch": {
+        "artifact": "executable",
+        "arguments": [],
+        "inputs": ["working-directory", "configuration-directory"]
+      }
+    },
+    {
       "id": "starship",
       "project": "Starship",
       "version": "1.25.1",
@@ -173,6 +239,50 @@
         "artifact": "executable",
         "arguments": [],
         "inputs": ["shell", "working-directory"]
+      }
+    },
+    {
+      "id": "atuin",
+      "project": "Atuin",
+      "version": "18.16.1",
+      "revision": "671f96b60dac49d1d2de73cc0812986a5e22ce7b",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/atuinsh/atuin.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/atuin" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": [],
+      "launch": {
+        "artifact": "executable",
+        "arguments": [],
+        "inputs": ["shell", "configuration-directory", "history-data"]
+      }
+    },
+    {
+      "id": "carapace",
+      "project": "Carapace",
+      "version": "1.6.3",
+      "revision": "e4ed2a5ae661848b228224ad7edb20ea678d33d4",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/carapace-sh/carapace-bin.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file", "path": "bin/carapace" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": [],
+      "launch": {
+        "artifact": "executable",
+        "arguments": [],
+        "inputs": ["shell", "configuration-directory"]
       }
     },
     {

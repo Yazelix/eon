@@ -5,6 +5,7 @@ use eon_workspace_protocol::{
     Response, declared_message_len, decode_request, decode_response, encode_request,
     encode_response,
 };
+use serde::Deserialize;
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -29,29 +30,72 @@ const MANIFEST: &str = include_str!("../../../components/eon-alpha-v1.json");
 const USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct EonConfig {
+    shell: ShellConfig,
+}
+
+#[derive(Debug, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+struct ShellConfig {
+    command: Vec<String>,
+    starship: bool,
+    zoxide: bool,
+    atuin: bool,
+    carapace: bool,
+}
+
+impl Default for ShellConfig {
+    fn default() -> Self {
+        Self {
+            command: vec!["eon-nu".into()],
+            starship: true,
+            zoxide: true,
+            atuin: true,
+            carapace: true,
+        }
+    }
+}
+
 struct Programs {
     orbit: PathBuf,
     venus: PathBuf,
-    shell: PathBuf,
     session_bin: Option<PathBuf>,
 }
 
 struct ManagedPrograms {
     nu: PathBuf,
+    bash: PathBuf,
+    zsh: PathBuf,
+    fish: PathBuf,
     helix: PathBuf,
     yazi: PathBuf,
     ya: PathBuf,
     lazygit: PathBuf,
     nu_vendor_autoload: Option<PathBuf>,
+    bash_rc: Option<PathBuf>,
+    zsh_config: Option<PathBuf>,
+    fish_init: Option<PathBuf>,
+    shell_bin: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ManagedTool {
     Nu,
+    Bash,
+    Zsh,
+    Fish,
     Helix,
     Yazi,
     Ya,
     LazyGit,
+}
+
+impl ManagedTool {
+    fn is_shell(self) -> bool {
+        matches!(self, Self::Nu | Self::Bash | Self::Zsh | Self::Fish)
+    }
 }
 
 fn main() -> ExitCode {
@@ -75,6 +119,9 @@ fn managed_tool(invocation: &OsStr) -> Option<ManagedTool> {
     let name = Path::new(invocation).file_name()?.to_str()?;
     match name {
         "eon-nu" | "nu" => Some(ManagedTool::Nu),
+        "eon-bash" | "bash" => Some(ManagedTool::Bash),
+        "eon-zsh" | "zsh" => Some(ManagedTool::Zsh),
+        "eon-fish" | "fish" => Some(ManagedTool::Fish),
         "eon-hx" | "hx" => Some(ManagedTool::Helix),
         "eon-yazi" | "yazi" => Some(ManagedTool::Yazi),
         "eon-ya" | "ya" => Some(ManagedTool::Ya),
@@ -87,7 +134,7 @@ fn launch_managed(tool: ManagedTool, arguments: Vec<OsString>) -> Result<i32, St
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
     let programs = managed_programs();
-    let mut command = managed_command(tool, &programs, &config, &arguments);
+    let mut command = managed_command(tool, &programs, &config, &arguments)?;
     let program = command.get_program().to_string_lossy().into_owned();
     let error = command.exec();
     Err(format!("cannot launch {program}: {error}"))
@@ -98,9 +145,16 @@ fn managed_command(
     programs: &ManagedPrograms,
     config: &Path,
     arguments: &[OsString],
-) -> Command {
+) -> Result<Command, String> {
+    let shell = tool
+        .is_shell()
+        .then(|| read_shell_config(config))
+        .transpose()?;
     let program = match tool {
         ManagedTool::Nu => &programs.nu,
+        ManagedTool::Bash => &programs.bash,
+        ManagedTool::Zsh => &programs.zsh,
+        ManagedTool::Fish => &programs.fish,
         ManagedTool::Helix => &programs.helix,
         ManagedTool::Yazi => &programs.yazi,
         ManagedTool::Ya => &programs.ya,
@@ -110,7 +164,39 @@ fn managed_command(
     match tool {
         ManagedTool::Nu => {
             if let Some(path) = &programs.nu_vendor_autoload {
-                command.env("NU_VENDOR_AUTOLOAD_DIR", path);
+                command.env(
+                    "NU_VENDOR_AUTOLOAD_DIR",
+                    path.join(
+                        integration_mask(
+                            shell.as_ref().unwrap(),
+                            env::var_os("ATUIN_NOBIND").is_some(),
+                        )
+                        .to_string(),
+                    ),
+                );
+            }
+        }
+        ManagedTool::Bash => {
+            if let Some(path) = &programs.bash_rc {
+                command.args([OsStr::new("--rcfile"), path.as_os_str()]);
+            }
+        }
+        ManagedTool::Zsh => {
+            if let Some(path) = &programs.zsh_config {
+                command.env("ZDOTDIR", path);
+                if let Some(user) = env::var_os("EON_USER_ZDOTDIR")
+                    .or_else(|| env::var_os("ZDOTDIR"))
+                    .or_else(|| env::var_os("HOME"))
+                {
+                    command.env("EON_USER_ZDOTDIR", user);
+                }
+            }
+        }
+        ManagedTool::Fish => {
+            if let Some(path) = &programs.fish_init {
+                command
+                    .env("EON_FISH_INIT", path)
+                    .args(["-C", "source \"$EON_FISH_INIT\""]);
             }
         }
         ManagedTool::Yazi | ManagedTool::Ya => {
@@ -129,11 +215,35 @@ fn managed_command(
                 .env_remove("HELIX_STEEL_CONFIG");
         }
     }
+    if let Some(shell) = &shell {
+        for (name, enabled) in [
+            ("STARSHIP", shell.starship),
+            ("ZOXIDE", shell.zoxide),
+            ("ATUIN", shell.atuin),
+            ("CARAPACE", shell.carapace),
+        ] {
+            command.env(format!("EON_SHELL_{name}"), if enabled { "1" } else { "0" });
+        }
+        if let Some(bin) = &programs.shell_bin {
+            command.env(
+                "PATH",
+                prepend_path(bin, env::var_os("PATH").as_deref(), "managed shell")?,
+            );
+        }
+    }
     command.args(arguments).env("EON_CONFIG_HOME", config);
-    if tool != ManagedTool::Nu {
+    if !tool.is_shell() {
         command.env("XDG_CONFIG_HOME", config);
     }
-    command
+    Ok(command)
+}
+
+fn integration_mask(shell: &ShellConfig, atuin_nobind: bool) -> u8 {
+    u8::from(shell.starship)
+        | (u8::from(shell.zoxide) << 1)
+        | (u8::from(shell.atuin) << 2)
+        | (u8::from(shell.carapace) << 3)
+        | (u8::from(shell.atuin && atuin_nobind) << 4)
 }
 
 fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
@@ -318,7 +428,6 @@ fn programs() -> Programs {
     Programs {
         orbit: configured_program("EON_ORBIT", "yazelix-orbit"),
         venus: configured_program("EON_VENUS", "yazelix-venus"),
-        shell: configured_program("EON_SHELL", "eon-nu"),
         session_bin: nonempty_environment_path("EON_SESSION_BIN"),
     }
 }
@@ -326,11 +435,18 @@ fn programs() -> Programs {
 fn managed_programs() -> ManagedPrograms {
     ManagedPrograms {
         nu: configured_program("EON_NU", "nu"),
+        bash: configured_program("EON_BASH", "bash"),
+        zsh: configured_program("EON_ZSH", "zsh"),
+        fish: configured_program("EON_FISH", "fish"),
         helix: configured_program("EON_HX", "hx"),
         yazi: configured_program("EON_YAZI", "yazi"),
         ya: configured_program("EON_YA", "ya"),
         lazygit: configured_program("EON_LAZYGIT", "lazygit"),
         nu_vendor_autoload: nonempty_environment_path("EON_NU_VENDOR_AUTOLOAD"),
+        bash_rc: nonempty_environment_path("EON_BASH_RC"),
+        zsh_config: nonempty_environment_path("EON_ZSH_CONFIG"),
+        fish_init: nonempty_environment_path("EON_FISH_INIT"),
+        shell_bin: nonempty_environment_path("EON_SESSION_BIN"),
     }
 }
 
@@ -359,6 +475,33 @@ fn prepare_configuration(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("cannot create {}: {error}", path.display()))
 }
 
+fn read_shell_config(root: &Path) -> Result<ShellConfig, String> {
+    let path = root.join("config.toml");
+    let source = match fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ShellConfig::default());
+        }
+        Err(error) => {
+            return Err(format!("cannot read {}: {error}", path.display()));
+        }
+    };
+    let config: EonConfig = toml::from_str(&source)
+        .map_err(|error| format!("invalid Eon configuration {}: {error}", path.display()))?;
+    if config.shell.command.is_empty() || config.shell.command[0].is_empty() {
+        return Err("shell.command must not be empty".into());
+    }
+    if config
+        .shell
+        .command
+        .iter()
+        .any(|argument| argument.contains('\0'))
+    {
+        return Err("shell.command must not contain NUL".into());
+    }
+    Ok(config.shell)
+}
+
 fn runtime_directory() -> PathBuf {
     nonempty_environment_path("EON_RUNTIME_DIR")
         .or_else(|| {
@@ -375,6 +518,17 @@ fn nonempty_environment_path(name: &str) -> Option<PathBuf> {
 
 fn xdg_path(path: Option<PathBuf>) -> Option<PathBuf> {
     path.filter(|path| path.is_absolute())
+}
+
+fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsString, String> {
+    let mut paths = path
+        .map(env::split_paths)
+        .into_iter()
+        .flatten()
+        .filter(|path| path != prefix)
+        .collect::<Vec<_>>();
+    paths.insert(0, prefix.into());
+    env::join_paths(paths).map_err(|error| format!("cannot construct {owner} PATH: {error}"))
 }
 
 fn prepare_runtime(path: &Path) -> Result<(), String> {
@@ -537,18 +691,13 @@ fn orbit_command(
         .arg("--")
         .env("EON_CONFIG_HOME", config);
     if let Some(session_bin) = &programs.session_bin {
-        let mut paths = vec![session_bin.clone()];
-        if let Some(path) = env::var_os("PATH") {
-            paths.extend(env::split_paths(&path));
-        }
         orbit_command.env(
             "PATH",
-            env::join_paths(paths)
-                .map_err(|error| format!("cannot construct Eon Session PATH: {error}"))?,
+            prepend_path(session_bin, env::var_os("PATH").as_deref(), "Eon Session")?,
         );
     }
     if child.is_empty() {
-        orbit_command.arg(&programs.shell);
+        orbit_command.args(read_shell_config(config)?.command);
     } else {
         orbit_command.args(child);
     }
@@ -808,8 +957,8 @@ fn status_code(status: ExitStatus) -> i32 {
 mod tests {
     use super::{
         ManagedPrograms, ManagedTool, Programs, create_control_listener, effective_uid,
-        managed_command, managed_tool, orbit_command, prepare_configuration, prepare_runtime,
-        supervise, xdg_path,
+        integration_mask, managed_command, managed_tool, orbit_command, prepare_configuration,
+        prepare_runtime, prepend_path, read_shell_config, supervise, xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -847,12 +996,53 @@ mod tests {
     }
 
     #[test]
+    fn shell_configuration_is_strict_and_defaults_without_a_file() {
+        let root = temporary_directory();
+        let default = read_shell_config(&root).unwrap();
+        assert_eq!(default.command, ["eon-nu"]);
+        assert!(default.starship && default.zoxide && default.atuin && default.carapace);
+
+        fs::write(
+            root.join("config.toml"),
+            "[shell]\ncommand = [\"eon-fish\", \"--no-config\"]\nstarship = false\nzoxide = false\natuin = false\ncarapace = false\n",
+        )
+        .unwrap();
+        let configured = read_shell_config(&root).unwrap();
+        assert_eq!(configured.command, ["eon-fish", "--no-config"]);
+        assert!(
+            !configured.starship && !configured.zoxide && !configured.atuin && !configured.carapace
+        );
+        assert_eq!(integration_mask(&configured, true), 0);
+        assert_eq!(integration_mask(&default, false), 15);
+        assert_eq!(integration_mask(&default, true), 31);
+
+        for (source, expected) in [
+            ("[shell]\ncommand = []\n", "shell.command must not be empty"),
+            (
+                "[shell]\ncommand = [\"eon-nu\"]\nunknown = true\n",
+                "unknown field `unknown`",
+            ),
+            ("[shell\n", "invalid Eon configuration"),
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            assert!(read_shell_config(&root).unwrap_err().contains(expected));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn managed_invocation_names_are_bounded() {
-        use ManagedTool::{Helix, LazyGit, Nu, Ya, Yazi};
+        use ManagedTool::{Bash, Fish, Helix, LazyGit, Nu, Ya, Yazi, Zsh};
 
         for (name, expected) in [
             ("eon-nu", Some(Nu)),
             ("nu", Some(Nu)),
+            ("eon-bash", Some(Bash)),
+            ("bash", Some(Bash)),
+            ("eon-zsh", Some(Zsh)),
+            ("zsh", Some(Zsh)),
+            ("eon-fish", Some(Fish)),
+            ("fish", Some(Fish)),
             ("eon-hx", Some(Helix)),
             ("hx", Some(Helix)),
             ("eon-yazi", Some(Yazi)),
@@ -877,15 +1067,22 @@ mod tests {
 
     #[test]
     fn managed_commands_use_exact_programs_and_private_configuration() {
-        use ManagedTool::{Helix, LazyGit, Nu, Ya, Yazi};
+        use ManagedTool::{Bash, Fish, Helix, LazyGit, Nu, Ya, Yazi, Zsh};
 
         let programs = ManagedPrograms {
             nu: "/managed/nu".into(),
+            bash: "/managed/bash".into(),
+            zsh: "/managed/zsh".into(),
+            fish: "/managed/fish".into(),
             helix: "/managed/hx".into(),
             yazi: "/managed/yazi".into(),
             ya: "/managed/ya".into(),
             lazygit: "/managed/lazygit".into(),
             nu_vendor_autoload: Some("/managed/autoload".into()),
+            bash_rc: Some("/managed/bashrc".into()),
+            zsh_config: Some("/managed/zsh-config".into()),
+            fish_init: Some("/managed/fish-init".into()),
+            shell_bin: Some("/managed/bin".into()),
         };
         let config = Path::new("/private/eon");
         for (tool, program, removed_variables) in [
@@ -902,7 +1099,7 @@ mod tests {
                 &["CONFIG_DIR", "LG_CONFIG_FILE"][..],
             ),
         ] {
-            let command = managed_command(tool, &programs, config, &["--version".into()]);
+            let command = managed_command(tool, &programs, config, &["--version".into()]).unwrap();
             assert_eq!(command.get_program(), program);
             assert_eq!(
                 command.get_args().map(OsString::from).collect::<Vec<_>>(),
@@ -925,7 +1122,7 @@ mod tests {
             }
         }
 
-        let command = managed_command(Nu, &programs, config, &["--version".into()]);
+        let command = managed_command(Nu, &programs, config, &["--version".into()]).unwrap();
         assert_eq!(command.get_program(), "/managed/nu");
         assert_eq!(
             command.get_args().map(OsString::from).collect::<Vec<_>>(),
@@ -937,27 +1134,83 @@ mod tests {
         );
         assert_eq!(
             command_environment(&command, "NU_VENDOR_AUTOLOAD_DIR"),
-            Some(Some(OsStr::new("/managed/autoload")))
+            Some(Some(OsStr::new("/managed/autoload/15")))
         );
         assert_eq!(command_environment(&command, "XDG_CONFIG_HOME"), None);
         assert_eq!(command_environment(&command, "STARSHIP_CONFIG"), None);
+
+        for (tool, program, arguments) in [
+            (
+                Bash,
+                "/managed/bash",
+                vec!["--rcfile", "/managed/bashrc", "--version"],
+            ),
+            (Zsh, "/managed/zsh", vec!["--version"]),
+            (
+                Fish,
+                "/managed/fish",
+                vec!["-C", "source \"$EON_FISH_INIT\"", "--version"],
+            ),
+        ] {
+            let command = managed_command(tool, &programs, config, &["--version".into()]).unwrap();
+            assert_eq!(command.get_program(), program);
+            assert_eq!(
+                command.get_args().map(OsString::from).collect::<Vec<_>>(),
+                arguments
+                    .into_iter()
+                    .map(OsString::from)
+                    .collect::<Vec<_>>()
+            );
+            for integration in ["STARSHIP", "ZOXIDE", "ATUIN", "CARAPACE"] {
+                assert_eq!(
+                    command_environment(&command, &format!("EON_SHELL_{integration}")),
+                    Some(Some(OsStr::new("1")))
+                );
+            }
+        }
+        assert_eq!(
+            command_environment(
+                &managed_command(Zsh, &programs, config, &[]).unwrap(),
+                "ZDOTDIR"
+            ),
+            Some(Some(OsStr::new("/managed/zsh-config")))
+        );
+        assert_eq!(
+            command_environment(
+                &managed_command(Fish, &programs, config, &[]).unwrap(),
+                "EON_FISH_INIT"
+            ),
+            Some(Some(OsStr::new("/managed/fish-init")))
+        );
     }
 
     #[test]
-    fn orbit_uses_managed_nu_only_for_default_sessions() {
+    fn orbit_uses_configured_argv_only_for_default_sessions() {
+        let root = temporary_directory();
         let programs = Programs {
             orbit: "/managed/orbit".into(),
             venus: "/managed/venus".into(),
-            shell: "/managed/eon-nu".into(),
             session_bin: Some("/managed/bin".into()),
         };
-        let config = Path::new("/private/eon");
+        let config = root.as_path();
         let socket = Path::new("/runtime/orbit.sock");
+        fs::write(
+            root.join("config.toml"),
+            "[shell]\ncommand = [\"eon-fish\", \"--no-config\"]\n",
+        )
+        .unwrap();
 
         let default = orbit_command(&programs, config, socket, &[]).unwrap();
         assert_eq!(
             default.get_args().map(OsString::from).collect::<Vec<_>>(),
-            ["serve", "/runtime/orbit.sock", "--", "/managed/eon-nu"].map(OsString::from)
+            [
+                "serve",
+                "/runtime/orbit.sock",
+                "--",
+                "eon-fish",
+                "--no-config",
+            ]
+            .map(OsString::from)
         );
         assert_eq!(
             command_environment(&default, "EON_CONFIG_HOME"),
@@ -996,6 +1249,7 @@ mod tests {
             ]
             .map(OsString::from)
         );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1047,7 +1301,6 @@ mod tests {
             &Programs {
                 orbit,
                 venus,
-                shell: root.join("eon-nu"),
                 session_bin: None,
             },
             &config,
@@ -1122,6 +1375,21 @@ mod tests {
 
         let absolute = PathBuf::from("/absolute");
         assert_eq!(xdg_path(Some(absolute.clone())), Some(absolute));
+    }
+
+    #[test]
+    fn session_path_contains_one_managed_prefix() {
+        let path = prepend_path(
+            Path::new("/managed/bin"),
+            Some(OsStr::new("/managed/bin:/usr/bin:/managed/bin")),
+            "test",
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::env::split_paths(&path).collect::<Vec<_>>(),
+            ["/managed/bin", "/usr/bin"].map(PathBuf::from)
+        );
     }
 
     #[test]

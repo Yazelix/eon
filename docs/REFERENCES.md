@@ -20,6 +20,12 @@ accepted Orbit contracts instead of repeating the engine decision.
 |---|---|---|
 | How should Eon organize and switch among durable terminal sessions without absorbing terminal or rendering state? | [Canario](https://rapha.land/canario/) and its [frontend at Rio `3e41b8b19a1c`](https://github.com/raphamorim/rio/tree/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario) | Study spaces, command-driven navigation, CWD-based filing, the global quick terminal, and on-demand pane previews. Canario's [session store](https://github.com/raphamorim/rio/blob/3e41b8b19a1cad9cd9bdfc8f7900cf61ce5a9098/frontends/canario/Sources/SessionStore.swift) restarts shells and restores layout plus plain-text scrollback, so it is workspace-UX evidence rather than a durable-session model. Eon must consume exact Orbit session identities and must not simulate process survival, copy Canario source, or move PTY lifetime into the UI process. |
 
+## Managed shell environment
+
+| Question | Sources | Use |
+|---|---|---|
+| How should Eon activate a consistent optional tool set after native Nushell, Bash, Zsh, and Fish configuration? | [Nova startup at `f1beb34f`](https://github.com/Yazelix/nova/tree/f1beb34fe6060cfa2c0201d7f8095f6ef707f467), [Nushell 0.113.1](https://github.com/nushell/nushell/tree/7b7df4aa68e957cf38b9d8157c35fa7523f44a6d), [Bash 5.3](https://git.savannah.gnu.org/cgit/bash.git/tag/?h=bash-5.3), [Zsh 5.9.1](https://github.com/zsh-users/zsh/tree/0e0d4ea11731c47f57bad042fbe75e3979d8a1d2), [Fish 4.7.1](https://github.com/fish-shell/fish-shell/tree/efb0223da10367031b7c887a3e40eccdf9bf7b06), [Starship 1.25.1](https://github.com/starship/starship/tree/8758daa7767d4e73874330b1e262fca66a7ffd30), [Zoxide 0.9.9](https://github.com/ajeetdsouza/zoxide/tree/9cdc6aa3740b4d8a9d62406c99e84c5de49645e9), [Atuin 18.16.1](https://github.com/atuinsh/atuin/tree/671f96b60dac49d1d2de73cc0812986a5e22ce7b), and [Carapace 1.6.3](https://github.com/carapace-sh/carapace-bin/tree/e4ed2a5ae661848b228224ad7edb20ea678d33d4) | Reuse each shell's native startup mechanism and each tool's generated init. Keep user config and tool state in native paths, guard existing prompt, completer, and same-tool hooks, and expose exact Eon-selected binaries through the Session PATH. Use Nova as comparison evidence; do not copy its source or inherit Mise, shell-specific settings, environment mutation, or compatibility scope. |
+
 ## Recovery experience
 
 | Question | Source | Use |

@@ -476,8 +476,13 @@ mod tests {
 orbit 0.1.0 64db581445bafca1a08a6530f8e44f9c1edbc169 x86_64-linux\n\
 venus 0.1.0 33a3d9af9f4c6015301ad6829fe733413c5b683d x86_64-linux\n\
 nushell 0.113.1 7b7df4aa68e957cf38b9d8157c35fa7523f44a6d x86_64-linux\n\
+bash 5.3p9 b8c60bc9ca365f8261fa97900b6fa939f6ebc303 x86_64-linux\n\
+zsh 5.9.1 0e0d4ea11731c47f57bad042fbe75e3979d8a1d2 x86_64-linux\n\
+fish 4.7.1 efb0223da10367031b7c887a3e40eccdf9bf7b06 x86_64-linux\n\
 starship 1.25.1 8758daa7767d4e73874330b1e262fca66a7ffd30 x86_64-linux\n\
 zoxide 0.9.9 9cdc6aa3740b4d8a9d62406c99e84c5de49645e9 x86_64-linux\n\
+atuin 18.16.1 671f96b60dac49d1d2de73cc0812986a5e22ce7b x86_64-linux\n\
+carapace 1.6.3 e4ed2a5ae661848b228224ad7edb20ea678d33d4 x86_64-linux\n\
 helix 25.7.1 7e6cd307d00783c16ad4cff99ed71936d34f6572 x86_64-linux\n\
 yazi 26.5.6 aa526434f00bb44e2e902d9a4ac5f810da1018b9 x86_64-linux\n\
 lazygit 0.62.2 009c8975beb322f9374789476ac65dfa02321fce x86_64-linux\n\
