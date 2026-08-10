@@ -9,6 +9,7 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
+    hash::{DefaultHasher, Hash, Hasher},
     io::{Read, Write},
     os::unix::{
         fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt},
@@ -87,7 +88,11 @@ fn managed_tool(invocation: &OsStr) -> Option<ManagedTool> {
 fn launch_managed(tool: ManagedTool, arguments: Vec<OsString>) -> Result<i32, String> {
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
-    let mut command = managed_command(tool, &managed_programs(), &config, &arguments);
+    let mut programs = managed_programs();
+    if tool == ManagedTool::Nu {
+        prepare_nu_configuration(&mut programs, &config, &runtime_directory())?;
+    }
+    let mut command = managed_command(tool, &programs, &config, &arguments);
     let program = command.get_program().to_string_lossy().into_owned();
     let error = command.exec();
     Err(format!("cannot launch {program}: {error}"))
@@ -360,6 +365,64 @@ fn prepare_configuration(path: &Path) -> Result<(), String> {
         .mode(0o700)
         .create(path)
         .map_err(|error| format!("cannot create {}: {error}", path.display()))
+}
+
+fn prepare_nu_configuration(
+    programs: &mut ManagedPrograms,
+    config: &Path,
+    runtime: &Path,
+) -> Result<(), String> {
+    prepare_runtime(runtime)?;
+    let mut hasher = DefaultHasher::new();
+    config.hash(&mut hasher);
+    let directory = runtime.join(format!("nushell-{:016x}", hasher.finish()));
+    prepare_runtime(&directory)?;
+    let directory = fs::canonicalize(&directory)
+        .map_err(|error| format!("cannot resolve {}: {error}", directory.display()))?;
+    let packaged_env = programs.nu_env.clone();
+    let packaged_config = programs.nu_config.clone();
+    let user = config.join("nu");
+
+    for (name, command, packaged, user) in [
+        ("env.nu", "source-env", packaged_env, user.join("env.nu")),
+        (
+            "config.nu",
+            "source",
+            packaged_config,
+            user.join("config.nu"),
+        ),
+    ] {
+        let mut source = format!("{command} {}\n", nu_quote(&packaged)?);
+        if user.is_file() {
+            source.push_str(&format!("{command} {}\n", nu_quote(&user)?));
+        }
+        atomic_write(&directory.join(name), source.as_bytes())?;
+    }
+
+    programs.nu_env = directory.join("env.nu");
+    programs.nu_config = directory.join("config.nu");
+    Ok(())
+}
+
+fn nu_quote(path: &Path) -> Result<String, String> {
+    let path = path.to_str().ok_or_else(|| {
+        format!(
+            "Nushell configuration path is not UTF-8: {}",
+            path.display()
+        )
+    })?;
+    Ok(format!(
+        "\"{}\"",
+        path.replace('\\', "\\\\").replace('"', "\\\"")
+    ))
+}
+
+fn atomic_write(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
+    fs::write(&temporary, contents)
+        .map_err(|error| format!("cannot write {}: {error}", temporary.display()))?;
+    fs::rename(&temporary, path)
+        .map_err(|error| format!("cannot install {}: {error}", path.display()))
 }
 
 fn runtime_directory() -> PathBuf {
@@ -812,8 +875,8 @@ fn status_code(status: ExitStatus) -> i32 {
 mod tests {
     use super::{
         ManagedPrograms, ManagedTool, Programs, create_control_listener, effective_uid,
-        managed_command, managed_tool, orbit_command, prepare_configuration, prepare_runtime,
-        supervise, xdg_path,
+        managed_command, managed_tool, orbit_command, prepare_configuration,
+        prepare_nu_configuration, prepare_runtime, supervise, xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -943,6 +1006,57 @@ mod tests {
             ]
             .map(OsString::from)
         );
+    }
+
+    #[test]
+    fn managed_nu_layers_packaged_config_before_optional_user_sources() {
+        let root = temporary_directory();
+        let runtime = root.join("runtime");
+        let config = root.join("config");
+        let user_nu = config.join("nu");
+        fs::create_dir_all(&user_nu).unwrap();
+        fs::write(user_nu.join("env.nu"), "$env.USER_ENV = true\n").unwrap();
+        fs::write(user_nu.join("config.nu"), "$env.USER_CONFIG = true\n").unwrap();
+        let mut programs = ManagedPrograms {
+            nu: "/managed/nu".into(),
+            helix: "/managed/hx".into(),
+            yazi: "/managed/yazi".into(),
+            ya: "/managed/ya".into(),
+            lazygit: "/managed/lazygit".into(),
+            nu_config: "/managed/config.nu".into(),
+            nu_env: "/managed/env.nu".into(),
+        };
+
+        prepare_nu_configuration(&mut programs, &config, &runtime).unwrap();
+        assert_eq!(
+            fs::read_to_string(&programs.nu_env).unwrap(),
+            format!(
+                "source-env \"/managed/env.nu\"\nsource-env \"{}\"\n",
+                user_nu.join("env.nu").display()
+            )
+        );
+        assert_eq!(
+            fs::read_to_string(&programs.nu_config).unwrap(),
+            format!(
+                "source \"/managed/config.nu\"\nsource \"{}\"\n",
+                user_nu.join("config.nu").display()
+            )
+        );
+
+        fs::remove_file(user_nu.join("env.nu")).unwrap();
+        fs::remove_file(user_nu.join("config.nu")).unwrap();
+        programs.nu_config = "/managed/config.nu".into();
+        programs.nu_env = "/managed/env.nu".into();
+        prepare_nu_configuration(&mut programs, &config, &runtime).unwrap();
+        assert_eq!(
+            fs::read_to_string(&programs.nu_env).unwrap(),
+            "source-env \"/managed/env.nu\"\n"
+        );
+        assert_eq!(
+            fs::read_to_string(&programs.nu_config).unwrap(),
+            "source \"/managed/config.nu\"\n"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

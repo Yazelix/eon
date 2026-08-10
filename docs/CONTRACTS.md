@@ -20,7 +20,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Proven | Composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21` |
-| EON-C9 | Eon supplies one exact managed interactive environment through prefixed external commands and Session-private unprefixed tool names without changing the user's global toolchain | Eon | Proven | `99c410a1081b88dd8db2b7f9e26394a38acd175a`; managed-environment proof below |
+| EON-C9 | Eon supplies one exact managed interactive environment through prefixed external commands and Session-private unprefixed tool names, with packaged-before-user native Nushell configuration, without changing the user's global toolchain | Eon | Candidate | Current working tree and exact artifact below; prior managed-environment proof `99c410a1081b88dd8db2b7f9e26394a38acd175a` |
 | EON-C10 | A local client can submit versioned Eon workspace actions and receive one complete accepted workspace snapshot without reconstructing topology or terminal state | Eon | Proven | `4af395aea06c230ee6b18cf0755ae25915c0b88d`; EONW v1 producer proof below |
 
 ## Approved workspace contract EON-C8
@@ -69,22 +69,29 @@ detailed execution evidence, and Git history retains superseded states.
   artifacts. Stable `eon-*` commands expose them outside Eon without shadowing
   the user toolchain. One Session-private PATH exposes the accepted unprefixed
   executable names to processes inside Eon, managed Nushell supplies `lg`, and
-  the default no-command Session starts managed Nushell.
+  the default no-command Session starts managed Nushell without its startup
+  banner. Managed Nushell loads Eon's packaged `env.nu` and `config.nu` before
+  optional native user sources at `<EON_CONFIG_HOME>/nu/env.nu` and
+  `<EON_CONFIG_HOME>/nu/config.nu`; missing user sources are ignored.
 - Important failures: a missing artifact, invalid private native
   configuration, manifest mismatch, or launch failure returns a bounded
   explicit error. Eon never mutates global user configuration, shell startup
-  files, aliases, or PATH.
+  files, aliases, or PATH, and never creates or rewrites the optional Nushell
+  user sources.
 - Ownership: Eon owns component selection, exact versions, launch policy, its
   private configuration root, managed command names, Session PATH projection,
-  and identity reporting. Each selected tool retains its native behavior and
-  configuration schema. Orbit retains process, PTY, terminal-state, and
-  Session authority; Venus owns no shell or tool policy.
+  Nushell source order and packaged defaults, and identity reporting. Nushell
+  owns source evaluation and its configuration schema; each other selected tool
+  retains its native behavior and configuration schema. Orbit retains process,
+  PTY, terminal-state, and Session authority; Venus owns no shell or tool
+  policy.
 - Boundary: the accepted slice adds no global alias mode, ornamental wrappers,
   shell framework, automatic Direnv or Mise activation, Carapace, plugin or MCP
   surface, declarative profile, distribution channel, remote behavior, or
   editor replacement. `eon run -- COMMAND...` remains the explicit
   child-command escape hatch.
-- Approval: explicitly approved by the user on 2026-08-08.
+- Approval: the managed environment was approved on 2026-08-08; native user
+  Nushell layering and the banner default were approved on 2026-08-10.
 
 ## Approved workspace protocol contract EON-C10
 
@@ -168,15 +175,20 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C9 — managed environment
 
-- Proof revision: `99c410a1081b88dd8db2b7f9e26394a38acd175a` on x86_64 Linux.
-- Artifact: the canonical manifest selects the exact managed tool revisions;
-  `eon versions` reports them, and the Nix alpha package retains their licenses.
-- Checks: locked Rust format, check, tests, and clippy; Nix flake evaluation and
-  exact package build; real managed-shell and composed-runtime dogfood; native
-  configuration-precedence and isolation checks; and `git diff --check`.
+- Proof candidate: current working tree on x86_64 Linux; no proof-bearing Git
+  revision yet.
+- Artifact: `/nix/store/pa5ksqs4s9dxlabkjia2pga8brd5dmg3-eon-0.1.0`, NAR hash
+  `sha256-1jXIgPVCHb/QCatKXEAkjY78buTibyrldqHy4MUiqcc=`, NAR size 1,316,096
+  bytes, closure size 1,559,526,400 bytes.
+- Checks: locked Rust format, check, 20-test workspace suite, and clippy; exact
+  Nix flake check and package build; native managed-Nushell configuration and
+  interactive startup dogfood; and `git diff --check`.
 - Exercised behavior: prefixed managed commands preserve the ambient toolchain
   outside Eon; Session-private unprefixed commands and configuration remain
-  rooted under Eon; explicit child argv and native configuration overrides win.
+  rooted under Eon; packaged Nushell configuration precedes optional native
+  user sources; nested managed Nushell retains the same root; missing sources
+  are ignored; invalid source text exits explicitly; the startup banner is
+  absent; and explicit child argv and native configuration overrides win.
 
 ### EON-C10 — EONW v1 producer
 

@@ -140,10 +140,11 @@ protocol schema.
 
 ## Managed environment
 
-A Session without an explicit command starts Eon's pinned Nushell. Starship
-supplies its native modules with a violet `∴` prompt marker and no leading blank
-line, while Zoxide supplies its native `z` integration. The package exposes the
-managed tools outside Eon only through these names:
+A Session without an explicit command starts Eon's pinned Nushell without its
+startup banner. Starship supplies its native modules with a violet `∴` prompt
+marker and no leading blank line, while Zoxide supplies its native `z`
+integration. The package exposes the managed tools outside Eon only through
+these names:
 
 | Command | Managed tool |
 |---|---|
@@ -164,6 +165,12 @@ LazyGit configuration arguments remain available. LazyGit uses the Git
 executable already available from the user's environment. The current packaged
 font set does not guarantee every emoji, Powerline, or Yazi icon glyph, so
 unsupported symbols may render as fallback boxes.
+
+Managed Nushell loads Eon's packaged defaults before optional native user
+sources at `~/.config/eon/nu/env.nu` and `~/.config/eon/nu/config.nu`. Under a
+custom configuration root, those files live at `$EON_CONFIG_HOME/nu/`. Eon
+does not create or rewrite them; missing files are ignored. The user sources
+remain executable Nushell configuration and may override packaged defaults.
 
 `EON_CONFIG_HOME` selects the configuration root; Eon resolves a relative value
 once against the launch directory. Without it, Eon uses `$XDG_CONFIG_HOME/eon`
@@ -220,15 +227,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 234 |
+| README | 241 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 338 |
+| Architecture and contracts | 350 |
 | Distribution and references | 202 |
-| Changelog | 37 |
-| Rust source and tests | 3,287 |
+| Changelog | 39 |
+| Rust source and tests | 3,401 |
 | Cargo manifests | 33 |
 | Component manifest | 263 |
 | Nix composition | 334 |
-| Product defaults | 10 |
-| **Total** | **5,401** |
+| Product defaults | 12 |
+| **Total** | **5,538** |
