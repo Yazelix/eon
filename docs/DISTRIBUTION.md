@@ -46,6 +46,22 @@ Direct-distribution work requires a separate user decision after:
 The graduation decision selects the first direct target and release tool. It
 does not activate every package channel.
 
+## Reference routing
+
+These routes remain conditional during the Nix-only alpha. Read only the row
+matching an activated distribution question, start with `Read first`, and
+inspect an additional source only when its condition applies. Record exact
+revisions, constraints, and rejections in the owning Bead.
+
+| Question or trigger | Read first | Read additionally only if | Boundary |
+|---|---|---|---|
+| Distribution graduation is active and one release graph must drive direct archives and package-manager outputs. | [dist documentation](https://axodotdev.github.io/cargo-dist/) | Read [dist configuration](https://axodotdev.github.io/cargo-dist/book/reference/config.html) only when evaluating its exact artifact, installer, Homebrew, or generated-CI shape. | Apply the tool gate and compare an owned assembler. Do not select dist before graduation. |
+| GitHub-hosted artifacts must preserve release identity. | [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) | None by default. | Prove tag protection, attestations, and asset immutability for the selected workflow. |
+| Hosted Actions minutes, queues, or spending create a demonstrated local-release requirement. | [Doodlestein Self Releaser](https://github.com/Dicklesworthstone/doodlestein_self_releaser) | Inspect `act` and the selected workflow only after exact compatibility and cost questions are named. | Comparison evidence only. A local run does not prove hosted parity, signing isolation, or provenance. |
+| Native macOS distribution is activated. | [Apple notarization requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) | Read the [Homebrew Cask Cookbook](https://docs.brew.sh/Cask-Cookbook) only if Homebrew is selected as a channel. | Prove signing, hardened runtime, notarization, stapling, Gatekeeper, quarantine, architecture, and upgrade behavior. |
+| Direct-bundle dogfood demonstrates a need for a portable Nix artifact. | [Nix `bundle` command](https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-bundle) | None by default. | Inspect experimental status, bundler constraints, closure size, and portability. Do not make an experimental interface canonical. |
+| Direct-bundle dogfood demonstrates an AppImage-specific user need. | [AppImage documentation](https://docs.appimage.org/) | None by default. | Inspect integration, updates, sandbox assumptions, and filesystem support. Do not treat format availability as product demand. |
+
 ## Cost-bounded CI and release execution
 
 Do not make hosted GitHub Actions consumption an implicit prerequisite for
