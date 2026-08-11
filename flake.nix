@@ -550,6 +550,9 @@
             for command in nu bash zsh fish hx yazi ya lazygit; do
               ln -s "../../../bin/eon-$command" "$out/libexec/eon/bin/$command"
             done
+            for command in nu bash zsh fish; do
+              ln -s "../../../bin/eon-$command" "$out/libexec/eon/bin/eon-$command"
+            done
             ln -s ${starshipPackage}/bin/starship "$out/libexec/eon/bin/starship"
             ln -s ${zoxidePackage}/bin/zoxide "$out/libexec/eon/bin/zoxide"
             ln -s ${atuinPackage}/bin/atuin "$out/libexec/eon/bin/atuin"
@@ -593,6 +596,15 @@
             platforms = [ system ];
           };
         };
+      managedCommandPathCheck = pkgs.runCommand "eon-managed-command-path-check" { } ''
+        export HOME="$TMPDIR" EON_CONFIG_HOME="$TMPDIR/config" PATH=${eonPackage}/libexec/eon/bin
+        for command in nu bash zsh fish; do
+          version_output=$("$command" --version)
+          test -n "$version_output" && test "$("eon-$command" --version)" = "$version_output"
+        done
+        ${orbitPackage}/bin/yazelix-orbit serve "$TMPDIR/orbit.sock" -- eon-nu --version
+        ${pkgs.coreutils}/bin/touch "$out"
+      '';
     in
     {
       packages.${system}.default = eonPackage;
@@ -602,6 +614,7 @@
       };
       checks.${system} = {
         default = eonPackage;
+        managed-command-path = managedCommandPathCheck;
         shell-environment = zshCompletionCheck;
       };
     };
