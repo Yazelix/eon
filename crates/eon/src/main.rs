@@ -1278,6 +1278,7 @@ fn launch_current(
     attach_existing: bool,
     decorations: bool,
 ) -> Result<i32, String> {
+    eon_manifest::parse_and_validate(MANIFEST).map_err(|error| error.to_string())?;
     let root = runtime_directory();
     let generation = current_generation();
     let runtime = prepare_generation_runtime(&root, &generation)?;

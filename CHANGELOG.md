@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Reject an invalid embedded component graph before creating runtime state or
+  starting Orbit, Venus, or another child.
 - Serialize supervisor control-socket acquisition so concurrent launches
   converge on one live owner instead of unlinking a newly bound peer.
 - Refuse a whole-generation stop when its validated supervisor is replaced
