@@ -13,7 +13,7 @@ detailed execution evidence, and Git history retains superseded states.
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
 | EON-C1 | Eon validates and launches one compatible component set and reports every exact component revision | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
-| EON-C2 | One versioned manifest defines component identity, compatibility, and abstract artifacts—but not launch policy—for every distribution channel | Eon | Candidate | Prior incomplete proof `60e9145aa204d387a28d917be8a4fe1f5ddcd4ef`; replacement proof pending |
+| EON-C2 | One versioned manifest defines component identity, compatibility, and abstract artifacts—but not launch policy—for every distribution channel | Eon | Proven | `088895708a1f5f65dabc4c66b1e8905efd551f66`; proof below |
 | EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
@@ -245,14 +245,14 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C1 through EON-C4 and the current EON-C8 topology — composition
 
-- Current EON-C2 candidate: schema 3 graph
-  `components/eon-alpha-v3.json`, SHA-256
+- Current EON-C2 proof: `088895708a1f5f65dabc4c66b1e8905efd551f66`
+  on x86_64 Linux. Schema 3 graph `components/eon-alpha-v3.json`, SHA-256
   `1139f4a372ad7107a6fbea7026f2e5c9621fd6bce797582211474d96765a422b`,
-  generation `g1-67aff726fa2116fa13e7adc1c560d083`. It rejects launch
+  generation `g1-c461dc17c78fb96f4d97a152c2ad9483`. It rejects launch
   declarations and retains the non-library file-artifact invariant.
-- Candidate package: `/nix/store/bxh2j3dncrjxlgg01jga2n6jkk38jkq2-eon-0.1.0`,
-  NAR hash `sha256-cO36qXeHO1EN0wdCuBjYpTM0EULvgA/VWp+qiGXa+MM=`. The active
-  profile selects that exact artifact; the replacement proof revision is pending.
+- Exact package: `/nix/store/rcxlkcz1zhaxwxajnld2dk8c48rq2f36-eon-0.1.0`,
+  NAR hash `sha256-aAOCBiVQOEl/bKZV0t7YGn3g64NcBOFj7lFQCjQ7Gvo=`. The active
+  profile remains synchronized to the current working tree without a restart.
 - Proof revision: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c` on x86_64
   Linux through the Nix alpha package `eon-0.1.0` at
   `/nix/store/04sbq6wc79h2hf1rjq9y9bcvaz5v92hb-eon-0.1.0`, NAR hash
