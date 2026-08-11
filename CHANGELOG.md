@@ -7,6 +7,8 @@ installation, and proven contract changes.
 
 - Component graph schema 3 removes inert artifact paths and launch declarations;
   Nix owns physical paths and Rust owns launch policy.
+- Preserve native Fish per-command completions when Carapace is enabled while
+  retaining its fallback definitions for commands without native coverage.
 - Reject an invalid embedded component graph before selecting a runtime
   generation, creating runtime state, or starting a child.
 - Serialize supervisor control-socket acquisition so concurrent launches

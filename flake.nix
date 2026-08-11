@@ -445,13 +445,33 @@
           path = zshRc;
         }
       ];
-      zshCompletionCheck = pkgs.runCommand "eon-zsh-completion-check" { } ''
-        mkdir -p "$TMPDIR/home" "$TMPDIR/zdot"
+      shellEnvironmentCheck = pkgs.runCommand "eon-shell-environment-check" { } ''
+        mkdir -p "$TMPDIR/home" "$TMPDIR/zdot" "$TMPDIR/fish/fish"
         HOME="$TMPDIR/home" ZDOTDIR=${zshConfig} EON_USER_ZDOTDIR="$TMPDIR/zdot" \
           EON_SHELL_STARSHIP=0 EON_SHELL_ZOXIDE=0 EON_SHELL_ATUIN=0 \
           EON_SHELL_CARAPACE=1 ${zshPackage}/bin/zsh -i -c \
             '(( $+functions[_carapace_completer] ))'
         test ! -e "$TMPDIR/zdot/.zcompdump"
+
+        printf '%s\n' 'complete -c git -a eon_user_marker' \
+          'complete -c eon-native -a eon_native_marker' 'complete -c acpi -e' \
+          > "$TMPDIR/fish/fish/config.fish"
+        export HOME="$TMPDIR/home" XDG_CONFIG_HOME="$TMPDIR/fish"
+        export EON_SHELL_STARSHIP=0 EON_SHELL_ZOXIDE=0 EON_SHELL_ATUIN=0
+        EON_SHELL_CARAPACE=1 ${fishPackage}/bin/fish -i -C 'source ${fishInit}' -c '
+            complete -c git | string match -q "*eon_user_marker*"; or exit 1
+            complete -c acpi | string match -q "*_carapace_completer*"; or exit 1
+            set before (complete -c git | count)
+            set native_before (complete -c eon-native | count)
+            test $native_before -eq 1; or exit 1
+            source ${fishInit}
+            test $before -eq (complete -c git | count); or exit 1
+            test $native_before -eq (complete -c eon-native | count)
+          '
+        EON_SHELL_CARAPACE=0 ${fishPackage}/bin/fish -i -C 'source ${fishInit}' -c '
+            not functions -q _carapace_completer; or exit 1
+            complete -c git | string match -q "*eon_user_marker*"; or exit 1
+          '
         touch "$out"
       '';
 
@@ -474,7 +494,13 @@
           end
         end
         if test "$EON_SHELL_CARAPACE" = 1; and not functions -q _carapace_completer
+          set -l _eon_completions (complete)
           source ${shellInit}/carapace-fish; or echo 'eon: cannot initialize Carapace' >&2
+          set -l _eon_active_completions (complete)
+          # ponytail: startup-only snapshot scan; index only if user completion sets make it measurable.
+          for _eon_completion in $_eon_completions
+            contains -- $_eon_completion $_eon_active_completions; or eval $_eon_completion
+          end
         end
       '';
 
@@ -615,7 +641,7 @@
       checks.${system} = {
         default = eonPackage;
         managed-command-path = managedCommandPathCheck;
-        shell-environment = zshCompletionCheck;
+        shell-environment = shellEnvironmentCheck;
       };
     };
 }
