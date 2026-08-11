@@ -14,7 +14,7 @@ use std::{
     io::{Read, Write},
     os::unix::{
         ffi::OsStrExt,
-        fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt},
+        fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
         net::{UnixListener, UnixStream},
         process::CommandExt,
     },
@@ -76,6 +76,7 @@ fn generation_directory(root: &Path, generation: &str) -> PathBuf {
 
 const MAX_GENERATIONS: usize = 256;
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(2);
+const SESSION_START_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EndpointFailureKind {
@@ -1281,6 +1282,8 @@ fn launch_current(
     let generation = current_generation();
     let runtime = prepare_generation_runtime(&root, &generation)?;
     let socket = runtime.join("eon.sock");
+    // ponytail: one root-wide startup lock; partition if cross-generation starts contend.
+    let startup_lock = lock_supervisor_startup(&root.join("startup.lock"))?;
     match probe_supervisor(&socket, &generation) {
         Ok((active_mode, supervisor)) => {
             if active_mode != mode {
@@ -1290,6 +1293,7 @@ fn launch_current(
                     mode.name()
                 ));
             }
+            drop(startup_lock);
             return if attach_existing {
                 present_at(&runtime, &generation, mode, supervisor)
             } else {
@@ -1307,9 +1311,9 @@ fn launch_current(
     match supervise(
         &programs,
         &config,
+        startup_lock,
         &runtime.join("orbit.sock"),
         child,
-        Duration::from_secs(5),
         &generation,
         mode,
     ) {
@@ -1674,9 +1678,9 @@ fn effective_uid() -> u32 {
 fn supervise(
     programs: &Programs,
     config: &Path,
+    startup_lock: fs::File,
     socket: &Path,
     child: &[OsString],
-    socket_timeout: Duration,
     generation: &str,
     mode: LaunchMode,
 ) -> Result<i32, String> {
@@ -1684,7 +1688,7 @@ fn supervise(
         .parent()
         .ok_or_else(|| format!("Sessions socket {} has no parent", socket.display()))?;
     let control_listener = create_control_listener(&runtime.join("eon.sock"))?;
-    let mut initial = start_orbit(programs, config, socket, child, socket_timeout)?;
+    let mut initial = start_orbit(programs, config, socket, child, SESSION_START_TIMEOUT)?;
 
     let venus = match venus_command(programs, config, socket, mode).spawn() {
         Ok(venus) => venus,
@@ -1706,6 +1710,7 @@ fn supervise(
         }],
         venus: Some(venus),
     };
+    drop(startup_lock);
     let mut initial_status = None;
 
     loop {
@@ -1752,7 +1757,7 @@ fn supervise(
             &mut state,
             programs,
             config,
-            socket_timeout,
+            SESSION_START_TIMEOUT,
             generation,
         )? {
             if let Some(mut process) = state.venus.take() {
@@ -1858,6 +1863,49 @@ impl Drop for ControlListener {
             let _ = fs::remove_file(&self.path);
         }
     }
+}
+
+fn lock_supervisor_startup(path: &Path) -> Result<fs::File, String> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|error| format!("cannot open Eon startup lock {}: {error}", path.display()))?;
+    let metadata = file.metadata().map_err(|error| {
+        format!(
+            "cannot inspect Eon startup lock {}: {error}",
+            path.display()
+        )
+    })?;
+    if !metadata.file_type().is_file() || metadata.uid() != effective_uid() {
+        return Err(format!(
+            "Eon startup lock {} must be an owned regular file",
+            path.display()
+        ));
+    }
+    file.set_permissions(fs::Permissions::from_mode(0o600))
+        .map_err(|error| {
+            format!(
+                "cannot protect Eon startup lock {}: {error}",
+                path.display()
+            )
+        })?;
+    loop {
+        match file.lock() {
+            Ok(()) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => {
+                return Err(format!(
+                    "cannot lock Eon supervisor startup {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    Ok(file)
 }
 
 fn create_control_listener(path: &Path) -> Result<ControlListener, String> {
@@ -2237,10 +2285,10 @@ mod tests {
         Action, Availability, Failure, LaunchMode, LifecycleResponse, ManagedPrograms, ManagedTool,
         Programs, Response, Runtime, VERSION, create_control_listener, current_generation,
         discover_generations, effective_uid, encode_lifecycle_response, encode_response,
-        generation_directory, generation_id, integration_mask, managed_command, managed_tool,
-        orbit_command, prepare_configuration, prepare_runtime, prepend_path,
-        probe_presentable_runtime, read_control_request, read_shell_config, supervise,
-        valid_generation, venus_command, xdg_path,
+        generation_directory, generation_id, integration_mask, lock_supervisor_startup,
+        managed_command, managed_tool, orbit_command, prepare_configuration, prepare_runtime,
+        prepend_path, probe_presentable_runtime, read_control_request, read_shell_config,
+        supervise, valid_generation, venus_command, xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -2697,9 +2745,9 @@ mod tests {
                 venus_decorations: true,
             },
             &config,
+            lock_supervisor_startup(&root.join("startup.lock")).unwrap(),
             &socket,
             &["ignored".into()],
-            Duration::from_secs(2),
             "g1-0123456789abcdef0123456789abcdef",
             LaunchMode::Terminal,
         )
@@ -2765,9 +2813,9 @@ mod tests {
                 venus_decorations: true,
             },
             &config,
+            lock_supervisor_startup(&root.join("startup.lock")).unwrap(),
             &socket,
             &["codex".into(), "--model".into(), "test".into()],
-            Duration::from_secs(2),
             "g1-0123456789abcdef0123456789abcdef",
             LaunchMode::Workspace,
         )
@@ -2866,6 +2914,46 @@ mod tests {
         drop(control);
 
         assert!(socket.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn control_listener_serializes_stale_cleanup_and_bind() {
+        let root = temporary_directory();
+        let socket = root.join("eon.sock");
+        let startup_lock = root.join("startup.lock");
+        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
+        let held = lock_supervisor_startup(&startup_lock).unwrap();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let peer_socket = socket.clone();
+        let peer_lock = startup_lock.clone();
+        let peer = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = lock_supervisor_startup(&peer_lock)
+                .and_then(|_startup_lock| create_control_listener(&peer_socket))
+                .map(drop);
+            result_tx.send(result).unwrap();
+        });
+        started_rx.recv().unwrap();
+        assert!(matches!(
+            result_rx.recv_timeout(Duration::from_millis(250)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+
+        fs::remove_file(&socket).unwrap();
+        let replacement = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        drop(held);
+
+        let error = result_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap_err();
+        assert!(error.contains("already active"));
+        assert!(std::os::unix::net::UnixStream::connect(&socket).is_ok());
+        peer.join().unwrap();
+        drop(replacement);
         fs::remove_dir_all(root).unwrap();
     }
 }

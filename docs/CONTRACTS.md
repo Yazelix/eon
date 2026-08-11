@@ -196,13 +196,15 @@ detailed execution evidence, and Git history retains superseded states.
   previous, legacy, dead, incompatible, and corrupt candidates. Explicit attach
   never substitutes another generation. Explicit stop is sent through the
   selected generation's EONW owner and names every affected live Session.
+  Concurrent attach-capable launches for one generation converge on one
+  supervisor and one initial Session.
 - Important failures: unsafe permissions, symlinks, invalid names, corrupt or
   oversized responses, unsupported EONW, identity mismatch, unavailable legacy
-  lifecycle support, timeout, partial startup, or a concurrent launch produces
-  a bounded explanation. Failure or cancelled confirmation preserves every
-  Session. Eon removes only its own dead control socket or an empty stopped
-  generation directory and never kills a process inferred from a PID, pathname,
-  or process tree.
+  lifecycle support, timeout, partial startup, or an incompatible competing
+  launch produces a bounded explanation. Failure or cancelled confirmation
+  preserves every Session. Eon removes only its own dead control socket or an
+  empty stopped generation directory and never kills a process inferred from a
+  PID, pathname, or process tree.
 - Ownership: Eon owns generation identity, namespace selection, discovery,
   compatibility policy, supervisor-routed stop, and bounded cleanup. Each live
   supervisor remains authoritative for its topology and lifecycle response.
@@ -216,9 +218,9 @@ detailed execution evidence, and Git history retains superseded states.
   supervisor may be inspected and attached through accepted EONW v1, but reports
   generation identity and stop as unavailable.
 - Checks: protocol round trips; deterministic identity, discovery, selection,
-  validation, and cleanup tests; concurrent process and A-to-B upgrade tests;
-  locked Rust and Nix checks; and live profile-upgrade dogfood that preserves the
-  older workspace.
+  listener acquisition, validation, and cleanup tests; concurrent process and
+  A-to-B upgrade tests; locked Rust and Nix checks; and live profile-upgrade
+  dogfood that preserves the older workspace.
 - Approval: explicitly approved by the user on 2026-08-10.
 
 ## Approved desktop-icon identity under EON-C1

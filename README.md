@@ -91,10 +91,11 @@ The package installs one `Eon` desktop entry and a transparent violet three-fold
 loop icon at native launcher sizes, with X11 and Xwayland window grouping.
 Opening Eon reconnects only to the exact installed runtime generation or starts
 that generation in its own private namespace. Older live generations and their
-Sessions remain running. Its Nix closure supplies Mesa's open-source Vulkan
-drivers; the current graphics proof uses Intel hardware, while proprietary
-NVIDIA remains unproved. Run Eon from a terminal when you need foreground
-lifecycle control.
+Sessions remain running. Concurrent starts converge on one supervisor and one
+initial Session; every attach-capable peer presents that owner. Its Nix closure
+supplies Mesa's open-source Vulkan drivers; the current graphics proof uses
+Intel hardware, while proprietary NVIDIA remains unproved. Run Eon from a
+terminal when you need foreground lifecycle control.
 Closing the Eon Desktop window detaches the client while Sessions and its PTY
 keep running. Ask the same supervisor to present them again with:
 
@@ -296,15 +297,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 310 |
+| README | 311 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 559 |
+| Architecture and contracts | 561 |
 | Distribution and references | 230 |
-| Changelog | 72 |
-| Rust source and tests | 5,847 |
+| Changelog | 74 |
+| Rust source and tests | 5,935 |
 | Cargo manifests | 35 |
 | Component manifest | 375 |
 | Nix composition | 621 |
 | Product defaults | 0 |
-| **Total** | **8,712** |
+| **Total** | **8,805** |

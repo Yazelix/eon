@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Serialize supervisor control-socket acquisition so concurrent launches
+  converge on one live owner instead of unlinking a newly bound peer.
 - Refuse a whole-generation stop when its validated supervisor is replaced
   during confirmation, preserving the replacement and its live Sessions.
 - Resolve the four stable managed-shell commands from the Session-private PATH
