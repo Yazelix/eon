@@ -246,14 +246,14 @@ detailed execution evidence, and Git history retains superseded states.
 ### EON-C1 through EON-C4 and the current EON-C8 topology — composition
 
 - Current EON-C2 composition proof:
-  `53f3a28793c4a4643afec4e53b6af1fcbc9c74ea` on x86_64 Linux. Schema 3
+  `4500e15088cbd4957d35d995d419489c81aeefbf` on x86_64 Linux. Schema 3
   graph `components/eon-alpha-v3.json`, SHA-256
-  `f308d167ef5ae6b153ddba6a093c1958a5ee25a3e45bc132ebe9e806b079d9e0`,
-  selects Venus source and VEN-C2 proof
-  `a17d100d11d38acf515cf96af34df6bbfef9850b` while retaining every other
-  accepted component proof. Generation: `g1-f24a79514d7be0b62e8f59f025f95c19`.
-- Exact package: `/nix/store/p94k02k0f42fklplgy2nl7qzi4ck289r-eon-0.1.0`,
-  NAR hash `sha256-8UTtztpYoqeJVmQYd7qwn/2cDs98GnjoAy9Rt/56W1Y=`. The active
+  `bad1c3763502403d8725ed75e532ce1a9587d760d8bbaa25da2995e976052925`,
+  selects Venus source and VEN-C1 proof
+  `3e27bb7e377da9d9eb7e5cbdbfcfa5add3de0cad` while retaining every other
+  accepted component proof. Generation: `g1-56b4b310c4058e8c8fc61fdcec626aed`.
+- Exact package: `/nix/store/9sssf6drq5vjamgapa2lw4171j77s82m-eon-0.1.0`,
+  NAR hash `sha256-acT/hfH+3cAsUJA5MykDw5OBg6DaPj8F5Is3U32OXUY=`. The active
   profile resolves this artifact without restarting live supervisors or Sessions.
 - Proof revision: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c` on x86_64
   Linux through the Nix alpha package `eon-0.1.0` at
