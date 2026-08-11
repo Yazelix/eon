@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Preserve Shift-produced layout text such as `?`, `:`, and `+` in the packaged
+  native terminal surface without changing modified shortcuts.
 - Component graph schema 3 removes inert artifact paths and launch declarations;
   Nix owns physical paths and Rust owns launch policy.
 - Preserve native Fish per-command completions when Carapace is enabled while
