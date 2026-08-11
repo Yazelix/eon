@@ -77,12 +77,16 @@ snapshots, supervisor lifecycle results, structured failures, and bounded
 framing. Workspace and lifecycle results are separate types, so the pinned
 Venus consumer remains source- and wire-compatible with additive lifecycle
 tags it never requests. The running Eon supervisor remains the only live
-topology, action, launch-mode, and generation-lifecycle owner; the CLI and Venus
-never infer state from each other, terminal output, or the wire format. In
-terminal-host mode the same private EONW endpoint retains lifecycle authority
-but returns `workspace-unavailable` to topology actions, while Venus receives
-only Orbit's endpoint. EONW carries opaque Orbit endpoint bytes but no terminal
-content.
+topology, action, launch-mode, presentation-process, and generation-lifecycle
+owner; the CLI and Venus never infer state from each other, terminal output, or
+the wire format. An idempotent presentation action preserves the supervisor's
+live Venus child or starts one replacement after detachment.
+A side-effect-free presentation-capability inspection leaves existing runtime
+reports unchanged. Supervisors with runtime inspection but no presentation
+actions remain discoverable but not presentable. In terminal-host mode the same
+private EONW endpoint retains lifecycle authority but returns
+`workspace-unavailable` to topology actions, while Venus receives only Orbit's
+endpoint. EONW carries opaque Orbit endpoint bytes but no terminal content.
 
 ## Repository subsystem boundaries
 
@@ -91,9 +95,9 @@ They route changes and audits without creating additional product scope.
 
 | Subsystem | Owning surfaces | Owns | Does not own |
 |---|---|---|---|
-| Runtime and lifecycle | `crates/eon/src/main.rs` | CLI dispatch, launch mode, private configuration and per-generation runtime roots, generation identity and discovery, exact attach, supervisor-routed stop, component launch policy, child observation, and the control socket | PTYs, terminal state, native rendering, persistent topology, or managed-tool behavior |
+| Runtime and lifecycle | `crates/eon/src/main.rs` | CLI dispatch, launch mode, private configuration and per-generation runtime roots, generation identity and discovery, supervisor-routed presentation and stop, component launch policy, child observation, and the control socket | PTYs, terminal state, native rendering, persistent topology, or managed-tool behavior |
 | Workspace state | `crates/eon/src/workspace.rs` | Live ordered tabs and panes, stable identities, active selection, Session-to-endpoint mapping, semantic action results, and complete snapshots | EONW encoding, Orbit state, or Venus geometry |
-| EONW boundary | `crates/eon-workspace-protocol` | Versioned values, bounded framing, validation, complete workspace snapshots, supervisor identity, stop results, and structured failures | Live topology, lifecycle policy, transport ownership, authorization, or rendering |
+| EONW boundary | `crates/eon-workspace-protocol` | Versioned values, bounded framing, validation, complete workspace snapshots, supervisor identity and capabilities, presentation and stop results, and structured failures | Live topology, lifecycle policy, transport ownership, authorization, or rendering |
 | Component graph | `components/eon-alpha-v1.json` and `crates/eon-manifest` | Stable component identity, compatibility requirements, artifact declarations, graph validation, and version reporting | Resolved package paths or package construction |
 | Managed environment | Managed dispatch in `crates/eon/src/main.rs`, `defaults/`, and its `flake.nix` wiring | Stable managed command names, private configuration projection, exact tool selection, and default interactive policy | Shell, prompt, editor, file-manager, or Git-TUI native behavior |
 | Nix alpha composition | `flake.nix` | Exact source resolution, child builds, opaque launch-path injection, desktop packaging, and the sole alpha installation artifact | Runtime product semantics or a second component graph |

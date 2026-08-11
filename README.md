@@ -96,7 +96,7 @@ drivers; the current graphics proof uses Intel hardware, while proprietary
 NVIDIA remains unproved. Run Eon from a terminal when you need foreground
 lifecycle control.
 Closing the Eon Desktop window detaches the client while Sessions and its PTY
-keep running. Reconnect to the current launch mode explicitly with:
+keep running. Ask the same supervisor to present them again with:
 
 ```sh
 eon attach
@@ -118,10 +118,11 @@ eon terminal -- COMMAND...
 ```
 
 This mode hosts exactly one Orbit Session, gives Venus only the Orbit endpoint,
-and keeps Eon's generation, attach, stop, child-exit, and cleanup lifecycle. A
-second invocation attaches to the compatible live terminal host. Workspace
-actions are unavailable, and a live workspace and terminal host cannot share
-one generation namespace.
+and keeps Eon's generation, presentation, stop, child-exit, and cleanup lifecycle.
+A repeated invocation preserves the active surface; after that surface closes,
+another invocation asks the supervisor to open one replacement against the same
+Session. Workspace actions are unavailable, and a live workspace and terminal
+host cannot share one generation namespace.
 
 While the foreground supervisor is running, Eon owns horizontal tab order and
 one vertical pane selection per tab. Each pane starts and maps to a distinct
@@ -129,11 +130,12 @@ Orbit session; changing focus never stops a session. The CLI reaches that owner
 through the private local Eon socket using EONW v1. Each accepted action returns
 one complete ordered workspace snapshot; incompatible or malformed requests
 receive a bounded structured failure. Additive EONW lifecycle actions report a
-supervisor's generation, component graph, live Sessions, and stop result through
-a separate result type that Eon Desktop never receives. Eon Desktop consumes
-the workspace result, shows every fitting pane header around one selected live
-Session, and binds Alt+H/L to tabs, Alt+K/J to panes, Alt+M to pane creation, and
-Ctrl+T to tab creation. External workspace changes appear within one second
+supervisor's generation, component graph, live Sessions, idempotent presentation,
+and stop result through a separate result type that Eon Desktop never receives.
+Eon Desktop consumes the workspace result, shows every fitting pane header around
+one selected live Session, and binds Alt+H/L to tabs, Alt+K/J to panes, Alt+M to
+pane creation, and Ctrl+T to tab creation. External workspace changes appear
+within one second
 because Eon Desktop re-inspects EONW v1 every 250 ms; the protocol adds no event
 stream. When a shell exits, Eon removes its pane, selects the nearest surviving
 pane, removes an empty tab, and closes when the final pane exits.
@@ -142,12 +144,12 @@ The command surface is small:
 
 | Command | Result |
 |---|---|
-| `eon` | Attach to the exact current-generation workspace, or start it with the default shell |
+| `eon` | Present the exact current-generation workspace, or start it with the default shell |
 | `eon run` | Explicitly start one Orbit session and one Venus window with the default shell |
 | `eon run -- COMMAND...` | Run one explicit command as the Orbit-owned PTY child |
-| `eon terminal -- COMMAND...` | Start or attach one command in a native terminal surface without Eon workspace actions |
-| `eon attach` | Open Eon Desktop against the exact current-generation launch mode |
-| `eon attach GENERATION` | Open one explicitly selected compatible generation, including `legacy` |
+| `eon terminal -- COMMAND...` | Start or present one command in a native terminal surface without Eon workspace actions |
+| `eon attach` | Present Eon Desktop against the exact current-generation launch mode |
+| `eon attach GENERATION` | Present one explicitly selected compatible generation, including `legacy` |
 | `eon generations [--json]` | List validated current, previous, legacy, dead, incompatible, unreachable, and corrupt generations |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor; human mode confirms first |
 | `eon workspace [--json]` | Inspect the live Eon-owned tab, pane, and Session mapping |
@@ -289,15 +291,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 303 |
+| README | 305 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 514 |
+| Architecture and contracts | 524 |
 | Distribution and references | 230 |
-| Changelog | 59 |
-| Rust source and tests | 5,453 |
+| Changelog | 61 |
+| Rust source and tests | 5,639 |
 | Cargo manifests | 35 |
 | Component manifest | 373 |
 | Nix composition | 606 |
 | Product defaults | 0 |
-| **Total** | **8,236** |
+| **Total** | **8,436** |

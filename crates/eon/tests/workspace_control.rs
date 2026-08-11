@@ -49,11 +49,13 @@ fn executable(path: &Path, source: &str) {
 }
 
 fn wait_for(path: &Path) {
+    let ready =
+        || fs::metadata(path).is_ok_and(|metadata| !metadata.is_file() || metadata.len() != 0);
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !path.exists() && Instant::now() < deadline {
+    while !ready() && Instant::now() < deadline {
         thread::sleep(Duration::from_millis(10));
     }
-    assert!(path.exists(), "{} was not created", path.display());
+    assert!(ready(), "{} was not created or populated", path.display());
 }
 
 fn generation_runtime(root: &Path) -> PathBuf {
@@ -182,7 +184,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     );
     executable(
         &venus,
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$EON_TEST_LOG\"\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$EON_TEST_LOG\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
     );
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
@@ -237,11 +239,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "{}\n{}\n{}\n{}\n{}\n{}\n",
-            generation.join("orbit.sock").display(),
-            control.display(),
-            generation.join("orbit.sock").display(),
-            control.display(),
+            "{}\n{}\n",
             generation.join("orbit.sock").display(),
             control.display(),
         )
@@ -257,6 +255,7 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
     let runtime = root.join("runtime");
     let config = root.join("config");
     let child_exit = root.join("child-exit");
+    let venus_exit = root.join("venus-exit");
     let orbit_log = root.join("orbit.log");
     let venus_log = root.join("venus.log");
     let orbit = root.join("orbit");
@@ -268,7 +267,7 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
     );
     executable(
         &venus,
-        "#!/bin/sh\nprintf '%s|%s|%s|%s\\n' \"$$\" \"$#\" \"$1\" \"${2-}\" >> \"$EON_TEST_VENUS_LOG\"\nwhile :; do sleep 0.01; done\n",
+        "#!/bin/sh\nprintf '%s|%s|%s|%s\\n' \"$$\" \"$#\" \"$1\" \"${2-}\" >> \"$EON_TEST_VENUS_LOG\"\nwhile test ! -e \"$EON_TEST_VENUS_EXIT\"; do sleep 0.01; done\nrm -f \"$EON_TEST_VENUS_EXIT\"\n",
     );
     executable(
         &command,
@@ -284,6 +283,7 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
         .env("EON_ORBIT", &orbit)
         .env("EON_VENUS", &venus)
         .env("EON_TEST_CHILD_EXIT", &child_exit)
+        .env("EON_TEST_VENUS_EXIT", &venus_exit)
         .env("EON_TEST_ORBIT_LOG", &orbit_log)
         .env("EON_TEST_VENUS_LOG", &venus_log)
         .stdout(Stdio::null())
@@ -295,23 +295,53 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
         stop: child_exit.clone(),
     };
     let generation = generation_runtime(&runtime);
-    let control = generation.join("eon.sock");
-    wait_for(&control);
+    wait_for(&generation.join("eon.sock"));
     wait_for(&venus_log);
+    let initial_venus = fs::read_to_string(&venus_log)
+        .unwrap()
+        .split('|')
+        .next()
+        .unwrap()
+        .to_string();
 
-    let mut reopened = Command::new(&binary)
+    let mut repeated = Command::new(&binary)
         .args(["terminal", "--", "/bin/false"])
         .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
+        .env("EON_CONFIG_HOME", &command)
         .env("EON_ORBIT", &orbit)
         .env("EON_VENUS", &venus)
         .env("EON_TEST_CHILD_EXIT", &child_exit)
+        .env("EON_TEST_VENUS_EXIT", &venus_exit)
         .env("EON_TEST_ORBIT_LOG", &orbit_log)
         .env("EON_TEST_VENUS_LOG", &venus_log)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
+    wait_for_successful_exit(&mut repeated);
+    assert_eq!(fs::read_to_string(&venus_log).unwrap().lines().count(), 1);
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
+
+    fs::write(&venus_exit, "").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Path::new("/proc").join(&initial_venus).exists() {
+        assert!(Instant::now() < deadline, "terminal surface did not exit");
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let reopened = Command::new(&binary)
+        .args(["terminal", "--", "/bin/false"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &command)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_CHILD_EXIT", &child_exit)
+        .env("EON_TEST_VENUS_EXIT", &venus_exit)
+        .env("EON_TEST_ORBIT_LOG", &orbit_log)
+        .env("EON_TEST_VENUS_LOG", &venus_log)
+        .output()
+        .unwrap();
+    assert!(reopened.status.success());
     let deadline = Instant::now() + Duration::from_secs(5);
     while fs::read_to_string(&venus_log).unwrap().lines().count() != 2 {
         assert!(Instant::now() < deadline, "terminal host did not reopen");
@@ -338,13 +368,6 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
     assert!(!wrong_mode.status.success());
     assert!(String::from_utf8_lossy(&wrong_mode.stderr).contains("terminal mode"));
 
-    fs::remove_file(&control).unwrap();
-    let replacement = UnixListener::bind(&control).unwrap();
-    fs::set_permissions(&control, fs::Permissions::from_mode(0o600)).unwrap();
-    wait_for_successful_exit(&mut reopened);
-
-    drop(replacement);
-    fs::remove_file(&control).unwrap();
     fs::write(&child_exit, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     for pid in venus_pids {

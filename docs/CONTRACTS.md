@@ -12,18 +12,18 @@ detailed execution evidence, and Git history retains superseded states.
 
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
-| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Proven | `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; current composition proof below |
-| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Proven | `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; current composition proof below |
-| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Proven | `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; current composition proof below |
-| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Proven | `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; current composition proof below |
+| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; presentation-owner correction is uncommitted |
+| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; presentation-owner correction is uncommitted |
+| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; presentation-owner correction is uncommitted |
+| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; presentation-owner correction is uncommitted |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
-| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Proven | Composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21` |
+| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Accepted composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21`; presentation-owner correction is uncommitted |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; proof below |
-| EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Workspace actions at `4af395aea06c230ee6b18cf0755ae25915c0b88d`; lifecycle actions at `fd6b348494111a0d18e241787da14ea99ee117a9` |
-| EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly attachable when compatible, and explicitly stoppable through their supervisor | Eon | Proven | Base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310`; exact-owner attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c` |
-| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; proof below |
+| EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Candidate | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; presentation action is uncommitted |
+| EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly presentable when they advertise the compatible presentation lifecycle, and explicitly stoppable through their supervisor | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; supervisor-routed presentation is uncommitted |
+| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; corrected presentation ownership is uncommitted |
 
 ## Approved terminal-host contract EON-C12
 
@@ -32,10 +32,11 @@ detailed execution evidence, and Git history retains superseded states.
 - Trigger: the consumer invokes `eon terminal -- COMMAND...` with one non-empty
   exact argv.
 - Result: Eon starts one Orbit-owned Session for the exact command and launches
-  Venus with only that Session endpoint. The current runtime generation remains
-  authoritative for attach, inspection, stop, concurrent-launch convergence,
-  child exit, and cleanup. A repeated terminal invocation attaches to the live
-  terminal instead of starting another Session.
+  Venus with only that Session endpoint. The supervisor remains the sole Venus
+  process launcher: a repeated invocation preserves an attached surface, while
+  an invocation after detachment opens one replacement against the same live
+  Session. The current runtime generation remains authoritative for presentation,
+  inspection, stop, concurrent-launch convergence, child exit, and cleanup.
 - Important failures: a missing command, incompatible or corrupt supervisor,
   component mismatch, partial startup, or a live supervisor in the other launch
   mode fails explicitly. Workspace actions against terminal mode return the
@@ -44,9 +45,9 @@ detailed execution evidence, and Git history retains superseded states.
   Orbit remains the sole owner of the process, PTY, terminal state, Session,
   and transport. Venus remains a transient native presentation and input client.
 - Boundary: terminal mode adds no Workspace value, tabs, panes, key remapping,
-  preset, wrapper process, persisted mode marker, protocol field, remote access,
-  second app identity, or Zellij policy. Bare `eon` and `eon run` retain their
-  workspace meanings.
+  preset, wrapper process, persisted mode marker, remote access,
+  second app identity, compositor focus guarantee, or Zellij policy. Bare `eon`
+  and `eon run` retain their workspace meanings.
 - Approval: the user approved this contract and the exact command spelling on
   2026-08-10 for `eon-4is.1`.
 
@@ -233,7 +234,7 @@ detailed execution evidence, and Git history retains superseded states.
   `33ec3062f72a732290dcd6c6f40a2d5f535d6a7cbfcaf7455a0a5c4f03a52e0d`.
 - Approval: the user selected icon 4 on 2026-08-09 after native-size inspection.
 
-## Current accepted proofs
+## Current proof state
 
 ### EON-C1 through EON-C4 and the current EON-C8 topology — composition
 
@@ -241,6 +242,9 @@ detailed execution evidence, and Git history retains superseded states.
   Linux through the Nix alpha package `eon-0.1.0` at
   `/nix/store/04sbq6wc79h2hf1rjq9y9bcvaz5v92hb-eon-0.1.0`, NAR hash
   `sha256-uSidJ5Xf047x0vxjiscmnAHlVZiIvm0ugN6mQldawpc=`.
+- Current candidate: uncommitted presentation-owner correction at
+  `/nix/store/slrmd85fpdf8sd8xxzyalakayy7hlar7-eon-0.1.0`, NAR hash
+  `sha256-Vx8TX7FUqF91+vs+Gn0K7n5HW+rxxzLB4cPk7v7/Pmc=`.
 - Component graph: `components/eon-alpha-v1.json`, SHA-256
   `036992de61e047f76c1bd9ec56cd74483a6a5af0dab7971d3fb44f43e99566e7`.
   It selects Orbit source `64db581445bafca1a08a6530f8e44f9c1edbc169`,
@@ -250,9 +254,9 @@ detailed execution evidence, and Git history retains superseded states.
   `e7bda96822274727faacb51731ae19181295e1cd`, VEN-C3 and VEN-C4 proof
   `6ef19afddaedcbe2b9ed0996e31bc02df5d854ac`, and VEN-C8 proof
   `33a3d9af9f4c6015301ad6829fe733413c5b683d`.
-- Checks: canonical manifest validation; locked Rust format, check, 29-test, and
+- Checks: canonical manifest validation; locked Rust format, check, 30-test, and
   Clippy suites; exact Nix build and flake check; installed version, commit, and
-  store-path comparison; workspace and exact-owner regression checks; README
+  store-path comparison; workspace and presentation-owner regression checks; README
   LOC checks; and `git diff --check`.
 - Retained dogfood: native standalone input and live-process survival passed at
   `4353e94ebc015453c77914a2be013a950f49c8cc`; the profile refresh at this proof
@@ -260,13 +264,14 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C12 — single-surface terminal host
 
-- Proof revision and artifact: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`
-  and `/nix/store/04sbq6wc79h2hf1rjq9y9bcvaz5v92hb-eon-0.1.0` on
-  x86_64 Linux, with the NAR hash above.
+- Accepted base: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c` and
+  `/nix/store/04sbq6wc79h2hf1rjq9y9bcvaz5v92hb-eon-0.1.0` on x86_64 Linux.
+- Current candidate: the uncommitted artifact and NAR hash above.
 - Checks: deterministic workspace-versus-terminal Venus argv; real-process
-  exact-command startup, same-namespace reopen, one-Session invariant,
+  exact-command startup, active-surface preservation, detached-surface replacement,
+  one-Session invariant,
   wrong-mode rejection, structured unavailable actions, partial-startup cleanup,
-  concurrent launch, exact-owner replacement, and command-exit cleanup.
+  concurrent launch, and command-exit cleanup.
 - Native dogfood at `4353e94ebc015453c77914a2be013a950f49c8cc`: one COSMIC Wayland surface
   forwarded Alt-h/j/k/l/m and Ctrl-t as exact bytes `1b 68 1b 6a 1b 6b 1b 6c 1b 6d 14`. After the
   supervisor-owned client detached, a second invocation reopened the same
@@ -336,17 +341,18 @@ detailed execution evidence, and Git history retains superseded states.
 ### EON-C10 lifecycle and EON-C11 — runtime generations
 
 - Lifecycle protocol proof: `fd6b348494111a0d18e241787da14ea99ee117a9`.
-  Current EON-C11 attach proof: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`
-  on x86_64 Linux.
+  Accepted EON-C11 attach proof: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`
+  on x86_64 Linux. The current presentation-owner correction is uncommitted.
 - Artifact: `/nix/store/04sbq6wc79h2hf1rjq9y9bcvaz5v92hb-eon-0.1.0`,
   generation `g1-f7615184ba28993ce1c1c779751c0d7d`, NAR hash
   `sha256-uSidJ5Xf047x0vxjiscmnAHlVZiIvm0ugN6mQldawpc=`.
-- Checks: locked format, check, 29-test, and Clippy suites; canonical manifest
+- Checks: locked format, check, 30-test, and Clippy suites; canonical manifest
   validation; exact Nix build and flake check; deterministic generation and
-  exact-owner replacement process tests; retained live upgrade dogfood at
+  presentation capability probing, preservation, and replacement process tests;
+  retained live upgrade dogfood at
   `3b84d83d807c6249efa340fabf9e3d0d0d3ef310`; profile comparison; and `git diff --check`.
 - Exercised behavior: bare launch selects only the exact current generation;
-  current and fixed-namespace legacy work coexist and attach explicitly;
+  current and fixed-namespace legacy work coexist and can be presented explicitly;
   supervisor-routed stop names and removes only the selected current generation;
   exact attach and stop ignore unrelated over-limit generation entries; profile
   refresh leaves the older supervisor and Orbit Sessions running.

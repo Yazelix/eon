@@ -176,7 +176,10 @@ impl Workspace {
 
         match action {
             Action::Inspect => {}
-            Action::InspectRuntime | Action::Stop { .. } => {
+            Action::InspectRuntime
+            | Action::InspectPresentation
+            | Action::Present { .. }
+            | Action::Stop { .. } => {
                 return Err(action_error(
                     "unavailable",
                     "supervisor lifecycle actions do not mutate workspace topology",

@@ -34,6 +34,8 @@ pub enum Direction {
 pub enum Action {
     Inspect,
     InspectRuntime,
+    InspectPresentation,
+    Present { workspace: bool },
     CreateTab,
     CreatePane,
     FocusId(String),
@@ -170,6 +172,11 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
     match &request.action {
         Action::Inspect => payload.byte(0),
         Action::InspectRuntime => payload.byte(8),
+        Action::InspectPresentation => payload.byte(11),
+        Action::Present { workspace } => {
+            payload.byte(10);
+            payload.byte(u8::from(*workspace));
+        }
         Action::CreateTab => payload.byte(1),
         Action::CreatePane => payload.byte(2),
         Action::FocusId(id) => {
@@ -217,6 +224,18 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
             identity("generation", &generation)?;
             Action::Stop { generation }
         }
+        10 => Action::Present {
+            workspace: match decoder.byte()? {
+                0 => false,
+                1 => true,
+                _ => {
+                    return Err(Error::InvalidValue {
+                        field: "presentation mode",
+                    });
+                }
+            },
+        },
+        11 => Action::InspectPresentation,
         value => {
             return Err(Error::InvalidTag {
                 field: "action",
@@ -740,6 +759,8 @@ mod tests {
         for action in [
             Action::Inspect,
             Action::InspectRuntime,
+            Action::InspectPresentation,
+            Action::Present { workspace: true },
             Action::CreateTab,
             Action::CreatePane,
             Action::FocusId("pane-2".into()),
@@ -760,6 +781,19 @@ mod tests {
                 request
             );
         }
+
+        let mut invalid_mode = encode_request(&Request {
+            id: "client-1.2".into(),
+            action: Action::Present { workspace: true },
+        })
+        .unwrap();
+        *invalid_mode.last_mut().unwrap() = 2;
+        assert_eq!(
+            decode_request(&invalid_mode),
+            Err(Error::InvalidValue {
+                field: "presentation mode",
+            })
+        );
 
         let response = Response::Snapshot(snapshot());
         let encoded = encode_response(&response).unwrap();

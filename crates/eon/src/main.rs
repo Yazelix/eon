@@ -119,6 +119,10 @@ enum ControlResponse {
 }
 
 fn send_action(socket: &Path, action: Action) -> Result<ControlResponse, EndpointFailure> {
+    send_action_on(connect_control(socket)?, action)
+}
+
+fn connect_control(socket: &Path) -> Result<UnixStream, EndpointFailure> {
     let metadata = match fs::symlink_metadata(socket) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -147,7 +151,7 @@ fn send_action(socket: &Path, action: Action) -> Result<ControlResponse, Endpoin
         ));
     }
 
-    let mut stream = UnixStream::connect(socket).map_err(|error| {
+    let stream = UnixStream::connect(socket).map_err(|error| {
         let kind = match error.kind() {
             std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
                 EndpointFailureKind::Dead
@@ -174,7 +178,20 @@ fn send_action(socket: &Path, action: Action) -> Result<ControlResponse, Endpoin
                 format!("cannot configure supervisor connection: {error}"),
             )
         })?;
-    let lifecycle = matches!(action, Action::InspectRuntime | Action::Stop { .. });
+    Ok(stream)
+}
+
+fn send_action_on(
+    mut stream: UnixStream,
+    action: Action,
+) -> Result<ControlResponse, EndpointFailure> {
+    let lifecycle = matches!(
+        action,
+        Action::InspectRuntime
+            | Action::InspectPresentation
+            | Action::Present { .. }
+            | Action::Stop { .. }
+    );
     let request = encode_request(&Request {
         id: request_id(),
         action,
@@ -232,8 +249,8 @@ fn protocol_endpoint_failure(error: ProtocolError) -> EndpointFailure {
     )
 }
 
-fn probe_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
-    match send_action(socket, Action::InspectRuntime)? {
+fn probe_runtime_action(socket: &Path, action: Action) -> Result<Runtime, EndpointFailure> {
+    match send_action(socket, action)? {
         ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)) => Ok(runtime),
         ControlResponse::Lifecycle(LifecycleResponse::Failure(failure))
             if matches!(
@@ -262,6 +279,21 @@ fn probe_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
             EndpointFailureKind::Corrupt,
             "supervisor returned the wrong EONW result for generation inspection",
         )),
+    }
+}
+
+fn probe_presentable_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
+    match probe_runtime_action(socket, Action::InspectPresentation) {
+        Ok(runtime) => Ok(runtime),
+        Err(error) if error.kind == EndpointFailureKind::Incompatible => {
+            let mut runtime = probe_runtime_action(socket, Action::InspectRuntime)?;
+            runtime.attach = Availability {
+                available: false,
+                reason: "supervisor does not support presentation requests".into(),
+            };
+            Ok(runtime)
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -303,7 +335,13 @@ fn probe_supervisor(
                 format!("endpoint {} is missing", socket.display()),
             )
         })?;
-    let info = probe_runtime(socket)?;
+    let info = probe_presentable_runtime(socket)?;
+    if !info.attach.available {
+        return Err(EndpointFailure::new(
+            EndpointFailureKind::Incompatible,
+            info.attach.reason,
+        ));
+    }
     validate_runtime(&info, generation)
         .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?;
     let mode = probe_launch_mode(socket)?;
@@ -452,7 +490,7 @@ fn inspect_generation(
     }
 
     let socket = runtime.join("eon.sock");
-    match probe_runtime(&socket) {
+    match probe_presentable_runtime(&socket) {
         Ok(info) if info.generation != id => failed_generation(
             id,
             kind,
@@ -791,14 +829,12 @@ fn attach_generation(target: &str) -> Result<i32, String> {
             record.attach.reason
         ));
     }
-    let (mode, supervisor) = if target == "legacy" {
-        (LaunchMode::Workspace, None)
-    } else {
-        let (mode, identity) = probe_supervisor(&record.runtime.join("eon.sock"), target)
-            .map_err(|error| error.detail)?;
-        (mode, Some(identity))
-    };
-    attach_at(&record.runtime, mode, supervisor)
+    if target == "legacy" {
+        return attach_legacy(&record.runtime);
+    }
+    let (mode, supervisor) =
+        probe_supervisor(&record.runtime.join("eon.sock"), target).map_err(|error| error.detail)?;
+    present_at(&record.runtime, target, mode, supervisor)
 }
 
 fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
@@ -1198,8 +1234,6 @@ fn launch_current(
     child: &[OsString],
     attach_existing: bool,
 ) -> Result<i32, String> {
-    let config = configuration_directory()?;
-    prepare_configuration(&config)?;
     let root = runtime_directory();
     let generation = current_generation();
     let runtime = prepare_generation_runtime(&root, &generation)?;
@@ -1214,7 +1248,7 @@ fn launch_current(
                 ));
             }
             return if attach_existing {
-                attach_at(&runtime, mode, Some(supervisor))
+                present_at(&runtime, &generation, mode, supervisor)
             } else {
                 Err(format!(
                     "generation {generation} already has a live Eon supervisor"
@@ -1224,6 +1258,8 @@ fn launch_current(
         Err(error) if error.kind == EndpointFailureKind::Dead => {}
         Err(error) => return Err(error.detail),
     }
+    let config = configuration_directory()?;
+    prepare_configuration(&config)?;
     match supervise(
         &programs(),
         &config,
@@ -1262,7 +1298,7 @@ fn attach_competing_supervisor(
                         mode.name()
                     ));
                 }
-                return attach_at(runtime, mode, Some(supervisor));
+                return present_at(runtime, generation, mode, supervisor);
             }
             Err(error)
                 if matches!(
@@ -1376,77 +1412,49 @@ fn request_id() -> String {
     format!("{}-{nanos}-{sequence}", std::process::id())
 }
 
-fn attach_at(
-    runtime: &Path,
-    mode: LaunchMode,
-    supervisor: Option<SocketIdentity>,
-) -> Result<i32, String> {
+fn attach_legacy(runtime: &Path) -> Result<i32, String> {
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
-    let control = runtime.join("eon.sock");
-    let generation = supervisor
-        .is_some()
-        .then(|| {
-            runtime
-                .file_name()
-                .and_then(OsStr::to_str)
-                .ok_or_else(|| format!("runtime {} has no generation identity", runtime.display()))
-        })
-        .transpose()?;
-    if supervisor.is_some() && socket_identity(&control)? != supervisor {
-        return Err("supervisor changed before Eon Desktop could attach".into());
-    }
-    let mut desktop = venus_command(&programs(), &config, &runtime.join("orbit.sock"), mode)
-        .spawn()
-        .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?;
-    let Some(supervisor) = supervisor else {
-        return desktop
-            .wait()
-            .map(status_code)
-            .map_err(|error| format!("cannot observe Eon Desktop: {error}"));
-    };
-    let generation = generation.unwrap();
+    venus_command(
+        &programs(),
+        &config,
+        &runtime.join("orbit.sock"),
+        LaunchMode::Workspace,
+    )
+    .spawn()
+    .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?
+    .wait()
+    .map(status_code)
+    .map_err(|error| format!("cannot observe Eon Desktop: {error}"))
+}
 
-    let mut invalid_probe = false;
-    loop {
-        if let Some(status) = desktop
-            .try_wait()
-            .map_err(|error| format!("cannot observe Eon Desktop: {error}"))?
-        {
-            return Ok(status_code(status));
+fn present_at(
+    runtime: &Path,
+    generation: &str,
+    mode: LaunchMode,
+    supervisor: SocketIdentity,
+) -> Result<i32, String> {
+    let control = runtime.join("eon.sock");
+    let stream = connect_control(&control).map_err(|error| error.detail)?;
+    if socket_identity(&control)? != Some(supervisor) {
+        return Err("supervisor changed before Eon Desktop could present".into());
+    }
+    match send_action_on(
+        stream,
+        Action::Present {
+            workspace: mode == LaunchMode::Workspace,
+        },
+    )
+    .map_err(|error| error.detail)?
+    {
+        ControlResponse::Lifecycle(LifecycleResponse::Runtime(info)) => {
+            validate_runtime(&info, generation)?;
+            Ok(0)
         }
-        match socket_identity(&control) {
-            Ok(Some(identity)) if identity == supervisor => {}
-            Ok(_) => {
-                stop(&mut desktop);
-                return Ok(0);
-            }
-            Err(error) => {
-                stop(&mut desktop);
-                return Err(error);
-            }
+        ControlResponse::Lifecycle(LifecycleResponse::Failure(failure)) => {
+            Err(format!("cannot present Eon Desktop: {}", failure.detail))
         }
-        let probe = probe_runtime(&control).and_then(|info| {
-            validate_runtime(&info, generation)
-                .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))
-        });
-        match probe {
-            Ok(()) => invalid_probe = false,
-            Err(error) if error.kind == EndpointFailureKind::Unreachable => {}
-            Err(error) if error.kind == EndpointFailureKind::Dead => {
-                stop(&mut desktop);
-                return Ok(0);
-            }
-            Err(_) if !invalid_probe => invalid_probe = true,
-            Err(error) => {
-                stop(&mut desktop);
-                return Err(format!(
-                    "attached supervisor became invalid: {}",
-                    error.detail
-                ));
-            }
-        }
-        thread::sleep(Duration::from_millis(100));
+        _ => Err("supervisor returned the wrong EONW result for presentation".into()),
     }
 }
 
@@ -1629,8 +1637,8 @@ fn supervise(
     let control_listener = create_control_listener(&runtime.join("eon.sock"))?;
     let mut initial = start_orbit(programs, config, socket, child, socket_timeout)?;
 
-    let mut venus = match venus_command(programs, config, socket, mode).spawn() {
-        Ok(venus) => Some(venus),
+    let venus = match venus_command(programs, config, socket, mode).spawn() {
+        Ok(venus) => venus,
         Err(error) => {
             stop(&mut initial);
             remove_dead_socket(socket);
@@ -1639,27 +1647,30 @@ fn supervise(
             return Err(format!("cannot launch Eon Desktop: {error}"));
         }
     };
-    let mut workspace = (mode == LaunchMode::Workspace)
-        .then(|| Workspace::with_initial_session(runtime.to_path_buf(), socket.to_path_buf()));
-    let mut sessions = vec![RunningSession {
-        id: "session-1".into(),
-        endpoint: socket.into(),
-        child: initial,
-    }];
+    let mut state = SupervisorState {
+        workspace: (mode == LaunchMode::Workspace)
+            .then(|| Workspace::with_initial_session(runtime.to_path_buf(), socket.to_path_buf())),
+        sessions: vec![RunningSession {
+            id: "session-1".into(),
+            endpoint: socket.into(),
+            child: initial,
+        }],
+        venus: Some(venus),
+    };
     let mut initial_status = None;
 
     loop {
         let mut index = 0;
-        while index < sessions.len() {
-            if let Some(status) = sessions[index]
+        while index < state.sessions.len() {
+            if let Some(status) = state.sessions[index]
                 .child
                 .try_wait()
                 .map_err(|error| format!("cannot observe Sessions: {error}"))?
             {
-                let session = sessions.remove(index);
+                let session = state.sessions.remove(index);
                 let code = status_code(status);
                 remove_dead_socket(&session.endpoint);
-                if let Some(workspace) = &mut workspace {
+                if let Some(workspace) = &mut state.workspace {
                     workspace
                         .session_exited(&session.id)
                         .map_err(|error| error.detail)?;
@@ -1672,8 +1683,8 @@ fn supervise(
             }
         }
 
-        if sessions.is_empty() {
-            if let Some(mut process) = venus.take() {
+        if state.sessions.is_empty() {
+            if let Some(mut process) = state.venus.take() {
                 stop(&mut process);
             }
             drop(control_listener);
@@ -1681,16 +1692,7 @@ fn supervise(
             return initial_status.ok_or("initial Sessions exit status is unavailable".into());
         }
 
-        let venus_exited = if let Some(process) = venus.as_mut() {
-            process
-                .try_wait()
-                .map_err(|error| format!("cannot observe Eon Desktop: {error}"))?
-                .is_some()
-        } else {
-            false
-        };
-        if venus_exited {
-            venus = None;
+        if reap_desktop(&mut state.venus)? {
             eprintln!(
                 "Eon Desktop exited; Sessions remains active. Run `eon attach` to reconnect."
             );
@@ -1698,17 +1700,16 @@ fn supervise(
 
         if accept_control_client(
             &control_listener.listener,
-            workspace.as_mut(),
-            &mut sessions,
+            &mut state,
             programs,
             config,
             socket_timeout,
             generation,
         )? {
-            if let Some(mut process) = venus.take() {
+            if let Some(mut process) = state.venus.take() {
                 stop(&mut process);
             }
-            for session in &mut sessions {
+            for session in &mut state.sessions {
                 stop(&mut session.child);
                 remove_dead_socket(&session.endpoint);
             }
@@ -1718,6 +1719,26 @@ fn supervise(
         }
         thread::sleep(Duration::from_millis(25));
     }
+}
+
+struct SupervisorState {
+    workspace: Option<Workspace>,
+    sessions: Vec<RunningSession>,
+    venus: Option<Child>,
+}
+
+fn reap_desktop(desktop: &mut Option<Child>) -> Result<bool, String> {
+    let exited = match desktop.as_mut() {
+        Some(process) => process
+            .try_wait()
+            .map_err(|error| format!("cannot observe Eon Desktop: {error}"))?
+            .is_some(),
+        None => false,
+    };
+    if exited {
+        *desktop = None;
+    }
+    Ok(exited)
 }
 
 struct RunningSession {
@@ -1855,8 +1876,7 @@ fn create_control_listener(path: &Path) -> Result<ControlListener, String> {
 
 fn accept_control_client(
     listener: &UnixListener,
-    workspace: Option<&mut Workspace>,
-    sessions: &mut Vec<RunningSession>,
+    state: &mut SupervisorState,
     programs: &Programs,
     config: &Path,
     socket_timeout: Duration,
@@ -1865,8 +1885,7 @@ fn accept_control_client(
     match listener.accept() {
         Ok((stream, _)) => Ok(handle_control_client(
             stream,
-            workspace,
-            sessions,
+            state,
             programs,
             config,
             socket_timeout,
@@ -1879,14 +1898,13 @@ fn accept_control_client(
 
 fn handle_control_client(
     mut stream: UnixStream,
-    workspace: Option<&mut Workspace>,
-    sessions: &mut Vec<RunningSession>,
+    state: &mut SupervisorState,
     programs: &Programs,
     config: &Path,
     socket_timeout: Duration,
     generation: &str,
 ) -> bool {
-    let mode = if workspace.is_some() {
+    let mode = if state.workspace.is_some() {
         LaunchMode::Workspace
     } else {
         LaunchMode::Terminal
@@ -1897,9 +1915,9 @@ fn handle_control_client(
     }
     let (response, stop_requested) = match read_control_request(&mut stream) {
         Ok(Request {
-            action: Action::InspectRuntime,
+            action: Action::InspectRuntime | Action::InspectPresentation,
             ..
-        }) => match runtime_status(generation, sessions, mode) {
+        }) => match runtime_status(generation, &state.sessions, mode) {
             Ok(runtime) => (
                 ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)),
                 false,
@@ -1913,12 +1931,61 @@ fn handle_control_client(
             ),
         },
         Ok(Request {
+            action: Action::Present {
+                workspace: expected,
+            },
+            ..
+        }) if expected != (mode == LaunchMode::Workspace) => (
+            ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
+                "launch-mode-mismatch",
+                format!("supervisor owns {} mode", mode.name()),
+            ))),
+            false,
+        ),
+        Ok(Request {
+            action: Action::Present { .. },
+            ..
+        }) => {
+            let result = reap_desktop(&mut state.venus).and_then(|_| {
+                if state.venus.is_some() {
+                    return Ok(());
+                }
+                let session = state
+                    .sessions
+                    .first()
+                    .ok_or_else(|| "supervisor has no live Session to present".to_string())?;
+                state.venus = Some(
+                    venus_command(programs, config, &session.endpoint, mode)
+                        .spawn()
+                        .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?,
+                );
+                Ok(())
+            });
+            match result.and_then(|()| runtime_status(generation, &state.sessions, mode)) {
+                Ok(runtime) => (
+                    ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)),
+                    false,
+                ),
+                Err(detail) => (
+                    ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
+                        "presentation-unavailable",
+                        detail,
+                    ))),
+                    false,
+                ),
+            }
+        }
+        Ok(Request {
             action: Action::Stop { generation: target },
             ..
         }) if target == generation => (
             ControlResponse::Lifecycle(LifecycleResponse::Stopped(Stopped {
                 generation: generation.into(),
-                sessions: sessions.iter().map(|session| session.id.clone()).collect(),
+                sessions: state
+                    .sessions
+                    .iter()
+                    .map(|session| session.id.clone())
+                    .collect(),
             })),
             true,
         ),
@@ -1932,10 +1999,10 @@ fn handle_control_client(
             ))),
             false,
         ),
-        Ok(request) => match workspace {
+        Ok(request) => match state.workspace.as_mut() {
             Some(workspace) => match workspace.dispatch(&request.id, request.action, |session| {
                 let child = start_orbit(programs, config, &session.endpoint, &[], socket_timeout)?;
-                sessions.push(RunningSession {
+                state.sessions.push(RunningSession {
                     id: session.id.clone(),
                     endpoint: session.endpoint.clone(),
                     child,
@@ -1995,7 +2062,7 @@ fn runtime_status(
         attach: Availability {
             available: true,
             reason: match mode {
-                LaunchMode::Workspace => "supervisor accepts EONW v1 workspace clients",
+                LaunchMode::Workspace => "supervisor accepts EONW v1 presentation requests",
                 LaunchMode::Terminal => "supervisor owns one terminal host",
             }
             .into(),
@@ -2118,15 +2185,18 @@ fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        LaunchMode, ManagedPrograms, ManagedTool, Programs, create_control_listener,
-        current_generation, discover_generations, effective_uid, generation_directory,
-        generation_id, integration_mask, managed_command, managed_tool, orbit_command,
-        prepare_configuration, prepare_runtime, prepend_path, read_shell_config, supervise,
+        Action, Availability, Failure, LaunchMode, LifecycleResponse, ManagedPrograms, ManagedTool,
+        Programs, Response, Runtime, VERSION, create_control_listener, current_generation,
+        discover_generations, effective_uid, encode_lifecycle_response, encode_response,
+        generation_directory, generation_id, integration_mask, managed_command, managed_tool,
+        orbit_command, prepare_configuration, prepare_runtime, prepend_path,
+        probe_presentable_runtime, read_control_request, read_shell_config, supervise,
         valid_generation, venus_command, xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
         fs,
+        io::Write,
         os::unix::{
             fs::{MetadataExt, PermissionsExt, symlink},
             net::UnixListener,
@@ -2197,6 +2267,62 @@ mod tests {
         fs::remove_file(generations.join(linked_id)).unwrap();
         fs::remove_dir_all(root).unwrap();
         fs::remove_dir_all(outside).unwrap();
+    }
+
+    #[test]
+    fn old_supervisor_remains_inspectable_but_not_presentable() {
+        let root = temporary_directory();
+        let socket = root.join("eon.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        let server = thread::spawn(move || {
+            let responses = [
+                (
+                    Action::InspectPresentation,
+                    encode_response(&Response::Failure(Failure {
+                        code: "malformed-action".into(),
+                        detail: "unknown EONW action tag 11".into(),
+                    }))
+                    .unwrap(),
+                ),
+                (
+                    Action::InspectRuntime,
+                    encode_lifecycle_response(&LifecycleResponse::Runtime(Runtime {
+                        generation: "g1-0123456789abcdef0123456789abcdef".into(),
+                        eon_version: "0.1.0".into(),
+                        workspace_protocol: VERSION,
+                        component_report: "old components".into(),
+                        sessions: vec!["session-1".into()],
+                        attach: Availability {
+                            available: true,
+                            reason: "older client attachment".into(),
+                        },
+                        stop: Availability {
+                            available: true,
+                            reason: "generation-aware supervisor".into(),
+                        },
+                    }))
+                    .unwrap(),
+                ),
+            ];
+            for (action, response) in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                assert_eq!(read_control_request(&mut stream).unwrap().action, action);
+                stream.write_all(&response).unwrap();
+            }
+        });
+
+        let runtime = probe_presentable_runtime(&socket).unwrap();
+        assert_eq!(runtime.sessions, ["session-1"]);
+        assert!(!runtime.attach.available);
+        assert_eq!(
+            runtime.attach.reason,
+            "supervisor does not support presentation requests"
+        );
+        assert!(runtime.stop.available);
+
+        server.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn executable(path: &Path, source: &str) {
