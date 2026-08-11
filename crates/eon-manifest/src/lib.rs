@@ -65,7 +65,6 @@ struct Component {
     contracts: Vec<Contract>,
     interfaces: Vec<Interface>,
     requires: Vec<Requirement>,
-    launch: Option<Launch>,
 }
 
 #[derive(Deserialize)]
@@ -103,12 +102,6 @@ struct Requirement {
     component: String,
     revision: String,
     interfaces: Vec<Interface>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Launch {
-    artifact: String,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -165,7 +158,7 @@ fn validate_strings(value: &serde_json::Value) -> Result<(), Error> {
 }
 
 fn validate(manifest: &Manifest) -> Result<(), Error> {
-    required(manifest.schema == 2, "unsupported manifest schema")?;
+    required(manifest.schema == 3, "unsupported manifest schema")?;
     required(token(&manifest.product.id), "invalid product id")?;
     required(token(&manifest.product.target), "invalid product target")?;
     required(!manifest.components.is_empty(), "component set is empty")?;
@@ -305,19 +298,14 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
 
     for component in &manifest.components {
         let role = component_roles[component.id.as_str()];
-        match (&component.launch, role) {
-            (None, "library") => {}
-            (Some(_), "library") => return Err(Error("library cannot have a launch plan".into())),
-            (None, _) => return Err(Error("executable component has no launch plan".into())),
-            (Some(launch), _) => {
-                required(
-                    component
-                        .artifacts
-                        .iter()
-                        .any(|artifact| artifact.id == launch.artifact && artifact.kind == "file"),
-                    "launch artifact is not a declared file",
-                )?;
-            }
+        if role != "library" {
+            required(
+                component
+                    .artifacts
+                    .iter()
+                    .any(|artifact| artifact.kind == "file"),
+                "executable component has no file artifact",
+            )?;
         }
         if role == "client" {
             required(
@@ -422,7 +410,7 @@ mod tests {
     use super::{parse_and_validate, version_report};
     use serde_json::Value;
 
-    const CANONICAL: &str = include_str!("../../../components/eon-alpha-v2.json");
+    const CANONICAL: &str = include_str!("../../../components/eon-alpha-v3.json");
 
     fn component_mut<'a>(manifest: &'a mut Value, id: &str) -> &'a mut Value {
         manifest["components"]
@@ -452,14 +440,10 @@ mod tests {
         component_mut(&mut path, "orbit")["artifacts"][0]["path"] = "bin/other".into();
         assert!(parse_and_validate(&serde_json::to_string(&path).unwrap()).is_err());
 
-        let mut arguments = canonical.clone();
-        component_mut(&mut arguments, "orbit")["launch"]["arguments"] =
-            serde_json::json!(["other"]);
-        assert!(parse_and_validate(&serde_json::to_string(&arguments).unwrap()).is_err());
-
-        let mut inputs = canonical;
-        component_mut(&mut inputs, "orbit")["launch"]["inputs"] = serde_json::json!(["other"]);
-        assert!(parse_and_validate(&serde_json::to_string(&inputs).unwrap()).is_err());
+        let mut launch = canonical;
+        component_mut(&mut launch, "orbit")["launch"] =
+            serde_json::json!({ "artifact": "terminfo" });
+        assert!(parse_and_validate(&serde_json::to_string(&launch).unwrap()).is_err());
     }
 
     #[test]
@@ -497,6 +481,14 @@ ratconfig 6.0.0 e6ec2ebfe84b2358186410680cbcaf0564eb59a2 x86_64-linux"
             .unwrap()
             .remove(0);
         rejected("role references missing component", &missing_component);
+
+        let mut no_file_artifact = canonical.clone();
+        component_mut(&mut no_file_artifact, "nushell")["artifacts"][0]["kind"] =
+            "cargo-package".into();
+        rejected(
+            "executable component has no file artifact",
+            &no_file_artifact,
+        );
 
         let mut incompatible = canonical.clone();
         component_mut(&mut incompatible, "venus")["requires"][0]["revision"] =
@@ -545,8 +537,8 @@ ratconfig 6.0.0 e6ec2ebfe84b2358186410680cbcaf0564eb59a2 x86_64-linux"
         rejected("invalid component revision", &mutable_revision);
 
         let duplicate = CANONICAL.replacen(
-            "{\n  \"schema\": 2,",
-            "{\n  \"schema\": 2,\n  \"schema\": 2,",
+            "{\n  \"schema\": 3,",
+            "{\n  \"schema\": 3,\n  \"schema\": 3,",
             1,
         );
         assert!(parse_and_validate(&duplicate).is_err());

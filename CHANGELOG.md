@@ -5,8 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
-- Component graph schema 2 removes inert artifact paths, launch arguments, and
-  semantic inputs; Nix owns physical paths and Rust launch policy.
+- Component graph schema 3 removes inert artifact paths and launch declarations;
+  Nix owns physical paths and Rust owns launch policy.
 - Reject an invalid embedded component graph before selecting a runtime
   generation, creating runtime state, or starting a child.
 - Serialize supervisor control-socket acquisition so concurrent launches

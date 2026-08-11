@@ -28,7 +28,7 @@ use workspace::{
     Workspace, failure_human, failure_json, human as human_output, json as json_output, json_escape,
 };
 
-const MANIFEST: &str = include_str!("../../../components/eon-alpha-v2.json");
+const MANIFEST: &str = include_str!("../../../components/eon-alpha-v3.json");
 const USAGE: &str = "usage: eon [run [-- COMMAND...]] | terminal [--no-decorations] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 

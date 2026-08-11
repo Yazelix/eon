@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "product": {
     "id": "eon-alpha",
     "target": "x86_64-linux"
@@ -65,10 +65,7 @@
         { "id": "ORBF", "version": 1, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
         { "id": "ORBS", "version": 2, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" }
       ],
-      "requires": [],
-      "launch": {
-        "artifact": "executable"
-      }
+      "requires": []
     },
     {
       "id": "venus",
@@ -102,10 +99,7 @@
             { "id": "ORBS", "version": 2, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" }
           ]
         }
-      ],
-      "launch": {
-        "artifact": "executable"
-      }
+      ]
     },
     {
       "id": "nushell",
@@ -122,10 +116,7 @@
       ],
       "contracts": [],
       "interfaces": [],
-      "requires": [],
-      "launch": {
-        "artifact": "executable"
-      }
+      "requires": []
     },
     {
       "id": "bash",
@@ -142,10 +133,7 @@
       ],
       "contracts": [],
       "interfaces": [],
-      "requires": [],
-      "launch": {
-        "artifact": "executable"
-      }
+      "requires": []
     },
     {
       "id": "zsh",
@@ -162,10 +150,7 @@
       ],
       "contracts": [],
       "interfaces": [],
-      "requires": [],
-      "launch": {
-        "artifact": "executable"
-      }
+      "requires": []
     },
     {
       "id": "fish",
@@ -182,10 +167,7 @@
       ],
       "contracts": [],
       "interfaces": [],
-      "requires": [],
-      "launch": {
-        "artifact": "executable"
-      }
+      "requires": []
     },
     {
       "id": "starship",
@@ -202,10 +184,7 @@
       ],
       "contracts": [],
       "interfaces": [],
-      "requires": [],
-      "launch": {
-        "artifact": "executable"
-      }
+      "requires": []
     },
     {
       "id": "zoxide",
@@ -222,10 +201,7 @@
       ],
       "contracts": [],
       "interfaces": [],
-      "requires": [],
-      "launch": {
-        "artifact": "executable"
-      }
+      "requires": []
     },
     {
       "id": "atuin",
@@ -242,10 +218,7 @@
       ],
       "contracts": [],
       "interfaces": [],
-      "requires": [],
-      "launch": {
-        "artifact": "executable"
-      }
+      "requires": []
     },
     {
       "id": "carapace",
@@ -262,10 +235,7 @@
       ],
       "contracts": [],
       "interfaces": [],
-      "requires": [],
-      "launch": {
-        "artifact": "executable"
-      }
+      "requires": []
     },
     {
       "id": "helix",
@@ -282,10 +252,7 @@
       ],
       "contracts": [],
       "interfaces": [],
-      "requires": [],
-      "launch": {
-        "artifact": "executable"
-      }
+      "requires": []
     },
     {
       "id": "yazi",
@@ -303,10 +270,7 @@
       ],
       "contracts": [],
       "interfaces": [],
-      "requires": [],
-      "launch": {
-        "artifact": "executable"
-      }
+      "requires": []
     },
     {
       "id": "lazygit",
@@ -323,10 +287,7 @@
       ],
       "contracts": [],
       "interfaces": [],
-      "requires": [],
-      "launch": {
-        "artifact": "executable"
-      }
+      "requires": []
     },
     {
       "id": "ratconfig",

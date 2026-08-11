@@ -256,7 +256,7 @@ changing them.
 
 ## Component manifest
 
-[`components/eon-alpha-v2.json`](components/eon-alpha-v2.json) is the one
+[`components/eon-alpha-v3.json`](components/eon-alpha-v3.json) is the one
 distribution-neutral source of component identity, compatibility, and abstract
 artifacts. Its activation list distinguishes required alpha contracts from
 additional recorded proof such as `ORB-C10`. Nix owns physical package paths,
@@ -266,7 +266,7 @@ duplicated launch policy.
 Validate it with the pinned Rust dependency graph:
 
 ```sh
-cargo run --locked -p eon-manifest -- components/eon-alpha-v2.json
+cargo run --locked -p eon-manifest -- components/eon-alpha-v3.json
 ```
 
 The validator rejects malformed, incomplete, or incompatible graphs. The flake
@@ -301,12 +301,12 @@ Beads data, lock files, and generated artifacts.
 | README | 312 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 566 |
+| Architecture and contracts | 574 |
 | Distribution and references | 231 |
 | Changelog | 78 |
-| Rust source and tests | 5,922 |
+| Rust source and tests | 5,914 |
 | Cargo manifests | 35 |
-| Component manifest | 349 |
+| Component manifest | 310 |
 | Nix composition | 621 |
 | Product defaults | 0 |
-| **Total** | **8,777** |
+| **Total** | **8,738** |
