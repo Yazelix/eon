@@ -301,10 +301,10 @@ Beads data, lock files, and generated artifacts.
 | License | 201 |
 | Architecture and contracts | 559 |
 | Distribution and references | 230 |
-| Changelog | 70 |
-| Rust source and tests | 5,705 |
+| Changelog | 72 |
+| Rust source and tests | 5,847 |
 | Cargo manifests | 35 |
 | Component manifest | 375 |
 | Nix composition | 621 |
 | Product defaults | 0 |
-| **Total** | **8,568** |
+| **Total** | **8,712** |

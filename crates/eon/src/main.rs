@@ -842,6 +842,8 @@ fn attach_generation(target: &str) -> Result<i32, String> {
 fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
     let root = runtime_directory();
     let current = current_generation();
+    let control = generation_directory(&root, target).join("eon.sock");
+    let observed_supervisor = socket_identity(&control);
     let record = match inspect_selected_generation(&root, &current, target)? {
         Some(record) => record,
         None => {
@@ -863,6 +865,22 @@ fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
             json,
         );
     }
+    let supervisor = match observed_supervisor {
+        Ok(Some(supervisor))
+            if socket_identity(&control).is_ok_and(|current| current == Some(supervisor)) =>
+        {
+            supervisor
+        }
+        _ => {
+            return report_failure(
+                &failure(
+                    "stop-failed",
+                    "supervisor endpoint changed while stop was being validated",
+                ),
+                json,
+            );
+        }
+    };
     if !json {
         eprint!(
             "Stop generation {target} and {} live Session{} [{}]? [y/N] ",
@@ -880,8 +898,21 @@ fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
         }
     }
 
-    let response = match send_action(
-        &record.runtime.join("eon.sock"),
+    let stream = match connect_control(&control) {
+        Ok(stream) => stream,
+        Err(error) => return report_failure(&failure("stop-failed", error.detail), json),
+    };
+    if !socket_identity(&control).is_ok_and(|current| current == Some(supervisor)) {
+        return report_failure(
+            &failure(
+                "stop-failed",
+                "supervisor endpoint changed before stop could be sent",
+            ),
+            json,
+        );
+    }
+    let response = match send_action_on(
+        stream,
         Action::Stop {
             generation: target.into(),
         },

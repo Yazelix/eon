@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Refuse a whole-generation stop when its validated supervisor is replaced
+  during confirmation, preserving the replacement and its live Sessions.
 - Resolve the four stable managed-shell commands from the Session-private PATH
   so direct package launches do not depend on an ambient Eon profile.
 - Include generated managed-shell and private Session command behavior in the

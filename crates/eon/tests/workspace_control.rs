@@ -567,6 +567,117 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
 }
 
 #[test]
+fn stop_confirmation_refuses_a_replacement_supervisor() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let first_stop = root.join("first-stop");
+    let second_stop = root.join("second-stop");
+    let prompt = root.join("prompt");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    executable(
+        &orbit,
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$2\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
+    );
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let launch = |stop: &Path| {
+        Command::new(&binary)
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", stop)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+
+    let mut first = TestProcess {
+        child: launch(&first_stop),
+        stop: first_stop.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for(&control);
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+
+    let mut confirmation = Command::new(&binary)
+        .args(["stop", generation_id])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::from(fs::File::create(&prompt).unwrap()))
+        .spawn()
+        .unwrap();
+    wait_for(&prompt);
+
+    let stopped_first = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["stop", generation_id, "--json"],
+    );
+    assert!(stopped_first.status.success(), "{}", stdout(&stopped_first));
+    wait_for_successful_exit(&mut first.child);
+
+    let mut second = TestProcess {
+        child: launch(&second_stop),
+        stop: second_stop.clone(),
+    };
+    wait_for(&control);
+    let orbit_socket = generation.join("orbit.sock");
+    wait_for(&orbit_socket);
+
+    confirmation
+        .stdin
+        .as_mut()
+        .unwrap()
+        .write_all(b"y\n")
+        .unwrap();
+    let attempted = confirmation.wait_with_output().unwrap();
+    let prompt = fs::read_to_string(&prompt).unwrap();
+    let replacement_live = second.child.try_wait().unwrap().is_none();
+    let replacement_child_live = fs::read_to_string(&orbit_socket)
+        .ok()
+        .and_then(|pid| pid.parse::<i32>().ok())
+        // SAFETY: signal 0 performs existence/permission checking without sending a signal.
+        .is_some_and(|pid| unsafe { libc::kill(pid, 0) } == 0);
+    let workspace_live = invoke(&binary, &runtime, &config, &["workspace", "--json"])
+        .status
+        .success();
+    let stopped_second = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["stop", generation_id, "--json"],
+    );
+    wait_for_successful_exit(&mut second.child);
+    fs::remove_dir_all(root).unwrap();
+
+    assert_eq!(
+        attempted.status.code(),
+        Some(2),
+        "stdout={} prompt={prompt}",
+        stdout(&attempted)
+    );
+    assert!(prompt.contains("supervisor") && prompt.contains("changed"));
+    assert!(replacement_live);
+    assert!(replacement_child_live);
+    assert!(workspace_live);
+    assert!(
+        stopped_second.status.success(),
+        "{}",
+        stdout(&stopped_second)
+    );
+}
+
+#[test]
 fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
