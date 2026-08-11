@@ -103,10 +103,14 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
                 output.push(',');
             }
             output.push_str(&format!(
-                "{{\"id\":\"{}\",\"session\":\"{}\",\"endpoint\":\"{}\",\"live\":{}}}",
+                "{{\"id\":\"{}\",\"session\":\"{}\",\"endpoint\":[{}],\"live\":{}}}",
                 json_escape(&pane.id),
                 json_escape(&pane.session),
-                json_escape(&String::from_utf8_lossy(&pane.endpoint)),
+                pane.endpoint
+                    .iter()
+                    .map(u8::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
                 pane.live
             ));
         }
@@ -561,5 +565,35 @@ mod tests {
         let snapshot = workspace.snapshot();
         assert_eq!(snapshot.active_tab, "tab-3");
         assert_eq!(snapshot.tabs[1].panes[0].id, "pane-6");
+    }
+
+    #[test]
+    fn json_preserves_opaque_endpoint_bytes() {
+        let snapshot = Snapshot {
+            active_tab: "tab-1".into(),
+            tabs: vec![SnapshotTab {
+                id: "tab-1".into(),
+                selected_pane: "pane-1".into(),
+                panes: vec![
+                    SnapshotPane {
+                        id: "pane-1".into(),
+                        session: "session-1".into(),
+                        endpoint: b"/a".to_vec(),
+                        live: true,
+                    },
+                    SnapshotPane {
+                        id: "pane-2".into(),
+                        session: "session-2".into(),
+                        endpoint: b"/\xff".to_vec(),
+                        live: false,
+                    },
+                ],
+            }],
+        };
+
+        assert_eq!(
+            json(&snapshot),
+            "{\"active_tab\":\"tab-1\",\"tabs\":[{\"id\":\"tab-1\",\"selected_pane\":\"pane-1\",\"panes\":[{\"id\":\"pane-1\",\"session\":\"session-1\",\"endpoint\":[47,97],\"live\":true},{\"id\":\"pane-2\",\"session\":\"session-2\",\"endpoint\":[47,255],\"live\":false}]}]}\n"
+        );
     }
 }

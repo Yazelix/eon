@@ -170,7 +170,8 @@ to 64 tabs and 256 panes, is not restored after supervisor loss, and has no
 per-pane or per-Session removal action. Whole-generation stop names and
 terminates every Session through that supervisor. `--json` reports the same
 accepted EONW result as the human view; neither output format is the protocol
-schema.
+schema. Its `endpoint` field is an ordered integer array that preserves every
+opaque endpoint byte.
 
 ## Managed environment
 
@@ -295,15 +296,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 309 |
+| README | 310 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 537 |
+| Architecture and contracts | 538 |
 | Distribution and references | 230 |
-| Changelog | 63 |
-| Rust source and tests | 5,669 |
+| Changelog | 65 |
+| Rust source and tests | 5,703 |
 | Cargo manifests | 35 |
 | Component manifest | 375 |
 | Nix composition | 606 |
 | Product defaults | 0 |
-| **Total** | **8,487** |
+| **Total** | **8,525** |

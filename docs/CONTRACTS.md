@@ -154,7 +154,8 @@ detailed execution evidence, and Git history retains superseded states.
   active and selected identities; Session liveness; and exact opaque Orbit
   endpoint bytes. Lifecycle results carry the supervisor's stable generation,
   component report, protocol identity, exact live Session identities, and
-  owner-authored attach and stop availability.
+  owner-authored attach and stop availability. The CLI JSON projection emits
+  each opaque endpoint as an ordered integer byte array without changing EONW.
 - Important failures: an unsupported version, malformed or oversized message,
   invalid result shape, unavailable action, unknown or mismatched generation,
   unrepresentable accepted state, missing supervisor, or an unconfirmed stop

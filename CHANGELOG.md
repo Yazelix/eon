@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Preserve every opaque Orbit endpoint byte in workspace-action JSON by
+  reporting `endpoint` as an ordered integer array instead of a lossy string.
 - Add `eon terminal -- COMMAND...` to host one exact Orbit-owned command in a
   native Venus surface without Eon workspace actions while retaining generation,
   presentation, stop, concurrent-launch, child-exit, and cleanup ownership.
