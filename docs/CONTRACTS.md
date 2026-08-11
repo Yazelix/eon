@@ -20,7 +20,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Accepted composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
-| EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; proof below |
+| EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; private Session PATH `c0d044c69318a921f9f9139bcaf2de9afce683d3`; proof below |
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Candidate | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; candidate `858e840cc5a7fd235ae62376172424a25cc1f422` |
 | EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly presentable when they advertise the compatible presentation lifecycle, and explicitly stoppable through their supervisor | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `5b15528b67417b34067832212f9dbee83ae502b5` |
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | `e77e842fe8c7070a96047dff1bf028ccbd49b788`; proof below |
@@ -336,6 +336,20 @@ detailed execution evidence, and Git history retains superseded states.
 - Tool-glyph checks: exact Nix build and flake check; installed wrapper,
   fontconfig, closure, face, and representative private-use charset inspection;
   fresh managed Yazi dogfood; and `git diff --check`.
+- Private Session command-path proof revision:
+  `c0d044c69318a921f9f9139bcaf2de9afce683d3` on x86_64 Linux.
+- Artifact: `/nix/store/j0mgxpx9s7rsqhxzhqsxg2vmb413n2gn-eon-0.1.0`,
+  generation `g1-da0fcf014f5fd6bd9755505e6c2e5d34`, NAR hash
+  `sha256-AOoech5U7yhz/HmS1eB9C5M2EwROvGANJg7sJhBL3CI=`, NAR size 1,939,312
+  bytes, and closure size 1,824,271,384 bytes.
+- Checks: one exact-package private-PATH check compares every prefixed managed
+  shell with its pinned unprefixed alias and launches the default `eon-nu`
+  through packaged Orbit; locked Rust format, check, 31-test, and Clippy suites;
+  canonical manifest validation; exact Nix build and flake check; and
+  `git diff --check`.
+- Exercised behavior: the Session-private PATH resolves `eon-nu`, `eon-bash`,
+  `eon-zsh`, and `eon-fish` without an ambient profile while preserving the
+  unprefixed aliases, exact selected programs, and one private PATH prefix.
 
 ### EON-C10 — EONW v1 producer and CLI projection
 
