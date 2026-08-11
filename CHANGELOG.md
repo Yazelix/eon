@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Render Unicode Braille progress cells with distinct dots in packaged native
+  Eon and Eonova surfaces while preserving their cell-grid bounds.
 - Preserve Shift-produced layout text such as `?`, `:`, and `+` in the packaged
   native terminal surface without changing modified shortcuts.
 - Component graph schema 3 removes inert artifact paths and launch declarations;
