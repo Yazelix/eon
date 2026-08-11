@@ -2918,41 +2918,31 @@ mod tests {
     }
 
     #[test]
-    fn control_listener_serializes_stale_cleanup_and_bind() {
+    fn startup_lock_serializes_stale_cleanup_and_bind() {
         let root = temporary_directory();
         let socket = root.join("eon.sock");
         let startup_lock = root.join("startup.lock");
         drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
         let held = lock_supervisor_startup(&startup_lock).unwrap();
-        let (started_tx, started_rx) = std::sync::mpsc::channel();
-        let (result_tx, result_rx) = std::sync::mpsc::channel();
-        let peer_socket = socket.clone();
-        let peer_lock = startup_lock.clone();
-        let peer = std::thread::spawn(move || {
-            started_tx.send(()).unwrap();
-            let result = lock_supervisor_startup(&peer_lock)
-                .and_then(|_startup_lock| create_control_listener(&peer_socket))
-                .map(drop);
-            result_tx.send(result).unwrap();
-        });
-        started_rx.recv().unwrap();
+        let contender = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&startup_lock)
+            .unwrap();
         assert!(matches!(
-            result_rx.recv_timeout(Duration::from_millis(250)),
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            contender.try_lock(),
+            Err(fs::TryLockError::WouldBlock)
         ));
 
         fs::remove_file(&socket).unwrap();
         let replacement = std::os::unix::net::UnixListener::bind(&socket).unwrap();
         fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
         drop(held);
+        contender.lock().unwrap();
 
-        let error = result_rx
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap()
-            .unwrap_err();
+        let error = create_control_listener(&socket).err().unwrap();
         assert!(error.contains("already active"));
         assert!(std::os::unix::net::UnixStream::connect(&socket).is_ok());
-        peer.join().unwrap();
         drop(replacement);
         fs::remove_dir_all(root).unwrap();
     }
