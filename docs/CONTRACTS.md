@@ -251,10 +251,11 @@ detailed execution evidence, and Git history retains superseded states.
   It selects Orbit source `64db581445bafca1a08a6530f8e44f9c1edbc169`,
   ORBF v1 and ORBS v2 proof `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`,
   ORB-C10 proof `292b2451c9a1d99390334771a681c7f481c996f2`, and Venus source
-  `690b038e2b58a0e7761023ac7e004e92327ac901` with VEN-C1 proof
+  `90988f6ebcde68338e202a9c637c59398aafe93d` with VEN-C1 proof
   `e7bda96822274727faacb51731ae19181295e1cd`, VEN-C3 and VEN-C4 proof
-  `6ef19afddaedcbe2b9ed0996e31bc02df5d854ac`, and VEN-C8 proof
-  `33a3d9af9f4c6015301ad6829fe733413c5b683d`.
+  `6ef19afddaedcbe2b9ed0996e31bc02df5d854ac`, VEN-C8 proof
+  `33a3d9af9f4c6015301ad6829fe733413c5b683d`, and VEN-C9 proof
+  `90988f6ebcde68338e202a9c637c59398aafe93d`.
 - Checks: canonical manifest validation; locked Rust format, check, 30-test, and
   Clippy suites; exact Nix build and flake check; installed version, commit, and
   store-path comparison; workspace and presentation-owner regression checks; README
