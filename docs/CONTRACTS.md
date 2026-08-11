@@ -23,7 +23,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; proof below |
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Candidate | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly presentable when they advertise the compatible presentation lifecycle, and explicitly stoppable through their supervisor | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
-| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
+| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | `e77e842fe8c7070a96047dff1bf028ccbd49b788`; proof below |
 
 ## Approved terminal-host contract EON-C12
 
@@ -270,9 +270,10 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C12 — single-surface terminal host
 
-- Accepted base: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c` and
-  `/nix/store/04sbq6wc79h2hf1rjq9y9bcvaz5v92hb-eon-0.1.0` on x86_64 Linux.
-- Current candidate: revision, artifact, and NAR hash above.
+- Proof revision: `e77e842fe8c7070a96047dff1bf028ccbd49b788` on
+  x86_64 Linux.
+- Artifact: `/nix/store/h7vvb4lrxnyr23lzglclmf02ajwrk2ar-eon-0.1.0`,
+  NAR hash `sha256-SOBxjNVGm0Cp4ntSv9NWV1zACtqZS/DVZJbKf4ABG0c=`.
 - Checks: deterministic workspace-versus-terminal Venus argv; real-process
   exact-command startup, active-surface preservation, detached-surface replacement,
   one-Session invariant,
@@ -283,6 +284,10 @@ detailed execution evidence, and Git history retains superseded states.
   supervisor-owned client detached, a second invocation reopened the same
   Session; command exit closed both invocations, removed the generation, and
   left no Venus process.
+- Installed Eonova dogfood at `e77e842fe8c7070a96047dff1bf028ccbd49b788`
+  launched Nova through `--no-decorations` in an isolated COSMIC Wayland
+  namespace and showed no native title bar. The namespace was stopped through
+  its supervisor without touching existing Eon or Eonova generations.
 - Remaining gap: this proof makes no macOS claim.
 
 ### EON-C8 — Session-exit pruning
