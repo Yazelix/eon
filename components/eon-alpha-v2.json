@@ -1,5 +1,5 @@
 {
-  "schema": 1,
+  "schema": 2,
   "product": {
     "id": "eon-alpha",
     "target": "x86_64-linux"
@@ -46,8 +46,8 @@
         "url": "https://github.com/Yazelix/eon-sessions.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/yazelix-orbit" },
-        { "id": "terminfo", "kind": "file", "path": "share/terminfo/e/eon" }
+        { "id": "executable", "kind": "file" },
+        { "id": "terminfo", "kind": "file" }
       ],
       "contracts": [
         { "id": "ORB-C1", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
@@ -67,9 +67,7 @@
       ],
       "requires": [],
       "launch": {
-        "artifact": "executable",
-        "arguments": ["serve"],
-        "inputs": ["runtime-directory", "terminfo-directory"]
+        "artifact": "executable"
       }
     },
     {
@@ -83,7 +81,7 @@
         "url": "https://github.com/Yazelix/eon-desktop.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/yazelix-venus" }
+        { "id": "executable", "kind": "file" }
       ],
       "contracts": [
         { "id": "VEN-C1", "proof": "e7bda96822274727faacb51731ae19181295e1cd" },
@@ -106,9 +104,7 @@
         }
       ],
       "launch": {
-        "artifact": "executable",
-        "arguments": [],
-        "inputs": ["orbit-socket", "optional-eon-workspace-socket", "optional-native-decorations"]
+        "artifact": "executable"
       }
     },
     {
@@ -122,15 +118,13 @@
         "url": "https://github.com/nushell/nushell.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/nu" }
+        { "id": "executable", "kind": "file" }
       ],
       "contracts": [],
       "interfaces": [],
       "requires": [],
       "launch": {
-        "artifact": "executable",
-        "arguments": [],
-        "inputs": ["working-directory", "configuration-directory"]
+        "artifact": "executable"
       }
     },
     {
@@ -144,15 +138,13 @@
         "url": "https://git.savannah.gnu.org/git/bash.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/bash" }
+        { "id": "executable", "kind": "file" }
       ],
       "contracts": [],
       "interfaces": [],
       "requires": [],
       "launch": {
-        "artifact": "executable",
-        "arguments": [],
-        "inputs": ["working-directory", "configuration-directory"]
+        "artifact": "executable"
       }
     },
     {
@@ -166,15 +158,13 @@
         "url": "https://github.com/zsh-users/zsh.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/zsh" }
+        { "id": "executable", "kind": "file" }
       ],
       "contracts": [],
       "interfaces": [],
       "requires": [],
       "launch": {
-        "artifact": "executable",
-        "arguments": [],
-        "inputs": ["working-directory", "configuration-directory"]
+        "artifact": "executable"
       }
     },
     {
@@ -188,15 +178,13 @@
         "url": "https://github.com/fish-shell/fish-shell.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/fish" }
+        { "id": "executable", "kind": "file" }
       ],
       "contracts": [],
       "interfaces": [],
       "requires": [],
       "launch": {
-        "artifact": "executable",
-        "arguments": [],
-        "inputs": ["working-directory", "configuration-directory"]
+        "artifact": "executable"
       }
     },
     {
@@ -210,15 +198,13 @@
         "url": "https://github.com/starship/starship.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/starship" }
+        { "id": "executable", "kind": "file" }
       ],
       "contracts": [],
       "interfaces": [],
       "requires": [],
       "launch": {
-        "artifact": "executable",
-        "arguments": [],
-        "inputs": ["shell", "configuration-file"]
+        "artifact": "executable"
       }
     },
     {
@@ -232,15 +218,13 @@
         "url": "https://github.com/ajeetdsouza/zoxide.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/zoxide" }
+        { "id": "executable", "kind": "file" }
       ],
       "contracts": [],
       "interfaces": [],
       "requires": [],
       "launch": {
-        "artifact": "executable",
-        "arguments": [],
-        "inputs": ["shell", "working-directory"]
+        "artifact": "executable"
       }
     },
     {
@@ -254,15 +238,13 @@
         "url": "https://github.com/atuinsh/atuin.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/atuin" }
+        { "id": "executable", "kind": "file" }
       ],
       "contracts": [],
       "interfaces": [],
       "requires": [],
       "launch": {
-        "artifact": "executable",
-        "arguments": [],
-        "inputs": ["shell", "configuration-directory", "history-data"]
+        "artifact": "executable"
       }
     },
     {
@@ -276,15 +258,13 @@
         "url": "https://github.com/carapace-sh/carapace-bin.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/carapace" }
+        { "id": "executable", "kind": "file" }
       ],
       "contracts": [],
       "interfaces": [],
       "requires": [],
       "launch": {
-        "artifact": "executable",
-        "arguments": [],
-        "inputs": ["shell", "configuration-directory"]
+        "artifact": "executable"
       }
     },
     {
@@ -298,15 +278,13 @@
         "url": "https://github.com/luccahuguet/yazelix-helix.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/hx" }
+        { "id": "executable", "kind": "file" }
       ],
       "contracts": [],
       "interfaces": [],
       "requires": [],
       "launch": {
-        "artifact": "executable",
-        "arguments": [],
-        "inputs": ["working-directory", "configuration-directory"]
+        "artifact": "executable"
       }
     },
     {
@@ -320,16 +298,14 @@
         "url": "https://github.com/sxyazi/yazi.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/yazi" },
-        { "id": "companion", "kind": "file", "path": "bin/ya" }
+        { "id": "executable", "kind": "file" },
+        { "id": "companion", "kind": "file" }
       ],
       "contracts": [],
       "interfaces": [],
       "requires": [],
       "launch": {
-        "artifact": "executable",
-        "arguments": [],
-        "inputs": ["working-directory", "configuration-directory"]
+        "artifact": "executable"
       }
     },
     {
@@ -343,15 +319,13 @@
         "url": "https://github.com/jesseduffield/lazygit.git"
       },
       "artifacts": [
-        { "id": "executable", "kind": "file", "path": "bin/lazygit" }
+        { "id": "executable", "kind": "file" }
       ],
       "contracts": [],
       "interfaces": [],
       "requires": [],
       "launch": {
-        "artifact": "executable",
-        "arguments": [],
-        "inputs": ["working-directory", "configuration-directory"]
+        "artifact": "executable"
       }
     },
     {
@@ -365,7 +339,7 @@
         "url": "https://github.com/luccahuguet/ratconfig.git"
       },
       "artifacts": [
-        { "id": "crate", "kind": "cargo-package", "path": "ratconfig" }
+        { "id": "crate", "kind": "cargo-package" }
       ],
       "contracts": [],
       "interfaces": [],

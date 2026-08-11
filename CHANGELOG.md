@@ -5,8 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
-- Reject an invalid embedded component graph before creating runtime state or
-  starting Orbit, Venus, or another child.
+- Component graph schema 2 removes inert artifact paths, launch arguments, and
+  semantic inputs; Nix owns physical paths and Rust launch policy.
+- Reject an invalid embedded component graph before selecting a runtime
+  generation, creating runtime state, or starting a child.
 - Serialize supervisor control-socket acquisition so concurrent launches
   converge on one live owner instead of unlinking a newly bound peer.
 - Refuse a whole-generation stop when its validated supervisor is replaced

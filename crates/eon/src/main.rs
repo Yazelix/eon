@@ -28,12 +28,13 @@ use workspace::{
     Workspace, failure_human, failure_json, human as human_output, json as json_output, json_escape,
 };
 
-const MANIFEST: &str = include_str!("../../../components/eon-alpha-v1.json");
+const MANIFEST: &str = include_str!("../../../components/eon-alpha-v2.json");
 const USAGE: &str = "usage: eon [run [-- COMMAND...]] | terminal [--no-decorations] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 
-fn current_generation() -> String {
-    generation_id(&[
+fn current_generation() -> Result<String, String> {
+    eon_manifest::parse_and_validate(MANIFEST).map_err(|error| error.to_string())?;
+    Ok(generation_id(&[
         include_bytes!("main.rs"),
         include_bytes!("workspace.rs"),
         include_bytes!("../../eon-workspace-protocol/src/lib.rs"),
@@ -46,7 +47,7 @@ fn current_generation() -> String {
         include_bytes!("../../../flake.nix"),
         include_bytes!("../../../flake.lock"),
         MANIFEST.as_bytes(),
-    ])
+    ]))
 }
 
 fn generation_id(inputs: &[&[u8]]) -> String {
@@ -735,7 +736,7 @@ fn generations_command(arguments: &[OsString]) -> Result<i32, String> {
         [flag] if flag == "--json" => true,
         _ => return Err(USAGE.into()),
     };
-    let records = discover_generations(&runtime_directory(), &current_generation())?;
+    let records = discover_generations(&runtime_directory(), &current_generation()?)?;
     write_stdout(if json {
         generations_json(&records)
     } else {
@@ -823,7 +824,7 @@ fn json_option(value: Option<&str>) -> String {
 
 fn attach_generation(target: &str) -> Result<i32, String> {
     let root = runtime_directory();
-    let current = current_generation();
+    let current = current_generation()?;
     let record = inspect_selected_generation(&root, &current, target)?
         .ok_or_else(|| format!("generation {target} was not found"))?;
     if !record.attach.available {
@@ -842,7 +843,7 @@ fn attach_generation(target: &str) -> Result<i32, String> {
 
 fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
     let root = runtime_directory();
-    let current = current_generation();
+    let current = current_generation()?;
     let control = generation_directory(&root, target).join("eon.sock");
     let observed_supervisor = socket_identity(&control);
     let record = match inspect_selected_generation(&root, &current, target)? {
@@ -1220,7 +1221,7 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
         {
             launch_current(LaunchMode::Terminal, child, true, false)
         }
-        [command] if command == "attach" => attach_generation(&current_generation()),
+        [command] if command == "attach" => attach_generation(&current_generation()?),
         [command, generation] if command == "attach" => {
             attach_generation(generation_argument(generation)?)
         }
@@ -1246,7 +1247,7 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
             write_stdout(format!(
                 "eon {} {}\neonw {}\n{}\n",
                 env!("CARGO_PKG_VERSION"),
-                current_generation(),
+                current_generation()?,
                 VERSION,
                 eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?
             ))?;
@@ -1278,9 +1279,8 @@ fn launch_current(
     attach_existing: bool,
     decorations: bool,
 ) -> Result<i32, String> {
-    eon_manifest::parse_and_validate(MANIFEST).map_err(|error| error.to_string())?;
+    let generation = current_generation()?;
     let root = runtime_directory();
-    let generation = current_generation();
     let runtime = prepare_generation_runtime(&root, &generation)?;
     let socket = runtime.join("eon.sock");
     // ponytail: one root-wide startup lock; partition if cross-generation starts contend.
@@ -1389,8 +1389,9 @@ fn validate_runtime(info: &Runtime, generation: &str) -> Result<(), String> {
 
 fn control(arguments: &[OsString]) -> Result<i32, String> {
     let (action, json) = parse_control_arguments(arguments)?;
+    let generation = current_generation()?;
     let root = runtime_directory();
-    let runtime = prepare_generation_runtime(&root, &current_generation())?;
+    let runtime = prepare_generation_runtime(&root, &generation)?;
     let socket = runtime.join("eon.sock");
     let response = match send_action(&socket, action) {
         Ok(response) => response,
@@ -2352,7 +2353,7 @@ mod tests {
         fs::set_permissions(dead.join("eon.sock"), fs::Permissions::from_mode(0o600)).unwrap();
         drop(listener);
 
-        let records = discover_generations(&root, &current_generation()).unwrap();
+        let records = discover_generations(&root, &current_generation().unwrap()).unwrap();
         assert!(records.iter().any(|record| {
             record.id == linked_id && record.kind == "previous" && record.state == "corrupt"
         }));

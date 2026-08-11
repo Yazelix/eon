@@ -83,9 +83,10 @@ runner.
 ## Canonical release input
 
 A versioned component manifest records each component's project, exact revision,
-package or artifact input, platform, and compatibility contract. Nix consumes
-this manifest during alpha. Release tooling extends it with portable artifacts,
-checksums, and provenance after distribution graduation.
+abstract artifacts, platform, and compatibility contract. Nix consumes this
+manifest during alpha and owns physical package paths. Release tooling extends
+the graph with consumed portable artifact locators, checksums, and provenance
+after distribution graduation.
 
 The manifest should remain small enough for humans to review. Child repositories
 build and test their owned artifacts. Eon verifies compatibility and assembles

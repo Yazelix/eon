@@ -99,7 +99,7 @@ They route changes and audits without creating additional product scope.
 | Runtime and lifecycle | `crates/eon/src/main.rs` | CLI dispatch, launch mode, private configuration and per-generation runtime roots, generation identity and discovery, supervisor-routed presentation and stop, component launch policy, child observation, and the control socket | PTYs, terminal state, native rendering, persistent topology, or managed-tool behavior |
 | Workspace state | `crates/eon/src/workspace.rs` | Live ordered tabs and panes, stable identities, active selection, Session-to-endpoint mapping, semantic action results, and complete snapshots | EONW encoding, Orbit state, or Venus geometry |
 | EONW boundary | `crates/eon-workspace-protocol` | Versioned values, bounded framing, validation, complete workspace snapshots, supervisor identity and capabilities, presentation and stop results, and structured failures | Live topology, lifecycle policy, transport ownership, authorization, or rendering |
-| Component graph | `components/eon-alpha-v1.json` and `crates/eon-manifest` | Stable component identity, compatibility requirements, artifact declarations, graph validation, and version reporting | Resolved package paths or package construction |
+| Component graph | `components/eon-alpha-v2.json` and `crates/eon-manifest` | Stable component identity, compatibility requirements, abstract artifact declarations, graph validation, and version reporting | Resolved package paths, launch policy, or package construction |
 | Managed environment | Managed dispatch in `crates/eon/src/main.rs`, `defaults/`, and its `flake.nix` wiring | Stable managed command names, private configuration projection, exact tool selection, and default interactive policy | Shell, prompt, editor, file-manager, or Git-TUI native behavior |
 | Nix alpha composition | `flake.nix` | Exact source resolution, child builds, opaque launch-path injection, desktop packaging, and the sole alpha installation artifact | Runtime product semantics or a second component graph |
 
@@ -119,14 +119,13 @@ Each composed build consumes:
 
 - a versioned component manifest;
 - exact source or release revisions;
-- declared component artifacts or package outputs;
-- available checksums and provenance;
-- a small set of declared launch and configuration inputs, including Venus's
-  optional Eon workspace endpoint and native decorations.
+- declared abstract component artifacts;
+- available checksums and provenance.
 
-Nix provides those inputs during alpha. Eon code receives component paths as
-opaque launch inputs and does not invoke a Nix evaluator during normal use. It
-does not construct store paths or persist them as stable component identity.
+Nix resolves physical package paths during alpha. Eon code receives those paths
+as opaque launch inputs, owns launch and configuration policy, and does not
+invoke a Nix evaluator during normal use. It does not construct store paths or
+persist them as stable component identity.
 
 The component manifest provides the canonical graph for the Nix alpha, direct
 bundles, and later package-manager channels. Package definitions translate that

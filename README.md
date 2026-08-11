@@ -256,16 +256,17 @@ changing them.
 
 ## Component manifest
 
-[`components/eon-alpha-v1.json`](components/eon-alpha-v1.json) is the one
-distribution-neutral source of component identity, compatibility, artifacts,
-and semantic launch inputs. Its activation list distinguishes required alpha
-contracts from additional recorded proof such as `ORB-C10`. It contains no
-resolved Nix store paths.
+[`components/eon-alpha-v2.json`](components/eon-alpha-v2.json) is the one
+distribution-neutral source of component identity, compatibility, and abstract
+artifacts. Its activation list distinguishes required alpha contracts from
+additional recorded proof such as `ORB-C10`. Nix owns physical package paths,
+Rust owns launch policy, and the graph contains neither resolved store paths nor
+duplicated launch policy.
 
 Validate it with the pinned Rust dependency graph:
 
 ```sh
-cargo run --locked -p eon-manifest -- components/eon-alpha-v1.json
+cargo run --locked -p eon-manifest -- components/eon-alpha-v2.json
 ```
 
 The validator rejects malformed, incomplete, or incompatible graphs. The flake
@@ -297,15 +298,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 311 |
+| README | 312 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 565 |
-| Distribution and references | 230 |
-| Changelog | 76 |
-| Rust source and tests | 5,926 |
+| Architecture and contracts | 564 |
+| Distribution and references | 231 |
+| Changelog | 78 |
+| Rust source and tests | 5,922 |
 | Cargo manifests | 35 |
-| Component manifest | 375 |
+| Component manifest | 349 |
 | Nix composition | 621 |
 | Product defaults | 0 |
-| **Total** | **8,802** |
+| **Total** | **8,775** |

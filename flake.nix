@@ -49,7 +49,7 @@
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
       inherit (pkgs) lib;
-      manifest = builtins.fromJSON (builtins.readFile ./components/eon-alpha-v1.json);
+      manifest = builtins.fromJSON (builtins.readFile ./components/eon-alpha-v2.json);
       component =
         id:
         let
@@ -518,7 +518,7 @@
               ./Cargo.toml
               ./flake.nix
               ./flake.lock
-              ./components/eon-alpha-v1.json
+              ./components/eon-alpha-v2.json
               ./crates
             ];
           };

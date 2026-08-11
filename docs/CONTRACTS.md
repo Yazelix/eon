@@ -13,7 +13,7 @@ detailed execution evidence, and Git history retains superseded states.
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
 | EON-C1 | Eon validates and launches one compatible component set and reports every exact component revision | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
-| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
+| EON-C2 | One versioned manifest defines component identity, compatibility, and abstract artifacts for every distribution channel | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
@@ -198,13 +198,13 @@ detailed execution evidence, and Git history retains superseded states.
   selected generation's EONW owner and names every affected live Session.
   Concurrent attach-capable launches for one generation converge on one
   supervisor and one initial Session.
-- Important failures: unsafe permissions, symlinks, invalid names, corrupt or
-  oversized responses, unsupported EONW, identity mismatch, unavailable legacy
-  lifecycle support, timeout, partial startup, or an incompatible competing
-  launch produces a bounded explanation. Failure or cancelled confirmation
-  preserves every Session. Eon removes only its own dead control socket or an
-  empty stopped generation directory and never kills a process inferred from a
-  PID, pathname, or process tree.
+- Important failures: an invalid component graph, unsafe permissions, symlinks,
+  invalid names, corrupt or oversized responses, unsupported EONW, identity
+  mismatch, unavailable legacy lifecycle support, timeout, partial startup, or
+  an incompatible competing launch produces a bounded explanation. Failure or
+  cancelled confirmation preserves every Session. Eon removes only its own dead
+  control socket or an empty stopped generation directory and never kills a
+  process inferred from a PID, pathname, or process tree.
 - Ownership: Eon owns generation identity, namespace selection, discovery,
   compatibility policy, supervisor-routed stop, and bounded cleanup. Each live
   supervisor remains authoritative for its topology and lifecycle response.
@@ -253,7 +253,7 @@ detailed execution evidence, and Git history retains superseded states.
   `e77e842fe8c7070a96047dff1bf028ccbd49b788`, packaged at
   `/nix/store/h7vvb4lrxnyr23lzglclmf02ajwrk2ar-eon-0.1.0`, NAR hash
   `sha256-SOBxjNVGm0Cp4ntSv9NWV1zACtqZS/DVZJbKf4ABG0c=`.
-- Component graph: `components/eon-alpha-v1.json`, SHA-256
+- Component graph at that candidate: `components/eon-alpha-v1.json`, SHA-256
   `ad7a5e965f102d6adaf2e2910e3ad1797477bd195c191733c4ff982a224c7ede`.
   It selects Orbit source `64db581445bafca1a08a6530f8e44f9c1edbc169`,
   ORBF v1 and ORBS v2 proof `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`,

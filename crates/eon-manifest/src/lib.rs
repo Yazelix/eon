@@ -80,7 +80,6 @@ struct Source {
 struct Artifact {
     id: String,
     kind: String,
-    path: String,
 }
 
 #[derive(Deserialize)]
@@ -110,9 +109,6 @@ struct Requirement {
 #[serde(deny_unknown_fields)]
 struct Launch {
     artifact: String,
-    #[serde(rename = "arguments")]
-    _arguments: Vec<String>,
-    inputs: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -169,7 +165,7 @@ fn validate_strings(value: &serde_json::Value) -> Result<(), Error> {
 }
 
 fn validate(manifest: &Manifest) -> Result<(), Error> {
-    required(manifest.schema == 1, "unsupported manifest schema")?;
+    required(manifest.schema == 2, "unsupported manifest schema")?;
     required(token(&manifest.product.id), "invalid product id")?;
     required(token(&manifest.product.target), "invalid product target")?;
     required(!manifest.components.is_empty(), "component set is empty")?;
@@ -221,7 +217,6 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
                 matches!(artifact.kind.as_str(), "file" | "cargo-package"),
                 "unsupported artifact kind",
             )?;
-            required(relative(&artifact.path), "artifact path must be relative")?;
         }
 
         let mut contracts = HashSet::new();
@@ -322,14 +317,6 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
                         .any(|artifact| artifact.id == launch.artifact && artifact.kind == "file"),
                     "launch artifact is not a declared file",
                 )?;
-                required(!launch.inputs.is_empty(), "launch plan has no inputs")?;
-                let mut inputs = HashSet::new();
-                for input in &launch.inputs {
-                    required(
-                        token(input) && inputs.insert(input.as_str()),
-                        "invalid or duplicate launch input",
-                    )?;
-                }
             }
         }
         if role == "client" {
@@ -430,21 +417,12 @@ fn token(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
-fn relative(value: &str) -> bool {
-    !value.is_empty()
-        && !value.starts_with('/')
-        && !value.contains('\\')
-        && value
-            .split('/')
-            .all(|segment| !matches!(segment, "" | "." | ".."))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{parse_and_validate, version_report};
     use serde_json::Value;
 
-    const CANONICAL: &str = include_str!("../../../components/eon-alpha-v1.json");
+    const CANONICAL: &str = include_str!("../../../components/eon-alpha-v2.json");
 
     fn component_mut<'a>(manifest: &'a mut Value, id: &str) -> &'a mut Value {
         manifest["components"]
@@ -464,6 +442,24 @@ mod tests {
     #[test]
     fn canonical_manifest_is_valid() {
         parse_and_validate(CANONICAL).unwrap();
+    }
+
+    #[test]
+    fn removed_graph_fields_are_rejected() {
+        let canonical: Value = serde_json::from_str(CANONICAL).unwrap();
+
+        let mut path = canonical.clone();
+        component_mut(&mut path, "orbit")["artifacts"][0]["path"] = "bin/other".into();
+        assert!(parse_and_validate(&serde_json::to_string(&path).unwrap()).is_err());
+
+        let mut arguments = canonical.clone();
+        component_mut(&mut arguments, "orbit")["launch"]["arguments"] =
+            serde_json::json!(["other"]);
+        assert!(parse_and_validate(&serde_json::to_string(&arguments).unwrap()).is_err());
+
+        let mut inputs = canonical;
+        component_mut(&mut inputs, "orbit")["launch"]["inputs"] = serde_json::json!(["other"]);
+        assert!(parse_and_validate(&serde_json::to_string(&inputs).unwrap()).is_err());
     }
 
     #[test]
@@ -517,17 +513,16 @@ ratconfig 6.0.0 e6ec2ebfe84b2358186410680cbcaf0564eb59a2 x86_64-linux"
         rejected("required interface is incompatible", &bad_interface);
 
         let mut resolved_path = canonical.clone();
-        component_mut(&mut resolved_path, "helix")["artifacts"][0]["path"] =
+        component_mut(&mut resolved_path, "helix")["project"] =
             Value::String("/nix/store/example/bin/hx".into());
         rejected(
             "Nix store paths are resolved inputs, not component identity",
             &resolved_path,
         );
 
-        let mut nul_path = canonical.clone();
-        component_mut(&mut nul_path, "helix")["artifacts"][0]["path"] =
-            Value::String("bin/\0hx".into());
-        rejected("manifest string contains NUL", &nul_path);
+        let mut nul_string = canonical.clone();
+        component_mut(&mut nul_string, "helix")["project"] = Value::String("Helix\0".into());
+        rejected("manifest string contains NUL", &nul_string);
 
         for url in ["https:///repo.git", "https://example.com/.git"] {
             let mut graph = canonical.clone();
@@ -537,8 +532,8 @@ ratconfig 6.0.0 e6ec2ebfe84b2358186410680cbcaf0564eb59a2 x86_64-linux"
 
         for path in [r"\u002fnix\/store\/escaped", r"\u002fnix\/store"] {
             let escaped_path = CANONICAL.replacen(
-                "\"arguments\": [],",
-                &format!("\"arguments\": [\"{path}\"],"),
+                "\"project\": \"Eon Desktop\"",
+                &format!("\"project\": \"{path}\""),
                 1,
             );
             assert!(!escaped_path.contains("/nix/store/"));
@@ -550,8 +545,8 @@ ratconfig 6.0.0 e6ec2ebfe84b2358186410680cbcaf0564eb59a2 x86_64-linux"
         rejected("invalid component revision", &mutable_revision);
 
         let duplicate = CANONICAL.replacen(
-            "{\n  \"schema\": 1,",
-            "{\n  \"schema\": 1,\n  \"schema\": 1,",
+            "{\n  \"schema\": 2,",
+            "{\n  \"schema\": 2,\n  \"schema\": 2,",
             1,
         );
         assert!(parse_and_validate(&duplicate).is_err());
