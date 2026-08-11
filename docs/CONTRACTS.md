@@ -22,7 +22,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Accepted composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; private Session PATH `c0d044c69318a921f9f9139bcaf2de9afce683d3`; proof below |
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Candidate | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; candidate `858e840cc5a7fd235ae62376172424a25cc1f422` |
-| EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly presentable when they advertise the compatible presentation lifecycle, and explicitly stoppable through their supervisor | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23` |
+| EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly presentable when they advertise the compatible presentation lifecycle, and explicitly stoppable through their supervisor | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf` |
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | `e77e842fe8c7070a96047dff1bf028ccbd49b788`; proof below |
 
 ## Approved terminal-host contract EON-C12
@@ -372,24 +372,24 @@ detailed execution evidence, and Git history retains superseded states.
 
 - Lifecycle protocol proof: `fd6b348494111a0d18e241787da14ea99ee117a9`.
   Accepted EON-C11 attach proof: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`
-  on x86_64 Linux. Generated managed-runtime identity proof:
-  `4beb441301d84039570dd07138da2a6f70b3ed23`.
-- Artifact: `/nix/store/mc4y160gdmqi0xcp16qar1khhpjfbsdh-eon-0.1.0`,
-  generation `g1-fe3c1a4491107b6ba50fdd777fd6ec21`, NAR hash
-  `sha256-7nj6AQ/Id1aUDbcsLMoLQp0b97IeYKKKtXWR+arAIa8=`, NAR size 1,938,456
-  bytes, and closure size 1,824,270,528 bytes.
-- Checks: locked format, check, 31-test, and Clippy suites; canonical manifest
-  validation; exact Nix build and flake check; deterministic generation and
-  presentation capability probing, generated-behavior A/B identity, preservation,
-  and replacement process tests;
-  retained live upgrade dogfood at
-  `3b84d83d807c6249efa340fabf9e3d0d0d3ef310`; profile comparison; and `git diff --check`.
+  on x86_64 Linux. Generated managed-runtime identity proof
+  `4beb441301d84039570dd07138da2a6f70b3ed23`; stop-owner proof `dbffad4018f0339bd3d35ea03579d0e09cff73bf`.
+- Artifact: `/nix/store/4gqw9129jg0xn71s81cgdx18v9c96xfx-eon-0.1.0`,
+  generation `g1-a82ca097829410988a897170991d1a5b`, NAR hash
+  `sha256-OKUABmxhFXF9HmqntV2xH9e3+yxipytNZoaTW9InEwU=`, NAR size 1,947,640
+  bytes, and closure size 1,824,279,712 bytes.
+- Checks: locked format, check, 32-test, and Clippy suites; canonical manifest
+  validation; exact Nix build and flake check; deterministic generation,
+  presentation capability, generated-behavior identity, and replacement-owner
+  process tests; retained live upgrade dogfood at
+  `3b84d83d807c6249efa340fabf9e3d0d0d3ef310`; profile comparison; and
+  `git diff --check`.
 - Exercised behavior: bare launch selects only the exact current generation;
   current and fixed-namespace legacy work coexist and can be presented explicitly;
-  supervisor-routed stop names and removes only the selected current generation;
-  exact attach and stop ignore unrelated over-limit generation entries; profile
-  refresh or generated managed-runtime change selects a fresh generation while
-  leaving the older supervisor and Orbit Sessions running.
+  supervisor-routed stop names and removes only the selected owner and refuses a
+  replacement without touching its Sessions; exact attach and stop ignore unrelated
+  over-limit generation entries; profile refresh or generated managed-runtime change
+  selects a fresh generation while leaving older supervisors and Sessions running.
 
 ## Current gaps
 
