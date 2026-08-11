@@ -12,18 +12,18 @@ detailed execution evidence, and Git history retains superseded states.
 
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
-| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `90a8b8ac44afc78c9bf5a08521b8f6bf853cbea2` |
-| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `90a8b8ac44afc78c9bf5a08521b8f6bf853cbea2` |
-| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `90a8b8ac44afc78c9bf5a08521b8f6bf853cbea2` |
-| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `90a8b8ac44afc78c9bf5a08521b8f6bf853cbea2` |
+| EON-C1 | Eon launches one compatible component set and reports every exact component revision | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
+| EON-C2 | One versioned manifest defines the component graph for every distribution channel | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
+| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
+| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
-| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Accepted composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21`; candidate `90a8b8ac44afc78c9bf5a08521b8f6bf853cbea2` |
+| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Accepted composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; proof below |
-| EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Candidate | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; candidate `90a8b8ac44afc78c9bf5a08521b8f6bf853cbea2` |
-| EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly presentable when they advertise the compatible presentation lifecycle, and explicitly stoppable through their supervisor | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `90a8b8ac44afc78c9bf5a08521b8f6bf853cbea2` |
-| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `90a8b8ac44afc78c9bf5a08521b8f6bf853cbea2` |
+| EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Candidate | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
+| EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly presentable when they advertise the compatible presentation lifecycle, and explicitly stoppable through their supervisor | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
+| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 
 ## Approved terminal-host contract EON-C12
 
@@ -246,12 +246,12 @@ detailed execution evidence, and Git history retains superseded states.
   Linux through the Nix alpha package `eon-0.1.0` at
   `/nix/store/04sbq6wc79h2hf1rjq9y9bcvaz5v92hb-eon-0.1.0`, NAR hash
   `sha256-uSidJ5Xf047x0vxjiscmnAHlVZiIvm0ugN6mQldawpc=`.
-- Current candidate: presentation-owner correction at
-  `90a8b8ac44afc78c9bf5a08521b8f6bf853cbea2`, packaged at
-  `/nix/store/slrmd85fpdf8sd8xxzyalakayy7hlar7-eon-0.1.0`, NAR hash
-  `sha256-Vx8TX7FUqF91+vs+Gn0K7n5HW+rxxzLB4cPk7v7/Pmc=`.
+- Current candidate: terminal-host native-decoration wiring at
+  `e77e842fe8c7070a96047dff1bf028ccbd49b788`, packaged at
+  `/nix/store/h7vvb4lrxnyr23lzglclmf02ajwrk2ar-eon-0.1.0`, NAR hash
+  `sha256-SOBxjNVGm0Cp4ntSv9NWV1zACtqZS/DVZJbKf4ABG0c=`.
 - Component graph: `components/eon-alpha-v1.json`, SHA-256
-  `036992de61e047f76c1bd9ec56cd74483a6a5af0dab7971d3fb44f43e99566e7`.
+  `ad7a5e965f102d6adaf2e2910e3ad1797477bd195c191733c4ff982a224c7ede`.
   It selects Orbit source `64db581445bafca1a08a6530f8e44f9c1edbc169`,
   ORBF v1 and ORBS v2 proof `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`,
   ORB-C10 proof `292b2451c9a1d99390334771a681c7f481c996f2`, and Venus source
@@ -349,7 +349,7 @@ detailed execution evidence, and Git history retains superseded states.
 - Lifecycle protocol proof: `fd6b348494111a0d18e241787da14ea99ee117a9`.
   Accepted EON-C11 attach proof: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`
   on x86_64 Linux. The current presentation-owner candidate is
-  `90a8b8ac44afc78c9bf5a08521b8f6bf853cbea2`.
+  `e77e842fe8c7070a96047dff1bf028ccbd49b788`.
 - Artifact: `/nix/store/04sbq6wc79h2hf1rjq9y9bcvaz5v92hb-eon-0.1.0`,
   generation `g1-f7615184ba28993ce1c1c779751c0d7d`, NAR hash
   `sha256-uSidJ5Xf047x0vxjiscmnAHlVZiIvm0ugN6mQldawpc=`.
