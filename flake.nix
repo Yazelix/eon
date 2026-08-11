@@ -517,6 +517,7 @@
               ./Cargo.lock
               ./Cargo.toml
               ./flake.nix
+              ./flake.lock
               ./components/eon-alpha-v1.json
               ./crates
             ];
