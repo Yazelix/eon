@@ -13,7 +13,7 @@ detailed execution evidence, and Git history retains superseded states.
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
 | EON-C1 | Eon validates and launches one compatible component set and reports every exact component revision | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
-| EON-C2 | One versioned manifest defines component identity, compatibility, and abstract artifacts for every distribution channel | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
+| EON-C2 | One versioned manifest defines component identity, compatibility, and abstract artifacts for every distribution channel | Eon | Proven | `60e9145aa204d387a28d917be8a4fe1f5ddcd4ef`; proof below |
 | EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
@@ -249,12 +249,13 @@ detailed execution evidence, and Git history retains superseded states.
   Linux through the Nix alpha package `eon-0.1.0` at
   `/nix/store/04sbq6wc79h2hf1rjq9y9bcvaz5v92hb-eon-0.1.0`, NAR hash
   `sha256-uSidJ5Xf047x0vxjiscmnAHlVZiIvm0ugN6mQldawpc=`.
-- Current candidate: terminal-host native-decoration wiring at
-  `e77e842fe8c7070a96047dff1bf028ccbd49b788`, packaged at
-  `/nix/store/h7vvb4lrxnyr23lzglclmf02ajwrk2ar-eon-0.1.0`, NAR hash
-  `sha256-SOBxjNVGm0Cp4ntSv9NWV1zACtqZS/DVZJbKf4ABG0c=`.
-- Component graph at that candidate: `components/eon-alpha-v1.json`, SHA-256
-  `ad7a5e965f102d6adaf2e2910e3ad1797477bd195c191733c4ff982a224c7ede`.
+- Current EON-C2 proof: `60e9145aa204d387a28d917be8a4fe1f5ddcd4ef`
+  on x86_64 Linux, packaged at
+  `/nix/store/n5vd1xr219b5xhmsf7vb68bwk93bwl6v-eon-0.1.0`, generation
+  `g1-61f104609121df6698b476433a852dd9`, NAR hash
+  `sha256-9VKowtFbrmqR4F7GGrGQQ0yDTS9u2wFoZbQVvIkdsbs=`.
+- Component graph: `components/eon-alpha-v2.json`, SHA-256
+  `cfe9ccc4932e7260afa17bbdec211cfafadc2e7a59e6bf349983840be19edf5b`.
   It selects Orbit source `64db581445bafca1a08a6530f8e44f9c1edbc169`,
   ORBF v1 and ORBS v2 proof `9d6d2bb37f20ab4ad9e186c7bc715eabef43e757`,
   ORB-C10 proof `292b2451c9a1d99390334771a681c7f481c996f2`, and Venus source
@@ -263,13 +264,14 @@ detailed execution evidence, and Git history retains superseded states.
   `6ef19afddaedcbe2b9ed0996e31bc02df5d854ac`, VEN-C8 proof
   `33a3d9af9f4c6015301ad6829fe733413c5b683d`, and VEN-C9 proof
   `90988f6ebcde68338e202a9c637c59398aafe93d`.
-- Checks: canonical manifest validation; locked Rust format, check, 30-test, and
-  Clippy suites; exact Nix build and flake check; installed version, commit, and
-  store-path comparison; workspace and presentation-owner regression checks; README
-  LOC checks; and `git diff --check`.
+- Checks: canonical manifest validation and removed-field mutations; locked Rust
+  format, check, 34-test, and Clippy suites; exact Nix build and flake check;
+  invalid-graph command matrix; installed version, commit, profile, and store-path
+  comparison; workspace and presentation-owner regressions; README LOC; and
+  `git diff --check`.
 - Retained dogfood: native standalone input and live-process survival passed at
-  `4353e94ebc015453c77914a2be013a950f49c8cc`; the profile refresh at this proof
-  revision preserved the previous three-Session generation and legacy workspace.
+  `4353e94ebc015453c77914a2be013a950f49c8cc`; the EON-C2 profile refresh preserved
+  three live namespaces and all six pre-existing Sessions.
 
 ### EON-C12 — single-surface terminal host
 
