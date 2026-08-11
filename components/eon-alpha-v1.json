@@ -26,7 +26,8 @@
       { "component": "venus", "contract": "VEN-C3" },
       { "component": "venus", "contract": "VEN-C4" },
       { "component": "venus", "contract": "VEN-C7" },
-      { "component": "venus", "contract": "VEN-C8" }
+      { "component": "venus", "contract": "VEN-C8" },
+      { "component": "venus", "contract": "VEN-C9" }
     ],
     "required_interfaces": [
       { "component": "orbit", "interface": "ORBF", "version": 1 },
@@ -107,7 +108,7 @@
       "launch": {
         "artifact": "executable",
         "arguments": [],
-        "inputs": ["orbit-socket", "optional-eon-workspace-socket"]
+        "inputs": ["orbit-socket", "optional-eon-workspace-socket", "optional-native-decorations"]
       }
     },
     {

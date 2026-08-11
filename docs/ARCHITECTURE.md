@@ -80,7 +80,8 @@ tags it never requests. The running Eon supervisor remains the only live
 topology, action, launch-mode, presentation-process, and generation-lifecycle
 owner; the CLI and Venus never infer state from each other, terminal output, or
 the wire format. An idempotent presentation action preserves the supervisor's
-live Venus child or starts one replacement after detachment.
+live Venus child or starts one replacement after detachment with the
+supervisor's original native-decoration choice.
 A side-effect-free presentation-capability inspection leaves existing runtime
 reports unchanged. Supervisors with runtime inspection but no presentation
 actions remain discoverable but not presentable. In terminal-host mode the same
@@ -121,7 +122,7 @@ Each composed build consumes:
 - declared component artifacts or package outputs;
 - available checksums and provenance;
 - a small set of declared launch and configuration inputs, including Venus's
-  optional Eon workspace endpoint.
+  optional Eon workspace endpoint and native decorations.
 
 Nix provides those inputs during alpha. Eon code receives component paths as
 opaque launch inputs and does not invoke a Nix evaluator during normal use. It

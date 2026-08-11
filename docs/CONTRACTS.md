@@ -30,13 +30,16 @@ detailed execution evidence, and Git history retains superseded states.
 - Consumer: one local Eon user or an explicitly approved composition that needs
   one native terminal surface without Eon's tab and pane model.
 - Trigger: the consumer invokes `eon terminal -- COMMAND...` with one non-empty
-  exact argv.
+  exact argv. An optional `--no-decorations` before `--` requests a native
+  surface without window-system decorations.
 - Result: Eon starts one Orbit-owned Session for the exact command and launches
   Venus with only that Session endpoint. The supervisor remains the sole Venus
   process launcher: a repeated invocation preserves an attached surface, while
   an invocation after detachment opens one replacement against the same live
-  Session. The current runtime generation remains authoritative for presentation,
-  inspection, stop, concurrent-launch convergence, child exit, and cleanup.
+  Session and with the supervisor's original decoration choice. A later invocation
+  does not mutate a live supervisor's choice. The current runtime generation
+  remains authoritative for presentation, inspection, stop, concurrent-launch
+  convergence, child exit, and cleanup.
 - Important failures: a missing command, incompatible or corrupt supervisor,
   component mismatch, partial startup, or a live supervisor in the other launch
   mode fails explicitly. Workspace actions against terminal mode return the
@@ -47,7 +50,8 @@ detailed execution evidence, and Git history retains superseded states.
 - Boundary: terminal mode adds no Workspace value, tabs, panes, key remapping,
   preset, wrapper process, persisted mode marker, remote access,
   second app identity, compositor focus guarantee, or Zellij policy. Bare `eon`
-  and `eon run` retain their workspace meanings.
+  and `eon run` retain their workspace meanings. Decorated surfaces remain the
+  default for workspace mode and terminal mode.
 - Approval: the user approved this contract and the exact command spelling on
   2026-08-10 for `eon-4is.1`.
 

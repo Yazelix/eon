@@ -10,6 +10,8 @@ installation, and proven contract changes.
   presentation, stop, concurrent-launch, child-exit, and cleanup ownership.
   Repeated launches preserve the attached surface; after detachment, the same
   supervisor opens one replacement instead of starting a competing Venus client.
+- Let terminal-host callers request `--no-decorations`; replacement surfaces
+  preserve the supervisor's original native-decoration choice.
 - Supply Symbols Nerd Font Mono to packaged Venus so Yazi can render its
   supported private-use icons without an ambient font.
 - Exit quietly when a downstream reader closes piped CLI output while keeping

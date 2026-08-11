@@ -29,7 +29,7 @@ use workspace::{
 };
 
 const MANIFEST: &str = include_str!("../../../components/eon-alpha-v1.json");
-const USAGE: &str = "usage: eon [run [-- COMMAND...]] | terminal -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
+const USAGE: &str = "usage: eon [run [-- COMMAND...]] | terminal [--no-decorations] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 
 fn current_generation() -> String {
@@ -964,6 +964,7 @@ struct Programs {
     orbit: PathBuf,
     venus: PathBuf,
     session_bin: Option<PathBuf>,
+    venus_decorations: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1165,17 +1166,25 @@ fn integration_mask(shell: &ShellConfig, atuin_nobind: bool) -> u8 {
 
 fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
     match arguments.as_slice() {
-        [] => launch_current(LaunchMode::Workspace, &[], true),
-        [command] if command == "run" => launch_current(LaunchMode::Workspace, &[], false),
+        [] => launch_current(LaunchMode::Workspace, &[], true, true),
+        [command] if command == "run" => launch_current(LaunchMode::Workspace, &[], false, true),
         [command, separator, child @ ..]
             if command == "run" && separator == "--" && !child.is_empty() =>
         {
-            launch_current(LaunchMode::Workspace, child, false)
+            launch_current(LaunchMode::Workspace, child, false, true)
         }
         [command, separator, child @ ..]
             if command == "terminal" && separator == "--" && !child.is_empty() =>
         {
-            launch_current(LaunchMode::Terminal, child, true)
+            launch_current(LaunchMode::Terminal, child, true, true)
+        }
+        [command, flag, separator, child @ ..]
+            if command == "terminal"
+                && flag == "--no-decorations"
+                && separator == "--"
+                && !child.is_empty() =>
+        {
+            launch_current(LaunchMode::Terminal, child, true, false)
         }
         [command] if command == "attach" => attach_generation(&current_generation()),
         [command, generation] if command == "attach" => {
@@ -1233,6 +1242,7 @@ fn launch_current(
     mode: LaunchMode,
     child: &[OsString],
     attach_existing: bool,
+    decorations: bool,
 ) -> Result<i32, String> {
     let root = runtime_directory();
     let generation = current_generation();
@@ -1260,8 +1270,9 @@ fn launch_current(
     }
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
+    let programs = programs(decorations);
     match supervise(
-        &programs(),
+        &programs,
         &config,
         &runtime.join("orbit.sock"),
         child,
@@ -1415,8 +1426,9 @@ fn request_id() -> String {
 fn attach_legacy(runtime: &Path) -> Result<i32, String> {
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
+    let programs = programs(true);
     venus_command(
-        &programs(),
+        &programs,
         &config,
         &runtime.join("orbit.sock"),
         LaunchMode::Workspace,
@@ -1460,6 +1472,9 @@ fn present_at(
 
 fn venus_command(programs: &Programs, config: &Path, socket: &Path, mode: LaunchMode) -> Command {
     let mut command = Command::new(&programs.venus);
+    if !programs.venus_decorations {
+        command.arg("--no-decorations");
+    }
     command.arg(socket);
     if mode == LaunchMode::Workspace {
         command.arg(socket.with_file_name("eon.sock"));
@@ -1468,11 +1483,12 @@ fn venus_command(programs: &Programs, config: &Path, socket: &Path, mode: Launch
     command
 }
 
-fn programs() -> Programs {
+fn programs(venus_decorations: bool) -> Programs {
     Programs {
         orbit: configured_program("EON_ORBIT", "yazelix-orbit"),
         venus: configured_program("EON_VENUS", "yazelix-venus"),
         session_bin: nonempty_environment_path("EON_SESSION_BIN"),
+        venus_decorations,
     }
 }
 
@@ -2533,6 +2549,7 @@ mod tests {
             orbit: "/managed/orbit".into(),
             venus: "/managed/venus".into(),
             session_bin: Some("/managed/bin".into()),
+            venus_decorations: true,
         };
         let config = root.as_path();
         let socket = Path::new("/runtime/orbit.sock");
@@ -2596,10 +2613,11 @@ mod tests {
 
     #[test]
     fn venus_receives_workspace_endpoint_only_in_workspace_mode() {
-        let programs = Programs {
+        let mut programs = Programs {
             orbit: "/managed/orbit".into(),
             venus: "/managed/venus".into(),
             session_bin: None,
+            venus_decorations: true,
         };
         let config = Path::new("/config/eon");
         let socket = Path::new("/runtime/orbit.sock");
@@ -2614,6 +2632,16 @@ mod tests {
         assert_eq!(
             terminal.get_args().map(OsString::from).collect::<Vec<_>>(),
             ["/runtime/orbit.sock"].map(OsString::from)
+        );
+
+        programs.venus_decorations = false;
+        let undecorated = venus_command(&programs, config, socket, LaunchMode::Terminal);
+        assert_eq!(
+            undecorated
+                .get_args()
+                .map(OsString::from)
+                .collect::<Vec<_>>(),
+            ["--no-decorations", "/runtime/orbit.sock"].map(OsString::from)
         );
     }
 
@@ -2633,6 +2661,7 @@ mod tests {
                 orbit,
                 venus: root.join("missing-venus"),
                 session_bin: None,
+                venus_decorations: true,
             },
             &config,
             &socket,
@@ -2700,6 +2729,7 @@ mod tests {
                 orbit,
                 venus,
                 session_bin: None,
+                venus_decorations: true,
             },
             &config,
             &socket,

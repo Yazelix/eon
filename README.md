@@ -115,10 +115,14 @@ without Eon's tab and pane shortcuts:
 
 ```sh
 eon terminal -- COMMAND...
+eon terminal --no-decorations -- COMMAND...
 ```
 
 This mode hosts exactly one Orbit Session, gives Venus only the Orbit endpoint,
 and keeps Eon's generation, presentation, stop, child-exit, and cleanup lifecycle.
+A terminal host uses native window decorations unless `--no-decorations` is
+selected. The supervisor preserves its original choice when it replaces a
+detached surface.
 A repeated invocation preserves the active surface; after that surface closes,
 another invocation asks the supervisor to open one replacement against the same
 Session. Workspace actions are unavailable, and a live workspace and terminal
@@ -147,7 +151,7 @@ The command surface is small:
 | `eon` | Present the exact current-generation workspace, or start it with the default shell |
 | `eon run` | Explicitly start one Orbit session and one Venus window with the default shell |
 | `eon run -- COMMAND...` | Run one explicit command as the Orbit-owned PTY child |
-| `eon terminal -- COMMAND...` | Start or present one command in a native terminal surface without Eon workspace actions |
+| `eon terminal [--no-decorations] -- COMMAND...` | Start or present one command in a native terminal surface without Eon workspace actions |
 | `eon attach` | Present Eon Desktop against the exact current-generation launch mode |
 | `eon attach GENERATION` | Present one explicitly selected compatible generation, including `legacy` |
 | `eon generations [--json]` | List validated current, previous, legacy, dead, incompatible, unreachable, and corrupt generations |
@@ -291,15 +295,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 305 |
+| README | 309 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 527 |
+| Architecture and contracts | 532 |
 | Distribution and references | 230 |
-| Changelog | 61 |
-| Rust source and tests | 5,639 |
+| Changelog | 63 |
+| Rust source and tests | 5,669 |
 | Cargo manifests | 35 |
-| Component manifest | 374 |
+| Component manifest | 375 |
 | Nix composition | 606 |
 | Product defaults | 0 |
-| **Total** | **8,440** |
+| **Total** | **8,482** |

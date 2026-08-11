@@ -276,7 +276,7 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     let child = Command::new(&binary)
-        .args(["terminal", "--"])
+        .args(["terminal", "--no-decorations", "--"])
         .arg(&command)
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
@@ -353,10 +353,10 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
         .lines()
         .map(|line| line.split('|').next().unwrap().to_string())
         .collect::<Vec<_>>();
-    assert_eq!(venus_log.matches("|1|").count(), 2);
+    assert_eq!(venus_log.matches("|2|--no-decorations|").count(), 2);
     assert_eq!(
         venus_log
-            .matches(&format!("|{}|", generation.join("orbit.sock").display()))
+            .matches(&generation.join("orbit.sock").display().to_string())
             .count(),
         2
     );
