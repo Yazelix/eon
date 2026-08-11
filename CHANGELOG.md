@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Include generated managed-shell and private Session command behavior in the
+  runtime-generation identity so profile updates select a fresh supervisor
+  without stopping older work.
 - Preserve every opaque Orbit endpoint byte in workspace-action JSON by
   reporting `endpoint` as an ordered integer array instead of a lossy string.
 - Add `eon terminal -- COMMAND...` to host one exact Orbit-owned command in a

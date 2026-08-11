@@ -516,6 +516,7 @@
             fileset = lib.fileset.unions [
               ./Cargo.lock
               ./Cargo.toml
+              ./flake.nix
               ./components/eon-alpha-v1.json
               ./crates
             ];

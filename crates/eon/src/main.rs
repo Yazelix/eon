@@ -43,6 +43,7 @@ fn current_generation() -> String {
         include_bytes!("../Cargo.toml"),
         include_bytes!("../../../Cargo.toml"),
         include_bytes!("../../../Cargo.lock"),
+        include_bytes!("../../../flake.nix"),
         MANIFEST.as_bytes(),
     ])
 }
