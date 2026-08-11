@@ -359,11 +359,11 @@ detailed execution evidence, and Git history retains superseded states.
 - Lifecycle protocol proof: `fd6b348494111a0d18e241787da14ea99ee117a9`.
   Accepted EON-C11 attach proof: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`
   on x86_64 Linux. Generated managed-runtime identity proof:
-  `5b15528b67417b34067832212f9dbee83ae502b5`.
-- Artifact: `/nix/store/83naa3zyqkqy6r3nmvamkid51psvr4cn-eon-0.1.0`,
-  generation `g1-54b3f313c849f10aac327bd9901d1c24`, NAR hash
-  `sha256-Llv3GvaOyJYs24I8h5FoeC8Z1X820aL0tPE+aC9EkLw=`, NAR size 1,934,360
-  bytes, and closure size 1,824,266,432 bytes.
+  `4beb441301d84039570dd07138da2a6f70b3ed23`.
+- Artifact: `/nix/store/mc4y160gdmqi0xcp16qar1khhpjfbsdh-eon-0.1.0`,
+  generation `g1-fe3c1a4491107b6ba50fdd777fd6ec21`, NAR hash
+  `sha256-7nj6AQ/Id1aUDbcsLMoLQp0b97IeYKKKtXWR+arAIa8=`, NAR size 1,938,456
+  bytes, and closure size 1,824,270,528 bytes.
 - Checks: locked format, check, 31-test, and Clippy suites; canonical manifest
   validation; exact Nix build and flake check; deterministic generation and
   presentation capability probing, generated-behavior A/B identity, preservation,
