@@ -252,24 +252,25 @@ detailed execution evidence, and Git history retains superseded states.
 ### EON-C1 through EON-C4 and the current EON-C8 topology — composition
 
 - Current EON-C1 through EON-C4 composition proof:
-  `a2792cc77f8254cc277d64eb41f65725b69ccf70` on x86_64 Linux. The EON-C2
+  `0d86cf0488f7899ce565de39347b0420a0cb9129` on x86_64 Linux. The EON-C2
   graph proof remains `da0d160801c5db6b6b982967b5bdc28a11f9b5fb`. Schema 3 graph
   `components/eon-alpha-v3.json`, SHA-256
-  `b6e9018e3d32fe2184776d876f2ecf14de6e17ad1df39d0b30b1d8d8a97ac6b8`,
+  `9c2145ab34b1ca8dfa3dea00e4fb301bac3ebc67b29255fdbc9d11b5b9f41254`,
   selects Orbit source with ORB-C2 and ORB-C6 proof at
   `f4f0b0a82333d088ad40e2b63108d4905466e8f2`, retains ORB-C11 and canonical
-  ORBS v3 proof at `3ee7c80005f3d2bbe81e539799327803716f6174`, and retains Venus source,
-  VEN-C8 proof, and partially proved VEN-C10 at
+  ORBS v3 proof at `3ee7c80005f3d2bbe81e539799327803716f6174`, selects Venus source and
+  VEN-C1 proof at `457b3da837f07d186a99ca20930f2146c3d78f36`, retains VEN-C8 and VEN-C10 at
   `9c56eb17613e10ef7712a1852b049ed63cf22b18`, while retaining VEN-C13 at
   `2d3498258920736eb1bdae2b8869b6547b9735d4`. Generation:
-  `g1-4c68e2dc43e4b446c4bd073be832d368`.
-- Exact full Eon package: `/nix/store/08nq6m5bj1niag9y98wrfbv64c6f6n00-eon-0.1.0`,
-  NAR hash `sha256-xqZSqAHacOUkmRt5/8Gq4N1mjjRTvDeCjZbqb16UxQ8=`. The active
+  `g1-01e141bdbaae3253f716b755fe9e210b`.
+- Exact full Eon package: `/nix/store/m5wcv3d41658srcfin4r0whrrllw10dg-eon-0.1.0`,
+  NAR hash `sha256-EfSvrh8zfJB13krVc2ZsDSMAf3EpLiIYEdyf1yqhUQE=`. The active
   profile resolves this artifact without restarting live supervisors or Sessions.
-- Eonova rollout source `fbe64270ea6a73381aaa7b16e3a42746c7d20a0d` packages exact EonTerm
-  `/nix/store/if65frajh884m0fjn06kvpxa0hrzn097-eonterm-0.1.0` with unchanged
-  Mars-free Nova at `/nix/store/g86nmnqgjp8r17jzlvbi2b99jkllnsi3-eonova-0.1.0`,
-  NAR hash `sha256-Npk4QkX34t07wrcEtnMIikvaTUkO01gcJrs7hwnuf8s=`. Its profile resolves it.
+- Eonova rollout source `c4e68e77301ea5d1816d955587c162be7524dff4` packages exact EonTerm
+  `/nix/store/bsrcyizp1km7d3i9llylxyp2227nvfbb-eonterm-0.1.0` with unchanged
+  Mars-free Nova at `/nix/store/d0hchzi9kcz2mkxf9n1lcgvbxj4a21jf-eonova-0.1.0`,
+  NAR hash `sha256-C2qyrJ+tTYn9UxJ84TTNPbJdEzEWg7tmjkeT7nNG1As=`. Native COSMIC
+  Wayland dogfood renders adjacent full blocks without seams or color bleed.
 - Prior terminal-clipboard-write composition proof:
   `0e25ebc2311d7e41edf90c940f8211dd5839bb83` on x86_64 Linux. Schema 3
   graph `components/eon-alpha-v3.json`, SHA-256
