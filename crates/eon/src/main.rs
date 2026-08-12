@@ -2227,7 +2227,6 @@ mod tests {
 
     #[test]
     fn orbit_uses_configured_argv_only_for_default_sessions() {
-        let palette = "000000,cd0000,00cd00,cdcd00,1093f5,cd00cd,00cdcd,faebd7,404040,ff0000,00ff00,ffff00,11b5f6,ff00ff,00ffff,ffffff";
         let root = temporary_directory();
         let programs = Programs {
             orbit: "/managed/orbit".into(),
@@ -2250,7 +2249,7 @@ mod tests {
                 "serve",
                 "/runtime/orbit.sock",
                 "--ansi-palette-v1",
-                palette,
+                EON_ANSI_PALETTE,
                 "--",
                 "eon-fish",
                 "--no-config",
@@ -2288,7 +2287,7 @@ mod tests {
                 "serve",
                 "/runtime/orbit.sock",
                 "--ansi-palette-v1",
-                palette,
+                EON_ANSI_PALETTE,
                 "--",
                 "codex",
                 "--model",
