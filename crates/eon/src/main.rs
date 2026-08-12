@@ -29,6 +29,7 @@ use workspace::{
 };
 
 const MANIFEST: &str = include_str!("../../../components/eon-alpha-v3.json");
+const EON_ANSI_PALETTE: &str = "000000,cd0000,00cd00,cdcd00,1093f5,cd00cd,00cdcd,faebd7,404040,ff0000,00ff00,ffff00,11b5f6,ff00ff,00ffff,ffffff";
 const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
@@ -1622,6 +1623,8 @@ fn orbit_command(
     orbit_command
         .arg("serve")
         .arg(socket)
+        .arg("--ansi-palette-v1")
+        .arg(EON_ANSI_PALETTE)
         .arg("--")
         .env("EON_CONFIG_HOME", config);
     if let Some(session_bin) = &programs.session_bin {
@@ -2071,12 +2074,12 @@ fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, Availability, Failure, LaunchMode, LifecycleResponse, Programs, Response, Runtime,
-        VERSION, create_control_listener, current_generation, discover_generations, effective_uid,
-        encode_lifecycle_response, encode_response, generation_directory, generation_id,
-        lock_supervisor_startup, orbit_command, prepare_configuration, prepare_runtime,
-        probe_presentable_runtime, read_control_request, supervise, valid_generation,
-        venus_command, xdg_path,
+        Action, Availability, EON_ANSI_PALETTE, Failure, LaunchMode, LifecycleResponse, Programs,
+        Response, Runtime, VERSION, create_control_listener, current_generation,
+        discover_generations, effective_uid, encode_lifecycle_response, encode_response,
+        generation_directory, generation_id, lock_supervisor_startup, orbit_command,
+        prepare_configuration, prepare_runtime, probe_presentable_runtime, read_control_request,
+        supervise, valid_generation, venus_command, xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -2224,6 +2227,7 @@ mod tests {
 
     #[test]
     fn orbit_uses_configured_argv_only_for_default_sessions() {
+        let palette = "000000,cd0000,00cd00,cdcd00,1093f5,cd00cd,00cdcd,faebd7,404040,ff0000,00ff00,ffff00,11b5f6,ff00ff,00ffff,ffffff";
         let root = temporary_directory();
         let programs = Programs {
             orbit: "/managed/orbit".into(),
@@ -2245,6 +2249,8 @@ mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
+                "--ansi-palette-v1",
+                palette,
                 "--",
                 "eon-fish",
                 "--no-config",
@@ -2281,6 +2287,8 @@ mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
+                "--ansi-palette-v1",
+                palette,
                 "--",
                 "codex",
                 "--model",
@@ -2425,9 +2433,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(orbit_log).unwrap(),
             format!(
-                "{}\nserve\n{}\n--\ncodex\n--model\ntest\n",
+                "{}\nserve\n{}\n--ansi-palette-v1\n{}\n--\ncodex\n--model\ntest\n",
                 config.display(),
-                socket.display()
+                socket.display(),
+                EON_ANSI_PALETTE
             )
         );
         assert_eq!(

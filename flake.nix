@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
     orbit = {
-      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=3ee7c80005f3d2bbe81e539799327803716f6174";
+      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=f4f0b0a82333d088ad40e2b63108d4905466e8f2";
       flake = false;
     };
     venus = {
@@ -12,7 +12,7 @@
       flake = false;
     };
     protocol = {
-      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=3ee7c80005f3d2bbe81e539799327803716f6174";
+      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=f4f0b0a82333d088ad40e2b63108d4905466e8f2";
       flake = false;
     };
     helix = {
@@ -139,6 +139,7 @@
         pkgs.wayland
       ];
       protocolRevision = (builtins.head venusIdentity.requires).revision;
+      venusProtocolSourceRevision = "3ee7c80005f3d2bbe81e539799327803716f6174";
       workspaceProtocolRevision = "4af395aea06c230ee6b18cf0755ae25915c0b88d";
       venusSource =
         assert protocol.rev == protocolRevision;
@@ -149,7 +150,7 @@
           ln -s ${./crates/eon-workspace-protocol} "$out/eon-workspace-protocol"
           substituteInPlace "$out/Cargo.toml" \
             --replace-fail \
-              'orbit-protocol = { git = "https://github.com/luccahuguet/orbit.git", rev = "${protocolRevision}" }' \
+              'orbit-protocol = { git = "https://github.com/luccahuguet/orbit.git", rev = "${venusProtocolSourceRevision}" }' \
               'orbit-protocol = { path = "orbit-protocol" }'
           substituteInPlace "$out/Cargo.toml" \
             --replace-fail \
@@ -157,7 +158,7 @@
               'eon-workspace-protocol = { path = "eon-workspace-protocol" }'
           substituteInPlace "$out/Cargo.lock" \
             --replace-fail \
-              'source = "git+https://github.com/luccahuguet/orbit.git?rev=${protocolRevision}#${protocolRevision}"' \
+              'source = "git+https://github.com/luccahuguet/orbit.git?rev=${venusProtocolSourceRevision}#${venusProtocolSourceRevision}"' \
               ""
           substituteInPlace "$out/Cargo.lock" \
             --replace-fail \

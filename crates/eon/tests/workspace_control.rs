@@ -264,7 +264,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     let command = root.join("command");
     executable(
         &orbit,
-        "#!/bin/sh\nprintf '%s\\n' \"$$\" >> \"$EON_TEST_ORBIT_LOG\"\nendpoint=$2\nprintf '%s' \"$$\" > \"$endpoint\"\nshift 3\n\"$@\"\nstatus=$?\nrm -f \"$endpoint\"\nexit $status\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$$\" >> \"$EON_TEST_ORBIT_LOG\"\nendpoint=$2\nprintf '%s' \"$$\" > \"$endpoint\"\nshift 5\n\"$@\"\nstatus=$?\nrm -f \"$endpoint\"\nexit $status\n",
     );
     executable(
         &venus,

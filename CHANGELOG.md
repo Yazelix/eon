@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Initialize new Eon and EonTerm Sessions with Eon's vivid ANSI palette while
+  preserving program overrides, direct RGB, extended colors, and live older
+  runtime generations.
 - Expose generation listing, exact attach, and owner-routed stop through
   `eonterm` so its separate runtime namespace remains manageable across updates.
   Reconnect guidance names the exact generation.

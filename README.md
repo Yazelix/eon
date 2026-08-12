@@ -146,6 +146,10 @@ Terminal programs can request bounded plain-text clipboard writes through Orbit;
 Venus delivers them to the requested ordinary or primary Linux clipboard.
 `Ctrl+Shift+V` and the native Paste key read the ordinary clipboard and send one
 semantic paste to Orbit, which alone applies terminal paste encoding.
+New Eon and EonTerm Sessions use Eon's vivid 16-color ANSI palette. Programs
+retain normal OSC override and reset behavior; direct RGB and palette indices
+16 through 255 remain unchanged. Existing live Sessions keep their current
+palette until they are started in the refreshed runtime generation.
 
 While the foreground supervisor is running, Eon owns horizontal tab order and
 one vertical pane selection per tab. Each pane starts and maps to a distinct
@@ -324,15 +328,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 234 |
-| README | 338 |
+| README | 342 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 632 |
 | Distribution and references | 231 |
-| Changelog | 88 |
-| Rust source and tests | 6,010 |
+| Changelog | 91 |
+| Rust source and tests | 6,019 |
 | Cargo manifests | 35 |
 | Component manifest | 316 |
-| Nix composition | 698 |
+| Nix composition | 699 |
 | Product defaults | 0 |
-| **Total** | **8,786** |
+| **Total** | **8,803** |

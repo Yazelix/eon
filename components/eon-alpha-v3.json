@@ -42,7 +42,7 @@
       "id": "orbit",
       "project": "Eon Sessions",
       "version": "0.1.0",
-      "revision": "3ee7c80005f3d2bbe81e539799327803716f6174",
+      "revision": "f4f0b0a82333d088ad40e2b63108d4905466e8f2",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -54,11 +54,11 @@
       ],
       "contracts": [
         { "id": "ORB-C1", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
-        { "id": "ORB-C2", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+        { "id": "ORB-C2", "proof": "f4f0b0a82333d088ad40e2b63108d4905466e8f2" },
         { "id": "ORB-C3", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
         { "id": "ORB-C4", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
         { "id": "ORB-C5", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
-        { "id": "ORB-C6", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
+        { "id": "ORB-C6", "proof": "f4f0b0a82333d088ad40e2b63108d4905466e8f2" },
         { "id": "ORB-C7", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
         { "id": "ORB-C8", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
         { "id": "ORB-C9", "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
@@ -99,7 +99,7 @@
       "requires": [
         {
           "component": "orbit",
-          "revision": "3ee7c80005f3d2bbe81e539799327803716f6174",
+          "revision": "f4f0b0a82333d088ad40e2b63108d4905466e8f2",
           "interfaces": [
             { "id": "ORBF", "version": 1, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
             { "id": "ORBS", "version": 3, "proof": "3ee7c80005f3d2bbe81e539799327803716f6174" }
