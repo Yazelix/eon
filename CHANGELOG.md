@@ -30,13 +30,10 @@ installation, and proven contract changes.
   without stopping older work.
 - Preserve every opaque Orbit endpoint byte in workspace-action JSON by
   reporting `endpoint` as an ordered integer array instead of a lossy string.
-- Add `eon terminal -- COMMAND...` to host one exact Orbit-owned command in a
-  native Venus surface without Eon workspace actions while retaining generation,
-  presentation, stop, concurrent-launch, child-exit, and cleanup ownership.
-  Repeated launches preserve the attached surface; after detachment, the same
-  supervisor opens one replacement instead of starting a competing Venus client.
-- Let terminal-host callers request `--no-decorations`; replacement surfaces
-  preserve the supervisor's original native-decoration choice.
+- Publish `eonterm [--no-decorations] -- COMMAND...` as the slim reusable
+  terminal product. It preserves Eon's proved exact-command lifecycle while
+  excluding the managed shell and tool bundle. Remove the former `eon terminal`
+  spelling without an alias.
 - Supply Symbols Nerd Font Mono to packaged Venus so Yazi can render its
   supported private-use icons without an ambient font.
 - Exit quietly when a downstream reader closes piped CLI output while keeping

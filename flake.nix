@@ -622,6 +622,47 @@
             platforms = [ system ];
           };
         };
+      eontermPackage =
+        assert manifest.composition.services == [ orbitIdentity.id ];
+        assert manifest.composition.clients == [ venusIdentity.id ];
+        eonPackage.overrideAttrs (_: {
+          pname = "eonterm";
+          desktopItems = [ ];
+          postInstall = ''
+            mv "$out/bin/eon" "$out/bin/eonterm"
+            install -Dm444 ${./LICENSE} "$out/share/licenses/eonterm/LICENSE"
+          '';
+          postFixup = ''
+            wrapProgram "$out/bin/eonterm" \
+              --set EON_ORBIT "${orbitPackage}/bin/yazelix-orbit" \
+              --set EON_VENUS "${venusPackage}/bin/yazelix-venus" \
+              --unset EON_SESSION_BIN \
+              --prefix TERMINFO_DIRS : "${orbitPackage}/share/terminfo"
+          '';
+          meta = {
+            description = "Reusable Eon terminal product";
+            license = lib.licenses.asl20;
+            mainProgram = "eonterm";
+            platforms = [ system ];
+          };
+        });
+      eontermClosure = pkgs.closureInfo { rootPaths = [ eontermPackage ]; };
+      eontermClosureCheck = pkgs.runCommand "eonterm-closure-check" { } ''
+        for required in ${orbitPackage} ${venusPackage}; do
+          ${pkgs.gnugrep}/bin/grep -Fx "$required" ${eontermClosure}/store-paths
+        done
+        for forbidden in \
+          ${eonPackage} \
+          ${nushellPackage} ${bashPackage} ${zshPackage} ${fishPackage} \
+          ${starshipPackage} ${zoxidePackage} ${atuinPackage} ${carapacePackage} \
+          ${helixPackage} ${yaziPackage} ${lazygitPackage}; do
+          ! ${pkgs.gnugrep}/bin/grep -Fx "$forbidden" ${eontermClosure}/store-paths
+        done
+        test ! -e ${eontermPackage}/libexec/eon
+        ${pkgs.gnugrep}/bin/grep -F 'unset EON_SESSION_BIN' ${eontermPackage}/bin/eonterm
+        ! ${pkgs.gnugrep}/bin/grep -F '/libexec/eon/bin' ${eontermPackage}/bin/eonterm
+        ${pkgs.coreutils}/bin/touch "$out"
+      '';
       managedCommandPathCheck = pkgs.runCommand "eon-managed-command-path-check" { } ''
         export HOME="$TMPDIR" EON_CONFIG_HOME="$TMPDIR/config" PATH=${eonPackage}/libexec/eon/bin
         for command in nu bash zsh fish; do
@@ -633,13 +674,23 @@
       '';
     in
     {
-      packages.${system}.default = eonPackage;
-      apps.${system}.default = {
-        type = "app";
-        program = "${eonPackage}/bin/eon";
+      packages.${system} = {
+        default = eonPackage;
+        eonterm = eontermPackage;
+      };
+      apps.${system} = {
+        default = {
+          type = "app";
+          program = "${eonPackage}/bin/eon";
+        };
+        eonterm = {
+          type = "app";
+          program = "${eontermPackage}/bin/eonterm";
+        };
       };
       checks.${system} = {
         default = eonPackage;
+        eonterm-closure = eontermClosureCheck;
         managed-command-path = managedCommandPathCheck;
         shell-environment = shellEnvironmentCheck;
       };

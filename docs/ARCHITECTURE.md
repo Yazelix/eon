@@ -2,9 +2,9 @@
 
 ## Product boundary
 
-The Eon orchestrator is the thin composition and distribution owner. It gives
-users one product while preserving the boundaries of the projects it
-composes.
+The Eon orchestrator is the thin composition and distribution owner. It ships
+Eon as the full managed product and EonTerm as the reusable terminal product
+while preserving the boundaries of the projects it composes.
 
 | Repository | Subsystem owner | Owns | Eon consumes |
 |---|---|---|---|
@@ -17,7 +17,7 @@ composes.
 | Yazi | Yazi | File management and navigation | A relocatable file-manager artifact and launch contract |
 | LazyGit | LazyGit | Git TUI behavior and configuration | A pinned executable and native configuration inputs |
 | Ratconfig | Ratconfig | User-facing configuration editing | A schema-aware configuration artifact and output contract |
-| Eon | Eon orchestrator | Product policy, launch mode, workspace topology and EONW, component selection, launch, updates, integration checks, distribution | Exact child revisions and their declared artifacts |
+| Eon | Eon orchestrator | Eon and EonTerm product policy, launch mode, workspace topology and EONW, component selection, launch, updates, integration checks, distribution | Exact child revisions and their declared artifacts |
 
 Nova stays independent. Eon may reuse proven ideas from Nova through explicit
 contracts, but the repositories do not share release identity or require each
@@ -25,8 +25,10 @@ other at runtime.
 
 ## Naming boundary
 
-Public documentation presents the composition as **Eon**. It calls durable
-terminal work **Sessions** and does not require users to learn subsystem names.
+Public documentation presents the full composition as **Eon** and its reusable
+terminal product as **EonTerm**. Their only command spellings are `eon` and
+`eonterm`. It calls durable terminal work **Sessions** and does not require
+users to learn subsystem names.
 
 Repository documentation uses **Eon Desktop** and **Eon Sessions**. Engineering
 documentation uses **Eon orchestrator**, **Venus client**, and **Orbit session
@@ -84,7 +86,7 @@ live Venus child or starts one replacement after detachment with the
 supervisor's original native-decoration choice.
 A side-effect-free presentation-capability inspection leaves existing runtime
 reports unchanged. Supervisors with runtime inspection but no presentation
-actions remain discoverable but not presentable. In terminal-host mode the same
+actions remain discoverable but not presentable. In EonTerm mode the same
 private EONW endpoint retains lifecycle authority but returns
 `workspace-unavailable` to topology actions, while Venus receives only Orbit's
 endpoint. EONW carries opaque Orbit endpoint bytes but no terminal content.
@@ -101,7 +103,7 @@ They route changes and audits without creating additional product scope.
 | EONW boundary | `crates/eon-workspace-protocol` | Versioned values, bounded framing, validation, complete workspace snapshots, supervisor identity and capabilities, presentation and stop results, and structured failures | Live topology, lifecycle policy, transport ownership, authorization, or rendering |
 | Component graph | `components/eon-alpha-v3.json` and `crates/eon-manifest` | Stable component identity, compatibility requirements, abstract artifact declarations, graph validation, and version reporting | Resolved package paths, launch policy, or package construction |
 | Managed environment | `crates/eon/src/managed_environment.rs` and its `flake.nix` wiring | Stable managed command names, private configuration projection, exact tool selection, and default interactive policy | Shell, prompt, editor, file-manager, or Git-TUI native behavior |
-| Nix alpha composition | `flake.nix` | Exact source resolution, child builds, opaque launch-path injection, desktop packaging, and the sole alpha installation artifact | Runtime product semantics or a second component graph |
+| Nix alpha composition | `flake.nix` | Exact source resolution, child builds, opaque launch-path injection, full Eon desktop packaging, and the slim EonTerm package | Runtime product semantics or a second component graph |
 
 The supervisor is the composition root for runtime policy. An opaque source-
 and-graph digest selects its private generation namespace. Candidate directories

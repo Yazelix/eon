@@ -6,7 +6,7 @@ use std::{
     fs,
     io::{Read, Write},
     os::unix::{
-        fs::PermissionsExt,
+        fs::{PermissionsExt, symlink},
         net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
@@ -250,14 +250,15 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
 }
 
 #[test]
-fn terminal_host_reopens_without_workspace_or_a_second_session() {
+fn eonterm_reopens_without_workspace_or_a_second_session() {
     let root = temporary_directory();
-    let runtime = root.join("runtime");
+    let runtime = root.join("eonterm");
     let config = root.join("config");
     let child_exit = root.join("child-exit");
     let venus_exit = root.join("venus-exit");
     let orbit_log = root.join("orbit.log");
     let venus_log = root.join("venus.log");
+    let supervisor_log = root.join("supervisor.log");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     let command = root.join("command");
@@ -274,11 +275,15 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
         "#!/bin/sh\nwhile test ! -e \"$EON_TEST_CHILD_EXIT\"; do sleep 0.01; done\n",
     );
 
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let eon = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let binary = root.join("bin/eonterm");
+    fs::create_dir(root.join("bin")).unwrap();
+    symlink(&eon, &binary).unwrap();
     let child = Command::new(&binary)
-        .args(["terminal", "--no-decorations", "--"])
+        .args(["--no-decorations", "--"])
         .arg(&command)
-        .env("EON_RUNTIME_DIR", &runtime)
+        .env_remove("EON_RUNTIME_DIR")
+        .env("XDG_RUNTIME_DIR", &root)
         .env("EON_CONFIG_HOME", &config)
         .env("EON_ORBIT", &orbit)
         .env("EON_VENUS", &venus)
@@ -287,7 +292,7 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
         .env("EON_TEST_ORBIT_LOG", &orbit_log)
         .env("EON_TEST_VENUS_LOG", &venus_log)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(fs::File::create(&supervisor_log).unwrap())
         .spawn()
         .unwrap();
     let mut supervisor = TestProcess {
@@ -305,8 +310,9 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
         .to_string();
 
     let mut repeated = Command::new(&binary)
-        .args(["terminal", "--", "/bin/false"])
-        .env("EON_RUNTIME_DIR", &runtime)
+        .args(["--", "/bin/false"])
+        .env_remove("EON_RUNTIME_DIR")
+        .env("XDG_RUNTIME_DIR", &root)
         .env("EON_CONFIG_HOME", &command)
         .env("EON_ORBIT", &orbit)
         .env("EON_VENUS", &venus)
@@ -328,10 +334,17 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
         assert!(Instant::now() < deadline, "terminal surface did not exit");
         thread::sleep(Duration::from_millis(10));
     }
+    wait_for(&supervisor_log);
+    assert!(
+        fs::read_to_string(&supervisor_log)
+            .unwrap()
+            .contains("Run `eonterm -- COMMAND...` to reconnect")
+    );
 
     let reopened = Command::new(&binary)
-        .args(["terminal", "--", "/bin/false"])
-        .env("EON_RUNTIME_DIR", &runtime)
+        .args(["--", "/bin/false"])
+        .env_remove("EON_RUNTIME_DIR")
+        .env("XDG_RUNTIME_DIR", &root)
         .env("EON_CONFIG_HOME", &command)
         .env("EON_ORBIT", &orbit)
         .env("EON_VENUS", &venus)
@@ -344,7 +357,7 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
     assert!(reopened.status.success());
     let deadline = Instant::now() + Duration::from_secs(5);
     while fs::read_to_string(&venus_log).unwrap().lines().count() != 2 {
-        assert!(Instant::now() < deadline, "terminal host did not reopen");
+        assert!(Instant::now() < deadline, "EonTerm did not reopen");
         thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
@@ -361,12 +374,20 @@ fn terminal_host_reopens_without_workspace_or_a_second_session() {
         2
     );
 
-    let workspace = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    let workspace = invoke(&eon, &runtime, &config, &["workspace", "--json"]);
     assert_eq!(workspace.status.code(), Some(2));
     assert!(stdout(&workspace).contains("\"code\":\"workspace-unavailable\""));
     let wrong_mode = invoke(&binary, &runtime, &config, &[]);
     assert!(!wrong_mode.status.success());
-    assert!(String::from_utf8_lossy(&wrong_mode.stderr).contains("terminal mode"));
+    assert!(String::from_utf8_lossy(&wrong_mode.stderr).contains("usage: eonterm"));
+    let removed = invoke(
+        &eon,
+        &root.join("removed-runtime"),
+        &config,
+        &["terminal", "--", "/bin/false"],
+    );
+    assert!(!removed.status.success());
+    assert!(String::from_utf8_lossy(&removed.stderr).contains("usage: eon "));
 
     fs::write(&child_exit, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);

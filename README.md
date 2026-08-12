@@ -4,25 +4,27 @@
 
 ![Glowing violet three-fold Eon loop](assets/eon.png)
 
-Eon is a greenfield product built around Eon Sessions and Eon Desktop. Its
-canonical component graph also selects the shell, prompt, directory navigator,
-editor, file manager, and Git TUI without reimplementing its child projects.
+This repository ships **Eon**, the full managed product, and **EonTerm**, its
+reusable terminal product. Both use Eon Sessions and Eon Desktop through one
+canonical component graph without reimplementing either child project.
 
 ## Project status
 
 This repository ships the first Nix-only Eon alpha for x86_64 Linux. One Rust
-supervisor launches the accepted Eon Sessions and Eon Desktop revisions, owns
-either a live workspace of independent Sessions or one terminal-host Session,
-supplies one pinned interactive environment, exposes control through EONW v1,
-keeps one configuration root, isolates live runtime generations, and reports
-the canonical component identities. Direct bundles, Home Manager, background
-updates, release automation, and macOS packaging remain outside this slice.
+supervisor launches the accepted Eon Sessions and Eon Desktop revisions. The
+`eon` package owns a live workspace and supplies one pinned interactive
+environment. The slimmer `eonterm` package owns one exact-command Session and
+contains no managed shell or tool bundle. Both expose lifecycle control through
+EONW v1, isolate live runtime generations, and consume the same component
+identities. Direct bundles, Home Manager, background updates, release
+automation, and macOS packaging remain outside this slice.
 
 ## Naming model
 
-**Eon** is the public product name. **Sessions** is its user-facing name for
-durable terminal work. Repository names describe what each repository ships;
-Venus and Orbit identify the underlying engineering subsystems.
+**Eon** is the full public product and `eon` is its command. **EonTerm** is the
+reusable terminal product and `eonterm` is its command. **Sessions** is the
+user-facing name for durable terminal work. Venus and Orbit identify the
+underlying engineering subsystems, not additional products.
 
 | Repository | Product-facing role | Underlying owner |
 |---|---|---|
@@ -50,7 +52,7 @@ Eon / product orchestrator
 
 Each child repository keeps one clear responsibility. Eon selects compatible
 versions, supplies product configuration, launches the composition, and ships
-the result.
+the Eon and EonTerm packages.
 
 Yazelix Nova remains a separate product. Nova provides a compact Yazelix runtime
 on its own architecture and keeps value independent of Eon's progress.
@@ -87,7 +89,15 @@ eon versions
 eon
 ```
 
-The package installs one `Eon` desktop entry and a transparent violet three-fold
+Install only the reusable terminal product when an exact command needs one
+native terminal surface without Eon's managed environment:
+
+```sh
+nix profile add .#eonterm
+eonterm -- COMMAND...
+```
+
+The full Eon package installs one `Eon` desktop entry and a transparent violet three-fold
 loop icon at native launcher sizes, with X11 and Xwayland window grouping.
 Opening Eon reconnects only to the exact installed runtime generation or starts
 that generation in its own private namespace. Older live generations and their
@@ -111,23 +121,23 @@ explicit non-interactive form. Pressing `Ctrl-C` in the original foreground
 `eon` process also stops that composed generation. Restarting the machine
 preserves no process state beyond the accepted child contracts.
 
-Use terminal-host mode when one command should receive the terminal key stream
-without Eon's tab and pane shortcuts:
+EonTerm gives one command the terminal key stream without Eon's tab and pane
+shortcuts:
 
 ```sh
-eon terminal -- COMMAND...
-eon terminal --no-decorations -- COMMAND...
+eonterm -- COMMAND...
+eonterm --no-decorations -- COMMAND...
 ```
 
 This mode hosts exactly one Orbit Session, gives Venus only the Orbit endpoint,
 and keeps Eon's generation, presentation, stop, child-exit, and cleanup lifecycle.
-A terminal host uses native window decorations unless `--no-decorations` is
-selected. The supervisor preserves its original choice when it replaces a
-detached surface.
+EonTerm uses native window decorations unless `--no-decorations` is selected.
+The supervisor preserves its original choice when it replaces a detached
+surface.
 A repeated invocation preserves the active surface; after that surface closes,
 another invocation asks the supervisor to open one replacement against the same
-Session. Workspace actions are unavailable, and a live workspace and terminal
-host cannot share one generation namespace.
+Session. Workspace actions are unavailable. Eon and EonTerm use separate
+default runtime namespaces.
 Terminal programs can request bounded plain-text clipboard writes through Orbit;
 Venus delivers them to the requested ordinary or primary Linux clipboard.
 `Ctrl+Shift+V` and the native Paste key read the ordinary clipboard and send one
@@ -156,7 +166,7 @@ The command surface is small:
 | `eon` | Present the exact current-generation workspace, or start it with the default shell |
 | `eon run` | Explicitly start one Orbit session and one Venus window with the default shell |
 | `eon run -- COMMAND...` | Run one explicit command as the Orbit-owned PTY child |
-| `eon terminal [--no-decorations] -- COMMAND...` | Start or present one command in a native terminal surface without Eon workspace actions |
+| `eonterm [--no-decorations] -- COMMAND...` | Start or present one exact command in a native terminal surface without Eon workspace or managed-environment policy |
 | `eon attach` | Present Eon Desktop against the exact current-generation launch mode |
 | `eon attach GENERATION` | Present one explicitly selected compatible generation, including `legacy` |
 | `eon generations [--json]` | List validated current, previous, legacy, dead, incompatible, unreachable, and corrupt generations |
@@ -169,8 +179,9 @@ The command surface is small:
 | `eon versions` | Print the runtime generation, EONW version, and stable component identities |
 | `eon config-path` | Create and print the Eon configuration root |
 
-Workspace commands target the exact current-generation supervisor and return
-`workspace-unavailable` in terminal-host mode. The workspace topology is bounded
+Workspace commands target the exact current-generation Eon supervisor. An
+EonTerm supervisor returns `workspace-unavailable` to topology actions at the
+EONW boundary. The workspace topology is bounded
 to 64 tabs and 256 panes, is not restored after supervisor loss, and has no
 per-pane or per-Session removal action. Whole-generation stop names and
 terminates every Session through that supervisor. `--json` reports the same
@@ -244,8 +255,10 @@ boxes.
 
 `EON_CONFIG_HOME` selects the configuration root; Eon resolves a relative value
 once against the launch directory. Without it, Eon uses `$XDG_CONFIG_HOME/eon`
-or `$HOME/.config/eon`. `EON_RUNTIME_DIR` selects the socket directory; Eon
-otherwise uses `$XDG_RUNTIME_DIR/eon` or a private per-user temporary directory.
+or `$HOME/.config/eon`. `EON_RUNTIME_DIR` selects the socket directory. Eon
+otherwise uses `$XDG_RUNTIME_DIR/eon`, while EonTerm uses
+`$XDG_RUNTIME_DIR/eonterm`; each falls back to a separate private per-user
+temporary directory.
 Eon passes the absolute root as `XDG_CONFIG_HOME` to Venus and managed tools
 other than shells. Sessions and managed shells inherit ambient XDG
 configuration; Eon preserves `EON_CONFIG_HOME` through Sessions and managed
@@ -274,9 +287,11 @@ cargo run --locked -p eon-manifest -- components/eon-alpha-v3.json
 ```
 
 The validator rejects malformed, incomplete, or incompatible graphs. The flake
-asserts each resolved source revision against this manifest before it builds a
-package. The installed wrapper injects resolved paths as opaque runtime inputs;
-`eon versions` prints stable identities and no Nix store path.
+asserts each resolved source revision against this manifest before it builds
+either package. Eon consumes the complete composition; EonTerm selects the
+manifest's service and client roles without another graph. The installed
+wrappers inject resolved paths as opaque runtime inputs; `eon versions` prints
+stable identities and no Nix store path.
 
 The documents in [`docs/`](docs/) hold the current planning truth:
 
@@ -302,15 +317,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 316 |
+| README | 331 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 607 |
+| Architecture and contracts | 614 |
 | Distribution and references | 231 |
-| Changelog | 88 |
-| Rust source and tests | 5,957 |
+| Changelog | 85 |
+| Rust source and tests | 5,994 |
 | Cargo manifests | 35 |
 | Component manifest | 316 |
-| Nix composition | 647 |
+| Nix composition | 697 |
 | Product defaults | 0 |
-| **Total** | **8,860** |
+| **Total** | **8,966** |

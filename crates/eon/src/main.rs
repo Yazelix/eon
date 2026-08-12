@@ -29,7 +29,8 @@ use workspace::{
 };
 
 const MANIFEST: &str = include_str!("../../../components/eon-alpha-v3.json");
-const USAGE: &str = "usage: eon [run [-- COMMAND...]] | terminal [--no-decorations] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
+const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
+const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] -- COMMAND...";
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 
 fn current_generation() -> Result<String, String> {
@@ -735,9 +736,9 @@ fn generations_command(arguments: &[OsString]) -> Result<i32, String> {
     let json = match arguments {
         [] => false,
         [flag] if flag == "--json" => true,
-        _ => return Err(USAGE.into()),
+        _ => return Err(EON_USAGE.into()),
     };
-    let records = discover_generations(&runtime_directory(), &current_generation()?)?;
+    let records = discover_generations(&runtime_directory("eon"), &current_generation()?)?;
     write_stdout(if json {
         generations_json(&records)
     } else {
@@ -824,7 +825,7 @@ fn json_option(value: Option<&str>) -> String {
 }
 
 fn attach_generation(target: &str) -> Result<i32, String> {
-    let root = runtime_directory();
+    let root = runtime_directory("eon");
     let current = current_generation()?;
     let record = inspect_selected_generation(&root, &current, target)?
         .ok_or_else(|| format!("generation {target} was not found"))?;
@@ -843,7 +844,7 @@ fn attach_generation(target: &str) -> Result<i32, String> {
 }
 
 fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
-    let root = runtime_directory();
+    let root = runtime_directory("eon");
     let current = current_generation()?;
     let control = generation_directory(&root, target).join("eon.sock");
     let observed_supervisor = socket_identity(&control);
@@ -985,7 +986,7 @@ impl LaunchMode {
     fn name(self) -> &'static str {
         match self {
             Self::Workspace => "workspace",
-            Self::Terminal => "terminal",
+            Self::Terminal => "EonTerm",
         }
     }
 }
@@ -994,14 +995,19 @@ fn main() -> ExitCode {
     let mut arguments = env::args_os();
     let invocation = arguments.next().unwrap_or_default();
     let arguments = arguments.collect();
-    let result = match managed_environment::tool(&invocation) {
-        Some(tool) => launch_managed(tool, arguments),
-        None => execute(arguments),
+    let eonterm = Path::new(&invocation).file_name() == Some(OsStr::new("eonterm"));
+    let result = if eonterm {
+        execute_eonterm(arguments)
+    } else {
+        match managed_environment::tool(&invocation) {
+            Some(tool) => launch_managed(tool, arguments),
+            None => execute(arguments),
+        }
     };
     match result {
         Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
         Err(error) => {
-            eprintln!("eon: {error}");
+            eprintln!("{}: {error}", if eonterm { "eonterm" } else { "eon" });
             ExitCode::FAILURE
         }
     }
@@ -1027,19 +1033,6 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
             if command == "run" && separator == "--" && !child.is_empty() =>
         {
             launch_current(LaunchMode::Workspace, child, false, true)
-        }
-        [command, separator, child @ ..]
-            if command == "terminal" && separator == "--" && !child.is_empty() =>
-        {
-            launch_current(LaunchMode::Terminal, child, true, true)
-        }
-        [command, flag, separator, child @ ..]
-            if command == "terminal"
-                && flag == "--no-decorations"
-                && separator == "--"
-                && !child.is_empty() =>
-        {
-            launch_current(LaunchMode::Terminal, child, true, false)
         }
         [command] if command == "attach" => attach_generation(&current_generation()?),
         [command, generation] if command == "attach" => {
@@ -1079,7 +1072,21 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
             write_stdout(format!("{}\n", path.display()))?;
             Ok(0)
         }
-        _ => Err(USAGE.into()),
+        _ => Err(EON_USAGE.into()),
+    }
+}
+
+fn execute_eonterm(arguments: Vec<OsString>) -> Result<i32, String> {
+    match arguments.as_slice() {
+        [separator, child @ ..] if separator == "--" && !child.is_empty() => {
+            launch_current(LaunchMode::Terminal, child, true, true)
+        }
+        [flag, separator, child @ ..]
+            if flag == "--no-decorations" && separator == "--" && !child.is_empty() =>
+        {
+            launch_current(LaunchMode::Terminal, child, true, false)
+        }
+        _ => Err(EONTERM_USAGE.into()),
     }
 }
 
@@ -1100,7 +1107,11 @@ fn launch_current(
     decorations: bool,
 ) -> Result<i32, String> {
     let generation = current_generation()?;
-    let root = runtime_directory();
+    let root = runtime_directory(if mode == LaunchMode::Terminal {
+        "eonterm"
+    } else {
+        "eon"
+    });
     let runtime = prepare_generation_runtime(&root, &generation)?;
     let socket = runtime.join("eon.sock");
     // ponytail: one root-wide startup lock; partition if cross-generation starts contend.
@@ -1210,7 +1221,7 @@ fn validate_runtime(info: &Runtime, generation: &str) -> Result<(), String> {
 fn control(arguments: &[OsString]) -> Result<i32, String> {
     let (action, json) = parse_control_arguments(arguments)?;
     let generation = current_generation()?;
-    let root = runtime_directory();
+    let root = runtime_directory("eon");
     let runtime = prepare_generation_runtime(&root, &generation)?;
     let socket = runtime.join("eon.sock");
     let response = match send_action(&socket, action) {
@@ -1252,7 +1263,7 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Str
             .ok_or_else(|| "Eon workspace actions require UTF-8 arguments".to_string())?;
         if argument == "--json" {
             if json {
-                return Err(USAGE.into());
+                return Err(EON_USAGE.into());
             }
             json = true;
         } else {
@@ -1268,7 +1279,7 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Str
         ["focus", "up"] => Action::Focus(Direction::Up),
         ["focus", "down"] => Action::Focus(Direction::Down),
         ["focus", id] => Action::FocusId((*id).into()),
-        _ => return Err(USAGE.into()),
+        _ => return Err(EON_USAGE.into()),
     };
     Ok((action, json))
 }
@@ -1376,16 +1387,16 @@ fn prepare_configuration(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("cannot create {}: {error}", path.display()))
 }
 
-fn runtime_directory() -> PathBuf {
+fn runtime_directory(product: &str) -> PathBuf {
     nonempty_environment_path("EON_RUNTIME_DIR")
         .or_else(|| {
-            xdg_path(nonempty_environment_path("XDG_RUNTIME_DIR")).map(|path| path.join("eon"))
+            xdg_path(nonempty_environment_path("XDG_RUNTIME_DIR")).map(|path| path.join(product))
         })
         .unwrap_or_else(|| {
             eprintln!(
-                "eon: warning: XDG_RUNTIME_DIR is unset; using a private temporary runtime root"
+                "{product}: warning: XDG_RUNTIME_DIR is unset; using a private temporary runtime root"
             );
-            env::temp_dir().join(format!("eon-{}", effective_uid()))
+            env::temp_dir().join(format!("{product}-{}", effective_uid()))
         })
 }
 
@@ -1513,9 +1524,14 @@ fn supervise(
         }
 
         if reap_desktop(&mut state.venus)? {
-            eprintln!(
-                "Eon Desktop exited; Sessions remains active. Run `eon attach` to reconnect."
-            );
+            match mode {
+                LaunchMode::Workspace => eprintln!(
+                    "Eon Desktop exited; Sessions remains active. Run `eon attach` to reconnect."
+                ),
+                LaunchMode::Terminal => eprintln!(
+                    "Eon Desktop exited; Session remains active. Run `eonterm -- COMMAND...` to reconnect."
+                ),
+            }
         }
 
         if accept_control_client(
@@ -1884,7 +1900,7 @@ fn handle_control_client(
             None => (
                 ControlResponse::Workspace(Response::Failure(failure(
                     "workspace-unavailable",
-                    "terminal mode has no Eon workspace",
+                    "EonTerm has no Eon workspace",
                 ))),
                 false,
             ),
@@ -1923,7 +1939,7 @@ fn runtime_status(
             available: true,
             reason: match mode {
                 LaunchMode::Workspace => "supervisor accepts EONW v1 presentation requests",
-                LaunchMode::Terminal => "supervisor owns one terminal host",
+                LaunchMode::Terminal => "supervisor owns one EonTerm Session",
             }
             .into(),
         },

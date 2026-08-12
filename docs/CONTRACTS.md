@@ -12,10 +12,10 @@ detailed execution evidence, and Git history retains superseded states.
 
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
-| EON-C1 | Eon validates and launches one compatible component set and reports every exact component revision | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
+| EON-C1 | Eon validates and launches one compatible component set and reports every exact component revision | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; `eon-4is.4` working tree |
 | EON-C2 | One versioned manifest defines component identity, compatibility, and abstract artifacts—but not launch policy—for every distribution channel | Eon | Proven | `234ad77ced4924d95400b5c39822b3fb9b928c95`; proof below |
-| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
-| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
+| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; `eon-4is.4` working tree |
+| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Candidate | Accepted base `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; `eon-4is.4` working tree |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
@@ -23,13 +23,13 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; private Session PATH `c0d044c69318a921f9f9139bcaf2de9afce683d3`; Fish preservation `194076f66f91c8823b03c3ee6d3a1706eb8ea4e4`; proof below |
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Candidate | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; candidate `858e840cc5a7fd235ae62376172424a25cc1f422` |
 | EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly presentable when they advertise the compatible presentation lifecycle, and explicitly stoppable through their supervisor | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83` |
-| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | `e77e842fe8c7070a96047dff1bf028ccbd49b788`; proof below |
+| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Candidate | Accepted lifecycle `e77e842fe8c7070a96047dff1bf028ccbd49b788`; `eon-4is.4` working tree |
 
-## Approved terminal-host contract EON-C12
+## Approved EonTerm contract EON-C12
 
 - Consumer: one local Eon user or an explicitly approved composition that needs
   one native terminal surface without Eon's tab and pane model.
-- Trigger: the consumer invokes `eon terminal -- COMMAND...` with one non-empty
+- Trigger: the consumer invokes `eonterm -- COMMAND...` with one non-empty
   exact argv. An optional `--no-decorations` before `--` requests a native
   surface without window-system decorations.
 - Result: Eon starts one Orbit-owned Session for the exact command and launches
@@ -42,18 +42,20 @@ detailed execution evidence, and Git history retains superseded states.
   convergence, child exit, and cleanup.
 - Important failures: a missing command, incompatible or corrupt supervisor,
   component mismatch, partial startup, or a live supervisor in the other launch
-  mode fails explicitly. Workspace actions against terminal mode return the
+  mode fails explicitly. Workspace actions against EonTerm mode return the
   bounded `workspace-unavailable` failure and create no hidden topology.
 - Ownership: Eon owns launch mode, generation, composition, and lifecycle.
   Orbit remains the sole owner of the process, PTY, terminal state, Session,
   and transport. Venus remains a transient native presentation and input client.
-- Boundary: terminal mode adds no Workspace value, tabs, panes, key remapping,
+- Boundary: EonTerm adds no Workspace value, tabs, panes, key remapping,
   preset, wrapper process, persisted mode marker, remote access,
-  second app identity, compositor focus guarantee, or Zellij policy. Bare `eon`
-  and `eon run` retain their workspace meanings. Decorated surfaces remain the
-  default for workspace mode and terminal mode.
-- Approval: the user approved this contract and the exact command spelling on
-  2026-08-10 for `eon-4is.1`.
+  compositor focus guarantee, or Zellij policy. Bare `eon` and `eon run` retain
+  their workspace meanings. Decorated surfaces remain the default for Eon and
+  EonTerm. EonTerm uses its own default runtime namespace and consumes no
+  EON-C9 managed-environment policy.
+- Approval: the user approved the lifecycle on 2026-08-10 for `eon-4is.1` and
+  the permanent EonTerm product and command identity on 2026-08-12 for
+  `eon-4is.4`.
 
 ## Approved workspace contract EON-C8
 
@@ -306,17 +308,20 @@ detailed execution evidence, and Git history retains superseded states.
   the Wayland primary selection, restored the prior selection, and stopped only its
   isolated namespace. The profile refresh preserved the three live Eonova processes.
 
-### EON-C12 — single-surface terminal host
+### EON-C12 — EonTerm exact-command lifecycle
 
-- Proof revision: `e77e842fe8c7070a96047dff1bf028ccbd49b788` on
-  x86_64 Linux.
-- Artifact: `/nix/store/h7vvb4lrxnyr23lzglclmf02ajwrk2ar-eon-0.1.0`,
-  NAR hash `sha256-SOBxjNVGm0Cp4ntSv9NWV1zACtqZS/DVZJbKf4ABG0c=`.
-- Checks: deterministic workspace-versus-terminal Venus argv; real-process
-  exact-command startup, active-surface preservation, detached-surface replacement,
-  one-Session invariant,
-  wrong-mode rejection, structured unavailable actions, partial-startup cleanup,
-  concurrent launch, and command-exit cleanup.
+- Accepted lifecycle basis: `e77e842fe8c7070a96047dff1bf028ccbd49b788`
+  on x86_64 Linux, before the permanent product rename and package split.
+- Candidate artifact: `/nix/store/k352amrz24363ir4jx40021drscjslkd-eonterm-0.1.0`.
+- Candidate checks: locked format, 34-test workspace, and Clippy suites; full
+  flake check; exact Eon and EonTerm package builds; EonTerm closure exclusion
+  of the managed shells and tools; basename-selected command and removed-name
+  regressions; `git diff --check`; and README LOC.
+- Candidate native dogfood: an installed no-decorations EonTerm launched one
+  exact command under Orbit and Venus, reported the EonTerm reconnect command,
+  reopened one replacement Venus against the same Orbit process, then removed
+  the generation and both child processes when the command exited. Existing
+  Eon and Eonova processes retained their original PIDs and start times.
 - Native dogfood at `4353e94ebc015453c77914a2be013a950f49c8cc`: one COSMIC Wayland surface
   forwarded Alt-h/j/k/l/m and Ctrl-t as exact bytes `1b 68 1b 6a 1b 6b 1b 6c 1b 6d 14`. After the
   supervisor-owned client detached, a second invocation reopened the same
