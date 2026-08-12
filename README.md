@@ -130,6 +130,8 @@ Session. Workspace actions are unavailable, and a live workspace and terminal
 host cannot share one generation namespace.
 Terminal programs can request bounded plain-text clipboard writes through Orbit;
 Venus delivers them to the requested ordinary or primary Linux clipboard.
+`Ctrl+Shift+V` and the native Paste key read the ordinary clipboard and send one
+semantic paste to Orbit, which alone applies terminal paste encoding.
 
 While the foreground supervisor is running, Eon owns horizontal tab order and
 one vertical pane selection per tab. Each pane starts and maps to a distinct
@@ -300,15 +302,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 314 |
+| README | 316 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 590 |
 | Distribution and references | 231 |
-| Changelog | 86 |
+| Changelog | 88 |
 | Rust source and tests | 5,957 |
 | Cargo manifests | 35 |
-| Component manifest | 314 |
+| Component manifest | 316 |
 | Nix composition | 647 |
 | Product defaults | 0 |
-| **Total** | **8,837** |
+| **Total** | **8,843** |

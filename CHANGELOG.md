@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Paste ordinary native clipboard text through Orbit's semantic normal or
+  bracketed-paste path in packaged Eon and Eonova surfaces.
 - Deliver bounded terminal-requested text to the ordinary or primary native
   clipboard in packaged Eon and Eonova surfaces.
 - Render Unicode Braille progress cells with distinct dots in packaged native

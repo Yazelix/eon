@@ -29,6 +29,7 @@
       { "component": "venus", "contract": "VEN-C7" },
       { "component": "venus", "contract": "VEN-C8" },
       { "component": "venus", "contract": "VEN-C9" },
+      { "component": "venus", "contract": "VEN-C10" },
       { "component": "venus", "contract": "VEN-C13" }
     ],
     "required_interfaces": [
@@ -74,7 +75,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "2d3498258920736eb1bdae2b8869b6547b9735d4",
+      "revision": "eb67dac509d0c6033e4373caf8c63eb6e4c88868",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -91,6 +92,7 @@
         { "id": "VEN-C7", "proof": "3230c5820c821fd2437dcf0399d2ba921cec2c94" },
         { "id": "VEN-C8", "proof": "33a3d9af9f4c6015301ad6829fe733413c5b683d" },
         { "id": "VEN-C9", "proof": "90988f6ebcde68338e202a9c637c59398aafe93d" },
+        { "id": "VEN-C10", "proof": "eb67dac509d0c6033e4373caf8c63eb6e4c88868" },
         { "id": "VEN-C13", "proof": "2d3498258920736eb1bdae2b8869b6547b9735d4" }
       ],
       "interfaces": [],
