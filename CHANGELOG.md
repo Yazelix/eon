@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Expose generation listing, exact attach, and owner-routed stop through
+  `eonterm` so its separate runtime namespace remains manageable across updates.
+  Reconnect guidance names the exact generation.
 - Paste ordinary native clipboard text through Orbit's semantic normal or
   bracketed-paste path in packaged Eon and Eonova surfaces.
 - Deliver bounded terminal-requested text to the ordinary or primary native

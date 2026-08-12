@@ -300,6 +300,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
         stop: child_exit.clone(),
     };
     let generation = generation_runtime(&runtime);
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
     wait_for(&generation.join("eon.sock"));
     wait_for(&venus_log);
     let initial_venus = fs::read_to_string(&venus_log)
@@ -308,6 +309,14 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
         .next()
         .unwrap()
         .to_string();
+    let listed = Command::new(&binary)
+        .args(["generations", "--json"])
+        .env_remove("EON_RUNTIME_DIR")
+        .env("XDG_RUNTIME_DIR", &root)
+        .output()
+        .unwrap();
+    assert!(listed.status.success());
+    assert!(stdout(&listed).contains(generation_id));
 
     let mut repeated = Command::new(&binary)
         .args(["--", "/bin/false"])
@@ -338,11 +347,13 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     assert!(
         fs::read_to_string(&supervisor_log)
             .unwrap()
-            .contains("Run `eonterm -- COMMAND...` to reconnect")
+            .contains(&format!(
+                "Run `eonterm attach {generation_id}` to reconnect"
+            ))
     );
 
     let reopened = Command::new(&binary)
-        .args(["--", "/bin/false"])
+        .args(["attach", generation_id])
         .env_remove("EON_RUNTIME_DIR")
         .env("XDG_RUNTIME_DIR", &root)
         .env("EON_CONFIG_HOME", &command)
@@ -388,6 +399,14 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     );
     assert!(!removed.status.success());
     assert!(String::from_utf8_lossy(&removed.stderr).contains("usage: eon "));
+    let unknown = Command::new(&binary)
+        .args(["stop", "g1-00000000000000000000000000000000", "--json"])
+        .env_remove("EON_RUNTIME_DIR")
+        .env("XDG_RUNTIME_DIR", &root)
+        .output()
+        .unwrap();
+    assert_eq!(unknown.status.code(), Some(2));
+    assert!(stdout(&unknown).contains("\"code\":\"unknown-generation\""));
 
     fs::write(&child_exit, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);

@@ -30,7 +30,7 @@ use workspace::{
 
 const MANIFEST: &str = include_str!("../../../components/eon-alpha-v3.json");
 const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
-const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] -- COMMAND...";
+const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 
 fn current_generation() -> Result<String, String> {
@@ -732,13 +732,13 @@ fn write_stdout(output: impl AsRef<[u8]>) -> Result<(), String> {
     }
 }
 
-fn generations_command(arguments: &[OsString]) -> Result<i32, String> {
+fn generations_command(arguments: &[OsString], product: &str, usage: &str) -> Result<i32, String> {
     let json = match arguments {
         [] => false,
         [flag] if flag == "--json" => true,
-        _ => return Err(EON_USAGE.into()),
+        _ => return Err(usage.into()),
     };
-    let records = discover_generations(&runtime_directory("eon"), &current_generation()?)?;
+    let records = discover_generations(&runtime_directory(product), &current_generation()?)?;
     write_stdout(if json {
         generations_json(&records)
     } else {
@@ -824,8 +824,8 @@ fn json_option(value: Option<&str>) -> String {
     )
 }
 
-fn attach_generation(target: &str) -> Result<i32, String> {
-    let root = runtime_directory("eon");
+fn attach_generation(target: &str, product: &str) -> Result<i32, String> {
+    let root = runtime_directory(product);
     let current = current_generation()?;
     let record = inspect_selected_generation(&root, &current, target)?
         .ok_or_else(|| format!("generation {target} was not found"))?;
@@ -843,8 +843,8 @@ fn attach_generation(target: &str) -> Result<i32, String> {
     present_at(&record.runtime, target, mode, supervisor)
 }
 
-fn stop_generation(target: &str, json: bool) -> Result<i32, String> {
-    let root = runtime_directory("eon");
+fn stop_generation(target: &str, json: bool, product: &str) -> Result<i32, String> {
+    let root = runtime_directory(product);
     let current = current_generation()?;
     let control = generation_directory(&root, target).join("eon.sock");
     let observed_supervisor = socket_identity(&control);
@@ -1026,6 +1026,9 @@ fn launch_managed(
 }
 
 fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
+    if let Some(code) = lifecycle_command(&arguments, "eon", EON_USAGE)? {
+        return Ok(code);
+    }
     match arguments.as_slice() {
         [] => launch_current(LaunchMode::Workspace, &[], true, true),
         [command] if command == "run" => launch_current(LaunchMode::Workspace, &[], false, true),
@@ -1033,20 +1036,6 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
             if command == "run" && separator == "--" && !child.is_empty() =>
         {
             launch_current(LaunchMode::Workspace, child, false, true)
-        }
-        [command] if command == "attach" => attach_generation(&current_generation()?),
-        [command, generation] if command == "attach" => {
-            attach_generation(generation_argument(generation)?)
-        }
-        [command, rest @ ..] if command == "generations" => generations_command(rest),
-        [command, generation] if command == "stop" => {
-            stop_generation(generation_argument(generation)?, false)
-        }
-        [command, generation, flag] if command == "stop" && flag == "--json" => {
-            stop_generation(generation_argument(generation)?, true)
-        }
-        [command, flag, generation] if command == "stop" && flag == "--json" => {
-            stop_generation(generation_argument(generation)?, true)
         }
         [command, ..]
             if command == "workspace"
@@ -1077,6 +1066,9 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
 }
 
 fn execute_eonterm(arguments: Vec<OsString>) -> Result<i32, String> {
+    if let Some(code) = lifecycle_command(&arguments, "eonterm", EONTERM_USAGE)? {
+        return Ok(code);
+    }
     match arguments.as_slice() {
         [separator, child @ ..] if separator == "--" && !child.is_empty() => {
             launch_current(LaunchMode::Terminal, child, true, true)
@@ -1088,6 +1080,32 @@ fn execute_eonterm(arguments: Vec<OsString>) -> Result<i32, String> {
         }
         _ => Err(EONTERM_USAGE.into()),
     }
+}
+
+fn lifecycle_command(
+    arguments: &[OsString],
+    product: &str,
+    usage: &str,
+) -> Result<Option<i32>, String> {
+    let code = match arguments {
+        [command] if command == "attach" => attach_generation(&current_generation()?, product)?,
+        [command, generation] if command == "attach" => {
+            attach_generation(generation_argument(generation)?, product)?
+        }
+        [command, rest @ ..] if command == "generations" => {
+            generations_command(rest, product, usage)?
+        }
+        [command, generation] if command == "stop" => {
+            stop_generation(generation_argument(generation)?, false, product)?
+        }
+        [command, generation, flag] | [command, flag, generation]
+            if command == "stop" && flag == "--json" =>
+        {
+            stop_generation(generation_argument(generation)?, true, product)?
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(code))
 }
 
 fn generation_argument(argument: &OsStr) -> Result<&str, String> {
@@ -1526,10 +1544,10 @@ fn supervise(
         if reap_desktop(&mut state.venus)? {
             match mode {
                 LaunchMode::Workspace => eprintln!(
-                    "Eon Desktop exited; Sessions remains active. Run `eon attach` to reconnect."
+                    "Eon Desktop exited; Sessions remains active. Run `eon attach {generation}` to reconnect."
                 ),
                 LaunchMode::Terminal => eprintln!(
-                    "Eon Desktop exited; Session remains active. Run `eonterm -- COMMAND...` to reconnect."
+                    "Eon Desktop exited; Session remains active. Run `eonterm attach {generation}` to reconnect."
                 ),
             }
         }

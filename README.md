@@ -97,6 +97,10 @@ nix profile add .#eonterm
 eonterm -- COMMAND...
 ```
 
+EonTerm keeps its own runtime generations. List them with
+`eonterm generations`, reopen one with `eonterm attach [GENERATION]`, and stop
+one through its supervisor with `eonterm stop GENERATION`.
+
 The full Eon package installs one `Eon` desktop entry and a transparent violet three-fold
 loop icon at native launcher sizes, with X11 and Xwayland window grouping.
 Opening Eon reconnects only to the exact installed runtime generation or starts
@@ -167,6 +171,9 @@ The command surface is small:
 | `eon run` | Explicitly start one Orbit session and one Venus window with the default shell |
 | `eon run -- COMMAND...` | Run one explicit command as the Orbit-owned PTY child |
 | `eonterm [--no-decorations] -- COMMAND...` | Start or present one exact command in a native terminal surface without Eon workspace or managed-environment policy |
+| `eonterm attach [GENERATION]` | Present the current or one selected compatible EonTerm generation |
+| `eonterm generations [--json]` | List validated current and older EonTerm generations |
+| `eonterm stop GENERATION [--json]` | Stop one EonTerm generation through its supervisor; human mode confirms first |
 | `eon attach` | Present Eon Desktop against the exact current-generation launch mode |
 | `eon attach GENERATION` | Present one explicitly selected compatible generation, including `legacy` |
 | `eon generations [--json]` | List validated current, previous, legacy, dead, incompatible, unreachable, and corrupt generations |
@@ -317,15 +324,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 331 |
+| README | 338 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 621 |
+| Architecture and contracts | 625 |
 | Distribution and references | 231 |
-| Changelog | 85 |
-| Rust source and tests | 5,994 |
+| Changelog | 88 |
+| Rust source and tests | 6,031 |
 | Cargo manifests | 35 |
 | Component manifest | 316 |
 | Nix composition | 698 |
 | Product defaults | 0 |
-| **Total** | **8,974** |
+| **Total** | **9,025** |
