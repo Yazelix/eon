@@ -22,8 +22,8 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Accepted composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; private Session PATH `c0d044c69318a921f9f9139bcaf2de9afce683d3`; Fish preservation `194076f66f91c8823b03c3ee6d3a1706eb8ea4e4`; proof below |
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Candidate | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; candidate `858e840cc5a7fd235ae62376172424a25cc1f422` |
-| EON-C11 | Eon defaults to the exact current runtime generation while older live generations remain discoverable, explicitly presentable when they advertise the compatible presentation lifecycle, and explicitly stoppable through their supervisor | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `eon-4is.4` working tree |
-| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Candidate | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; EonTerm lifecycle correction `eon-4is.4` working tree |
+| EON-C11 | Eon and EonTerm default to the exact current generation in separate runtime namespaces while older live generations remain discoverable, explicitly presentable when compatible, and explicitly stoppable through their supervisor | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc` |
+| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; proof below |
 
 ## Approved EonTerm contract EON-C12
 
@@ -189,17 +189,17 @@ detailed execution evidence, and Git history retains superseded states.
 
 ## Approved runtime-generation contract EON-C11
 
-- Consumer: one local Eon user, the bare launcher, and the explicit generation
+- Consumer: one local Eon or EonTerm user and the explicit generation
   inspection, attach, and stop commands.
-- Trigger: Eon launches without a subcommand, or the user lists, attaches to, or
-  stops one exact runtime generation.
+- Trigger: an attach-capable product launch, or the user lists, attaches to, or
+  stops one exact generation in that product's runtime namespace.
 - Result: Eon derives one opaque distribution-neutral identity from its runtime
   source, dependency lock, canonical component manifest, and EONW source. Each
-  generation owns a separate private directory below Eon's runtime root. A bare
-  launch attaches only to a live supervisor that authoritatively reports the
-  exact current identity; otherwise it starts the current generation without
-  stopping older work. Discovery deterministically distinguishes current,
-  previous, legacy, dead, incompatible, and corrupt candidates. Explicit attach
+  product selects a separate runtime namespace, and each generation owns a
+  private directory below it. An implicit attach selects only a live supervisor
+  that authoritatively reports the exact current identity; otherwise it starts
+  the current generation without stopping older work. Discovery distinguishes
+  current, previous, legacy, dead, incompatible, and corrupt candidates. Explicit attach
   never substitutes another generation. Explicit stop is sent through the
   selected generation's EONW owner and names every affected live Session.
   Concurrent attach-capable launches for one generation converge on one
@@ -211,7 +211,7 @@ detailed execution evidence, and Git history retains superseded states.
   cancelled confirmation preserves every Session. Eon removes only its own dead
   control socket or an empty stopped generation directory and never kills a
   process inferred from a PID, pathname, or process tree.
-- Ownership: Eon owns generation identity, namespace selection, discovery,
+- Ownership: Eon owns generation identity, product namespace selection, discovery,
   compatibility policy, supervisor-routed stop, and bounded cleanup. Each live
   supervisor remains authoritative for its topology and lifecycle response.
   Orbit retains process, PTY, terminal-state, and Session authority. Venus is a
@@ -315,24 +315,30 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C12 — EonTerm exact-command lifecycle
 
-- Proof revision: `816372ea9ffe90f08ff442b5763a3b5413b7906c` on
-  x86_64 Linux; runtime generation `g1-13665e1746ba54269a4d66cfe646324f`.
-- EonTerm artifact: `/nix/store/k352amrz24363ir4jx40021drscjslkd-eonterm-0.1.0`,
-  NAR hash `sha256-mFso1QKOvBm/uvMOQ2kUXJJhMBtyETCN0YBycLMMSYU=`, NAR size
-  1,686,904 bytes, closure size 1,139,215,736 bytes. Full Eon remains
-  `/nix/store/0cidyi1fpflgk3r9mj94xhfzpc6p5rfd-eon-0.1.0`, closure size
-  1,824,446,976 bytes.
+- Accepted product revision: `816372ea9ffe90f08ff442b5763a3b5413b7906c`;
+  lifecycle correction: `63686a12b752c9423b2096d5e32aa5842f2184fc`
+  on x86_64 Linux; runtime generation
+  `g1-7aac2def4359287dc80d068f91ecb7cc`.
+- EonTerm artifact: `/nix/store/nmacs55wiqmz8qyf26wykipmgraqgdm3-eonterm-0.1.0`,
+  NAR hash `sha256-Pv0U16WrOPAaEHEXubqjf7WIJDInudY51pSOOhh3evc=`, NAR size
+  1,686,888 bytes, closure size 1,139,215,720 bytes. Full Eon is
+  `/nix/store/q0ql16r9amlwj1n6ipbgs8drr9n51ifv-eon-0.1.0`, closure size
+  1,824,446,960 bytes.
 - Checks: locked format, 34-test workspace, and Clippy suites; canonical
   manifest validation; exact-revision full flake check; both packages and apps;
   full Eon managed checks; exact Orbit/Venus and managed-tool closure exclusion;
-  basename-selected command, separate namespace, reconnect guidance, and
-  removed-name regressions; `git diff --check`; and README LOC.
-- Exact installed dogfood: a no-decorations EonTerm launched one command under
-  Orbit 464284 and Venus 464291, reported the EonTerm reconnect command, and
-  opened replacement Venus 464323 against the same Orbit. Command exit removed
-  the generation and both children. Named `eon` and `eonterm` profiles resolve
-  to the exact artifacts above; existing Eon and Eonova processes retained
-  their original PIDs and start times without a restart.
+  basename-selected command, separate namespace, lifecycle routing, exact
+  reconnect guidance, and removed-name regressions; `git diff --check`; and
+  README LOC.
+- Exact installed dogfood: the corrected CLI listed published generation
+  `g1-13665e1746ba54269a4d66cfe646324f` as previous and live, attached Venus
+  491558 to its unchanged Orbit 491527, and stopped it through supervisor
+  491522. A corrected supervisor 491577 launched Orbit 491582 and Venus 491588,
+  then reported `eonterm attach g1-7aac2def4359287dc80d068f91ecb7cc`
+  after Venus detached. Structured stop removed both isolated generations and
+  every child with status 0. Named `eon` and `eonterm` profiles resolve to the
+  exact artifacts above; existing Eon and Eonova processes retained their PIDs
+  and start times without a restart.
 - Native dogfood at `4353e94ebc015453c77914a2be013a950f49c8cc`: one COSMIC Wayland surface
   forwarded Alt-h/j/k/l/m and Ctrl-t as exact bytes `1b 68 1b 6a 1b 6b 1b 6c 1b 6d 14`. After the
   supervisor-owned client detached, a second invocation reopened the same
@@ -436,7 +442,8 @@ detailed execution evidence, and Git history retains superseded states.
   on x86_64 Linux. Generated managed-runtime identity proof
   `4beb441301d84039570dd07138da2a6f70b3ed23`; stop-owner proof
   `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup-convergence proof
-  `36c95ad04cb9519f88b907642c8147d95f56ee83`.
+  `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm namespace proof
+  `63686a12b752c9423b2096d5e32aa5842f2184fc`.
 - Artifact: `/nix/store/jwmwp11cy0zrf1gxnzx3vbpvsrpbas4v-eon-0.1.0`,
   generation `g1-5386ea0e7d167fd252746bbae1c9d02d`, NAR hash
   `sha256-nv3/BnZC2hB2VutQMSPmNPUnX0ZS0vIxMTSk+xciaro=`, NAR size 1,952,040
