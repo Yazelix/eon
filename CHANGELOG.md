@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Present synchronized terminal updates atomically in new Eon and EonTerm
+  Sessions, while bounding producers that omit the closing marker.
 - Render adjacent Unicode full-block cells without visible seams in packaged
   native Eon and Eonova terminal surfaces.
 - Initialize new Eon and EonTerm Sessions with Eon's vivid ANSI palette while

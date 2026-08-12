@@ -58,16 +58,16 @@
     "orbit": {
       "flake": false,
       "locked": {
-        "lastModified": 1786546705,
-        "narHash": "sha256-PeV71+MQfSP0U82uyYO3urtUR+j1Y+YMOD83ELSoOqM=",
+        "lastModified": 1786576518,
+        "narHash": "sha256-c3T5G+uLOF7tm11/krqI/YRC36YG8xfYcbx09T/Ljjc=",
         "ref": "refs/heads/edge",
-        "rev": "f4f0b0a82333d088ad40e2b63108d4905466e8f2",
-        "revCount": 73,
+        "rev": "26b4b9465b3f0e74f091a0aae93fddc61412b893",
+        "revCount": 77,
         "type": "git",
         "url": "https://github.com/Yazelix/eon-sessions.git"
       },
       "original": {
-        "rev": "f4f0b0a82333d088ad40e2b63108d4905466e8f2",
+        "rev": "26b4b9465b3f0e74f091a0aae93fddc61412b893",
         "type": "git",
         "url": "https://github.com/Yazelix/eon-sessions.git"
       }
@@ -75,16 +75,16 @@
     "protocol": {
       "flake": false,
       "locked": {
-        "lastModified": 1786546705,
-        "narHash": "sha256-PeV71+MQfSP0U82uyYO3urtUR+j1Y+YMOD83ELSoOqM=",
+        "lastModified": 1786576518,
+        "narHash": "sha256-c3T5G+uLOF7tm11/krqI/YRC36YG8xfYcbx09T/Ljjc=",
         "ref": "refs/heads/edge",
-        "rev": "f4f0b0a82333d088ad40e2b63108d4905466e8f2",
-        "revCount": 73,
+        "rev": "26b4b9465b3f0e74f091a0aae93fddc61412b893",
+        "revCount": 77,
         "type": "git",
         "url": "https://github.com/Yazelix/eon-sessions.git"
       },
       "original": {
-        "rev": "f4f0b0a82333d088ad40e2b63108d4905466e8f2",
+        "rev": "26b4b9465b3f0e74f091a0aae93fddc61412b893",
         "type": "git",
         "url": "https://github.com/Yazelix/eon-sessions.git"
       }
