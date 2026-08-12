@@ -128,6 +128,8 @@ A repeated invocation preserves the active surface; after that surface closes,
 another invocation asks the supervisor to open one replacement against the same
 Session. Workspace actions are unavailable, and a live workspace and terminal
 host cannot share one generation namespace.
+Terminal programs can request bounded plain-text clipboard writes through Orbit;
+Venus delivers them to the requested ordinary or primary Linux clipboard.
 
 While the foreground supervisor is running, Eon owns horizontal tab order and
 one vertical pane selection per tab. Each pane starts and maps to a distinct
@@ -298,15 +300,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 459 |
-| README | 312 |
+| README | 314 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 584 |
 | Distribution and references | 231 |
-| Changelog | 84 |
+| Changelog | 86 |
 | Rust source and tests | 5,957 |
 | Cargo manifests | 35 |
-| Component manifest | 310 |
+| Component manifest | 314 |
 | Nix composition | 647 |
 | Product defaults | 0 |
-| **Total** | **8,823** |
+| **Total** | **8,831** |

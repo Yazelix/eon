@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Deliver bounded terminal-requested text to the ordinary or primary native
+  clipboard in packaged Eon and Eonova surfaces.
 - Render Unicode Braille progress cells with distinct dots in packaged native
   Eon and Eonova surfaces while preserving their cell-grid bounds.
 - Preserve Shift-produced layout text such as `?`, `:`, and `+` in the packaged
