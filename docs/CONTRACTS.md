@@ -246,6 +246,22 @@ detailed execution evidence, and Git history retains superseded states.
 ### EON-C1 through EON-C4 and the current EON-C8 topology — composition
 
 - Current EON-C2 composition proof:
+  `86130a3b4df0dd9ef731acb2a072ac219f23cfe2` on x86_64 Linux. Schema 3
+  graph `components/eon-alpha-v3.json`, SHA-256
+  `35217ea2108e09544a1e2af7ab8de065709788ec5b89e903080b51832aa6ae5b`,
+  retains Orbit, ORB-C11, and canonical ORBS v3 at
+  `3ee7c80005f3d2bbe81e539799327803716f6174`, and selects Venus source with
+  partially proved VEN-C10 at `eb67dac509d0c6033e4373caf8c63eb6e4c88868`
+  while retaining VEN-C13 at `2d3498258920736eb1bdae2b8869b6547b9735d4`.
+  Generation: `g1-e3880bfc50dce6fade13044161d5ed80`.
+- Exact package: `/nix/store/jc82vmdzmplbcl8zz0i22v14qpxrx0sy-eon-0.1.0`,
+  NAR hash `sha256-6jOSd5oYZwWwlQdhMg7TVSrGpF22k4ePBvZ7w9upk58=`. The active
+  profile resolves this artifact without restarting live supervisors or Sessions.
+- Eonova rollout source `fb64d27e8755ff7ed9818a239b103f581e2b0a47` packages the exact Eon
+  artifact at `/nix/store/9fmrqml44h0fzvaqnscsv91sq9zna3zx-eonova-0.1.0`,
+  NAR hash `sha256-3eb+++XQPpjlQStmknKuZ8JQJ8V2Gntm/9jPjM09/SA=`, with unchanged
+  Mars-free Nova. Its active profile resolves that artifact.
+- Prior terminal-clipboard-write composition proof:
   `0e25ebc2311d7e41edf90c940f8211dd5839bb83` on x86_64 Linux. Schema 3
   graph `components/eon-alpha-v3.json`, SHA-256
   `351c406d5439029bbbefec2151cbf1eca5f3bf2d7b1c821cb5c36f5ae328d285`,
