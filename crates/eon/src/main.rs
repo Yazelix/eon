@@ -732,12 +732,7 @@ fn write_stdout(output: impl AsRef<[u8]>) -> Result<(), String> {
     }
 }
 
-fn generations_command(arguments: &[OsString], product: &str, usage: &str) -> Result<i32, String> {
-    let json = match arguments {
-        [] => false,
-        [flag] if flag == "--json" => true,
-        _ => return Err(usage.into()),
-    };
+fn generations_command(json: bool, product: &str) -> Result<i32, String> {
     let records = discover_generations(&runtime_directory(product), &current_generation()?)?;
     write_stdout(if json {
         generations_json(&records)
@@ -1026,7 +1021,7 @@ fn launch_managed(
 }
 
 fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
-    if let Some(code) = lifecycle_command(&arguments, "eon", EON_USAGE)? {
+    if let Some(code) = lifecycle_command(&arguments, "eon")? {
         return Ok(code);
     }
     match arguments.as_slice() {
@@ -1066,7 +1061,7 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
 }
 
 fn execute_eonterm(arguments: Vec<OsString>) -> Result<i32, String> {
-    if let Some(code) = lifecycle_command(&arguments, "eonterm", EONTERM_USAGE)? {
+    if let Some(code) = lifecycle_command(&arguments, "eonterm")? {
         return Ok(code);
     }
     match arguments.as_slice() {
@@ -1082,30 +1077,27 @@ fn execute_eonterm(arguments: Vec<OsString>) -> Result<i32, String> {
     }
 }
 
-fn lifecycle_command(
-    arguments: &[OsString],
-    product: &str,
-    usage: &str,
-) -> Result<Option<i32>, String> {
-    let code = match arguments {
-        [command] if command == "attach" => attach_generation(&current_generation()?, product)?,
+fn lifecycle_command(arguments: &[OsString], product: &str) -> Result<Option<i32>, String> {
+    match arguments {
+        [command] if command == "attach" => attach_generation(&current_generation()?, product),
         [command, generation] if command == "attach" => {
-            attach_generation(generation_argument(generation)?, product)?
+            attach_generation(generation_argument(generation)?, product)
         }
-        [command, rest @ ..] if command == "generations" => {
-            generations_command(rest, product, usage)?
+        [command] if command == "generations" => generations_command(false, product),
+        [command, flag] if command == "generations" && flag == "--json" => {
+            generations_command(true, product)
         }
         [command, generation] if command == "stop" => {
-            stop_generation(generation_argument(generation)?, false, product)?
+            stop_generation(generation_argument(generation)?, false, product)
         }
         [command, generation, flag] | [command, flag, generation]
             if command == "stop" && flag == "--json" =>
         {
-            stop_generation(generation_argument(generation)?, true, product)?
+            stop_generation(generation_argument(generation)?, true, product)
         }
         _ => return Ok(None),
-    };
-    Ok(Some(code))
+    }
+    .map(Some)
 }
 
 fn generation_argument(argument: &OsStr) -> Result<&str, String> {
