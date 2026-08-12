@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Render adjacent Unicode full-block cells without visible seams in packaged
+  native Eon and Eonova terminal surfaces.
 - Initialize new Eon and EonTerm Sessions with Eon's vivid ANSI palette while
   preserving program overrides, direct RGB, extended colors, and live older
   runtime generations.
