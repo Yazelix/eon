@@ -246,15 +246,20 @@ detailed execution evidence, and Git history retains superseded states.
 ### EON-C1 through EON-C4 and the current EON-C8 topology — composition
 
 - Current EON-C2 composition proof:
-  `4500e15088cbd4957d35d995d419489c81aeefbf` on x86_64 Linux. Schema 3
+  `0e25ebc2311d7e41edf90c940f8211dd5839bb83` on x86_64 Linux. Schema 3
   graph `components/eon-alpha-v3.json`, SHA-256
-  `bad1c3763502403d8725ed75e532ce1a9587d760d8bbaa25da2995e976052925`,
-  selects Venus source and VEN-C1 proof
-  `3e27bb7e377da9d9eb7e5cbdbfcfa5add3de0cad` while retaining every other
-  accepted component proof. Generation: `g1-56b4b310c4058e8c8fc61fdcec626aed`.
-- Exact package: `/nix/store/9sssf6drq5vjamgapa2lw4171j77s82m-eon-0.1.0`,
-  NAR hash `sha256-acT/hfH+3cAsUJA5MykDw5OBg6DaPj8F5Is3U32OXUY=`. The active
+  `351c406d5439029bbbefec2151cbf1eca5f3bf2d7b1c821cb5c36f5ae328d285`,
+  selects Orbit source, ORB-C11, and canonical ORBS v3 proof
+  `3ee7c80005f3d2bbe81e539799327803716f6174` plus Venus source and VEN-C13
+  proof `2d3498258920736eb1bdae2b8869b6547b9735d4`, while retaining every other
+  accepted component proof. Generation: `g1-dd77de2a596dccc968f08127cb801081`.
+- Exact package: `/nix/store/0q1fsf7mjijvgxzj3z94vf80xjjgf9dn-eon-0.1.0`,
+  NAR hash `sha256-GDkZsHi+D1udfusoKpgvzCKANlWgEbkRX4HUC1qCgRQ=`. The active
   profile resolves this artifact without restarting live supervisors or Sessions.
+- Eonova rollout source `4fda9b67b0faa33561624633229135e5e2d579ea` packages the exact Eon
+  artifact at `/nix/store/hgvf1lr9i0sc1ql3qq0nhf9y81wzgkkj-eonova-0.1.0`,
+  NAR hash `sha256-nsxak7RGzTpWBd+WOtvXl4olsUvK4dh+bDHYtBGfJnc=`, with the
+  unchanged Mars-free Nova input. Its active profile resolves that artifact.
 - Proof revision: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c` on x86_64
   Linux through the Nix alpha package `eon-0.1.0` at
   `/nix/store/04sbq6wc79h2hf1rjq9y9bcvaz5v92hb-eon-0.1.0`, NAR hash
@@ -275,13 +280,14 @@ detailed execution evidence, and Git history retains superseded states.
   `33a3d9af9f4c6015301ad6829fe733413c5b683d`, and VEN-C9 proof
   `90988f6ebcde68338e202a9c637c59398aafe93d`.
 - Checks: canonical manifest validation and removed-field mutations; locked Rust
-  format, check, 34-test, and Clippy suites; exact Nix build and flake check;
+  format, check, 34-test, and Clippy suites; exact Eon and Eonova Nix builds and
+  flake checks; Eonova Mars/Rio closure, desktop, license, and wrapper checks;
   invalid-graph command matrix; installed version, commit, profile, and store-path
   comparison; workspace and presentation-owner regressions; README LOC; and
   `git diff --check`.
-- Retained dogfood: native standalone input and live-process survival passed at
-  `4353e94ebc015453c77914a2be013a950f49c8cc`; the EON-C2 profile refresh preserved
-  three live namespaces and all six pre-existing Sessions.
+- Dogfood: an isolated Eonova launch delivered exact terminal-emitted UTF-8 through
+  the Wayland primary selection, restored the prior selection, and stopped only its
+  isolated namespace. The profile refresh preserved the three live Eonova processes.
 
 ### EON-C12 — single-surface terminal host
 
