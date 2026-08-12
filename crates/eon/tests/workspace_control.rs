@@ -279,18 +279,23 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     let binary = root.join("bin/eonterm");
     fs::create_dir(root.join("bin")).unwrap();
     symlink(&eon, &binary).unwrap();
-    let child = Command::new(&binary)
+    let eonterm = |configuration: &Path| {
+        let mut process = Command::new(&binary);
+        process
+            .env_remove("EON_RUNTIME_DIR")
+            .env("XDG_RUNTIME_DIR", &root)
+            .env("EON_CONFIG_HOME", configuration)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_CHILD_EXIT", &child_exit)
+            .env("EON_TEST_VENUS_EXIT", &venus_exit)
+            .env("EON_TEST_ORBIT_LOG", &orbit_log)
+            .env("EON_TEST_VENUS_LOG", &venus_log);
+        process
+    };
+    let child = eonterm(&config)
         .args(["--no-decorations", "--"])
         .arg(&command)
-        .env_remove("EON_RUNTIME_DIR")
-        .env("XDG_RUNTIME_DIR", &root)
-        .env("EON_CONFIG_HOME", &config)
-        .env("EON_ORBIT", &orbit)
-        .env("EON_VENUS", &venus)
-        .env("EON_TEST_CHILD_EXIT", &child_exit)
-        .env("EON_TEST_VENUS_EXIT", &venus_exit)
-        .env("EON_TEST_ORBIT_LOG", &orbit_log)
-        .env("EON_TEST_VENUS_LOG", &venus_log)
         .stdout(Stdio::null())
         .stderr(fs::File::create(&supervisor_log).unwrap())
         .spawn()
@@ -318,17 +323,8 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     assert!(listed.status.success());
     assert!(stdout(&listed).contains(generation_id));
 
-    let mut repeated = Command::new(&binary)
+    let mut repeated = eonterm(&command)
         .args(["--", "/bin/false"])
-        .env_remove("EON_RUNTIME_DIR")
-        .env("XDG_RUNTIME_DIR", &root)
-        .env("EON_CONFIG_HOME", &command)
-        .env("EON_ORBIT", &orbit)
-        .env("EON_VENUS", &venus)
-        .env("EON_TEST_CHILD_EXIT", &child_exit)
-        .env("EON_TEST_VENUS_EXIT", &venus_exit)
-        .env("EON_TEST_ORBIT_LOG", &orbit_log)
-        .env("EON_TEST_VENUS_LOG", &venus_log)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -352,17 +348,8 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
             ))
     );
 
-    let reopened = Command::new(&binary)
+    let reopened = eonterm(&command)
         .args(["attach", generation_id])
-        .env_remove("EON_RUNTIME_DIR")
-        .env("XDG_RUNTIME_DIR", &root)
-        .env("EON_CONFIG_HOME", &command)
-        .env("EON_ORBIT", &orbit)
-        .env("EON_VENUS", &venus)
-        .env("EON_TEST_CHILD_EXIT", &child_exit)
-        .env("EON_TEST_VENUS_EXIT", &venus_exit)
-        .env("EON_TEST_ORBIT_LOG", &orbit_log)
-        .env("EON_TEST_VENUS_LOG", &venus_log)
         .output()
         .unwrap();
     assert!(reopened.status.success());
