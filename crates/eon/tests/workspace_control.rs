@@ -468,7 +468,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
 }
 
 #[test]
-fn second_cli_controls_three_live_sessions_without_owning_them() {
+fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
@@ -477,7 +477,7 @@ fn second_cli_controls_three_live_sessions_without_owning_them() {
     let venus = root.join("venus");
     executable(
         &orbit,
-        "#!/bin/sh\nprintf '%s' \"$$\" > \"$2\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
+        "#!/bin/sh\ncase \"$2\" in */session-2.sock) sleep 3 ;; esac\nprintf '%s' \"$$\" > \"$2\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
     );
     executable(&venus, "#!/bin/sh\nexit 0\n");
 
@@ -512,6 +512,7 @@ fn second_cli_controls_three_live_sessions_without_owning_them() {
         fs::metadata(&control).unwrap().permissions().mode() & 0o777,
         0o600
     );
+    assert_eq!(stdout(&pane).matches("\"session\":").count(), 2);
     assert!(
         invoke(&binary, &runtime, &config, &["tab", "create", "--json"])
             .status

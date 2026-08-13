@@ -80,8 +80,8 @@ fn generation_directory(root: &Path, generation: &str) -> PathBuf {
 }
 
 const MAX_GENERATIONS: usize = 256;
-const CONTROL_TIMEOUT: Duration = Duration::from_secs(2);
 const SESSION_START_TIMEOUT: Duration = Duration::from_secs(5);
+const CONTROL_TIMEOUT: Duration = SESSION_START_TIMEOUT.saturating_add(Duration::from_secs(1));
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum EndpointFailureKind {

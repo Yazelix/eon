@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Return a committed workspace snapshot when Session startup finishes within
+  Eon's accepted work bound instead of reporting the supervisor unavailable.
 - Preserve live replacement supervisor sockets and generation directories when
   dead-generation inspection races with startup, without waiting on its lock.
 - Report empty and overlong focus identities as local `malformed-action` errors
