@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Preserve live replacement supervisor sockets and generation directories when
+  dead-generation inspection races with startup, without waiting on its lock.
 - Report empty and overlong focus identities as local `malformed-action` errors
   without contacting or blaming the Eon supervisor.
 - Preserve the existing Venus window and request native presentation when a live

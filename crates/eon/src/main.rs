@@ -413,15 +413,23 @@ fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationReco
     candidates.sort_by(|left, right| left.0.cmp(&right.0));
 
     let current_path = generation_directory(root, current);
+    let startup_lock = root.join("startup.lock");
     let mut records = vec![inspect_generation(
         current,
         "current",
         current_path,
+        &startup_lock,
         &component_report,
     )];
     for (_, id, path) in candidates {
         if id != current {
-            records.push(inspect_generation(&id, "previous", path, &component_report));
+            records.push(inspect_generation(
+                &id,
+                "previous",
+                path,
+                &startup_lock,
+                &component_report,
+            ));
         }
     }
     if path_exists(&root.join("eon.sock")) || path_exists(&root.join("orbit.sock")) {
@@ -470,6 +478,7 @@ fn inspect_selected_generation(
             "previous"
         },
         runtime,
+        &root.join("startup.lock"),
         &component_report,
     )))
 }
@@ -478,6 +487,7 @@ fn inspect_generation(
     id: &str,
     kind: &'static str,
     runtime: PathBuf,
+    startup_lock: &Path,
     current_components: &str,
 ) -> GenerationRecord {
     if !valid_generation(id) {
@@ -559,7 +569,7 @@ fn inspect_generation(
         Err(error) => {
             let dead = error.kind == EndpointFailureKind::Dead;
             let record = failed_generation(id, kind, runtime.clone(), error);
-            if dead {
+            if dead && let Some(_startup_lock) = try_lock_supervisor_startup(startup_lock) {
                 remove_dead_socket(&socket);
                 let _ = fs::remove_dir(&runtime);
             }
@@ -620,14 +630,7 @@ fn inspect_legacy(root: &Path) -> GenerationRecord {
                 "legacy supervisor returned the wrong EONW result",
             ),
         ),
-        Err(error) => {
-            let dead = error.kind == EndpointFailureKind::Dead;
-            let record = failed_generation("legacy", "legacy", runtime, error);
-            if dead {
-                remove_dead_socket(&socket);
-            }
-            record
-        }
+        Err(error) => failed_generation("legacy", "legacy", runtime, error),
     }
 }
 
@@ -725,6 +728,7 @@ fn remove_dead_socket(path: &Path) {
     if !metadata.file_type().is_socket() || metadata.uid() != effective_uid() {
         return;
     }
+    let identity = socket_identity_from(&metadata);
     if matches!(
         UnixStream::connect(path),
         Err(error)
@@ -733,7 +737,7 @@ fn remove_dead_socket(path: &Path) {
                 std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
             )
     ) {
-        let _ = fs::remove_file(path);
+        remove_socket_if_identity(path, identity);
     }
 }
 
@@ -1135,10 +1139,11 @@ fn launch_current(
     } else {
         "eon"
     });
-    let runtime = prepare_generation_runtime(&root, &generation)?;
-    let socket = runtime.join("eon.sock");
+    prepare_runtime(&root)?;
     // ponytail: one root-wide startup lock; partition if cross-generation starts contend.
     let startup_lock = lock_supervisor_startup(&root.join("startup.lock"))?;
+    let runtime = prepare_generation_runtime(&root, &generation)?;
+    let socket = runtime.join("eon.sock");
     match probe_supervisor(&socket, &generation) {
         Ok((active_mode, supervisor)) => {
             if active_mode != mode {
@@ -1711,7 +1716,7 @@ impl Drop for ControlListener {
     }
 }
 
-fn lock_supervisor_startup(path: &Path) -> Result<fs::File, String> {
+fn open_supervisor_startup_lock(path: &Path) -> Result<fs::File, String> {
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -1739,6 +1744,11 @@ fn lock_supervisor_startup(path: &Path) -> Result<fs::File, String> {
                 path.display()
             )
         })?;
+    Ok(file)
+}
+
+fn lock_supervisor_startup(path: &Path) -> Result<fs::File, String> {
+    let file = open_supervisor_startup_lock(path)?;
     loop {
         match file.lock() {
             Ok(()) => break,
@@ -1752,6 +1762,12 @@ fn lock_supervisor_startup(path: &Path) -> Result<fs::File, String> {
         }
     }
     Ok(file)
+}
+
+fn try_lock_supervisor_startup(path: &Path) -> Option<fs::File> {
+    let file = open_supervisor_startup_lock(path).ok()?;
+    file.try_lock().ok()?;
+    Some(file)
 }
 
 fn create_control_listener(path: &Path) -> Result<ControlListener, String> {
@@ -2062,19 +2078,29 @@ fn failure(code: impl Into<String>, detail: impl Into<String>) -> Failure {
 
 type SocketIdentity = (u64, u64, i64, i64);
 
+fn socket_identity_from(metadata: &fs::Metadata) -> SocketIdentity {
+    (
+        metadata.dev(),
+        metadata.ino(),
+        metadata.ctime(),
+        metadata.ctime_nsec(),
+    )
+}
+
 fn socket_identity(socket: &Path) -> Result<Option<SocketIdentity>, String> {
     match fs::symlink_metadata(socket) {
-        Ok(metadata) => Ok(Some((
-            metadata.dev(),
-            metadata.ino(),
-            metadata.ctime(),
-            metadata.ctime_nsec(),
-        ))),
+        Ok(metadata) => Ok(Some(socket_identity_from(&metadata))),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!(
             "cannot inspect socket {}: {error}",
             socket.display()
         )),
+    }
+}
+
+fn remove_socket_if_identity(path: &Path, identity: SocketIdentity) {
+    if socket_identity(path).is_ok_and(|current| current == Some(identity)) {
+        let _ = fs::remove_file(path);
     }
 }
 
@@ -2129,7 +2155,8 @@ mod tests {
         discover_generations, effective_uid, encode_lifecycle_response, encode_response,
         generation_directory, generation_id, lock_supervisor_startup, orbit_command,
         prepare_configuration, prepare_runtime, probe_presentable_runtime, read_control_request,
-        supervise, valid_generation, venus_command, xdg_path,
+        remove_socket_if_identity, socket_identity, supervise, valid_generation, venus_command,
+        xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -2173,7 +2200,7 @@ mod tests {
     }
 
     #[test]
-    fn discovery_rejects_symlinks_and_removes_only_dead_owned_control_metadata() {
+    fn discovery_bounds_dead_cleanup_and_rejects_unsafe_metadata() {
         let root = temporary_directory();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
         let generations = root.join("generations");
@@ -2192,15 +2219,39 @@ mod tests {
         fs::set_permissions(dead.join("eon.sock"), fs::Permissions::from_mode(0o600)).unwrap();
         drop(listener);
 
-        let records = discover_generations(&root, &current_generation().unwrap()).unwrap();
+        let held = lock_supervisor_startup(&root.join("startup.lock")).unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let inspection_root = root.clone();
+        let inspection = thread::spawn(move || {
+            sender
+                .send(discover_generations(
+                    &inspection_root,
+                    &current_generation().unwrap(),
+                ))
+                .unwrap();
+        });
+        let result = receiver.recv_timeout(Duration::from_secs(2));
+        let preserved = dead.exists();
+        drop(held);
+        inspection.join().unwrap();
+
+        let records = result
+            .expect("generation inspection waited for startup")
+            .unwrap();
         assert!(records.iter().any(|record| {
             record.id == linked_id && record.kind == "previous" && record.state == "corrupt"
         }));
         assert!(records.iter().any(|record| {
             record.id == dead_id && record.kind == "previous" && record.state == "dead"
         }));
-        assert!(outside.is_dir());
+        assert!(
+            preserved,
+            "contended inspection removed dead control metadata"
+        );
+
+        discover_generations(&root, &current_generation().unwrap()).unwrap();
         assert!(!dead.exists());
+        assert!(outside.is_dir());
 
         fs::remove_file(generations.join(linked_id)).unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -2556,6 +2607,22 @@ mod tests {
         drop(control);
 
         assert!(socket.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn socket_removal_is_bound_to_the_observed_identity() {
+        let root = temporary_directory();
+        let socket = root.join("eon.sock");
+        let stale = UnixListener::bind(&socket).unwrap();
+        let observed = socket_identity(&socket).unwrap().unwrap();
+        drop(stale);
+        fs::remove_file(&socket).unwrap();
+        let _replacement = UnixListener::bind(&socket).unwrap();
+
+        remove_socket_if_identity(&socket, observed);
+
+        assert!(std::os::unix::net::UnixStream::connect(&socket).is_ok());
         fs::remove_dir_all(root).unwrap();
     }
 
