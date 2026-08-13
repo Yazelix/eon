@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Report empty and overlong focus identities as local `malformed-action` errors
+  without contacting or blaming the Eon supervisor.
 - Preserve the existing Venus window and request native presentation when a live
   Eon or EonTerm generation is launched again.
 - Present synchronized terminal updates atomically in new Eon and EonTerm

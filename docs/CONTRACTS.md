@@ -21,7 +21,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Accepted composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; private Session PATH `c0d044c69318a921f9f9139bcaf2de9afce683d3`; Fish preservation `194076f66f91c8823b03c3ee6d3a1706eb8ea4e4`; proof below |
-| EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Candidate | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; candidate `858e840cc5a7fd235ae62376172424a25cc1f422` |
+| EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; current CLI proof `d0c2208d628fa0dc1e186899b45e0b73534ff9bc`; proof below |
 | EON-C11 | Eon and EonTerm default to the exact current generation in separate runtime namespaces while older live generations remain discoverable, explicitly presentable when compatible, and explicitly stoppable through their supervisor; presenting an existing surface requests native presentation | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; native activation candidate consumes Venus `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f` |
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; proof below |
 
@@ -439,18 +439,22 @@ detailed execution evidence, and Git history retains superseded states.
 
 - Producer proof revision: `4af395aea06c230ee6b18cf0755ae25915c0b88d`.
   Exact CLI endpoint-byte projection: `858e840cc5a7fd235ae62376172424a25cc1f422`
-  on x86_64 Linux.
-- Artifact: `/nix/store/5bffaz73kk398dcb7c57smivsfmyfzwa-eon-0.1.0`,
-  generation `g1-f8e68d38df1102c0b1c2af393ecbe439`, NAR hash
-  `sha256-5p1iQjdAmONq9fcD+zvIlHc/kEPTynbMDUouk4DWqPo=`.
-- Checks: locked workspace format, check, 31-test, and clippy suites; canonical
+  on x86_64 Linux. Current local-client proof:
+  `d0c2208d628fa0dc1e186899b45e0b73534ff9bc` on x86_64 Linux.
+- Artifact: `/nix/store/bc26a5gbzw2d8rd9nikbi4310i2m3dlj-eon-0.1.0`,
+  generation `g1-ab14af5dc43b561febe6bbd4e370e2d5`, NAR hash
+  `sha256-UN+jn2QaFqyQdsH2fKa3+NbMuAEkiJ4dlGEPi38fjM4=`, NAR size 1,947,416
+  bytes, and closure size 1,824,510,712 bytes.
+- Checks: locked workspace format, check, 35-test, and clippy suites; canonical
   manifest validation; exact-revision Nix build and flake check; installed
   invalid-UTF-8 endpoint-byte reconstruction; and `git diff --check`.
 - Exercised behavior: one mode-`0600` control socket carries bounded complete
   requests and responses; the shared codec rejects incompatible or malformed
   input; every accepted inspect or semantic action returns a complete snapshot;
-  rejected input preserves the accepted workspace; and successful CLI JSON
-  preserves each exact opaque endpoint byte as an ordered integer array.
+  empty and overlong focus identities fail locally as `malformed-action` before
+  any endpoint connection; valid missing-supervisor classification remains
+  unchanged; rejected input preserves the accepted workspace; and successful CLI
+  JSON preserves each exact opaque endpoint byte as an ordered integer array.
 
 ### EON-C10 lifecycle and EON-C11 — runtime generations
 
