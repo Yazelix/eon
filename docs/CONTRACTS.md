@@ -461,11 +461,13 @@ detailed execution evidence, and Git history retains superseded states.
   `4beb441301d84039570dd07138da2a6f70b3ed23`; stop-owner proof
   `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup-convergence proof
   `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm namespace proof
-  `63686a12b752c9423b2096d5e32aa5842f2184fc`.
-- Artifact: `/nix/store/jwmwp11cy0zrf1gxnzx3vbpvsrpbas4v-eon-0.1.0`,
-  generation `g1-5386ea0e7d167fd252746bbae1c9d02d`, NAR hash
-  `sha256-nv3/BnZC2hB2VutQMSPmNPUnX0ZS0vIxMTSk+xciaro=`, NAR size 1,952,040
-  bytes, and closure size 1,824,284,112 bytes.
+  `63686a12b752c9423b2096d5e32aa5842f2184fc`; native presentation proof
+  `9942aa87e56da022bbcf9ae0e32b0ce5b640505d` with exact Venus
+  `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f`.
+- Artifact: `/nix/store/wyf20989i804v6gn0k761g4xkivwk19x-eon-0.1.0`,
+  generation `g1-216e217e59b4fd6738b148d4bc82b45e`, NAR hash
+  `sha256-p4wvvG3zhucdQbg0My6RUiEjIYpmFDrgxKQIIWDvHL0=`, NAR size 1,947,272
+  bytes, and closure size 1,824,510,568 bytes.
 - Checks: locked format, check, 33-test, and Clippy suites; canonical manifest
   validation; exact Nix build and flake check; deterministic listener-acquisition,
   generation, presentation-capability, generated-behavior-identity, and
@@ -480,6 +482,9 @@ detailed execution evidence, and Git history retains superseded states.
   replacement without touching its Sessions; exact attach and stop ignore unrelated
   over-limit generation entries; profile refresh or generated managed-runtime change
   selects a fresh generation while leaving older supervisors and Sessions running.
+  Installed Eonova `/nix/store/39rqav6bkspfkyvdv4p3b6i1jy258l33-eonova-0.1.0`
+  on native COSMIC Wayland preserved supervisor, Orbit, and Venus PIDs across a
+  repeated desktop launch and brought the existing accepted surface forward.
 
 ## Current gaps
 
