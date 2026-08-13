@@ -453,8 +453,8 @@ mod tests {
         assert_eq!(
             report,
             "eon-alpha x86_64-linux\n\
-orbit 0.1.0 26b4b9465b3f0e74f091a0aae93fddc61412b893 x86_64-linux\n\
-venus 0.1.0 50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f x86_64-linux\n\
+orbit 0.1.0 6de95296d252c119d4fdba2d9b03cec1a09355ae x86_64-linux\n\
+venus 0.1.0 74ab5a0b661210f0afec94086f5358fe50b01f05 x86_64-linux\n\
 nushell 0.113.1 7b7df4aa68e957cf38b9d8157c35fa7523f44a6d x86_64-linux\n\
 bash 5.3p9 b8c60bc9ca365f8261fa97900b6fa939f6ebc303 x86_64-linux\n\
 zsh 5.9.1 0e0d4ea11731c47f57bad042fbe75e3979d8a1d2 x86_64-linux\n\

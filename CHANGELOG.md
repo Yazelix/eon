@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Refresh new Eon and EonTerm launches to the accepted ORBS v3 terminal
+  runtimes, preserving Sessions through client-pressure disconnects, transient
+  PTY closure, and concurrent stale-socket claims while rejecting contradictory
+  presentation capabilities.
 - Return a committed workspace snapshot when Session startup finishes within
   Eon's accepted work bound instead of reporting the supervisor unavailable.
 - Preserve live replacement supervisor sockets and generation directories when
