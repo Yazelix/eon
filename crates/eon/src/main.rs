@@ -87,6 +87,7 @@ const SESSION_START_TIMEOUT: Duration = Duration::from_secs(5);
 enum EndpointFailureKind {
     Dead,
     Incompatible,
+    InvalidAction,
     Unreachable,
     Corrupt,
 }
@@ -127,7 +128,8 @@ enum ControlResponse {
 }
 
 fn send_action(socket: &Path, action: Action) -> Result<ControlResponse, EndpointFailure> {
-    send_action_on(connect_control(socket)?, action)
+    let action = prepare_action(action)?;
+    send_prepared_action(connect_control(socket)?, action)
 }
 
 fn connect_control(socket: &Path) -> Result<UnixStream, EndpointFailure> {
@@ -189,10 +191,11 @@ fn connect_control(socket: &Path) -> Result<UnixStream, EndpointFailure> {
     Ok(stream)
 }
 
-fn send_action_on(
-    mut stream: UnixStream,
-    action: Action,
-) -> Result<ControlResponse, EndpointFailure> {
+fn send_action_on(stream: UnixStream, action: Action) -> Result<ControlResponse, EndpointFailure> {
+    send_prepared_action(stream, prepare_action(action)?)
+}
+
+fn prepare_action(action: Action) -> Result<(bool, Vec<u8>), EndpointFailure> {
     let lifecycle = matches!(
         action,
         Action::InspectRuntime
@@ -206,10 +209,17 @@ fn send_action_on(
     })
     .map_err(|error| {
         EndpointFailure::new(
-            EndpointFailureKind::Corrupt,
+            EndpointFailureKind::InvalidAction,
             format!("cannot encode Eon action: {error}"),
         )
     })?;
+    Ok((lifecycle, request))
+}
+
+fn send_prepared_action(
+    mut stream: UnixStream,
+    (lifecycle, request): (bool, Vec<u8>),
+) -> Result<ControlResponse, EndpointFailure> {
     stream
         .write_all(&request)
         .map_err(|error| io_endpoint_failure(error, "cannot send Eon action"))?;
@@ -653,6 +663,7 @@ fn failed_generation(
     let state = match error.kind {
         EndpointFailureKind::Dead => "dead",
         EndpointFailureKind::Incompatible => "incompatible",
+        EndpointFailureKind::InvalidAction => "corrupt",
         EndpointFailureKind::Unreachable => "unreachable",
         EndpointFailureKind::Corrupt => "corrupt",
     };
@@ -1238,6 +1249,9 @@ fn control(arguments: &[OsString]) -> Result<i32, String> {
     let socket = runtime.join("eon.sock");
     let response = match send_action(&socket, action) {
         Ok(response) => response,
+        Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
+            return report_failure(&failure("malformed-action", error.detail), json);
+        }
         Err(error) => {
             let code = if error.kind == EndpointFailureKind::Dead {
                 "missing-supervisor"

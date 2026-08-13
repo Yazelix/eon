@@ -170,6 +170,42 @@ fn missing_supervisor_is_a_structured_workspace_failure() {
 }
 
 #[test]
+fn invalid_focus_is_rejected_before_supervisor_connection() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+
+    let missing = invoke(binary, &runtime, &config, &["workspace", "--json"]);
+    assert_eq!(missing.status.code(), Some(2));
+    let control = generation_runtime(&runtime).join("eon.sock");
+    let too_long = "x".repeat(129);
+    let assert_invalid = |id| {
+        let output = invoke(binary, &runtime, &config, &["focus", id, "--json"]);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(stdout(&output).contains("\"code\":\"malformed-action\""));
+        assert!(!stdout(&output).contains("run `eon` first"));
+        assert!(output.stderr.is_empty());
+    };
+    for id in ["", too_long.as_str()] {
+        assert_invalid(id);
+    }
+
+    let listener = UnixListener::bind(&control).unwrap();
+    fs::set_permissions(&control, fs::Permissions::from_mode(0o600)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    for id in ["", too_long.as_str()] {
+        assert_invalid(id);
+    }
+    assert_eq!(
+        listener.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn bare_eon_attaches_only_to_the_live_current_generation() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
