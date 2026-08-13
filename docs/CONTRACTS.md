@@ -22,7 +22,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Accepted composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; private Session PATH `c0d044c69318a921f9f9139bcaf2de9afce683d3`; Fish preservation `194076f66f91c8823b03c3ee6d3a1706eb8ea4e4`; proof below |
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Candidate | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; candidate `858e840cc5a7fd235ae62376172424a25cc1f422` |
-| EON-C11 | Eon and EonTerm default to the exact current generation in separate runtime namespaces while older live generations remain discoverable, explicitly presentable when compatible, and explicitly stoppable through their supervisor | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc` |
+| EON-C11 | Eon and EonTerm default to the exact current generation in separate runtime namespaces while older live generations remain discoverable, explicitly presentable when compatible, natively brought to the user's attention when already presented, and explicitly stoppable through their supervisor | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; native activation candidate consumes Venus `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f` |
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; proof below |
 
 ## Approved EonTerm contract EON-C12
@@ -36,10 +36,11 @@ detailed execution evidence, and Git history retains superseded states.
   lifecycle within EonTerm's runtime namespace.
 - Result: Eon starts one Orbit-owned Session for the exact command and launches
   Venus with only that Session endpoint. The supervisor remains the sole Venus
-  process launcher: a repeated invocation preserves an attached surface, while
-  an invocation after detachment opens one replacement against the same live
-  Session and with the supervisor's original decoration choice. A later invocation
-  does not mutate a live supervisor's choice. The current runtime generation
+  process launcher: a repeated invocation preserves an attached surface and asks
+  Venus to restore it and request native focus or attention, while an invocation
+  after detachment opens one replacement against the same live Session and with
+  the supervisor's original decoration choice. A later invocation does not mutate
+  a live supervisor's choice. The current runtime generation
   remains authoritative for presentation, inspection, explicit older-generation
   selection, owner-routed stop, concurrent-launch convergence, child exit, and
   cleanup.
@@ -51,8 +52,8 @@ detailed execution evidence, and Git history retains superseded states.
   Orbit remains the sole owner of the process, PTY, terminal state, Session,
   and transport. Venus remains a transient native presentation and input client.
 - Boundary: EonTerm adds no Workspace value, tabs, panes, key remapping,
-  preset, wrapper process, persisted mode marker, remote access,
-  compositor focus guarantee, or Zellij policy. It exposes no workspace,
+  preset, wrapper process, persisted mode marker, remote access, compositor-specific
+  focus mechanism or guarantee, or Zellij policy. It exposes no workspace,
   configuration, managed-tool, or default-shell command. Bare `eon` and
   `eon run` retain their workspace meanings. Decorated surfaces remain the
   default for Eon and EonTerm. EonTerm uses its own default runtime namespace
@@ -203,17 +204,23 @@ detailed execution evidence, and Git history retains superseded states.
   never substitutes another generation. Explicit stop is sent through the
   selected generation's EONW owner and names every affected live Session.
   Concurrent attach-capable launches for one generation converge on one
-  supervisor and one initial Session.
+  supervisor and one initial Session. Presenting a generation with a live Venus
+  child preserves that process and its Sessions, then sends one bounded private
+  signal for Venus to restore its existing window and request native focus or
+  attention.
 - Important failures: an invalid component graph, unsafe permissions, symlinks,
   invalid names, corrupt or oversized responses, unsupported EONW, identity
-  mismatch, unavailable legacy lifecycle support, timeout, partial startup, or
-  an incompatible competing launch produces a bounded explanation. Failure or
+  mismatch, unavailable legacy lifecycle support, timeout, partial startup,
+  unavailable presentation control, or an incompatible competing launch produces
+  a bounded explanation. A compositor may decline a native attention request.
+  Failure or
   cancelled confirmation preserves every Session. Eon removes only its own dead
   control socket or an empty stopped generation directory and never kills a
   process inferred from a PID, pathname, or process tree.
 - Ownership: Eon owns generation identity, product namespace selection, discovery,
-  compatibility policy, supervisor-routed stop, and bounded cleanup. Each live
-  supervisor remains authoritative for its topology and lifecycle response.
+  compatibility policy, supervisor-routed presentation and stop, and bounded
+  cleanup. Each live supervisor remains authoritative for its topology and
+  lifecycle response.
   Orbit retains process, PTY, terminal-state, and Session authority. Venus is a
   transient client of one explicitly compatible Eon/Orbit endpoint pair. A
   distributor injects artifacts but does not define runtime identity or policy.

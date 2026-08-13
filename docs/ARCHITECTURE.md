@@ -81,9 +81,10 @@ Venus consumer remains source- and wire-compatible with additive lifecycle
 tags it never requests. The running Eon supervisor remains the only live
 topology, action, launch-mode, presentation-process, and generation-lifecycle
 owner; the CLI and Venus never infer state from each other, terminal output, or
-the wire format. An idempotent presentation action preserves the supervisor's
-live Venus child or starts one replacement after detachment with the
-supervisor's original native-decoration choice.
+the wire format. An idempotent presentation action sends one bounded private
+attention signal to the supervisor's live Venus child, or starts one replacement
+after detachment with the supervisor's original native-decoration choice. Venus
+alone translates that signal into native window restoration, focus, or attention.
 A side-effect-free presentation-capability inspection leaves existing runtime
 reports unchanged. Supervisors with runtime inspection but no presentation
 actions remain discoverable but not presentable. In EonTerm mode the same

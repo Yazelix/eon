@@ -255,9 +255,9 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     let runtime = root.join("eonterm");
     let config = root.join("config");
     let child_exit = root.join("child-exit");
-    let venus_exit = root.join("venus-exit");
     let orbit_log = root.join("orbit.log");
     let venus_log = root.join("venus.log");
+    let presentation_log = root.join("presentation.log");
     let supervisor_log = root.join("supervisor.log");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
@@ -268,7 +268,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     );
     executable(
         &venus,
-        "#!/bin/sh\nprintf '%s|%s|%s|%s\\n' \"$$\" \"$#\" \"$1\" \"${2-}\" >> \"$EON_TEST_VENUS_LOG\"\nwhile test ! -e \"$EON_TEST_VENUS_EXIT\"; do sleep 0.01; done\nrm -f \"$EON_TEST_VENUS_EXIT\"\n",
+        "#!/bin/sh\nprintf '%s|%s|%s|%s|%s\\n' \"$$\" \"$#\" \"$1\" \"${2-}\" \"$EON_VENUS_PRESENTATION_CONTROL\" >> \"$EON_TEST_VENUS_LOG\"\ndd bs=8 count=1 status=none >> \"$EON_TEST_PRESENTATION_LOG\"\nwhile :; do sleep 0.01; done\n",
     );
     executable(
         &command,
@@ -288,9 +288,9 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
             .env("EON_ORBIT", &orbit)
             .env("EON_VENUS", &venus)
             .env("EON_TEST_CHILD_EXIT", &child_exit)
-            .env("EON_TEST_VENUS_EXIT", &venus_exit)
             .env("EON_TEST_ORBIT_LOG", &orbit_log)
-            .env("EON_TEST_VENUS_LOG", &venus_log);
+            .env("EON_TEST_VENUS_LOG", &venus_log)
+            .env("EON_TEST_PRESENTATION_LOG", &presentation_log);
         process
     };
     let child = eonterm(&config)
@@ -330,10 +330,18 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
         .spawn()
         .unwrap();
     wait_for_successful_exit(&mut repeated);
+    wait_for(&presentation_log);
+    assert_eq!(fs::read_to_string(&presentation_log).unwrap(), "present\n");
     assert_eq!(fs::read_to_string(&venus_log).unwrap().lines().count(), 1);
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
 
-    fs::write(&venus_exit, "").unwrap();
+    assert!(
+        Command::new("kill")
+            .arg(&initial_venus)
+            .status()
+            .unwrap()
+            .success()
+    );
     let deadline = Instant::now() + Duration::from_secs(5);
     while Path::new("/proc").join(&initial_venus).exists() {
         assert!(Instant::now() < deadline, "terminal surface did not exit");
@@ -358,6 +366,24 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
         assert!(Instant::now() < deadline, "EonTerm did not reopen");
         thread::sleep(Duration::from_millis(10));
     }
+    let refocused = eonterm(&command)
+        .args(["attach", generation_id])
+        .output()
+        .unwrap();
+    assert!(refocused.status.success());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while fs::read_to_string(&presentation_log)
+        .unwrap()
+        .lines()
+        .count()
+        != 2
+    {
+        assert!(
+            Instant::now() < deadline,
+            "reopened EonTerm was not presented"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
     let venus_log = fs::read_to_string(&venus_log).unwrap();
     let venus_pids = venus_log
@@ -365,6 +391,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
         .map(|line| line.split('|').next().unwrap().to_string())
         .collect::<Vec<_>>();
     assert_eq!(venus_log.matches("|2|--no-decorations|").count(), 2);
+    assert_eq!(venus_log.matches("|stdin\n").count(), 2);
     assert_eq!(
         venus_log
             .matches(&generation.join("orbit.sock").display().to_string())

@@ -137,11 +137,11 @@ This mode hosts exactly one Orbit Session, gives Venus only the Orbit endpoint,
 and keeps Eon's generation, presentation, stop, child-exit, and cleanup lifecycle.
 EonTerm uses native window decorations unless `--no-decorations` is selected.
 The supervisor preserves its original choice when it replaces a detached
-surface.
-A repeated invocation preserves the active surface; after that surface closes,
+surface. A repeated invocation preserves the active surface and asks Venus to
+restore it and request native focus or attention; after that surface closes,
 another invocation asks the supervisor to open one replacement against the same
-Session. Workspace actions are unavailable. Eon and EonTerm use separate
-default runtime namespaces.
+Session. Workspace actions are unavailable. Eon and EonTerm use separate default
+runtime namespaces.
 Terminal programs can request bounded plain-text clipboard writes through Orbit;
 Venus delivers them to the requested ordinary or primary Linux clipboard.
 `Ctrl+Shift+V` and the native Paste key read the ordinary clipboard and send one
@@ -331,12 +331,12 @@ Beads data, lock files, and generated artifacts.
 | README | 342 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 643 |
+| Architecture and contracts | 651 |
 | Distribution and references | 231 |
-| Changelog | 95 |
-| Rust source and tests | 6,018 |
+| Changelog | 97 |
+| Rust source and tests | 6,081 |
 | Cargo manifests | 35 |
-| Component manifest | 316 |
+| Component manifest | 318 |
 | Nix composition | 699 |
 | Product defaults | 0 |
-| **Total** | **8,817** |
+| **Total** | **8,892** |

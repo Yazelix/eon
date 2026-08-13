@@ -12,14 +12,15 @@ use std::{
     ffi::{OsStr, OsString},
     fs,
     io::{Read, Write},
+    os::fd::OwnedFd,
     os::unix::{
         ffi::OsStrExt,
         fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
-        net::{UnixListener, UnixStream},
+        net::{UnixDatagram, UnixListener, UnixStream},
         process::CommandExt,
     },
     path::{Path, PathBuf},
-    process::{Child, Command, ExitCode, ExitStatus},
+    process::{Child, Command, ExitCode, ExitStatus, Stdio},
     sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -1364,6 +1365,44 @@ fn venus_command(programs: &Programs, config: &Path, socket: &Path, mode: Launch
     command
 }
 
+struct PresentationProcess {
+    child: Child,
+    control: UnixDatagram,
+}
+
+impl PresentationProcess {
+    fn start(mut command: Command) -> Result<Self, String> {
+        let (control, input) = UnixDatagram::pair()
+            .map_err(|error| format!("cannot create Eon Desktop presentation control: {error}"))?;
+        control
+            .set_nonblocking(true)
+            .map_err(|error| format!("cannot bound Eon Desktop presentation control: {error}"))?;
+        command
+            .env("EON_VENUS_PRESENTATION_CONTROL", "stdin")
+            .stdin(Stdio::from(OwnedFd::from(input)));
+        let child = command
+            .spawn()
+            .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?;
+        Ok(Self { child, control })
+    }
+
+    fn present(&self) -> Result<(), String> {
+        self.control
+            .send(b"present\n")
+            .map(|_| ())
+            .map_err(|error| format!("cannot signal Eon Desktop presentation: {error}"))
+    }
+}
+
+fn start_venus(
+    programs: &Programs,
+    config: &Path,
+    socket: &Path,
+    mode: LaunchMode,
+) -> Result<PresentationProcess, String> {
+    PresentationProcess::start(venus_command(programs, config, socket, mode))
+}
+
 fn programs(venus_decorations: bool) -> Programs {
     Programs {
         orbit: configured_program("EON_ORBIT", "yazelix-orbit"),
@@ -1478,14 +1517,14 @@ fn supervise(
     let control_listener = create_control_listener(&runtime.join("eon.sock"))?;
     let mut initial = start_orbit(programs, config, socket, child, SESSION_START_TIMEOUT)?;
 
-    let venus = match venus_command(programs, config, socket, mode).spawn() {
+    let venus = match start_venus(programs, config, socket, mode) {
         Ok(venus) => venus,
         Err(error) => {
             stop(&mut initial);
             remove_dead_socket(socket);
             drop(control_listener);
             let _ = fs::remove_dir(runtime);
-            return Err(format!("cannot launch Eon Desktop: {error}"));
+            return Err(error);
         }
     };
     let mut state = SupervisorState {
@@ -1527,7 +1566,7 @@ fn supervise(
 
         if state.sessions.is_empty() {
             if let Some(mut process) = state.venus.take() {
-                stop(&mut process);
+                stop(&mut process.child);
             }
             drop(control_listener);
             let _ = fs::remove_dir(runtime);
@@ -1554,7 +1593,7 @@ fn supervise(
             generation,
         )? {
             if let Some(mut process) = state.venus.take() {
-                stop(&mut process);
+                stop(&mut process.child);
             }
             for session in &mut state.sessions {
                 stop(&mut session.child);
@@ -1571,12 +1610,13 @@ fn supervise(
 struct SupervisorState {
     workspace: Option<Workspace>,
     sessions: Vec<RunningSession>,
-    venus: Option<Child>,
+    venus: Option<PresentationProcess>,
 }
 
-fn reap_desktop(desktop: &mut Option<Child>) -> Result<bool, String> {
+fn reap_desktop(desktop: &mut Option<PresentationProcess>) -> Result<bool, String> {
     let exited = match desktop.as_mut() {
         Some(process) => process
+            .child
             .try_wait()
             .map_err(|error| format!("cannot observe Eon Desktop: {error}"))?
             .is_some(),
@@ -1836,18 +1876,14 @@ fn handle_control_client(
             ..
         }) => {
             let result = reap_desktop(&mut state.venus).and_then(|_| {
-                if state.venus.is_some() {
-                    return Ok(());
+                if let Some(venus) = &state.venus {
+                    return venus.present();
                 }
                 let session = state
                     .sessions
                     .first()
                     .ok_or_else(|| "supervisor has no live Session to present".to_string())?;
-                state.venus = Some(
-                    venus_command(programs, config, &session.endpoint, mode)
-                        .spawn()
-                        .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?,
-                );
+                state.venus = Some(start_venus(programs, config, &session.endpoint, mode)?);
                 Ok(())
             });
             match result.and_then(|()| runtime_status(generation, &state.sessions, mode)) {
