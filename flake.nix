@@ -11,10 +11,6 @@
       url = "git+https://github.com/Yazelix/eon-desktop.git?rev=50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f";
       flake = false;
     };
-    protocol = {
-      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=26b4b9465b3f0e74f091a0aae93fddc61412b893";
-      flake = false;
-    };
     helix = {
       url = "github:luccahuguet/yazelix-helix/7e6cd307d00783c16ad4cff99ed71936d34f6572";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -39,7 +35,6 @@
       nixpkgs,
       orbit,
       venus,
-      protocol,
       helix,
       yazi,
       ratconfig,
@@ -141,15 +136,14 @@
         pkgs.vulkan-loader
         pkgs.wayland
       ];
-      protocolRevision = (builtins.head venusIdentity.requires).revision;
       venusProtocolSourceRevision = "3ee7c80005f3d2bbe81e539799327803716f6174";
       workspaceProtocolRevision = "4af395aea06c230ee6b18cf0755ae25915c0b88d";
       venusSource =
-        assert protocol.rev == protocolRevision;
+        assert orbit.rev == (builtins.head venusIdentity.requires).revision;
         pkgs.runCommand "eon-desktop-${venusIdentity.revision}" { } ''
           cp -R ${venus}/. "$out"
           chmod -R u+w "$out"
-          ln -s ${protocol}/crates/protocol "$out/orbit-protocol"
+          ln -s ${orbit}/crates/protocol "$out/orbit-protocol"
           ln -s ${./crates/eon-workspace-protocol} "$out/eon-workspace-protocol"
           substituteInPlace "$out/Cargo.toml" \
             --replace-fail \
