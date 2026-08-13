@@ -296,12 +296,12 @@ Validate it with the pinned Rust dependency graph:
 cargo run --locked -p eon-manifest -- components/eon-alpha-v3.json
 ```
 
-The validator rejects malformed, incomplete, or incompatible graphs. The flake
-asserts each resolved source revision against this manifest before it builds
-either package. Eon consumes the complete composition; EonTerm selects the
-manifest's service and client roles without another graph. The installed
-wrappers inject resolved paths as opaque runtime inputs; `eon versions` prints
-stable identities and no Nix store path.
+The validator rejects malformed, incomplete, or incompatible graphs. Before
+building Eon or EonTerm, the flake checks the selected Orbit, Venus, and Helix
+revisions and Cargo-owned versions against the manifest. Eon consumes the
+complete composition; EonTerm selects the manifest's service and client roles
+without another graph. Installed wrappers inject resolved paths as opaque
+runtime inputs; `eon versions` prints stable identities and no Nix store path.
 
 The documents in [`docs/`](docs/) hold the current planning truth:
 
@@ -336,6 +336,6 @@ Beads data, lock files, and generated artifacts.
 | Rust source and tests | 6,131 |
 | Cargo manifests | 35 |
 | Component manifest | 318 |
-| Nix composition | 699 |
+| Nix composition | 709 |
 | Product defaults | 0 |
-| **Total** | **8,951** |
+| **Total** | **8,961** |

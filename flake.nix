@@ -50,6 +50,10 @@
       pkgs = import nixpkgs { inherit system; };
       inherit (pkgs) lib;
       manifest = builtins.fromJSON (builtins.readFile ./components/eon-alpha-v3.json);
+      eonCargo = builtins.fromTOML (builtins.readFile ./crates/eon/Cargo.toml);
+      orbitCargo = builtins.fromTOML (builtins.readFile "${orbit}/Cargo.toml");
+      venusCargo = builtins.fromTOML (builtins.readFile "${venus}/Cargo.toml");
+      helixCargo = builtins.fromTOML (builtins.readFile "${helix}/Cargo.toml");
       component =
         id:
         let
@@ -103,7 +107,6 @@
       };
 
       orbitPackage =
-        assert orbit.rev == orbitIdentity.revision;
         assert ghostty.rev == "a887df42c56f6de86c0fe6da9c4eeca37931e083";
         pkgs.rustPlatform.buildRustPackage {
           pname = "yazelix-orbit";
@@ -166,7 +169,6 @@
               ""
         '';
       venusPackage =
-        assert venus.rev == venusIdentity.revision;
         pkgs.rustPlatform.buildRustPackage {
           pname = "yazelix-venus";
           inherit (venusIdentity) version;
@@ -209,7 +211,6 @@
         });
 
       helixPackage =
-        assert helix.rev == helixIdentity.revision;
         helix.packages.${system}.yazelix_helix;
 
       nushellPackage = managedPackage nushellIdentity pkgs.nushell;
@@ -535,9 +536,18 @@
         assert nixpkgs.rev == "567a49d1913ce81ac6e9582e3553dd90a955875f";
         assert ratconfig.rev == ratconfigIdentity.revision;
         assert manifest.product.target == system;
+        assert orbit.rev == orbitIdentity.revision;
+        assert lib.assertMsg (orbitCargo.package.version == orbitIdentity.version)
+          "Orbit manifest version does not match the selected Cargo package";
+        assert venus.rev == venusIdentity.revision;
+        assert lib.assertMsg (venusCargo.package.version == venusIdentity.version)
+          "Venus manifest version does not match the selected Cargo package";
+        assert helix.rev == helixIdentity.revision;
+        assert lib.assertMsg (helixCargo.workspace.package.version == helixIdentity.version)
+          "Helix manifest version does not match the selected Cargo workspace package";
         pkgs.rustPlatform.buildRustPackage {
           pname = "eon";
-          version = "0.1.0";
+          inherit (eonCargo.package) version;
           src = lib.fileset.toSource {
             root = ./.;
             fileset = lib.fileset.unions [
