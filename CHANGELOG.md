@@ -5,8 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
-- Preserve and natively present the existing Venus window when a live Eon or
-  EonTerm generation is launched again.
+- Preserve the existing Venus window and request native presentation when a live
+  Eon or EonTerm generation is launched again.
 - Present synchronized terminal updates atomically in new Eon and EonTerm
   Sessions, while bounding producers that omit the closing marker.
 - Render adjacent Unicode full-block cells without visible seams in packaged
