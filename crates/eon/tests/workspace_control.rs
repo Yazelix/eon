@@ -317,7 +317,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "--background-opacity\n1\n{}\n{}\n",
+            "--background-opacity\n0.9\n{}\n{}\n",
             generation.join("orbit.sock").display(),
             control.display(),
         )
@@ -1023,7 +1023,7 @@ fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
     assert_eq!(
         fs::read_to_string(&venus_log).unwrap(),
         format!(
-            "--background-opacity\n1\n{}\n{}\n",
+            "--background-opacity\n0.9\n{}\n{}\n",
             runtime.join("orbit.sock").display(),
             runtime.join("eon.sock").display()
         )

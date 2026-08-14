@@ -24,7 +24,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; current CLI proof `d0c2208d628fa0dc1e186899b45e0b73534ff9bc`; deadline hardening `a390fc5c007900c3fc8c9c49df85f9b8acc06d4a`; proof below |
 | EON-C11 | Eon and EonTerm default to the exact current generation in separate runtime namespaces while older live generations remain discoverable, explicitly presentable when compatible, and explicitly stoppable through their supervisor; presenting an existing surface requests native presentation | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; native activation candidate consumes Venus `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f` |
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; proof below |
-| EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Proven | `b58f463849cc233ce8137737d61d61bee11b11ae`; proof below |
+| EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Candidate | Accepted base `b58f463849cc233ce8137737d61d61bee11b11ae`; approved `0.90` default correction pending proof |
 
 ## Approved terminal-presentation contract EON-C13
 
@@ -34,7 +34,7 @@ detailed execution evidence, and Git history retains superseded states.
   `$EON_CONFIG_HOME/config.toml` contains `[terminal]
   background_opacity = VALUE`, or contains no such value.
 - Result: Eon accepts one finite `f32` in `0.0..=1.0`, defaults absence to
-  `1.0`, and passes the exact value to Venus as `--background-opacity VALUE`
+  `0.90`, and passes the exact value to Venus as `--background-opacity VALUE`
   before its socket endpoints. Eon and EonTerm share the setting. A live Venus
   remains unchanged; after it exits, presentation reopens with the current
   value while the Orbit Session and PTY child remain live.
@@ -52,11 +52,11 @@ detailed execution evidence, and Git history retains superseded states.
   or click-through. This slice adds no profile, public CLI override, watcher,
   live reload, Orbit restart, or macOS transparency claim.
 - Update order: Venus source `74ab5a0b661210f0afec94086f5358fe50b01f05`
-  proves `VEN-C11`; Eon then proves `EON-C13` against that exact revision; an
-  approved composition may then map its product setting to Eon's field. There
-  is no adapter, feature probe, dual write, or fallback.
-- Approval: the user approved this contract on 2026-08-14 for
-  `eon-eonterm-presentation-e4f`.
+  proves `VEN-C11`; Eon then proves `EON-C13` against that exact revision.
+  Eonova consumes Eon's default by providing no opacity override. There is no
+  adapter, feature probe, dual write, or fallback.
+- Approval: the user approved this contract on 2026-08-14 and corrected its
+  default to `0.90` on 2026-08-14 for `eon-eonterm-presentation-e4f`.
 
 ## Approved EonTerm contract EON-C12
 

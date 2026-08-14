@@ -46,7 +46,7 @@ struct TerminalConfig {
 impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
-            background_opacity: 1.0,
+            background_opacity: 0.9,
         }
     }
 }
@@ -355,11 +355,11 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
-        assert_eq!(terminal_background_opacity(&root).unwrap(), 1.0);
+        assert_eq!(terminal_background_opacity(&root).unwrap(), 0.9);
 
         for (source, expected) in [
-            ("", 1.0),
-            ("[shell]\nstarship = false\n", 1.0),
+            ("", 0.9),
+            ("[shell]\nstarship = false\n", 0.9),
             ("[terminal]\nbackground_opacity = 0.0\n", 0.0),
             ("[terminal]\nbackground_opacity = 0.88\n", 0.88),
             ("[terminal]\nbackground_opacity = 1.0\n", 1.0),

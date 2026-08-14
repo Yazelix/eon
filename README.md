@@ -206,14 +206,17 @@ Eon and EonTerm use the same terminal background-opacity setting in
 
 ```toml
 [terminal]
-background_opacity = 1.0
+background_opacity = 0.90
 ```
 
 `background_opacity` accepts a finite number from `0.0` through `1.0` and
-defaults to the opaque value `1.0`. Eon applies it when creating a Venus
+defaults to `0.90`. Eon applies it when creating a Venus
 surface. Editing the file does not change a live surface; after Venus exits,
 `eon attach` or `eonterm attach` reads the current value for its replacement
 without restarting the live Orbit Session or PTY child.
+
+Eonova provides no opacity override, so an Eonova release that pins this
+EON-C13 revision consumes the same `0.90` default from EonTerm.
 
 Opacity applies only to the terminal default background and padding. Explicit
 cell backgrounds, text, cursor, selection, Eon workspace chrome, native
@@ -348,7 +351,7 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 234 |
-| README | 362 |
+| README | 365 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 756 |
@@ -359,4 +362,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 320 |
 | Nix composition | 703 |
 | Product defaults | 0 |
-| **Total** | **9,366** |
+| **Total** | **9,369** |
