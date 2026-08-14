@@ -257,7 +257,8 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C1 through EON-C4 and the current EON-C8 topology — composition
 
-- Unpublished refresh candidate on x86_64 Linux: schema 3 graph
+- Accepted refresh proof `59d8cebf9392051a5b37ac09dc23e90ad7443209` on
+  x86_64 Linux: schema 3 graph
   `components/eon-alpha-v3.json`, SHA-256
   `b694e85cc89e7d18b2319bcfc6be8a81403b15778c579732de42eb70263ea7d8`,
   selects accepted ORBS v3 Orbit source `6de95296d252c119d4fdba2d9b03cec1a09355ae`;
@@ -265,14 +266,14 @@ detailed execution evidence, and Git history retains superseded states.
   and that source for ORB-C3 through ORB-C11; selects Venus source and VEN-C1
   proof `74ab5a0b661210f0afec94086f5358fe50b01f05`; retains VEN-C2 proof
   `846daf8fb7846b0e8dc227e533aa8d51a691f76f`, ORBF v1, ORBS v3, EONW v1,
-  and every unrelated identity. Candidate packages are
+  and every unrelated identity. Exact packages are
   `/nix/store/2rvbvzprjrxdj1h260kny5qfqa8l87yc-eon-0.1.0` and
   `/nix/store/df186d9d92l2vvlfnpwa1lcax1dbhqgi-eonterm-0.1.0`; Eon NAR hash
   `sha256-0cMyGlIZEAVjOSq0beVBRlFsDkkzDsv9Hah2NJRhSm8=`; generation
   `g1-d81f6398c46f9f0aefb7de56b5922854`. Locked Rust, manifest/report, exact
   graph, Nix flake, and both-package build checks pass. The active `eon` profile
-  will be refreshed after immutable publication. ORBS v4 and VEN-C11 activation
-  remain outside this refresh. This is a candidate until its source is published.
+  resolves the exact Eon package without changing recorded live process
+  identities. ORBS v4 and VEN-C11 activation remain outside this refresh.
 - Current EON-C1 through EON-C4 composition proof:
   `0d86cf0488f7899ce565de39347b0420a0cb9129` on x86_64 Linux. The EON-C2
   graph proof remains `da0d160801c5db6b6b982967b5bdc28a11f9b5fb`. Schema 3 graph
