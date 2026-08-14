@@ -25,7 +25,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C11 | Eon and EonTerm default to the exact current generation in separate runtime namespaces while older live generations remain discoverable, explicitly presentable when compatible, and explicitly stoppable through their supervisor; presenting an existing surface requests native presentation | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; native activation candidate consumes Venus `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f` |
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; proof below |
 | EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Proven | `7303ee5cca3925939b84267bd54587a2cfb223a6`; proof below |
-| EON-C14 | Eon requests compositor-owned background blur by default whenever it creates an Eon or EonTerm Venus surface, permits an explicit configuration opt-out, and keeps opacity independent | Eon | Candidate | `eon-consume-venus-background-blur-k8o`; exact source proof pending |
+| EON-C14 | Eon requests compositor-owned background blur by default whenever it creates an Eon or EonTerm Venus surface, permits an explicit configuration opt-out, and keeps opacity independent | Eon | Proven | `b41be3a00a8e47a435521509c3d060d80e0524a5`; proof below |
 
 ## Approved terminal-background blur contract EON-C14
 
@@ -454,6 +454,46 @@ detailed execution evidence, and Git history retains superseded states.
   namespace and showed no native title bar. The namespace was stopped through
   its supervisor without touching existing Eon or Eonova generations.
 - Remaining gap: this proof makes no macOS claim.
+
+### EON-C14 — terminal-background blur
+
+- Proof revision: `b41be3a00a8e47a435521509c3d060d80e0524a5` on
+  x86_64 Linux. Canonical schema-3 graph SHA-256
+  `a56ece45662d28e4b70eb1935abe206d1c9d4760ef61f6241bad91bd6d0a9f0a`
+  selects Venus source and proved `VEN-C15`
+  `7fc7e4ba97aaf48b586002934a580ef2d1c31694`, unchanged Orbit source
+  `6de95296d252c119d4fdba2d9b03cec1a09355ae`, ORBF v1, ORBS v3, and EONW
+  v1.
+- Exact artifacts: `/nix/store/ky1f6a1q5iz2lg95ph81kgs1b6ragms3-eon-0.1.0`,
+  NAR hash `sha256-s/PaHkQqdkwzGDV9YOohosGkc2M9XB1FbXSgXJqJpsY=`, NAR size
+  1,985,128 bytes and closure size 1,824,610,296 bytes; and
+  `/nix/store/qh2gsxryzlyypva6087sw0bp0ninyhj3-eonterm-0.1.0`, NAR hash
+  `sha256-4jp9KGU8eM0XYTf8uuXt4nMq9AdR1VKaCJShqLk5C4Q=`, NAR size
+  1,729,376 bytes and closure size 1,139,379,056 bytes. Installed dogfood
+  reported generation `g1-a45ab15d3ab6fa1b45a8e00031dfeda2`.
+- Checks: focused parser, argv, initial-failure, and replacement-lifecycle
+  tests; locked format, check, 38-test workspace, and all-target Clippy suites;
+  canonical manifest validation; every declared Nix flake app, package, and
+  check; both exact package builds; README LOC; and `git diff --check` pass.
+- Exercised behavior: no file and absent field use blur; explicit true emits
+  one `--background-blur` and explicit false omits it. Opacity `0.0`, `0.8`,
+  `0.88`, and `1.0` remain independent. Wrong-type, duplicate, and unknown
+  fields are rejected before initial effects; replacement rejection preserves
+  the live supervisor, Orbit, and PTY child. Workspace, EonTerm, legacy,
+  decorated, undecorated, initial, and replacement paths share one parsed
+  terminal snapshot and one Venus argument owner.
+- Config-free installed COSMIC Wayland dogfood traced accepted Venus with
+  `--background-opacity 0.8 --background-blur` before its Orbit endpoint. The
+  isolated two-second Session exited with status 0, left no product process,
+  and its fixture moved to trash. The active `eon` and `eonterm` profiles
+  resolve the exact artifacts above; no running product process was stopped or
+  restarted.
+- Dependency disposition: Eon adds no Cargo dependency or native blur code.
+  Nix records the accepted Venus fork's exact `dpi-0.1.1` fixed-output hash
+  `sha256-ahkXE2sS1RGZDpaZEKCRMrwctWKWEnOHyn+JsUNs9Ws=`. Capability probing,
+  automatic opacity, blur strength, fallback rendering, and Eonova policy stay
+  out of scope. The compositor may ignore the request; this proof makes no X11
+  or macOS blur claim.
 
 ### EON-C13 — terminal-background opacity
 
