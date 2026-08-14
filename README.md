@@ -201,18 +201,21 @@ opaque endpoint byte.
 
 ## Terminal presentation
 
-Eon and EonTerm use the same terminal background-opacity setting in
+Eon and EonTerm use the same terminal presentation settings in
 `$EON_CONFIG_HOME/config.toml`, normally `~/.config/eon/config.toml`:
 
 ```toml
 [terminal]
 background_opacity = 0.80
+background_blur = true
 ```
 
 `background_opacity` accepts a finite number from `0.0` through `1.0` and
-defaults to `0.80`. Eon applies it when creating a Venus
+defaults to `0.80`. `background_blur` accepts a boolean, defaults to `true`,
+and requests full-surface compositor blur; set it to `false` to omit that
+request. Eon applies both values from one snapshot when creating a Venus
 surface. Editing the file does not change a live surface; after Venus exits,
-`eon attach` or `eonterm attach` reads the current value for its replacement
+`eon attach` or `eonterm attach` reads the current values for its replacement
 without restarting the live Orbit Session or PTY child.
 
 Eonova provides no opacity override, so an Eonova release that pins this
@@ -221,7 +224,11 @@ EON-C13 revision consumes the same `0.80` default from EonTerm.
 Opacity applies only to the terminal default background and padding. Explicit
 cell backgrounds, text, cursor, selection, Eon workspace chrome, native
 decorations, input, hit testing, and accessibility keep their existing
-semantics. Transparency does not enable click-through.
+semantics. Opacity and blur are independent: Eon never changes one because of
+the other, and an opaque background can visually hide compositor blur.
+Unsupported or policy-disabled compositors may ignore the best-effort request;
+Eon does not claim X11 or macOS blur. Transparency does not enable
+click-through.
 
 ## Managed environment
 
@@ -351,15 +358,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 246 |
-| README | 365 |
+| README | 372 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 757 |
+| Architecture and contracts | 794 |
 | Distribution and references | 231 |
-| Changelog | 110 |
-| Rust source and tests | 6,411 |
+| Changelog | 113 |
+| Rust source and tests | 6,481 |
 | Cargo manifests | 35 |
-| Component manifest | 320 |
-| Nix composition | 703 |
+| Component manifest | 322 |
+| Nix composition | 706 |
 | Product defaults | 0 |
-| **Total** | **9,382** |
+| **Total** | **9,504** |

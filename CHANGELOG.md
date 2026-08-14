@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Request compositor-owned terminal background blur by default for Eon and
+  EonTerm, allow strict `terminal.background_blur = false` opt-out, and keep
+  opacity independent when Venus is created or reopened.
 - Accept finite `terminal.background_opacity` values from `0.0` through `1.0`
   for Eon and EonTerm, default to `0.80`, and apply the current value whenever
   Venus is created or reopened without restarting its live Orbit Session.

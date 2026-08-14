@@ -215,11 +215,6 @@ fn invalid_terminal_configuration_precedes_supervisor_generation_and_children() 
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     fs::create_dir(&config).unwrap();
-    fs::write(
-        config.join("config.toml"),
-        "[terminal]\nbackground_opacity = 1.01\n",
-    )
-    .unwrap();
     executable(
         &orbit,
         "#!/bin/sh\nprintf started > \"$EON_TEST_ORBIT_LOG\"\n",
@@ -229,21 +224,30 @@ fn invalid_terminal_configuration_precedes_supervisor_generation_and_children() 
         "#!/bin/sh\nprintf started > \"$EON_TEST_VENUS_LOG\"\n",
     );
 
-    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
-        .arg("run")
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .env("EON_ORBIT", &orbit)
-        .env("EON_VENUS", &venus)
-        .env("EON_TEST_ORBIT_LOG", &orbit_log)
-        .env("EON_TEST_VENUS_LOG", &venus_log)
-        .output()
-        .unwrap();
+    for (source, field) in [
+        (
+            "[terminal]\nbackground_opacity = 1.01\n",
+            "background_opacity",
+        ),
+        ("[terminal]\nbackground_blur = \"yes\"\n", "background_blur"),
+    ] {
+        fs::write(config.join("config.toml"), source).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_ORBIT_LOG", &orbit_log)
+            .env("EON_TEST_VENUS_LOG", &venus_log)
+            .output()
+            .unwrap();
 
-    assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("terminal.background_opacity"));
-    assert!(!runtime.join("generations").exists());
-    assert!(!orbit_log.exists() && !venus_log.exists());
+        assert_eq!(output.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&output.stderr).contains(field));
+        assert!(!runtime.join("generations").exists());
+        assert!(!orbit_log.exists() && !venus_log.exists());
+    }
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -317,7 +321,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "--background-opacity\n0.8\n{}\n{}\n",
+            "--background-opacity\n0.8\n--background-blur\n{}\n{}\n",
             generation.join("orbit.sock").display(),
             control.display(),
         )
@@ -356,7 +360,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     fs::create_dir(&config).unwrap();
     fs::write(
         config.join("config.toml"),
-        "[terminal]\nbackground_opacity = 0.88\n",
+        "[terminal]\nbackground_opacity = 0.88\nbackground_blur = false\n",
     )
     .unwrap();
 
@@ -450,7 +454,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
 
     fs::write(
         config.join("config.toml"),
-        "[terminal]\nbackground_opacity = 1.01\n",
+        "[terminal]\nbackground_blur = \"yes\"\n",
     )
     .unwrap();
     let rejected = eonterm(&config)
@@ -460,7 +464,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     assert_eq!(rejected.status.code(), Some(1));
     let rejected_error = String::from_utf8_lossy(&rejected.stderr);
     assert!(rejected_error.contains("cannot present Eon Desktop"));
-    assert!(rejected_error.contains("terminal.background_opacity"));
+    assert!(rejected_error.contains("background_blur"));
     assert!(supervisor.child.try_wait().unwrap().is_none());
     let orbit_pid: i32 = fs::read_to_string(&orbit_log)
         .unwrap()
@@ -524,7 +528,8 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
         2
     );
     assert!(venus_log.contains("--background-opacity 0.88"));
-    assert!(venus_log.contains("--background-opacity 0"));
+    assert!(venus_log.contains("--background-opacity 0 --background-blur"));
+    assert_eq!(venus_log.matches("--background-blur").count(), 1);
     assert_eq!(
         venus_log
             .matches(&generation.join("orbit.sock").display().to_string())
@@ -1023,7 +1028,7 @@ fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
     assert_eq!(
         fs::read_to_string(&venus_log).unwrap(),
         format!(
-            "--background-opacity\n0.8\n{}\n{}\n",
+            "--background-opacity\n0.8\n--background-blur\n{}\n{}\n",
             runtime.join("orbit.sock").display(),
             runtime.join("eon.sock").display()
         )

@@ -25,6 +25,43 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C11 | Eon and EonTerm default to the exact current generation in separate runtime namespaces while older live generations remain discoverable, explicitly presentable when compatible, and explicitly stoppable through their supervisor; presenting an existing surface requests native presentation | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; native activation candidate consumes Venus `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f` |
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; proof below |
 | EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Proven | `7303ee5cca3925939b84267bd54587a2cfb223a6`; proof below |
+| EON-C14 | Eon requests compositor-owned background blur by default whenever it creates an Eon or EonTerm Venus surface, permits an explicit configuration opt-out, and keeps opacity independent | Eon | Candidate | `eon-consume-venus-background-blur-k8o`; exact source proof pending |
+
+## Approved terminal-background blur contract EON-C14
+
+- Consumer: one local Eon or EonTerm user and an approved composition that
+  pins this contract.
+- Trigger: Eon creates or reopens a Venus surface while
+  `$EON_CONFIG_HOME/config.toml` contains `[terminal]
+  background_blur = true|false`, or contains no such field.
+- Result: Eon accepts one strict boolean, defaults absence to `true`, and when
+  true passes exactly one `--background-blur` before Venus socket endpoints.
+  Explicit false omits the flag. Eon and EonTerm share the setting. A live
+  Venus remains unchanged; after it exits, presentation reopens from one
+  current terminal-configuration snapshot while Orbit and its PTY child remain
+  live.
+- Important failures: invalid configuration identifies
+  `terminal.background_blur` and starts no initial supervisor, Orbit, or Venus
+  process. Invalid replacement configuration returns a bounded presentation
+  failure without stopping Orbit or its child. An unsupported or
+  policy-disabled compositor remains Venus best effort and does not make Eon
+  launch fail.
+- Ownership: Eon owns the configuration schema, true default, apply timing,
+  launch argument, generation policy, and exact Venus compatibility. Venus
+  `VEN-C15` owns the native boolean request through winit; the compositor owns
+  capability, algorithm, strength, and policy. Orbit remains unaware.
+- Boundary: `terminal.background_blur` and EON-C13
+  `terminal.background_opacity` are independent. Eon does not infer or change
+  either value from the other. This slice adds no capability probe, automatic
+  opacity, blur strength, public CLI or environment override, watcher, live
+  reload, fallback renderer, Eonova policy, or X11/macOS visual claim.
+- Update order: Venus source `7fc7e4ba97aaf48b586002934a580ef2d1c31694`
+  proves `VEN-C15`; Eon then proves `EON-C14` against that exact revision with
+  unchanged Orbit `6de95296d252c119d4fdba2d9b03cec1a09355ae`, ORBF v1, ORBS
+  v3, and EONW v1.
+- Approval: the user approved the Eon consumer and independent opacity on
+  2026-08-14, then superseded the proposed false default with “blur on by
+  default.”
 
 ## Approved terminal-presentation contract EON-C13
 

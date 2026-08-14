@@ -37,16 +37,18 @@ impl Default for ShellConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-struct TerminalConfig {
-    background_opacity: f32,
+pub(crate) struct TerminalConfig {
+    pub(crate) background_opacity: f32,
+    pub(crate) background_blur: bool,
 }
 
 impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
             background_opacity: 0.8,
+            background_blur: true,
         }
     }
 }
@@ -106,17 +108,16 @@ pub(crate) fn shell_command(root: &Path) -> Result<Vec<String>, String> {
     Ok(read_shell_config(root)?.command)
 }
 
-pub(crate) fn terminal_background_opacity(root: &Path) -> Result<f32, String> {
-    let value = read_config(root)
-        .map_err(|error| format!("terminal.background_opacity: {error}"))?
-        .terminal
-        .background_opacity;
-    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+pub(crate) fn terminal_presentation(root: &Path) -> Result<TerminalConfig, String> {
+    let terminal = read_config(root)?.terminal;
+    if !terminal.background_opacity.is_finite()
+        || !(0.0..=1.0).contains(&terminal.background_opacity)
+    {
         return Err(
             "terminal.background_opacity must be a finite number from 0.0 through 1.0".into(),
         );
     }
-    Ok(value)
+    Ok(terminal)
 }
 
 pub(crate) fn session_path(prefix: &Path) -> Result<OsString, String> {
@@ -293,7 +294,7 @@ fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsSt
 mod tests {
     use super::{
         ManagedPrograms, Tool, integration_mask, managed_command, prepend_path, read_shell_config,
-        terminal_background_opacity, tool,
+        terminal_presentation, tool,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -349,39 +350,76 @@ mod tests {
     }
 
     #[test]
-    fn terminal_background_opacity_is_strict_and_bounded() {
+    fn terminal_presentation_is_strict_and_bounded() {
         let root = std::env::temp_dir().join(format!(
-            "eon-managed-environment-test-{}-opacity",
+            "eon-managed-environment-test-{}-presentation",
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
-        assert_eq!(terminal_background_opacity(&root).unwrap(), 0.8);
+        let presentation = terminal_presentation(&root).unwrap();
+        assert_eq!(presentation.background_opacity, 0.8);
+        assert!(presentation.background_blur);
 
-        for (source, expected) in [
-            ("", 0.8),
-            ("[shell]\nstarship = false\n", 0.8),
-            ("[terminal]\nbackground_opacity = 0.0\n", 0.0),
-            ("[terminal]\nbackground_opacity = 0.88\n", 0.88),
-            ("[terminal]\nbackground_opacity = 1.0\n", 1.0),
+        for (source, expected_opacity, expected_blur) in [
+            ("", 0.8, true),
+            ("[shell]\nstarship = false\n", 0.8, true),
+            ("[terminal]\nbackground_opacity = 0.0\n", 0.0, true),
+            (
+                "[terminal]\nbackground_opacity = 0.88\nbackground_blur = false\n",
+                0.88,
+                false,
+            ),
+            (
+                "[terminal]\nbackground_opacity = 1.0\nbackground_blur = true\n",
+                1.0,
+                true,
+            ),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
-            assert_eq!(terminal_background_opacity(&root).unwrap(), expected);
+            let presentation = terminal_presentation(&root).unwrap();
+            assert_eq!(presentation.background_opacity, expected_opacity);
+            assert_eq!(presentation.background_blur, expected_blur);
         }
 
-        for source in [
-            "[terminal]\nbackground_opacity = nan\n",
-            "[terminal]\nbackground_opacity = inf\n",
-            "[terminal]\nbackground_opacity = -0.01\n",
-            "[terminal]\nbackground_opacity = 1.01\n",
-            "[terminal]\nbackground_opacity = \"0.88\"\n",
-            "[terminal]\nbackground_opacity = 0.5\nbackground_opacity = 0.6\n",
-            "[terminal]\nunknown = true\n",
+        for (source, field) in [
+            (
+                "[terminal]\nbackground_opacity = nan\n",
+                "background_opacity",
+            ),
+            (
+                "[terminal]\nbackground_opacity = inf\n",
+                "background_opacity",
+            ),
+            (
+                "[terminal]\nbackground_opacity = -0.01\n",
+                "background_opacity",
+            ),
+            (
+                "[terminal]\nbackground_opacity = 1.01\n",
+                "background_opacity",
+            ),
+            (
+                "[terminal]\nbackground_opacity = \"0.88\"\n",
+                "background_opacity",
+            ),
+            (
+                "[terminal]\nbackground_opacity = 0.5\nbackground_opacity = 0.6\n",
+                "background_opacity",
+            ),
+            (
+                "[terminal]\nbackground_blur = \"true\"\n",
+                "background_blur",
+            ),
+            (
+                "[terminal]\nbackground_blur = true\nbackground_blur = false\n",
+                "background_blur",
+            ),
+            ("[terminal]\nunknown = true\n", "unknown"),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert!(
-                terminal_background_opacity(&root)
-                    .unwrap_err()
-                    .contains("terminal.background_opacity")
+                terminal_presentation(&root).unwrap_err().contains(field),
+                "invalid {field} configuration did not name its field"
             );
         }
         fs::remove_dir_all(root).unwrap();
