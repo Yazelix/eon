@@ -7,8 +7,8 @@ or `.agent-protocols.exceptions.json`, then render from the pinned source.
 
 ## Protocol import record
 
-- Source: `https://github.com/luccahuguet/starcompass`
-- Source commit: `c524d3c47592ce006b749d0c6db7fd0c3478ce63`
+- Source: `https://github.com/Yazelix/starcompass`
+- Source commit: `fe1b71f24b50da43b1fdafef6c3e632837711fa6`
 - Profiles: `greenfield`, `orchestrator`
 - Manifest: `.agent-protocols.json` (schema 1)
 
@@ -21,8 +21,8 @@ or `.agent-protocols.exceptions.json`, then render from the pinned source.
 | `AP-DEPENDENCY-001` | 2 | `ded49add538b82de0a9c522bc8a34720f4ebbb47f39fc2f7ddb25e7aad1700d3` |
 | `AP-OWNERSHIP-001` | 2 | `d218a4e0625b659ec366284110bdfce02bd66cb229ab6ba07f2317092ea13053` |
 | `AP-TEST-001` | 3 | `58b5837cb679e958192b366bb15d6e34649f5a91ff9f4accdc7edb4ef5cdb873` |
-| `AP-PROOF-001` | 4 | `2762fdf80ba2a36bb1e8844a44959bea7a6309dcd7a5796029a06a7ad9c26692` |
-| `AP-PLAN-001` | 9 | `a1671c41d8a5c059a7138914ae4903b1d305473cf9681e293fa7d16c0b939b15` |
+| `AP-PROOF-001` | 6 | `01fc3712fd369189b934b0503173e6a8963be64b7f18869abfaef3cca53866f7` |
+| `AP-PLAN-001` | 11 | `fcb7c8d2b99c6641a7cd1244072eda6230f1ccfc3a4aa47c29cf2525fcb1376d` |
 | `AP-CI-001` | 3 | `c7cb65a81ce8434d02f2d19306bf93358f3624d0b77886bc91d4de93f7a779ba` |
 | `AP-EXCEPTION-001` | 2 | `2c4f00299922edac83286821af07ad485e5a630bca6acbbce918d87614abb395` |
 | `AP-GIT-001` | 5 | `f2c3254311de57a23a13aa382fe3285e65bb34e535ecd813d1be783ca79d4bf9` |
@@ -140,46 +140,47 @@ contract.
 
 ### AP-PROOF-001 — Explicit proof lifecycle
 
-Proof supports only its recorded command or observation, revision, environment,
-result, and exercised surface. Distinguish proposed, implemented, mechanically
-verified, dogfooded, accepted, and promoted states; rerun stale proof and never
-widen its claim.
+Proof records revision, command/observation, environment, result/surface,
+and phase: proposed, implemented, mechanically verified, dogfooded, accepted,
+or promoted. Never widen/reuse after material change.
 
-For performance claims, measure the bottleneck, compare the same representative
-workload and environment with a recorded baseline, retain a correctness oracle,
-and report a distribution or bound. Preserve constraining negative results.
+Use the highest boundary exercising the changed contract. Add broader/lower
+suites only for changed owner, failure, trust, distinct delivery, or
+promotion—not availability, issue text, or prior phase. Exact downstream proof
+subsumes lower checks only for the identity/behavior exercised.
 
-A review or simplification pass that materially changes its subject invalidates
-completion. Repeat it on the revised state and declare convergence only after a
-full pass finds no actionable in-scope bugs or simplifications.
+Run a complete suite once per unchanged candidate/environment. Metadata/docs/
+planning follow-ups reuse it; commands are evidence, not a checklist. Keep logs
+only when reproduction is costly, disputed, performance-sensitive, or lossily
+summarized; temporary paths are not proof.
+
+Performance claims need a measured bottleneck, fixed workload/environment,
+baseline, oracle, and distribution/bound; retain constraining negatives. Review
+changes require another pass; convergence needs a full clean pass.
 
 ### AP-PLAN-001 — Durable planning state
 
-Keep later-needed outcomes and constraints in the designated planning system or
-canonical docs. Issues represent chosen goals, decisions, material defects, or
-schedulable follow-ups; methods stay in their owning issue.
+Keep later-needed outcomes/constraints in planning or canonical docs. Issues
+hold chosen goals/decisions, material defects, or schedulable follow-ups;
+methods stay with their owner. Acceptance names outcomes/cheapest falsifiers,
+not command catalogs unless the boundary/transition needs them.
 
-A run includes automatic continuations and ends when control returns. Planning
-reads are unrestricted. A run that writes planning state or implementation uses
-one shape:
+A run includes continuations until control returns; reads are unrestricted. A
+writing run does exactly one:
 
-1. Own at most one issue; create, claim, update, implement, or close only it.
-2. With explicit user authorization, create, update, or close a named or
-   accepted planning-only batch; claim nothing and edit no implementation.
+1. Owns at most one issue and may create/claim/update/implement/close it.
+2. With explicit user authorization, changes a named/accepted planning-only
+   batch; claims nothing and changes no implementation.
 
-Do not combine these shapes in one run.
+Bind implementation before writes; return at completion, block, or handoff.
+Report unapproved findings; create issues only for material out-of-scope or
+schedulable work, deferred outside authorized batches.
 
-Bind implementation work to its issue before planning or code writes. When that
-issue completes, blocks, or hands off, return without starting another. Report
-unapproved findings; create separate issues only for material out-of-scope or
-independently schedulable work, and outside an authorized batch defer creation.
-
-Keep editable fields at accepted current state after review, simplification, or
-verification; reserve append-only history for needed evidence. Preserve
-contracts, decisions, dependencies, acceptance evidence, material negative
-results and failures, constraining rejections, and approvals. Keep raw logs with
-their proof. Keep status honest, model only real prerequisites, and reconcile
-before handoff. Use the designated issue tool; never edit its storage directly.
+Keep fields current; append only needed contracts, decisions, dependencies,
+acceptance, material failures/negatives, constraining rejections, and approvals.
+Baseline/reference comments record only changed identities, dirty state,
+mechanism/stop decisions, and first check. Keep status/prerequisites honest; use
+the issue tool, never its storage.
 
 ### AP-CI-001 — Bounded continuous integration
 
@@ -406,11 +407,11 @@ the artifact or behavior that consumes the value.
 
 ## Local Runtime Synchronization
 
-After any accepted change to this repository, refresh the active `eon` Nix
-profile element from the current working tree before handoff. Verify that the
-profile resolves to the just-built store artifact and that the changed installed
-behavior or artifact passes its cheapest exact check. A build or profile-update
-failure leaves the change incomplete.
+After any accepted runtime, package, or product-configuration change, refresh
+the active `eon` Nix profile element from the current working tree before
+handoff. Verify that the profile resolves to the just-built store artifact and
+that the changed installed behavior or artifact passes its cheapest exact
+check. A build or profile-update failure leaves the change incomplete.
 
 Do not stop or restart a running Eon supervisor automatically because that
 terminates its live Sessions. Update the profile, preserve the running
@@ -453,7 +454,19 @@ changes. Planning edits do not require changelog entries.
 
 ## Verification
 
-Run the cheapest exact checks for the changed surface. During the planning
-phase, verify Markdown paths, contract identifiers, Beads state, the LOC
-scorecard, and a clean Git diff. Do not claim runtime behavior from planning
-documents.
+Use the narrowest route that proves every changed surface; combine routes only
+when the change actually crosses them.
+
+| Changed surface | Required proof |
+| --- | --- |
+| Planning, metadata, docs, or agent policy only | Beads/Markdown paths, contract IDs, generated import, LOC, and diff; do not refresh the runtime profile or claim runtime behavior. |
+| One owned parser, default, or regression | Focused red/green check plus the affected crate or package build. |
+| Exact component pin only | Manifest/lock identity and affected downstream build. |
+| Installed runtime, UI, or product-configuration interaction | Affected profile refresh plus one isolated outermost installed dogfood observation. |
+| Shared protocol, manifest, security, dependency, or lifecycle boundary | Full affected Rust and Nix surfaces. |
+| Promotion or release | Complete delivery and promotion proof. |
+
+Every route preserves Git and user state, validates trust boundaries, keeps
+exact pins exact, preserves live Sessions, and retains the cheapest check for a
+known regression. A downstream observation covers an unchanged embedded
+component only for the exact identity and behavior it exercises.

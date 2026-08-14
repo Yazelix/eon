@@ -350,7 +350,7 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy | 234 |
+| Agent policy | 246 |
 | README | 365 |
 | Repository ignore rules | 3 |
 | License | 201 |
@@ -362,4 +362,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 320 |
 | Nix composition | 703 |
 | Product defaults | 0 |
-| **Total** | **9,370** |
+| **Total** | **9,382** |
