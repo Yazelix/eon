@@ -6,7 +6,7 @@ installation, and proven contract changes.
 ## Unreleased
 
 - Accept finite `terminal.background_opacity` values from `0.0` through `1.0`
-  for Eon and EonTerm, default to `0.90`, and apply the current value whenever
+  for Eon and EonTerm, default to `0.80`, and apply the current value whenever
   Venus is created or reopened without restarting its live Orbit Session.
 - Refresh new Eon and EonTerm launches to the accepted ORBS v3 terminal
   runtimes, preserving Sessions through client-pressure disconnects, transient
