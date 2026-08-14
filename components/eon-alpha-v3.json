@@ -30,6 +30,7 @@
       { "component": "venus", "contract": "VEN-C8" },
       { "component": "venus", "contract": "VEN-C9" },
       { "component": "venus", "contract": "VEN-C10" },
+      { "component": "venus", "contract": "VEN-C11" },
       { "component": "venus", "contract": "VEN-C13" },
       { "component": "venus", "contract": "VEN-C14" }
     ],
@@ -94,6 +95,7 @@
         { "id": "VEN-C8", "proof": "9c56eb17613e10ef7712a1852b049ed63cf22b18" },
         { "id": "VEN-C9", "proof": "90988f6ebcde68338e202a9c637c59398aafe93d" },
         { "id": "VEN-C10", "proof": "9c56eb17613e10ef7712a1852b049ed63cf22b18" },
+        { "id": "VEN-C11", "proof": "74ab5a0b661210f0afec94086f5358fe50b01f05" },
         { "id": "VEN-C13", "proof": "2d3498258920736eb1bdae2b8869b6547b9735d4" },
         { "id": "VEN-C14", "proof": "50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f" }
       ],

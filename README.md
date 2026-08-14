@@ -199,6 +199,27 @@ accepted EONW result as the human view; neither output format is the protocol
 schema. Its `endpoint` field is an ordered integer array that preserves every
 opaque endpoint byte.
 
+## Terminal presentation
+
+Eon and EonTerm use the same terminal background-opacity setting in
+`$EON_CONFIG_HOME/config.toml`, normally `~/.config/eon/config.toml`:
+
+```toml
+[terminal]
+background_opacity = 1.0
+```
+
+`background_opacity` accepts a finite number from `0.0` through `1.0` and
+defaults to the opaque value `1.0`. Eon applies it when creating a Venus
+surface. Editing the file does not change a live surface; after Venus exits,
+`eon attach` or `eonterm attach` reads the current value for its replacement
+without restarting the live Orbit Session or PTY child.
+
+Opacity applies only to the terminal default background and padding. Explicit
+cell backgrounds, text, cursor, selection, Eon workspace chrome, native
+decorations, input, hit testing, and accessibility keep their existing
+semantics. Transparency does not enable click-through.
+
 ## Managed environment
 
 A Session without an explicit command starts Eon's pinned Nushell. Configure
@@ -327,15 +348,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 234 |
-| README | 341 |
+| README | 362 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 680 |
+| Architecture and contracts | 713 |
 | Distribution and references | 231 |
-| Changelog | 107 |
-| Rust source and tests | 6,199 |
+| Changelog | 110 |
+| Rust source and tests | 6,411 |
 | Cargo manifests | 35 |
-| Component manifest | 318 |
+| Component manifest | 320 |
 | Nix composition | 703 |
 | Product defaults | 0 |
-| **Total** | **9,052** |
+| **Total** | **9,323** |

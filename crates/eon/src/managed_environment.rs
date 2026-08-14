@@ -12,6 +12,7 @@ use std::{
 #[serde(default, deny_unknown_fields)]
 struct EonConfig {
     shell: ShellConfig,
+    terminal: TerminalConfig,
 }
 
 #[derive(Debug, Deserialize, PartialEq, Eq)]
@@ -32,6 +33,20 @@ impl Default for ShellConfig {
             zoxide: true,
             atuin: true,
             carapace: true,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct TerminalConfig {
+    background_opacity: f32,
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self {
+            background_opacity: 1.0,
         }
     }
 }
@@ -89,6 +104,19 @@ pub(crate) fn command(
 
 pub(crate) fn shell_command(root: &Path) -> Result<Vec<String>, String> {
     Ok(read_shell_config(root)?.command)
+}
+
+pub(crate) fn terminal_background_opacity(root: &Path) -> Result<f32, String> {
+    let value = read_config(root)
+        .map_err(|error| format!("terminal.background_opacity: {error}"))?
+        .terminal
+        .background_opacity;
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        return Err(
+            "terminal.background_opacity must be a finite number from 0.0 through 1.0".into(),
+        );
+    }
+    Ok(value)
 }
 
 pub(crate) fn session_path(prefix: &Path) -> Result<OsString, String> {
@@ -220,18 +248,7 @@ fn managed_programs() -> ManagedPrograms {
 }
 
 fn read_shell_config(root: &Path) -> Result<ShellConfig, String> {
-    let path = root.join("config.toml");
-    let source = match fs::read_to_string(&path) {
-        Ok(source) => source,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ShellConfig::default());
-        }
-        Err(error) => {
-            return Err(format!("cannot read {}: {error}", path.display()));
-        }
-    };
-    let config: EonConfig = toml::from_str(&source)
-        .map_err(|error| format!("invalid Eon configuration {}: {error}", path.display()))?;
+    let config = read_config(root)?;
     if config.shell.command.is_empty() || config.shell.command[0].is_empty() {
         return Err("shell.command must not be empty".into());
     }
@@ -244,6 +261,21 @@ fn read_shell_config(root: &Path) -> Result<ShellConfig, String> {
         return Err("shell.command must not contain NUL".into());
     }
     Ok(config.shell)
+}
+
+fn read_config(root: &Path) -> Result<EonConfig, String> {
+    let path = root.join("config.toml");
+    let source = match fs::read_to_string(&path) {
+        Ok(source) => source,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(EonConfig::default());
+        }
+        Err(error) => {
+            return Err(format!("cannot read {}: {error}", path.display()));
+        }
+    };
+    toml::from_str(&source)
+        .map_err(|error| format!("invalid Eon configuration {}: {error}", path.display()))
 }
 
 fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsString, String> {
@@ -261,7 +293,7 @@ fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsSt
 mod tests {
     use super::{
         ManagedPrograms, Tool, integration_mask, managed_command, prepend_path, read_shell_config,
-        tool,
+        terminal_background_opacity, tool,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -312,6 +344,45 @@ mod tests {
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert!(read_shell_config(&root).unwrap_err().contains(expected));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn terminal_background_opacity_is_strict_and_bounded() {
+        let root = std::env::temp_dir().join(format!(
+            "eon-managed-environment-test-{}-opacity",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        assert_eq!(terminal_background_opacity(&root).unwrap(), 1.0);
+
+        for (source, expected) in [
+            ("", 1.0),
+            ("[shell]\nstarship = false\n", 1.0),
+            ("[terminal]\nbackground_opacity = 0.0\n", 0.0),
+            ("[terminal]\nbackground_opacity = 0.88\n", 0.88),
+            ("[terminal]\nbackground_opacity = 1.0\n", 1.0),
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            assert_eq!(terminal_background_opacity(&root).unwrap(), expected);
+        }
+
+        for source in [
+            "[terminal]\nbackground_opacity = nan\n",
+            "[terminal]\nbackground_opacity = inf\n",
+            "[terminal]\nbackground_opacity = -0.01\n",
+            "[terminal]\nbackground_opacity = 1.01\n",
+            "[terminal]\nbackground_opacity = \"0.88\"\n",
+            "[terminal]\nbackground_opacity = 0.5\nbackground_opacity = 0.6\n",
+            "[terminal]\nunknown = true\n",
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            assert!(
+                terminal_background_opacity(&root)
+                    .unwrap_err()
+                    .contains("terminal.background_opacity")
+            );
         }
         fs::remove_dir_all(root).unwrap();
     }

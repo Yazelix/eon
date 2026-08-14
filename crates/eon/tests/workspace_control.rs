@@ -206,6 +206,48 @@ fn invalid_focus_is_rejected_before_supervisor_connection() {
 }
 
 #[test]
+fn invalid_terminal_configuration_precedes_supervisor_generation_and_children() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let orbit_log = root.join("orbit.log");
+    let venus_log = root.join("venus.log");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    fs::create_dir(&config).unwrap();
+    fs::write(
+        config.join("config.toml"),
+        "[terminal]\nbackground_opacity = 1.01\n",
+    )
+    .unwrap();
+    executable(
+        &orbit,
+        "#!/bin/sh\nprintf started > \"$EON_TEST_ORBIT_LOG\"\n",
+    );
+    executable(
+        &venus,
+        "#!/bin/sh\nprintf started > \"$EON_TEST_VENUS_LOG\"\n",
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_ORBIT_LOG", &orbit_log)
+        .env("EON_TEST_VENUS_LOG", &venus_log)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("terminal.background_opacity"));
+    assert!(!runtime.join("generations").exists());
+    assert!(!orbit_log.exists() && !venus_log.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn bare_eon_attaches_only_to_the_live_current_generation() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
@@ -275,7 +317,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "{}\n{}\n",
+            "--background-opacity\n1\n{}\n{}\n",
             generation.join("orbit.sock").display(),
             control.display(),
         )
@@ -291,6 +333,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     let runtime = root.join("eonterm");
     let config = root.join("config");
     let child_exit = root.join("child-exit");
+    let child_pid = root.join("child.pid");
     let orbit_log = root.join("orbit.log");
     let venus_log = root.join("venus.log");
     let presentation_log = root.join("presentation.log");
@@ -304,12 +347,18 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     );
     executable(
         &venus,
-        "#!/bin/sh\nprintf '%s|%s|%s|%s|%s\\n' \"$$\" \"$#\" \"$1\" \"${2-}\" \"$EON_VENUS_PRESENTATION_CONTROL\" >> \"$EON_TEST_VENUS_LOG\"\ndd bs=8 count=1 status=none >> \"$EON_TEST_PRESENTATION_LOG\"\nwhile :; do sleep 0.01; done\n",
+        "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$$\" \"$EON_VENUS_PRESENTATION_CONTROL\" \"$*\" >> \"$EON_TEST_VENUS_LOG\"\ndd bs=8 count=1 status=none >> \"$EON_TEST_PRESENTATION_LOG\"\nwhile :; do sleep 0.01; done\n",
     );
     executable(
         &command,
-        "#!/bin/sh\nwhile test ! -e \"$EON_TEST_CHILD_EXIT\"; do sleep 0.01; done\n",
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_CHILD_PID\"\nwhile test ! -e \"$EON_TEST_CHILD_EXIT\"; do sleep 0.01; done\n",
     );
+    fs::create_dir(&config).unwrap();
+    fs::write(
+        config.join("config.toml"),
+        "[terminal]\nbackground_opacity = 0.88\n",
+    )
+    .unwrap();
 
     let eon = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     let binary = root.join("bin/eonterm");
@@ -324,6 +373,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
             .env("EON_ORBIT", &orbit)
             .env("EON_VENUS", &venus)
             .env("EON_TEST_CHILD_EXIT", &child_exit)
+            .env("EON_TEST_CHILD_PID", &child_pid)
             .env("EON_TEST_ORBIT_LOG", &orbit_log)
             .env("EON_TEST_VENUS_LOG", &venus_log)
             .env("EON_TEST_PRESENTATION_LOG", &presentation_log);
@@ -344,6 +394,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     wait_for(&generation.join("eon.sock"));
     wait_for(&venus_log);
+    wait_for(&child_pid);
     let initial_venus = fs::read_to_string(&venus_log)
         .unwrap()
         .split('|')
@@ -359,6 +410,11 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     assert!(listed.status.success());
     assert!(stdout(&listed).contains(generation_id));
 
+    fs::write(
+        config.join("config.toml"),
+        "[terminal]\nbackground_opacity = 0.0\n",
+    )
+    .unwrap();
     let mut repeated = eonterm(&command)
         .args(["--", "/bin/false"])
         .stdout(Stdio::null())
@@ -392,7 +448,38 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
             ))
     );
 
-    let reopened = eonterm(&command)
+    fs::write(
+        config.join("config.toml"),
+        "[terminal]\nbackground_opacity = 1.01\n",
+    )
+    .unwrap();
+    let rejected = eonterm(&config)
+        .args(["attach", generation_id])
+        .output()
+        .unwrap();
+    assert_eq!(rejected.status.code(), Some(1));
+    let rejected_error = String::from_utf8_lossy(&rejected.stderr);
+    assert!(rejected_error.contains("cannot present Eon Desktop"));
+    assert!(rejected_error.contains("terminal.background_opacity"));
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    let orbit_pid: i32 = fs::read_to_string(&orbit_log)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let child_pid: i32 = fs::read_to_string(&child_pid).unwrap().parse().unwrap();
+    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
+    assert_eq!(unsafe { libc::kill(orbit_pid, 0) }, 0);
+    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
+    assert_eq!(unsafe { libc::kill(child_pid, 0) }, 0);
+    assert_eq!(fs::read_to_string(&venus_log).unwrap().lines().count(), 1);
+
+    fs::write(
+        config.join("config.toml"),
+        "[terminal]\nbackground_opacity = 0.0\n",
+    )
+    .unwrap();
+    let reopened = eonterm(&config)
         .args(["attach", generation_id])
         .output()
         .unwrap();
@@ -402,7 +489,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
         assert!(Instant::now() < deadline, "EonTerm did not reopen");
         thread::sleep(Duration::from_millis(10));
     }
-    let refocused = eonterm(&command)
+    let refocused = eonterm(&config)
         .args(["attach", generation_id])
         .output()
         .unwrap();
@@ -421,13 +508,23 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
         thread::sleep(Duration::from_millis(10));
     }
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
+    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
+    assert_eq!(unsafe { libc::kill(orbit_pid, 0) }, 0);
+    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
+    assert_eq!(unsafe { libc::kill(child_pid, 0) }, 0);
     let venus_log = fs::read_to_string(&venus_log).unwrap();
     let venus_pids = venus_log
         .lines()
         .map(|line| line.split('|').next().unwrap().to_string())
         .collect::<Vec<_>>();
-    assert_eq!(venus_log.matches("|2|--no-decorations|").count(), 2);
-    assert_eq!(venus_log.matches("|stdin\n").count(), 2);
+    assert_eq!(
+        venus_log
+            .matches("|stdin|--no-decorations --background-opacity ")
+            .count(),
+        2
+    );
+    assert!(venus_log.contains("--background-opacity 0.88"));
+    assert!(venus_log.contains("--background-opacity 0"));
     assert_eq!(
         venus_log
             .matches(&generation.join("orbit.sock").display().to_string())
@@ -926,7 +1023,7 @@ fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
     assert_eq!(
         fs::read_to_string(&venus_log).unwrap(),
         format!(
-            "{}\n{}\n",
+            "--background-opacity\n1\n{}\n{}\n",
             runtime.join("orbit.sock").display(),
             runtime.join("eon.sock").display()
         )

@@ -1142,7 +1142,7 @@ fn launch_current(
     prepare_runtime(&root)?;
     // ponytail: one root-wide startup lock; partition if cross-generation starts contend.
     let startup_lock = lock_supervisor_startup(&root.join("startup.lock"))?;
-    let runtime = prepare_generation_runtime(&root, &generation)?;
+    let runtime = generation_directory(&root, &generation);
     let socket = runtime.join("eon.sock");
     match probe_supervisor(&socket, &generation) {
         Ok((active_mode, supervisor)) => {
@@ -1166,11 +1166,14 @@ fn launch_current(
         Err(error) => return Err(error.detail),
     }
     let config = configuration_directory()?;
+    let background_opacity = managed_environment::terminal_background_opacity(&config)?;
+    prepare_generation_runtime(&root, &generation)?;
     prepare_configuration(&config)?;
     let programs = programs(decorations);
     match supervise(
         &programs,
         &config,
+        background_opacity,
         startup_lock,
         &runtime.join("orbit.sock"),
         child,
@@ -1326,6 +1329,7 @@ fn request_id() -> String {
 
 fn attach_legacy(runtime: &Path) -> Result<i32, String> {
     let config = configuration_directory()?;
+    let background_opacity = managed_environment::terminal_background_opacity(&config)?;
     prepare_configuration(&config)?;
     let programs = programs(true);
     venus_command(
@@ -1333,6 +1337,7 @@ fn attach_legacy(runtime: &Path) -> Result<i32, String> {
         &config,
         &runtime.join("orbit.sock"),
         LaunchMode::Workspace,
+        background_opacity,
     )
     .spawn()
     .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?
@@ -1371,11 +1376,20 @@ fn present_at(
     }
 }
 
-fn venus_command(programs: &Programs, config: &Path, socket: &Path, mode: LaunchMode) -> Command {
+fn venus_command(
+    programs: &Programs,
+    config: &Path,
+    socket: &Path,
+    mode: LaunchMode,
+    background_opacity: f32,
+) -> Command {
     let mut command = Command::new(&programs.venus);
     if !programs.venus_decorations {
         command.arg("--no-decorations");
     }
+    command
+        .arg("--background-opacity")
+        .arg(background_opacity.to_string());
     command.arg(socket);
     if mode == LaunchMode::Workspace {
         command.arg(socket.with_file_name("eon.sock"));
@@ -1418,8 +1432,15 @@ fn start_venus(
     config: &Path,
     socket: &Path,
     mode: LaunchMode,
+    background_opacity: f32,
 ) -> Result<PresentationProcess, String> {
-    PresentationProcess::start(venus_command(programs, config, socket, mode))
+    PresentationProcess::start(venus_command(
+        programs,
+        config,
+        socket,
+        mode,
+        background_opacity,
+    ))
 }
 
 fn programs(venus_decorations: bool) -> Programs {
@@ -1521,9 +1542,11 @@ fn effective_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn supervise(
     programs: &Programs,
     config: &Path,
+    background_opacity: f32,
     startup_lock: fs::File,
     socket: &Path,
     child: &[OsString],
@@ -1536,7 +1559,7 @@ fn supervise(
     let control_listener = create_control_listener(&runtime.join("eon.sock"))?;
     let mut initial = start_orbit(programs, config, socket, child, SESSION_START_TIMEOUT)?;
 
-    let venus = match start_venus(programs, config, socket, mode) {
+    let venus = match start_venus(programs, config, socket, mode, background_opacity) {
         Ok(venus) => venus,
         Err(error) => {
             stop(&mut initial);
@@ -1913,7 +1936,14 @@ fn handle_control_client(
                     .sessions
                     .first()
                     .ok_or_else(|| "supervisor has no live Session to present".to_string())?;
-                state.venus = Some(start_venus(programs, config, &session.endpoint, mode)?);
+                let background_opacity = managed_environment::terminal_background_opacity(config)?;
+                state.venus = Some(start_venus(
+                    programs,
+                    config,
+                    &session.endpoint,
+                    mode,
+                    background_opacity,
+                )?);
                 Ok(())
             });
             match result.and_then(|()| runtime_status(generation, &state.sessions, mode)) {
@@ -2410,26 +2440,38 @@ mod tests {
         let config = Path::new("/config/eon");
         let socket = Path::new("/runtime/orbit.sock");
 
-        let workspace = venus_command(&programs, config, socket, LaunchMode::Workspace);
+        let workspace = venus_command(&programs, config, socket, LaunchMode::Workspace, 0.88);
         assert_eq!(
             workspace.get_args().map(OsString::from).collect::<Vec<_>>(),
-            ["/runtime/orbit.sock", "/runtime/eon.sock"].map(OsString::from)
+            [
+                "--background-opacity",
+                "0.88",
+                "/runtime/orbit.sock",
+                "/runtime/eon.sock",
+            ]
+            .map(OsString::from)
         );
 
-        let terminal = venus_command(&programs, config, socket, LaunchMode::Terminal);
+        let terminal = venus_command(&programs, config, socket, LaunchMode::Terminal, 1.0);
         assert_eq!(
             terminal.get_args().map(OsString::from).collect::<Vec<_>>(),
-            ["/runtime/orbit.sock"].map(OsString::from)
+            ["--background-opacity", "1", "/runtime/orbit.sock"].map(OsString::from)
         );
 
         programs.venus_decorations = false;
-        let undecorated = venus_command(&programs, config, socket, LaunchMode::Terminal);
+        let undecorated = venus_command(&programs, config, socket, LaunchMode::Terminal, 0.0);
         assert_eq!(
             undecorated
                 .get_args()
                 .map(OsString::from)
                 .collect::<Vec<_>>(),
-            ["--no-decorations", "/runtime/orbit.sock"].map(OsString::from)
+            [
+                "--no-decorations",
+                "--background-opacity",
+                "0",
+                "/runtime/orbit.sock",
+            ]
+            .map(OsString::from)
         );
     }
 
@@ -2452,6 +2494,7 @@ mod tests {
                 venus_decorations: true,
             },
             &config,
+            1.0,
             lock_supervisor_startup(&root.join("startup.lock")).unwrap(),
             &socket,
             &["ignored".into()],
@@ -2491,7 +2534,7 @@ mod tests {
         executable(
             &venus,
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$XDG_CONFIG_HOME\" \"$@\" \"$(cat \"$1\")\" > '{}'\n: > '{}'
+                "#!/bin/sh\nprintf '%s\\n' \"$XDG_CONFIG_HOME\" \"$@\" \"$(cat \"$3\")\" > '{}'\n: > '{}'
 ",
                 venus_log.display(),
                 venus_exited.display()
@@ -2520,6 +2563,7 @@ mod tests {
                 venus_decorations: true,
             },
             &config,
+            1.0,
             lock_supervisor_startup(&root.join("startup.lock")).unwrap(),
             &socket,
             &["codex".into(), "--model".into(), "test".into()],
@@ -2542,7 +2586,7 @@ mod tests {
         assert_eq!(
             fs::read_to_string(venus_log).unwrap(),
             format!(
-                "{}\n{}\n{}\nnew\n",
+                "{}\n--background-opacity\n1\n{}\n{}\nnew\n",
                 config.display(),
                 socket.display(),
                 root.join("eon.sock").display()
