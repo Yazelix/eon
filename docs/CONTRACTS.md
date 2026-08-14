@@ -24,7 +24,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; current CLI proof `d0c2208d628fa0dc1e186899b45e0b73534ff9bc`; deadline hardening `a390fc5c007900c3fc8c9c49df85f9b8acc06d4a`; proof below |
 | EON-C11 | Eon and EonTerm default to the exact current generation in separate runtime namespaces while older live generations remain discoverable, explicitly presentable when compatible, and explicitly stoppable through their supervisor; presenting an existing surface requests native presentation | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; native activation candidate consumes Venus `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f` |
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; proof below |
-| EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Candidate | Previous `0.90` proof `3149dfd92e6130f58ac7c086b6d90f9003c1c2df`; `0.80` correction pending exact proof below |
+| EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Proven | `7303ee5cca3925939b84267bd54587a2cfb223a6`; proof below |
 
 ## Approved terminal-presentation contract EON-C13
 
@@ -420,45 +420,42 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C13 — terminal-background opacity
 
-- Proof revision: `3149dfd92e6130f58ac7c086b6d90f9003c1c2df` on
-  x86_64 Linux, superseding the `1.0` default proved by `b58f463`. Canonical
-  schema-3 graph SHA-256
+- Proof revision: `7303ee5cca3925939b84267bd54587a2cfb223a6` on
+  x86_64 Linux, superseding the `0.90` default proved by `3149dfd` and the
+  `1.0` default proved by `b58f463`. Canonical schema-3 graph SHA-256
   `76252ee2ccbca91694526117b35ebd47a8bb5d6b31490d775dad4432c212cbe7`
   selects Venus source and proved `VEN-C11`
   `74ab5a0b661210f0afec94086f5358fe50b01f05`, unchanged Orbit source
   `6de95296d252c119d4fdba2d9b03cec1a09355ae`, ORBS v3, and EONW v1.
-- Exact artifacts: `/nix/store/9v08fv40hj1wsk3lhngb6q6g5yswmik6-eon-0.1.0`,
-  NAR hash `sha256-qNy8VQdaCi2tRyub1A4SyDJvT7nPMIediaIJs62sB2c=`, NAR size
+- Exact artifacts: `/nix/store/3b7zzsn9ah79qm4r49rdxmcp9fsdfq56-eon-0.1.0`,
+  NAR hash `sha256-q3oa+kFuWyQuVQ8oxLtOo2osxTJ8jaBE2fPlO83qoIE=`, NAR size
   1,981,280 bytes and closure size 1,824,543,536 bytes; and
-  `/nix/store/5ga819cf9w4nxjn4dy2wy3x5l6hfgqdp-eonterm-0.1.0`, NAR hash
-  `sha256-3YnCN92X/lJMwGgOb68zoRK8YJslL6Ou7N+7nCp8FCw=`, NAR size
+  `/nix/store/8a31d8p6vcxld23j05wjzisw8b0n68bp-eonterm-0.1.0`, NAR hash
+  `sha256-MhLz/0L6DQi02ptzmINS7ji/JvjgdaUEA9J8gdiy8WM=`, NAR size
   1,725,528 bytes and closure size 1,139,312,296 bytes. Installed dogfood
-  reported generation `g1-bf8bf3e74275d89dd387ded02a09ed82`.
-- Checks: the focused correction test first observed `1.0` where `0.9` was
+  reported generation `g1-cb5721abd1b5d0c41776ca065460e15a`.
+- Checks: the focused correction test first observed `0.9` where `0.8` was
   required; focused default and no-config argv checks; locked format, check,
   38-test workspace, and all-target Clippy suites; canonical manifest
-  validation; all five Nix flake checks; both exact package builds; README LOC;
+  validation; all 22 Nix flake checks; both exact package builds; README LOC;
   and `git diff --check` pass.
-- Exercised behavior: no file and absent field pass `--background-opacity 0.9`;
+- Exercised behavior: no file and absent field pass `--background-opacity 0.8`;
   explicit `0.0`, `0.88`, and `1.0` remain accepted; non-finite, out-of-range,
   wrong-type, duplicate, and unknown terminal fields identify
   `terminal.background_opacity`. Initial rejection creates no generation,
   socket, Orbit, or Venus process. Every decorated, undecorated, workspace,
   EonTerm, and legacy Venus launch puts the exact flag before socket endpoints.
-- Installed COSMIC Wayland dogfood traced actual accepted Venus execs: EonTerm
-  PID `1996228` received `--no-decorations --background-opacity 0.9` before its
-  Orbit endpoint, and decorated Eon PID `1996433` received
-  `--background-opacity 0.9` before its Orbit and Eon endpoints. Both isolated
-  two-second Sessions exited successfully, left no process, and their fixtures
-  moved to trash. The accepted Venus proof continues to supply native resize,
-  reconnect, selection, IME, accessibility, background-layer, decoration, and
-  compositor behavior for the exact consumed child source.
+- Config-free COSMIC Wayland dogfood traced actual accepted Venus PID `2095909`
+  with `--no-decorations --background-opacity 0.8` before its Orbit endpoint.
+  The isolated two-second Session exited successfully, left no process, and its
+  fixture moved to trash. The accepted Venus proof continues to supply native
+  resize, reconnect, selection, IME, accessibility, background-layer,
+  decoration, and compositor behavior for the exact consumed child source.
 - The active `eon` profile resolves the exact Eon artifact above. Eonova source
-  `247265c44f759f8142783af7dfd5415c25211c5c` supplies no opacity override, so
-  it will inherit `0.90` when its separate exact Eon pin advances from
-  `a390fc5c007900c3fc8c9c49df85f9b8acc06d4a`. Existing Eonova
-  supervisor, Orbit, and Venus PIDs `1769216`, `1769218`, and `1769231` retain
-  their 2026-08-13 23:11:51 start time; no live process was restarted.
+  `057d42b1b755c6ca25cd2f7012ac2de1ce069759` supplies no opacity override;
+  its exact-pin rollout is owned by `eon-default-opacity-0-80-eonova-rollout-elu`.
+  Existing Eonova supervisor, Orbit, and Venus processes retained their start
+  identities throughout this Eon proof; no live process was restarted.
 - Dependency disposition: no dependency, profile framework, watcher, public
   CLI option, environment-per-setting boundary, or second graph was added.
   Broader Linux compositor behavior and macOS transparency remain limited by
