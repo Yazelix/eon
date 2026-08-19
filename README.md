@@ -218,6 +218,10 @@ surface. Editing the file does not change a live surface; after Venus exits,
 `eon attach` or `eonterm attach` reads the current values for its replacement
 without restarting the live Orbit Session or PTY child.
 
+Cursor presentation remains Venus-owned. Eon passes no cursor-effect profile,
+so every new or replacement surface uses Venus's blue cursor tail with its
+default timing.
+
 Eonova provides no opacity override, so an Eonova release that pins this
 EON-C13 revision consumes the same `0.80` default from EonTerm.
 
@@ -358,15 +362,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 246 |
-| README | 372 |
+| README | 376 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 834 |
 | Distribution and references | 237 |
-| Changelog | 113 |
+| Changelog | 115 |
 | Rust source and tests | 6,481 |
 | Cargo manifests | 35 |
 | Component manifest | 322 |
 | Nix composition | 706 |
 | Product defaults | 0 |
-| **Total** | **9,550** |
+| **Total** | **9,556** |

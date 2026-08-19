@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Consume Venus's blue cursor-tail default for new and replacement Eon and
+  EonTerm surfaces without adding Eon-owned cursor configuration.
 - Request compositor-owned terminal background blur by default for Eon and
   EonTerm, allow strict `terminal.background_blur = false` opt-out, and keep
   opacity independent when Venus is created or reopened.
