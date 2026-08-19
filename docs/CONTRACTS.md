@@ -328,6 +328,32 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C1 through EON-C4 and the current EON-C8 topology — composition
 
+- Accepted default-cursor refresh proof
+  `7d59dc127dff623e950792ccf4d63f127fba6c7b` on x86_64 Linux: schema 3
+  graph `components/eon-alpha-v3.json`, SHA-256
+  `0c3af1506c26607c1ee721a13442bba3740f2b4283701ed77f22d2127068990c`,
+  selects Venus source and VEN-C1 proof
+  `5d22b09e323212693a8e54c4c63089784b660cad`; keeps accepted VEN-C15,
+  Orbit `6de95296d252c119d4fdba2d9b03cec1a09355ae`, ORBF v1, ORBS v3,
+  EONW v1, and every unrelated identity unchanged. Exact packages are
+  `/nix/store/yx0q0qix10wmcnabvg63bh937wp1d5mx-eon-0.1.0`, NAR hash
+  `sha256-vQYLaYRlp5057X9qiOsHlYsofTdsLBG7yfarjud+cp8=`, closure size
+  1,824,610,344 bytes, and
+  `/nix/store/k88d9pq03wv6amsfxiq2qk50pky1q4zc-eonterm-0.1.0`, NAR hash
+  `sha256-LaZt+ISX4es+3FVArp1E7O0oymtZIzpOvG8AkUIy+W8=`, closure size
+  1,139,379,104 bytes. Focused manifest tests pass 4/4, the canonical graph
+  validates, and both exact packages build. The first package attempt met the
+  unchanged dead-generation cleanup timing assertion; its focused rerun and a
+  complete second package build passed without changing the candidate.
+- The active `eon` and `eonterm` profile elements resolve those exact packages.
+  Existing Eonova supervisor, Orbit, and Venus PIDs `428222`, `428223`, and
+  `428242` retained their identities across the profile refresh.
+- Isolated installed COSMIC Wayland dogfood used generation
+  `g1-de3dfecf76855f17d79d5eed09fe762f`. Venus PID `468639` launched with
+  opacity, blur, and its Orbit socket but no cursor-effect arguments. A native
+  1920×1080 frame showed the pale current cursor and the blue tail on the
+  preceding moving cell. Structured stop removed the isolated Session and
+  product processes; its temporary runtime and capture were moved to trash.
 - Accepted refresh proof `59d8cebf9392051a5b37ac09dc23e90ad7443209` on
   x86_64 Linux: schema 3 graph
   `components/eon-alpha-v3.json`, SHA-256
