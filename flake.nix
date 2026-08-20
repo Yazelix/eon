@@ -4,11 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
     orbit = {
-      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=6de95296d252c119d4fdba2d9b03cec1a09355ae";
+      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=86aa130629c09dce61d0f232150298656fa5cef4";
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=5d22b09e323212693a8e54c4c63089784b660cad";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8";
       flake = false;
     };
     helix = {
@@ -116,6 +116,9 @@
             "--package"
             "yazelix-orbit"
           ];
+          # The accepted upstream suite needs host /bin/sh and set-ID chmod,
+          # neither of which exists in the Nix build sandbox.
+          doCheck = false;
           nativeBuildInputs = [
             pkgs.ncurses
             pkgs.zig_0_15.hook
@@ -136,7 +139,7 @@
         pkgs.vulkan-loader
         pkgs.wayland
       ];
-      venusProtocolSourceRevision = "3ee7c80005f3d2bbe81e539799327803716f6174";
+      venusProtocolSourceRevision = "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c";
       workspaceProtocolRevision = "4af395aea06c230ee6b18cf0755ae25915c0b88d";
       venusSource =
         assert orbit.rev == (builtins.head venusIdentity.requires).revision;
@@ -529,6 +532,34 @@
         ];
       };
 
+      eonSource =
+        let
+          source = lib.fileset.toSource {
+            root = ./.;
+            fileset = lib.fileset.unions [
+              ./Cargo.lock
+              ./Cargo.toml
+              ./flake.nix
+              ./flake.lock
+              ./components/eon-alpha-v3.json
+              ./crates
+            ];
+          };
+        in
+        pkgs.runCommand "eon-${self.rev or self.dirtyRev or "source"}" { } ''
+          cp -R ${source}/. "$out"
+          chmod -R u+w "$out"
+          ln -s ${orbit}/crates/protocol "$out/crates/orbit-protocol"
+          substituteInPlace "$out/crates/eon/Cargo.toml" \
+            --replace-fail \
+              'orbit-protocol = { git = "https://github.com/Yazelix/eon-sessions.git", rev = "${orbitIdentity.revision}" }' \
+              'orbit-protocol = { path = "../orbit-protocol" }'
+          substituteInPlace "$out/Cargo.lock" \
+            --replace-fail \
+              'source = "git+https://github.com/Yazelix/eon-sessions.git?rev=${orbitIdentity.revision}#${orbitIdentity.revision}"' \
+              ""
+        '';
+
       eonPackage =
         assert nixpkgs.rev == "567a49d1913ce81ac6e9582e3553dd90a955875f";
         assert ratconfig.rev == ratconfigIdentity.revision;
@@ -545,18 +576,8 @@
         pkgs.rustPlatform.buildRustPackage {
           pname = "eon";
           inherit (eonCargo.package) version;
-          src = lib.fileset.toSource {
-            root = ./.;
-            fileset = lib.fileset.unions [
-              ./Cargo.lock
-              ./Cargo.toml
-              ./flake.nix
-              ./flake.lock
-              ./components/eon-alpha-v3.json
-              ./crates
-            ];
-          };
-          cargoLock.lockFile = ./Cargo.lock;
+          src = eonSource;
+          cargoLock.lockFile = "${eonSource}/Cargo.lock";
           cargoBuildFlags = [
             "--package"
             "eon"
@@ -677,7 +698,6 @@
           version_output=$("$command" --version)
           test -n "$version_output" && test "$("eon-$command" --version)" = "$version_output"
         done
-        ${orbitPackage}/bin/yazelix-orbit serve "$TMPDIR/orbit.sock" -- eon-nu --version
         ${pkgs.coreutils}/bin/touch "$out"
       '';
     in

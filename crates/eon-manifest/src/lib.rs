@@ -135,6 +135,17 @@ pub fn version_report(input: &str) -> Result<String, Error> {
     Ok(lines.join("\n"))
 }
 
+pub fn component_revision(input: &str, id: &str) -> Result<String, Error> {
+    let manifest = parse(input)?;
+    validate(&manifest)?;
+    manifest
+        .components
+        .into_iter()
+        .find(|component| component.id == id)
+        .map(|component| component.revision)
+        .ok_or_else(|| Error(format!("manifest has no {id} component")))
+}
+
 fn parse(input: &str) -> Result<Manifest, Error> {
     let decoded: serde_json::Value = serde_json::from_str(input)
         .map_err(|error| Error(format!("invalid manifest JSON: {error}")))?;
@@ -407,7 +418,7 @@ fn token(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_and_validate, version_report};
+    use super::{component_revision, parse_and_validate, version_report};
     use serde_json::Value;
 
     const CANONICAL: &str = include_str!("../../../components/eon-alpha-v3.json");
@@ -453,8 +464,8 @@ mod tests {
         assert_eq!(
             report,
             "eon-alpha x86_64-linux\n\
-orbit 0.1.0 6de95296d252c119d4fdba2d9b03cec1a09355ae x86_64-linux\n\
-venus 0.1.0 5d22b09e323212693a8e54c4c63089784b660cad x86_64-linux\n\
+orbit 0.1.0 86aa130629c09dce61d0f232150298656fa5cef4 x86_64-linux\n\
+venus 0.1.0 a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8 x86_64-linux\n\
 nushell 0.113.1 7b7df4aa68e957cf38b9d8157c35fa7523f44a6d x86_64-linux\n\
 bash 5.3p9 b8c60bc9ca365f8261fa97900b6fa939f6ebc303 x86_64-linux\n\
 zsh 5.9.1 0e0d4ea11731c47f57bad042fbe75e3979d8a1d2 x86_64-linux\n\
@@ -469,6 +480,11 @@ lazygit 0.62.2 009c8975beb322f9374789476ac65dfa02321fce x86_64-linux\n\
 ratconfig 6.0.0 e6ec2ebfe84b2358186410680cbcaf0564eb59a2 x86_64-linux"
         );
         assert!(!report.contains("/nix/store"));
+        assert_eq!(
+            component_revision(CANONICAL, "orbit").unwrap(),
+            "86aa130629c09dce61d0f232150298656fa5cef4"
+        );
+        assert!(component_revision(CANONICAL, "missing").is_err());
     }
 
     #[test]

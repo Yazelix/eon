@@ -9,6 +9,7 @@ dependencies = [
  "eon-manifest",
  "eon-workspace-protocol",
  "libc",
+ "orbit-protocol",
  "serde",
  "toml",
 ]
@@ -64,6 +65,11 @@ name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
+
+[[package]]
+name = "orbit-protocol"
+version = "0.1.0"
+source = "git+https://github.com/Yazelix/eon-sessions.git?rev=86aa130629c09dce61d0f232150298656fa5cef4#86aa130629c09dce61d0f232150298656fa5cef4"
 
 [[package]]
 name = "proc-macro2"

@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Recover exact current-generation Orbit runs after same-boot Eon or EonTerm
+  supervisor loss, preserving their process, PTY child, and terminal state while
+  projecting full Eon into one deterministic numeric workspace.
+- Acquire Orbit's sole canonical management lease before publishing Sessions or
+  Venus, and complete whole-generation stop only after every exact Orbit
+  tombstone; uncertain recovery or stop fails without PID or signal fallback.
+- Refresh the canonical composition to Orbit ORB-C13/ORBS v4 and the accepted
+  stream-supervised Venus, whose replacement lifetime follows Eon's control EOF.
 - Consume Venus's blue cursor-tail default for new and replacement Eon and
   EonTerm surfaces without adding Eon-owned cursor configuration.
 - Request compositor-owned terminal background blur by default for Eon and
@@ -13,10 +21,9 @@ installation, and proven contract changes.
 - Accept finite `terminal.background_opacity` values from `0.0` through `1.0`
   for Eon and EonTerm, default to `0.80`, and apply the current value whenever
   Venus is created or reopened without restarting its live Orbit Session.
-- Refresh new Eon and EonTerm launches to the accepted ORBS v3 terminal
-  runtimes, preserving Sessions through client-pressure disconnects, transient
-  PTY closure, and concurrent stale-socket claims while rejecting contradictory
-  presentation capabilities.
+- Preserve Sessions through client-pressure disconnects, transient PTY closure,
+  and concurrent stale-socket claims while rejecting contradictory presentation
+  capabilities.
 - Return a committed workspace snapshot when Session startup finishes within
   Eon's accepted work bound instead of reporting the supervisor unavailable.
 - Preserve live replacement supervisor sockets and generation directories when

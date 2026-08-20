@@ -51,7 +51,7 @@ active routing map.
 
 | Question or trigger | Owner | Read first | Read additionally only if | Preserve / reject |
 |---|---|---|---|---|
-| How should Eon help a user recover an interrupted product session without guessing or silently reopening the wrong work? | Eon recovery policy over accepted Orbit and Venus contracts | [Power Failure Resumer](https://github.com/Dicklesworthstone/power_failure_resumer) | None by default. | Study discovery, ambiguity, previewable plans, idempotence, verified reopen, and partial failure. Reject product-specific mechanics, automatic unknown-process resume, and claims beyond exact child contracts. |
+| How should Eon help a user recover an interrupted product session without guessing or silently reopening the wrong work? | Eon recovery policy over accepted Orbit and Venus contracts | [Power Failure Resumer at `318d24fbab1b`](https://github.com/Dicklesworthstone/power_failure_resumer/tree/318d24fbab1b5c0ab1242ee19892419b034faa0e) | None by default. | Study discovery, ambiguity, previewable plans, idempotence, verified reopen, and partial failure. Reject product-specific mechanics, automatic unknown-process resume, and claims beyond exact child contracts. |
 
 Composition and release references are routed by [Distribution and
 Composition](DISTRIBUTION.md#reference-routing), their owning policy document.

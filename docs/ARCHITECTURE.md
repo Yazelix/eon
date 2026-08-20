@@ -92,6 +92,15 @@ private EONW endpoint retains lifecycle authority but returns
 `workspace-unavailable` to topology actions, while Venus receives only Orbit's
 endpoint. EONW carries opaque Orbit endpoint bytes but no terminal content.
 
+Within one exact runtime generation, Eon consumes Orbit's canonical private
+management records and lease stream without copying their schema. Eon validates
+the complete live identity and acquires every lease before publishing EONW or
+Venus. Same-boot supervisor replacement retains the exact Orbit runs and maps
+their numeric Session identities into one deterministic live workspace; it does
+not reconstruct prior topology. Whole-generation stop is EONW-owned product
+policy routed through Orbit-owned Stop and terminal records. Venus is tied to
+its Eon owner by a private stream and exits on owner EOF.
+
 ## Repository subsystem boundaries
 
 Eon's internal boundaries follow owned invariants rather than delivery phases.
@@ -99,8 +108,8 @@ They route changes and audits without creating additional product scope.
 
 | Subsystem | Owning surfaces | Owns | Does not own |
 |---|---|---|---|
-| Runtime and lifecycle | `crates/eon/src/main.rs` | CLI dispatch, launch mode, private configuration and per-generation runtime roots, generation identity and discovery, supervisor-routed presentation and stop, component launch policy, child observation, and the control socket | PTYs, terminal state, native rendering, persistent topology, or managed-tool behavior |
-| Workspace state | `crates/eon/src/workspace.rs` | Live ordered tabs and panes, stable identities, active selection, Session-to-endpoint mapping, semantic action results, and complete snapshots | EONW encoding, Orbit state, or Venus geometry |
+| Runtime and lifecycle | `crates/eon/src/main.rs` | CLI dispatch, launch mode, private configuration and per-generation runtime roots, generation identity and discovery, canonical Orbit identity validation and lease collection, deterministic same-boot recovery policy, supervisor-routed presentation and stop, component launch policy, and the control socket | PTYs, terminal state, native rendering, persistent topology, or managed-tool behavior |
+| Workspace state | `crates/eon/src/workspace.rs` | Live ordered tabs and panes, stable identities, active selection, Session-to-endpoint mapping, deterministic recovered-Session projection, semantic action results, and complete snapshots | EONW encoding, Orbit state, prior-topology persistence, or Venus geometry |
 | EONW boundary | `crates/eon-workspace-protocol` | Versioned values, bounded framing, validation, complete workspace snapshots, supervisor identity and capabilities, presentation and stop results, and structured failures | Live topology, lifecycle policy, transport ownership, authorization, or rendering |
 | Component graph | `components/eon-alpha-v3.json` and `crates/eon-manifest` | Stable component identity, compatibility requirements, abstract artifact declarations, graph validation, and version reporting | Resolved package paths, launch policy, or package construction |
 | Managed environment | `crates/eon/src/managed_environment.rs` and its `flake.nix` wiring | Stable managed command names, private configuration projection, exact tool selection, and default interactive policy | Shell, prompt, editor, file-manager, or Git-TUI native behavior |
@@ -111,10 +120,11 @@ and-graph digest selects its private generation namespace. Candidate directories
 locate control endpoints, but only a bounded EONW response establishes live
 identity and capabilities. A bare launch never adopts or stops a different
 generation. Workspace and lifecycle state cross process boundaries only through
-EONW. Nix resolves the canonical component graph and injects paths without
-becoming a runtime owner. A subsystem review includes its direct callers and
-consumers; a separate repository integration review reconciles invariants that
-cross these rows.
+EONW for Eon clients; canonical Orbit management records and leases remain the
+private child-lifecycle boundary. Nix resolves the canonical component graph and
+injects paths without becoming a runtime owner. A subsystem review includes its
+direct callers and consumers; a separate repository integration review
+reconciles invariants that cross these rows.
 
 ## Composition unit
 

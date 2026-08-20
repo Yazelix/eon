@@ -3,20 +3,26 @@ mod workspace;
 
 use eon_workspace_protocol::{
     Action, Availability, Direction, Error as ProtocolError, Failure, HEADER_BYTES,
-    LifecycleResponse, MAX_DETAIL_BYTES, Request, Response, Runtime, Stopped, VERSION,
+    LifecycleResponse, MAX_DETAIL_BYTES, MAX_PANES, Request, Response, Runtime, Stopped, VERSION,
     declared_message_len, decode_lifecycle_response, decode_request, decode_response,
     encode_lifecycle_response, encode_request, encode_response,
 };
+use orbit_protocol::management::{
+    self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LiveIdentity,
+    ObjectIdentity, ProcessOutcome, Record as ManagementRecord,
+    ServerMessage as ManagementServerMessage, TerminationReason, Tombstone,
+};
 use std::{
+    collections::HashSet,
     env,
     ffi::{OsStr, OsString},
     fs,
     io::{Read, Write},
-    os::fd::OwnedFd,
+    os::fd::{AsRawFd, OwnedFd},
     os::unix::{
-        ffi::OsStrExt,
+        ffi::{OsStrExt, OsStringExt},
         fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
-        net::{UnixDatagram, UnixListener, UnixStream},
+        net::{UnixListener, UnixStream},
         process::CommandExt,
     },
     path::{Path, PathBuf},
@@ -73,6 +79,18 @@ fn valid_generation(value: &str) -> bool {
         && value[3..]
             .bytes()
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn session_number(value: &str) -> Option<usize> {
+    let number = value.strip_prefix("session-")?;
+    if number.is_empty() || number == "0" || number.starts_with('0') {
+        return None;
+    }
+    number
+        .bytes()
+        .all(|byte| byte.is_ascii_digit())
+        .then(|| number.parse().ok())
+        .flatten()
 }
 
 fn generation_directory(root: &Path, generation: &str) -> PathBuf {
@@ -1403,15 +1421,15 @@ fn venus_command(
 
 struct PresentationProcess {
     child: Child,
-    control: UnixDatagram,
+    control: UnixStream,
 }
 
 impl PresentationProcess {
     fn start(mut command: Command) -> Result<Self, String> {
-        let (control, input) = UnixDatagram::pair()
+        let (control, input) = UnixStream::pair()
             .map_err(|error| format!("cannot create Eon Desktop presentation control: {error}"))?;
         control
-            .set_nonblocking(true)
+            .set_write_timeout(Some(Duration::from_millis(250)))
             .map_err(|error| format!("cannot bound Eon Desktop presentation control: {error}"))?;
         command
             .env("EON_VENUS_PRESENTATION_CONTROL", "stdin")
@@ -1423,10 +1441,25 @@ impl PresentationProcess {
     }
 
     fn present(&self) -> Result<(), String> {
-        self.control
-            .send(b"present\n")
-            .map(|_| ())
+        (&self.control)
+            .write_all(b"present\n")
             .map_err(|error| format!("cannot signal Eon Desktop presentation: {error}"))
+    }
+}
+
+fn close_presentation(process: PresentationProcess) {
+    let PresentationProcess { mut child, control } = process;
+    drop(control);
+    let deadline = Instant::now() + SESSION_START_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            _ => {
+                stop(&mut child);
+                return;
+            }
+        }
     }
 }
 
@@ -1539,6 +1572,446 @@ fn effective_uid() -> u32 {
     unsafe { libc::geteuid() }
 }
 
+struct RecordSnapshot {
+    object: ObjectIdentity,
+    record: ManagementRecord,
+}
+
+struct ManagedCandidate {
+    number: usize,
+    endpoint: PathBuf,
+    record_path: PathBuf,
+    record: ObjectIdentity,
+    identity: LiveIdentity,
+}
+
+fn artifact_path(endpoint: &Path, suffix: &str) -> PathBuf {
+    let mut path = endpoint.as_os_str().to_os_string();
+    path.push(suffix);
+    path.into()
+}
+
+fn object_identity(metadata: &fs::Metadata) -> ObjectIdentity {
+    ObjectIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    }
+}
+
+fn read_management_record(path: &Path) -> Result<Option<RecordSnapshot>, String> {
+    let mut file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "cannot open Sessions record {}: {error}",
+                path.display()
+            ));
+        }
+    };
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("cannot inspect Sessions record {}: {error}", path.display()))?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != effective_uid()
+        || metadata.mode() & 0o7777 != 0o600
+        || metadata.len() > management::MAX_RECORD_BYTES as u64
+    {
+        return Err(format!(
+            "Sessions record {} must be an owned mode-0600 regular file no larger than {} bytes",
+            path.display(),
+            management::MAX_RECORD_BYTES
+        ));
+    }
+    let object = object_identity(&metadata);
+    let mut bytes = Vec::with_capacity(management::MAX_RECORD_BYTES.saturating_add(1));
+    Read::by_ref(&mut file)
+        .take(management::MAX_RECORD_BYTES.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("cannot read Sessions record {}: {error}", path.display()))?;
+    if bytes.len() > management::MAX_RECORD_BYTES {
+        return Err(format!(
+            "Sessions record {} exceeds {} bytes",
+            path.display(),
+            management::MAX_RECORD_BYTES
+        ));
+    }
+    let current = fs::symlink_metadata(path).map_err(|error| {
+        format!(
+            "cannot revalidate Sessions record {}: {error}",
+            path.display()
+        )
+    })?;
+    if !current.file_type().is_file()
+        || current.uid() != effective_uid()
+        || current.mode() & 0o7777 != 0o600
+        || object_identity(&current) != object
+    {
+        return Err(format!(
+            "Sessions record {} changed while it was being read",
+            path.display()
+        ));
+    }
+    let record = management::decode_record(&bytes)
+        .map_err(|error| format!("invalid Sessions record {}: {error}", path.display()))?;
+    Ok(Some(RecordSnapshot { object, record }))
+}
+
+fn endpoint_matches(path: &Path, expected: &EndpointIdentity) -> Result<(), String> {
+    if expected.path != path.as_os_str().as_bytes() {
+        return Err(format!(
+            "Sessions identity names endpoint {}, expected {}",
+            PathBuf::from(OsString::from_vec(expected.path.clone())).display(),
+            path.display()
+        ));
+    }
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        format!(
+            "cannot inspect Sessions endpoint {}: {error}",
+            path.display()
+        )
+    })?;
+    if !metadata.file_type().is_socket()
+        || metadata.uid() != effective_uid()
+        || metadata.mode() & 0o7777 != 0o600
+        || object_identity(&metadata) != expected.object
+    {
+        return Err(format!(
+            "Sessions endpoint {} does not match its owned mode-0600 socket identity",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn expected_session_endpoint(runtime: &Path, number: usize) -> PathBuf {
+    if number == 1 {
+        runtime.join("orbit.sock")
+    } else {
+        runtime.join(format!("session-{number}.sock"))
+    }
+}
+
+fn validate_management_identity(
+    identity: &LiveIdentity,
+    component_generation: &str,
+    expected_run: Option<&str>,
+    require_live_endpoints: bool,
+) -> Result<(usize, PathBuf), String> {
+    let number = session_number(&identity.session_id)
+        .ok_or_else(|| format!("invalid Sessions identity {:?}", identity.session_id))?;
+    if expected_run.is_some_and(|expected| identity.run_id != expected) {
+        return Err("Sessions record reports a different run identity".into());
+    }
+    if identity.component_generation != component_generation {
+        return Err(format!(
+            "Sessions record reports component generation {}, expected {component_generation}",
+            identity.component_generation
+        ));
+    }
+    if identity.record_generation != management::RECORD_GENERATION
+        || identity.management_generation != management::VERSION
+    {
+        return Err("Sessions record reports an unsupported management generation".into());
+    }
+    if identity.uid != effective_uid() {
+        return Err(format!(
+            "Sessions record reports UID {}, expected {}",
+            identity.uid,
+            effective_uid()
+        ));
+    }
+    let presentation = PathBuf::from(OsString::from_vec(identity.presentation.path.clone()));
+    let runtime = presentation
+        .parent()
+        .ok_or_else(|| "Sessions presentation endpoint has no parent".to_string())?;
+    let expected_presentation = expected_session_endpoint(runtime, number);
+    if presentation != expected_presentation {
+        return Err(format!(
+            "Sessions identity {} uses unexpected presentation endpoint {}",
+            identity.session_id,
+            presentation.display()
+        ));
+    }
+    let management_path = artifact_path(&presentation, ".management");
+    if identity.management.path != management_path.as_os_str().as_bytes() {
+        return Err(format!(
+            "Sessions identity {} uses an unexpected management endpoint",
+            identity.session_id
+        ));
+    }
+    if require_live_endpoints {
+        endpoint_matches(&presentation, &identity.presentation)?;
+        endpoint_matches(&management_path, &identity.management)?;
+    }
+    Ok((number, presentation))
+}
+
+fn operation_timeout(deadline: Instant, operation: &str) -> Result<Duration, String> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| format!("{operation} exceeded five seconds"))
+}
+
+fn read_management_response(stream: &mut UnixStream) -> Result<ManagementServerMessage, String> {
+    let mut bytes = vec![0; management::HEADER_BYTES];
+    stream
+        .read_exact(&mut bytes)
+        .map_err(|error| format!("cannot read Sessions management result: {error}"))?;
+    let length = management::server_message_len(&bytes)
+        .map_err(|error| format!("invalid Sessions management result: {error}"))?
+        .ok_or("incomplete Sessions management header")?;
+    bytes.resize(length, 0);
+    stream
+        .read_exact(&mut bytes[management::HEADER_BYTES..])
+        .map_err(|error| format!("cannot read complete Sessions management result: {error}"))?;
+    management::decode_server_message(&bytes)
+        .map_err(|error| format!("invalid Sessions management result: {error}"))
+}
+
+fn validate_management_peer(stream: &UnixStream, identity: &LiveIdentity) -> Result<(), String> {
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: credentials points to writable ucred storage of the declared length.
+    if unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&raw mut credentials).cast(),
+            &raw mut length,
+        )
+    } == -1
+        || length as usize != std::mem::size_of::<libc::ucred>()
+    {
+        return Err("cannot validate Sessions management peer credentials".into());
+    }
+    if u32::try_from(credentials.pid).ok() != Some(identity.process_id)
+        || credentials.uid != identity.uid
+    {
+        return Err("Sessions management peer differs from its Ready process identity".into());
+    }
+    let stat = fs::read_to_string(format!("/proc/{}/stat", identity.process_id))
+        .map_err(|error| format!("cannot validate Sessions process identity: {error}"))?;
+    let start = stat
+        .rsplit_once(')')
+        .and_then(|(_, fields)| fields.split_whitespace().nth(19))
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or("invalid Sessions process identity")?;
+    if start != identity.process_start {
+        return Err("Sessions process start differs from its Ready identity".into());
+    }
+    Ok(())
+}
+
+fn acquire_management(
+    candidate: ManagedCandidate,
+    deadline: Instant,
+) -> Result<RunningSession, String> {
+    let current = read_management_record(&candidate.record_path)?.ok_or_else(|| {
+        format!(
+            "Sessions record {} disappeared",
+            candidate.record_path.display()
+        )
+    })?;
+    if current.object != candidate.record
+        || current.record != ManagementRecord::Live(candidate.identity.clone())
+    {
+        return Err(format!(
+            "Sessions record {} changed before lease acquisition",
+            candidate.record_path.display()
+        ));
+    }
+    let management_path = PathBuf::from(OsString::from_vec(
+        candidate.identity.management.path.clone(),
+    ));
+    endpoint_matches(&management_path, &candidate.identity.management)?;
+    let mut stream = UnixStream::connect(&management_path).map_err(|error| {
+        format!(
+            "cannot connect to Sessions management endpoint {}: {error}",
+            management_path.display()
+        )
+    })?;
+    validate_management_peer(&stream, &candidate.identity)?;
+    let timeout = operation_timeout(deadline, "Sessions lease acquisition")?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .and_then(|()| stream.set_write_timeout(Some(timeout)))
+        .map_err(|error| format!("cannot bound Sessions lease acquisition: {error}"))?;
+    let request = management::encode_client_message(&ManagementClientMessage::Acquire {
+        expected: candidate.identity.clone(),
+        record: candidate.record,
+    })
+    .map_err(|error| format!("cannot encode Sessions lease request: {error}"))?;
+    stream
+        .write_all(&request)
+        .map_err(|error| format!("cannot send Sessions lease request: {error}"))?;
+    match read_management_response(&mut stream)? {
+        ManagementServerMessage::Lease(identity) if identity == candidate.identity => {}
+        ManagementServerMessage::Busy => {
+            return Err(format!(
+                "Sessions run {} is already managed",
+                candidate.identity.run_id
+            ));
+        }
+        ManagementServerMessage::Failure(failure) => {
+            return Err(format!(
+                "Sessions rejected lease acquisition: {}",
+                failure.detail
+            ));
+        }
+        _ => return Err("Sessions returned the wrong lease result".into()),
+    }
+    stream
+        .set_read_timeout(None)
+        .and_then(|()| stream.set_write_timeout(None))
+        .and_then(|()| stream.set_nonblocking(true))
+        .map_err(|error| format!("cannot configure Sessions management lease: {error}"))?;
+    Ok(RunningSession {
+        number: candidate.number,
+        id: candidate.identity.session_id.clone(),
+        endpoint: candidate.endpoint,
+        record: candidate.record_path,
+        identity: candidate.identity,
+        lease: stream,
+        child: None,
+    })
+}
+
+fn cleanup_record(path: &Path, expected: ObjectIdentity) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        format!(
+            "cannot inspect ended Sessions record {}: {error}",
+            path.display()
+        )
+    })?;
+    if !metadata.file_type().is_file()
+        || metadata.uid() != effective_uid()
+        || metadata.mode() & 0o7777 != 0o600
+        || object_identity(&metadata) != expected
+    {
+        return Err(format!(
+            "ended Sessions record {} changed before cleanup",
+            path.display()
+        ));
+    }
+    fs::remove_file(path).map_err(|error| {
+        format!(
+            "cannot remove ended Sessions record {}: {error}",
+            path.display()
+        )
+    })
+}
+
+fn recover_sessions(
+    runtime: &Path,
+    mode: LaunchMode,
+    component_generation: &str,
+    deadline: Instant,
+) -> Result<Vec<RunningSession>, String> {
+    let mut paths = fs::read_dir(runtime)
+        .map_err(|error| {
+            format!(
+                "cannot list Sessions runtime {}: {error}",
+                runtime.display()
+            )
+        })?
+        .filter_map(|entry| match entry {
+            Ok(entry) if entry.file_name().as_bytes().ends_with(b".record") => {
+                Some(Ok(entry.path()))
+            }
+            Ok(_) => None,
+            Err(error) => Some(Err(format!(
+                "cannot inspect Sessions entry in {}: {error}",
+                runtime.display()
+            ))),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if paths.len() > MAX_PANES {
+        return Err(format!(
+            "Sessions runtime {} exceeds the {MAX_PANES}-record recovery limit",
+            runtime.display()
+        ));
+    }
+    paths.sort_by(|left, right| {
+        left.as_os_str()
+            .as_bytes()
+            .cmp(right.as_os_str().as_bytes())
+    });
+
+    let mut candidates = Vec::new();
+    let mut numbers = HashSet::new();
+    for record_path in paths {
+        operation_timeout(deadline, "Sessions recovery")?;
+        let snapshot = read_management_record(&record_path)?
+            .ok_or_else(|| format!("Sessions record {} disappeared", record_path.display()))?;
+        let identity = match &snapshot.record {
+            ManagementRecord::Live(identity) => identity,
+            ManagementRecord::Tombstone(tombstone) => {
+                let (_, endpoint) = validate_management_identity(
+                    &tombstone.identity,
+                    component_generation,
+                    None,
+                    false,
+                )?;
+                if artifact_path(&endpoint, ".record") != record_path {
+                    return Err(format!(
+                        "ended Sessions record {} has the wrong identity path",
+                        record_path.display()
+                    ));
+                }
+                let management_path = PathBuf::from(OsString::from_vec(
+                    tombstone.identity.management.path.clone(),
+                ));
+                loop {
+                    if endpoint_removed(&endpoint, tombstone.identity.presentation.object)?
+                        && endpoint_removed(&management_path, tombstone.identity.management.object)?
+                    {
+                        break;
+                    }
+                    operation_timeout(deadline, "ended Sessions cleanup")?;
+                    thread::sleep(Duration::from_millis(25));
+                }
+                cleanup_record(&record_path, snapshot.object)?;
+                continue;
+            }
+        };
+        let (number, endpoint) =
+            validate_management_identity(identity, component_generation, None, true)?;
+        if artifact_path(&endpoint, ".record") != record_path {
+            return Err(format!(
+                "Sessions record {} has the wrong presentation identity",
+                record_path.display()
+            ));
+        }
+        if !numbers.insert(number) {
+            return Err(format!("duplicate live Sessions identity session-{number}"));
+        }
+        candidates.push(ManagedCandidate {
+            number,
+            endpoint,
+            record_path,
+            record: snapshot.object,
+            identity: identity.clone(),
+        });
+    }
+    candidates.sort_by_key(|candidate| candidate.number);
+    if mode == LaunchMode::Terminal && candidates.len() > 1 {
+        return Err("EonTerm cannot recover more than one live Session".into());
+    }
+
+    let mut sessions = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        sessions.push(acquire_management(candidate, deadline)?);
+    }
+    Ok(sessions)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn supervise(
     programs: &Programs,
@@ -1553,27 +2026,57 @@ fn supervise(
     let runtime = socket
         .parent()
         .ok_or_else(|| format!("Sessions socket {} has no parent", socket.display()))?;
+    let component_generation =
+        eon_manifest::component_revision(MANIFEST, "orbit").map_err(|error| error.to_string())?;
+    let deadline = Instant::now() + SESSION_START_TIMEOUT;
+    let mut sessions = recover_sessions(runtime, mode, &component_generation, deadline)?;
+    if sessions.is_empty() {
+        sessions.push(start_orbit(
+            programs,
+            config,
+            socket,
+            "session-1",
+            &component_generation,
+            child,
+            deadline,
+        )?);
+    }
+    let workspace = (mode == LaunchMode::Workspace)
+        .then(|| {
+            Workspace::with_recovered_sessions(
+                runtime.to_path_buf(),
+                sessions
+                    .iter()
+                    .map(|session| {
+                        (
+                            session.number,
+                            workspace::Session {
+                                id: session.id.clone(),
+                                endpoint: session.endpoint.clone(),
+                            },
+                        )
+                    })
+                    .collect(),
+            )
+        })
+        .transpose()?;
     let control_listener = create_control_listener(&runtime.join("eon.sock"))?;
-    let mut initial = start_orbit(programs, config, socket, child, SESSION_START_TIMEOUT)?;
-
-    let venus = match start_venus(programs, config, socket, mode, terminal) {
+    let first_endpoint = sessions[0].endpoint.clone();
+    let venus = match start_venus(programs, config, &first_endpoint, mode, terminal) {
         Ok(venus) => venus,
         Err(error) => {
-            stop(&mut initial);
-            remove_dead_socket(socket);
+            let stopped = stop_managed_sessions(&mut sessions, SESSION_START_TIMEOUT)
+                .map_err(|stop_error| format!("{error}; cannot roll back Sessions: {stop_error}"));
             drop(control_listener);
-            let _ = fs::remove_dir(runtime);
-            return Err(error);
+            if stopped.is_ok() {
+                let _ = fs::remove_dir(runtime);
+            }
+            return stopped.and(Err(error));
         }
     };
     let mut state = SupervisorState {
-        workspace: (mode == LaunchMode::Workspace)
-            .then(|| Workspace::with_initial_session(runtime.to_path_buf(), socket.to_path_buf())),
-        sessions: vec![RunningSession {
-            id: "session-1".into(),
-            endpoint: socket.into(),
-            child: initial,
-        }],
+        workspace,
+        sessions,
         venus: Some(venus),
     };
     drop(startup_lock);
@@ -1582,14 +2085,8 @@ fn supervise(
     loop {
         let mut index = 0;
         while index < state.sessions.len() {
-            if let Some(status) = state.sessions[index]
-                .child
-                .try_wait()
-                .map_err(|error| format!("cannot observe Sessions: {error}"))?
-            {
+            if let Some(code) = session_finished(&mut state.sessions[index])? {
                 let session = state.sessions.remove(index);
-                let code = status_code(status);
-                remove_dead_socket(&session.endpoint);
                 if let Some(workspace) = &mut state.workspace {
                     workspace
                         .session_exited(&session.id)
@@ -1604,12 +2101,12 @@ fn supervise(
         }
 
         if state.sessions.is_empty() {
-            if let Some(mut process) = state.venus.take() {
-                stop(&mut process.child);
+            if let Some(process) = state.venus.take() {
+                close_presentation(process);
             }
             drop(control_listener);
             let _ = fs::remove_dir(runtime);
-            return initial_status.ok_or("initial Sessions exit status is unavailable".into());
+            return Ok(initial_status.unwrap_or(0));
         }
 
         if reap_desktop(&mut state.venus)? {
@@ -1631,12 +2128,8 @@ fn supervise(
             SESSION_START_TIMEOUT,
             generation,
         )? {
-            if let Some(mut process) = state.venus.take() {
-                stop(&mut process.child);
-            }
-            for session in &mut state.sessions {
-                stop(&mut session.child);
-                remove_dead_socket(&session.endpoint);
+            if let Some(process) = state.venus.take() {
+                close_presentation(process);
             }
             drop(control_listener);
             let _ = fs::remove_dir(runtime);
@@ -1668,44 +2161,116 @@ fn reap_desktop(desktop: &mut Option<PresentationProcess>) -> Result<bool, Strin
 }
 
 struct RunningSession {
+    number: usize,
     id: String,
     endpoint: PathBuf,
-    child: Child,
+    record: PathBuf,
+    identity: LiveIdentity,
+    lease: UnixStream,
+    child: Option<Child>,
 }
 
 fn start_orbit(
     programs: &Programs,
     config: &Path,
     socket: &Path,
+    session_id: &str,
+    component_generation: &str,
     child: &[OsString],
-    socket_timeout: Duration,
-) -> Result<Child, String> {
-    let previous_socket = socket_identity(socket)?;
-    let mut orbit_command = orbit_command(programs, config, socket, child)?;
+    deadline: Instant,
+) -> Result<RunningSession, String> {
+    let run_id = request_id();
+    let record_path = artifact_path(socket, ".record");
+    let mut orbit_command = orbit_command(
+        programs,
+        config,
+        socket,
+        session_id,
+        &run_id,
+        component_generation,
+        child,
+    )?;
     let mut orbit = orbit_command
         .spawn()
         .map_err(|error| format!("cannot launch Sessions: {error}"))?;
-    if let Err(error) = wait_for_socket(&mut orbit, socket, previous_socket, socket_timeout) {
-        stop(&mut orbit);
-        return Err(error);
+    loop {
+        if let Some(status) = orbit
+            .try_wait()
+            .map_err(|error| format!("cannot observe Sessions startup: {error}"))?
+        {
+            return Err(format!(
+                "Sessions exited before publishing Ready (status {})",
+                status_code(status)
+            ));
+        }
+        match read_management_record(&record_path) {
+            Ok(Some(RecordSnapshot {
+                object,
+                record: ManagementRecord::Live(identity),
+            })) => {
+                let (number, endpoint) = validate_management_identity(
+                    &identity,
+                    component_generation,
+                    Some(&run_id),
+                    true,
+                )?;
+                if identity.session_id != session_id || endpoint != socket {
+                    return Err("Sessions Ready identity does not match its launch".into());
+                }
+                let mut session = acquire_management(
+                    ManagedCandidate {
+                        number,
+                        endpoint,
+                        record_path,
+                        record: object,
+                        identity,
+                    },
+                    deadline,
+                )?;
+                session.child = Some(orbit);
+                return Ok(session);
+            }
+            Ok(Some(RecordSnapshot {
+                record: ManagementRecord::Tombstone(_),
+                ..
+            })) => return Err("Sessions ended before its management lease was acquired".into()),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
+            Ok(None) => {
+                stop(&mut orbit);
+                return Err("Sessions did not publish Ready within five seconds".into());
+            }
+            Err(error) => {
+                stop(&mut orbit);
+                return Err(error);
+            }
+        }
     }
-    Ok(orbit)
 }
 
 fn orbit_command(
     programs: &Programs,
     config: &Path,
     socket: &Path,
+    session_id: &str,
+    run_id: &str,
+    component_generation: &str,
     child: &[OsString],
 ) -> Result<Command, String> {
     let mut orbit_command = Command::new(&programs.orbit);
     orbit_command
         .arg("serve")
         .arg(socket)
+        .arg("--management-v1")
+        .arg(session_id)
+        .arg(run_id)
+        .arg(component_generation)
         .arg("--ansi-palette-v1")
         .arg(EON_ANSI_PALETTE)
         .arg("--")
-        .env("EON_CONFIG_HOME", config);
+        .env("EON_CONFIG_HOME", config)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     if let Some(session_bin) = &programs.session_bin {
         orbit_command.env("PATH", managed_environment::session_path(session_bin)?);
     }
@@ -1715,6 +2280,188 @@ fn orbit_command(
         orbit_command.args(child);
     }
     Ok(orbit_command)
+}
+
+fn endpoint_removed(path: &Path, expected: ObjectIdentity) -> Result<bool, String> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Ok(metadata) if object_identity(&metadata) == expected => Ok(false),
+        Ok(_) => Err(format!(
+            "Sessions endpoint {} was replaced during cleanup",
+            path.display()
+        )),
+        Err(error) => Err(format!(
+            "cannot observe Sessions endpoint cleanup {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn wait_and_finalize_tombstone(
+    session: &mut RunningSession,
+    reason: TerminationReason,
+    response: Option<&Tombstone>,
+    deadline: Instant,
+) -> Result<ProcessOutcome, String> {
+    let (tombstone, record_object) = loop {
+        let snapshot = read_management_record(&session.record)?.ok_or_else(|| {
+            format!(
+                "ended Sessions record {} disappeared",
+                session.record.display()
+            )
+        })?;
+        match snapshot.record {
+            ManagementRecord::Live(identity) if identity == session.identity => {
+                operation_timeout(deadline, "Sessions tombstone reconciliation")?;
+                thread::sleep(Duration::from_millis(25));
+            }
+            ManagementRecord::Tombstone(tombstone)
+                if tombstone.identity == session.identity && tombstone.reason == reason =>
+            {
+                if response.is_some_and(|response| response != &tombstone) {
+                    return Err("Sessions stop result differs from its terminal record".into());
+                }
+                break (tombstone, snapshot.object);
+            }
+            _ => return Err("Sessions terminal record does not match the acquired run".into()),
+        }
+    };
+    validate_management_identity(
+        &tombstone.identity,
+        &session.identity.component_generation,
+        Some(&session.identity.run_id),
+        false,
+    )?;
+    let management_path =
+        PathBuf::from(OsString::from_vec(session.identity.management.path.clone()));
+    loop {
+        if endpoint_removed(&session.endpoint, session.identity.presentation.object)?
+            && endpoint_removed(&management_path, session.identity.management.object)?
+        {
+            break;
+        }
+        operation_timeout(deadline, "Sessions endpoint cleanup")?;
+        thread::sleep(Duration::from_millis(25));
+    }
+    if let Some(child) = &mut session.child {
+        loop {
+            if child
+                .try_wait()
+                .map_err(|error| format!("cannot reap ended Sessions: {error}"))?
+                .is_some()
+            {
+                break;
+            }
+            operation_timeout(deadline, "Sessions process reaping")?;
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+    cleanup_record(&session.record, record_object)?;
+    Ok(tombstone.outcome)
+}
+
+fn session_finished(session: &mut RunningSession) -> Result<Option<i32>, String> {
+    let ended = match session.lease.read(&mut [0]) {
+        Ok(0) => true,
+        Ok(_) => return Err("Sessions sent an unsolicited management result".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => false,
+        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => return Ok(None),
+        Err(_) => true,
+    };
+    if !ended {
+        return Ok(None);
+    }
+    let outcome = wait_and_finalize_tombstone(
+        session,
+        TerminationReason::NaturalExit,
+        None,
+        Instant::now() + SESSION_START_TIMEOUT,
+    )?;
+    Ok(Some(match outcome {
+        ProcessOutcome::ExitCode(code) => code,
+        ProcessOutcome::Signal(_) => 1,
+    }))
+}
+
+fn stop_managed_sessions(
+    sessions: &mut [RunningSession],
+    timeout: Duration,
+) -> Result<Vec<String>, String> {
+    let deadline = Instant::now() + timeout;
+    let request = management::encode_client_message(&ManagementClientMessage::Stop)
+        .map_err(|error| format!("cannot encode Sessions stop: {error}"))?;
+    let mut writes = Vec::with_capacity(sessions.len());
+    for session in sessions.iter_mut() {
+        let result = (|| {
+            let remaining = operation_timeout(deadline, "Sessions stop")?;
+            session
+                .lease
+                .set_nonblocking(false)
+                .and_then(|()| session.lease.set_read_timeout(Some(remaining)))
+                .and_then(|()| session.lease.set_write_timeout(Some(remaining)))
+                .map_err(|error| format!("cannot bound Sessions stop: {error}"))?;
+            session
+                .lease
+                .write_all(&request)
+                .map_err(|error| format!("cannot send Sessions stop: {error}"))
+        })();
+        writes.push(result);
+    }
+
+    let mut errors = Vec::new();
+    for (session, write) in sessions.iter_mut().zip(writes) {
+        let response = if write.is_ok() {
+            let remaining = operation_timeout(deadline, "Sessions stop response");
+            match remaining.and_then(|remaining| {
+                session
+                    .lease
+                    .set_read_timeout(Some(remaining))
+                    .map_err(|error| format!("cannot bound Sessions stop response: {error}"))?;
+                read_management_response(&mut session.lease)
+            }) {
+                Ok(ManagementServerMessage::Stopped(tombstone))
+                    if tombstone.identity == session.identity
+                        && tombstone.reason == TerminationReason::ExplicitStop =>
+                {
+                    Some(Ok(tombstone))
+                }
+                Ok(ManagementServerMessage::Failure(failure)) => Some(Err(format!(
+                    "Sessions rejected stop for {}: {}",
+                    session.id, failure.detail
+                ))),
+                Ok(_) => Some(Err(format!(
+                    "Sessions returned the wrong stop result for {}",
+                    session.id
+                ))),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
+        let result = match response {
+            Some(Ok(tombstone)) => wait_and_finalize_tombstone(
+                session,
+                TerminationReason::ExplicitStop,
+                Some(&tombstone),
+                deadline,
+            ),
+            Some(Err(error)) => Err(error),
+            None => wait_and_finalize_tombstone(
+                session,
+                TerminationReason::ExplicitStop,
+                None,
+                deadline,
+            ),
+        };
+        if let Err(error) = result {
+            errors.push(format!("{}: {error}", session.id));
+        }
+    }
+    if errors.is_empty() {
+        Ok(sessions.iter().map(|session| session.id.clone()).collect())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 struct ControlListener {
@@ -1960,17 +2707,24 @@ fn handle_control_client(
         Ok(Request {
             action: Action::Stop { generation: target },
             ..
-        }) if target == generation => (
-            ControlResponse::Lifecycle(LifecycleResponse::Stopped(Stopped {
-                generation: generation.into(),
-                sessions: state
-                    .sessions
-                    .iter()
-                    .map(|session| session.id.clone())
-                    .collect(),
-            })),
-            true,
-        ),
+        }) if target == generation => {
+            match stop_managed_sessions(&mut state.sessions, socket_timeout) {
+                Ok(sessions) => (
+                    ControlResponse::Lifecycle(LifecycleResponse::Stopped(Stopped {
+                        generation: generation.into(),
+                        sessions,
+                    })),
+                    true,
+                ),
+                Err(detail) => (
+                    ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
+                        "stop-failed",
+                        detail,
+                    ))),
+                    false,
+                ),
+            }
+        }
         Ok(Request {
             action: Action::Stop { generation: target },
             ..
@@ -1983,12 +2737,22 @@ fn handle_control_client(
         ),
         Ok(request) => match state.workspace.as_mut() {
             Some(workspace) => match workspace.dispatch(&request.id, request.action, |session| {
-                let child = start_orbit(programs, config, &session.endpoint, &[], socket_timeout)?;
-                state.sessions.push(RunningSession {
-                    id: session.id.clone(),
-                    endpoint: session.endpoint.clone(),
-                    child,
-                });
+                let component_generation = state
+                    .sessions
+                    .first()
+                    .ok_or("supervisor has no component generation")?
+                    .identity
+                    .component_generation
+                    .clone();
+                state.sessions.push(start_orbit(
+                    programs,
+                    config,
+                    &session.endpoint,
+                    &session.id,
+                    &component_generation,
+                    &[],
+                    Instant::now() + socket_timeout,
+                )?);
                 Ok(())
             }) {
                 Ok(()) => (
@@ -2131,38 +2895,6 @@ fn remove_socket_if_identity(path: &Path, identity: SocketIdentity) {
     }
 }
 
-fn wait_for_socket(
-    child: &mut Child,
-    socket: &Path,
-    previous_socket: Option<SocketIdentity>,
-    timeout: Duration,
-) -> Result<(), String> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| format!("cannot observe Sessions startup: {error}"))?
-        {
-            return Err(format!(
-                "Sessions exited before creating {} (status {})",
-                socket.display(),
-                status_code(status)
-            ));
-        }
-        if socket_identity(socket)?.is_some_and(|identity| Some(identity) != previous_socket) {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err(format!(
-                "Sessions did not create {} within {} seconds",
-                socket.display(),
-                timeout.as_secs()
-            ));
-        }
-        thread::sleep(Duration::from_millis(25));
-    }
-}
-
 fn stop(child: &mut Child) {
     if child.try_wait().ok().flatten().is_none() {
         let _ = child.kill();
@@ -2182,8 +2914,8 @@ mod tests {
         discover_generations, effective_uid, encode_lifecycle_response, encode_response,
         generation_directory, generation_id, lock_supervisor_startup, orbit_command,
         prepare_configuration, prepare_runtime, probe_presentable_runtime, read_control_request,
-        remove_socket_if_identity, socket_identity, supervise, valid_generation, venus_command,
-        xdg_path,
+        remove_socket_if_identity, session_number, socket_identity, valid_generation,
+        venus_command, xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -2197,7 +2929,7 @@ mod tests {
         process::Command,
         sync::atomic::{AtomicU64, Ordering},
         thread,
-        time::{Duration, Instant},
+        time::Duration,
     };
 
     static NEXT_TEST: AtomicU64 = AtomicU64::new(0);
@@ -2234,6 +2966,23 @@ mod tests {
             generation_directory(Path::new("/runtime/eon"), &first),
             Path::new("/runtime/eon/generations").join(first)
         );
+    }
+
+    #[test]
+    fn session_identity_is_positive_canonical_decimal() {
+        assert_eq!(session_number("session-1"), Some(1));
+        assert_eq!(session_number("session-256"), Some(256));
+        for invalid in [
+            "session-0",
+            "session-01",
+            "session-",
+            "session-a",
+            "Session-1",
+            "pane-1",
+            "session-184467440737095516160",
+        ] {
+            assert_eq!(session_number(invalid), None, "accepted {invalid}");
+        }
     }
 
     #[test]
@@ -2351,11 +3100,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    fn executable(path: &Path, source: &str) {
-        fs::write(path, source).unwrap();
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
-    }
-
     fn command_environment<'a>(command: &'a Command, name: &str) -> Option<Option<&'a OsStr>> {
         command
             .get_envs()
@@ -2380,12 +3124,25 @@ mod tests {
         )
         .unwrap();
 
-        let default = orbit_command(&programs, config, socket, &[]).unwrap();
+        let default = orbit_command(
+            &programs,
+            config,
+            socket,
+            "session-1",
+            "run-1",
+            "component-1",
+            &[],
+        )
+        .unwrap();
         assert_eq!(
             default.get_args().map(OsString::from).collect::<Vec<_>>(),
             [
                 "serve",
                 "/runtime/orbit.sock",
+                "--management-v1",
+                "session-1",
+                "run-1",
+                "component-1",
                 "--ansi-palette-v1",
                 EON_ANSI_PALETTE,
                 "--",
@@ -2416,6 +3173,9 @@ mod tests {
             &programs,
             config,
             socket,
+            "session-2",
+            "run-2",
+            "component-2",
             &["codex".into(), "--model".into(), "test".into()],
         )
         .unwrap();
@@ -2424,6 +3184,10 @@ mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
+                "--management-v1",
+                "session-2",
+                "run-2",
+                "component-2",
                 "--ansi-palette-v1",
                 EON_ANSI_PALETTE,
                 "--",
@@ -2500,126 +3264,6 @@ mod tests {
             ]
             .map(OsString::from)
         );
-    }
-
-    #[test]
-    fn failed_terminal_surface_stops_its_new_session_and_control_endpoint() {
-        let root = temporary_directory();
-        let orbit = root.join("orbit");
-        let socket = root.join("orbit.sock");
-        let config = root.join("config");
-        executable(
-            &orbit,
-            "#!/bin/sh\nprintf '%s' \"$$\" > \"$2\"\nwhile :; do sleep 0.01; done\n",
-        );
-
-        let error = supervise(
-            &Programs {
-                orbit,
-                venus: root.join("missing-venus"),
-                session_bin: None,
-                venus_decorations: true,
-            },
-            &config,
-            terminal_presentation(1.0, true),
-            lock_supervisor_startup(&root.join("startup.lock")).unwrap(),
-            &socket,
-            &["ignored".into()],
-            "g1-0123456789abcdef0123456789abcdef",
-            LaunchMode::Terminal,
-        )
-        .unwrap_err();
-
-        assert!(error.contains("cannot launch Eon Desktop"));
-        let pid = fs::read_to_string(&socket).unwrap();
-        assert!(!Path::new("/proc").join(pid).exists());
-        assert!(!root.join("eon.sock").exists());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn venus_exit_leaves_orbit_and_its_command_running() {
-        let root = temporary_directory();
-        let orbit = root.join("orbit");
-        let venus = root.join("venus");
-        let socket = root.join("orbit.sock");
-        let config = root.join("config");
-        let orbit_log = root.join("orbit.log");
-        let venus_log = root.join("venus.log");
-        let venus_exited = root.join("venus-exited");
-        let stop = root.join("stop");
-        fs::write(&socket, "old").unwrap();
-
-        executable(
-            &orbit,
-            &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$EON_CONFIG_HOME\" \"$@\" > '{}'\nsleep 0.05\nmv \"$2\" \"$2.old\"\nprintf new > \"$2\"\nwhile test ! -e '{}'; do sleep 0.01; done\nexit 23\n",
-                orbit_log.display(),
-                stop.display()
-            ),
-        );
-        executable(
-            &venus,
-            &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$XDG_CONFIG_HOME\" \"$@\" \"$(cat \"$4\")\" > '{}'\n: > '{}'
-",
-                venus_log.display(),
-                venus_exited.display()
-            ),
-        );
-
-        let stop_after_venus = thread::spawn({
-            let venus_exited = venus_exited.clone();
-            let stop = stop.clone();
-            move || {
-                let deadline = Instant::now() + Duration::from_secs(2);
-                while !venus_exited.exists() && Instant::now() < deadline {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                assert!(venus_exited.exists());
-                thread::sleep(Duration::from_millis(100));
-                fs::write(stop, "").unwrap();
-            }
-        });
-
-        let status = supervise(
-            &Programs {
-                orbit,
-                venus,
-                session_bin: None,
-                venus_decorations: true,
-            },
-            &config,
-            terminal_presentation(1.0, true),
-            lock_supervisor_startup(&root.join("startup.lock")).unwrap(),
-            &socket,
-            &["codex".into(), "--model".into(), "test".into()],
-            "g1-0123456789abcdef0123456789abcdef",
-            LaunchMode::Workspace,
-        )
-        .unwrap();
-        stop_after_venus.join().unwrap();
-
-        assert_eq!(status, 23);
-        assert_eq!(
-            fs::read_to_string(orbit_log).unwrap(),
-            format!(
-                "{}\nserve\n{}\n--ansi-palette-v1\n{}\n--\ncodex\n--model\ntest\n",
-                config.display(),
-                socket.display(),
-                EON_ANSI_PALETTE
-            )
-        );
-        assert_eq!(
-            fs::read_to_string(venus_log).unwrap(),
-            format!(
-                "{}\n--background-opacity\n1\n--background-blur\n{}\n{}\nnew\n",
-                config.display(),
-                socket.display(),
-                root.join("eon.sock").display()
-            )
-        );
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

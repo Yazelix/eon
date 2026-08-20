@@ -104,9 +104,12 @@ one through its supervisor with `eonterm stop GENERATION`.
 The full Eon package installs one `Eon` desktop entry and a transparent violet three-fold
 loop icon at native launcher sizes, with X11 and Xwayland window grouping.
 Opening Eon reconnects only to the exact installed runtime generation or starts
-that generation in its own private namespace. Older live generations and their
-Sessions remain running. Concurrent starts converge on one supervisor and one
-initial Session; every attach-capable peer presents that owner. Its Nix closure
+that generation in its own private namespace. If that generation's supervisor
+was lost on the same boot, Eon validates and adopts its exact surviving Orbit
+runs before publishing a replacement workspace or Venus surface. Older live
+generations and their Sessions remain running. Concurrent starts converge on
+one supervisor and one complete Session set; every attach-capable peer presents
+that owner. Its Nix closure
 supplies Mesa's open-source Vulkan drivers; the current graphics proof uses
 Intel hardware, while proprietary NVIDIA remains unproved. Run Eon from a
 terminal when you need foreground lifecycle control.
@@ -121,9 +124,8 @@ eon attach
 workspaces after validating their live supervisors. `eon attach GENERATION`
 selects one compatible generation without fallback. `eon stop GENERATION`
 shows its live Session identities and asks for confirmation; `--json` is the
-explicit non-interactive form. Pressing `Ctrl-C` in the original foreground
-`eon` process also stops that composed generation. Restarting the machine
-preserves no process state beyond the accepted child contracts.
+explicit non-interactive form. Restarting the machine preserves no process
+state beyond the accepted child contracts.
 
 EonTerm gives one command the terminal key stream without Eon's tab and pane
 shortcuts:
@@ -135,6 +137,8 @@ eonterm --no-decorations -- COMMAND...
 
 This mode hosts exactly one Orbit Session, gives Venus only the Orbit endpoint,
 and keeps Eon's generation, presentation, stop, child-exit, and cleanup lifecycle.
+After same-boot supervisor loss, a replacement EonTerm adopts that exact live
+Session rather than launching another one.
 EonTerm uses native window decorations unless `--no-decorations` is selected.
 The supervisor preserves its original choice when it replaces a detached
 surface. A repeated invocation preserves the active surface and asks Venus to
@@ -166,6 +170,12 @@ because Eon Desktop re-inspects EONW v1 every 250 ms; the protocol adds no event
 stream. When a shell exits, Eon removes its pane, selects the nearest surviving
 pane, removes an empty tab, and closes when the final pane exits.
 
+Workspace topology is live-only. After same-boot supervisor loss, full Eon
+projects surviving canonical `session-N` runs into one `tab-1` as `pane-N` in
+numeric order and selects the lowest number; it does not reconstruct prior tabs,
+focus, commands, or history. The exact Orbit processes, PTY children, and
+terminal state remain Orbit-owned and unchanged.
+
 The command surface is small:
 
 | Command | Result |
@@ -192,9 +202,10 @@ The command surface is small:
 Workspace commands target the exact current-generation Eon supervisor. An
 EonTerm supervisor returns `workspace-unavailable` to topology actions at the
 EONW boundary. The workspace topology is bounded
-to 64 tabs and 256 panes, is not restored after supervisor loss, and has no
-per-pane or per-Session removal action. Whole-generation stop names and
-terminates every Session through that supervisor. `--json` reports the same
+to 64 tabs and 256 panes, is not persisted, and has no per-pane or per-Session
+removal action. Whole-generation stop sends canonical management Stop to every
+validated Session lease and succeeds only after every exact terminal record is
+complete. `--json` reports the same
 accepted EONW result as the human view; neither output format is the protocol
 schema. Its `endpoint` field is an ordered integer array that preserves every
 opaque endpoint byte.
@@ -362,15 +373,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 246 |
-| README | 376 |
+| README | 387 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 860 |
+| Architecture and contracts | 924 |
 | Distribution and references | 237 |
-| Changelog | 115 |
-| Rust source and tests | 6,481 |
-| Cargo manifests | 35 |
-| Component manifest | 322 |
-| Nix composition | 706 |
+| Changelog | 122 |
+| Rust source and tests | 7,687 |
+| Cargo manifests | 36 |
+| Component manifest | 326 |
+| Nix composition | 726 |
 | Product defaults | 0 |
-| **Total** | **9,582** |
+| **Total** | **10,895** |

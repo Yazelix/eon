@@ -26,6 +26,55 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; proof below |
 | EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Proven | `7303ee5cca3925939b84267bd54587a2cfb223a6`; proof below |
 | EON-C14 | Eon requests compositor-owned background blur by default whenever it creates an Eon or EonTerm Venus surface, permits an explicit configuration opt-out, and keeps opacity independent | Eon | Proven | `b41be3a00a8e47a435521509c3d060d80e0524a5`; proof below |
+| EON-C15 | On the same boot and login, Eon can recover and explicitly stop the exact Orbit runs that survived loss of their Eon supervisor, without reconstructing Session authority | Eon | Candidate | Candidate proof below |
+
+## Approved same-boot Session-recovery contract EON-C15
+
+- Consumer: one local Eon or EonTerm user on the same boot and login.
+- Trigger: Eon starts a managed Orbit run, or a prior Eon supervisor disappears
+  after Orbit publishes its live management record and a later Eon targets that
+  exact Eon generation.
+- Result: Eon supplies a strict `session-N` identity, a fresh opaque run ID, and
+  the exact Orbit component revision. It validates Orbit's complete live
+  identity and acquires the sole management lease within one shared five-second
+  operation before publishing a Session or launching Venus. A replacement
+  EonTerm recovers exactly one live run. A replacement full Eon acquires every
+  valid live run up to the existing 256-pane limit, sorts the positive canonical
+  decimal `N` values numerically, and projects them into `tab-1` as `pane-N`,
+  selecting the lowest `N`; later creation starts at `tab-2` and checked
+  `max(N)+1`. Prior grouping, focus, argv, and request history are not restored.
+  Explicit generation stop sends canonical Stop through every acquired lease
+  before waiting and returns EONW Stopped only after every run has a matching
+  explicit-stop tombstone.
+- Important failures: unsafe, missing, replaced, malformed, oversized,
+  incompatible, duplicate, zero, noncanonical, or overflowing records and
+  identities; too many candidates; wrong component generation or UID; Busy;
+  Orbit exit; partial acquisition; and transport loss fail within the shared
+  deadline. Partial failure publishes no workspace or Venus, releases acquired
+  leases, launches no duplicate run, and cannot report clean stop. Before Ready,
+  the exact local child is rollback authority. After Ready, validation or
+  transport failure authorizes no Child, PID, signal, pathname, process-name,
+  process-group, cgroup, or pidfd fallback.
+- Ownership: Eon owns generation selection, Session and run creation, bounded
+  enumeration, recovery projection, the shared deadline, lease collection,
+  EONW result ordering, the Eon-to-Venus control stream, and Eon-owned residue.
+  Orbit `ORB-C13` owns the canonical management values, live identity, sole
+  lease, PTY and terminal state, wait outcome, `ORB-C12` cleanup, tombstone, and
+  exact endpoint cleanup. Venus remains a transient ORBS v4 client and exits
+  when its accepted Eon-owned presentation-control stream ends.
+- Boundary: recovery is one exact same-boot, same-login adoption. Tombstones
+  grant no authority and must be reconciled and safely removed before their
+  workspace slot can be reused. The contract adds no durable launch intent,
+  prior-topology persistence, Orbit or machine restart recovery, logout or
+  reboot survival, remote access, public management protocol, service manager,
+  broker, compatibility adapter, or macOS proof.
+- Update order: Orbit source `86aa130629c09dce61d0f232150298656fa5cef4`
+  and metadata `68377ed9429e974b96757e48bea702150042689a` precede
+  Venus source `a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8` and metadata
+  `602e21ee224ad69e1bcd2959a02f3f66857ed55a`; Eon consumes that exact
+  compatible pair with ORBF v1, ORBS v4, and unchanged EONW v1.
+- Approval: the user selected the same-boot phase and activated its exact Orbit
+  and Venus prerequisites on 2026-08-20.
 
 ## Approved terminal-background blur contract EON-C14
 
@@ -238,7 +287,9 @@ detailed execution evidence, and Git history retains superseded states.
   unrepresentable accepted state, missing supervisor, or an unconfirmed stop
   returns a bounded structured failure. A rejected action leaves the prior
   accepted workspace and every Session unchanged. An accepted stop names the
-  affected live Sessions before the supervisor terminates only its own children.
+  affected live Sessions, sends Stop through every validated Orbit management
+  lease before waiting, and returns only after every exact terminal record is
+  complete.
 - Ownership: Eon owns EONW v1, the semantic action vocabulary, topology,
   mappings, acceptance, and complete snapshot. Orbit retains process, PTY,
   terminal-state, and Session authority. The CLI and Venus decode the same
@@ -273,8 +324,11 @@ detailed execution evidence, and Git history retains superseded states.
   current, previous, legacy, dead, incompatible, and corrupt candidates. Explicit attach
   never substitutes another generation. Explicit stop is sent through the
   selected generation's EONW owner and names every affected live Session.
-  Concurrent attach-capable launches for one generation converge on one
-  supervisor and one initial Session. Presenting a generation with a live Venus
+  If the exact current generation has no live supervisor but retains valid
+  same-boot Orbit records, one replacement acquires every live management lease
+  and adopts the exact runs under EON-C15. Concurrent attach-capable launches
+  converge on one supervisor and one complete Session set. Presenting a
+  generation with a live Venus
   child preserves that process and its Sessions, then sends one bounded private
   signal for Venus to request native presentation of its existing window.
 - Important failures: an invalid component graph, unsafe permissions, symlinks,
@@ -295,7 +349,7 @@ detailed execution evidence, and Git history retains superseded states.
   transient client of one explicitly compatible Eon/Orbit endpoint pair. A
   distributor injects artifacts but does not define runtime identity or policy.
 - Boundary: the accepted slice adds no manager daemon, persisted topology,
-  machine-restart recovery, live supervisor or PTY handoff, background updater,
+  machine-restart recovery, PTY handoff, old-generation backport, background updater,
   Nix evaluation, package-channel identity, compatibility window, remote
   runtime, plugin API, or automatic age/count eviction. A fixed-namespace legacy
   supervisor may be inspected and attached through accepted EONW v1, but reports

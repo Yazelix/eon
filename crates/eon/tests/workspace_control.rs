@@ -2,12 +2,20 @@ use eon_workspace_protocol::{
     Action, HEADER_BYTES, Pane, Request, Response, Snapshot, Tab, VERSION, declared_message_len,
     decode_request, decode_response, encode_request, encode_response,
 };
+use orbit_protocol::management::{
+    self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, Failure,
+    FailureCode, LiveIdentity, ObjectIdentity, ProcessOutcome, Record as ManagementRecord,
+    ServerMessage as ManagementServerMessage, TerminationReason, Tombstone,
+};
 use std::{
+    ffi::OsStr,
     fs,
     io::{Read, Write},
     os::unix::{
-        fs::{PermissionsExt, symlink},
+        ffi::OsStrExt,
+        fs::{MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
         net::{UnixListener, UnixStream},
+        process::ExitStatusExt,
     },
     path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
@@ -35,7 +43,7 @@ impl Drop for TestProcess {
 
 fn temporary_directory() -> PathBuf {
     let path = std::env::temp_dir().join(format!(
-        "eon-control-test-{}-{}",
+        "ec-{}-{}",
         std::process::id(),
         NEXT_TEST.fetch_add(1, Ordering::Relaxed)
     ));
@@ -48,6 +56,300 @@ fn executable(path: &Path, source: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
 }
 
+fn artifact_path(endpoint: &Path, suffix: &str) -> PathBuf {
+    let mut path = endpoint.as_os_str().to_os_string();
+    path.push(suffix);
+    path.into()
+}
+
+fn object_identity(path: &Path) -> ObjectIdentity {
+    let metadata = fs::symlink_metadata(path).unwrap();
+    ObjectIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+    }
+}
+
+fn write_management_record(path: &Path, record: &ManagementRecord) {
+    let bytes = management::encode_record(record).unwrap();
+    let temporary = artifact_path(path, &format!(".tmp.{}", std::process::id()));
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&temporary)
+        .unwrap();
+    file.write_all(&bytes).unwrap();
+    drop(file);
+    fs::rename(temporary, path).unwrap();
+}
+
+fn managed_orbit_executable(path: &Path) {
+    let helper = std::env::current_exe().unwrap();
+    executable(
+        path,
+        &format!(
+            "#!/bin/sh\nEON_TEST_MANAGED_ORBIT=1 exec '{}' --exact managed_orbit_helper --nocapture -- \"$@\"\n",
+            helper.display()
+        ),
+    );
+}
+
+fn process_start_identity() -> u64 {
+    let stat = fs::read_to_string("/proc/self/stat").unwrap();
+    stat.rsplit_once(')')
+        .unwrap()
+        .1
+        .split_whitespace()
+        .nth(19)
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+fn endpoint_identity(path: &Path) -> EndpointIdentity {
+    EndpointIdentity {
+        path: path.as_os_str().as_bytes().to_vec(),
+        object: object_identity(path),
+    }
+}
+
+fn write_management(stream: &mut UnixStream, message: ManagementServerMessage) {
+    let bytes = management::encode_server_message(&message).unwrap();
+    stream.set_nonblocking(false).unwrap();
+    stream.write_all(&bytes).unwrap();
+    stream.set_nonblocking(true).unwrap();
+}
+
+fn finish_managed_orbit(
+    record_path: &Path,
+    presentation: &Path,
+    management_path: &Path,
+    identity: &LiveIdentity,
+    reason: TerminationReason,
+    outcome: ProcessOutcome,
+    client: Option<&mut UnixStream>,
+) {
+    let tombstone = Tombstone {
+        identity: identity.clone(),
+        reason,
+        outcome,
+    };
+    write_management_record(record_path, &ManagementRecord::Tombstone(tombstone.clone()));
+    fs::remove_file(presentation).unwrap();
+    fs::remove_file(management_path).unwrap();
+    if let Some(client) = client {
+        write_management(client, ManagementServerMessage::Stopped(tombstone));
+    }
+}
+
+#[test]
+fn managed_orbit_helper() {
+    if std::env::var_os("EON_TEST_MANAGED_ORBIT").is_none() {
+        return;
+    }
+    let arguments = std::env::args_os().collect::<Vec<_>>();
+    let serve = arguments
+        .iter()
+        .position(|argument| argument == OsStr::new("serve"))
+        .unwrap();
+    let presentation = PathBuf::from(&arguments[serve + 1]);
+    let management_argument = arguments
+        .iter()
+        .position(|argument| argument == OsStr::new("--management-v1"))
+        .unwrap();
+    let session_id = arguments[management_argument + 1]
+        .to_str()
+        .unwrap()
+        .to_string();
+    let run_id = arguments[management_argument + 2]
+        .to_str()
+        .unwrap()
+        .to_string();
+    let component_generation = arguments[management_argument + 3]
+        .to_str()
+        .unwrap()
+        .to_string();
+    if let Some(delay) = std::env::var_os("EON_TEST_ORBIT_DELAY_MS") {
+        thread::sleep(Duration::from_millis(
+            delay.to_str().unwrap().parse().unwrap(),
+        ));
+    }
+    if session_id == "session-2"
+        && let Some(delay) = std::env::var_os("EON_TEST_DELAY_SESSION_2_MS")
+    {
+        thread::sleep(Duration::from_millis(
+            delay.to_str().unwrap().parse().unwrap(),
+        ));
+    }
+
+    let management_path = artifact_path(&presentation, ".management");
+    let record_path = artifact_path(&presentation, ".record");
+    let presentation_listener = UnixListener::bind(&presentation).unwrap();
+    let management_listener = UnixListener::bind(&management_path).unwrap();
+    fs::set_permissions(&presentation, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(&management_path, fs::Permissions::from_mode(0o600)).unwrap();
+    management_listener.set_nonblocking(true).unwrap();
+    let identity = LiveIdentity {
+        session_id,
+        run_id,
+        component_generation,
+        record_generation: management::RECORD_GENERATION,
+        management_generation: management::VERSION,
+        process_id: std::process::id(),
+        process_start: process_start_identity(),
+        uid: unsafe { libc::geteuid() },
+        presentation: endpoint_identity(&presentation),
+        management: endpoint_identity(&management_path),
+    };
+    write_management_record(&record_path, &ManagementRecord::Live(identity.clone()));
+    if let Some(log) = std::env::var_os("EON_TEST_ORBIT_LOG") {
+        let mut log = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+            .unwrap();
+        writeln!(log, "{}", std::process::id()).unwrap();
+    }
+
+    let command = arguments
+        .iter()
+        .rposition(|argument| argument == OsStr::new("--"))
+        .map(|separator| &arguments[separator + 1..])
+        .unwrap_or(&[]);
+    let mut child = std::env::var_os("EON_TEST_RUN_CHILD").map(|_| {
+        Command::new(&command[0])
+            .args(&command[1..])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    });
+    let mut client: Option<(UnixStream, Vec<u8>, bool)> = None;
+    loop {
+        match management_listener.accept() {
+            Ok((mut stream, _)) => {
+                stream.set_nonblocking(true).unwrap();
+                if client.as_ref().is_some_and(|client| client.2) {
+                    write_management(&mut stream, ManagementServerMessage::Busy);
+                } else {
+                    client = Some((stream, Vec::new(), false));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) => panic!("cannot accept management client: {error}"),
+        }
+
+        let mut stop = false;
+        if let Some((stream, input, leased)) = &mut client {
+            let mut bytes = [0; management::MAX_MESSAGE_BYTES];
+            match stream.read(&mut bytes) {
+                Ok(0) => client = None,
+                Ok(count) => {
+                    input.extend_from_slice(&bytes[..count]);
+                    if let Some(length) = management::client_message_len(input).unwrap()
+                        && input.len() >= length
+                    {
+                        let request = management::decode_client_message(&input[..length]).unwrap();
+                        input.drain(..length);
+                        match request {
+                            ManagementClientMessage::Acquire { expected, record }
+                                if !*leased
+                                    && expected == identity
+                                    && record == object_identity(&record_path) =>
+                            {
+                                *leased = true;
+                                write_management(
+                                    stream,
+                                    ManagementServerMessage::Lease(identity.clone()),
+                                );
+                            }
+                            ManagementClientMessage::Status if *leased => write_management(
+                                stream,
+                                ManagementServerMessage::Status(identity.clone()),
+                            ),
+                            ManagementClientMessage::Stop if *leased => stop = true,
+                            _ => write_management(
+                                stream,
+                                ManagementServerMessage::Failure(Failure {
+                                    code: FailureCode::InvalidRequest,
+                                    detail: "invalid test management request".into(),
+                                }),
+                            ),
+                        }
+                    }
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => client = None,
+            }
+        }
+        if stop {
+            if let Some(child) = &mut child {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+            finish_managed_orbit(
+                &record_path,
+                &presentation,
+                &management_path,
+                &identity,
+                TerminationReason::ExplicitStop,
+                ProcessOutcome::Signal(libc::SIGHUP),
+                client.as_mut().map(|client| &mut client.0),
+            );
+            drop(presentation_listener);
+            return;
+        }
+
+        let child_status = child.as_mut().and_then(|child| child.try_wait().unwrap());
+        let initial_exit = presentation.file_name() == Some(OsStr::new("orbit.sock"))
+            && std::env::var_os("EON_TEST_EXIT_INITIAL")
+                .is_some_and(|path| Path::new(&path).exists());
+        let requested_exit =
+            std::env::var_os("EON_TEST_STOP").is_some_and(|path| Path::new(&path).exists());
+        if child_status.is_some() || initial_exit || requested_exit {
+            let outcome = child_status.map_or_else(
+                || {
+                    ProcessOutcome::ExitCode(
+                        std::env::var("EON_TEST_ORBIT_EXIT_CODE")
+                            .ok()
+                            .and_then(|code| code.parse().ok())
+                            .unwrap_or(0),
+                    )
+                },
+                |status| {
+                    status.code().map_or_else(
+                        || ProcessOutcome::Signal(status.signal().unwrap()),
+                        ProcessOutcome::ExitCode,
+                    )
+                },
+            );
+            finish_managed_orbit(
+                &record_path,
+                &presentation,
+                &management_path,
+                &identity,
+                TerminationReason::NaturalExit,
+                outcome,
+                None,
+            );
+            drop(presentation_listener);
+            return;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn live_identity(endpoint: &Path) -> LiveIdentity {
+    let bytes = fs::read(artifact_path(endpoint, ".record")).unwrap();
+    match management::decode_record(&bytes).unwrap() {
+        ManagementRecord::Live(identity) => identity,
+        record => panic!("expected live management record, got {record:?}"),
+    }
+}
+
 fn wait_for(path: &Path) {
     let ready =
         || fs::metadata(path).is_ok_and(|metadata| !metadata.is_file() || metadata.len() != 0);
@@ -56,6 +358,21 @@ fn wait_for(path: &Path) {
         thread::sleep(Duration::from_millis(10));
     }
     assert!(ready(), "{} was not created or populated", path.display());
+}
+
+fn wait_for_connection(path: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if UnixStream::connect(path).is_ok() {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} did not become connectable",
+            path.display()
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 fn generation_runtime(root: &Path) -> PathBuf {
@@ -215,10 +532,7 @@ fn invalid_terminal_configuration_precedes_supervisor_generation_and_children() 
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     fs::create_dir(&config).unwrap();
-    executable(
-        &orbit,
-        "#!/bin/sh\nprintf started > \"$EON_TEST_ORBIT_LOG\"\n",
-    );
+    managed_orbit_executable(&orbit);
     executable(
         &venus,
         "#!/bin/sh\nprintf started > \"$EON_TEST_VENUS_LOG\"\n",
@@ -260,10 +574,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     let log = root.join("venus.log");
-    executable(
-        &orbit,
-        "#!/bin/sh\nprintf '%s' \"$$\" > \"$2\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
-    );
+    managed_orbit_executable(&orbit);
     executable(
         &venus,
         "#!/bin/sh\nprintf '%s\\n' \"$@\" >> \"$EON_TEST_LOG\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
@@ -345,13 +656,10 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     let command = root.join("command");
-    executable(
-        &orbit,
-        "#!/bin/sh\nprintf '%s\\n' \"$$\" >> \"$EON_TEST_ORBIT_LOG\"\nendpoint=$2\nprintf '%s' \"$$\" > \"$endpoint\"\nwhile [ \"$1\" != -- ]; do shift; done\nshift\n\"$@\"\nstatus=$?\nrm -f \"$endpoint\"\nexit $status\n",
-    );
+    managed_orbit_executable(&orbit);
     executable(
         &venus,
-        "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$$\" \"$EON_VENUS_PRESENTATION_CONTROL\" \"$*\" >> \"$EON_TEST_VENUS_LOG\"\ndd bs=8 count=1 status=none >> \"$EON_TEST_PRESENTATION_LOG\"\nwhile :; do sleep 0.01; done\n",
+        "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$$\" \"$EON_VENUS_PRESENTATION_CONTROL\" \"$*\" >> \"$EON_TEST_VENUS_LOG\"\ndd bs=8 count=1 status=none >> \"$EON_TEST_PRESENTATION_LOG\"\ncat >/dev/null\n",
     );
     executable(
         &command,
@@ -379,6 +687,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
             .env("EON_TEST_CHILD_EXIT", &child_exit)
             .env("EON_TEST_CHILD_PID", &child_pid)
             .env("EON_TEST_ORBIT_LOG", &orbit_log)
+            .env("EON_TEST_RUN_CHILD", "1")
             .env("EON_TEST_VENUS_LOG", &venus_log)
             .env("EON_TEST_PRESENTATION_LOG", &presentation_log);
         process
@@ -577,10 +886,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     let stop = root.join("stop");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
-    executable(
-        &orbit,
-        "#!/bin/sh\ncase \"$2\" in */session-2.sock) sleep 3 ;; esac\nprintf '%s' \"$$\" > \"$2\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
-    );
+    managed_orbit_executable(&orbit);
     executable(&venus, "#!/bin/sh\nexit 0\n");
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
@@ -591,6 +897,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         .env("EON_ORBIT", &orbit)
         .env("EON_VENUS", &venus)
         .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_DELAY_SESSION_2_MS", "3000")
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -675,7 +982,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     for endpoint in ["orbit.sock", "session-2.sock", "session-3.sock"] {
         let endpoint = generation.join(endpoint);
         wait_for(&endpoint);
-        let pid: i32 = fs::read_to_string(endpoint).unwrap().parse().unwrap();
+        let pid = live_identity(&endpoint).process_id as i32;
         // SAFETY: signal 0 performs existence/permission checking without sending a signal.
         assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
     }
@@ -696,13 +1003,10 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
     let venus_pid = root.join("venus.pid");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
-    executable(
-        &orbit,
-        "#!/bin/sh\nprintf '%s' \"$$\" > \"$2\"\ncase \"$2\" in\n  */orbit.sock) while test ! -e \"$EON_TEST_EXIT_INITIAL\"; do sleep 0.01; done ;;\n  *) while test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done ;;\nesac\n",
-    );
+    managed_orbit_executable(&orbit);
     executable(
         &venus,
-        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\nwhile :; do sleep 0.01; done\n",
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\ncat >/dev/null\n",
     );
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
@@ -760,6 +1064,175 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
 }
 
 #[test]
+fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let fallback_stop = root.join("fallback-stop");
+    let orbit_log = root.join("orbit.log");
+    let venus_log = root.join("venus.log");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(
+        &venus,
+        "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$$\" \"$EON_VENUS_PRESENTATION_CONTROL\" \"$*\" >> \"$EON_TEST_VENUS_LOG\"\ncat >/dev/null\n",
+    );
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let launch = || {
+        Command::new(&binary)
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &fallback_stop)
+            .env("EON_TEST_ORBIT_LOG", &orbit_log)
+            .env("EON_TEST_VENUS_LOG", &venus_log)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+    let mut first = launch();
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for(&control);
+    wait_for(&venus_log);
+    let pane = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
+    assert!(pane.status.success(), "{}", stdout(&pane));
+    let initial = [
+        live_identity(&generation.join("orbit.sock")),
+        live_identity(&generation.join("session-2.sock")),
+    ];
+    let first_venus = fs::read_to_string(&venus_log)
+        .unwrap()
+        .split('|')
+        .next()
+        .unwrap()
+        .to_string();
+
+    first.kill().unwrap();
+    assert!(!first.wait().unwrap().success());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Path::new("/proc").join(&first_venus).exists() {
+        assert!(Instant::now() < deadline, "owner-loss Venus did not exit");
+        thread::sleep(Duration::from_millis(10));
+    }
+    for identity in &initial {
+        // SAFETY: signal 0 performs existence/permission checking without sending a signal.
+        assert_eq!(unsafe { libc::kill(identity.process_id as i32, 0) }, 0);
+    }
+
+    let first_record = artifact_path(&generation.join("orbit.sock"), ".record");
+    let replacement_attempt = || {
+        Command::new(&binary)
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &fallback_stop)
+            .env("EON_TEST_ORBIT_LOG", &orbit_log)
+            .env("EON_TEST_VENUS_LOG", &venus_log)
+            .output()
+            .unwrap()
+    };
+    fs::set_permissions(&first_record, fs::Permissions::from_mode(0o640)).unwrap();
+    let refused = replacement_attempt();
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("mode-0600"));
+    fs::set_permissions(&first_record, fs::Permissions::from_mode(0o600)).unwrap();
+
+    let mut wrong_process = initial[0].clone();
+    wrong_process.process_start += 1;
+    write_management_record(&first_record, &ManagementRecord::Live(wrong_process));
+    let refused = replacement_attempt();
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("process start"));
+    write_management_record(&first_record, &ManagementRecord::Live(initial[0].clone()));
+
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 2);
+    for identity in &initial {
+        // SAFETY: signal 0 performs existence/permission checking without sending a signal.
+        assert_eq!(unsafe { libc::kill(identity.process_id as i32, 0) }, 0);
+    }
+
+    let mut replacement = launch();
+    wait_for_connection(&control);
+    let recovered = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    assert!(recovered.status.success(), "{}", stdout(&recovered));
+    let recovered = stdout(&recovered);
+    assert!(recovered.contains("\"active_tab\":\"tab-1\""));
+    assert!(recovered.contains("\"selected_pane\":\"pane-1\""));
+    assert_eq!(recovered.matches("\"session\":").count(), 2);
+    assert!(recovered.contains("\"id\":\"pane-1\""));
+    assert!(recovered.contains("\"id\":\"pane-2\""));
+    assert_eq!(
+        [
+            live_identity(&generation.join("orbit.sock")),
+            live_identity(&generation.join("session-2.sock")),
+        ],
+        initial
+    );
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 2);
+
+    let created = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
+    assert!(created.status.success(), "{}", stdout(&created));
+    assert!(stdout(&created).contains("\"id\":\"pane-3\""));
+    assert!(stdout(&created).contains("\"session\":\"session-3\""));
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 3);
+
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["stop", generation_id, "--json"],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    assert!(stdout(&stopped).contains("\"sessions\":[\"session-1\",\"session-2\",\"session-3\"]"));
+    wait_for_successful_exit(&mut replacement);
+    assert!(!generation.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn desktop_launch_failure_stops_the_ready_session_through_management() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let orbit_log = root.join("orbit.log");
+    let orbit = root.join("orbit");
+    managed_orbit_executable(&orbit);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", root.join("missing-venus"))
+        .env("EON_TEST_ORBIT_LOG", &orbit_log)
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot launch Eon Desktop"));
+    let orbit_pid: i32 = fs::read_to_string(&orbit_log)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(!Path::new("/proc").join(orbit_pid.to_string()).exists());
+    assert_eq!(
+        fs::read_dir(runtime.join("generations")).unwrap().count(),
+        0
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn stop_confirmation_refuses_a_replacement_supervisor() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
@@ -769,10 +1242,7 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
     let prompt = root.join("prompt");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
-    executable(
-        &orbit,
-        "#!/bin/sh\nprintf '%s' \"$$\" > \"$2\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
-    );
+    managed_orbit_executable(&orbit);
     executable(&venus, "#!/bin/sh\nexit 0\n");
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
@@ -836,11 +1306,9 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
     let attempted = confirmation.wait_with_output().unwrap();
     let prompt = fs::read_to_string(&prompt).unwrap();
     let replacement_live = second.child.try_wait().unwrap().is_none();
-    let replacement_child_live = fs::read_to_string(&orbit_socket)
-        .ok()
-        .and_then(|pid| pid.parse::<i32>().ok())
-        // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-        .is_some_and(|pid| unsafe { libc::kill(pid, 0) } == 0);
+    let replacement_pid = live_identity(&orbit_socket).process_id as i32;
+    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
+    let replacement_child_live = unsafe { libc::kill(replacement_pid, 0) } == 0;
     let workspace_live = invoke(&binary, &runtime, &config, &["workspace", "--json"])
         .status
         .success();
@@ -879,10 +1347,7 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
     let orbit_log = root.join("orbit.log");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
-    executable(
-        &orbit,
-        "#!/bin/sh\nprintf '%s\\n' \"$$\" >> \"$EON_TEST_ORBIT_LOG\"\nsleep 0.25\nprintf '%s' \"$$\" > \"$2\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
-    );
+    managed_orbit_executable(&orbit);
     executable(&venus, "#!/bin/sh\nexit 0\n");
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
@@ -894,6 +1359,7 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
             .env("EON_VENUS", &venus)
             .env("EON_TEST_STOP", &fallback_stop)
             .env("EON_TEST_ORBIT_LOG", &orbit_log)
+            .env("EON_TEST_ORBIT_DELAY_MS", "250")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()

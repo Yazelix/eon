@@ -144,25 +144,34 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
 }
 
 impl Workspace {
-    pub(crate) fn with_initial_session(runtime: PathBuf, endpoint: PathBuf) -> Self {
-        let mut workspace = Self {
+    pub(crate) fn with_recovered_sessions(
+        runtime: PathBuf,
+        sessions: Vec<(usize, Session)>,
+    ) -> Result<Self, String> {
+        let next_pane = sessions
+            .last()
+            .ok_or("cannot recover an empty workspace")?
+            .0
+            .checked_add(1)
+            .ok_or("recovered Session identity leaves no next pane identity")?;
+        Ok(Self {
             runtime,
-            tabs: Vec::new(),
+            tabs: vec![Tab {
+                id: "tab-1".into(),
+                panes: sessions
+                    .into_iter()
+                    .map(|(number, session)| Pane {
+                        id: format!("pane-{number}"),
+                        session,
+                    })
+                    .collect(),
+                selected: 0,
+            }],
             active: 0,
-            next_tab: 1,
-            next_pane: 1,
+            next_tab: 2,
+            next_pane,
             recent_requests: VecDeque::new(),
-        };
-        let (tab, mut pane) = workspace.next_tab_and_pane();
-        pane.session.endpoint = endpoint;
-        workspace.tabs.push(Tab {
-            id: tab,
-            panes: vec![pane],
-            selected: 0,
-        });
-        workspace.next_tab += 1;
-        workspace.next_pane += 1;
-        workspace
+        })
     }
 
     pub(crate) fn dispatch(
@@ -409,10 +418,23 @@ pub(crate) fn json_escape(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn initial_workspace() -> Workspace {
+        Workspace::with_recovered_sessions(
+            "/runtime".into(),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+        )
+        .unwrap()
+    }
+
     #[test]
     fn ordered_topology_rejects_invalid_actions_without_mutation() {
-        let mut workspace =
-            Workspace::with_initial_session("/runtime".into(), "/runtime/orbit.sock".into());
+        let mut workspace = initial_workspace();
         let initial = workspace.clone();
         assert_eq!(
             workspace
@@ -515,8 +537,7 @@ mod tests {
 
     #[test]
     fn session_exit_removes_panes_and_empty_tabs_without_reusing_ids() {
-        let mut workspace =
-            Workspace::with_initial_session("/runtime".into(), "/runtime/orbit.sock".into());
+        let mut workspace = initial_workspace();
         let mut start = |_: &Session| Ok(());
 
         workspace
@@ -565,6 +586,65 @@ mod tests {
         let snapshot = workspace.snapshot();
         assert_eq!(snapshot.active_tab, "tab-3");
         assert_eq!(snapshot.tabs[1].panes[0].id, "pane-6");
+    }
+
+    #[test]
+    fn recovered_sessions_have_one_numeric_projection_without_reusing_ids() {
+        let sessions = vec![
+            (
+                2,
+                Session {
+                    id: "session-2".into(),
+                    endpoint: "/runtime/session-2.sock".into(),
+                },
+            ),
+            (
+                9,
+                Session {
+                    id: "session-9".into(),
+                    endpoint: "/runtime/session-9.sock".into(),
+                },
+            ),
+        ];
+        let mut workspace =
+            Workspace::with_recovered_sessions("/runtime".into(), sessions).unwrap();
+
+        let snapshot = workspace.snapshot();
+        assert_eq!(snapshot.active_tab, "tab-1");
+        assert_eq!(snapshot.tabs[0].selected_pane, "pane-2");
+        assert_eq!(
+            snapshot.tabs[0]
+                .panes
+                .iter()
+                .map(|pane| (pane.id.as_str(), pane.session.as_str()))
+                .collect::<Vec<_>>(),
+            [("pane-2", "session-2"), ("pane-9", "session-9")]
+        );
+
+        workspace
+            .dispatch("request-1", Action::CreatePane, |_| Ok(()))
+            .unwrap();
+        workspace
+            .dispatch("request-2", Action::CreateTab, |_| Ok(()))
+            .unwrap();
+        let snapshot = workspace.snapshot();
+        assert_eq!(snapshot.tabs[0].panes[2].id, "pane-10");
+        assert_eq!(snapshot.tabs[1].id, "tab-2");
+        assert_eq!(snapshot.tabs[1].panes[0].id, "pane-11");
+
+        assert!(
+            Workspace::with_recovered_sessions(
+                "/runtime".into(),
+                vec![(
+                    usize::MAX,
+                    Session {
+                        id: format!("session-{}", usize::MAX),
+                        endpoint: "/runtime/overflow.sock".into(),
+                    },
+                )],
+            )
+            .is_err()
+        );
     }
 
     #[test]
