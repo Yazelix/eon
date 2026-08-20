@@ -26,7 +26,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; one-run recovery `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
 | EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Proven | `7303ee5cca3925939b84267bd54587a2cfb223a6`; proof below |
 | EON-C14 | Eon requests compositor-owned background blur by default whenever it creates an Eon or EonTerm Venus surface, permits an explicit configuration opt-out, and keeps opacity independent | Eon | Proven | `b41be3a00a8e47a435521509c3d060d80e0524a5`; proof below |
-| EON-C15 | On the same boot and login, Eon can recover and explicitly stop the exact Orbit runs that survived loss of their Eon supervisor, without reconstructing Session authority | Eon | Partially proved | Base `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; response-loss correction `56fcae2d00baecf9b69e4650882a69e50419f56b`; connection-deadline correction `a4f0122862b7293326c22530f787124a47d0f560`; response-deadline correction `ced9e4ae11ed21a0f05d50cd470491adffa73b54`; composed acceptance remains open; proof below |
+| EON-C15 | On the same boot and login, Eon can recover and explicitly stop the exact Orbit runs that survived loss of their Eon supervisor, without reconstructing Session authority | Eon | Proven | Base `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; response-loss correction `56fcae2d00baecf9b69e4650882a69e50419f56b`; connection-deadline correction `a4f0122862b7293326c22530f787124a47d0f560`; response-deadline correction `ced9e4ae11ed21a0f05d50cd470491adffa73b54`; accepted composed proof below |
 
 ## Approved same-boot Session-recovery contract EON-C15
 
@@ -132,9 +132,45 @@ detailed execution evidence, and Git history retains superseded states.
   Orbit PID `1002943`, workload PID `1002944`, and Venus PID `1002946`;
   structured Stop named `session-1`, and every process and generation artifact
   was gone afterward. The two observed Eonova supervisors remained live.
-- Remaining gap: `eon-accept-eon-orbit-same-boot-recovery-iwc` owns broader
-  multi-Session, competing-replacement, EonTerm, failure-corpus, and explicit
-  user acceptance. EON-C15 therefore remains partially proved. macOS, logout,
+- Accepted composed proof: on 2026-08-20 the user activated and accepted
+  `eon-accept-eon-orbit-same-boot-recovery-iwc` against unchanged Eon source
+  `ced9e4ae11ed21a0f05d50cd470491adffa73b54`, Orbit
+  `86aa130629c09dce61d0f232150298656fa5cef4`, and Venus
+  `a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8` on x86_64 Linux. The refreshed
+  profile resolved Eon to
+  `/nix/store/7hbl9nsd953vax4nfyp5s00km6kb9zwm-eon-0.1.0` and EonTerm to
+  `/nix/store/qrhb368px6zj3hxwy4cazvdrfvi5wii0-eonterm-0.1.0`, both reporting
+  runtime `g1-ef5d3b5e4b2b241c4ef23666189d6317`; the five pre-existing Eonova
+  processes retained their PIDs and start times.
+- Full Eon launched three managed Sessions with Orbit PIDs `1021530`,
+  `1021560`, and `1021567`, process-start identities `10752142`, `10752150`,
+  and `10752155`, distinct run IDs, PTY children, and advancing deterministic
+  work. SIGKILL of supervisor `1021524` left every Orbit, child, record object,
+  and record hash exact while Venus `1021533` exited and released ORBS. The
+  exact packaged Orbit diagnostic client then observed frame revisions 1, 11,
+  and 11 and two accepted semantic inputs on every run.
+- Two immediate replacement Eon controls converged in 40 ms: supervisor
+  `1025046` acquired all three leases and reconstructed one numeric `tab-1`
+  with `pane-1` through `pane-3`; the other launch failed boundedly with no
+  duplicate Orbit or Venus. A later create advanced to `session-4`/`pane-4`
+  with fresh run ID `1025046-1787256921244330141-1`. Structured Stop returned
+  all four Sessions in 77 ms, removed every exact Orbit, PTY, Venus, record,
+  endpoint, and generation artifact, and preserved the unrelated EonTerm and
+  both existing Eonova generations.
+- Exact EonTerm package proof launched supervisor `1026565`, Orbit `1026580`,
+  PTY child `1026584`, and Venus `1026591`. After supervisor SIGKILL, the exact
+  record hash and advancing work survived, Venus exited, the diagnostic client
+  observed frame revision 2 and two accepted inputs, and replacement EonTerm
+  `1027581` recovered the sole run in 42 ms without a duplicate Orbit. Its
+  structured Stop named `session-1` and left no fixture process or generation
+  artifact. Both isolated proof roots were moved to trash.
+- The unchanged candidate passed formatting, locked Clippy, 23 Eon unit tests,
+  16 lifecycle integration tests, four manifest tests, one EONW test, and all
+  six Nix checks. The lifecycle suite supplies the composed unsafe-record,
+  process-start, replacement-supervisor, lost-Stop-response, tombstone,
+  deadline, and retained-diagnostic negatives; Orbit source `86aa1306` supplies
+  the identical owner-level lease race, authority, non-cancellable Stop,
+  natural-exit, containment, and typed-tombstone negatives. macOS, logout,
   reboot, machine loss, prior topology, and old-generation backport remain
   unproved.
 

@@ -7,7 +7,9 @@ installation, and proven contract changes.
 
 - Recover exact current-generation Orbit runs after same-boot Eon or EonTerm
   supervisor loss, preserving their process, PTY child, and terminal state while
-  projecting full Eon into one deterministic numeric workspace.
+  projecting full Eon into one deterministic numeric workspace; the accepted
+  installed boundary covers three full Eon Sessions, one EonTerm Session,
+  competing replacement controls, and unrelated-Session isolation.
 - Acquire Orbit's sole canonical management lease before publishing Sessions or
   Venus, and complete whole-generation stop only after every exact Orbit
   tombstone; uncertain recovery or stop fails without PID or signal fallback.
