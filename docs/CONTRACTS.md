@@ -173,6 +173,20 @@ detailed execution evidence, and Git history retains superseded states.
   natural-exit, containment, and typed-tombstone negatives. macOS, logout,
   reboot, machine loss, prior topology, and old-generation backport remain
   unproved.
+- Eonova rollout source `d8a8729f442f3d535b30fd22ac8dc7b6da4626dd`
+  pins exact Eon `ced9e4ae11ed21a0f05d50cd470491adffa73b54`, Orbit
+  `86aa130629c09dce61d0f232150298656fa5cef4`, Venus
+  `a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8`, and unchanged Nova
+  `9ef7f6530bac3b4296adbaa7b50eaef3c1716cf1`. Its refreshed profile resolves
+  to `/nix/store/v46asylvh7jscfcik3xqm3r7n49lj4h1-eonova-0.1.0`.
+  Isolated installed generation `g1-ef5d3b5e4b2b241c4ef23666189d6317`
+  launched supervisor `1064490`, Orbit `1064496`, Zellij `1064497`, and a
+  HUP/TERM-ignoring descendant `1065024` in Orbit's exact cgroup. Stop remained
+  pending with populated containment at 100 ms and returned `session-1` after
+  734 ms; only then were every process, containment, and generation artifact
+  gone. The fixture root was moved to trash. The five pre-existing Eonova
+  processes retained their exact PIDs and start times; the separate Eon and
+  EonTerm profiles remained unchanged. macOS remains unproved.
 
 ## Approved terminal-background blur contract EON-C14
 
