@@ -376,7 +376,7 @@ Beads data, lock files, and generated artifacts.
 | README | 387 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 924 |
+| Architecture and contracts | 949 |
 | Distribution and references | 237 |
 | Changelog | 122 |
 | Rust source and tests | 7,687 |
@@ -384,4 +384,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 326 |
 | Nix composition | 726 |
 | Product defaults | 0 |
-| **Total** | **10,895** |
+| **Total** | **10,920** |

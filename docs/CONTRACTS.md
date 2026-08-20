@@ -12,21 +12,21 @@ detailed execution evidence, and Git history retains superseded states.
 
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
-| EON-C1 | Eon validates and launches one compatible component set and reports every exact component revision | Eon | Proven | `a2792cc77f8254cc277d64eb41f65725b69ccf70`; proof below |
-| EON-C2 | One versioned manifest defines component identity, compatibility, and abstract artifacts—but not launch policy—for every distribution channel | Eon | Proven | `234ad77ced4924d95400b5c39822b3fb9b928c95`; proof below |
-| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Proven | `a2792cc77f8254cc277d64eb41f65725b69ccf70`; proof below |
-| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Proven | `a2792cc77f8254cc277d64eb41f65725b69ccf70`; proof below |
+| EON-C1 | Eon validates and launches one compatible component set and reports every exact component revision | Eon | Proven | `a2792cc77f8254cc277d64eb41f65725b69ccf70`; ORB-C13/ORBS v4 refresh `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
+| EON-C2 | One versioned manifest defines component identity, compatibility, and abstract artifacts—but not launch policy—for every distribution channel | Eon | Proven | `234ad77ced4924d95400b5c39822b3fb9b928c95`; current graph `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
+| EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Proven | `a2792cc77f8254cc277d64eb41f65725b69ccf70`; exact protocol-source substitution `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
+| EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Proven | `a2792cc77f8254cc277d64eb41f65725b69ccf70`; management-consumer boundary `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
 | EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Accepted composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; private Session PATH `c0d044c69318a921f9f9139bcaf2de9afce683d3`; Fish preservation `194076f66f91c8823b03c3ee6d3a1706eb8ea4e4`; proof below |
-| EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; current CLI proof `d0c2208d628fa0dc1e186899b45e0b73534ff9bc`; deadline hardening `a390fc5c007900c3fc8c9c49df85f9b8acc06d4a`; proof below |
-| EON-C11 | Eon and EonTerm default to the exact current generation in separate runtime namespaces while older live generations remain discoverable, explicitly presentable when compatible, and explicitly stoppable through their supervisor; presenting an existing surface requests native presentation | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; native activation candidate consumes Venus `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f` |
-| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; proof below |
+| EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; current CLI proof `d0c2208d628fa0dc1e186899b45e0b73534ff9bc`; deadline hardening `a390fc5c007900c3fc8c9c49df85f9b8acc06d4a`; management Stop `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
+| EON-C11 | Eon and EonTerm default to the exact current generation in separate runtime namespaces while older live generations remain discoverable, explicitly presentable when compatible, and explicitly stoppable through their supervisor; presenting an existing surface requests native presentation | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; same-boot adoption `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; native activation candidate consumes Venus `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f` |
+| EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; one-run recovery `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
 | EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Proven | `7303ee5cca3925939b84267bd54587a2cfb223a6`; proof below |
 | EON-C14 | Eon requests compositor-owned background blur by default whenever it creates an Eon or EonTerm Venus surface, permits an explicit configuration opt-out, and keeps opacity independent | Eon | Proven | `b41be3a00a8e47a435521509c3d060d80e0524a5`; proof below |
-| EON-C15 | On the same boot and login, Eon can recover and explicitly stop the exact Orbit runs that survived loss of their Eon supervisor, without reconstructing Session authority | Eon | Candidate | Candidate proof below |
+| EON-C15 | On the same boot and login, Eon can recover and explicitly stop the exact Orbit runs that survived loss of their Eon supervisor, without reconstructing Session authority | Eon | Partially proved | `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; composed acceptance remains open; proof below |
 
 ## Approved same-boot Session-recovery contract EON-C15
 
@@ -75,6 +75,31 @@ detailed execution evidence, and Git history retains superseded states.
   compatible pair with ORBF v1, ORBS v4, and unchanged EONW v1.
 - Approval: the user selected the same-boot phase and activated its exact Orbit
   and Venus prerequisites on 2026-08-20.
+- Implemented and mechanically verified: source
+  `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910` consumes exact Orbit
+  `86aa130629c09dce61d0f232150298656fa5cef4` and Venus
+  `a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8`. Locked formatting, Clippy,
+  Rust tests, manifest validation, Eon and EonTerm package test phases, managed
+  command/closure checks, full `nix flake check`, LOC, and diff checks pass on
+  x86_64 Linux. The active `eon` profile resolves to
+  `/nix/store/cb8vp41l9w4rp6k69n1kmg2dk2llfc62-eon-0.1.0` without restarting
+  the two observed older Eonova supervisors.
+- Dogfooded: installed runtime `g1-94d39f6d5dad0dbbb36f44e57e42e102`
+  launched packaged Orbit PID `953501`, PTY child `953502`, and Venus PID
+  `953504`. Supervisor PID `953500` was killed after Ready. Orbit, its child,
+  advancing work, and live-record hash
+  `c556d7623011c8dd539afe076196cdc4f65838a683c688e3befcff3dfdef258d`
+  remained exact while Venus exited on control EOF. The exact Orbit diagnostic
+  client attached, observed frame revision 3, and received both input
+  acceptances. Replacement Eon preserved the record, process, Session, and
+  workspace identities, created one replacement packaged Venus, and launched no
+  second Orbit. Installed structured Stop named `session-1`, after which every
+  isolated process and the exact generation directory were gone.
+- Remaining gap: `eon-accept-eon-orbit-same-boot-recovery-iwc` owns broader
+  multi-Session, competing-replacement, EonTerm, failure-corpus, and explicit
+  user acceptance. EON-C15 therefore remains partially proved. macOS, logout,
+  reboot, machine loss, prior topology, and old-generation backport remain
+  unproved.
 
 ## Approved terminal-background blur contract EON-C14
 
