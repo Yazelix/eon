@@ -26,7 +26,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; one-run recovery `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
 | EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Proven | `7303ee5cca3925939b84267bd54587a2cfb223a6`; proof below |
 | EON-C14 | Eon requests compositor-owned background blur by default whenever it creates an Eon or EonTerm Venus surface, permits an explicit configuration opt-out, and keeps opacity independent | Eon | Proven | `b41be3a00a8e47a435521509c3d060d80e0524a5`; proof below |
-| EON-C15 | On the same boot and login, Eon can recover and explicitly stop the exact Orbit runs that survived loss of their Eon supervisor, without reconstructing Session authority | Eon | Partially proved | Base `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; response-loss correction `56fcae2d00baecf9b69e4650882a69e50419f56b`; composed acceptance remains open; proof below |
+| EON-C15 | On the same boot and login, Eon can recover and explicitly stop the exact Orbit runs that survived loss of their Eon supervisor, without reconstructing Session authority | Eon | Partially proved | Base `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; response-loss correction `56fcae2d00baecf9b69e4650882a69e50419f56b`; connection-deadline correction `a4f0122862b7293326c22530f787124a47d0f560`; composed acceptance remains open; proof below |
 
 ## Approved same-boot Session-recovery contract EON-C15
 
@@ -105,6 +105,20 @@ detailed execution evidence, and Git history retains superseded states.
   `969051`, its workload PID `969052`, and the generation directory were gone.
   The focused regression was red before the correction and green after it;
   locked Rust, Clippy, and all six Nix checks also pass.
+- Management-pressure correction: source
+  `a4f0122862b7293326c22530f787124a47d0f560` applies the remaining shared
+  deadline to Unix management connection establishment. A disposable blocking-
+  connect probe exceeded one second; the focused saturated-listener regression
+  returns within its bound with the corrected connector. Locked formatting,
+  Clippy, workspace tests, and all six Nix checks pass on x86_64 Linux. The
+  active profile resolves to
+  `/nix/store/ycd09m4l5glnfhzb8drd2v5i5h3nk7x5-eon-0.1.0` and reports runtime
+  `g1-c97b65af485ded4e7bb3a97426ccad52`. An isolated installed Orbit at PID
+  `989217` was paused by the test harness after supervisor loss while 4,097
+  clients filled its management queue; replacement Eon failed closed in 0.006
+  seconds without launching another Orbit. External setup teardown removed the
+  exact isolated Orbit and workload; the two observed Eonova supervisors
+  remained live.
 - Remaining gap: `eon-accept-eon-orbit-same-boot-recovery-iwc` owns broader
   multi-Session, competing-replacement, EonTerm, failure-corpus, and explicit
   user acceptance. EON-C15 therefore remains partially proved. macOS, logout,
