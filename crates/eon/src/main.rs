@@ -1758,6 +1758,13 @@ fn operation_timeout(deadline: Instant, operation: &str) -> Result<Duration, Str
         .ok_or_else(|| format!("{operation} exceeded five seconds"))
 }
 
+fn unix_connect_with_timeout(path: &Path, timeout: Duration) -> std::io::Result<UnixStream> {
+    let address = socket2::SockAddr::unix(path)?;
+    let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
+    socket.connect_timeout(&address, timeout)?;
+    Ok(UnixStream::from(OwnedFd::from(socket)))
+}
+
 fn read_management_response(stream: &mut UnixStream) -> Result<ManagementServerMessage, String> {
     let mut bytes = vec![0; management::HEADER_BYTES];
     stream
@@ -1831,7 +1838,8 @@ fn acquire_management(
         candidate.identity.management.path.clone(),
     ));
     endpoint_matches(&management_path, &candidate.identity.management)?;
-    let mut stream = UnixStream::connect(&management_path).map_err(|error| {
+    let timeout = operation_timeout(deadline, "Sessions lease acquisition")?;
+    let mut stream = unix_connect_with_timeout(&management_path, timeout).map_err(|error| {
         format!(
             "cannot connect to Sessions management endpoint {}: {error}",
             management_path.display()
@@ -2913,8 +2921,8 @@ mod tests {
         discover_generations, effective_uid, encode_lifecycle_response, encode_response,
         generation_directory, generation_id, lock_supervisor_startup, orbit_command,
         prepare_configuration, prepare_runtime, probe_presentable_runtime, read_control_request,
-        remove_socket_if_identity, session_number, socket_identity, valid_generation,
-        venus_command, xdg_path,
+        remove_socket_if_identity, session_number, socket_identity, unix_connect_with_timeout,
+        valid_generation, venus_command, xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -2922,7 +2930,7 @@ mod tests {
         io::Write,
         os::unix::{
             fs::{MetadataExt, PermissionsExt, symlink},
-            net::UnixListener,
+            net::{UnixListener, UnixStream},
         },
         path::{Path, PathBuf},
         process::Command,
@@ -2982,6 +2990,42 @@ mod tests {
         ] {
             assert_eq!(session_number(invalid), None, "accepted {invalid}");
         }
+    }
+
+    #[test]
+    fn unix_connection_attempt_obeys_timeout() {
+        let root = temporary_directory();
+        let path = root.join("backlog.sock");
+        let socket =
+            socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).unwrap();
+        socket
+            .bind(&socket2::SockAddr::unix(&path).unwrap())
+            .unwrap();
+        socket.listen(0).unwrap();
+        let listener = UnixListener::from(std::os::fd::OwnedFd::from(socket));
+        let queued = UnixStream::connect(&path).unwrap();
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let target = path.clone();
+        let attempt = thread::spawn(move || {
+            sender
+                .send(unix_connect_with_timeout(
+                    &target,
+                    Duration::from_millis(50),
+                ))
+                .unwrap();
+        });
+
+        let result = receiver.recv_timeout(Duration::from_secs(1));
+        drop(queued);
+        drop(listener);
+        attempt.join().unwrap();
+
+        assert!(
+            result
+                .expect("Unix connection exceeded its timeout")
+                .is_err()
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
