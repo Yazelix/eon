@@ -11,6 +11,8 @@ installation, and proven contract changes.
 - Acquire Orbit's sole canonical management lease before publishing Sessions or
   Venus, and complete whole-generation stop only after every exact Orbit
   tombstone; uncertain recovery or stop fails without PID or signal fallback.
+- Finish the supervisor after an exact Stop even when the EONW client disappears
+  before receiving its result, without reviving stopped Sessions or stale state.
 - Refresh the canonical composition to Orbit ORB-C13/ORBS v4 and the accepted
   stream-supervised Venus, whose replacement lifetime follows Eon's control EOF.
 - Consume Venus's blue cursor-tail default for new and replacement Eon and

@@ -2639,7 +2639,7 @@ fn handle_control_client(
     if stream.set_read_timeout(timeout).is_err() || stream.set_write_timeout(timeout).is_err() {
         return false;
     }
-    let (response, stop_requested) = match read_control_request(&mut stream) {
+    let (response, shutdown) = match read_control_request(&mut stream) {
         Ok(Request {
             action: Action::InspectRuntime | Action::InspectPresentation,
             ..
@@ -2721,7 +2721,7 @@ fn handle_control_client(
                         "stop-failed",
                         detail,
                     ))),
-                    false,
+                    true,
                 ),
             }
         }
@@ -2787,10 +2787,9 @@ fn handle_control_client(
             format!("cannot encode Eon workspace result: {error}"),
         )))
     }) {
-        let written = stream.write_all(&encoded).is_ok();
-        return stop_requested && written;
+        let _ = stream.write_all(&encoded);
     }
-    false
+    shutdown
 }
 
 fn runtime_status(

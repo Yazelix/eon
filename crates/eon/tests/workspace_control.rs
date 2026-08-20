@@ -11,6 +11,7 @@ use std::{
     ffi::OsStr,
     fs,
     io::{Read, Write},
+    net::Shutdown,
     os::unix::{
         ffi::OsStrExt,
         fs::{MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
@@ -1229,6 +1230,55 @@ fn desktop_launch_failure_stops_the_ready_session_through_management() {
         fs::read_dir(runtime.join("generations")).unwrap().count(),
         0
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn lost_stop_response_still_finishes_the_supervisor() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let fallback_stop = root.join("fallback-stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let mut supervisor = TestProcess {
+        child: Command::new(&binary)
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &fallback_stop)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop: fallback_stop,
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for_connection(&control);
+    let orbit_pid = live_identity(&generation.join("orbit.sock")).process_id;
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    let request = encode_request(&Request {
+        id: "lost-stop-response".into(),
+        action: Action::Stop {
+            generation: generation_id.into(),
+        },
+    })
+    .unwrap();
+    let mut stream = UnixStream::connect(control).unwrap();
+    stream.write_all(&request).unwrap();
+    stream.shutdown(Shutdown::Both).unwrap();
+    drop(stream);
+
+    wait_for_successful_exit(&mut supervisor.child);
+    assert!(!generation.exists());
+    assert!(!Path::new("/proc").join(orbit_pid.to_string()).exists());
     fs::remove_dir_all(root).unwrap();
 }
 

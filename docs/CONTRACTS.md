@@ -45,7 +45,8 @@ detailed execution evidence, and Git history retains superseded states.
   `max(N)+1`. Prior grouping, focus, argv, and request history are not restored.
   Explicit generation stop sends canonical Stop through every acquired lease
   before waiting and returns EONW Stopped only after every run has a matching
-  explicit-stop tombstone.
+  explicit-stop tombstone. Loss of the EONW response after that terminal state
+  cannot revive the stopped Sessions or return the supervisor to its live loop.
 - Important failures: unsafe, missing, replaced, malformed, oversized,
   incompatible, duplicate, zero, noncanonical, or overflowing records and
   identities; too many candidates; wrong component generation or UID; Busy;
