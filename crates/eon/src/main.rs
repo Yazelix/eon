@@ -1765,18 +1765,36 @@ fn unix_connect_with_timeout(path: &Path, timeout: Duration) -> std::io::Result<
     Ok(UnixStream::from(OwnedFd::from(socket)))
 }
 
-fn read_management_response(stream: &mut UnixStream) -> Result<ManagementServerMessage, String> {
+fn read_management_response(
+    stream: &mut UnixStream,
+    deadline: Instant,
+    operation: &str,
+) -> Result<ManagementServerMessage, String> {
+    let mut read_exact = |mut bytes: &mut [u8], context: &str| -> Result<(), String> {
+        while !bytes.is_empty() {
+            let timeout = operation_timeout(deadline, operation)?;
+            stream
+                .set_read_timeout(Some(timeout))
+                .map_err(|error| format!("cannot bound {operation}: {error}"))?;
+            match stream.read(bytes) {
+                Ok(0) => return Err(format!("{context}: unexpected end of file")),
+                Ok(read) => bytes = &mut bytes[read..],
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => return Err(format!("{context}: {error}")),
+            }
+        }
+        Ok(())
+    };
     let mut bytes = vec![0; management::HEADER_BYTES];
-    stream
-        .read_exact(&mut bytes)
-        .map_err(|error| format!("cannot read Sessions management result: {error}"))?;
+    read_exact(&mut bytes, "cannot read Sessions management result")?;
     let length = management::server_message_len(&bytes)
         .map_err(|error| format!("invalid Sessions management result: {error}"))?
         .ok_or("incomplete Sessions management header")?;
     bytes.resize(length, 0);
-    stream
-        .read_exact(&mut bytes[management::HEADER_BYTES..])
-        .map_err(|error| format!("cannot read complete Sessions management result: {error}"))?;
+    read_exact(
+        &mut bytes[management::HEADER_BYTES..],
+        "cannot read complete Sessions management result",
+    )?;
     management::decode_server_message(&bytes)
         .map_err(|error| format!("invalid Sessions management result: {error}"))
 }
@@ -1848,8 +1866,7 @@ fn acquire_management(
     validate_management_peer(&stream, &candidate.identity)?;
     let timeout = operation_timeout(deadline, "Sessions lease acquisition")?;
     stream
-        .set_read_timeout(Some(timeout))
-        .and_then(|()| stream.set_write_timeout(Some(timeout)))
+        .set_write_timeout(Some(timeout))
         .map_err(|error| format!("cannot bound Sessions lease acquisition: {error}"))?;
     let request = management::encode_client_message(&ManagementClientMessage::Acquire {
         expected: candidate.identity.clone(),
@@ -1859,7 +1876,7 @@ fn acquire_management(
     stream
         .write_all(&request)
         .map_err(|error| format!("cannot send Sessions lease request: {error}"))?;
-    match read_management_response(&mut stream)? {
+    match read_management_response(&mut stream, deadline, "Sessions lease acquisition")? {
         ManagementServerMessage::Lease(identity) if identity == candidate.identity => {}
         ManagementServerMessage::Busy => {
             return Err(format!(
@@ -2405,7 +2422,6 @@ fn stop_managed_sessions(
             session
                 .lease
                 .set_nonblocking(false)
-                .and_then(|()| session.lease.set_read_timeout(Some(remaining)))
                 .and_then(|()| session.lease.set_write_timeout(Some(remaining)))
                 .map_err(|error| format!("cannot bound Sessions stop: {error}"))?;
             session
@@ -2419,14 +2435,7 @@ fn stop_managed_sessions(
     let mut errors = Vec::new();
     for (session, write) in sessions.iter_mut().zip(writes) {
         let response = if write.is_ok() {
-            let remaining = operation_timeout(deadline, "Sessions stop response");
-            match remaining.and_then(|remaining| {
-                session
-                    .lease
-                    .set_read_timeout(Some(remaining))
-                    .map_err(|error| format!("cannot bound Sessions stop response: {error}"))?;
-                read_management_response(&mut session.lease)
-            }) {
+            match read_management_response(&mut session.lease, deadline, "Sessions stop response") {
                 Ok(ManagementServerMessage::Stopped(tombstone))
                     if tombstone.identity == session.identity
                         && tombstone.reason == TerminationReason::ExplicitStop =>
@@ -2921,8 +2930,8 @@ mod tests {
         discover_generations, effective_uid, encode_lifecycle_response, encode_response,
         generation_directory, generation_id, lock_supervisor_startup, orbit_command,
         prepare_configuration, prepare_runtime, probe_presentable_runtime, read_control_request,
-        remove_socket_if_identity, session_number, socket_identity, unix_connect_with_timeout,
-        valid_generation, venus_command, xdg_path,
+        read_management_response, remove_socket_if_identity, session_number, socket_identity,
+        unix_connect_with_timeout, valid_generation, venus_command, xdg_path,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -2936,7 +2945,7 @@ mod tests {
         process::Command,
         sync::atomic::{AtomicU64, Ordering},
         thread,
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     static NEXT_TEST: AtomicU64 = AtomicU64::new(0);
@@ -3026,6 +3035,35 @@ mod tests {
                 .is_err()
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn management_response_obeys_one_deadline_across_partial_reads() {
+        let (mut reader, mut writer) = UnixStream::pair().unwrap();
+        let response =
+            super::management::encode_server_message(&super::ManagementServerMessage::Busy)
+                .unwrap();
+        let sender = thread::spawn(move || {
+            for byte in response {
+                if writer.write_all(&[byte]).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+        let started = Instant::now();
+        let result = read_management_response(
+            &mut reader,
+            started + Duration::from_millis(80),
+            "Sessions management response",
+        );
+        let elapsed = started.elapsed();
+        drop(reader);
+        sender.join().unwrap();
+
+        assert!(result.is_err(), "received {result:?}");
+        assert!(elapsed >= Duration::from_millis(40));
+        assert!(elapsed < Duration::from_secs(1));
     }
 
     #[test]

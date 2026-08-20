@@ -11,8 +11,8 @@ installation, and proven contract changes.
 - Acquire Orbit's sole canonical management lease before publishing Sessions or
   Venus, and complete whole-generation stop only after every exact Orbit
   tombstone; uncertain recovery or stop fails without PID or signal fallback.
-- Bound management connection pressure inside the same five-second recovery
-  deadline instead of waiting indefinitely for a saturated local Unix socket.
+- Bound management connection and partial-response pressure inside the same
+  five-second recovery deadline.
 - Finish the supervisor after an exact Stop even when the EONW client disappears
   before receiving its result, without reviving stopped Sessions or stale state.
 - Refresh the canonical composition to Orbit ORB-C13/ORBS v4 and the accepted
