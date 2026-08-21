@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Refresh new Eon and EonTerm launches to the accepted post-audit Orbit and
+  Venus sources, including bounded renderer failures and retained events,
+  coherent native input and accessibility, and corrected X11 lifecycle behavior.
 - Recover exact current-generation Orbit runs after same-boot Eon or EonTerm
   supervisor loss, preserving their process, PTY child, and terminal state while
   projecting full Eon into one deterministic numeric workspace; the accepted

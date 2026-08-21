@@ -494,6 +494,23 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C1 through EON-C4 and the current EON-C8 topology — composition
 
+- Post-audit child refresh candidate on x86_64 Linux: schema 3 graph
+  `components/eon-alpha-v3.json`, SHA-256
+  `b069a8b5af82458a05db80e811e6532e9ac2b3d4fce017d7ea5760144f59b651`,
+  selects audited Orbit source `17f330adb6d358eec90d6b214c2c5640fd6c4138`,
+  corrected ORB-C4 proof `74c3b78de7726239badccd5c9867b85a13209bcf`,
+  and unchanged ORBF v1/ORBS v4 proof
+  `7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c`. It selects accepted Venus
+  `1f6af23860ce4c9f135a8eeb9e3e66cf75b4c619`, including the final VEN-C8
+  correction, and exact EONW v1 producer
+  `4af395aea06c230ee6b18cf0755ae25915c0b88d`; every other graph identity is
+  unchanged. Installed Eon `/nix/store/5yrjjdcvml5hjzrlnflz43c0x6sd6pvs-eon-0.1.0`
+  and built EonTerm `/nix/store/zyb0ldg9ri6kvrs6knq9da5facy8iiy9-eonterm-0.1.0`
+  use generation `g1-ac3a3d89d476fb70793174f3e7741ebd`. Locked Rust, graph/report,
+  full Nix flake, package, profile, and process-identity checks pass. An isolated
+  invalid-display launch published `session-1`; structured Stop removed its
+  generation without a native window, focus change, or existing-process change. This
+  remains a candidate until its source is published.
 - Accepted default-cursor refresh proof
   `7d59dc127dff623e950792ccf4d63f127fba6c7b` on x86_64 Linux: schema 3
   graph `components/eon-alpha-v3.json`, SHA-256
