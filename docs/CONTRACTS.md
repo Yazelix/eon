@@ -494,8 +494,8 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C1 through EON-C4 and the current EON-C8 topology — composition
 
-- Post-audit child refresh candidate on x86_64 Linux: schema 3 graph
-  `components/eon-alpha-v3.json`, SHA-256
+- Accepted post-audit child refresh proof `de7d0e41cf17f7111d5cdd9c3b41f1c07a2dbeab`
+  on x86_64 Linux: schema 3 graph `components/eon-alpha-v3.json`, SHA-256
   `b069a8b5af82458a05db80e811e6532e9ac2b3d4fce017d7ea5760144f59b651`,
   selects audited Orbit source `17f330adb6d358eec90d6b214c2c5640fd6c4138`,
   corrected ORB-C4 proof `74c3b78de7726239badccd5c9867b85a13209bcf`,
@@ -504,13 +504,13 @@ detailed execution evidence, and Git history retains superseded states.
   `1f6af23860ce4c9f135a8eeb9e3e66cf75b4c619`, including the final VEN-C8
   correction, and exact EONW v1 producer
   `4af395aea06c230ee6b18cf0755ae25915c0b88d`; every other graph identity is
-  unchanged. Installed Eon `/nix/store/5yrjjdcvml5hjzrlnflz43c0x6sd6pvs-eon-0.1.0`
-  and built EonTerm `/nix/store/zyb0ldg9ri6kvrs6knq9da5facy8iiy9-eonterm-0.1.0`
-  use generation `g1-ac3a3d89d476fb70793174f3e7741ebd`. Locked Rust, graph/report,
-  full Nix flake, package, profile, and process-identity checks pass. An isolated
-  invalid-display launch published `session-1`; structured Stop removed its
-  generation without a native window, focus change, or existing-process change. This
-  remains a candidate until its source is published.
+  unchanged. Installed Eon `/nix/store/p6sdg1kgkms3z3bmlh1k05vkb04x9m9b-eon-0.1.0`
+  and built EonTerm `/nix/store/a7xxsr4521in9f4bv32mcfdqvqg50kbp-eonterm-0.1.0`
+  use generation `g1-ac3a3d89d476fb70793174f3e7741ebd`. All 44 locked Rust tests,
+  warnings-denied Clippy, graph/report, six Nix checks, both packages, profile,
+  and process-identity checks pass. An isolated invalid-display launch published
+  `session-1`; structured Stop removed its generation without a native window,
+  focus change, or existing-process change.
 - Accepted default-cursor refresh proof
   `7d59dc127dff623e950792ccf4d63f127fba6c7b` on x86_64 Linux: schema 3
   graph `components/eon-alpha-v3.json`, SHA-256
