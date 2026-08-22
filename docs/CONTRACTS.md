@@ -896,6 +896,15 @@ detailed execution evidence, and Git history retains superseded states.
   `g1-e78ed0904f837644785eeaf427f3f032`; the live previous generation and its
   Session remained running. Phase: accepted source, mechanically verified,
   and dogfooded.
+- Session-adapter ownership proof: `830170b8b26838b306d8dcb2dcfc9c4d1859abe8`
+  on x86_64 Linux. `sessions.rs` owns Ready claims, management validation and
+  acquisition, same-boot recovery, Orbit launch and rollback, Stop, terminal
+  reconciliation, and live bookkeeping; `main.rs` composes its outcomes. The
+  exact rejected-Ready and marked-claim regressions, locked 46-test Rust suite,
+  all-target Clippy, manifest, exact Eon and EonTerm packages, full flake,
+  refreshed profile, installed generation `g1-1c480d66c2b3f3046871619e4d06fefa`,
+  and structured Stop dogfood pass. The pre-existing live EonTerm remained
+  uninterrupted. Phase: accepted source, mechanically verified, and dogfooded.
 - Lifecycle protocol proof: `fd6b348494111a0d18e241787da14ea99ee117a9`.
   Accepted EON-C11 attach proof: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`
   on x86_64 Linux. Generated managed-runtime identity proof
