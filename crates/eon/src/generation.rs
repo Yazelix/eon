@@ -1,10 +1,12 @@
+use super::control::{
+    ControlResponse, EndpointFailure, EndpointFailureKind, connect_control, failure,
+    probe_presentable_runtime, remove_socket_if_identity, report_failure, send_action,
+    send_action_on, socket_identity, socket_identity_from,
+};
 use super::workspace::json_escape;
 use super::{
-    ControlResponse, EndpointFailure, EndpointFailureKind, MANIFEST, attach_legacy,
-    connect_control, effective_uid, failure, path_exists, present_at, probe_presentable_runtime,
-    probe_supervisor, remove_socket_if_identity, report_failure, runtime_directory, send_action,
-    send_action_on, socket_identity, socket_identity_from, try_lock_supervisor_startup,
-    validate_private_directory, write_stdout,
+    MANIFEST, attach_legacy, effective_uid, path_exists, present_at, probe_supervisor,
+    runtime_directory, try_lock_supervisor_startup, validate_private_directory, write_stdout,
 };
 use eon_workspace_protocol::{Action, Availability, LifecycleResponse, Response, Stopped, VERSION};
 use std::{
@@ -21,6 +23,7 @@ pub(super) fn current_generation() -> Result<String, String> {
     eon_manifest::parse_and_validate(MANIFEST).map_err(|error| error.to_string())?;
     Ok(generation_id(&[
         include_bytes!("main.rs"),
+        include_bytes!("control.rs"),
         include_bytes!("generation.rs"),
         include_bytes!("managed_environment.rs"),
         include_bytes!("workspace.rs"),
