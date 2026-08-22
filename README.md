@@ -107,9 +107,11 @@ Opening Eon reconnects only to the exact installed runtime generation or starts
 that generation in its own private namespace. If that generation's supervisor
 was lost on the same boot, Eon validates and adopts its exact surviving Orbit
 runs before publishing a replacement workspace or Venus surface. Older live
-generations and their Sessions remain running. Concurrent starts converge on
-one supervisor and one complete Session set; every attach-capable peer presents
-that owner. Its Nix closure
+generations and their Sessions remain running. An exact retained record claim
+separates pre-Ready local-child rollback from post-Ready Orbit management;
+rejected Ready identities are stopped only through that management owner.
+Concurrent starts converge on one supervisor and one complete Session set;
+every attach-capable peer presents that owner. Its Nix closure
 supplies Mesa's open-source Vulkan drivers; the current graphics proof uses
 Intel hardware, while proprietary NVIDIA remains unproved. Run Eon from a
 terminal when you need foreground lifecycle control.
@@ -373,15 +375,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 246 |
-| README | 387 |
+| README | 389 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,053 |
+| Architecture and contracts | 1,084 |
 | Distribution and references | 237 |
-| Changelog | 131 |
-| Rust source and tests | 7,818 |
+| Changelog | 136 |
+| Rust source and tests | 8,187 |
 | Cargo manifests | 37 |
 | Component manifest | 326 |
 | Nix composition | 726 |
 | Product defaults | 0 |
-| **Total** | **11,165** |
+| **Total** | **11,572** |

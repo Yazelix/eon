@@ -58,16 +58,16 @@
     "orbit": {
       "flake": false,
       "locked": {
-        "lastModified": 1787332467,
-        "narHash": "sha256-8SPeIjECWXav8E2CYOy3hmouqZAo7aoyya3gPIxctO0=",
+        "lastModified": 1787356326,
+        "narHash": "sha256-J8CMlVVVn1a2RDLQaqzgrVnhpMXvF5vWUR5Mnf/SOV4=",
         "ref": "refs/heads/edge",
-        "rev": "17f330adb6d358eec90d6b214c2c5640fd6c4138",
-        "revCount": 117,
+        "rev": "2518512758c7848bbd87f907b105c8bcf0fc4e1b",
+        "revCount": 120,
         "type": "git",
         "url": "https://github.com/Yazelix/eon-sessions.git"
       },
       "original": {
-        "rev": "17f330adb6d358eec90d6b214c2c5640fd6c4138",
+        "rev": "2518512758c7848bbd87f907b105c8bcf0fc4e1b",
         "type": "git",
         "url": "https://github.com/Yazelix/eon-sessions.git"
       }

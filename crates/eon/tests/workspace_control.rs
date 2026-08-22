@@ -85,6 +85,36 @@ fn write_management_record(path: &Path, record: &ManagementRecord) {
     fs::rename(temporary, path).unwrap();
 }
 
+fn publish_management_record(path: &Path, record: &ManagementRecord) {
+    let mut claim = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .unwrap();
+    let expected = object_identity(path);
+    let metadata = claim.metadata().unwrap();
+    assert!(metadata.file_type().is_file());
+    assert_eq!(metadata.uid(), unsafe { libc::geteuid() });
+    assert_eq!(metadata.mode() & 0o7777, 0o600);
+    assert_eq!(metadata.len(), 0);
+    claim.try_lock().unwrap();
+    assert_eq!(object_identity(path), expected);
+    claim.write_all(b"1").unwrap();
+    if std::env::var_os("EON_TEST_REPLACE_READY_RECORD").is_some() {
+        fs::remove_file(path).unwrap();
+        let mut replacement = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .unwrap();
+        replacement.write_all(b"invalid").unwrap();
+    } else {
+        write_management_record(path, record);
+    }
+}
+
 fn managed_orbit_executable(path: &Path) {
     let helper = std::env::current_exe().unwrap();
     executable(
@@ -167,10 +197,13 @@ fn managed_orbit_helper() {
         .to_str()
         .unwrap()
         .to_string();
-    let component_generation = arguments[management_argument + 3]
-        .to_str()
-        .unwrap()
-        .to_string();
+    let component_generation =
+        std::env::var("EON_TEST_ORBIT_COMPONENT_GENERATION").unwrap_or_else(|_| {
+            arguments[management_argument + 3]
+                .to_str()
+                .unwrap()
+                .to_string()
+        });
     if let Some(delay) = std::env::var_os("EON_TEST_ORBIT_DELAY_MS") {
         thread::sleep(Duration::from_millis(
             delay.to_str().unwrap().parse().unwrap(),
@@ -203,7 +236,7 @@ fn managed_orbit_helper() {
         presentation: endpoint_identity(&presentation),
         management: endpoint_identity(&management_path),
     };
-    write_management_record(&record_path, &ManagementRecord::Live(identity.clone()));
+    publish_management_record(&record_path, &ManagementRecord::Live(identity.clone()));
     if let Some(log) = std::env::var_os("EON_TEST_ORBIT_LOG") {
         let mut log = fs::OpenOptions::new()
             .create(true)
@@ -1230,6 +1263,112 @@ fn desktop_launch_failure_stops_the_ready_session_through_management() {
         fs::read_dir(runtime.join("generations")).unwrap().count(),
         0
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rejected_ready_identity_stops_the_spawned_session_through_management() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let orbit_log = root.join("orbit.log");
+    let orbit = root.join("orbit");
+    managed_orbit_executable(&orbit);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", root.join("missing-venus"))
+        .env("EON_TEST_ORBIT_LOG", &orbit_log)
+        .env("EON_TEST_ORBIT_COMPONENT_GENERATION", "wrong-generation")
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("Sessions record reports component generation wrong-generation"),
+        "{stderr}"
+    );
+    let orbit_pid: i32 = fs::read_to_string(&orbit_log)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(!Path::new("/proc").join(orbit_pid.to_string()).exists());
+    let generation = fs::read_dir(runtime.join("generations"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect::<Vec<_>>();
+    assert_eq!(generation.len(), 1);
+    assert!(
+        fs::read_dir(&generation[0]).unwrap().next().is_none(),
+        "rejected Ready left residue in {}",
+        generation[0].display()
+    );
+
+    let retry = Command::new(env!("CARGO_BIN_EXE_eon"))
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", root.join("missing-venus"))
+        .output()
+        .unwrap();
+    let retry_stderr = String::from_utf8_lossy(&retry.stderr);
+    assert_eq!(retry.status.code(), Some(1), "{retry_stderr}");
+    assert!(
+        retry_stderr.contains("cannot launch Eon Desktop"),
+        "{retry_stderr}"
+    );
+    assert_eq!(
+        fs::read_dir(runtime.join("generations")).unwrap().count(),
+        0
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn marked_ready_claim_never_falls_back_to_child_stop() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let orbit_log = root.join("orbit.log");
+    let fallback_stop = root.join("fallback-stop");
+    let orbit = root.join("orbit");
+    managed_orbit_executable(&orbit);
+
+    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", root.join("missing-venus"))
+        .env("EON_TEST_ORBIT_LOG", &orbit_log)
+        .env("EON_TEST_REPLACE_READY_RECORD", "1")
+        .env("EON_TEST_STOP", &fallback_stop)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("invalid Sessions record"), "{stderr}");
+    let orbit_pid: i32 = fs::read_to_string(&orbit_log)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let process = Path::new("/proc").join(orbit_pid.to_string());
+    assert!(process.exists(), "marked Ready helper was killed");
+
+    fs::write(&fallback_stop, "").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while process.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(!process.exists(), "marked Ready helper did not exit");
     fs::remove_dir_all(root).unwrap();
 }
 

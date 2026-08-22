@@ -1577,6 +1577,150 @@ struct RecordSnapshot {
     record: ManagementRecord,
 }
 
+struct ReadyClaim {
+    file: fs::File,
+    path: PathBuf,
+    object: ObjectIdentity,
+}
+
+impl ReadyClaim {
+    fn create(path: &Path) -> Result<Self, String> {
+        let parent = path
+            .parent()
+            .ok_or_else(|| format!("Sessions record {} has no parent", path.display()))?;
+        validate_private_directory(parent)?;
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(path)
+            .map_err(|error| {
+                format!(
+                    "cannot create Sessions Ready claim {}: {error}",
+                    path.display()
+                )
+            })?;
+        let metadata = file.metadata().map_err(|error| {
+            format!(
+                "cannot inspect Sessions Ready claim {}: {error}",
+                path.display()
+            )
+        })?;
+        let claim = Self {
+            object: object_identity(&metadata),
+            file,
+            path: path.to_path_buf(),
+        };
+        claim
+            .file
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| {
+                format!(
+                    "cannot protect Sessions Ready claim {}: {error}",
+                    path.display()
+                )
+            })?;
+        if !claim.exact_path_is_empty()? {
+            return Err(format!(
+                "Sessions Ready claim {} changed while it was created",
+                path.display()
+            ));
+        }
+        Ok(claim)
+    }
+
+    fn retains_path(&self) -> Result<bool, String> {
+        let current = match fs::symlink_metadata(&self.path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(format!(
+                    "cannot revalidate Sessions Ready claim {}: {error}",
+                    self.path.display()
+                ));
+            }
+        };
+        Ok(current.file_type().is_file()
+            && current.uid() == effective_uid()
+            && current.mode() & 0o7777 == 0o600
+            && object_identity(&current) == self.object)
+    }
+
+    fn exact_path_is_empty(&self) -> Result<bool, String> {
+        let metadata = self.file.metadata().map_err(|error| {
+            format!(
+                "cannot inspect Sessions Ready claim {}: {error}",
+                self.path.display()
+            )
+        })?;
+        if !metadata.file_type().is_file()
+            || metadata.uid() != effective_uid()
+            || metadata.mode() & 0o7777 != 0o600
+            || object_identity(&metadata) != self.object
+        {
+            return Err(format!(
+                "Sessions Ready claim {} changed while retained",
+                self.path.display()
+            ));
+        }
+        Ok(metadata.len() == 0 && self.retains_path()?)
+    }
+
+    fn lock_for_rollback(&self, deadline: Instant) -> Result<bool, String> {
+        loop {
+            match self.file.try_lock() {
+                Ok(()) => return self.exact_path_is_empty(),
+                Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(25));
+                }
+                Err(fs::TryLockError::WouldBlock) => {
+                    return Err(format!(
+                        "Sessions Ready claim {} remained busy",
+                        self.path.display()
+                    ));
+                }
+                Err(fs::TryLockError::Error(error)) => {
+                    return Err(format!(
+                        "cannot lock Sessions Ready claim {}: {error}",
+                        self.path.display()
+                    ));
+                }
+            }
+        }
+    }
+
+    fn remove_empty(&self) -> Result<(), String> {
+        if !self.exact_path_is_empty()? {
+            return Err(format!(
+                "Sessions Ready claim {} changed before cleanup",
+                self.path.display()
+            ));
+        }
+        fs::remove_file(&self.path).map_err(|error| {
+            format!(
+                "cannot remove Sessions Ready claim {}: {error}",
+                self.path.display()
+            )
+        })
+    }
+}
+
+impl Drop for ReadyClaim {
+    fn drop(&mut self) {
+        if self
+            .file
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() == 0)
+            && fs::symlink_metadata(&self.path)
+                .is_ok_and(|metadata| object_identity(&metadata) == self.object)
+        {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
 struct ManagedCandidate {
     number: usize,
     endpoint: PathBuf,
@@ -2215,61 +2359,147 @@ fn start_orbit(
         component_generation,
         child,
     )?;
-    let mut orbit = orbit_command
-        .spawn()
-        .map_err(|error| format!("cannot launch Sessions: {error}"))?;
-    loop {
-        if let Some(status) = orbit
-            .try_wait()
-            .map_err(|error| format!("cannot observe Sessions startup: {error}"))?
-        {
-            return Err(format!(
-                "Sessions exited before publishing Ready (status {})",
-                status_code(status)
-            ));
+    let claim = ReadyClaim::create(&record_path)?;
+    let mut orbit = match orbit_command.spawn() {
+        Ok(orbit) => orbit,
+        Err(error) => {
+            return match claim.remove_empty() {
+                Ok(()) => Err(format!("cannot launch Sessions: {error}")),
+                Err(cleanup_error) => Err(format!(
+                    "cannot launch Sessions: {error}; cannot roll back Sessions: {cleanup_error}"
+                )),
+            };
         }
-        match read_management_record(&record_path) {
-            Ok(Some(RecordSnapshot {
-                object,
-                record: ManagementRecord::Live(identity),
-            })) => {
-                let (number, endpoint) = validate_management_identity(
-                    &identity,
-                    component_generation,
-                    Some(&run_id),
-                    true,
-                )?;
-                if identity.session_id != session_id || endpoint != socket {
-                    return Err("Sessions Ready identity does not match its launch".into());
+    };
+    let result = (|| {
+        loop {
+            let record = if claim.retains_path()? {
+                Ok(None)
+            } else {
+                read_management_record(&record_path)
+            };
+            match record {
+                Ok(Some(RecordSnapshot {
+                    object,
+                    record: ManagementRecord::Live(identity),
+                })) => {
+                    if let Some(status) = orbit
+                        .try_wait()
+                        .map_err(|error| format!("cannot observe Sessions startup: {error}"))?
+                    {
+                        return Err(format!(
+                            "Sessions exited before its management lease was acquired (status {})",
+                            status_code(status)
+                        ));
+                    }
+                    let (number, endpoint) = validate_management_identity(
+                        &identity,
+                        component_generation,
+                        Some(&run_id),
+                        true,
+                    )?;
+                    if identity.session_id != session_id || endpoint != socket {
+                        return Err("Sessions Ready identity does not match its launch".into());
+                    }
+                    return acquire_management(
+                        ManagedCandidate {
+                            number,
+                            endpoint,
+                            record_path: record_path.clone(),
+                            record: object,
+                            identity,
+                        },
+                        deadline,
+                    );
                 }
-                let mut session = acquire_management(
-                    ManagedCandidate {
-                        number,
-                        endpoint,
-                        record_path,
-                        record: object,
-                        identity,
-                    },
-                    deadline,
-                )?;
-                session.child = Some(orbit);
-                return Ok(session);
-            }
-            Ok(Some(RecordSnapshot {
-                record: ManagementRecord::Tombstone(_),
-                ..
-            })) => return Err("Sessions ended before its management lease was acquired".into()),
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
-            Ok(None) => {
-                stop(&mut orbit);
-                return Err("Sessions did not publish Ready within five seconds".into());
-            }
-            Err(error) => {
-                stop(&mut orbit);
-                return Err(error);
+                Ok(Some(RecordSnapshot {
+                    record: ManagementRecord::Tombstone(_),
+                    ..
+                })) => {
+                    return Err("Sessions ended before its management lease was acquired".into());
+                }
+                Ok(None) => {
+                    if let Some(status) = orbit
+                        .try_wait()
+                        .map_err(|error| format!("cannot observe Sessions startup: {error}"))?
+                    {
+                        return if claim.exact_path_is_empty()? {
+                            Err(format!(
+                                "Sessions exited before publishing Ready (status {})",
+                                status_code(status)
+                            ))
+                        } else {
+                            Err(format!(
+                                "Sessions exited before its management lease was acquired (status {})",
+                                status_code(status)
+                            ))
+                        };
+                    }
+                    if Instant::now() < deadline {
+                        thread::sleep(Duration::from_millis(25));
+                    } else {
+                        return Err("Sessions did not publish Ready within five seconds".into());
+                    }
+                }
+                Err(error) => return Err(error),
             }
         }
+    })();
+    match result {
+        Ok(mut session) => {
+            session.child = Some(orbit);
+            Ok(session)
+        }
+        Err(error) => match rollback_unleased_orbit(orbit, claim, deadline) {
+            Ok(()) => Err(error),
+            Err(stop_error) => Err(format!("{error}; cannot roll back Sessions: {stop_error}")),
+        },
     }
+}
+
+fn rollback_unleased_orbit(
+    mut orbit: Child,
+    claim: ReadyClaim,
+    deadline: Instant,
+) -> Result<(), String> {
+    let claim_error = match claim.lock_for_rollback(deadline) {
+        Ok(true) => {
+            while Instant::now() < deadline {
+                match orbit.try_wait() {
+                    Ok(Some(_)) => return claim.remove_empty(),
+                    Ok(None) => thread::sleep(Duration::from_millis(25)),
+                    Err(_) => break,
+                }
+            }
+            stop(&mut orbit);
+            return claim.remove_empty();
+        }
+        Ok(false) => None,
+        Err(error) => Some(error),
+    };
+    let Ok(Some(RecordSnapshot {
+        object,
+        record: ManagementRecord::Live(identity),
+    })) = read_management_record(&claim.path)
+    else {
+        return claim_error.map_or(Ok(()), Err);
+    };
+    if identity.process_id != orbit.id() {
+        return claim_error.map_or(Ok(()), Err);
+    }
+    let mut session = acquire_management(
+        ManagedCandidate {
+            number: session_number(&identity.session_id).unwrap_or(1),
+            endpoint: PathBuf::from(OsString::from_vec(identity.presentation.path.clone())),
+            record_path: claim.path.clone(),
+            record: object,
+            identity,
+        },
+        deadline,
+    )?;
+    session.child = Some(orbit);
+    let timeout = operation_timeout(deadline, "Sessions rollback")?;
+    stop_managed_sessions(std::slice::from_mut(&mut session), timeout).map(|_| ())
 }
 
 fn orbit_command(

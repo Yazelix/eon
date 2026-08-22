@@ -12,7 +12,7 @@ detailed execution evidence, and Git history retains superseded states.
 
 | ID | Contract | Owner | Status | Proof |
 |---|---|---|---|---|
-| EON-C1 | Eon validates and launches one compatible component set and reports every exact component revision | Eon | Proven | `a2792cc77f8254cc277d64eb41f65725b69ccf70`; ORB-C13/ORBS v4 refresh `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
+| EON-C1 | Eon validates and launches one compatible component set and reports every exact component revision | Eon | Candidate | `a2792cc77f8254cc277d64eb41f65725b69ccf70`; ORB-C13/ORBS v4 refresh `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; accepted ORB-C13 Ready owner `2518512758c7848bbd87f907b105c8bcf0fc4e1b`, Eon consumer candidate below |
 | EON-C2 | One versioned manifest defines component identity, compatibility, and abstract artifacts—but not launch policy—for every distribution channel | Eon | Proven | `234ad77ced4924d95400b5c39822b3fb9b928c95`; current graph `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
 | EON-C3 | Eon receives explicit component paths, treats Nix store paths as opaque launch inputs, and invokes no Nix evaluator during normal use | Eon | Proven | `a2792cc77f8254cc277d64eb41f65725b69ccf70`; exact protocol-source substitution `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
 | EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Proven | `a2792cc77f8254cc277d64eb41f65725b69ccf70`; management-consumer boundary `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
@@ -26,7 +26,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; one-run recovery `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
 | EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Proven | `7303ee5cca3925939b84267bd54587a2cfb223a6`; proof below |
 | EON-C14 | Eon requests compositor-owned background blur by default whenever it creates an Eon or EonTerm Venus surface, permits an explicit configuration opt-out, and keeps opacity independent | Eon | Proven | `b41be3a00a8e47a435521509c3d060d80e0524a5`; proof below |
-| EON-C15 | On the same boot and login, Eon can recover and explicitly stop the exact Orbit runs that survived loss of their Eon supervisor, without reconstructing Session authority | Eon | Proven | Base `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; response-loss correction `56fcae2d00baecf9b69e4650882a69e50419f56b`; connection-deadline correction `a4f0122862b7293326c22530f787124a47d0f560`; response-deadline correction `ced9e4ae11ed21a0f05d50cd470491adffa73b54`; accepted composed proof below |
+| EON-C15 | On the same boot and login, Eon can recover and explicitly stop the exact Orbit runs that survived loss of their Eon supervisor, without reconstructing Session authority | Eon | Candidate | Base `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; response-loss correction `56fcae2d00baecf9b69e4650882a69e50419f56b`; connection-deadline correction `a4f0122862b7293326c22530f787124a47d0f560`; response-deadline correction `ced9e4ae11ed21a0f05d50cd470491adffa73b54`; accepted ORB-C13 Ready owner `2518512758c7848bbd87f907b105c8bcf0fc4e1b`, Eon consumer candidate below |
 
 ## Approved same-boot Session-recovery contract EON-C15
 
@@ -52,17 +52,24 @@ detailed execution evidence, and Git history retains superseded states.
   identities; too many candidates; wrong component generation or UID; Busy;
   Orbit exit; partial acquisition; and transport loss fail within the shared
   deadline. Partial failure publishes no workspace or Venus, releases acquired
-  leases, launches no duplicate run, and cannot report clean stop. Before Ready,
-  the exact local child is rollback authority. After Ready, validation or
-  transport failure authorizes no Child, PID, signal, pathname, process-name,
+  leases, launches no duplicate run, and cannot report clean stop. Before
+  spawn, Eon creates and retains the exact empty owned mode-0600 management
+  record inode. Only Eon winning that inode's exclusive lock while it remains
+  empty authorizes local Child rollback, and Eon holds the lock through the
+  stop. Orbit marks the retained inode before atomically publishing Ready;
+  after that mark, a Live record for the spawned child whose identity Eon
+  rejects is stopped through canonical management using that published
+  identity and is not published as a Session. Other validation or transport
+  failure authorizes no Child, PID, signal, pathname, process-name,
   process-group, cgroup, or pidfd fallback.
 - Ownership: Eon owns generation selection, Session and run creation, bounded
   enumeration, recovery projection, the shared deadline, lease collection,
-  EONW result ordering, the Eon-to-Venus control stream, and Eon-owned residue.
-  Orbit `ORB-C13` owns the canonical management values, live identity, sole
-  lease, PTY and terminal state, wait outcome, `ORB-C12` cleanup, tombstone, and
-  exact endpoint cleanup. Venus remains a transient ORBS v4 client and exits
-  when its accepted Eon-owned presentation-control stream ends.
+  EONW result ordering, the Eon-to-Venus control stream, the retained launch
+  claim, and Eon-owned residue. Orbit `ORB-C13` owns Ready marking and
+  publication, the canonical management values, live identity, sole lease, PTY
+  and terminal state, wait outcome, `ORB-C12` cleanup, tombstone, and exact
+  endpoint cleanup. Venus remains a transient ORBS v4 client and exits when its
+  accepted Eon-owned presentation-control stream ends.
 - Boundary: recovery is one exact same-boot, same-login adoption. Tombstones
   grant no authority and must be reconciled and safely removed before their
   workspace slot can be reused. The contract adds no durable launch intent,
@@ -74,6 +81,11 @@ detailed execution evidence, and Git history retains superseded states.
   Venus source `a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8` and metadata
   `602e21ee224ad69e1bcd2959a02f3f66857ed55a`; Eon consumes that exact
   compatible pair with ORBF v1, ORBS v4, and unchanged EONW v1.
+- Ready-boundary activation: accepted Orbit owner revision
+  `2518512758c7848bbd87f907b105c8bcf0fc4e1b` and metadata
+  `a565997e7087f974df88da01d28c611fd6168fa6` precede Eon's exact pin, retained
+  claim integration, and consumer proof. Venus remains at accepted source
+  `1f6af23860ce4c9f135a8eeb9e3e66cf75b4c619`.
 - Approval: the user selected the same-boot phase and activated its exact Orbit
   and Venus prerequisites on 2026-08-20.
 - Implemented and mechanically verified: source
@@ -187,6 +199,25 @@ detailed execution evidence, and Git history retains superseded states.
   gone. The fixture root was moved to trash. The five pre-existing Eonova
   processes retained their exact PIDs and start times; the separate Eon and
   EonTerm profiles remained unchanged. macOS remains unproved.
+- Ready-boundary consumer candidate on x86_64 Linux: canonical graph SHA-256
+  `c4a480d8b2ee61ccc9efa59cd7a08b72ef92ca504bb10bf84650cd96d300eff0`
+  selects accepted Orbit and ORB-C13 proof
+  `2518512758c7848bbd87f907b105c8bcf0fc4e1b` with unchanged accepted Venus
+  `1f6af23860ce4c9f135a8eeb9e3e66cf75b4c619`. Eon retains the exact empty
+  record claim before spawn, arbitrates local rollback through its lock and
+  empty state, and uses only management Stop after Orbit marks it. The focused
+  rejected-identity and marked-record-loss regressions passed, followed by
+  locked formatting, workspace check and 46-test suite, all-target Clippy with
+  warnings denied, manifest validation, diff check, and all ten Nix checks.
+  Refreshed profiles resolve to
+  `/nix/store/0b7cjr060ny5dagaqc12kqxg0cw1sw1r-eon-0.1.0` and
+  `/nix/store/k0f216pw2v422v0lskp29p4g72r35hx9-eonterm-0.1.0`; `eon versions`
+  reports `g1-e38fd71172dd574be41ad1b2d55b9e42` and the exact Orbit revision.
+  Isolated installed launch published `session-1`; workspace inspection saw the
+  live pane and structured Stop removed the exact generation. Live EonTerm PIDs
+  `428222`, `482149`, and `1465468` retained their prior start times and store
+  paths. The proof-bearing Eon source revision is pending this candidate commit;
+  macOS remains unproved.
 
 ## Approved terminal-background blur contract EON-C14
 

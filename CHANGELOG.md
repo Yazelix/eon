@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Serialize Session startup with Orbit's exact retained Ready claim. Only an
+  empty locked claim permits local-child rollback; after Orbit marks it, Eon
+  uses management Stop for a rejected spawned identity and never falls back to
+  a Child or PID signal.
+
 - Refresh new Eon and EonTerm launches to the accepted post-audit Orbit and
   Venus sources, including bounded renderer failures and retained events,
   coherent native input and accessibility, and corrected X11 lifecycle behavior.
