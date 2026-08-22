@@ -216,6 +216,7 @@ fn managed_orbit_helper() {
             delay.to_str().unwrap().parse().unwrap(),
         ));
     }
+    let session_id = std::env::var("EON_TEST_ORBIT_SESSION_ID").unwrap_or(session_id);
 
     let management_path = artifact_path(&presentation, ".management");
     let record_path = artifact_path(&presentation, ".record");
@@ -1268,66 +1269,76 @@ fn desktop_launch_failure_stops_the_ready_session_through_management() {
 
 #[test]
 fn rejected_ready_identity_stops_the_spawned_session_through_management() {
-    let root = temporary_directory();
-    let runtime = root.join("runtime");
-    let config = root.join("config");
-    let orbit_log = root.join("orbit.log");
-    let orbit = root.join("orbit");
-    managed_orbit_executable(&orbit);
+    for (variable, value, expected_error) in [
+        (
+            "EON_TEST_ORBIT_COMPONENT_GENERATION",
+            "wrong-generation",
+            "Sessions record reports component generation wrong-generation",
+        ),
+        (
+            "EON_TEST_ORBIT_SESSION_ID",
+            "session-2",
+            "uses unexpected presentation endpoint",
+        ),
+    ] {
+        let root = temporary_directory();
+        let runtime = root.join("runtime");
+        let config = root.join("config");
+        let orbit_log = root.join("orbit.log");
+        let orbit = root.join("orbit");
+        managed_orbit_executable(&orbit);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
-        .arg("run")
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .env("EON_ORBIT", &orbit)
-        .env("EON_VENUS", root.join("missing-venus"))
-        .env("EON_TEST_ORBIT_LOG", &orbit_log)
-        .env("EON_TEST_ORBIT_COMPONENT_GENERATION", "wrong-generation")
-        .output()
-        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", root.join("missing-venus"))
+            .env("EON_TEST_ORBIT_LOG", &orbit_log)
+            .env(variable, value)
+            .output()
+            .unwrap();
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(output.status.code(), Some(1), "{stderr}");
-    assert!(
-        stderr.contains("Sessions record reports component generation wrong-generation"),
-        "{stderr}"
-    );
-    let orbit_pid: i32 = fs::read_to_string(&orbit_log)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    assert!(!Path::new("/proc").join(orbit_pid.to_string()).exists());
-    let generation = fs::read_dir(runtime.join("generations"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .collect::<Vec<_>>();
-    assert_eq!(generation.len(), 1);
-    assert!(
-        fs::read_dir(&generation[0]).unwrap().next().is_none(),
-        "rejected Ready left residue in {}",
-        generation[0].display()
-    );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert_eq!(output.status.code(), Some(1), "{stderr}");
+        assert!(stderr.contains(expected_error), "{stderr}");
+        let orbit_pid: i32 = fs::read_to_string(&orbit_log)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        assert!(!Path::new("/proc").join(orbit_pid.to_string()).exists());
+        let generation = fs::read_dir(runtime.join("generations"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        assert_eq!(generation.len(), 1);
+        assert!(
+            fs::read_dir(&generation[0]).unwrap().next().is_none(),
+            "rejected Ready left residue in {}",
+            generation[0].display()
+        );
 
-    let retry = Command::new(env!("CARGO_BIN_EXE_eon"))
-        .arg("run")
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .env("EON_ORBIT", &orbit)
-        .env("EON_VENUS", root.join("missing-venus"))
-        .output()
-        .unwrap();
-    let retry_stderr = String::from_utf8_lossy(&retry.stderr);
-    assert_eq!(retry.status.code(), Some(1), "{retry_stderr}");
-    assert!(
-        retry_stderr.contains("cannot launch Eon Desktop"),
-        "{retry_stderr}"
-    );
-    assert_eq!(
-        fs::read_dir(runtime.join("generations")).unwrap().count(),
-        0
-    );
-    fs::remove_dir_all(root).unwrap();
+        let retry = Command::new(env!("CARGO_BIN_EXE_eon"))
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", root.join("missing-venus"))
+            .output()
+            .unwrap();
+        let retry_stderr = String::from_utf8_lossy(&retry.stderr);
+        assert_eq!(retry.status.code(), Some(1), "{retry_stderr}");
+        assert!(
+            retry_stderr.contains("cannot launch Eon Desktop"),
+            "{retry_stderr}"
+        );
+        assert_eq!(
+            fs::read_dir(runtime.join("generations")).unwrap().count(),
+            0
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[test]

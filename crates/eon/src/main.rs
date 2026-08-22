@@ -2374,15 +2374,15 @@ fn start_orbit(
     let result = (|| {
         loop {
             let record = if claim.retains_path()? {
-                Ok(None)
+                None
             } else {
-                read_management_record(&record_path)
+                read_management_record(&record_path)?
             };
             match record {
-                Ok(Some(RecordSnapshot {
+                Some(RecordSnapshot {
                     object,
                     record: ManagementRecord::Live(identity),
-                })) => {
+                }) => {
                     if let Some(status) = orbit
                         .try_wait()
                         .map_err(|error| format!("cannot observe Sessions startup: {error}"))?
@@ -2412,13 +2412,13 @@ fn start_orbit(
                         deadline,
                     );
                 }
-                Ok(Some(RecordSnapshot {
+                Some(RecordSnapshot {
                     record: ManagementRecord::Tombstone(_),
                     ..
-                })) => {
+                }) => {
                     return Err("Sessions ended before its management lease was acquired".into());
                 }
-                Ok(None) => {
+                None => {
                     if let Some(status) = orbit
                         .try_wait()
                         .map_err(|error| format!("cannot observe Sessions startup: {error}"))?
@@ -2441,7 +2441,6 @@ fn start_orbit(
                         return Err("Sessions did not publish Ready within five seconds".into());
                     }
                 }
-                Err(error) => return Err(error),
             }
         }
     })();
@@ -2558,7 +2557,7 @@ fn wait_and_finalize_tombstone(
     response: Option<&Tombstone>,
     deadline: Instant,
 ) -> Result<ProcessOutcome, String> {
-    let (tombstone, record_object) = loop {
+    let (outcome, record_object) = loop {
         let snapshot = read_management_record(&session.record)?.ok_or_else(|| {
             format!(
                 "ended Sessions record {} disappeared",
@@ -2576,17 +2575,11 @@ fn wait_and_finalize_tombstone(
                 if response.is_some_and(|response| response != &tombstone) {
                     return Err("Sessions stop result differs from its terminal record".into());
                 }
-                break (tombstone, snapshot.object);
+                break (tombstone.outcome, snapshot.object);
             }
             _ => return Err("Sessions terminal record does not match the acquired run".into()),
         }
     };
-    validate_management_identity(
-        &tombstone.identity,
-        &session.identity.component_generation,
-        Some(&session.identity.run_id),
-        false,
-    )?;
     let management_path =
         PathBuf::from(OsString::from_vec(session.identity.management.path.clone()));
     loop {
@@ -2612,7 +2605,7 @@ fn wait_and_finalize_tombstone(
         }
     }
     cleanup_record(&session.record, record_object)?;
-    Ok(tombstone.outcome)
+    Ok(outcome)
 }
 
 fn session_finished(session: &mut RunningSession) -> Result<Option<i32>, String> {
