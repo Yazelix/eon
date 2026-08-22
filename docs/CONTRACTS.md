@@ -884,15 +884,16 @@ detailed execution evidence, and Git history retains superseded states.
 
 ### EON-C10 lifecycle and EON-C11 — runtime generations
 
-- Source-ownership proof: `abf2513b51c8871b5bfea602e8369bd2596609ef`
+- Source-ownership proof: `1d44796d3eda9d4d62da4859983cda36277fdd85`
   on x86_64 Linux. `generation.rs` owns generation
   identity, discovery, classification, listing, attachment selection, and stop
-  initiation; `main.rs` retains EONW transport, Orbit Session lifecycle, and CLI
-  dispatch. Locked 46-test Rust, all-target Clippy, manifest, exact Eon and
+  initiation; `control.rs` owns EONW transport while `main.rs` retains Orbit
+  Session lifecycle and CLI dispatch. Locked 46-test Rust, all-target Clippy,
+  manifest, exact Eon and
   EonTerm package, full flake, installed `versions`, and installed generation-
   discovery checks pass on x86_64 Linux with artifact
-  `/nix/store/6c8lknhcb7r66l7im1qdzcsdrk6211qp-eon-0.1.0`, generation
-  `g1-be46d76a79c4267c7d4645ee730ba8de`; the live previous generation and its
+  `/nix/store/8a7bjnc5n7apvb50yihzqs5mdj72av0g-eon-0.1.0`, generation
+  `g1-e78ed0904f837644785eeaf427f3f032`; the live previous generation and its
   Session remained running. Phase: accepted source, mechanically verified,
   and dogfooded.
 - Lifecycle protocol proof: `fd6b348494111a0d18e241787da14ea99ee117a9`.
