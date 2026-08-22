@@ -26,6 +26,7 @@ pub(super) fn current_generation() -> Result<String, String> {
         include_bytes!("control.rs"),
         include_bytes!("generation.rs"),
         include_bytes!("managed_environment.rs"),
+        include_bytes!("sessions.rs"),
         include_bytes!("workspace.rs"),
         include_bytes!("../../eon-workspace-protocol/src/lib.rs"),
         include_bytes!("../../eon-workspace-protocol/Cargo.toml"),
@@ -103,11 +104,7 @@ fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationReco
                     parent.display()
                 )
             })?;
-            candidates.push((
-                entry.file_name().as_bytes().to_vec(),
-                entry.file_name().to_string_lossy().into_owned(),
-                entry.path(),
-            ));
+            candidates.push((entry.file_name(), entry.path()));
             if candidates.len() > MAX_GENERATIONS {
                 return Err(format!(
                     "generation directory {} exceeds the {MAX_GENERATIONS}-entry inspection limit",
@@ -116,7 +113,7 @@ fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationReco
             }
         }
     }
-    candidates.sort_by(|left, right| left.0.cmp(&right.0));
+    candidates.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
 
     let current_path = generation_directory(root, current);
     let startup_lock = root.join("startup.lock");
@@ -127,7 +124,8 @@ fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationReco
         &startup_lock,
         &component_report,
     )];
-    for (_, id, path) in candidates {
+    for (id, path) in candidates {
+        let id = id.to_string_lossy();
         if id != current {
             records.push(inspect_generation(
                 &id,
@@ -539,17 +537,14 @@ pub(super) fn stop_generation(target: &str, json: bool, product: &str) -> Result
     let current = current_generation()?;
     let control = generation_directory(&root, target).join("eon.sock");
     let observed_supervisor = socket_identity(&control);
-    let record = match inspect_selected_generation(&root, &current, target)? {
-        Some(record) => record,
-        None => {
-            return report_failure(
-                &failure(
-                    "unknown-generation",
-                    format!("generation {target} was not found"),
-                ),
-                json,
-            );
-        }
+    let Some(record) = inspect_selected_generation(&root, &current, target)? else {
+        return report_failure(
+            &failure(
+                "unknown-generation",
+                format!("generation {target} was not found"),
+            ),
+            json,
+        );
     };
     if !record.stop.available {
         return report_failure(
