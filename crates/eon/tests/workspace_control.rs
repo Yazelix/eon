@@ -1099,6 +1099,132 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
 }
 
 #[test]
+fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let child_exit = root.join("child-exit");
+    let orbit_log = root.join("orbit.log");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    let command = root.join("command");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\nsleep 2\n");
+    executable(
+        &command,
+        "#!/bin/sh\nwhile test ! -e \"$EON_TEST_CHILD_EXIT\"; do sleep 0.01; done\n",
+    );
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = Command::new(&binary)
+        .args(["run", "--"])
+        .arg(&command)
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_CHILD_EXIT", &child_exit)
+        .env("EON_TEST_ORBIT_LOG", &orbit_log)
+        .env("EON_TEST_RUN_CHILD", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut first = TestProcess {
+        child,
+        stop: child_exit.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    let record = artifact_path(&generation.join("orbit.sock"), ".record");
+    wait_for_connection(&control);
+    wait_for(&record);
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    let lifecycle_lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(runtime.join(format!("supervisor-{generation_id}.lock")))
+        .unwrap();
+    assert!(matches!(
+        lifecycle_lock.try_lock(),
+        Err(fs::TryLockError::WouldBlock)
+    ));
+    drop(lifecycle_lock);
+    let first_orbit = live_identity(&generation.join("orbit.sock")).process_id;
+
+    // Freeze the owner so the replacement launch necessarily overlaps teardown.
+    assert_eq!(
+        unsafe { libc::kill(first.child.id() as i32, libc::SIGSTOP) },
+        0
+    );
+    fs::write(&child_exit, "").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if fs::read(&record).ok().is_some_and(|bytes| {
+            matches!(
+                management::decode_record(&bytes),
+                Ok(ManagementRecord::Tombstone(_))
+            )
+        }) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "initial Session did not exit");
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    let second = Command::new(&binary)
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_ORBIT_LOG", &orbit_log)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut second = TestProcess {
+        child: second,
+        stop: root.join("unused-stop"),
+    };
+    thread::sleep(Duration::from_secs(5));
+    assert_eq!(
+        unsafe { libc::kill(first.child.id() as i32, libc::SIGCONT) },
+        0
+    );
+    wait_for_successful_exit(&mut first.child);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let second_orbit = loop {
+        if let Ok(bytes) = fs::read(&record)
+            && let Ok(ManagementRecord::Live(identity)) = management::decode_record(&bytes)
+            && identity.process_id != first_orbit
+        {
+            break identity.process_id;
+        }
+        assert!(
+            second.child.try_wait().unwrap().is_none(),
+            "replacement launch exited instead of becoming the new supervisor"
+        );
+        assert!(Instant::now() < deadline, "fresh Session did not start");
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_ne!(second_orbit, first_orbit);
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 2);
+    wait_for_connection(&control);
+
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["stop", generation_id, "--json"],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    wait_for_successful_exit(&mut second.child);
+    assert!(!generation.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     let root = temporary_directory();
     let runtime = root.join("runtime");

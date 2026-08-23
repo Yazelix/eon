@@ -5,7 +5,8 @@ use super::control::{
 };
 use super::supervisor::{
     MANIFEST, attach_legacy, effective_uid, path_exists, present_at, probe_supervisor,
-    runtime_directory, try_lock_supervisor_startup, validate_private_directory,
+    runtime_directory, supervisor_lock_path, try_lock_supervisor_lifecycle,
+    validate_private_directory,
 };
 use super::workspace::json_escape;
 use eon_workspace_protocol::{Action, Availability, LifecycleResponse, Response, Stopped, VERSION};
@@ -118,12 +119,11 @@ fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationReco
     candidates.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
 
     let current_path = generation_directory(root, current);
-    let startup_lock = root.join("startup.lock");
     let mut records = vec![inspect_generation(
         current,
         "current",
         current_path,
-        &startup_lock,
+        &supervisor_lock_path(root, current),
         &component_report,
     )];
     for (id, path) in candidates {
@@ -133,7 +133,7 @@ fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationReco
                 &id,
                 "previous",
                 path,
-                &startup_lock,
+                &supervisor_lock_path(root, &id),
                 &component_report,
             ));
         }
@@ -184,7 +184,7 @@ fn inspect_selected_generation(
             "previous"
         },
         runtime,
-        &root.join("startup.lock"),
+        &supervisor_lock_path(root, target),
         &component_report,
     )))
 }
@@ -193,7 +193,7 @@ fn inspect_generation(
     id: &str,
     kind: &'static str,
     runtime: PathBuf,
-    startup_lock: &Path,
+    lifecycle_lock: &Path,
     current_components: &str,
 ) -> GenerationRecord {
     if !valid_generation(id) {
@@ -275,7 +275,8 @@ fn inspect_generation(
         Err(error) => {
             let dead = error.kind == EndpointFailureKind::Dead;
             let record = failed_generation(id, kind, runtime.clone(), error);
-            if dead && let Some(_startup_lock) = try_lock_supervisor_startup(startup_lock) {
+            if dead && let Ok(Some(_lifecycle_lock)) = try_lock_supervisor_lifecycle(lifecycle_lock)
+            {
                 remove_dead_socket(&socket);
                 let _ = fs::remove_dir(&runtime);
             }
@@ -663,7 +664,7 @@ mod tests {
         current_generation, discover_generations, generation_directory, generation_id,
         valid_generation,
     };
-    use crate::supervisor::{lock_supervisor_startup, temporary_directory};
+    use crate::supervisor::{lock_supervisor_lifecycle, supervisor_lock_path, temporary_directory};
     use std::{
         fs,
         os::unix::{
@@ -709,7 +710,7 @@ mod tests {
         fs::set_permissions(dead.join("eon.sock"), fs::Permissions::from_mode(0o600)).unwrap();
         drop(listener);
 
-        let held = lock_supervisor_startup(&root.join("startup.lock")).unwrap();
+        let held = lock_supervisor_lifecycle(&supervisor_lock_path(&root, dead_id)).unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
         let inspection_root = root.clone();
         let inspection = thread::spawn(move || {

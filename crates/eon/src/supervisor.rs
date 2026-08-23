@@ -71,16 +71,18 @@ pub(super) fn probe_supervisor(
                 format!("endpoint {} is missing", socket.display()),
             )
         })?;
-    let info = probe_presentable_runtime(socket)?;
-    if !info.attach.available {
-        return Err(EndpointFailure::new(
-            EndpointFailureKind::Incompatible,
-            info.attach.reason,
-        ));
-    }
-    validate_runtime(&info, generation)
-        .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?;
-    let mode = probe_launch_mode(socket)?;
+    let result = (|| {
+        let info = probe_presentable_runtime(socket)?;
+        if !info.attach.available {
+            return Err(EndpointFailure::new(
+                EndpointFailureKind::Incompatible,
+                info.attach.reason,
+            ));
+        }
+        validate_runtime(&info, generation)
+            .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?;
+        probe_launch_mode(socket)
+    })();
     if socket_identity(socket)
         .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?
         != Some(identity)
@@ -90,7 +92,7 @@ pub(super) fn probe_supervisor(
             "supervisor endpoint changed while it was being validated",
         ));
     }
-    Ok((mode, identity))
+    result.map(|mode| (mode, identity))
 }
 
 fn validate_owned_private_directory(path: &Path, kind: &str) -> Result<(), String> {
@@ -151,31 +153,81 @@ pub(super) fn launch_current(
         "eon"
     });
     prepare_runtime(&root)?;
-    // ponytail: one root-wide startup lock; partition if cross-generation starts contend.
-    let startup_lock = lock_supervisor_startup(&root.join("startup.lock"))?;
+    let lifecycle_lock_path = supervisor_lock_path(&root, &generation);
     let runtime = generation_directory(&root, &generation);
     let socket = runtime.join("eon.sock");
-    match probe_supervisor(&socket, &generation) {
-        Ok((active_mode, supervisor)) => {
-            if active_mode != mode {
-                return Err(format!(
-                    "generation {generation} already has a live {} mode; requested {} mode",
-                    active_mode.name(),
-                    mode.name()
-                ));
+    let mut missing_deadline = None;
+    let lifecycle_lock = loop {
+        let endpoint_failure = match probe_supervisor(&socket, &generation) {
+            Ok((active_mode, supervisor)) => {
+                missing_deadline = None;
+                if active_mode != mode {
+                    return Err(format!(
+                        "generation {generation} already has a live {} mode; requested {} mode",
+                        active_mode.name(),
+                        mode.name()
+                    ));
+                }
+                if !attach_existing {
+                    return Err(format!(
+                        "generation {generation} already has a live Eon supervisor"
+                    ));
+                }
+                let presentation_error = match present_at(&runtime, &generation, mode, supervisor) {
+                    Ok(code) => return Ok(code),
+                    Err(error) => error,
+                };
+                match probe_supervisor(&socket, &generation) {
+                    Ok((_, current)) if current == supervisor => return Err(presentation_error),
+                    Ok(_) => continue,
+                    Err(error)
+                        if matches!(
+                            error.kind,
+                            EndpointFailureKind::Dead | EndpointFailureKind::Unreachable
+                        ) =>
+                    {
+                        error
+                    }
+                    Err(_) => return Err(presentation_error),
+                }
             }
-            drop(startup_lock);
-            return if attach_existing {
-                present_at(&runtime, &generation, mode, supervisor)
-            } else {
-                Err(format!(
-                    "generation {generation} already has a live Eon supervisor"
-                ))
+            Err(error)
+                if matches!(
+                    error.kind,
+                    EndpointFailureKind::Dead | EndpointFailureKind::Unreachable
+                ) =>
+            {
+                error
+            }
+            Err(error) => return Err(error.detail),
+        };
+        let lifecycle_lock = if endpoint_failure.kind == EndpointFailureKind::Dead {
+            let Some(lock) = try_lock_supervisor_lifecycle(&lifecycle_lock_path)? else {
+                let deadline = missing_deadline.get_or_insert_with(|| {
+                    Instant::now() + SESSION_START_TIMEOUT.saturating_add(Duration::from_secs(1))
+                });
+                if Instant::now() >= *deadline {
+                    return Err(format!(
+                        "timed out waiting for Eon supervisor lifecycle {}",
+                        lifecycle_lock_path.display()
+                    ));
+                }
+                thread::sleep(Duration::from_millis(25));
+                continue;
             };
+            lock
+        } else {
+            lock_supervisor_lifecycle(&lifecycle_lock_path)?
+        };
+        match probe_supervisor(&socket, &generation) {
+            Err(error) if error.kind == EndpointFailureKind::Dead => break lifecycle_lock,
+            Ok(_) => {
+                drop(lifecycle_lock);
+                continue;
+            }
+            Err(error) => return Err(error.detail),
         }
-        Err(error) if error.kind == EndpointFailureKind::Dead => {}
-        Err(error) => return Err(error.detail),
-    }
+    };
     let config = configuration_directory()?;
     let terminal = managed_environment::terminal_presentation(&config)?;
     prepare_generation_runtime(&root, &generation)?;
@@ -185,7 +237,7 @@ pub(super) fn launch_current(
         &programs,
         &config,
         terminal,
-        startup_lock,
+        lifecycle_lock,
         &runtime,
         child,
         &generation,
@@ -447,12 +499,13 @@ fn supervise(
     programs: &Programs,
     config: &Path,
     terminal: managed_environment::TerminalConfig,
-    startup_lock: fs::File,
+    lifecycle_lock: fs::File,
     runtime: &Path,
     child: &[OsString],
     generation: &str,
     mode: LaunchMode,
 ) -> Result<i32, String> {
+    let _lifecycle_lock = lifecycle_lock;
     let socket = runtime.join("orbit.sock");
     let component_generation =
         eon_manifest::component_revision(MANIFEST, "orbit").map_err(|error| error.to_string())?;
@@ -507,56 +560,42 @@ fn supervise(
         workspace,
         sessions,
         venus: Some(venus),
+        initial_status: None,
     };
-    drop(startup_lock);
-    let mut initial_status = None;
 
-    let status = loop {
-        let mut index = 0;
-        while index < state.sessions.len() {
-            if let Some(code) = session_finished(&mut state.sessions[index])? {
-                let session = state.sessions.remove(index);
-                if let Some(workspace) = &mut state.workspace {
-                    workspace
-                        .session_exited(&session.id)
-                        .map_err(|error| error.detail)?;
-                }
-                if session.id == "session-1" {
-                    initial_status = Some(code);
-                }
-            } else {
-                index += 1;
+    let status = (|| {
+        loop {
+            reap_finished_sessions(&mut state)?;
+
+            if state.sessions.is_empty() {
+                return Ok(state.initial_status.unwrap_or(0));
             }
-        }
 
-        if state.sessions.is_empty() {
-            break initial_status.unwrap_or(0);
-        }
-
-        if reap_desktop(&mut state.venus)? {
-            match mode {
-                LaunchMode::Workspace => eprintln!(
-                    "Eon Desktop exited; Sessions remains active. Run `eon attach {generation}` to reconnect."
-                ),
-                LaunchMode::Terminal => eprintln!(
-                    "Eon Desktop exited; Session remains active. Run `eonterm attach {generation}` to reconnect."
-                ),
+            if reap_desktop(&mut state.venus)? {
+                match mode {
+                    LaunchMode::Workspace => eprintln!(
+                        "Eon Desktop exited; Sessions remains active. Run `eon attach {generation}` to reconnect."
+                    ),
+                    LaunchMode::Terminal => eprintln!(
+                        "Eon Desktop exited; Session remains active. Run `eonterm attach {generation}` to reconnect."
+                    ),
+                }
             }
-        }
 
-        if control_listener.accept(|request| {
-            dispatch_control_request(request, &mut state, programs, config, generation)
-        })? {
-            break 0;
+            if control_listener.accept(|request| {
+                dispatch_control_request(request, &mut state, programs, config, generation)
+            })? {
+                return Ok(state.initial_status.unwrap_or(0));
+            }
+            thread::sleep(Duration::from_millis(25));
         }
-        thread::sleep(Duration::from_millis(25));
-    };
+    })();
+    drop(control_listener);
     if let Some(process) = state.venus.take() {
         close_presentation(process);
     }
-    drop(control_listener);
     let _ = fs::remove_dir(runtime);
-    Ok(status)
+    status
 }
 
 struct SupervisorState {
@@ -564,6 +603,27 @@ struct SupervisorState {
     workspace: Option<Workspace>,
     sessions: Vec<RunningSession>,
     venus: Option<PresentationProcess>,
+    initial_status: Option<i32>,
+}
+
+fn reap_finished_sessions(state: &mut SupervisorState) -> Result<(), String> {
+    let mut index = 0;
+    while index < state.sessions.len() {
+        if let Some(code) = session_finished(&mut state.sessions[index])? {
+            let session = state.sessions.remove(index);
+            if let Some(workspace) = &mut state.workspace {
+                workspace
+                    .session_exited(&session.id)
+                    .map_err(|error| error.detail)?;
+            }
+            if session.id == "session-1" {
+                state.initial_status = Some(code);
+            }
+        } else {
+            index += 1;
+        }
+    }
+    Ok(())
 }
 
 fn reap_desktop(desktop: &mut Option<PresentationProcess>) -> Result<bool, String> {
@@ -581,7 +641,11 @@ fn reap_desktop(desktop: &mut Option<PresentationProcess>) -> Result<bool, Strin
     Ok(exited)
 }
 
-fn open_supervisor_startup_lock(path: &Path) -> Result<fs::File, String> {
+pub(super) fn supervisor_lock_path(root: &Path, generation: &str) -> PathBuf {
+    root.join(format!("supervisor-{generation}.lock"))
+}
+
+fn open_supervisor_lifecycle_lock(path: &Path) -> Result<fs::File, String> {
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -589,50 +653,72 @@ fn open_supervisor_startup_lock(path: &Path) -> Result<fs::File, String> {
         .mode(0o600)
         .custom_flags(libc::O_NOFOLLOW)
         .open(path)
-        .map_err(|error| format!("cannot open Eon startup lock {}: {error}", path.display()))?;
+        .map_err(|error| format!("cannot open Eon lifecycle lock {}: {error}", path.display()))?;
     let metadata = file.metadata().map_err(|error| {
         format!(
-            "cannot inspect Eon startup lock {}: {error}",
+            "cannot inspect Eon lifecycle lock {}: {error}",
             path.display()
         )
     })?;
     if !metadata.file_type().is_file() || metadata.uid() != effective_uid() {
         return Err(format!(
-            "Eon startup lock {} must be an owned regular file",
+            "Eon lifecycle lock {} must be an owned regular file",
             path.display()
         ));
     }
     file.set_permissions(fs::Permissions::from_mode(0o600))
         .map_err(|error| {
             format!(
-                "cannot protect Eon startup lock {}: {error}",
+                "cannot protect Eon lifecycle lock {}: {error}",
                 path.display()
             )
         })?;
     Ok(file)
 }
 
-pub(super) fn lock_supervisor_startup(path: &Path) -> Result<fs::File, String> {
-    let file = open_supervisor_startup_lock(path)?;
+pub(super) fn lock_supervisor_lifecycle(path: &Path) -> Result<fs::File, String> {
+    let file = open_supervisor_lifecycle_lock(path)?;
+    let deadline = Instant::now() + SESSION_START_TIMEOUT.saturating_add(Duration::from_secs(1));
     loop {
-        match file.lock() {
-            Ok(()) => break,
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(error) => {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(fs::TryLockError::WouldBlock) if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(25));
+            }
+            Err(fs::TryLockError::WouldBlock) => {
                 return Err(format!(
-                    "cannot lock Eon supervisor startup {}: {error}",
+                    "timed out waiting for Eon supervisor lifecycle {}",
+                    path.display()
+                ));
+            }
+            Err(fs::TryLockError::Error(error))
+                if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(fs::TryLockError::Error(error)) => {
+                return Err(format!(
+                    "cannot lock Eon supervisor lifecycle {}: {error}",
                     path.display()
                 ));
             }
         }
     }
-    Ok(file)
 }
 
-pub(super) fn try_lock_supervisor_startup(path: &Path) -> Option<fs::File> {
-    let file = open_supervisor_startup_lock(path).ok()?;
-    file.try_lock().ok()?;
-    Some(file)
+pub(super) fn try_lock_supervisor_lifecycle(path: &Path) -> Result<Option<fs::File>, String> {
+    let file = open_supervisor_lifecycle_lock(path)?;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(Some(file)),
+            Err(fs::TryLockError::WouldBlock) => return Ok(None),
+            Err(fs::TryLockError::Error(error))
+                if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(fs::TryLockError::Error(error)) => {
+                return Err(format!(
+                    "cannot lock Eon supervisor lifecycle {}: {error}",
+                    path.display()
+                ));
+            }
+        }
+    }
 }
 
 fn dispatch_control_request(
@@ -679,6 +765,24 @@ fn dispatch_control_request(
                     false,
                 );
             }
+            if let Err(detail) = reap_finished_sessions(state) {
+                return (
+                    ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
+                        "presentation-unavailable",
+                        detail,
+                    ))),
+                    false,
+                );
+            }
+            if state.sessions.is_empty() {
+                return (
+                    ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
+                        "generation-ending",
+                        "the last Session exited while Eon Desktop was reopening",
+                    ))),
+                    true,
+                );
+            }
             let result = reap_desktop(&mut state.venus).and_then(|_| {
                 if let Some(venus) = &state.venus {
                     return venus.present();
@@ -716,22 +820,14 @@ fn dispatch_control_request(
                     false,
                 );
             }
-            match stop_managed_sessions(&mut state.sessions, SESSION_START_TIMEOUT) {
-                Ok(sessions) => (
-                    ControlResponse::Lifecycle(LifecycleResponse::Stopped(Stopped {
-                        generation: generation.into(),
-                        sessions,
-                    })),
-                    true,
-                ),
-                Err(detail) => (
-                    ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
-                        "stop-failed",
-                        detail,
-                    ))),
-                    true,
-                ),
-            }
+            let response = match stop_managed_sessions(&mut state.sessions, SESSION_START_TIMEOUT) {
+                Ok(sessions) => LifecycleResponse::Stopped(Stopped {
+                    generation: generation.into(),
+                    sessions,
+                }),
+                Err(detail) => LifecycleResponse::Failure(failure("stop-failed", detail)),
+            };
+            (ControlResponse::Lifecycle(response), true)
         }
         request => match state.workspace.as_mut() {
             Some(workspace) => match workspace.dispatch(&request.id, request.action, |session| {
@@ -775,6 +871,9 @@ fn runtime_status(
     sessions: &[RunningSession],
     mode: LaunchMode,
 ) -> Result<Runtime, String> {
+    if sessions.is_empty() {
+        return Err("supervisor has no live Sessions".into());
+    }
     Ok(Runtime {
         generation: generation.into(),
         eon_version: env!("CARGO_PKG_VERSION").into(),
@@ -811,8 +910,8 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        ControlListener, LaunchMode, Programs, effective_uid, lock_supervisor_startup,
-        prepare_configuration, prepare_runtime, venus_command, xdg_path,
+        LaunchMode, Programs, effective_uid, prepare_configuration, prepare_runtime, venus_command,
+        xdg_path,
     };
     use crate::supervisor::temporary_directory;
     use std::{
@@ -941,35 +1040,5 @@ mod tests {
 
         let absolute = PathBuf::from("/absolute");
         assert_eq!(xdg_path(Some(absolute.clone())), Some(absolute));
-    }
-
-    #[test]
-    fn startup_lock_serializes_stale_cleanup_and_bind() {
-        let root = temporary_directory();
-        let socket = root.join("eon.sock");
-        let startup_lock = root.join("startup.lock");
-        drop(std::os::unix::net::UnixListener::bind(&socket).unwrap());
-        let held = lock_supervisor_startup(&startup_lock).unwrap();
-        let contender = fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(&startup_lock)
-            .unwrap();
-        assert!(matches!(
-            contender.try_lock(),
-            Err(fs::TryLockError::WouldBlock)
-        ));
-
-        fs::remove_file(&socket).unwrap();
-        let replacement = std::os::unix::net::UnixListener::bind(&socket).unwrap();
-        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
-        drop(held);
-        contender.lock().unwrap();
-
-        let error = ControlListener::bind(&socket).err().unwrap();
-        assert!(error.contains("already active"));
-        assert!(std::os::unix::net::UnixStream::connect(&socket).is_ok());
-        drop(replacement);
-        fs::remove_dir_all(root).unwrap();
     }
 }

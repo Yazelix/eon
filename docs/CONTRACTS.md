@@ -491,7 +491,12 @@ detailed execution evidence, and Git history retains superseded states.
   If the exact current generation has no live supervisor but retains valid
   same-boot Orbit records, one replacement acquires every live management lease
   and adopts the exact runs under EON-C15. Concurrent attach-capable launches
-  converge on one supervisor and one complete Session set. Presenting a
+  converge on one supervisor and one complete Session set. The supervisor holds
+  one per-generation lifecycle lock through listener and runtime teardown, so
+  replacement cannot overlap cleanup while unrelated generations remain independent.
+  A current-generation launch that overlaps clean exit of the last Session waits
+  for the retiring supervisor, then starts one fresh Session instead of
+  reporting presentation success against the ended Session. Presenting a
   generation with a live Venus
   child preserves that process and its Sessions, then sends one bounded private
   signal for Venus to request native presentation of its existing window.

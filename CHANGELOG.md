@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Make an attach-capable launch that overlaps clean exit of the last Session
+  wait for the retiring supervisor and start one fresh Session instead of
+  reporting a successful presentation against the ended Session.
 - Name the installed launcher action `Open Eon`, show live terminal title and
   working directory in every visible pane header, and omit the redundant native
   title bar from new full-Eon windows. The action invokes its exact packaged

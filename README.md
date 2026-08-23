@@ -114,7 +114,9 @@ generations and their Sessions remain running. An exact retained record claim
 separates pre-Ready local-child rollback from post-Ready Orbit management;
 rejected Ready identities are stopped only through that management owner.
 Concurrent starts converge on one supervisor and one complete Session set;
-every attach-capable peer presents that owner. Its Nix closure
+every attach-capable peer presents that owner. If a launch overlaps clean exit
+of the last Session, it waits for the retiring owner and starts one fresh
+Session. Its Nix closure
 supplies Mesa's open-source Vulkan drivers; the current graphics proof uses
 Intel hardware, while proprietary NVIDIA remains unproved. Run Eon from a
 terminal when you need foreground lifecycle control.
@@ -380,15 +382,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 250 |
-| README | 394 |
+| README | 396 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,185 |
+| Architecture and contracts | 1,190 |
 | Distribution and references | 233 |
-| Changelog | 143 |
-| Rust source and tests | 8,273 |
+| Changelog | 146 |
+| Rust source and tests | 8,469 |
 | Cargo manifests | 37 |
 | Component manifest | 326 |
 | Nix composition | 728 |
 | Product defaults | 0 |
-| **Total** | **11,773** |
+| **Total** | **11,979** |
