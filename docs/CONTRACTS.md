@@ -558,6 +558,11 @@ detailed execution evidence, and Git history retains superseded states.
 - Boundary: this adds no instance picker, running badge, title prefix, new app
   identity, shell wrapper, or compositor-specific launcher integration.
 - Approval: the user selected the name from first principles on 2026-08-23.
+- Proof: implementation `32c768e0d9a62984640a516c34d0cb0db16e8adb`;
+  installed package `/nix/store/lfvn8vnwcralhd4qw9y68jvjq68rd1pp-eon-0.1.0`
+  validates `Exec` as its exact wrapped binary. Launch through the installed
+  entry with the Nix profile omitted from `PATH` presented the live current
+  generation, and the user accepted the result on 2026-08-23.
 
 ## Current proof state
 
