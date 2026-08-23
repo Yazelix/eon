@@ -667,7 +667,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "--background-opacity\n0.8\n--background-blur\n{}\n{}\n",
+            "--no-decorations\n--background-opacity\n0.8\n--background-blur\n{}\n{}\n",
             generation.join("orbit.sock").display(),
             control.display(),
         )
@@ -1147,6 +1147,11 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         .next()
         .unwrap()
         .to_string();
+    assert!(
+        fs::read_to_string(&venus_log)
+            .unwrap()
+            .contains("|--no-decorations ")
+    );
 
     first.kill().unwrap();
     assert!(!first.wait().unwrap().success());

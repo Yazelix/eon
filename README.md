@@ -102,8 +102,10 @@ EonTerm keeps its own runtime generations. List them with
 `eonterm generations`, reopen one with `eonterm attach [GENERATION]`, and stop
 one through its supervisor with `eonterm stop GENERATION`.
 
-The full Eon package installs one `Eon` desktop entry and a transparent violet
-three-fold loop icon at native launcher sizes.
+The full Eon package installs one `Open Eon` desktop action and a transparent
+violet three-fold loop icon at native launcher sizes. Running surfaces keep
+their terminal-authored titles, distinguishing the launcher action from live
+Eon state.
 Opening Eon reconnects only to the exact installed runtime generation or starts
 that generation in its own private namespace. If that generation's supervisor
 was lost on the same boot, Eon validates and adopts its exact surviving Orbit
@@ -165,10 +167,13 @@ one complete ordered workspace snapshot; incompatible or malformed requests
 receive a bounded structured failure. Additive EONW lifecycle actions report a
 supervisor's generation, component graph, live Sessions, idempotent presentation,
 and stop result through a separate result type that Eon Desktop never receives.
-Eon Desktop consumes the workspace result, shows every fitting pane header around
-one selected live Session, and binds Alt+H/L to tabs, Alt+K/J to panes, Alt+M to
-pane creation, and Ctrl+T to tab creation. External workspace changes appear
-within one second
+Eon Desktop consumes the workspace result and shows every fitting pane header
+around one selected live Session. Each visible live pane header carries its
+bounded terminal-authored title and working directory, with the pane identity
+as an honest fallback. Full Eon windows omit the redundant native title bar;
+EonTerm keeps native decorations by default. Alt+H/L traverses tabs, Alt+K/J
+traverses panes, Alt+M creates a pane, and Ctrl+T creates a tab. External
+workspace changes appear within one second
 because Eon Desktop re-inspects EONW v1 every 250 ms; the protocol adds no event
 stream. When a shell exits, Eon removes its pane, selects the nearest surviving
 pane, removes an empty tab, and closes when the final pane exits.
@@ -375,15 +380,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 250 |
-| README | 389 |
+| README | 394 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,131 |
+| Architecture and contracts | 1,173 |
 | Distribution and references | 233 |
-| Changelog | 138 |
-| Rust source and tests | 8,276 |
+| Changelog | 141 |
+| Rust source and tests | 8,281 |
 | Cargo manifests | 37 |
 | Component manifest | 326 |
 | Nix composition | 726 |
 | Product defaults | 0 |
-| **Total** | **11,710** |
+| **Total** | **11,765** |

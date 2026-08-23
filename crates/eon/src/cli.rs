@@ -58,12 +58,12 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
         return Ok(code);
     }
     match arguments.as_slice() {
-        [] => launch_current(LaunchMode::Workspace, &[], true, true),
-        [command] if command == "run" => launch_current(LaunchMode::Workspace, &[], false, true),
+        [] => launch_current(LaunchMode::Workspace, &[], true, false),
+        [command] if command == "run" => launch_current(LaunchMode::Workspace, &[], false, false),
         [command, separator, child @ ..]
             if command == "run" && separator == "--" && !child.is_empty() =>
         {
-            launch_current(LaunchMode::Workspace, child, false, true)
+            launch_current(LaunchMode::Workspace, child, false, false)
         }
         [command, ..]
             if command == "workspace"

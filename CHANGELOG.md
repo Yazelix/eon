@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Name the installed launcher action `Open Eon`, show live terminal title and
+  working directory in every visible pane header, and omit the redundant native
+  title bar from new full-Eon windows. EonTerm remains decorated by default.
 - Encode Kitty Space releases in Orbit and remove Venus's duplicate-input
   workaround, so new Eon launches deliver one space per physical press.
 - Serialize Session startup with Orbit's exact retained Ready claim. Only an

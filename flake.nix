@@ -4,11 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
     orbit = {
-      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=b2fbfe1a718b77dbd37d9c82370bec83584384ae";
+      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=69c402737799f03e615473956954a043647a4713";
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=a36a7b6b9cbfc72807eccb1fe6637a4cd5444d2e";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=3612a929402de00d07d582b6547d99f66afe5cad";
       flake = false;
     };
     helix = {
@@ -139,7 +139,7 @@
         pkgs.vulkan-loader
         pkgs.wayland
       ];
-      venusProtocolSourceRevision = "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c";
+      venusProtocolSourceRevision = "69c402737799f03e615473956954a043647a4713";
       workspaceProtocolRevision = "4af395aea06c230ee6b18cf0755ae25915c0b88d";
       venusSource =
         assert orbit.rev == (builtins.head venusIdentity.requires).revision;
@@ -150,7 +150,7 @@
           ln -s ${./crates/eon-workspace-protocol} "$out/eon-workspace-protocol"
           substituteInPlace "$out/Cargo.toml" \
             --replace-fail \
-              'orbit-protocol = { git = "https://github.com/luccahuguet/orbit.git", rev = "${venusProtocolSourceRevision}" }' \
+              'orbit-protocol = { git = "https://github.com/Yazelix/eon-sessions.git", rev = "${venusProtocolSourceRevision}" }' \
               'orbit-protocol = { path = "orbit-protocol" }'
           substituteInPlace "$out/Cargo.toml" \
             --replace-fail \
@@ -158,7 +158,7 @@
               'eon-workspace-protocol = { path = "eon-workspace-protocol" }'
           substituteInPlace "$out/Cargo.lock" \
             --replace-fail \
-              'source = "git+https://github.com/luccahuguet/orbit.git?rev=${venusProtocolSourceRevision}#${venusProtocolSourceRevision}"' \
+              'source = "git+https://github.com/Yazelix/eon-sessions.git?rev=${venusProtocolSourceRevision}#${venusProtocolSourceRevision}"' \
               ""
           substituteInPlace "$out/Cargo.lock" \
             --replace-fail \
@@ -515,7 +515,7 @@
 
       desktopItem = pkgs.makeDesktopItem {
         name = "eon";
-        desktopName = "Eon";
+        desktopName = "Open Eon";
         comment = "Launch Eon for desktop and Sessions";
         exec = "eon";
         icon = "eon";
