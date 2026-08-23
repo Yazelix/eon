@@ -18,7 +18,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Proven | `a2792cc77f8254cc277d64eb41f65725b69ccf70`; management-consumer boundary `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
-| EON-C7 | Release design accounts for Linux and native signed and notarized macOS artifacts | Eon and Venus | Planned | None |
+| EON-C7 | Eon releases target Linux on native Wayland; each channel names its proved architectures, while X11, Xwayland, and macOS are unsupported | Eon | Planned | None |
 | EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Accepted composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788` |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; private Session PATH `c0d044c69318a921f9f9139bcaf2de9afce683d3`; Fish preservation `194076f66f91c8823b03c3ee6d3a1706eb8ea4e4`; proof below |
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; current CLI proof `d0c2208d628fa0dc1e186899b45e0b73534ff9bc`; deadline hardening `a390fc5c007900c3fc8c9c49df85f9b8acc06d4a`; management Stop `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; response-loss correction `56fcae2d00baecf9b69e4650882a69e50419f56b`; source ownership `abf2513b51c8871b5bfea602e8369bd2596609ef`; proof below |
@@ -75,7 +75,7 @@ detailed execution evidence, and Git history retains superseded states.
   workspace slot can be reused. The contract adds no durable launch intent,
   prior-topology persistence, Orbit or machine restart recovery, logout or
   reboot survival, remote access, public management protocol, service manager,
-  broker, compatibility adapter, or macOS proof.
+  broker, compatibility adapter, or wider-platform promise.
 - Update order: Orbit source `86aa130629c09dce61d0f232150298656fa5cef4`
   and metadata `68377ed9429e974b96757e48bea702150042689a` precede
   Venus source `a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8` and metadata
@@ -182,9 +182,9 @@ detailed execution evidence, and Git history retains superseded states.
   process-start, replacement-supervisor, lost-Stop-response, tombstone,
   deadline, and retained-diagnostic negatives; Orbit source `86aa1306` supplies
   the identical owner-level lease race, authority, non-cancellable Stop,
-  natural-exit, containment, and typed-tombstone negatives. macOS, logout,
-  reboot, machine loss, prior topology, and old-generation backport remain
-  unproved.
+  natural-exit, containment, and typed-tombstone negatives. Logout, reboot,
+  machine loss, prior topology, and old-generation backport remain unproved;
+  other platforms are outside Eon's contract.
 - Eonova rollout source `d8a8729f442f3d535b30fd22ac8dc7b6da4626dd`
   pins exact Eon `ced9e4ae11ed21a0f05d50cd470491adffa73b54`, Orbit
   `86aa130629c09dce61d0f232150298656fa5cef4`, Venus
@@ -198,7 +198,8 @@ detailed execution evidence, and Git history retains superseded states.
   734 ms; only then were every process, containment, and generation artifact
   gone. The fixture root was moved to trash. The five pre-existing Eonova
   processes retained their exact PIDs and start times; the separate Eon and
-  EonTerm profiles remained unchanged. macOS remains unproved.
+  EonTerm profiles remained unchanged. Other platforms are outside Eon's
+  contract.
 - Ready-boundary consumer base `7cbcf1d4ce8ac186dc3ceff48240f04c437709af`
   on x86_64 Linux: canonical graph SHA-256
   `c4a480d8b2ee61ccc9efa59cd7a08b72ef92ca504bb10bf84650cd96d300eff0`
@@ -228,7 +229,7 @@ detailed execution evidence, and Git history retains superseded states.
   reports `g1-0345c794e8099870325f3ed3208af4d3`. An isolated installed launch,
   workspace inspection, and structured Stop removed its exact generation.
   Existing live EonTerm processes were not restarted. EON-C1 and EON-C15 are
-  Proven at that revision; macOS remains unproved.
+  Proven at that revision on x86_64 Linux.
 
 ## Approved terminal-background blur contract EON-C14
 
@@ -257,7 +258,7 @@ detailed execution evidence, and Git history retains superseded states.
   `terminal.background_opacity` are independent. Eon does not infer or change
   either value from the other. This slice adds no capability probe, automatic
   opacity, blur strength, public CLI or environment override, watcher, live
-  reload, fallback renderer, Eonova policy, or X11/macOS visual claim.
+  reload, fallback renderer, Eonova policy, or non-Wayland visual claim.
 - Update order: Venus source `7fc7e4ba97aaf48b586002934a580ef2d1c31694`
   proves `VEN-C15`; Eon then proves `EON-C14` against that exact revision with
   unchanged Orbit `6de95296d252c119d4fdba2d9b03cec1a09355ae`, ORBF v1, ORBS
@@ -290,7 +291,7 @@ detailed execution evidence, and Git history retains superseded states.
   padding. It does not affect explicit cell backgrounds, text, cursor,
   selection, workspace chrome, decorations, input, hit testing, accessibility,
   or click-through. This slice adds no profile, public CLI override, watcher,
-  live reload, Orbit restart, or macOS transparency claim.
+  live reload, Orbit restart, or non-Wayland transparency claim.
 - Update order: Venus source `74ab5a0b661210f0afec94086f5358fe50b01f05`
   proves `VEN-C11`; Eon then proves `EON-C13` against that exact revision.
   Eonova consumes Eon's default by providing no opacity override. There is no
@@ -704,7 +705,7 @@ detailed execution evidence, and Git history retains superseded states.
   launched Nova through `--no-decorations` in an isolated COSMIC Wayland
   namespace and showed no native title bar. The namespace was stopped through
   its supervisor without touching existing Eon or Eonova generations.
-- Remaining gap: this proof makes no macOS claim.
+- Platform boundary: this proof applies to native Wayland on x86_64 Linux.
 
 ### EON-C14 — terminal-background blur
 
@@ -743,8 +744,8 @@ detailed execution evidence, and Git history retains superseded states.
   Nix records the accepted Venus fork's exact `dpi-0.1.1` fixed-output hash
   `sha256-ahkXE2sS1RGZDpaZEKCRMrwctWKWEnOHyn+JsUNs9Ws=`. Capability probing,
   automatic opacity, blur strength, fallback rendering, and Eonova policy stay
-  out of scope. The compositor may ignore the request; this proof makes no X11
-  or macOS blur claim.
+  out of scope. The compositor may ignore the request; non-Wayland platforms
+  are outside Eon's contract.
 
 ### EON-C13 — terminal-background opacity
 
@@ -786,8 +787,8 @@ detailed execution evidence, and Git history retains superseded states.
   identities throughout this Eon proof; no live process was restarted.
 - Dependency disposition: no dependency, profile framework, watcher, public
   CLI option, environment-per-setting boundary, or second graph was added.
-  Broader Linux compositor behavior and macOS transparency remain limited by
-  `VEN-C11`; Eon makes no wider platform claim.
+  Broader Wayland compositor behavior remains limited by `VEN-C11`; Eon makes
+  no wider platform claim.
 
 ### EON-C8 — Session-exit pruning
 
@@ -949,8 +950,8 @@ detailed execution evidence, and Git history retains superseded states.
 ## Current gaps
 
 - EON-C5 through EON-C7 remain planned. The accepted artifact is a Nix-only
-  x86_64 Linux alpha; direct bundles and native signed and notarized macOS
-  distribution are unproved.
+  x86_64 Linux Wayland alpha; direct bundles and removal of the inherited
+  unsupported backend features are unproved.
 - Packaged graphics are proved on Intel Mesa. Proprietary NVIDIA remains
   unproved. The packaged font set supplies Symbols Nerd Font Mono for Yazi's
   supported private-use icons; unsupported emoji and symbols may still render

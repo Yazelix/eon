@@ -10,14 +10,15 @@ canonical component graph without reimplementing either child project.
 
 ## Project status
 
-This repository ships the first Nix-only Eon alpha for x86_64 Linux. One Rust
-supervisor launches the accepted Eon Sessions and Eon Desktop revisions. The
-`eon` package owns a live workspace and supplies one pinned interactive
-environment. The slimmer `eonterm` package owns one exact-command Session and
-contains no managed shell or tool bundle. Both expose lifecycle control through
-EONW v1, isolate live runtime generations, and consume the same component
-identities. Direct bundles, Home Manager, background updates, release
-automation, and macOS packaging remain outside this slice.
+This repository ships the first Nix-only Eon alpha for x86_64 Linux on native
+Wayland. One Rust supervisor launches the accepted Eon Sessions and Eon Desktop
+revisions. The `eon` package owns a live workspace and supplies one pinned
+interactive environment. The slimmer `eonterm` package owns one exact-command
+Session and contains no managed shell or tool bundle. Both expose lifecycle
+control through EONW v1, isolate live runtime generations, and consume the same
+component identities. Direct bundles, Home Manager, background updates, and
+release automation remain outside this slice. X11, Xwayland, and macOS are
+unsupported.
 
 ## Naming model
 
@@ -65,7 +66,7 @@ on its own architecture and keeps value independent of Eon's progress.
 - Nix provides the sole alpha and early-dogfood installation path.
 - Eon runtime code remains independent of Nix concepts and evaluation.
 - Direct bundles wait for sustained dogfood and an explicit graduation decision.
-- Linux and macOS constrain architecture from the start.
+- Linux on native Wayland is the sole supported platform.
 - Eon owns product policy and avoids copying child behavior.
 
 ## Implementation language
@@ -101,8 +102,8 @@ EonTerm keeps its own runtime generations. List them with
 `eonterm generations`, reopen one with `eonterm attach [GENERATION]`, and stop
 one through its supervisor with `eonterm stop GENERATION`.
 
-The full Eon package installs one `Eon` desktop entry and a transparent violet three-fold
-loop icon at native launcher sizes, with X11 and Xwayland window grouping.
+The full Eon package installs one `Eon` desktop entry and a transparent violet
+three-fold loop icon at native launcher sizes.
 Opening Eon reconnects only to the exact installed runtime generation or starts
 that generation in its own private namespace. If that generation's supervisor
 was lost on the same boot, Eon validates and adopts its exact surviving Orbit
@@ -243,9 +244,8 @@ cell backgrounds, text, cursor, selection, Eon workspace chrome, native
 decorations, input, hit testing, and accessibility keep their existing
 semantics. Opacity and blur are independent: Eon never changes one because of
 the other, and an opaque background can visually hide compositor blur.
-Unsupported or policy-disabled compositors may ignore the best-effort request;
-Eon does not claim X11 or macOS blur. Transparency does not enable
-click-through.
+Unsupported or policy-disabled Wayland compositors may ignore the best-effort
+request. Transparency does not enable click-through.
 
 ## Managed environment
 
@@ -374,16 +374,16 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy | 246 |
+| Agent policy | 250 |
 | README | 389 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,130 |
-| Distribution and references | 237 |
+| Architecture and contracts | 1,131 |
+| Distribution and references | 233 |
 | Changelog | 138 |
 | Rust source and tests | 8,276 |
 | Cargo manifests | 37 |
 | Component manifest | 326 |
 | Nix composition | 726 |
 | Product defaults | 0 |
-| **Total** | **11,709** |
+| **Total** | **11,710** |

@@ -6,6 +6,11 @@ Eon alpha and early dogfood use Nix as the sole installation and composition
 channel. This phase spends project time on Eon Sessions, Eon Desktop, and Eon
 contracts instead of portable archives and installer maintenance.
 
+Every Eon channel targets Linux on native Wayland. The current alpha is
+x86_64-only; another Linux architecture needs its own scope and proof. X11,
+Xwayland, and macOS are unsupported and create no release or compatibility
+work.
+
 Direct installation remains the long-term adoption path. It begins after Nix
 dogfood proves a useful product and the user approves distribution graduation.
 Every channel consumes the same component graph and preserves runtime semantics.
@@ -58,7 +63,7 @@ revisions, constraints, and rejections in the owning Bead.
 | Distribution graduation is active and one release graph must drive direct archives and package-manager outputs. | [dist documentation](https://axodotdev.github.io/cargo-dist/) | Read [dist configuration](https://axodotdev.github.io/cargo-dist/book/reference/config.html) only when evaluating its exact artifact, installer, Homebrew, or generated-CI shape. | Apply the tool gate and compare an owned assembler. Do not select dist before graduation. |
 | GitHub-hosted artifacts must preserve release identity. | [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) | None by default. | Prove tag protection, attestations, and asset immutability for the selected workflow. |
 | Hosted Actions minutes, queues, or spending create a demonstrated local-release requirement. | [Doodlestein Self Releaser](https://github.com/Dicklesworthstone/doodlestein_self_releaser) | Inspect `act` and the selected workflow only after exact compatibility and cost questions are named. | Comparison evidence only. A local run does not prove hosted parity, signing isolation, or provenance. |
-| Native macOS distribution is activated. | [Apple notarization requirements](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution) | Read the [Homebrew Cask Cookbook](https://docs.brew.sh/Cask-Cookbook) only if Homebrew is selected as a channel. | Prove signing, hardened runtime, notarization, stapling, Gatekeeper, quarantine, architecture, and upgrade behavior. |
+| Product or desktop work could widen the native platform boundary. | [foot at `85655c74a4de`](https://codeberg.org/dnkl/foot/src/commit/85655c74a4ded119392ea8b632626c3920042807) | Read [Monstar at `71e4babde8e4`](https://github.com/rockorager/monstar/tree/71e4babde8e47e0739abd610f2afe202c8e99c00) only when direct Wayland ownership is in question. | Preserve a maintained Wayland-only product and headless Wayland proof. Keep presentation in Venus; reject X11, Xwayland, macOS, and an Eon-owned raw-Wayland rewrite. |
 | Direct-bundle dogfood demonstrates a need for a portable Nix artifact. | [Nix `bundle` command](https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-bundle) | None by default. | Inspect experimental status, bundler constraints, closure size, and portability. Do not make an experimental interface canonical. |
 | Direct-bundle dogfood demonstrates an AppImage-specific user need. | [AppImage documentation](https://docs.appimage.org/) | None by default. | Inspect integration, updates, sandbox assumptions, and filesystem support. Do not treat format availability as product demand. |
 
@@ -116,18 +121,11 @@ A manual download and extraction path remains available beside the installer.
 Nix remains supported when the direct channel arrives. Direct-install users do
 not need Nix, and Nix users receive the same accepted component set.
 
-### macOS
-
-Eon Desktop determines the native application boundary through its Venus
-subsystem. Eon should plan a signed and notarized application or disk image and
-a Homebrew Cask over the same release artifacts. Architecture reviews must
-reject process, path, PTY, or packaging foundations that prevent this channel.
-
 ## Website
 
 During alpha, `yazelix.com` can explain Eon and label Nix as the required
-dogfood path. After distribution graduation, the site can publish direct
-installation instructions and select a platform-specific installer. GitHub
+dogfood path. After distribution graduation, the site can publish direct Linux
+installation instructions. GitHub
 release assets or another immutable object store remain the authority for
 binaries, checksums, signatures, attestations, and historical versions.
 
@@ -150,7 +148,7 @@ An alpha candidate should prove:
 - the installed composition reports every exact component revision;
 - normal runtime use invokes no Nix evaluator;
 - product state uses stable component identity instead of persisted store paths;
-- Linux runs in a clean Nix-enabled user environment.
+- Eon runs in a clean Nix-enabled native Wayland environment.
 
 A direct release candidate should also prove:
 
@@ -159,6 +157,4 @@ A direct release candidate should also prove:
 - bundles contain no undeclared store paths or machine-local references;
 - installation, upgrade, rollback, and removal preserve user data;
 - signatures or attestations bind the published checksums;
-- Linux runs in a clean user environment;
-- macOS passes signing, notarization, quarantine, and first-launch checks once
-  that channel exists.
+- Eon runs in a clean native Wayland environment.
