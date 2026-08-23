@@ -1141,17 +1141,9 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         live_identity(&generation.join("orbit.sock")),
         live_identity(&generation.join("session-2.sock")),
     ];
-    let first_venus = fs::read_to_string(&venus_log)
-        .unwrap()
-        .split('|')
-        .next()
-        .unwrap()
-        .to_string();
-    assert!(
-        fs::read_to_string(&venus_log)
-            .unwrap()
-            .contains("|--no-decorations ")
-    );
+    let first_venus_log = fs::read_to_string(&venus_log).unwrap();
+    let first_venus = first_venus_log.split('|').next().unwrap().to_string();
+    assert!(first_venus_log.contains("|--no-decorations "));
 
     first.kill().unwrap();
     assert!(!first.wait().unwrap().success());

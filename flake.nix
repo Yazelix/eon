@@ -626,6 +626,8 @@
             install -Dm444 ${lazygitPackage.src}/LICENSE "$out/share/licenses/eon/lazygit/LICENSE"
           '';
           postFixup = ''
+            substituteInPlace "$out/share/applications/eon.desktop" \
+              --replace-fail 'Exec=eon' "Exec=$out/bin/eon"
             wrapProgram "$out/bin/eon" \
               --set EON_ORBIT "${orbitPackage}/bin/yazelix-orbit" \
               --set EON_VENUS "${venusPackage}/bin/yazelix-venus" \

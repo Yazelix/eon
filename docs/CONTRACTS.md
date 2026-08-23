@@ -349,13 +349,14 @@ detailed execution evidence, and Git history retains superseded states.
   selection as the only expanded accordion pane. For every visible live pane,
   Venus observes Orbit's bounded read-only terminal title and working directory
   and projects one bounded header and accessibility name, falling back to the
-  pane identity without exposing the mapped Session identity. Full Eon omits
-  the redundant native title bar while retaining the selected terminal title
-  for compositor semantics. When a Session exits, Eon
-  removes its pane. If that empties a tab, Eon removes the tab; if it empties
-  the workspace, Eon closes Venus and the supervisor. Selection stays on the
-  same identity when possible, otherwise moves to the following sibling at the
-  removed index or the preceding sibling when no following sibling exists.
+  pane identity without exposing the mapped Session identity. New
+  current-generation full Eon surfaces omit the redundant native title bar
+  while retaining the selected terminal title for compositor semantics. When a
+  Session exits, Eon removes its pane. If that empties a tab, Eon removes the
+  tab; if it empties the workspace, Eon closes Venus and the supervisor.
+  Selection stays on the same identity when possible, otherwise moves to the
+  following sibling at the removed index or the preceding sibling when no
+  following sibling exists.
 - Important failures: an unknown or stale identity, invalid transition, or
   direction without a target returns a bounded explicit failure and leaves the
   last accepted topology unchanged. An unknown or repeated Session-exit
@@ -548,13 +549,14 @@ detailed execution evidence, and Git history retains superseded states.
 - Trigger: the launcher lists the packaged Eon desktop entry beside live Eon
   windows.
 - Result: the installed action is named `Open Eon`; live surfaces retain their
-  terminal-authored title. The action may start or present the exact current
-  generation, so it promises neither a new window nor a new Session.
+  terminal-authored title. The action invokes the exact packaged Eon executable
+  without relying on the launcher's `PATH`. It may start or present the exact
+  current generation, so it promises neither a new window nor a new Session.
 - Ownership: Eon owns desktop-entry metadata. Venus and Orbit retain the native
-  and terminal title path. The application ID, `StartupWMClass`, command, icon,
-  and process identity remain unchanged.
+  and terminal title path. The application ID, `StartupWMClass`, icon, and
+  executable identity remain unchanged.
 - Boundary: this adds no instance picker, running badge, title prefix, new app
-  identity, or compositor-specific launcher integration.
+  identity, shell wrapper, or compositor-specific launcher integration.
 - Approval: the user selected the name from first principles on 2026-08-23.
 
 ## Current proof state
@@ -567,17 +569,22 @@ detailed execution evidence, and Git history retains superseded states.
   selects Orbit `69c402737799f03e615473956954a043647a4713`, canonical ORBS v5,
   and Venus `3612a929402de00d07d582b6547d99f66afe5cad`. Locked formatting,
   check, all 46 Rust tests, warnings-denied Clippy, manifest validation, and the
-  complete Nix flake check pass. Exact package
+  complete Nix flake check pass. Pre-commit candidate package
   `/nix/store/2lvrln3bli0n7dri8ndi0mvkhmlf5r6p-eon-0.1.0`, NAR hash
-  `sha256-NoNf2tPeeGXOOK3JxF70TBjPC1jngY43MeljcnLQFkQ=`, installs a validated
-  `Open Eon` desktop action and is the active profile artifact. Isolated native
-  COSMIC Wayland generation `g1-c0ea3b3a8a5a688369b9fff315ee9b40` launched
+  `sha256-NoNf2tPeeGXOOK3JxF70TBjPC1jngY43MeljcnLQFkQ=`, supplied the isolated
+  native COSMIC Wayland generation `g1-c0ea3b3a8a5a688369b9fff315ee9b40` launched
   Venus PID `1599630` with exactly one `--no-decorations`, two exact Orbit
   Sessions, and no native title bar. With pane 2 selected, inactive pane 1's
   visible title advanced from `eon-proof-374` to `eon-proof-378` in 400 ms while
   retaining `/tmp/eon-proof`; structured Stop removed both Sessions and all
-  disposable processes. The profile refresh preserved all 20 recorded live
-  Eon, EonTerm, Eonova, Orbit, and Venus process start identities.
+  disposable processes. Published profile artifact
+  `/nix/store/36j1bp4q0iin50asxi1pxrr2yai6mg3j-eon-0.1.0`, NAR hash
+  `sha256-p5LLjeoulX6XXZrKib2OwC8nxHMbm2jlS5wHWtdWwf8=`, installs the validated
+  `Open Eon` desktop action and remains active. After the obsolete user-local
+  override was moved to Trash and only COSMIC's launcher surfaces were
+  refreshed, installed queries for `eon` and `on` returned that action; the
+  user accepted the result. All 20 recorded live Eon, EonTerm, Eonova, Orbit,
+  and Venus process start identities were preserved.
 
 - Accepted post-audit child refresh proof `de7d0e41cf17f7111d5cdd9c3b41f1c07a2dbeab`
   on x86_64 Linux: schema 3 graph `components/eon-alpha-v3.json`, SHA-256
