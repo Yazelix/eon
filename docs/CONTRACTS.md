@@ -905,6 +905,16 @@ detailed execution evidence, and Git history retains superseded states.
   refreshed profile, installed generation `g1-1c480d66c2b3f3046871619e4d06fefa`,
   and structured Stop dogfood pass. The pre-existing live EonTerm remained
   uninterrupted. Phase: accepted source, mechanically verified, and dogfooded.
+- Supervisor ownership proof: `af7371a58ff7bcd5eefd2004ecd2957562727d93` on
+  x86_64 Linux. `supervisor.rs` owns composition, runtime/configuration roots,
+  startup serialization, presentation, request dispatch, and child coordination;
+  `main.rs` retains CLI parsing/projection and top-level exit mapping. Locked
+  46-test Rust and warnings-denied Clippy, manifest, exact Eon/EonTerm builds,
+  full flake, refreshed profile, and installed generation `g1-dfb08359e8c6f91b2349fa4af54c3244`
+  launch/attach/structured-Stop dogfood pass with artifacts `/nix/store/4p029ajrd120m8ypyjpij8a4bq71b1vz-eon-0.1.0`
+  and `/nix/store/2ngrjicclwnpjlk9xg37a89i63fkddh7-eonterm-0.1.0`.
+  Existing live EonTerm and its Orbit/Venus children remained uninterrupted.
+  Phase: accepted source, mechanically verified, installed, and dogfooded.
 - Lifecycle protocol proof: `fd6b348494111a0d18e241787da14ea99ee117a9`.
   Accepted EON-C11 attach proof: `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`
   on x86_64 Linux. Generated managed-runtime identity proof
