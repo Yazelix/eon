@@ -5,8 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
-- Use Venus's native Space coalescing so new Eon launches do not deliver a
-  duplicate space on Linux Wayland.
+- Encode Kitty Space releases in Orbit and remove Venus's duplicate-input
+  workaround, so new Eon launches deliver one space per physical press.
 - Serialize Session startup with Orbit's exact retained Ready claim. Only an
   empty locked claim permits local-child rollback; after Orbit marks it, Eon
   uses management Stop for a rejected spawned identity and never falls back to

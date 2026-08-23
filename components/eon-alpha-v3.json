@@ -47,7 +47,7 @@
       "id": "orbit",
       "project": "Eon Sessions",
       "version": "0.1.0",
-      "revision": "2518512758c7848bbd87f907b105c8bcf0fc4e1b",
+      "revision": "b2fbfe1a718b77dbd37d9c82370bec83584384ae",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -62,7 +62,7 @@
         { "id": "ORB-C2", "proof": "9bc87191dd90fd3d7db939127f1ebedfccd2b48d" },
         { "id": "ORB-C3", "proof": "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c" },
         { "id": "ORB-C4", "proof": "74c3b78de7726239badccd5c9867b85a13209bcf" },
-        { "id": "ORB-C5", "proof": "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c" },
+        { "id": "ORB-C5", "proof": "b2fbfe1a718b77dbd37d9c82370bec83584384ae" },
         { "id": "ORB-C6", "proof": "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c" },
         { "id": "ORB-C7", "proof": "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c" },
         { "id": "ORB-C8", "proof": "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c" },
@@ -82,7 +82,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "a84016532c51cbebabb185d53b7a108a64873178",
+      "revision": "a36a7b6b9cbfc72807eccb1fe6637a4cd5444d2e",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -93,7 +93,7 @@
       ],
       "contracts": [
         { "id": "VEN-C1", "proof": "96f04d6091e9b1f94dceda53ce302b8eb42e41c0" },
-        { "id": "VEN-C2", "proof": "a84016532c51cbebabb185d53b7a108a64873178" },
+        { "id": "VEN-C2", "proof": "96f04d6091e9b1f94dceda53ce302b8eb42e41c0" },
         { "id": "VEN-C3", "proof": "f1bb47525973f7ddb250eeed9bc20c599dd9fbaa" },
         { "id": "VEN-C4", "proof": "a910ebcebd4013e5016c8d8ecac696a1df13fd7b" },
         { "id": "VEN-C7", "proof": "96f04d6091e9b1f94dceda53ce302b8eb42e41c0" },
@@ -109,7 +109,7 @@
       "requires": [
         {
           "component": "orbit",
-          "revision": "2518512758c7848bbd87f907b105c8bcf0fc4e1b",
+          "revision": "b2fbfe1a718b77dbd37d9c82370bec83584384ae",
           "interfaces": [
             { "id": "ORBF", "version": 1, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
             { "id": "ORBS", "version": 4, "proof": "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c" }
