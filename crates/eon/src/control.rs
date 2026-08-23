@@ -1,7 +1,6 @@
 use super::{
-    request_id,
-    supervisor::{LaunchMode, SESSION_START_TIMEOUT, effective_uid},
-    workspace, write_stdout,
+    supervisor::{LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id},
+    workspace,
 };
 use eon_workspace_protocol::{
     Action, Availability, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse,
@@ -430,6 +429,14 @@ pub(super) fn report_failure(failure: &Failure, json: bool) -> Result<i32, Strin
     Ok(2)
 }
 
+pub(super) fn write_stdout(output: impl AsRef<[u8]>) -> Result<(), String> {
+    match std::io::stdout().lock().write_all(output.as_ref()) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(error) => Err(format!("cannot write stdout: {error}")),
+    }
+}
+
 pub(super) fn failure(code: impl Into<String>, detail: impl Into<String>) -> Failure {
     let mut detail = detail.into();
     detail.truncate(detail.floor_char_boundary(MAX_DETAIL_BYTES));
@@ -476,7 +483,7 @@ mod tests {
         ControlListener, probe_presentable_runtime, read_request, remove_socket_if_identity,
         socket_identity,
     };
-    use crate::tests::temporary_directory;
+    use crate::supervisor::temporary_directory;
     use eon_workspace_protocol::{
         Action, Availability, Failure, LifecycleResponse, Response, Runtime, VERSION,
         encode_lifecycle_response, encode_response,

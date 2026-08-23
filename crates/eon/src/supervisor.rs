@@ -1,5 +1,4 @@
 use super::{
-    MANIFEST,
     control::{
         ControlListener, ControlResponse, EndpointFailure, EndpointFailureKind, SocketIdentity,
         connect_control, failure, probe_launch_mode, probe_presentable_runtime, send_action_on,
@@ -27,12 +26,38 @@ use std::{
     },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+pub(super) const MANIFEST: &str = include_str!("../../../components/eon-alpha-v3.json");
 pub(super) const EON_ANSI_PALETTE: &str = "000000,cd0000,00cd00,cdcd00,1093f5,cd00cd,00cdcd,faebd7,404040,ff0000,00ff00,ffff00,11b5f6,ff00ff,00ffff,ffffff";
 pub(super) const SESSION_START_TIMEOUT: Duration = Duration::from_secs(5);
+static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
+
+pub(super) fn request_id() -> String {
+    let sequence = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{}-{nanos}-{sequence}", std::process::id())
+}
+
+#[cfg(test)]
+static NEXT_TEST: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+pub(super) fn temporary_directory() -> PathBuf {
+    let path = std::env::temp_dir().join(format!(
+        "eon-test-{}-{}",
+        std::process::id(),
+        NEXT_TEST.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&path).unwrap();
+    path
+}
 
 pub(super) fn probe_supervisor(
     socket: &Path,
@@ -789,7 +814,7 @@ mod tests {
         ControlListener, LaunchMode, Programs, effective_uid, lock_supervisor_startup,
         prepare_configuration, prepare_runtime, venus_command, xdg_path,
     };
-    use crate::tests::temporary_directory;
+    use crate::supervisor::temporary_directory;
     use std::{
         ffi::OsString,
         fs,

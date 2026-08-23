@@ -1,8 +1,8 @@
 use super::{
-    managed_environment, request_id,
+    managed_environment,
     supervisor::{
-        EON_ANSI_PALETTE, LaunchMode, Programs, SESSION_START_TIMEOUT, effective_uid, status_code,
-        stop, validate_private_directory,
+        EON_ANSI_PALETTE, LaunchMode, Programs, SESSION_START_TIMEOUT, effective_uid, request_id,
+        status_code, stop, validate_private_directory,
     },
 };
 use eon_workspace_protocol::MAX_PANES;
@@ -1018,7 +1018,7 @@ mod tests {
         EON_ANSI_PALETTE, Programs, management, orbit_command, read_management_response,
         session_number, unix_connect_with_timeout,
     };
-    use crate::tests::temporary_directory;
+    use crate::supervisor::temporary_directory;
     use orbit_protocol::management::ServerMessage as ManagementServerMessage;
     use std::{
         ffi::{OsStr, OsString},
