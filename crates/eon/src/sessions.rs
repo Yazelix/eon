@@ -1,6 +1,9 @@
 use super::{
-    EON_ANSI_PALETTE, LaunchMode, Programs, SESSION_START_TIMEOUT, effective_uid,
-    managed_environment, request_id, status_code, stop, validate_private_directory,
+    managed_environment, request_id,
+    supervisor::{
+        EON_ANSI_PALETTE, LaunchMode, Programs, SESSION_START_TIMEOUT, effective_uid, status_code,
+        stop, validate_private_directory,
+    },
 };
 use eon_workspace_protocol::MAX_PANES;
 use orbit_protocol::management::{

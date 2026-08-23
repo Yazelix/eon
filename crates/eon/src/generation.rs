@@ -5,8 +5,12 @@ use super::control::{
 };
 use super::workspace::json_escape;
 use super::{
-    MANIFEST, attach_legacy, effective_uid, path_exists, present_at, probe_supervisor,
-    runtime_directory, try_lock_supervisor_startup, validate_private_directory, write_stdout,
+    MANIFEST,
+    supervisor::{
+        attach_legacy, effective_uid, path_exists, present_at, probe_supervisor, runtime_directory,
+        try_lock_supervisor_startup, validate_private_directory,
+    },
+    write_stdout,
 };
 use eon_workspace_protocol::{Action, Availability, LifecycleResponse, Response, Stopped, VERSION};
 use std::{
@@ -27,6 +31,7 @@ pub(super) fn current_generation() -> Result<String, String> {
         include_bytes!("generation.rs"),
         include_bytes!("managed_environment.rs"),
         include_bytes!("sessions.rs"),
+        include_bytes!("supervisor.rs"),
         include_bytes!("workspace.rs"),
         include_bytes!("../../eon-workspace-protocol/src/lib.rs"),
         include_bytes!("../../eon-workspace-protocol/Cargo.toml"),
@@ -661,7 +666,7 @@ mod tests {
         current_generation, discover_generations, generation_directory, generation_id,
         valid_generation,
     };
-    use crate::{lock_supervisor_startup, tests::temporary_directory};
+    use crate::{supervisor::lock_supervisor_startup, tests::temporary_directory};
     use std::{
         fs,
         os::unix::{

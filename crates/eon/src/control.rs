@@ -1,4 +1,8 @@
-use super::{LaunchMode, effective_uid, request_id, workspace, write_stdout};
+use super::{
+    request_id,
+    supervisor::{LaunchMode, SESSION_START_TIMEOUT, effective_uid},
+    workspace, write_stdout,
+};
 use eon_workspace_protocol::{
     Action, Availability, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse,
     MAX_DETAIL_BYTES, Request, Response, Runtime, declared_message_len, decode_lifecycle_response,
@@ -15,8 +19,7 @@ use std::{
     time::Duration,
 };
 
-const CONTROL_TIMEOUT: Duration =
-    super::SESSION_START_TIMEOUT.saturating_add(Duration::from_secs(1));
+const CONTROL_TIMEOUT: Duration = SESSION_START_TIMEOUT.saturating_add(Duration::from_secs(1));
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum EndpointFailureKind {

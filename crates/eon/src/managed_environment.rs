@@ -1,4 +1,3 @@
-use super::{configured_program, nonempty_environment_path};
 use serde::Deserialize;
 use std::{
     env,
@@ -7,6 +6,16 @@ use std::{
     path::{Path, PathBuf},
     process::Command,
 };
+
+pub(super) fn configured_program(variable: &str, fallback: &str) -> PathBuf {
+    env::var_os(variable).map_or_else(|| fallback.into(), PathBuf::from)
+}
+
+pub(super) fn nonempty_environment_path(name: &str) -> Option<PathBuf> {
+    env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
