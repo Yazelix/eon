@@ -18,15 +18,15 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C4 | Eon preserves child ownership and adds no duplicate terminal, rendering, editor, file-manager, or configuration state | Eon | Proven | `a2792cc77f8254cc277d64eb41f65725b69ccf70`; management-consumer boundary `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
 | EON-C5 | A user can install, upgrade, inspect, and remove a direct Eon bundle without replacing an existing unrelated toolchain | Eon | Planned | None |
 | EON-C6 | The Nix alpha and later distribution channels consume the same accepted component graph without changing runtime semantics | Eon | Planned | None |
-| EON-C7 | Eon releases target Linux on native Wayland; each channel names its proved architectures, while X11, Xwayland, and macOS are unsupported | Eon | Planned | None |
-| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, see each visible pane's live title and working directory, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Accepted composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788`; live pane chrome candidate tracked by `eon-adopt-pane-chrome-undecorated-tz0` |
+| EON-C7 | Eon releases target Linux on native Wayland without requiring a specific init or service manager; each channel names its proved architectures and launch environments, while X11, Xwayland, and macOS are unsupported | Eon | Planned | None |
+| EON-C8 | A user can organize independent durable Sessions as horizontal tabs containing vertical accordion panes, identify each pane as `pN` followed by two spaces and a compact working-directory label, keep one pane expanded, traverse the topology directly, and have ended Sessions leave no dead pane or empty tab behind | Eon | Candidate | Accepted composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; Session-exit pruning `7ede475992528be1b6643035abe4da9560d50a21`; candidate `e77e842fe8c7070a96047dff1bf028ccbd49b788`; compact identity/header candidate `cfcb38e6e711e971ed6004528987761ddd7c87e4` tracked by `eon-compact-pane-identities-yht` |
 | EON-C9 | Eon supplies one configurable exact managed environment across Nushell, Bash, Zsh, and Fish while native shell and tool configuration remain user-owned | Eon | Proven | Base `6dfcb473beccadd6e145235009240c81dd570fe5`; tool glyphs `fb95671d855fa944c3717103cb13bd0135f8aec8`; private Session PATH `c0d044c69318a921f9f9139bcaf2de9afce683d3`; Fish preservation `194076f66f91c8823b03c3ee6d3a1706eb8ea4e4`; proof below |
 | EON-C10 | A local client can submit versioned Eon workspace and supervisor-lifecycle actions and receive one complete typed result without reconstructing hidden state | Eon | Proven | Accepted workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d` and lifecycle actions `fd6b348494111a0d18e241787da14ea99ee117a9`; current CLI proof `d0c2208d628fa0dc1e186899b45e0b73534ff9bc`; deadline hardening `a390fc5c007900c3fc8c9c49df85f9b8acc06d4a`; management Stop `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; response-loss correction `56fcae2d00baecf9b69e4650882a69e50419f56b`; source ownership `abf2513b51c8871b5bfea602e8369bd2596609ef`; proof below |
-| EON-C11 | Eon and EonTerm default to the exact current generation in separate runtime namespaces while older live generations remain discoverable, explicitly presentable when compatible, and explicitly stoppable through their supervisor; presenting an existing surface requests native presentation | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; same-boot adoption `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; native activation candidate consumes Venus `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f` |
+| EON-C11 | Eon and EonTerm default to the exact current generation in separate runtime namespaces while older live generations remain discoverable, explicitly presentable when compatible, and explicitly stoppable through their supervisor; presenting an existing surface requests native presentation | Eon | Candidate | Accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310` and attachment `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`; generated-runtime identity `4beb441301d84039570dd07138da2a6f70b3ed23`; stop owner `dbffad4018f0339bd3d35ea03579d0e09cff73bf`; startup convergence `36c95ad04cb9519f88b907642c8147d95f56ee83`; EonTerm lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; same-boot adoption `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; native activation candidate consumes Venus `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f`; pre-fork cgroup readiness candidate `cfcb38e6e711e971ed6004528987761ddd7c87e4` tracked by `eon-9i7` |
 | EON-C12 | A local user or composition can host one exact command in one native terminal surface without Eon workspace actions while Eon retains generation and lifecycle authority | Eon | Proven | Accepted product `816372ea9ffe90f08ff442b5763a3b5413b7906c`; vivid palette `285c6bf48fb402a673eb997594b6eb1bbcb1429b`; lifecycle correction `63686a12b752c9423b2096d5e32aa5842f2184fc`; one-run recovery `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; proof below |
 | EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Proven | `7303ee5cca3925939b84267bd54587a2cfb223a6`; proof below |
 | EON-C14 | Eon requests compositor-owned background blur by default whenever it creates an Eon or EonTerm Venus surface, permits an explicit configuration opt-out, and keeps opacity independent | Eon | Proven | `b41be3a00a8e47a435521509c3d060d80e0524a5`; proof below |
-| EON-C15 | On the same boot and login, Eon can recover and explicitly stop the exact Orbit runs that survived loss of their Eon supervisor, without reconstructing Session authority | Eon | Proven | Base `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; response-loss correction `56fcae2d00baecf9b69e4650882a69e50419f56b`; connection-deadline correction `a4f0122862b7293326c22530f787124a47d0f560`; response-deadline correction `ced9e4ae11ed21a0f05d50cd470491adffa73b54`; Ready-boundary base `7cbcf1d4ce8ac186dc3ceff48240f04c437709af`, correction `871c9f639e519c7e3201fa5d9755d0a77a4cb0df` |
+| EON-C15 | On the same boot and login, Eon can recover and explicitly stop the exact Orbit runs that survived loss of their Eon supervisor, without reconstructing Session authority | Eon | Candidate | Base `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; response-loss correction `56fcae2d00baecf9b69e4650882a69e50419f56b`; connection-deadline correction `a4f0122862b7293326c22530f787124a47d0f560`; response-deadline correction `ced9e4ae11ed21a0f05d50cd470491adffa73b54`; Ready-boundary base `7cbcf1d4ce8ac186dc3ceff48240f04c437709af`, correction `871c9f639e519c7e3201fa5d9755d0a77a4cb0df`; compact recovered identity candidate `cfcb38e6e711e971ed6004528987761ddd7c87e4` tracked by `eon-compact-pane-identities-yht` |
 
 ## Approved same-boot Session-recovery contract EON-C15
 
@@ -40,7 +40,7 @@ detailed execution evidence, and Git history retains superseded states.
   operation before publishing a Session or launching Venus. A replacement
   EonTerm recovers exactly one live run. A replacement full Eon acquires every
   valid live run up to the existing 256-pane limit, sorts the positive canonical
-  decimal `N` values numerically, and projects them into `tab-1` as `pane-N`,
+  decimal `N` values numerically, and projects them into `tab-1` as `pN`,
   selecting the lowest `N`; later creation starts at `tab-2` and checked
   `max(N)+1`. Prior grouping, focus, argv, and request history are not restored.
   Explicit generation stop sends canonical Stop through every acquired lease
@@ -347,9 +347,12 @@ detailed execution evidence, and Git history retains superseded states.
   Tabs form the horizontal axis; each tab contains one ordered vertical pane
   stack. Eon selects one pane in the active tab, and Venus materializes that
   selection as the only expanded accordion pane. For every visible live pane,
-  Venus observes Orbit's bounded read-only terminal title and working directory
-  and projects one bounded header and accessibility name, falling back to the
-  pane identity without exposing the mapped Session identity. New
+  Venus observes Orbit's bounded read-only working directory and projects the
+  exact `pN` identity, two ASCII spaces, then a `~/`-anchored path below home or
+  an absolute path elsewhere through one bounded header and accessibility name.
+  The exact home directory uses the packaged marker, left elision preserves the leaf, and
+  missing metadata falls back to pane identity without exposing the
+  mapped Session identity. New
   current-generation full Eon surfaces omit the redundant native title bar
   while retaining the selected terminal title for compositor semantics. When a
   Session exits, Eon removes its pane. If that empties a tab, Eon removes the
@@ -359,7 +362,8 @@ detailed execution evidence, and Git history retains superseded states.
   following sibling exists.
 - Important failures: an unknown or stale identity, invalid transition, or
   direction without a target returns a bounded explicit failure and leaves the
-  last accepted topology unchanged. An unknown or repeated Session-exit
+  last accepted topology unchanged. Exhausted numeric pane identities return a
+  capacity failure before Session start. An unknown or repeated Session-exit
   notification removes nothing. Removing or losing a view never silently stops
   or substitutes another live Orbit Session.
 - Ownership: Eon owns topology, selection, mappings, and semantic workspace
@@ -378,8 +382,9 @@ detailed execution evidence, and Git history retains superseded states.
 - Approval: topology was approved on 2026-08-08; Session-exit pruning was
   approved on 2026-08-10. Eon composition `3b8e5f884f156d3d7f7ee294fb4e1c5d8c6cb5d2`
   consumes Venus's direct navigation, creation, pane headers, and bounded refresh.
-  The user approved live title/CWD pane chrome and the undecorated full-Eon
-  default on 2026-08-23.
+  The user approved the undecorated full-Eon default and later selected exact
+  `pN` plus compact CWD pane chrome with Nova's home marker on 2026-08-23 and
+  2026-08-24 respectively.
 
 ## Approved managed-environment contract EON-C9
 
@@ -496,33 +501,40 @@ detailed execution evidence, and Git history retains superseded states.
   replacement cannot overlap cleanup while unrelated generations remain independent.
   A current-generation launch that overlaps clean exit of the last Session waits
   for the retiring supervisor, then starts one fresh Session instead of
-  reporting presentation success against the ended Session. Presenting a
-  generation with a live Venus
-  child preserves that process and its Sessions, then sends one bounded private
-  signal for Venus to request native presentation of its existing window.
+  reporting presentation success against the ended Session. Before forking a
+  new Orbit process, Eon waits within the shared five-second startup deadline
+  until its own current cgroup-v2 directory is user-owned, is not writable by
+  group or others, and contains Eon's process. The child then inherits that
+  placement and Orbit independently enforces ORB-C12 before PTY exec. This
+  ordering uses no compositor, init, or service-manager API. Presenting a live
+  Venus generation preserves that process and its Sessions, then sends one
+  bounded private signal for Venus to request native presentation of its
+  existing window.
 - Important failures: an invalid component graph, unsafe permissions, symlinks,
   invalid names, corrupt or oversized responses, unsupported EONW, identity
   mismatch, unavailable legacy lifecycle support, timeout, partial startup,
-  unavailable presentation control, or an incompatible competing launch produces
-  a bounded explanation. Wayland does not support direct focus or unminimize
+  unavailable launch cgroup, unavailable presentation control, or an
+  incompatible competing launch produces a bounded explanation. Wayland does
+  not support direct focus or unminimize
   through locked winit; a compositor may decline a native attention request.
   Failure or
   cancelled confirmation preserves every Session. Eon removes only its own dead
   control socket or an empty stopped generation directory and never kills a
   process inferred from a PID, pathname, or process tree.
 - Ownership: Eon owns generation identity, product namespace selection, discovery,
-  compatibility policy, supervisor-routed presentation and stop, and bounded
-  cleanup. Each live supervisor remains authoritative for its topology and
-  lifecycle response.
+  compatibility policy, child launch ordering, supervisor-routed presentation
+  and stop, and bounded cleanup. Each live supervisor remains authoritative for
+  its topology and lifecycle response.
   Orbit retains process, PTY, terminal-state, and Session authority. Venus is a
   transient client of one explicitly compatible Eon/Orbit endpoint pair. A
   distributor injects artifacts but does not define runtime identity or policy.
 - Boundary: the accepted slice adds no manager daemon, persisted topology,
   machine-restart recovery, PTY handoff, old-generation backport, background updater,
   Nix evaluation, package-channel identity, compatibility window, remote
-  runtime, plugin API, or automatic age/count eviction. A fixed-namespace legacy
-  supervisor may be inspected and attached through accepted EONW v1, but reports
-  generation identity and stop as unavailable.
+  runtime, plugin API, service-manager requirement, or automatic age/count
+  eviction. A fixed-namespace legacy supervisor may be inspected and attached
+  through accepted EONW v1, but reports generation identity and stop as
+  unavailable.
 - Checks: protocol round trips; deterministic identity, discovery, selection,
   listener acquisition, validation, and cleanup tests; concurrent process and
   A-to-B upgrade tests; locked Rust and Nix checks; and live profile-upgrade
@@ -590,11 +602,54 @@ detailed execution evidence, and Git history retains superseded states.
   disposable processes. Published profile artifact
   `/nix/store/36j1bp4q0iin50asxi1pxrr2yai6mg3j-eon-0.1.0`, NAR hash
   `sha256-p5LLjeoulX6XXZrKib2OwC8nxHMbm2jlS5wHWtdWwf8=`, installs the validated
-  `Open Eon` desktop action and remains active. After the obsolete user-local
+  `Open Eon` desktop action and was active for that proof. After the obsolete user-local
   override was moved to Trash and only COSMIC's launcher surfaces were
   refreshed, installed queries for `eon` and `on` returned that action; the
   user accepted the result. All 20 recorded live Eon, EonTerm, Eonova, Orbit,
   and Venus process start identities were preserved.
+
+- Compact pane-identity candidate `eon-compact-pane-identities-yht` on x86_64
+  Linux: schema 3 graph `components/eon-alpha-v3.json`, SHA-256
+  `5c0266b1386968716e7aab9fe4a89eafb5c2b93112ce2412a3f21cd0e6d8fad3`,
+  keeps Orbit `0ca0cc93b83793d08eadcca7eac6e947a80ce25d` and selects Venus source
+  `5f548f41055fee3b0826e607787d302359ed9f84`. Eon allocates `pN` for new
+  and recovered panes; Venus's one header/accessibility projection renders the
+  identity beside only the final CWD component, or U+F015 for the exact home
+  directory, while terminal title remains a selected-window compositor
+  semantic. Focused red/green identity, metadata, and accessibility checks;
+  complete locked Rust, warnings-denied Clippy, manifest, and child suites; and
+  the exact path-flake check pass. The profile artifact for that candidate was
+  `/nix/store/c00kgx140y0p9xpx8a1k6zbjvpbyif44-eon-0.1.0`, generation
+  `g1-e57bd19b1a9d8bbe31ba502ab533a919`, NAR hash
+  `sha256-E4aQNTZRsi3x5cXoXwsda9Aeo8B2P5KYYEKxijO0OEE=`, NAR size 2,186,160
+  bytes, and closure size 1,823,432,640 bytes. An isolated native Wayland run
+  reported selected pane `p1` through installed EONW and stopped cleanly; its
+  window was not captured on the active workspace, so direct user-visible
+  header acceptance remains pending. The profile refresh restarted no Session.
+  Phase: mechanically verified and installed.
+
+- Eon source `cfcb38e6e711e971ed6004528987761ddd7c87e4` proves the two-space
+  home-relative pane-label correction on x86_64 Linux: schema 3 graph SHA-256 `0bd0ddf3c2c88b4946fe95769d6be7184e77a353b6bfab88075f02f36516c163`
+  selects exact Venus source `ee3defea55c77f7acc4559606965d93d39bba8b5`.
+  The shared header and AccessKit name use U+F015 at exact home, a `~/`-anchored
+  lexical path below home, and an absolute path elsewhere, with exactly two
+  ASCII spaces after the pane identity. Unset or empty `HOME` leaves absolute
+  paths absolute. The existing 80-character field bound, left elision, leaf,
+  and control-byte replacement remain unchanged. Full child checks pass 61
+  library, 28 host, and 14 canonical integration tests with warnings denied.
+  The pane-identity exhaustion regression failed by overflowing after Session
+  start, then passed with one shared pre-start capacity guard. All 23 Eon unit
+  and 19 process tests, check, warnings-denied Clippy, and exact Eon/EonTerm
+  package builds pass. The active profile resolves to
+  `/nix/store/0yaqadjcgz65g4ky7js069hf8clpbbiv-eon-0.1.0`, generation
+  `g1-0b001bdaf92fb1876ac7d0fff40d18d0`, NAR hash
+  `sha256-N7c95t722memgSvuHK/qbqnThvqTOKBxrKLBQSiaKyQ=`, NAR size 2,186,168
+  bytes, and closure size 1,823,432,264 bytes. It reports exact Orbit
+  `0ca0cc93b83793d08eadcca7eac6e947a80ce25d` and exact Venus
+  `ee3defea55c77f7acc4559606965d93d39bba8b5`. All 31 observed Eon, EonTerm,
+  and Orbit process identities retained their PIDs and start times through
+  refresh. Phase: mechanically verified and installed; native visual acceptance
+  remains pending.
 
 - Accepted post-audit child refresh proof `de7d0e41cf17f7111d5cdd9c3b41f1c07a2dbeab`
   on x86_64 Linux: schema 3 graph `components/eon-alpha-v3.json`, SHA-256
@@ -1009,8 +1064,9 @@ detailed execution evidence, and Git history retains superseded states.
 ## Current gaps
 
 - EON-C5 through EON-C7 remain planned. The accepted artifact is a Nix-only
-  x86_64 Linux Wayland alpha; direct bundles and removal of the inherited
-  unsupported backend features are unproved.
+  x86_64 Linux Wayland alpha proved on COSMIC with systemd; non-systemd native
+  Wayland, direct bundles, and removal of the inherited unsupported backend
+  features are unproved.
 - Packaged graphics are proved on Intel Mesa. Proprietary NVIDIA remains
   unproved. The packaged font set supplies Symbols Nerd Font Mono for Yazi's
   supported private-use icons; unsupported emoji and symbols may still render

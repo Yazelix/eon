@@ -18,7 +18,10 @@ Session and contains no managed shell or tool bundle. Both expose lifecycle
 control through EONW v1, isolate live runtime generations, and consume the same
 component identities. Direct bundles, Home Manager, background updates, and
 release automation remain outside this slice. X11, Xwayland, and macOS are
-unsupported.
+unsupported. The accepted runtime proof uses COSMIC with systemd. Eon targets
+native Wayland without requiring a specific init or service manager, but
+non-systemd use remains unproved. Orbit's accepted Linux lifecycle still
+requires a user-owned writable cgroup-v2 parent with `cgroup.kill`.
 
 ## Naming model
 
@@ -66,7 +69,8 @@ on its own architecture and keeps value independent of Eon's progress.
 - Nix provides the sole alpha and early-dogfood installation path.
 - Eon runtime code remains independent of Nix concepts and evaluation.
 - Direct bundles wait for sustained dogfood and an explicit graduation decision.
-- Linux on native Wayland is the sole supported platform.
+- Linux on native Wayland is the sole platform target, without a required init
+  or service manager.
 - Eon owns product policy and avoids copying child behavior.
 
 ## Implementation language
@@ -116,7 +120,10 @@ rejected Ready identities are stopped only through that management owner.
 Concurrent starts converge on one supervisor and one complete Session set;
 every attach-capable peer presents that owner. If a launch overlaps clean exit
 of the last Session, it waits for the retiring owner and starts one fresh
-Session. Its Nix closure
+Session. Before starting a new Orbit process, Eon waits within the existing
+startup deadline until its current cgroup is safe for Orbit to inherit. This
+uses no compositor, init, or service-manager API; Orbit still validates and
+owns Session containment. Its Nix closure
 supplies Mesa's open-source Vulkan drivers; the current graphics proof uses
 Intel hardware, while proprietary NVIDIA remains unproved. Run Eon from a
 terminal when you need foreground lifecycle control.
@@ -170,18 +177,22 @@ receive a bounded structured failure. Additive EONW lifecycle actions report a
 supervisor's generation, component graph, live Sessions, idempotent presentation,
 and stop result through a separate result type that Eon Desktop never receives.
 Eon Desktop consumes the workspace result and shows every fitting pane header
-around one selected live Session. Each visible live pane header carries its
-bounded terminal-authored title and working directory, with the pane identity
-as an honest fallback. New current-generation full Eon windows omit the
-redundant native title bar; EonTerm and legacy Eon attachment keep native
-decorations. Alt+H/L traverses tabs, Alt+K/J traverses panes, Alt+M creates a
+around one selected live Session. New generations identify panes as `p1`, `p2`,
+and so on. Each visible live header shows that exact identity, two spaces, then
+a `~/`-anchored path below home, an absolute path elsewhere, or Nova's marker
+for the exact home directory. Unset or empty `HOME` leaves paths absolute.
+Overlong labels preserve their rightmost components.
+New current-generation full Eon windows omit the redundant native title bar;
+the selected terminal retains compositor title semantics, while EonTerm and
+legacy Eon attachment keep native decorations. Alt+H/L traverses tabs,
+Alt+K/J traverses panes, Alt+M creates a
 pane, and Ctrl+T creates a tab. External workspace changes appear within one
 second because Eon Desktop re-inspects EONW v1 every 250 ms; the protocol adds
 no event stream. When a shell exits, Eon removes its pane, selects the nearest
 surviving pane, removes an empty tab, and closes when the final pane exits.
 
 Workspace topology is live-only. After same-boot supervisor loss, full Eon
-projects surviving canonical `session-N` runs into one `tab-1` as `pane-N` in
+projects surviving canonical `session-N` runs into one `tab-1` as `pN` in
 numeric order and selects the lowest number; it does not reconstruct prior tabs,
 focus, commands, or history. The exact Orbit processes, PTY children, and
 terminal state remain Orbit-owned and unchanged.
@@ -381,16 +392,16 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy | 250 |
-| README | 396 |
+| Agent policy | 257 |
+| README | 407 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,190 |
-| Distribution and references | 233 |
-| Changelog | 146 |
-| Rust source and tests | 8,469 |
+| Architecture and contracts | 1,246 |
+| Distribution and references | 243 |
+| Changelog | 152 |
+| Rust source and tests | 8,571 |
 | Cargo manifests | 37 |
 | Component manifest | 326 |
 | Nix composition | 728 |
 | Product defaults | 0 |
-| **Total** | **11,979** |
+| **Total** | **12,171** |

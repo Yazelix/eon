@@ -11,6 +11,12 @@ x86_64-only; another Linux architecture needs its own scope and proof. X11,
 Xwayland, and macOS are unsupported and create no release or compatibility
 work.
 
+No channel requires systemd or another specific init or service manager. The
+accepted runtime proof uses COSMIC with systemd, so non-systemd native Wayland
+remains unproved. This target preserves child-owned kernel requirements:
+Orbit's accepted Linux lifecycle requires a user-owned writable cgroup-v2
+parent with `cgroup.kill`.
+
 Direct installation remains the long-term adoption path. It begins after Nix
 dogfood proves a useful product and the user approves distribution graduation.
 Every channel consumes the same component graph and preserves runtime semantics.
@@ -149,6 +155,10 @@ An alpha candidate should prove:
 - normal runtime use invokes no Nix evaluator;
 - product state uses stable component identity instead of persisted store paths;
 - Eon runs in a clean Nix-enabled native Wayland environment.
+
+EON-C7 remains planned until an installed candidate also runs in a clean
+non-systemd native Wayland environment that provides its documented kernel
+capabilities.
 
 A direct release candidate should also prove:
 

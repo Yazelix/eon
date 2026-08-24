@@ -5,14 +5,20 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Wait for Eon's current delegated cgroup before forking a new Orbit process,
+  preventing asynchronous desktop-launch placement from leaving Orbit in the
+  inherited login cgroup without requiring a compositor or service-manager API.
 - Make an attach-capable launch that overlaps clean exit of the last Session
   wait for the retiring supervisor and start one fresh Session instead of
   reporting a successful presentation against the ended Session.
-- Name the installed launcher action `Open Eon`, show live terminal title and
-  working directory in every visible pane header, and omit the redundant native
-  title bar from new full-Eon windows. The action invokes its exact packaged
-  executable without depending on the desktop session's `PATH`; EonTerm remains
-  decorated by default.
+- Name the installed launcher action `Open Eon`, identify panes as `p1`, `p2`,
+  and so on, and show that identity, two spaces, then a `~/`-anchored path below
+  home, an absolute path elsewhere, or Nova's exact-home marker. Unset or empty
+  `HOME` leaves paths absolute. Exhausted numeric pane identities fail before
+  starting another Session. New full-Eon windows omit the redundant native
+  title bar while the selected terminal keeps compositor title semantics.
+  The action invokes its exact packaged executable without depending on the
+  desktop session's `PATH`; EonTerm remains decorated by default.
 - Encode Kitty Space releases in Orbit and remove Venus's duplicate-input
   workaround, so new Eon launches deliver one space per physical press.
 - Serialize Session startup with Orbit's exact retained Ready claim. Only an
