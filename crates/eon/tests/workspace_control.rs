@@ -451,12 +451,18 @@ fn wait_for_successful_exit(child: &mut Child) {
 }
 
 fn invoke(binary: &Path, runtime: &Path, config: &Path, arguments: &[&str]) -> Output {
-    Command::new(binary)
+    eon_command(binary)
         .args(arguments)
         .env("EON_RUNTIME_DIR", runtime)
         .env("EON_CONFIG_HOME", config)
         .output()
         .unwrap()
+}
+
+fn eon_command(binary: &Path) -> Command {
+    let mut command = Command::new(binary);
+    command.env("EON_TEST_MANAGED_ORBIT", "1");
+    command
 }
 
 fn stdout(output: &Output) -> &str {
@@ -467,7 +473,7 @@ fn stdout(output: &Output) -> &str {
 fn closed_stdout_pipe_is_not_a_panic() {
     let (reader, writer) = std::io::pipe().unwrap();
     drop(reader);
-    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+    let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
         .arg("versions")
         .stdout(writer)
         .stderr(Stdio::piped())
@@ -487,7 +493,7 @@ fn closed_stdout_pipe_is_not_a_panic() {
 fn relative_configuration_root_is_resolved_once() {
     let root = temporary_directory();
     let config = root.join("config");
-    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+    let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
         .arg("config-path")
         .current_dir(&root)
         .env("EON_CONFIG_HOME", "config")
@@ -581,7 +587,7 @@ fn invalid_terminal_configuration_precedes_supervisor_generation_and_children() 
         ("[terminal]\nbackground_blur = \"yes\"\n", "background_blur"),
     ] {
         fs::write(config.join("config.toml"), source).unwrap();
-        let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+        let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
             .arg("run")
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
@@ -616,7 +622,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     );
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    let child = Command::new(&binary)
+    let child = eon_command(&binary)
         .arg("run")
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
@@ -637,7 +643,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     wait_for(&control);
     wait_for(&log);
 
-    let output = Command::new(&binary)
+    let output = eon_command(&binary)
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
         .env("EON_ORBIT", &orbit)
@@ -650,7 +656,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert!(output.status.success());
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     overfill_generation_directory(&runtime);
-    let exact = Command::new(&binary)
+    let exact = eon_command(&binary)
         .args(["attach", generation_id])
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
@@ -712,7 +718,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     fs::create_dir(root.join("bin")).unwrap();
     symlink(&eon, &binary).unwrap();
     let eonterm = |configuration: &Path| {
-        let mut process = Command::new(&binary);
+        let mut process = eon_command(&binary);
         process
             .env_remove("EON_RUNTIME_DIR")
             .env("XDG_RUNTIME_DIR", &root)
@@ -749,7 +755,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
         .next()
         .unwrap()
         .to_string();
-    let listed = Command::new(&binary)
+    let listed = eon_command(&binary)
         .args(["generations", "--json"])
         .env_remove("EON_RUNTIME_DIR")
         .env("XDG_RUNTIME_DIR", &root)
@@ -895,7 +901,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     );
     assert!(!removed.status.success());
     assert!(String::from_utf8_lossy(&removed.stderr).contains("usage: eon "));
-    let unknown = Command::new(&binary)
+    let unknown = eon_command(&binary)
         .args(["stop", "g1-00000000000000000000000000000000", "--json"])
         .env_remove("EON_RUNTIME_DIR")
         .env("XDG_RUNTIME_DIR", &root)
@@ -925,7 +931,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     executable(&venus, "#!/bin/sh\nexit 0\n");
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    let child = Command::new(&binary)
+    let child = eon_command(&binary)
         .arg("run")
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
@@ -963,7 +969,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
             .success()
     );
     for arguments in [
-        &["focus", "pane-1", "--json"][..],
+        &["focus", "p1", "--json"][..],
         &["focus", "down", "--json"][..],
         &["focus", "right", "--json"][..],
         &["focus", "left", "--json"][..],
@@ -1011,7 +1017,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     let snapshot = stdout(&snapshot);
     assert!(snapshot.contains("\"active_tab\":\"tab-1\""));
     assert!(snapshot.contains("\"id\":\"tab-2\""));
-    assert!(snapshot.contains("\"id\":\"pane-3\""));
+    assert!(snapshot.contains("\"id\":\"p3\""));
     assert_eq!(snapshot.matches("\"session\":").count(), 3);
 
     for endpoint in ["orbit.sock", "session-2.sock", "session-3.sock"] {
@@ -1045,7 +1051,7 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
     );
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    let child = Command::new(&binary)
+    let child = eon_command(&binary)
         .arg("run")
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
@@ -1079,8 +1085,8 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
     loop {
         let snapshot = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
         if snapshot.status.success()
-            && !stdout(&snapshot).contains("pane-1")
-            && stdout(&snapshot).contains("pane-2")
+            && !stdout(&snapshot).contains("\"id\":\"p1\"")
+            && stdout(&snapshot).contains("\"id\":\"p2\"")
         {
             break;
         }
@@ -1116,7 +1122,7 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
     );
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    let child = Command::new(&binary)
+    let child = eon_command(&binary)
         .args(["run", "--"])
         .arg(&command)
         .env("EON_RUNTIME_DIR", &runtime)
@@ -1172,7 +1178,7 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
         thread::sleep(Duration::from_millis(10));
     }
 
-    let second = Command::new(&binary)
+    let second = eon_command(&binary)
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
         .env("EON_ORBIT", &orbit)
@@ -1242,7 +1248,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     let launch = || {
-        Command::new(&binary)
+        eon_command(&binary)
             .arg("run")
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
@@ -1285,7 +1291,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
 
     let first_record = artifact_path(&generation.join("orbit.sock"), ".record");
     let replacement_attempt = || {
-        Command::new(&binary)
+        eon_command(&binary)
             .arg("run")
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
@@ -1323,10 +1329,10 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert!(recovered.status.success(), "{}", stdout(&recovered));
     let recovered = stdout(&recovered);
     assert!(recovered.contains("\"active_tab\":\"tab-1\""));
-    assert!(recovered.contains("\"selected_pane\":\"pane-1\""));
+    assert!(recovered.contains("\"selected_pane\":\"p1\""));
     assert_eq!(recovered.matches("\"session\":").count(), 2);
-    assert!(recovered.contains("\"id\":\"pane-1\""));
-    assert!(recovered.contains("\"id\":\"pane-2\""));
+    assert!(recovered.contains("\"id\":\"p1\""));
+    assert!(recovered.contains("\"id\":\"p2\""));
     assert_eq!(
         [
             live_identity(&generation.join("orbit.sock")),
@@ -1338,7 +1344,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
 
     let created = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
     assert!(created.status.success(), "{}", stdout(&created));
-    assert!(stdout(&created).contains("\"id\":\"pane-3\""));
+    assert!(stdout(&created).contains("\"id\":\"p3\""));
     assert!(stdout(&created).contains("\"session\":\"session-3\""));
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 3);
 
@@ -1365,7 +1371,7 @@ fn desktop_launch_failure_stops_the_ready_session_through_management() {
     let orbit = root.join("orbit");
     managed_orbit_executable(&orbit);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+    let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
         .arg("run")
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
@@ -1411,7 +1417,7 @@ fn rejected_ready_identity_stops_the_spawned_session_through_management() {
         let orbit = root.join("orbit");
         managed_orbit_executable(&orbit);
 
-        let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+        let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
             .arg("run")
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
@@ -1442,7 +1448,7 @@ fn rejected_ready_identity_stops_the_spawned_session_through_management() {
             generation[0].display()
         );
 
-        let retry = Command::new(env!("CARGO_BIN_EXE_eon"))
+        let retry = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
             .arg("run")
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
@@ -1474,7 +1480,7 @@ fn marked_ready_claim_never_falls_back_to_child_stop() {
     let orbit = root.join("orbit");
     managed_orbit_executable(&orbit);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_eon"))
+    let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
         .arg("run")
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
@@ -1519,7 +1525,7 @@ fn lost_stop_response_still_finishes_the_supervisor() {
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     let mut supervisor = TestProcess {
-        child: Command::new(&binary)
+        child: eon_command(&binary)
             .arg("run")
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
@@ -1570,7 +1576,7 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     let launch = |stop: &Path| {
-        Command::new(&binary)
+        eon_command(&binary)
             .arg("run")
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
@@ -1592,7 +1598,7 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
     wait_for(&control);
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
 
-    let mut confirmation = Command::new(&binary)
+    let mut confirmation = eon_command(&binary)
         .args(["stop", generation_id])
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
@@ -1675,7 +1681,7 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     let launch = || {
-        Command::new(&binary)
+        eon_command(&binary)
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
             .env("EON_ORBIT", &orbit)
@@ -1805,7 +1811,7 @@ fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
     assert!(stdout(&listed).contains("\"id\":\"legacy\",\"kind\":\"legacy\",\"state\":\"live\""));
     assert!(stdout(&listed).contains("legacy supervisor has no authoritative stop action"));
 
-    let attached = Command::new(&binary)
+    let attached = eon_command(&binary)
         .args(["attach", "legacy"])
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)

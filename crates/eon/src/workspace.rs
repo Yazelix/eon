@@ -161,7 +161,7 @@ impl Workspace {
                 panes: sessions
                     .into_iter()
                     .map(|(number, session)| Pane {
-                        id: format!("pane-{number}"),
+                        id: format!("p{number}"),
                         session,
                     })
                     .collect(),
@@ -346,6 +346,12 @@ impl Workspace {
     }
 
     fn check_pane_capacity(&self) -> Result<(), Failure> {
+        if self.next_pane == usize::MAX {
+            return Err(action_error(
+                "capacity",
+                "workspace has exhausted pane identities",
+            ));
+        }
         if self.pane_count() >= MAX_PANES {
             return Err(action_error(
                 "capacity",
@@ -362,7 +368,7 @@ impl Workspace {
 
     fn next_pane(&self) -> Pane {
         let next = self.next_pane;
-        let pane_id = format!("pane-{next}");
+        let pane_id = format!("p{next}");
         let session_id = format!("session-{next}");
         let endpoint = self.runtime.join(format!("{session_id}.sock"));
         Pane {
@@ -456,21 +462,15 @@ mod tests {
         assert_eq!(workspace.tabs.len(), 2);
         assert_eq!(workspace.tabs[workspace.active].id, "tab-2");
         assert_eq!(workspace.tabs[0].id, "tab-1");
-        assert_eq!(
-            workspace.tabs[0].panes[workspace.tabs[0].selected].id,
-            "pane-2"
-        );
+        assert_eq!(workspace.tabs[0].panes[workspace.tabs[0].selected].id, "p2");
         assert_eq!(workspace.tabs[1].id, "tab-2");
-        assert_eq!(
-            workspace.tabs[1].panes[workspace.tabs[1].selected].id,
-            "pane-3"
-        );
+        assert_eq!(workspace.tabs[1].panes[workspace.tabs[1].selected].id, "p3");
         let mut projection = workspace.snapshot();
         projection.tabs[0].panes[0].endpoint = b"/runtime/\x1b[2J\n.sock".to_vec();
         assert!(human(&projection).contains("endpoint=/runtime/\\u{1b}[2J\\n.sock\n"));
 
         workspace
-            .dispatch("request-3", Action::FocusId("pane-1".into()), &mut start)
+            .dispatch("request-3", Action::FocusId("p1".into()), &mut start)
             .unwrap();
         workspace
             .dispatch("request-4", Action::Focus(Direction::Down), &mut start)
@@ -484,17 +484,14 @@ mod tests {
         workspace
             .dispatch("request-7", Action::Focus(Direction::Up), &mut start)
             .unwrap();
-        assert_eq!(
-            workspace.tabs[0].panes[workspace.tabs[0].selected].id,
-            "pane-1"
-        );
+        assert_eq!(workspace.tabs[0].panes[workspace.tabs[0].selected].id, "p1");
 
         for (request, action, code) in [
             ("request-8", Action::Focus(Direction::Up), "unavailable"),
             ("request-9", Action::Focus(Direction::Left), "unavailable"),
             (
                 "request-10",
-                Action::FocusId("pane-1".into()),
+                Action::FocusId("p1".into()),
                 "already-focused",
             ),
             (
@@ -547,19 +544,19 @@ mod tests {
             .dispatch("request-2", Action::CreatePane, &mut start)
             .unwrap();
         workspace
-            .dispatch("request-3", Action::FocusId("pane-2".into()), &mut start)
+            .dispatch("request-3", Action::FocusId("p2".into()), &mut start)
             .unwrap();
         workspace.session_exited("session-2").unwrap();
 
         let snapshot = workspace.snapshot();
-        assert_eq!(snapshot.tabs[0].selected_pane, "pane-3");
+        assert_eq!(snapshot.tabs[0].selected_pane, "p3");
         assert_eq!(
             snapshot.tabs[0]
                 .panes
                 .iter()
                 .map(|pane| pane.id.as_str())
                 .collect::<Vec<_>>(),
-            ["pane-1", "pane-3"]
+            ["p1", "p3"]
         );
 
         workspace
@@ -569,7 +566,7 @@ mod tests {
             .dispatch("request-5", Action::CreatePane, &mut start)
             .unwrap();
         workspace.session_exited("session-5").unwrap();
-        assert_eq!(workspace.snapshot().tabs[1].selected_pane, "pane-4");
+        assert_eq!(workspace.snapshot().tabs[1].selected_pane, "p4");
         workspace.session_exited("session-4").unwrap();
         assert_eq!(workspace.snapshot().active_tab, "tab-1");
 
@@ -585,7 +582,7 @@ mod tests {
             .unwrap();
         let snapshot = workspace.snapshot();
         assert_eq!(snapshot.active_tab, "tab-3");
-        assert_eq!(snapshot.tabs[1].panes[0].id, "pane-6");
+        assert_eq!(snapshot.tabs[1].panes[0].id, "p6");
     }
 
     #[test]
@@ -611,14 +608,14 @@ mod tests {
 
         let snapshot = workspace.snapshot();
         assert_eq!(snapshot.active_tab, "tab-1");
-        assert_eq!(snapshot.tabs[0].selected_pane, "pane-2");
+        assert_eq!(snapshot.tabs[0].selected_pane, "p2");
         assert_eq!(
             snapshot.tabs[0]
                 .panes
                 .iter()
                 .map(|pane| (pane.id.as_str(), pane.session.as_str()))
                 .collect::<Vec<_>>(),
-            [("pane-2", "session-2"), ("pane-9", "session-9")]
+            [("p2", "session-2"), ("p9", "session-9")]
         );
 
         workspace
@@ -628,9 +625,9 @@ mod tests {
             .dispatch("request-2", Action::CreateTab, |_| Ok(()))
             .unwrap();
         let snapshot = workspace.snapshot();
-        assert_eq!(snapshot.tabs[0].panes[2].id, "pane-10");
+        assert_eq!(snapshot.tabs[0].panes[2].id, "p10");
         assert_eq!(snapshot.tabs[1].id, "tab-2");
-        assert_eq!(snapshot.tabs[1].panes[0].id, "pane-11");
+        assert_eq!(snapshot.tabs[1].panes[0].id, "p11");
 
         assert!(
             Workspace::with_recovered_sessions(
@@ -645,6 +642,24 @@ mod tests {
             )
             .is_err()
         );
+
+        let mut exhausted = Workspace::with_recovered_sessions(
+            "/runtime".into(),
+            vec![(
+                usize::MAX - 1,
+                Session {
+                    id: format!("session-{}", usize::MAX - 1),
+                    endpoint: "/runtime/exhausted.sock".into(),
+                },
+            )],
+        )
+        .unwrap();
+        let failure = exhausted
+            .dispatch("request-1", Action::CreatePane, |_| {
+                unreachable!("capacity check must prevent Session start")
+            })
+            .unwrap_err();
+        assert_eq!(failure.code, "capacity");
     }
 
     #[test]
