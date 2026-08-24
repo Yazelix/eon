@@ -8,6 +8,8 @@ installation, and proven contract changes.
 - Give full Eon, standalone EonTerm, and approved EonTerm compositions distinct
   native Wayland application identities without changing terminal titles or
   child process state.
+- Let the next launch replace exact owned Session records and sockets after
+  both their Eon supervisor and recorded Orbit process have died unexpectedly.
 - Wait for Eon's current delegated cgroup before forking a new Orbit process,
   preventing asynchronous desktop-launch placement from leaving Orbit in the
   inherited login cgroup without requiring a compositor or service-manager API.

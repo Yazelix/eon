@@ -89,8 +89,9 @@ detailed execution evidence, and Git history retains superseded states.
   claim, and Eon-owned residue. Orbit `ORB-C13` owns Ready marking and
   publication, the canonical management values, live identity, sole lease, PTY
   and terminal state, wait outcome, `ORB-C12` cleanup, tombstone, and exact
-  endpoint cleanup. Venus remains a transient ORBS v5 client and exits when its
-  accepted Eon-owned presentation-control stream ends.
+  endpoint cleanup while it is alive. Eon cleans exact residue only after that
+  recorded process is absent or dead. Venus remains a transient ORBS v5 client
+  and exits when its accepted Eon-owned presentation-control stream ends.
 - Boundary: recovery is one exact same-boot, same-login adoption. Tombstones
   grant no authority and must be reconciled and safely removed before their
   workspace slot can be reused. The contract adds no durable launch intent,
@@ -522,8 +523,11 @@ detailed execution evidence, and Git history retains superseded states.
   replacement cannot overlap cleanup while unrelated generations remain independent.
   A current-generation launch that overlaps clean exit of the last Session waits
   for the retiring supervisor, then starts one fresh Session instead of
-  reporting presentation success against the ended Session. Before forking a
-  new Orbit process, Eon waits within the shared five-second startup deadline
+  reporting presentation success against the ended Session. If a valid current
+  Live record names an exact Orbit process that is absent or dead, Eon removes
+  only that record's exact owned endpoints and record before starting a fresh
+  Session. Before forking a new Orbit process, Eon waits within the shared
+  five-second startup deadline
   until its own current cgroup-v2 directory is user-owned, is not writable by
   group or others, and contains Eon's process. The child then inherits that
   placement and Orbit independently enforces ORB-C12 before PTY exec. This
@@ -540,7 +544,8 @@ detailed execution evidence, and Git history retains superseded states.
   through locked winit; a compositor may decline a native attention request.
   Failure or
   cancelled confirmation preserves every Session. Eon removes only its own dead
-  control socket or an empty stopped generation directory and never kills a
+  control socket, an empty stopped generation directory, or exact owned Session
+  residue whose recorded process identity is absent or dead. It never kills a
   process inferred from a PID, pathname, or process tree.
 - Ownership: Eon owns generation identity, product namespace selection, discovery,
   compatibility policy, child launch ordering, supervisor-routed presentation

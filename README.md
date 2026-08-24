@@ -153,7 +153,9 @@ eonterm --application-id eonova -- COMMAND...
 This mode hosts exactly one Orbit Session, gives Venus only the Orbit endpoint,
 and keeps Eon's generation, presentation, stop, child-exit, and cleanup lifecycle.
 After same-boot supervisor loss, a replacement EonTerm adopts that exact live
-Session rather than launching another one.
+Session rather than launching another one. If both the supervisor and recorded
+Orbit process die unexpectedly, the next launch removes only their exact owned
+runtime residue and starts a fresh Session.
 EonTerm uses native window decorations unless `--no-decorations` is selected.
 It supplies the distinct native application identity `eonterm`; an approved
 composition may select one bounded desktop identity with `--application-id`.
@@ -397,15 +399,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 257 |
-| README | 411 |
+| README | 413 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,279 |
+| Architecture and contracts | 1,284 |
 | Distribution and references | 243 |
-| Changelog | 155 |
-| Rust source and tests | 8,659 |
+| Changelog | 157 |
+| Rust source and tests | 8,782 |
 | Cargo manifests | 37 |
 | Component manifest | 327 |
 | Nix composition | 728 |
 | Product defaults | 0 |
-| **Total** | **12,300** |
+| **Total** | **12,432** |

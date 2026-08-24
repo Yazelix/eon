@@ -540,6 +540,60 @@ fn cleanup_record(path: &Path, expected: ObjectIdentity) -> Result<(), String> {
     })
 }
 
+fn recorded_process_is_dead(identity: &LiveIdentity) -> Result<bool, String> {
+    let stat = match fs::read_to_string(format!("/proc/{}/stat", identity.process_id)) {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+        Err(error) => {
+            return Err(format!(
+                "cannot validate Sessions process identity: {error}"
+            ));
+        }
+    };
+    let mut fields = stat
+        .rsplit_once(')')
+        .map(|(_, fields)| fields.split_whitespace())
+        .ok_or("invalid Sessions process identity")?;
+    let state = fields.next().ok_or("invalid Sessions process identity")?;
+    let start = fields
+        .nth(18)
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or("invalid Sessions process identity")?;
+    if start != identity.process_start {
+        return Err("Sessions process start differs from its Ready identity".into());
+    }
+    Ok(matches!(state, "Z" | "X"))
+}
+
+fn remove_dead_endpoint(path: &Path, expected: &EndpointIdentity) -> Result<(), String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "cannot inspect dead Sessions endpoint {}: {error}",
+                path.display()
+            ));
+        }
+    };
+    if !metadata.file_type().is_socket()
+        || metadata.uid() != effective_uid()
+        || metadata.mode() & 0o7777 != 0o600
+        || object_identity(&metadata) != expected.object
+    {
+        return Err(format!(
+            "dead Sessions endpoint {} changed before cleanup",
+            path.display()
+        ));
+    }
+    fs::remove_file(path).map_err(|error| {
+        format!(
+            "cannot remove dead Sessions endpoint {}: {error}",
+            path.display()
+        )
+    })
+}
+
 pub(super) fn recover_sessions(
     runtime: &Path,
     mode: LaunchMode,
@@ -613,13 +667,23 @@ pub(super) fn recover_sessions(
             }
         };
         let (number, endpoint) =
-            validate_management_identity(&identity, component_generation, None, true)?;
+            validate_management_identity(&identity, component_generation, None, false)?;
         if artifact_path(&endpoint, ".record") != record_path {
             return Err(format!(
                 "Sessions record {} has the wrong presentation identity",
                 record_path.display()
             ));
         }
+        if recorded_process_is_dead(&identity)? {
+            remove_dead_endpoint(&endpoint, &identity.presentation)?;
+            remove_dead_endpoint(
+                Path::new(OsStr::from_bytes(&identity.management.path)),
+                &identity.management,
+            )?;
+            cleanup_record(&record_path, snapshot.object)?;
+            continue;
+        }
+        validate_management_identity(&identity, component_generation, None, true)?;
         if !numbers.insert(number) {
             return Err(format!("duplicate live Sessions identity session-{number}"));
         }

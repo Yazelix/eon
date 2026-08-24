@@ -929,6 +929,65 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
 }
 
 #[test]
+fn eonterm_replaces_exact_residue_after_its_supervisor_and_session_die() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let first_stop = root.join("first-stop");
+    let second_stop = root.join("second-stop");
+    let orbit_log = root.join("orbit.log");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
+
+    let eon = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let binary = root.join("eonterm");
+    symlink(&eon, &binary).unwrap();
+    let launch = |stop: &Path| {
+        eon_command(&binary)
+            .args(["--application-id", "eonova", "--", "/bin/false"])
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", stop)
+            .env("EON_TEST_ORBIT_LOG", &orbit_log)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+
+    let mut first = launch(&first_stop);
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    let orbit_socket = generation.join("orbit.sock");
+    wait_for_connection(&control);
+    let orbit_pid = live_identity(&orbit_socket).process_id as i32;
+    first.kill().unwrap();
+    first.wait().unwrap();
+    // SAFETY: the test owns this exact process identity.
+    assert_eq!(unsafe { libc::kill(orbit_pid, libc::SIGKILL) }, 0);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Path::new("/proc").join(orbit_pid.to_string()).exists() {
+        assert!(Instant::now() < deadline, "dead Session was not reaped");
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(artifact_path(&orbit_socket, ".record").exists());
+
+    let mut second = launch(&second_stop);
+    wait_for_connection(&control);
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 2);
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    let stopped = invoke(&eon, &runtime, &config, &["stop", generation_id, "--json"]);
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    wait_for_successful_exit(&mut second);
+    assert!(!generation.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
