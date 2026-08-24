@@ -502,8 +502,8 @@ and remaining limitations. Owning Beads and Git retain execution history;
   mapping only.
 - **Consumes:** Venus `VEN-C17` at
   `ab24961bd6b2f9403736e52ebbac8cc266488a41`.
-- **Boundary:** Immutable launch metadata only; no branding provider, mutable
-  identity, desktop discovery, child inspection, or wider platform promise.
+- **Boundary:** Immutable launch metadata only; no runtime protocol, branding
+  provider, desktop discovery, child inspection, or wider platform promise.
 - **Proof:** `6a3236bb342c535aca16acdf563ff66386e8f6e5`
   - **Environment:** x86_64 Linux COSMIC Wayland with installed Eonova
   - **Evidence:** CLI validation, exact Venus argv mapping, distinct Eon/Eonova
@@ -511,9 +511,12 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 ## Rules
 
-- Each contract uses one `## EON-CN — Name` heading and the semantic fields
+- Each contract uses one `## EON-CN — Name` heading and the required fields
   `Status`, `Consumer`, `Trigger`, `Result`, `Important failures`, `Owner`,
-  `Boundary`, and `Proof`; use nested bullets instead of prose table cells.
+  `Boundary`, and `Proof`.
+- Add optional `Consumes` and `Open proof` fields when applicable; nest
+  `Environment` and `Evidence` under `Proof`, and use nested bullets instead of
+  prose table cells.
 - Contract IDs are stable and repository-qualified. Never renumber or reuse an
   ID; mark an explicitly removed contract retired.
 - Only current user-visible behavior, correctness boundaries, ownership
