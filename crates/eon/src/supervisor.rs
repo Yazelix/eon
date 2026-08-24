@@ -145,6 +145,7 @@ pub(super) fn launch_current(
     child: &[OsString],
     attach_existing: bool,
     decorations: bool,
+    application_id: &str,
 ) -> Result<i32, String> {
     let generation = current_generation()?;
     let root = runtime_directory(if mode == LaunchMode::Terminal {
@@ -242,6 +243,7 @@ pub(super) fn launch_current(
         child,
         &generation,
         mode,
+        application_id,
     )
     .or_else(|error| {
         if attach_existing && path_exists(&socket) {
@@ -321,6 +323,7 @@ pub(super) fn attach_legacy(runtime: &Path) -> Result<i32, String> {
         &runtime.join("orbit.sock"),
         LaunchMode::Workspace,
         terminal,
+        "eon",
     )
     .spawn()
     .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?
@@ -365,12 +368,15 @@ fn venus_command(
     socket: &Path,
     mode: LaunchMode,
     terminal: managed_environment::TerminalConfig,
+    application_id: &str,
 ) -> Command {
     let mut command = Command::new(&programs.venus);
     if !programs.venus_decorations {
         command.arg("--no-decorations");
     }
     command
+        .arg("--application-id")
+        .arg(application_id)
         .arg("--background-opacity")
         .arg(terminal.background_opacity.to_string());
     if terminal.background_blur {
@@ -504,6 +510,7 @@ fn supervise(
     child: &[OsString],
     generation: &str,
     mode: LaunchMode,
+    application_id: &str,
 ) -> Result<i32, String> {
     let _lifecycle_lock = lifecycle_lock;
     let socket = runtime.join("orbit.sock");
@@ -542,7 +549,14 @@ fn supervise(
         })
         .transpose()?;
     let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
-    let command = venus_command(programs, config, &sessions[0].endpoint, mode, terminal);
+    let command = venus_command(
+        programs,
+        config,
+        &sessions[0].endpoint,
+        mode,
+        terminal,
+        application_id,
+    );
     let venus = match PresentationProcess::start(command) {
         Ok(venus) => venus,
         Err(error) => {
@@ -557,6 +571,7 @@ fn supervise(
     };
     let mut state = SupervisorState {
         component_generation,
+        application_id: application_id.into(),
         workspace,
         sessions,
         venus: Some(venus),
@@ -600,6 +615,7 @@ fn supervise(
 
 struct SupervisorState {
     component_generation: String,
+    application_id: String,
     workspace: Option<Workspace>,
     sessions: Vec<RunningSession>,
     venus: Option<PresentationProcess>,
@@ -789,7 +805,14 @@ fn dispatch_control_request(
                 }
                 let session = &state.sessions[0];
                 let terminal = managed_environment::terminal_presentation(config)?;
-                let command = venus_command(programs, config, &session.endpoint, mode, terminal);
+                let command = venus_command(
+                    programs,
+                    config,
+                    &session.endpoint,
+                    mode,
+                    terminal,
+                    &state.application_id,
+                );
                 state.venus = Some(PresentationProcess::start(command)?);
                 Ok(())
             });
@@ -948,10 +971,13 @@ mod tests {
             socket,
             LaunchMode::Workspace,
             terminal_presentation(0.88, true),
+            "eon",
         );
         assert_eq!(
             workspace.get_args().map(OsString::from).collect::<Vec<_>>(),
             [
+                "--application-id",
+                "eon",
                 "--background-opacity",
                 "0.88",
                 "--background-blur",
@@ -967,10 +993,18 @@ mod tests {
             socket,
             LaunchMode::Terminal,
             terminal_presentation(1.0, false),
+            "eonterm",
         );
         assert_eq!(
             terminal.get_args().map(OsString::from).collect::<Vec<_>>(),
-            ["--background-opacity", "1", "/runtime/orbit.sock"].map(OsString::from)
+            [
+                "--application-id",
+                "eonterm",
+                "--background-opacity",
+                "1",
+                "/runtime/orbit.sock",
+            ]
+            .map(OsString::from)
         );
 
         programs.venus_decorations = false;
@@ -980,6 +1014,7 @@ mod tests {
             socket,
             LaunchMode::Terminal,
             terminal_presentation(0.0, true),
+            "eonova",
         );
         assert_eq!(
             undecorated
@@ -988,6 +1023,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 "--no-decorations",
+                "--application-id",
+                "eonova",
                 "--background-opacity",
                 "0",
                 "--background-blur",

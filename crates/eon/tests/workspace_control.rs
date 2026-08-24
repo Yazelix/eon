@@ -673,7 +673,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "--no-decorations\n--background-opacity\n0.8\n--background-blur\n{}\n{}\n",
+            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--background-blur\n{}\n{}\n",
             generation.join("orbit.sock").display(),
             control.display(),
         )
@@ -733,8 +733,17 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
             .env("EON_TEST_PRESENTATION_LOG", &presentation_log);
         process
     };
+    let invalid = eonterm(&config)
+        .args(["--application-id", "bad/id", "--"])
+        .arg(&command)
+        .output()
+        .unwrap();
+    assert_eq!(invalid.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("invalid Eon application identity"));
+    assert!(!runtime.join("generations").exists());
+
     let child = eonterm(&config)
-        .args(["--no-decorations", "--"])
+        .args(["--no-decorations", "--application-id", "eonova", "--"])
         .arg(&command)
         .stdout(Stdio::null())
         .stderr(fs::File::create(&supervisor_log).unwrap())
@@ -873,7 +882,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
         .collect::<Vec<_>>();
     assert_eq!(
         venus_log
-            .matches("|stdin|--no-decorations --background-opacity ")
+            .matches("|stdin|--no-decorations --application-id eonova --background-opacity ")
             .count(),
         2
     );
@@ -1823,7 +1832,7 @@ fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
     assert_eq!(
         fs::read_to_string(&venus_log).unwrap(),
         format!(
-            "--background-opacity\n0.8\n--background-blur\n{}\n{}\n",
+            "--application-id\neon\n--background-opacity\n0.8\n--background-blur\n{}\n{}\n",
             runtime.join("orbit.sock").display(),
             runtime.join("eon.sock").display()
         )

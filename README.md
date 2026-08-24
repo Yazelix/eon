@@ -147,6 +147,7 @@ shortcuts:
 ```sh
 eonterm -- COMMAND...
 eonterm --no-decorations -- COMMAND...
+eonterm --application-id eonova -- COMMAND...
 ```
 
 This mode hosts exactly one Orbit Session, gives Venus only the Orbit endpoint,
@@ -154,6 +155,9 @@ and keeps Eon's generation, presentation, stop, child-exit, and cleanup lifecycl
 After same-boot supervisor loss, a replacement EonTerm adopts that exact live
 Session rather than launching another one.
 EonTerm uses native window decorations unless `--no-decorations` is selected.
+It supplies the distinct native application identity `eonterm`; an approved
+composition may select one bounded desktop identity with `--application-id`.
+Full Eon remains `eon`, and terminal-authored titles remain independent.
 The supervisor preserves its original choice when it replaces a detached
 surface. A repeated invocation preserves the active surface and asks Venus to
 request native presentation. After that surface closes, another invocation asks
@@ -204,7 +208,7 @@ The command surface is small:
 | `eon` | Present the exact current-generation workspace, or start it with the default shell |
 | `eon run` | Explicitly start one Orbit session and one Venus window with the default shell |
 | `eon run -- COMMAND...` | Run one explicit command as the Orbit-owned PTY child |
-| `eonterm [--no-decorations] -- COMMAND...` | Start or present one exact command in a native terminal surface without Eon workspace or managed-environment policy |
+| `eonterm [--no-decorations] [--application-id ID] -- COMMAND...` | Start or present one exact command in a native terminal surface without Eon workspace or managed-environment policy |
 | `eonterm attach [GENERATION]` | Present the current or one selected compatible EonTerm generation |
 | `eonterm generations [--json]` | List validated current and older EonTerm generations |
 | `eonterm stop GENERATION [--json]` | Stop one EonTerm generation through its supervisor; human mode confirms first |
@@ -393,15 +397,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 257 |
-| README | 407 |
+| README | 411 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,246 |
+| Architecture and contracts | 1,267 |
 | Distribution and references | 243 |
-| Changelog | 152 |
-| Rust source and tests | 8,571 |
+| Changelog | 155 |
+| Rust source and tests | 8,659 |
 | Cargo manifests | 37 |
-| Component manifest | 326 |
+| Component manifest | 327 |
 | Nix composition | 728 |
 | Product defaults | 0 |
-| **Total** | **12,171** |
+| **Total** | **12,288** |

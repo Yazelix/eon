@@ -22,7 +22,7 @@ use std::{
 };
 
 const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
-const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
+const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
 pub(super) fn run() -> (&'static str, Result<i32, String>) {
     let mut arguments = env::args_os();
@@ -58,12 +58,14 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
         return Ok(code);
     }
     match arguments.as_slice() {
-        [] => launch_current(LaunchMode::Workspace, &[], true, false),
-        [command] if command == "run" => launch_current(LaunchMode::Workspace, &[], false, false),
+        [] => launch_current(LaunchMode::Workspace, &[], true, false, "eon"),
+        [command] if command == "run" => {
+            launch_current(LaunchMode::Workspace, &[], false, false, "eon")
+        }
         [command, separator, child @ ..]
             if command == "run" && separator == "--" && !child.is_empty() =>
         {
-            launch_current(LaunchMode::Workspace, child, false, false)
+            launch_current(LaunchMode::Workspace, child, false, false, "eon")
         }
         [command, ..]
             if command == "workspace"
@@ -99,15 +101,55 @@ fn execute_eonterm(arguments: Vec<OsString>) -> Result<i32, String> {
     }
     match arguments.as_slice() {
         [separator, child @ ..] if separator == "--" && !child.is_empty() => {
-            launch_current(LaunchMode::Terminal, child, true, true)
+            launch_current(LaunchMode::Terminal, child, true, true, "eonterm")
         }
         [flag, separator, child @ ..]
             if flag == "--no-decorations" && separator == "--" && !child.is_empty() =>
         {
-            launch_current(LaunchMode::Terminal, child, true, false)
+            launch_current(LaunchMode::Terminal, child, true, false, "eonterm")
+        }
+        [flag, application_id, separator, child @ ..]
+            if flag == "--application-id" && separator == "--" && !child.is_empty() =>
+        {
+            launch_current(
+                LaunchMode::Terminal,
+                child,
+                true,
+                true,
+                application_id_argument(application_id)?,
+            )
+        }
+        [decorations, flag, application_id, separator, child @ ..]
+            if decorations == "--no-decorations"
+                && flag == "--application-id"
+                && separator == "--"
+                && !child.is_empty() =>
+        {
+            launch_current(
+                LaunchMode::Terminal,
+                child,
+                true,
+                false,
+                application_id_argument(application_id)?,
+            )
         }
         _ => Err(EONTERM_USAGE.into()),
     }
+}
+
+fn application_id_argument(argument: &OsStr) -> Result<&str, String> {
+    let value = argument
+        .to_str()
+        .ok_or_else(|| "Eon application identities must be UTF-8".to_string())?;
+    if value.is_empty()
+        || value.len() > 128
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+    {
+        return Err(format!("invalid Eon application identity {value:?}"));
+    }
+    Ok(value)
 }
 
 fn lifecycle_command(arguments: &[OsString], product: &str) -> Result<Option<i32>, String> {
