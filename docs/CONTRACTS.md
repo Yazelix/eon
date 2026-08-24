@@ -27,7 +27,7 @@ detailed execution evidence, and Git history retains superseded states.
 | EON-C13 | Eon applies one bounded terminal-background opacity from its canonical configuration whenever it creates an Eon or EonTerm Venus surface, while preserving live presentation and Orbit Session ownership | Eon | Proven | `7303ee5cca3925939b84267bd54587a2cfb223a6`; proof below |
 | EON-C14 | Eon requests compositor-owned background blur by default whenever it creates an Eon or EonTerm Venus surface, permits an explicit configuration opt-out, and keeps opacity independent | Eon | Proven | `b41be3a00a8e47a435521509c3d060d80e0524a5`; proof below |
 | EON-C15 | On the same boot and login, Eon can recover and explicitly stop the exact Orbit runs that survived loss of their Eon supervisor, without reconstructing Session authority | Eon | Candidate | Base `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`; response-loss correction `56fcae2d00baecf9b69e4650882a69e50419f56b`; connection-deadline correction `a4f0122862b7293326c22530f787124a47d0f560`; response-deadline correction `ced9e4ae11ed21a0f05d50cd470491adffa73b54`; Ready-boundary base `7cbcf1d4ce8ac186dc3ceff48240f04c437709af`, correction `871c9f639e519c7e3201fa5d9755d0a77a4cb0df`; accepted compact recovered identity correction `cfcb38e6e711e971ed6004528987761ddd7c87e4` |
-| EON-C16 | Eon selects one bounded native application identity for every Eon or EonTerm Venus surface and approved EonTerm compositions may supply their own exact desktop identity | Eon | Planned | None |
+| EON-C16 | Eon selects one bounded native application identity for every Eon or EonTerm Venus surface and approved EonTerm compositions may supply their own exact desktop identity | Eon | Candidate | `6a3236bb342c535aca16acdf563ff66386e8f6e5`; proof below |
 
 ## Approved caller-owned application identity contract EON-C16
 
@@ -841,6 +841,18 @@ detailed execution evidence, and Git history retains superseded states.
   namespace and showed no native title bar. The namespace was stopped through
   its supervisor without touching existing Eon or Eonova generations.
 - Platform boundary: this proof applies to native Wayland on x86_64 Linux.
+
+### EON-C16 — caller-owned native application identity
+
+- Candidate revision: `6a3236bb342c535aca16acdf563ff66386e8f6e5` on
+  x86_64 Linux, selecting Venus source and VEN-C17 candidate
+  `ab24961bd6b2f9403736e52ebbac8cc266488a41`.
+- Checks: focused parser and process regressions prove the full Eon, standalone
+  EonTerm, composition, invalid-input, and replacement-client paths; all 23 Eon
+  unit, 19 process, four manifest, and one protocol tests; locked format,
+  check, warnings-denied Clippy, the complete Nix flake check, and both exact
+  package builds pass.
+- Native launcher matching and installed Eonova acceptance remain pending.
 
 ### EON-C14 — terminal-background blur
 
