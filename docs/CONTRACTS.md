@@ -518,6 +518,41 @@ exact graph without restarting older live generations.
   - **Evidence:** CLI validation, exact Venus argv mapping, distinct Eon/Eonova
     grouping, repeated-launch convergence, and unchanged Session identity
 
+## EON-C17 — Tab launch directory
+
+- **Status:** Candidate
+- **Consumer:** One local Eon workspace user creating tabs and panes.
+- **Trigger:** Eon creates or recovers a workspace, creates a tab or pane, or an
+  approved same-user client explicitly retargets one live tab.
+- **Result:**
+  - Every live tab has one stable `tN` identity and one authoritative absolute
+    launch directory. Panes retain `pN` identities.
+  - Fresh `t1` uses the supervisor's absolute launch directory. A new tab
+    inherits the active tab's value and uses it for its first Session.
+  - `SetTabDirectory` changes exactly one addressed tab. Later panes in that tab
+    start with the accepted directory; existing Sessions and terminal CWDs do
+    not change.
+  - EONW v2 returns the exact accepted raw path bytes. Venus derives a bounded
+    `N  leaf`, `N  ~`, or `N  /` label while retaining `tN` for actions and
+    exposing identity plus bounded path context to accessibility.
+  - Same-boot recovery assigns synthetic `t1` the replacement supervisor's
+    launch directory as fresh policy and never infers prior policy from a pane.
+- **Important failures:** Empty, relative, NUL-containing, oversized, missing,
+  non-directory, unknown-tab, or stale-tab updates change nothing. A path that
+  becomes invalid after acceptance remains stored, but later Session startup
+  fails without committing pane topology or leaving launch residue.
+- **Owner:** Eon owns tab identity, launch-directory state, validation, mutation,
+  inheritance, and recovery fallback; Orbit owns each Session's terminal CWD;
+  Venus owns only native projection of Eon's state.
+- **Consumes:** EONW v2, Orbit Session startup, and Venus `VEN-C8`.
+- **Boundary:** No manual names, path canonicalization, retained directory
+  handles, filesystem watching, shell-`cd` tracking, pane-CWD inference,
+  retargeting of existing processes, persistence, picker UI, or compatibility
+  service accepting EONW v1 and v2.
+- **Proof:** None.
+- **Open proof:** Exact Eon protocol seed, Venus consumer, final Eon activation,
+  and installed integration evidence remain pending.
+
 ## Rules
 
 - Each contract uses one `## EON-CN — Name` heading and the required fields

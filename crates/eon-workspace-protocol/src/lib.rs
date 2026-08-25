@@ -2,6 +2,8 @@
 
 //! Eon-owned values and bounded EONW v1 codec for local workspace clients.
 
+pub mod v2;
+
 use std::{collections::HashSet, fmt, str};
 
 const MAGIC: &[u8; 4] = b"EONW";
