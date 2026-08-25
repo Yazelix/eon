@@ -14,10 +14,9 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The current composition candidate selects Orbit
-`199ee1a6f00efb8a080b31ffbfc7c89b2e857ee6`, canonical ORBS v6 proof
-`780f5d746175b4a9b71df57c51ed4bfcc4c4c375`, and Venus
-`e5e37a3df119ee2bcfa2493a2ce5a46307493732`. `EON-C1` through `EON-C4`
+The current composition candidate selects Orbit and canonical ORBS v7 proof
+`baf8aa28dcaa50484cd221aa7730defedc2356bb`, and Venus
+`f13dc7ac2e9a24c5cff5bb7e618436783ec76dbf`. `EON-C1` through `EON-C4`
 retain their prior proof records but remain Candidate until the exact installed
 profile and native Wayland behavior are accepted.
 
