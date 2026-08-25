@@ -16,9 +16,8 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `70861097a825c2fbfaea53a8ca9437f45e8602eb` with canonical ORBS v10 and Venus
-`1034817bbe2352fb4b1026bce6b1f02eedd67e37`. Native-Wayland touchpad selection
-is accepted, and the installed Eon, EonTerm, and Eonova profiles resolve this
-exact graph without restarting older live generations.
+`19d7d28a2aba09c0afe3173d25bbb76ec3edce49`. The installed Eon profile resolves
+this exact graph without restarting its older live generation.
 
 ## EON-C1 — Exact compatible component launch
 
@@ -174,6 +173,9 @@ exact graph without restarting older live generations.
 - **Result:**
   - Independent durable Sessions appear as horizontal tabs containing vertical
     accordion panes with exactly one expanded pane.
+  - Tabs use stable `tN` identities. Each tab header shows its number plus the
+    leaf, `~`, or `/` derived from Eon's authoritative launch directory; actions
+    retain `tN`, and accessibility includes bounded full-path context.
   - Each pane is identified as `pN`, two ASCII spaces, and a compact working-
     directory label; home uses the packaged marker, descendants use `~/`, and
     external paths remain absolute.
@@ -183,8 +185,8 @@ exact graph without restarting older live generations.
     to the same identity when possible, otherwise the following sibling at the
     removed index, otherwise the preceding sibling; an empty workspace closes
     Venus and the supervisor.
-  - Same-boot recovered runs project numerically into `tab-1` as `pN` without
-    claiming restoration of prior topology.
+  - Same-boot recovered runs project numerically into synthetic `t1` as `pN`
+    without claiming restoration of prior topology or launch-directory policy.
   - New current-generation full Eon surfaces omit the redundant native title
     bar while retaining the selected terminal title for compositor semantics.
 - **Important failures:** Unknown or stale identity, invalid transition,
@@ -194,20 +196,19 @@ exact graph without restarting older live generations.
   remove nothing; losing a view never silently stops or substitutes a Session.
 - **Owner:** Eon workspace topology, identity, focus, pruning, and action policy;
   Orbit owns Sessions and Venus owns native materialization.
-- **Consumes:** EONW v1, Orbit Session identities/endpoints, and Venus `VEN-C8`.
+- **Consumes:** EONW v2, Orbit Session identities/endpoints, and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, simultaneous expanded panes,
   reordering, picker-based ordinary traversal, durable layout restoration,
   per-pane Session stop/restart, terminal content/history, provider state,
   plugin surface, remote access, or reconstructed Session state.
-- **Proof:** `e77e842fe8c7070a96047dff1bf028ccbd49b788`
-  - **Environment:** x86_64 Linux candidate with installed compact-header and
-    Session-exit dogfood
-  - **Evidence:** Workspace composition, traversal and creation, `pN` projection,
-    exact compact path labels, accessibility parity, and exit pruning; accepted
-    composition `ece0f1bc151eeccd15b0172c5fbdbe8ab32c502c`, exit pruning
-    `7ede475992528be1b6643035abe4da9560d50a21`, and compact identity/header
-    correction `cfcb38e6e711e971ed6004528987761ddd7c87e4`
-- **Open proof:** Final current-source acceptance revision remains pending.
+- **Proof:** `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
+  - **Environment:** x86_64 Linux Nix candidate and installed profile
+  - **Evidence:** Workspace composition, traversal, creation, exit pruning,
+    `tN`/`pN` projection, exact tab launch-directory labels and accessibility,
+    and full Rust/Nix checks; prior compact-header proof
+    `e77e842fe8c7070a96047dff1bf028ccbd49b788` and exact Venus consumer
+    `19d7d28a2aba09c0afe3173d25bbb76ec3edce49`
+- **Open proof:** Native current-generation tab-label acceptance remains pending.
 
 ## EON-C9 — Managed shell environment
 
@@ -260,12 +261,13 @@ exact graph without restarting older live generations.
     human-readable CLI output and deterministic structured output project the
     same result.
   - Workspace results carry ordered tab, pane, and Session identities, active
-    and selected identities, liveness, and exact opaque Orbit endpoint bytes.
-    Lifecycle results carry generation, component/protocol identity, live
-    Sessions, and owner-authored attach/stop availability.
-  - CLI JSON emits opaque endpoints as ordered byte arrays without changing
-    EONW. Each connection carries one length-delimited request and response and
-    does not use EOF as framing.
+    and selected identities, liveness, exact raw tab launch-directory bytes,
+    and exact opaque Orbit endpoint bytes. Lifecycle results carry generation,
+    component/protocol identity, live Sessions, and owner-authored attach/stop
+    availability.
+  - CLI JSON emits opaque directories and endpoints as ordered byte arrays
+    without changing EONW. Each connection carries one length-delimited request
+    and response and does not use EOF as framing.
 - **Important failures:** Malformed, oversized, incompatible, unavailable,
   rejected, timed-out, partially read, or response-lost operations fail within
   the shared bound without reconstructing hidden state or reviving completed
@@ -274,16 +276,17 @@ exact graph without restarting older live generations.
   exact terminal record is complete.
 - **Owner:** Eon supervisor workspace/action state, EONW result ordering, and CLI
   projection.
-- **Consumes:** EONW v1 and accepted Orbit management operations.
+- **Consumes:** EONW v2 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content, or direct child-protocol escape hatch.
-- **Proof:** `abf2513b51c8871b5bfea602e8369bd2596609ef`
-  - **Environment:** x86_64 Linux packaged and installed lifecycle checks
-  - **Evidence:** Workspace actions, CLI projection, absolute connection/read
-    deadlines, management Stop, response-loss finality, and source ownership;
-    workspace actions `4af395aea06c230ee6b18cf0755ae25915c0b88d`, lifecycle
+- **Proof:** `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
+  - **Environment:** x86_64 Linux Nix package and installed profile
+  - **Evidence:** EONW v2 codec/version rejection, raw directory snapshot and
+    retarget action, CLI projection, absolute connection/read deadlines,
+    management Stop, response-loss finality, and source ownership; EONW v2 seed
+    `7bb50873ae27e09dfebd8a6ca2f8075bac07afe8`, lifecycle
     actions `fd6b348494111a0d18e241787da14ea99ee117a9`, CLI proof
     `d0c2208d628fa0dc1e186899b45e0b73534ff9bc`, deadline hardening
     `a390fc5c007900c3fc8c9c49df85f9b8acc06d4a`, management Stop
@@ -332,8 +335,8 @@ exact graph without restarting older live generations.
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
   identity, compatibility window, remote runtime, plugin API, service-manager
   requirement, or automatic eviction.
-- **Proof:** `5631d8dc4de49bfd3831aa3abef300b7734ad36c`
-  - **Environment:** x86_64 Linux packaged and installed recovery tests
+- **Proof:** `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
+  - **Environment:** x86_64 Linux Nix package and installed profile
   - **Evidence:** Separate namespaces, repeated launch, native Present,
     management Stop, supervisor-loss replacement, and dead-residue correction;
     accepted base `3b84d83d807c6249efa340fabf9e3d0d0d3ef310`, attachment
@@ -343,8 +346,9 @@ exact graph without restarting older live generations.
     `36c95ad04cb9519f88b907642c8147d95f56ee83`, EonTerm lifecycle
     `63686a12b752c9423b2096d5e32aa5842f2184fc`, same-boot adoption
     `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`, Venus presentation
-    `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f`, and readiness correction
-    `cfcb38e6e711e971ed6004528987761ddd7c87e4`
+    `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f`, readiness correction
+    `cfcb38e6e711e971ed6004528987761ddd7c87e4`, and exact EONW v2 generation
+    activation `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
 - **Open proof:** Current-generation native acceptance remains candidate evidence.
 
 ## EON-C12 — Standalone exact-command terminal
@@ -449,10 +453,11 @@ exact graph without restarting older live generations.
     the sole management lease within one shared five-second operation.
   - Replacement EonTerm recovers exactly one live run; replacement full Eon
     acquires at most 256 valid runs, sorts positive canonical N numerically, and
-    projects them into `tab-1` as `pN` with the lowest selected.
+    projects them into synthetic `t1` as `pN` with the lowest selected. That tab
+    receives the replacement supervisor's launch directory as fresh policy.
   - New creation continues at checked `max(N)+1`; prior grouping, focus, argv,
-    and request history are not restored. After recovered `tab-1`, later
-    creation starts at `tab-2`.
+    launch directories, and request history are not restored. After recovered
+    `t1`, later creation starts at `t2`.
   - Before spawn, Eon creates and retains the exact empty owned mode-0600
     management record inode and holds its exclusive lock through rollback or
     Stop. Only winning that still-empty inode authorizes local Child rollback;
@@ -478,7 +483,7 @@ exact graph without restarting older live generations.
   machine restart recovery, logout/reboot survival, remote authority, service
   manager, broker, or compatibility adapter. Tombstones grant no authority and
   must be reconciled before their workspace slot is reused.
-- **Proof:** `5631d8dc4de49bfd3831aa3abef300b7734ad36c`
+- **Proof:** `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
   - **Environment:** x86_64 Linux packaged installed recovery and adversarial
     lifecycle checks
   - **Evidence:** Ready serialization, supervisor kill, exact adoption, Busy and
@@ -490,7 +495,8 @@ exact graph without restarting older live generations.
     `ced9e4ae11ed21a0f05d50cd470491adffa73b54`, Ready base
     `7cbcf1d4ce8ac186dc3ceff48240f04c437709af`, Ready correction
     `871c9f639e519c7e3201fa5d9755d0a77a4cb0df`, and compact recovery
-    correction `cfcb38e6e711e971ed6004528987761ddd7c87e4`
+    correction `cfcb38e6e711e971ed6004528987761ddd7c87e4`, and synthetic-tab
+    launch-directory fallback `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
 - **Open proof:** Final current-source user acceptance remains candidate evidence.
 
 ## EON-C16 — Caller-owned application identity
@@ -549,9 +555,16 @@ exact graph without restarting older live generations.
   handles, filesystem watching, shell-`cd` tracking, pane-CWD inference,
   retargeting of existing processes, persistence, picker UI, or compatibility
   service accepting EONW v1 and v2.
-- **Proof:** None.
-- **Open proof:** Exact Eon protocol seed, Venus consumer, final Eon activation,
-  and installed integration evidence remain pending.
+- **Proof:** `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
+  - **Environment:** x86_64 Linux Nix package and installed Eon profile
+  - **Evidence:** EONW v2 seed
+    `7bb50873ae27e09dfebd8a6ca2f8075bac07afe8`; exact Venus consumer
+    `19d7d28a2aba09c0afe3173d25bbb76ec3edce49`; focused codec, workspace,
+    CLI, launch-command, and outer multi-tab CWD/rollback checks; complete
+    locked Rust and Nix gates; manifest validation; installed store artifact
+    `/nix/store/2vpa0l81rks8r8nmf9c83ybsidja70fy-eon-0.1.0`
+- **Open proof:** Native visual and AT-SPI dogfood begin after the next normal Eon
+  restart; the profile refresh intentionally preserved the older live supervisor.
 
 ## Rules
 

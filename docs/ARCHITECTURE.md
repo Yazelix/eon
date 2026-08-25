@@ -76,7 +76,9 @@ shims require an explicit user decision, a removal condition, and a bead.
 EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
 snapshots, supervisor lifecycle results, structured failures, and bounded
-framing. Workspace and lifecycle results are separate types, so the pinned
+framing. EONW v2 carries Eon-owned raw tab launch directories and the explicit
+retarget action without interpreting Orbit terminal metadata. Workspace and
+lifecycle results are separate types, so the pinned
 Venus consumer remains source- and wire-compatible with additive lifecycle
 tags it never requests. The running Eon supervisor remains the only live
 topology, action, launch-mode, presentation-process, and generation-lifecycle
@@ -96,8 +98,9 @@ Within one exact runtime generation, Eon consumes Orbit's canonical private
 management records and lease stream without copying their schema. Eon validates
 the complete live identity and acquires every lease before publishing EONW or
 Venus. Same-boot supervisor replacement retains the exact Orbit runs and maps
-their numeric Session identities into one deterministic live workspace; it does
-not reconstruct prior topology. Whole-generation stop is EONW-owned product
+their numeric Session identities into one synthetic `t1` whose launch directory
+is fresh replacement policy; it does not reconstruct prior topology or launch
+directories. Whole-generation stop is EONW-owned product
 policy routed through Orbit-owned Stop and terminal records. Venus is tied to
 its Eon owner by a private stream and exits on owner EOF.
 
@@ -113,7 +116,7 @@ They route changes and audits without creating additional product scope.
 | EONW transport | `crates/eon/src/control.rs` | Owned mode-`0600` endpoint validation, bounded client connection and length-delimited request/response I/O, listener lifetime, socket identity, protocol failure projection, and concrete client probes | Workspace or supervisor action policy, Orbit lifecycle, EONW values and codec, authorization, or rendering |
 | Generation lifecycle | `crates/eon/src/generation.rs` | Runtime-source identity and generation-directory projection, bounded discovery and classification, list output, explicit attachment selection, and validated owner-routed stop initiation | EONW transport, Orbit Session lifecycle, component launch, topology, or CLI dispatch |
 | Orbit Session lifecycle adapter | `crates/eon/src/sessions.rs` | Ready-claim authority, management-record and peer validation, lease acquisition, same-boot recovery, Orbit launch and rollback, management Stop, terminal-record and endpoint reconciliation, and live Session bookkeeping | Orbit-owned shutdown mechanics and terminal state, workspace topology, EONW transport, Venus presentation, or generation discovery |
-| Workspace state | `crates/eon/src/workspace.rs` | Live ordered tabs and panes, stable identities, active selection, Session-to-endpoint mapping, deterministic recovered-Session projection, semantic action results, and complete snapshots | EONW encoding, Orbit state, prior-topology persistence, or Venus geometry |
+| Workspace state | `crates/eon/src/workspace.rs` | Live ordered tabs and panes, stable identities, authoritative tab launch directories, active selection, Session-to-endpoint mapping, deterministic recovered-Session projection, semantic action results, and complete snapshots | EONW encoding, Orbit state, prior-topology persistence, shell-CWD inference, or Venus geometry |
 | EONW boundary | `crates/eon-workspace-protocol` | Versioned values, bounded message codec, validation, complete workspace snapshots, supervisor identity and capabilities, presentation and stop results, and structured failures | Live topology, lifecycle policy, transport ownership, authorization, or rendering |
 | Component graph | `components/eon-alpha-v3.json` and `crates/eon-manifest` | Stable component identity, compatibility requirements, abstract artifact declarations, graph validation, and version reporting | Resolved package paths, launch policy, or package construction |
 | Managed environment | `crates/eon/src/managed_environment.rs` and its `flake.nix` wiring | Stable managed command names, private configuration projection, exact tool selection, and default interactive policy | Shell, prompt, editor, file-manager, or Git-TUI native behavior |
@@ -156,7 +159,7 @@ the user activates an implementation bead and its upstream proof revisions exist
 The first Eon slice launches one accepted Eon Desktop and Eon Sessions pair,
 supplies the accepted managed environment, preserves Eon component and native
 shell configuration boundaries, reports component identity through one
-Nix-managed path, and exposes its live workspace through EONW v1. Venus
+Nix-managed path, and exposes its live workspace through EONW v2. Venus
 consumption follows an exact Eon producer proof; the canonical composition graph
 changes only after an exact consumer proof exists. Later slices earn their scope
 through dogfooding. Direct distribution has its own activation gate.

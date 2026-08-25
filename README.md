@@ -15,7 +15,7 @@ Wayland. One Rust supervisor launches the accepted Eon Sessions and Eon Desktop
 revisions. The `eon` package owns a live workspace and supplies one pinned
 interactive environment. The slimmer `eonterm` package owns one exact-command
 Session and contains no managed shell or tool bundle. Both expose lifecycle
-control through EONW v1, isolate live runtime generations, and consume the same
+control through EONW v2, isolate live runtime generations, and consume the same
 component identities. Direct bundles, Home Manager, background updates, and
 release automation remain outside this slice. X11, Xwayland, and macOS are
 unsupported. The accepted runtime proof uses COSMIC with systemd. Eon targets
@@ -177,31 +177,44 @@ palette until they are started in the refreshed runtime generation.
 While the foreground supervisor is running, Eon owns horizontal tab order and
 one vertical pane selection per tab. Each pane starts and maps to a distinct
 Orbit session; changing focus never stops a session. The CLI reaches that owner
-through the private local Eon socket using EONW v1. Each accepted action returns
+through the private local Eon socket using EONW v2. Each accepted action returns
 one complete ordered workspace snapshot; incompatible or malformed requests
 receive a bounded structured failure. Additive EONW lifecycle actions report a
 supervisor's generation, component graph, live Sessions, idempotent presentation,
 and stop result through a separate result type that Eon Desktop never receives.
 Eon Desktop consumes the workspace result and shows every fitting pane header
-around one selected live Session. New generations identify panes as `p1`, `p2`,
-and so on. Each visible live header shows that exact identity, two spaces, then
-a `~/`-anchored path below home, an absolute path elsewhere, or Nova's marker
-for the exact home directory. Unset or empty `HOME` leaves paths absolute.
-Overlong labels preserve their rightmost components.
+around one selected live Session. New generations identify tabs as `t1`, `t2`,
+and so on. A tab header shows the numeric part, two spaces, then the leaf of
+Eon's authoritative launch directory, `~` for the exact home directory, or `/`
+for root; hit testing and actions retain the complete `tN` identity. Panes remain
+`p1`, `p2`, and so on. Each visible live pane header shows that exact identity,
+two spaces, then a `~/`-anchored path below home, an absolute path elsewhere, or
+Nova's marker for the exact home directory. Unset or empty `HOME` leaves paths
+absolute. Overlong labels preserve their rightmost components.
 New current-generation full Eon windows omit the redundant native title bar;
 the selected terminal retains compositor title semantics, while EonTerm and
 legacy Eon attachment keep native decorations. Alt+H/L traverses tabs,
 Alt+K/J traverses panes, Alt+M creates a
 pane, and Ctrl+T creates a tab. External workspace changes appear within one
-second because Eon Desktop re-inspects EONW v1 every 250 ms; the protocol adds
+second because Eon Desktop re-inspects EONW v2 every 250 ms; the protocol adds
 no event stream. When a shell exits, Eon removes its pane, selects the nearest
 surviving pane, removes an empty tab, and closes when the final pane exits.
 
+Every live tab owns one absolute launch directory. Fresh `t1` uses Eon's launch
+directory, a new tab inherits the active tab's value for its first Session, and
+`eon tab directory tN -- DIRECTORY` explicitly retargets only future Sessions
+in that tab. Existing Sessions and shell working directories do not change.
+Invalid targets or directories change no state; if an accepted path later
+disappears, Session creation fails without adding a pane and the tab retains its
+accepted value.
+
 Workspace topology is live-only. After same-boot supervisor loss, full Eon
-projects surviving canonical `session-N` runs into one `tab-1` as `pN` in
-numeric order and selects the lowest number; it does not reconstruct prior tabs,
-focus, commands, or history. The exact Orbit processes, PTY children, and
-terminal state remain Orbit-owned and unchanged.
+projects surviving canonical `session-N` runs into one synthetic `t1` as `pN`
+in numeric order and selects the lowest number. That tab receives the replacement
+supervisor's launch directory as fresh future-launch policy; Eon does not
+reconstruct prior tabs, focus, launch directories, commands, or history. The
+exact Orbit processes, PTY children, and terminal state remain Orbit-owned and
+unchanged.
 
 The command surface is small:
 
@@ -220,6 +233,7 @@ The command surface is small:
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor; human mode confirms first |
 | `eon workspace [--json]` | Inspect the live Eon-owned tab, pane, and Session mapping |
 | `eon tab create [--json]` | Create and focus a tab containing a default-shell Session |
+| `eon tab directory TAB [--json] -- DIRECTORY` | Set one live `tN` tab's absolute launch directory for future Sessions |
 | `eon pane create [--json]` | Create and select a default-shell Session in the active tab |
 | `eon focus ID [--json]` | Focus a stable tab or pane identity |
 | `eon focus left\|right\|up\|down [--json]` | Traverse tabs or panes directly without wrapping |
@@ -234,8 +248,8 @@ removal action. Whole-generation stop sends canonical management Stop to every
 validated Session lease and succeeds only after every exact terminal record is
 complete. `--json` reports the same
 accepted EONW result as the human view; neither output format is the protocol
-schema. Its `endpoint` field is an ordered integer array that preserves every
-opaque endpoint byte.
+schema. Its tab `directory` and pane `endpoint` fields are ordered integer arrays
+that preserve every opaque Unix path or endpoint byte.
 
 ## Terminal presentation
 
@@ -399,15 +413,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 483 |
-| README | 413 |
+| README | 427 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 735 |
-| Distribution and references | 243 |
-| Changelog | 163 |
-| Rust source and tests | 9,232 |
+| Architecture and contracts | 751 |
+| Distribution and references | 244 |
+| Changelog | 167 |
+| Rust source and tests | 9,206 |
 | Cargo manifests | 37 |
 | Component manifest | 327 |
 | Nix composition | 728 |
 | Product defaults | 0 |
-| **Total** | **12,565** |
+| **Total** | **12,574** |
