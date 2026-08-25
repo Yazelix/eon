@@ -13,15 +13,15 @@ use super::{
     },
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::{Action, Direction, Response, VERSION};
+use eon_workspace_protocol::v2::{Action, Direction, Response, VERSION};
 use std::{
     env,
     ffi::{OsStr, OsString},
-    os::unix::process::CommandExt,
+    os::unix::{ffi::OsStrExt, process::CommandExt},
     path::Path,
 };
 
-const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
+const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | tab directory TAB [--json] -- DIRECTORY | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
 pub(super) fn run() -> (&'static str, Result<i32, String>) {
@@ -225,6 +225,9 @@ fn control(arguments: &[OsString]) -> Result<i32, String> {
 }
 
 fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), String> {
+    if let Some(action) = parse_tab_directory_arguments(arguments)? {
+        return Ok(action);
+    }
     let mut json = false;
     let mut values = Vec::new();
     for argument in arguments {
@@ -252,4 +255,74 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Str
         _ => return Err(EON_USAGE.into()),
     };
     Ok((action, json))
+}
+
+fn parse_tab_directory_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>, String> {
+    let (tab, directory, json) = match arguments {
+        [command, operation, tab, separator, directory]
+            if command == "tab" && operation == "directory" && separator == "--" =>
+        {
+            (tab, directory, false)
+        }
+        [command, operation, tab, flag, separator, directory]
+            if command == "tab"
+                && operation == "directory"
+                && flag == "--json"
+                && separator == "--" =>
+        {
+            (tab, directory, true)
+        }
+        [command, operation, ..] if command == "tab" && operation == "directory" => {
+            return Err(EON_USAGE.into());
+        }
+        _ => return Ok(None),
+    };
+    let tab = tab
+        .to_str()
+        .ok_or_else(|| "Eon tab identities must be UTF-8".to_string())?;
+    Ok(Some((
+        Action::SetTabDirectory {
+            tab: tab.into(),
+            directory: directory.as_os_str().as_bytes().to_vec(),
+        },
+        json,
+    )))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::ffi::OsStringExt;
+
+    #[test]
+    fn tab_directory_parser_preserves_one_opaque_path_argument() {
+        let directory = OsString::from_vec(b"/tmp/eon-\xff".to_vec());
+        assert_eq!(
+            parse_control_arguments(&[
+                "tab".into(),
+                "directory".into(),
+                "t2".into(),
+                "--json".into(),
+                "--".into(),
+                directory,
+            ])
+            .unwrap(),
+            (
+                Action::SetTabDirectory {
+                    tab: "t2".into(),
+                    directory: b"/tmp/eon-\xff".to_vec(),
+                },
+                true,
+            )
+        );
+        assert!(
+            parse_control_arguments(&[
+                "tab".into(),
+                "directory".into(),
+                "t2".into(),
+                "/tmp/eon".into(),
+            ])
+            .is_err()
+        );
+    }
 }

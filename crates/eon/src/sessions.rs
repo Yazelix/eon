@@ -5,7 +5,7 @@ use super::{
         status_code, stop, validate_private_directory,
     },
 };
-use eon_workspace_protocol::MAX_PANES;
+use eon_workspace_protocol::v2::MAX_PANES;
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LiveIdentity,
     ObjectIdentity, ProcessOutcome, Record as ManagementRecord,
@@ -772,12 +772,14 @@ fn wait_for_orbit_parent_cgroup(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn start_orbit(
     programs: &Programs,
     config: &Path,
     socket: &Path,
     session_id: &str,
     component_generation: &str,
+    directory: &Path,
     child: &[OsString],
     deadline: Instant,
 ) -> Result<RunningSession, String> {
@@ -790,6 +792,7 @@ pub(super) fn start_orbit(
         session_id,
         &run_id,
         component_generation,
+        directory,
         child,
     )?;
     if env::var_os("EON_TEST_MANAGED_ORBIT").is_none() {
@@ -937,6 +940,7 @@ fn rollback_unleased_orbit(
     stop_managed_sessions(std::slice::from_mut(&mut session), timeout).map(|_| ())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn orbit_command(
     programs: &Programs,
     config: &Path,
@@ -944,6 +948,7 @@ fn orbit_command(
     session_id: &str,
     run_id: &str,
     component_generation: &str,
+    directory: &Path,
     child: &[OsString],
 ) -> Result<Command, String> {
     let mut orbit_command = Command::new(&programs.orbit);
@@ -958,6 +963,7 @@ fn orbit_command(
         .arg(EON_ANSI_PALETTE)
         .arg("--")
         .env("EON_CONFIG_HOME", config)
+        .current_dir(directory)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -1283,6 +1289,7 @@ mod tests {
             "session-1",
             "run-1",
             "component-1",
+            root.as_path(),
             &[],
         )
         .unwrap();
@@ -1308,6 +1315,7 @@ mod tests {
             Some(Some(config.as_os_str()))
         );
         assert_eq!(command_environment(&default, "XDG_CONFIG_HOME"), None);
+        assert_eq!(default.get_current_dir(), Some(root.as_path()));
         assert_eq!(
             std::env::split_paths(
                 default
@@ -1328,6 +1336,7 @@ mod tests {
             "session-2",
             "run-2",
             "component-2",
+            root.as_path(),
             &["codex".into(), "--model".into(), "test".into()],
         )
         .unwrap();

@@ -1,4 +1,4 @@
-use eon_workspace_protocol::{
+use eon_workspace_protocol::v2::{
     Action, HEADER_BYTES, Pane, Request, Response, Snapshot, Tab, VERSION, declared_message_len,
     decode_request, decode_response, encode_request, encode_response,
 };
@@ -245,6 +245,20 @@ fn managed_orbit_helper() {
             .open(log)
             .unwrap();
         writeln!(log, "{}", std::process::id()).unwrap();
+    }
+    if let Some(log) = std::env::var_os("EON_TEST_ORBIT_CWD_LOG") {
+        let mut log = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+            .unwrap();
+        writeln!(
+            log,
+            "{} {}",
+            identity.session_id,
+            std::env::current_dir().unwrap().display()
+        )
+        .unwrap();
     }
 
     let command = arguments
@@ -1059,7 +1073,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     assert_eq!(stdout(&before), stdout(&after));
     let human = invoke(&binary, &runtime, &config, &["workspace"]);
     assert!(human.status.success());
-    assert!(stdout(&human).contains("active tab-1\n"));
+    assert!(stdout(&human).contains("active t1\n"));
     assert_eq!(stdout(&human).matches("  pane ").count(), 3);
 
     let mut incompatible = encode_request(&Request {
@@ -1083,8 +1097,8 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     let snapshot = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert!(snapshot.status.success());
     let snapshot = stdout(&snapshot);
-    assert!(snapshot.contains("\"active_tab\":\"tab-1\""));
-    assert!(snapshot.contains("\"id\":\"tab-2\""));
+    assert!(snapshot.contains("\"active_tab\":\"t1\""));
+    assert!(snapshot.contains("\"id\":\"t2\""));
     assert!(snapshot.contains("\"id\":\"p3\""));
     assert_eq!(snapshot.matches("\"session\":").count(), 3);
 
@@ -1099,6 +1113,173 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     fs::write(&stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!control.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
+    let root = temporary_directory();
+    let first = root.join("first");
+    let second = root.join("second");
+    let disappearing = root.join("disappearing");
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let stop = root.join("stop");
+    let orbit_log = root.join("orbit-cwd.log");
+    let child_log = root.join("child-cwd.log");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    let reporter = root.join("report-cwd");
+    for directory in [&first, &second, &disappearing, &config] {
+        fs::create_dir(directory).unwrap();
+    }
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+    executable(
+        &reporter,
+        "#!/bin/sh\nprintf '%s\\n' \"$PWD\" >> \"$EON_TEST_CHILD_CWD_LOG\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
+    );
+    fs::write(
+        config.join("config.toml"),
+        format!("[shell]\ncommand = [\"{}\"]\n", reporter.to_string_lossy()),
+    )
+    .unwrap();
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = eon_command(&binary)
+        .arg("run")
+        .current_dir(&first)
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_ORBIT_CWD_LOG", &orbit_log)
+        .env("EON_TEST_CHILD_CWD_LOG", &child_log)
+        .env("EON_TEST_RUN_CHILD", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for_connection(&control);
+
+    assert!(
+        invoke(&binary, &runtime, &config, &["tab", "create"])
+            .status
+            .success()
+    );
+    assert!(
+        invoke(
+            &binary,
+            &runtime,
+            &config,
+            &["tab", "directory", "t1", "--", second.to_str().unwrap()],
+        )
+        .status
+        .success()
+    );
+    assert!(
+        invoke(&binary, &runtime, &config, &["focus", "t1"])
+            .status
+            .success()
+    );
+    assert!(
+        invoke(&binary, &runtime, &config, &["pane", "create"])
+            .status
+            .success()
+    );
+    assert!(
+        invoke(&binary, &runtime, &config, &["focus", "t2"])
+            .status
+            .success()
+    );
+    assert!(
+        invoke(&binary, &runtime, &config, &["pane", "create"])
+            .status
+            .success()
+    );
+    assert!(
+        invoke(
+            &binary,
+            &runtime,
+            &config,
+            &[
+                "tab",
+                "directory",
+                "t1",
+                "--",
+                disappearing.to_str().unwrap(),
+            ],
+        )
+        .status
+        .success()
+    );
+    fs::remove_dir(&disappearing).unwrap();
+    assert!(
+        invoke(&binary, &runtime, &config, &["focus", "t1"])
+            .status
+            .success()
+    );
+    let before = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    let failed = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
+    assert_eq!(failed.status.code(), Some(2));
+    assert!(stdout(&failed).contains("\"code\":\"session-start\""));
+    let after = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    assert_eq!(stdout(&before), stdout(&after));
+    assert!(!generation.join("session-5.sock").exists());
+    assert!(!artifact_path(&generation.join("session-5.sock"), ".record").exists());
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while fs::read_to_string(&orbit_log)
+        .unwrap_or_default()
+        .lines()
+        .count()
+        < 4
+        || fs::read_to_string(&child_log)
+            .unwrap_or_default()
+            .lines()
+            .count()
+            < 4
+    {
+        assert!(
+            Instant::now() < deadline,
+            "directory reports did not arrive"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let orbit_directories = fs::read_to_string(&orbit_log).unwrap();
+    for expected in [
+        format!("session-1 {}", first.display()),
+        format!("session-2 {}", first.display()),
+        format!("session-3 {}", second.display()),
+        format!("session-4 {}", first.display()),
+    ] {
+        assert!(orbit_directories.lines().any(|line| line == expected));
+    }
+    let child_directories = fs::read_to_string(&child_log).unwrap();
+    assert_eq!(
+        child_directories
+            .lines()
+            .filter(|line| *line == first.to_string_lossy())
+            .count(),
+        3
+    );
+    assert_eq!(
+        child_directories
+            .lines()
+            .filter(|line| *line == second.to_string_lossy())
+            .count(),
+        1
+    );
+
+    fs::write(&stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1396,7 +1577,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     let recovered = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert!(recovered.status.success(), "{}", stdout(&recovered));
     let recovered = stdout(&recovered);
-    assert!(recovered.contains("\"active_tab\":\"tab-1\""));
+    assert!(recovered.contains("\"active_tab\":\"t1\""));
     assert!(recovered.contains("\"selected_pane\":\"p1\""));
     assert_eq!(recovered.matches("\"session\":").count(), 2);
     assert!(recovered.contains("\"id\":\"p1\""));
@@ -1856,9 +2037,10 @@ fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
                 Action::Inspect
             ));
             let response = encode_response(&Response::Snapshot(Snapshot {
-                active_tab: "tab-1".into(),
+                active_tab: "t1".into(),
                 tabs: vec![Tab {
-                    id: "tab-1".into(),
+                    id: "t1".into(),
+                    directory: b"/legacy".to_vec(),
                     selected_pane: "pane-1".into(),
                     panes: vec![Pane {
                         id: "pane-1".into(),

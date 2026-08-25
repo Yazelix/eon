@@ -1,8 +1,14 @@
-use eon_workspace_protocol::{
-    Action, Direction, Failure, MAX_PANES, MAX_TABS, Pane as SnapshotPane, Snapshot,
-    Tab as SnapshotTab,
+use eon_workspace_protocol::v2::{
+    Action, Direction, Failure, MAX_DIRECTORY_BYTES, MAX_PANES, MAX_TABS, Pane as SnapshotPane,
+    Snapshot, Tab as SnapshotTab,
 };
-use std::{collections::VecDeque, os::unix::ffi::OsStrExt, path::PathBuf};
+use std::{
+    collections::VecDeque,
+    ffi::OsString,
+    fs,
+    os::unix::ffi::{OsStrExt, OsStringExt},
+    path::{Path, PathBuf},
+};
 
 const MAX_RECENT_REQUESTS: usize = 256;
 
@@ -21,6 +27,7 @@ struct Pane {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Tab {
     id: String,
+    directory: PathBuf,
     panes: Vec<Pane>,
     selected: usize,
 }
@@ -44,6 +51,7 @@ impl Workspace {
                 .iter()
                 .map(|tab| SnapshotTab {
                     id: tab.id.clone(),
+                    directory: tab.directory.as_os_str().as_bytes().to_vec(),
                     selected_pane: tab.panes[tab.selected].id.clone(),
                     panes: tab
                         .panes
@@ -66,8 +74,9 @@ pub(crate) fn human(snapshot: &Snapshot) -> String {
     let mut output = format!("active {active}\n");
     for tab in &snapshot.tabs {
         output.push_str(&format!(
-            "tab {} selected={} active={}\n",
+            "tab {} directory={} selected={} active={}\n",
             tab.id,
+            String::from_utf8_lossy(&tab.directory).escape_debug(),
             tab.selected_pane,
             tab.id == *active
         ));
@@ -94,8 +103,13 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
             output.push(',');
         }
         output.push_str(&format!(
-            "{{\"id\":\"{}\",\"selected_pane\":\"{}\",\"panes\":[",
+            "{{\"id\":\"{}\",\"directory\":[{}],\"selected_pane\":\"{}\",\"panes\":[",
             json_escape(&tab.id),
+            tab.directory
+                .iter()
+                .map(u8::to_string)
+                .collect::<Vec<_>>()
+                .join(","),
             json_escape(&tab.selected_pane)
         ));
         for (pane_index, pane) in tab.panes.iter().enumerate() {
@@ -146,8 +160,10 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
 impl Workspace {
     pub(crate) fn with_recovered_sessions(
         runtime: PathBuf,
+        directory: PathBuf,
         sessions: Vec<(usize, Session)>,
     ) -> Result<Self, String> {
+        validate_initial_directory(&directory)?;
         let next_pane = sessions
             .last()
             .ok_or("cannot recover an empty workspace")?
@@ -157,7 +173,8 @@ impl Workspace {
         Ok(Self {
             runtime,
             tabs: vec![Tab {
-                id: "tab-1".into(),
+                id: "t1".into(),
+                directory,
                 panes: sessions
                     .into_iter()
                     .map(|(number, session)| Pane {
@@ -178,7 +195,7 @@ impl Workspace {
         &mut self,
         request_id: &str,
         action: Action,
-        mut start: impl FnMut(&Session) -> Result<(), String>,
+        mut start: impl FnMut(&Session, &Path) -> Result<(), String>,
     ) -> Result<(), Failure> {
         if self.recent_requests.iter().any(|seen| seen == request_id) {
             return Err(action_error(
@@ -202,6 +219,9 @@ impl Workspace {
             Action::CreatePane => self.create_pane(&mut start)?,
             Action::FocusId(id) => self.focus_id(&id)?,
             Action::Focus(direction) => self.focus_direction(direction)?,
+            Action::SetTabDirectory { tab, directory } => {
+                self.set_tab_directory(&tab, directory)?;
+            }
         }
         self.remember(request_id);
         Ok(())
@@ -239,7 +259,7 @@ impl Workspace {
 
     fn create_tab(
         &mut self,
-        start: &mut impl FnMut(&Session) -> Result<(), String>,
+        start: &mut impl FnMut(&Session, &Path) -> Result<(), String>,
     ) -> Result<(), Failure> {
         if self.tabs.len() >= MAX_TABS {
             return Err(action_error(
@@ -247,13 +267,21 @@ impl Workspace {
                 format!("workspace is limited to {MAX_TABS} tabs"),
             ));
         }
+        if self.next_tab == usize::MAX {
+            return Err(action_error(
+                "capacity",
+                "workspace has exhausted tab identities",
+            ));
+        }
         self.check_pane_capacity()?;
         let (tab_id, pane) = self.next_tab_and_pane();
-        start(&pane.session).map_err(|detail| action_error("session-start", detail))?;
+        let directory = self.tabs[self.active].directory.clone();
+        start(&pane.session, &directory).map_err(|detail| action_error("session-start", detail))?;
         self.next_tab += 1;
         self.next_pane += 1;
         self.tabs.push(Tab {
             id: tab_id,
+            directory,
             panes: vec![pane],
             selected: 0,
         });
@@ -263,15 +291,42 @@ impl Workspace {
 
     fn create_pane(
         &mut self,
-        start: &mut impl FnMut(&Session) -> Result<(), String>,
+        start: &mut impl FnMut(&Session, &Path) -> Result<(), String>,
     ) -> Result<(), Failure> {
         self.check_pane_capacity()?;
         let pane = self.next_pane();
-        start(&pane.session).map_err(|detail| action_error("session-start", detail))?;
+        let directory = self.tabs[self.active].directory.clone();
+        start(&pane.session, &directory).map_err(|detail| action_error("session-start", detail))?;
         self.next_pane += 1;
         let active = &mut self.tabs[self.active];
         active.panes.push(pane);
         active.selected = active.panes.len() - 1;
+        Ok(())
+    }
+
+    fn set_tab_directory(&mut self, id: &str, directory: Vec<u8>) -> Result<(), Failure> {
+        if tab_number(id).is_none() {
+            return Err(action_error(
+                "invalid-tab",
+                "tab directory targets require a canonical tN identity",
+            ));
+        }
+        let tab = self
+            .tabs
+            .iter_mut()
+            .find(|tab| tab.id == id)
+            .ok_or_else(|| action_error("unknown-tab", format!("tab {id} is not live")))?;
+        let directory = directory_path(directory)?;
+        let metadata = fs::metadata(&directory).map_err(|_| {
+            action_error("invalid-directory", "tab launch directory is unavailable")
+        })?;
+        if !metadata.is_dir() {
+            return Err(action_error(
+                "invalid-directory",
+                "tab launch directory is not a directory",
+            ));
+        }
+        tab.directory = directory;
         Ok(())
     }
 
@@ -362,7 +417,7 @@ impl Workspace {
     }
 
     fn next_tab_and_pane(&self) -> (String, Pane) {
-        let tab = format!("tab-{}", self.next_tab);
+        let tab = format!("t{}", self.next_tab);
         (tab, self.next_pane())
     }
 
@@ -390,6 +445,51 @@ impl Workspace {
         }
         self.recent_requests.push_back(request_id.into());
     }
+}
+
+fn tab_number(value: &str) -> Option<usize> {
+    let number = value.strip_prefix('t')?;
+    if number.is_empty()
+        || number.starts_with('0')
+        || !number.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    number.parse().ok().filter(|number| *number > 0)
+}
+
+fn directory_path(bytes: Vec<u8>) -> Result<PathBuf, Failure> {
+    if bytes.is_empty() || bytes.contains(&0) {
+        return Err(action_error(
+            "invalid-directory",
+            "tab launch directory is empty or contains NUL",
+        ));
+    }
+    if bytes.len() > MAX_DIRECTORY_BYTES {
+        return Err(action_error(
+            "invalid-directory",
+            format!("tab launch directory exceeds {MAX_DIRECTORY_BYTES} bytes"),
+        ));
+    }
+    let path = PathBuf::from(OsString::from_vec(bytes));
+    if !path.is_absolute() {
+        return Err(action_error(
+            "invalid-directory",
+            "tab launch directory must be absolute",
+        ));
+    }
+    Ok(path)
+}
+
+fn validate_initial_directory(path: &Path) -> Result<(), String> {
+    let bytes = path.as_os_str().as_bytes();
+    if !path.is_absolute() || bytes.is_empty() || bytes.len() > MAX_DIRECTORY_BYTES {
+        return Err("initial tab launch directory must be a bounded absolute path".into());
+    }
+    if !path.is_dir() {
+        return Err("initial tab launch directory is unavailable".into());
+    }
+    Ok(())
 }
 
 fn index_after_removal(selected: usize, removed: usize, remaining: usize) -> usize {
@@ -423,10 +523,153 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::supervisor::temporary_directory;
+
+    #[test]
+    fn tab_directories_inherit_retarget_and_preserve_failed_spawn_state() {
+        let root = temporary_directory();
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        let mut workspace = Workspace::with_recovered_sessions(
+            "/runtime".into(),
+            first.clone(),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+        )
+        .unwrap();
+        let mut launches = Vec::new();
+        workspace
+            .dispatch("request-1", Action::CreateTab, |_, directory| {
+                launches.push(directory.to_path_buf());
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(launches, [first]);
+        assert_eq!(
+            workspace.snapshot().tabs[1].directory,
+            launches[0].as_os_str().as_bytes()
+        );
+
+        workspace
+            .dispatch(
+                "request-2",
+                Action::SetTabDirectory {
+                    tab: "t1".into(),
+                    directory: second.as_os_str().as_bytes().to_vec(),
+                },
+                |_, _| unreachable!(),
+            )
+            .unwrap();
+        workspace
+            .dispatch(
+                "request-3",
+                Action::FocusId("t1".into()),
+                |_, _| unreachable!(),
+            )
+            .unwrap();
+        workspace
+            .dispatch("request-4", Action::CreatePane, |_, directory| {
+                assert_eq!(directory, second);
+                Ok(())
+            })
+            .unwrap();
+
+        let before = workspace.clone();
+        assert_eq!(
+            workspace
+                .dispatch(
+                    "request-5",
+                    Action::SetTabDirectory {
+                        tab: "t9".into(),
+                        directory: second.as_os_str().as_bytes().to_vec(),
+                    },
+                    |_, _| unreachable!(),
+                )
+                .unwrap_err()
+                .code,
+            "unknown-tab"
+        );
+        assert_eq!(workspace, before);
+        for id in ["tab-1", "t0", "t01", "t"] {
+            let before = workspace.clone();
+            assert_eq!(
+                workspace
+                    .dispatch(
+                        "invalid-tab",
+                        Action::SetTabDirectory {
+                            tab: id.into(),
+                            directory: second.as_os_str().as_bytes().to_vec(),
+                        },
+                        |_, _| unreachable!(),
+                    )
+                    .unwrap_err()
+                    .code,
+                "invalid-tab"
+            );
+            assert_eq!(workspace, before);
+        }
+
+        let file = root.join("file");
+        std::fs::write(&file, "not a directory").unwrap();
+        for (request, directory) in [
+            ("invalid-empty", Vec::new()),
+            ("invalid-relative", b"relative".to_vec()),
+            ("invalid-nul", b"/tmp/eon\0bad".to_vec()),
+            ("invalid-oversized", vec![b'x'; MAX_DIRECTORY_BYTES + 1]),
+            (
+                "invalid-missing",
+                root.join("missing").as_os_str().as_bytes().to_vec(),
+            ),
+            ("invalid-file", file.as_os_str().as_bytes().to_vec()),
+        ] {
+            let before = workspace.clone();
+            assert_eq!(
+                workspace
+                    .dispatch(
+                        request,
+                        Action::SetTabDirectory {
+                            tab: "t1".into(),
+                            directory,
+                        },
+                        |_, _| unreachable!(),
+                    )
+                    .unwrap_err()
+                    .code,
+                "invalid-directory"
+            );
+            assert_eq!(workspace, before);
+        }
+
+        std::fs::remove_dir(&second).unwrap();
+        let before_panes = workspace.tabs[0].panes.len();
+        assert_eq!(
+            workspace
+                .dispatch("request-6", Action::CreatePane, |_, directory| {
+                    directory
+                        .is_dir()
+                        .then_some(())
+                        .ok_or_else(|| "launch directory is unavailable".into())
+                })
+                .unwrap_err()
+                .code,
+            "session-start"
+        );
+        assert_eq!(workspace.tabs[0].panes.len(), before_panes);
+        assert_eq!(workspace.tabs[0].directory, second);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn initial_workspace() -> Workspace {
         Workspace::with_recovered_sessions(
             "/runtime".into(),
+            "/".into(),
             vec![(
                 1,
                 Session {
@@ -444,13 +687,15 @@ mod tests {
         let initial = workspace.clone();
         assert_eq!(
             workspace
-                .dispatch("request-1", Action::CreatePane, |_| Err("offline".into()))
+                .dispatch("request-1", Action::CreatePane, |_, _| {
+                    Err("offline".into())
+                })
                 .unwrap_err()
                 .code,
             "session-start"
         );
         assert_eq!(workspace, initial);
-        let mut start = |_: &Session| Ok(());
+        let mut start = |_: &Session, _: &Path| Ok(());
 
         workspace
             .dispatch("request-1", Action::CreatePane, &mut start)
@@ -460,10 +705,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(workspace.tabs.len(), 2);
-        assert_eq!(workspace.tabs[workspace.active].id, "tab-2");
-        assert_eq!(workspace.tabs[0].id, "tab-1");
+        assert_eq!(workspace.tabs[workspace.active].id, "t2");
+        assert_eq!(workspace.tabs[0].id, "t1");
         assert_eq!(workspace.tabs[0].panes[workspace.tabs[0].selected].id, "p2");
-        assert_eq!(workspace.tabs[1].id, "tab-2");
+        assert_eq!(workspace.tabs[1].id, "t2");
         assert_eq!(workspace.tabs[1].panes[workspace.tabs[1].selected].id, "p3");
         let mut projection = workspace.snapshot();
         projection.tabs[0].panes[0].endpoint = b"/runtime/\x1b[2J\n.sock".to_vec();
@@ -535,7 +780,7 @@ mod tests {
     #[test]
     fn session_exit_removes_panes_and_empty_tabs_without_reusing_ids() {
         let mut workspace = initial_workspace();
-        let mut start = |_: &Session| Ok(());
+        let mut start = |_: &Session, _: &Path| Ok(());
 
         workspace
             .dispatch("request-1", Action::CreatePane, &mut start)
@@ -568,7 +813,7 @@ mod tests {
         workspace.session_exited("session-5").unwrap();
         assert_eq!(workspace.snapshot().tabs[1].selected_pane, "p4");
         workspace.session_exited("session-4").unwrap();
-        assert_eq!(workspace.snapshot().active_tab, "tab-1");
+        assert_eq!(workspace.snapshot().active_tab, "t1");
 
         let before = workspace.clone();
         assert_eq!(
@@ -581,7 +826,7 @@ mod tests {
             .dispatch("request-6", Action::CreateTab, &mut start)
             .unwrap();
         let snapshot = workspace.snapshot();
-        assert_eq!(snapshot.active_tab, "tab-3");
+        assert_eq!(snapshot.active_tab, "t3");
         assert_eq!(snapshot.tabs[1].panes[0].id, "p6");
     }
 
@@ -604,10 +849,10 @@ mod tests {
             ),
         ];
         let mut workspace =
-            Workspace::with_recovered_sessions("/runtime".into(), sessions).unwrap();
+            Workspace::with_recovered_sessions("/runtime".into(), "/".into(), sessions).unwrap();
 
         let snapshot = workspace.snapshot();
-        assert_eq!(snapshot.active_tab, "tab-1");
+        assert_eq!(snapshot.active_tab, "t1");
         assert_eq!(snapshot.tabs[0].selected_pane, "p2");
         assert_eq!(
             snapshot.tabs[0]
@@ -619,19 +864,20 @@ mod tests {
         );
 
         workspace
-            .dispatch("request-1", Action::CreatePane, |_| Ok(()))
+            .dispatch("request-1", Action::CreatePane, |_, _| Ok(()))
             .unwrap();
         workspace
-            .dispatch("request-2", Action::CreateTab, |_| Ok(()))
+            .dispatch("request-2", Action::CreateTab, |_, _| Ok(()))
             .unwrap();
         let snapshot = workspace.snapshot();
         assert_eq!(snapshot.tabs[0].panes[2].id, "p10");
-        assert_eq!(snapshot.tabs[1].id, "tab-2");
+        assert_eq!(snapshot.tabs[1].id, "t2");
         assert_eq!(snapshot.tabs[1].panes[0].id, "p11");
 
         assert!(
             Workspace::with_recovered_sessions(
                 "/runtime".into(),
+                "/".into(),
                 vec![(
                     usize::MAX,
                     Session {
@@ -645,6 +891,7 @@ mod tests {
 
         let mut exhausted = Workspace::with_recovered_sessions(
             "/runtime".into(),
+            "/".into(),
             vec![(
                 usize::MAX - 1,
                 Session {
@@ -655,7 +902,7 @@ mod tests {
         )
         .unwrap();
         let failure = exhausted
-            .dispatch("request-1", Action::CreatePane, |_| {
+            .dispatch("request-1", Action::CreatePane, |_, _| {
                 unreachable!("capacity check must prevent Session start")
             })
             .unwrap_err();
@@ -665,9 +912,10 @@ mod tests {
     #[test]
     fn json_preserves_opaque_endpoint_bytes() {
         let snapshot = Snapshot {
-            active_tab: "tab-1".into(),
+            active_tab: "t1".into(),
             tabs: vec![SnapshotTab {
-                id: "tab-1".into(),
+                id: "t1".into(),
+                directory: b"/tmp/eon-\xff".to_vec(),
                 selected_pane: "pane-1".into(),
                 panes: vec![
                     SnapshotPane {
@@ -688,7 +936,7 @@ mod tests {
 
         assert_eq!(
             json(&snapshot),
-            "{\"active_tab\":\"tab-1\",\"tabs\":[{\"id\":\"tab-1\",\"selected_pane\":\"pane-1\",\"panes\":[{\"id\":\"pane-1\",\"session\":\"session-1\",\"endpoint\":[47,97],\"live\":true},{\"id\":\"pane-2\",\"session\":\"session-2\",\"endpoint\":[47,255],\"live\":false}]}]}\n"
+            "{\"active_tab\":\"t1\",\"tabs\":[{\"id\":\"t1\",\"directory\":[47,116,109,112,47,101,111,110,45,255],\"selected_pane\":\"pane-1\",\"panes\":[{\"id\":\"pane-1\",\"session\":\"session-1\",\"endpoint\":[47,97],\"live\":true},{\"id\":\"pane-2\",\"session\":\"session-2\",\"endpoint\":[47,255],\"live\":false}]}]}\n"
         );
     }
 }

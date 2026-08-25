@@ -2,7 +2,7 @@ use super::{
     supervisor::{LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id},
     workspace,
 };
-use eon_workspace_protocol::{
+use eon_workspace_protocol::v2::{
     Action, Availability, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse,
     MAX_DETAIL_BYTES, Request, Response, Runtime, declared_message_len, decode_lifecycle_response,
     decode_request, decode_response, encode_lifecycle_response, encode_request, encode_response,
@@ -484,7 +484,7 @@ mod tests {
         socket_identity,
     };
     use crate::supervisor::temporary_directory;
-    use eon_workspace_protocol::{
+    use eon_workspace_protocol::v2::{
         Action, Availability, Failure, LifecycleResponse, Response, Runtime, VERSION,
         encode_lifecycle_response, encode_response,
     };

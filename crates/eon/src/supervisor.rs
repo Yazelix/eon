@@ -11,7 +11,7 @@ use super::{
     },
     workspace::{self, Workspace},
 };
-use eon_workspace_protocol::{
+use eon_workspace_protocol::v2::{
     Action, Availability, LifecycleResponse, Request, Response, Runtime, Stopped, VERSION,
 };
 use std::{
@@ -513,6 +513,8 @@ fn supervise(
     application_id: &str,
 ) -> Result<i32, String> {
     let _lifecycle_lock = lifecycle_lock;
+    let launch_directory = env::current_dir()
+        .map_err(|error| format!("cannot resolve Eon launch directory: {error}"))?;
     let socket = runtime.join("orbit.sock");
     let component_generation =
         eon_manifest::component_revision(MANIFEST, "orbit").map_err(|error| error.to_string())?;
@@ -525,6 +527,7 @@ fn supervise(
             &socket,
             "session-1",
             &component_generation,
+            &launch_directory,
             child,
             deadline,
         )?);
@@ -533,6 +536,7 @@ fn supervise(
         .then(|| {
             Workspace::with_recovered_sessions(
                 runtime.to_path_buf(),
+                launch_directory,
                 sessions
                     .iter()
                     .map(|session| {
@@ -853,31 +857,34 @@ fn dispatch_control_request(
             (ControlResponse::Lifecycle(response), true)
         }
         request => match state.workspace.as_mut() {
-            Some(workspace) => match workspace.dispatch(&request.id, request.action, |session| {
-                let running = start_orbit(
-                    programs,
-                    config,
-                    &session.endpoint,
-                    &session.id,
-                    &state.component_generation,
-                    &[],
-                    Instant::now() + SESSION_START_TIMEOUT,
-                )?;
-                state.sessions.push(running);
-                Ok(())
-            }) {
-                Ok(()) => (
-                    ControlResponse::Workspace(Response::Snapshot(workspace.snapshot())),
-                    false,
-                ),
-                Err(error) => (
-                    ControlResponse::Workspace(Response::Failure(failure(
-                        error.code,
-                        error.detail,
-                    ))),
-                    false,
-                ),
-            },
+            Some(workspace) => {
+                match workspace.dispatch(&request.id, request.action, |session, directory| {
+                    let running = start_orbit(
+                        programs,
+                        config,
+                        &session.endpoint,
+                        &session.id,
+                        &state.component_generation,
+                        directory,
+                        &[],
+                        Instant::now() + SESSION_START_TIMEOUT,
+                    )?;
+                    state.sessions.push(running);
+                    Ok(())
+                }) {
+                    Ok(()) => (
+                        ControlResponse::Workspace(Response::Snapshot(workspace.snapshot())),
+                        false,
+                    ),
+                    Err(error) => (
+                        ControlResponse::Workspace(Response::Failure(failure(
+                            error.code,
+                            error.detail,
+                        ))),
+                        false,
+                    ),
+                }
+            }
             None => (
                 ControlResponse::Workspace(Response::Failure(failure(
                     "workspace-unavailable",
@@ -907,7 +914,7 @@ fn runtime_status(
         attach: Availability {
             available: true,
             reason: match mode {
-                LaunchMode::Workspace => "supervisor accepts EONW v1 presentation requests",
+                LaunchMode::Workspace => "supervisor accepts EONW v2 presentation requests",
                 LaunchMode::Terminal => "supervisor owns one EonTerm Session",
             }
             .into(),

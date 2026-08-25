@@ -9,7 +9,9 @@ use super::supervisor::{
     validate_private_directory,
 };
 use super::workspace::json_escape;
-use eon_workspace_protocol::{Action, Availability, LifecycleResponse, Response, Stopped, VERSION};
+use eon_workspace_protocol::v2::{
+    Action, Availability, LifecycleResponse, Response, Stopped, VERSION,
+};
 use std::{
     fs,
     os::unix::{
@@ -304,7 +306,7 @@ fn inspect_legacy(root: &Path) -> GenerationRecord {
                 .collect(),
             attach: Availability {
                 available: true,
-                reason: "legacy supervisor returned a valid EONW v1 workspace".into(),
+                reason: "legacy supervisor returned a valid EONW v2 workspace".into(),
             },
             stop: Availability {
                 available: false,

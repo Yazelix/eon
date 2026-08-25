@@ -82,7 +82,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "1034817bbe2352fb4b1026bce6b1f02eedd67e37",
+      "revision": "19d7d28a2aba09c0afe3173d25bbb76ec3edce49",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -97,7 +97,7 @@
         { "id": "VEN-C3", "proof": "a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8" },
         { "id": "VEN-C4", "proof": "588996739aaff32756ca24960135371a94636801" },
         { "id": "VEN-C7", "proof": "1034817bbe2352fb4b1026bce6b1f02eedd67e37" },
-        { "id": "VEN-C8", "proof": "ee3defea55c77f7acc4559606965d93d39bba8b5" },
+        { "id": "VEN-C8", "proof": "19d7d28a2aba09c0afe3173d25bbb76ec3edce49" },
         { "id": "VEN-C9", "proof": "90988f6ebcde68338e202a9c637c59398aafe93d" },
         { "id": "VEN-C10", "proof": "9c56eb17613e10ef7712a1852b049ed63cf22b18" },
         { "id": "VEN-C11", "proof": "74ab5a0b661210f0afec94086f5358fe50b01f05" },
