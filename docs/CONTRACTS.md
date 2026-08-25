@@ -268,6 +268,8 @@ this exact graph without restarting its older live generation.
   - CLI JSON emits opaque directories and endpoints as ordered byte arrays
     without changing EONW. Each connection carries one length-delimited request
     and response and does not use EOF as framing.
+  - The shared 2 MiB frame ceiling admits every snapshot valid at EONW's field
+    and workspace-count bounds.
 - **Important failures:** Malformed, oversized, incompatible, unavailable,
   rejected, timed-out, partially read, or response-lost operations fail within
   the shared bound without reconstructing hidden state or reviving completed
@@ -281,7 +283,7 @@ this exact graph without restarting its older live generation.
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content, or direct child-protocol escape hatch.
-- **Proof:** `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
+- **Proof:** `10c29edf861fac28db48f41a4546165f79777ee6`
   - **Environment:** x86_64 Linux Nix package and installed profile
   - **Evidence:** EONW v2 codec/version rejection, raw directory snapshot and
     retarget action, CLI projection, absolute connection/read deadlines,
@@ -291,7 +293,8 @@ this exact graph without restarting its older live generation.
     `d0c2208d628fa0dc1e186899b45e0b73534ff9bc`, deadline hardening
     `a390fc5c007900c3fc8c9c49df85f9b8acc06d4a`, management Stop
     `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`, and response-loss
-    correction `56fcae2d00baecf9b69e4650882a69e50419f56b`
+    correction `56fcae2d00baecf9b69e4650882a69e50419f56b`, and maximum-bound snapshot
+    correction `10c29edf861fac28db48f41a4546165f79777ee6`
 
 ## EON-C11 — Runtime generations and presentation
 
@@ -335,7 +338,7 @@ this exact graph without restarting its older live generation.
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
   identity, compatibility window, remote runtime, plugin API, service-manager
   requirement, or automatic eviction.
-- **Proof:** `3c1d6e08d223df753eb88ca031d108ed1abe8ee3`
+- **Proof:** `10c29edf861fac28db48f41a4546165f79777ee6`
   - **Environment:** x86_64 Linux Nix package and installed profile
   - **Evidence:** Separate namespaces, repeated launch, native Present,
     management Stop, supervisor-loss replacement, and dead-residue correction;
@@ -349,8 +352,9 @@ this exact graph without restarting its older live generation.
     `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f`, readiness correction
     `cfcb38e6e711e971ed6004528987761ddd7c87e4`, exact EONW v2 generation
     activation `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`, and codec-source sensitivity
-    correction `3c1d6e08d223df753eb88ca031d108ed1abe8ee3`; installed artifact
-    `/nix/store/a9k4k0811zkvh8wgjv74fr8gpfipxpzd-eon-0.1.0`
+    correction `3c1d6e08d223df753eb88ca031d108ed1abe8ee3`, and bounded-frame correction
+    `10c29edf861fac28db48f41a4546165f79777ee6`; installed artifact
+    `/nix/store/dbiv438iwn9mljrwfg6d29ypg96hp00c-eon-0.1.0`
 - **Open proof:** Current-generation native acceptance remains candidate evidence.
 
 ## EON-C12 — Standalone exact-command terminal
@@ -557,15 +561,15 @@ this exact graph without restarting its older live generation.
   handles, filesystem watching, shell-`cd` tracking, pane-CWD inference,
   retargeting of existing processes, persistence, picker UI, or compatibility
   service accepting EONW v1 and v2.
-- **Proof:** `3c1d6e08d223df753eb88ca031d108ed1abe8ee3`
+- **Proof:** `10c29edf861fac28db48f41a4546165f79777ee6`
   - **Environment:** x86_64 Linux Nix package and installed Eon profile
   - **Evidence:** EONW v2 seed
     `7bb50873ae27e09dfebd8a6ca2f8075bac07afe8`; exact Venus consumer
     `19d7d28a2aba09c0afe3173d25bbb76ec3edce49`; focused codec, workspace,
     CLI, launch-command, and outer multi-tab CWD/rollback checks; complete
-    locked Rust/Nix gates, manifest validation, and generation sensitivity;
-    installed store artifact
-    `/nix/store/a9k4k0811zkvh8wgjv74fr8gpfipxpzd-eon-0.1.0`
+    locked Rust/Nix gates, manifest validation, generation sensitivity, and a
+    maximum-bound EONW snapshot round trip; installed store artifact
+    `/nix/store/dbiv438iwn9mljrwfg6d29ypg96hp00c-eon-0.1.0`
 - **Open proof:** Native visual and AT-SPI dogfood begin after the next normal Eon
   restart; the profile refresh intentionally preserved the older live supervisor.
 

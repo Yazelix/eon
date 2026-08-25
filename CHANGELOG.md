@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keep every valid EONW v2 workspace snapshot representable within its bounded
+  2 MiB frame, so accepted high-bound workspace actions still return their
+  complete typed result.
 - Give every full-Eon tab a stable `tN` identity and one authoritative launch
   directory, expose explicit retargeting through `eon tab directory`, and start
   later panes there without changing existing Sessions. EONW v2 carries exact

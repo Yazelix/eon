@@ -242,10 +242,10 @@ The command surface is small:
 
 Workspace commands target the exact current-generation Eon supervisor. An
 EonTerm supervisor returns `workspace-unavailable` to topology actions at the
-EONW boundary. The workspace topology is bounded
-to 64 tabs and 256 panes, is not persisted, and has no per-pane or per-Session
-removal action. Whole-generation stop sends canonical management Stop to every
-validated Session lease and succeeds only after every exact terminal record is
+EONW boundary. EONW v2 frames are bounded to 2 MiB. The workspace topology is
+bounded to 64 tabs and 256 panes, is not persisted, and has no per-pane or
+per-Session removal action. Whole-generation stop sends canonical management
+Stop to every validated Session lease and succeeds only after every exact terminal record is
 complete. `--json` reports the same
 accepted EONW result as the human view; neither output format is the protocol
 schema. Its tab `directory` and pane `endpoint` fields are ordered integer arrays
@@ -416,12 +416,12 @@ Beads data, lock files, and generated artifacts.
 | README | 427 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 754 |
+| Architecture and contracts | 758 |
 | Distribution and references | 244 |
-| Changelog | 167 |
-| Rust source and tests | 9,207 |
+| Changelog | 170 |
+| Rust source and tests | 9,240 |
 | Cargo manifests | 37 |
 | Component manifest | 327 |
 | Nix composition | 728 |
 | Product defaults | 0 |
-| **Total** | **12,578** |
+| **Total** | **12,618** |
