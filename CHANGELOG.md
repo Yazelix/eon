@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Compose the ORBS v6 Orbit source and the compositor-paced Venus kinetic-
+  scrollback candidate for installed native-Wayland dogfood.
 - Give full Eon, standalone EonTerm, and approved EonTerm compositions distinct
   native Wayland application identities without changing terminal titles or
   child process state.

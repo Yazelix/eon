@@ -14,9 +14,16 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
+The current composition candidate selects Orbit
+`199ee1a6f00efb8a080b31ffbfc7c89b2e857ee6`, canonical ORBS v6 proof
+`780f5d746175b4a9b71df57c51ed4bfcc4c4c375`, and Venus
+`e5e37a3df119ee2bcfa2493a2ce5a46307493732`. `EON-C1` through `EON-C4`
+retain their prior proof records but remain Candidate until the exact installed
+profile and native Wayland behavior are accepted.
+
 ## EON-C1 — Exact compatible component launch
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** A user launching Eon or EonTerm from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -52,7 +59,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 ## EON-C2 — One component compatibility graph
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** Every Eon distribution and runtime launch path.
 - **Trigger:** A product generation resolves or validates its component set.
 - **Result:** One versioned manifest defines component identity, compatibility,
@@ -71,7 +78,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 ## EON-C3 — Distribution-neutral runtime inputs
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** Eon launch and every distribution channel.
 - **Trigger:** A channel supplies exact component artifacts to Eon.
 - **Result:** Eon receives explicit component paths, treats Nix store paths as
@@ -90,7 +97,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 ## EON-C4 — Thin orchestrator ownership
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** Eon, Orbit, Venus, Helix, Yazi, and Ratconfig integrations.
 - **Trigger:** Eon composes or controls a product surface.
 - **Result:** Eon owns launch policy, topology, component selection, product
