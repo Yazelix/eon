@@ -34,6 +34,7 @@ pub(super) fn current_generation() -> Result<String, String> {
         include_bytes!("supervisor.rs"),
         include_bytes!("workspace.rs"),
         include_bytes!("../../eon-workspace-protocol/src/lib.rs"),
+        include_bytes!("../../eon-workspace-protocol/src/v2.rs"),
         include_bytes!("../../eon-workspace-protocol/Cargo.toml"),
         include_bytes!("../../eon-manifest/src/lib.rs"),
         include_bytes!("../../eon-manifest/Cargo.toml"),
