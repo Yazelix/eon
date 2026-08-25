@@ -539,8 +539,9 @@ this exact graph without restarting its older live generation.
 - **Result:**
   - Every live tab has one stable `tN` identity and one authoritative absolute
     launch directory. Panes retain `pN` identities.
-  - Fresh `t1` uses the supervisor's absolute launch directory. A new tab
-    inherits the active tab's value and uses it for its first Session.
+  - Fresh `t1` validates the supervisor's absolute launch directory before any
+    Session recovery or startup. A new tab inherits the active tab's value and
+    uses it for its first Session.
   - `SetTabDirectory` changes exactly one addressed tab. Later panes in that tab
     start with the accepted directory; existing Sessions and terminal CWDs do
     not change.
@@ -550,9 +551,10 @@ this exact graph without restarting its older live generation.
   - Same-boot recovery assigns synthetic `t1` the replacement supervisor's
     launch directory as fresh policy and never infers prior policy from a pane.
 - **Important failures:** Empty, relative, NUL-containing, oversized, missing,
-  non-directory, unknown-tab, or stale-tab updates change nothing. A path that
-  becomes invalid after acceptance remains stored, but later Session startup
-  fails without committing pane topology or leaving launch residue.
+  non-directory, unknown-tab, or stale-tab updates change nothing. Once a path
+  passes validation, later disappearance leaves its policy value stored; a
+  later Session startup fails without committing pane topology or leaving
+  launch residue.
 - **Owner:** Eon owns tab identity, launch-directory state, validation, mutation,
   inheritance, and recovery fallback; Orbit owns each Session's terminal CWD;
   Venus owns only native projection of Eon's state.
@@ -561,15 +563,17 @@ this exact graph without restarting its older live generation.
   handles, filesystem watching, shell-`cd` tracking, pane-CWD inference,
   retargeting of existing processes, persistence, picker UI, or compatibility
   service accepting EONW v1 and v2.
-- **Proof:** `10c29edf861fac28db48f41a4546165f79777ee6`
+- **Proof:** `06325620f700702c71acc5c5ae3f3131612a76a1`
   - **Environment:** x86_64 Linux Nix package and installed Eon profile
   - **Evidence:** EONW v2 seed
     `7bb50873ae27e09dfebd8a6ca2f8075bac07afe8`; exact Venus consumer
     `19d7d28a2aba09c0afe3173d25bbb76ec3edce49`; focused codec, workspace,
-    CLI, launch-command, and outer multi-tab CWD/rollback checks; complete
-    locked Rust/Nix gates, manifest validation, generation sensitivity, and a
-    maximum-bound EONW snapshot round trip; installed store artifact
-    `/nix/store/dbiv438iwn9mljrwfg6d29ypg96hp00c-eon-0.1.0`
+    CLI, launch-command, startup-disappearance, and outer multi-tab CWD/rollback
+    checks; complete locked Rust/Nix gates, manifest validation, generation
+    sensitivity, maximum-bound EONW snapshot round trip, and exact installed
+    startup-disappearance proof; profile artifact
+    `/nix/store/j4h0bmyvkndzvhi3l9r96b7f57jxlmm8-eon-0.1.0` reports generation
+    `g1-a9a0102de0a2c56d1d5bdda6c25bb3dc`
 - **Open proof:** Native visual and AT-SPI dogfood begin after the next normal Eon
   restart; the profile refresh intentionally preserved the older live supervisor.
 

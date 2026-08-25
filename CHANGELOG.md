@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Validate full Eon's initial tab launch directory before recovering or starting
+  Sessions, so a startup filesystem race cannot report failure after launching
+  a persistent Session.
 - Keep every valid EONW v2 workspace snapshot representable within its bounded
   2 MiB frame, so accepted high-bound workspace actions still return their
   complete typed result.

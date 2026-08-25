@@ -200,8 +200,9 @@ second because Eon Desktop re-inspects EONW v2 every 250 ms; the protocol adds
 no event stream. When a shell exits, Eon removes its pane, selects the nearest
 surviving pane, removes an empty tab, and closes when the final pane exits.
 
-Every live tab owns one absolute launch directory. Fresh `t1` uses Eon's launch
-directory, a new tab inherits the active tab's value for its first Session, and
+Every live tab owns one absolute launch directory. Fresh `t1` validates Eon's
+launch directory before recovering or starting Sessions. A new tab inherits the
+active tab's value for its first Session, and
 `eon tab directory tN -- DIRECTORY` explicitly retargets only future Sessions
 in that tab. Existing Sessions and shell working directories do not change.
 Invalid targets or directories change no state; if an accepted path later
@@ -413,15 +414,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 483 |
-| README | 427 |
+| README | 428 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 758 |
+| Architecture and contracts | 762 |
 | Distribution and references | 244 |
-| Changelog | 170 |
-| Rust source and tests | 9,240 |
+| Changelog | 173 |
+| Rust source and tests | 9,296 |
 | Cargo manifests | 37 |
 | Component manifest | 327 |
 | Nix composition | 728 |
 | Product defaults | 0 |
-| **Total** | **12,618** |
+| **Total** | **12,682** |
