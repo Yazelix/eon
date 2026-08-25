@@ -5,7 +5,7 @@ use std::{collections::HashSet, fmt, str};
 pub const VERSION: u16 = 2;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
-const MAX_MESSAGE_BYTES: usize = 128 * 1024;
+const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ID_BYTES: usize = 128;
 const MAX_ENDPOINT_BYTES: usize = 4096;
 const MAX_VERSION_BYTES: usize = 128;
@@ -768,7 +768,7 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_raw_directories_and_rejects_v1_and_invalid_paths() {
+    fn round_trips_v2_bounds_and_rejects_invalid_inputs() {
         let request = Request {
             id: "client-1".into(),
             action: Action::SetTabDirectory {
@@ -807,6 +807,39 @@ mod tests {
             decode_lifecycle_response(&encode_lifecycle_response(&runtime).unwrap()).unwrap(),
             runtime
         );
+
+        let identity = |prefix: &str, number: usize| {
+            let suffix = number.to_string();
+            format!(
+                "{prefix}{}{suffix}",
+                "x".repeat(MAX_ID_BYTES - prefix.len() - suffix.len())
+            )
+        };
+        let panes_per_tab = MAX_PANES / MAX_TABS;
+        let maximal = Response::Snapshot(Snapshot {
+            active_tab: identity("t", 1),
+            tabs: (1..=MAX_TABS)
+                .map(|tab_number| {
+                    let first_pane = (tab_number - 1) * panes_per_tab + 1;
+                    Tab {
+                        id: identity("t", tab_number),
+                        directory: vec![b'/'; MAX_DIRECTORY_BYTES],
+                        selected_pane: identity("p", first_pane),
+                        panes: (first_pane..first_pane + panes_per_tab)
+                            .map(|pane_number| Pane {
+                                id: identity("p", pane_number),
+                                session: identity("session-", pane_number),
+                                endpoint: vec![pane_number as u8; MAX_ENDPOINT_BYTES],
+                                live: true,
+                            })
+                            .collect(),
+                    }
+                })
+                .collect(),
+        });
+        let encoded_maximal = encode_response(&maximal).unwrap();
+        assert_eq!(decode_response(&encoded_maximal).unwrap(), maximal);
+
         for directory in [Vec::new(), b"/tmp/eon\0bad".to_vec()] {
             let invalid = Request {
                 id: "client-1".into(),
