@@ -7,7 +7,8 @@ installation, and proven contract changes.
 
 - Compose accepted ORBS v10 native cell, word, and logical-line selection,
   terminal mouse capture with Shift override, and automatic ordinary-plus-primary
-  Wayland clipboard copy for installed dogfood.
+  Wayland clipboard copy for installed dogfood. Host selection keeps only the
+  latest unpresented frame so touchpad drag tracks promptly and stops at release.
 - Compose accepted ORBS v7 bounded preview windows and Venus multi-row
   compositor-paced kinetic scrollback for installed native-Wayland dogfood.
 - Give full Eon, standalone EonTerm, and approved EonTerm compositions distinct

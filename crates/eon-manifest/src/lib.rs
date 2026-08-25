@@ -464,7 +464,7 @@ mod tests {
         assert_eq!(
             report,
             "eon-alpha x86_64-linux\n\
-orbit 0.1.0 59975e9176f5caf8b78dc3273e88d9ecbb75dc3f x86_64-linux\n\
+orbit 0.1.0 70861097a825c2fbfaea53a8ca9437f45e8602eb x86_64-linux\n\
 venus 0.1.0 1034817bbe2352fb4b1026bce6b1f02eedd67e37 x86_64-linux\n\
 nushell 0.113.1 7b7df4aa68e957cf38b9d8157c35fa7523f44a6d x86_64-linux\n\
 bash 5.3p9 b8c60bc9ca365f8261fa97900b6fa939f6ebc303 x86_64-linux\n\
@@ -482,7 +482,7 @@ ratconfig 6.0.0 e6ec2ebfe84b2358186410680cbcaf0564eb59a2 x86_64-linux"
         assert!(!report.contains("/nix/store"));
         assert_eq!(
             component_revision(CANONICAL, "orbit").unwrap(),
-            "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f"
+            "70861097a825c2fbfaea53a8ca9437f45e8602eb"
         );
         assert!(component_revision(CANONICAL, "missing").is_err());
     }

@@ -47,7 +47,7 @@
       "id": "orbit",
       "project": "Eon Sessions",
       "version": "0.1.0",
-      "revision": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f",
+      "revision": "70861097a825c2fbfaea53a8ca9437f45e8602eb",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -60,21 +60,21 @@
       "contracts": [
         { "id": "ORB-C1", "proof": "d96fff2015cded947c881c454216c6bf0ad69b7b" },
         { "id": "ORB-C2", "proof": "d96fff2015cded947c881c454216c6bf0ad69b7b" },
-        { "id": "ORB-C3", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
-        { "id": "ORB-C4", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
-        { "id": "ORB-C5", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
-        { "id": "ORB-C6", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
-        { "id": "ORB-C7", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
-        { "id": "ORB-C8", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
-        { "id": "ORB-C9", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
+        { "id": "ORB-C3", "proof": "70861097a825c2fbfaea53a8ca9437f45e8602eb" },
+        { "id": "ORB-C4", "proof": "70861097a825c2fbfaea53a8ca9437f45e8602eb" },
+        { "id": "ORB-C5", "proof": "70861097a825c2fbfaea53a8ca9437f45e8602eb" },
+        { "id": "ORB-C6", "proof": "70861097a825c2fbfaea53a8ca9437f45e8602eb" },
+        { "id": "ORB-C7", "proof": "70861097a825c2fbfaea53a8ca9437f45e8602eb" },
+        { "id": "ORB-C8", "proof": "70861097a825c2fbfaea53a8ca9437f45e8602eb" },
+        { "id": "ORB-C9", "proof": "70861097a825c2fbfaea53a8ca9437f45e8602eb" },
         { "id": "ORB-C10", "proof": "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c" },
-        { "id": "ORB-C11", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
+        { "id": "ORB-C11", "proof": "70861097a825c2fbfaea53a8ca9437f45e8602eb" },
         { "id": "ORB-C12", "proof": "7de9980ffbd6417758698d5c33356204eeb24de5" },
         { "id": "ORB-C13", "proof": "7de9980ffbd6417758698d5c33356204eeb24de5" }
       ],
       "interfaces": [
         { "id": "ORBF", "version": 1, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
-        { "id": "ORBS", "version": 10, "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" }
+        { "id": "ORBS", "version": 10, "proof": "70861097a825c2fbfaea53a8ca9437f45e8602eb" }
       ],
       "requires": []
     },
@@ -110,10 +110,10 @@
       "requires": [
         {
           "component": "orbit",
-          "revision": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f",
+          "revision": "70861097a825c2fbfaea53a8ca9437f45e8602eb",
           "interfaces": [
             { "id": "ORBF", "version": 1, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
-            { "id": "ORBS", "version": 10, "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" }
+            { "id": "ORBS", "version": 10, "proof": "70861097a825c2fbfaea53a8ca9437f45e8602eb" }
           ]
         }
       ]
