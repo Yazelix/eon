@@ -292,8 +292,8 @@ this exact graph without restarting its older live generation.
     actions `fd6b348494111a0d18e241787da14ea99ee117a9`, CLI proof
     `d0c2208d628fa0dc1e186899b45e0b73534ff9bc`, deadline hardening
     `a390fc5c007900c3fc8c9c49df85f9b8acc06d4a`, management Stop
-    `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`, and response-loss
-    correction `56fcae2d00baecf9b69e4650882a69e50419f56b`, and maximum-bound snapshot
+    `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`, response-loss correction
+    `56fcae2d00baecf9b69e4650882a69e50419f56b`, and maximum-bound snapshot
     correction `10c29edf861fac28db48f41a4546165f79777ee6`
 
 ## EON-C11 — Runtime generations and presentation

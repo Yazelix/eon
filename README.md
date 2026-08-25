@@ -245,8 +245,8 @@ EonTerm supervisor returns `workspace-unavailable` to topology actions at the
 EONW boundary. EONW v2 frames are bounded to 2 MiB. The workspace topology is
 bounded to 64 tabs and 256 panes, is not persisted, and has no per-pane or
 per-Session removal action. Whole-generation stop sends canonical management
-Stop to every validated Session lease and succeeds only after every exact terminal record is
-complete. `--json` reports the same
+Stop to every validated Session lease and succeeds only after every exact
+terminal record is complete. `--json` reports the same
 accepted EONW result as the human view; neither output format is the protocol
 schema. Its tab `directory` and pane `endpoint` fields are ordered integer arrays
 that preserve every opaque Unix path or endpoint byte.
