@@ -335,7 +335,7 @@ this exact graph without restarting its older live generation.
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
   identity, compatibility window, remote runtime, plugin API, service-manager
   requirement, or automatic eviction.
-- **Proof:** `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
+- **Proof:** `3c1d6e08d223df753eb88ca031d108ed1abe8ee3`
   - **Environment:** x86_64 Linux Nix package and installed profile
   - **Evidence:** Separate namespaces, repeated launch, native Present,
     management Stop, supervisor-loss replacement, and dead-residue correction;
@@ -347,8 +347,10 @@ this exact graph without restarting its older live generation.
     `63686a12b752c9423b2096d5e32aa5842f2184fc`, same-boot adoption
     `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`, Venus presentation
     `50b7ef7f6c9d5b531b79ecca67c9c8fdf40f355f`, readiness correction
-    `cfcb38e6e711e971ed6004528987761ddd7c87e4`, and exact EONW v2 generation
-    activation `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
+    `cfcb38e6e711e971ed6004528987761ddd7c87e4`, exact EONW v2 generation
+    activation `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`, and codec-source sensitivity
+    correction `3c1d6e08d223df753eb88ca031d108ed1abe8ee3`; installed artifact
+    `/nix/store/a9k4k0811zkvh8wgjv74fr8gpfipxpzd-eon-0.1.0`
 - **Open proof:** Current-generation native acceptance remains candidate evidence.
 
 ## EON-C12 — Standalone exact-command terminal
@@ -555,14 +557,15 @@ this exact graph without restarting its older live generation.
   handles, filesystem watching, shell-`cd` tracking, pane-CWD inference,
   retargeting of existing processes, persistence, picker UI, or compatibility
   service accepting EONW v1 and v2.
-- **Proof:** `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
+- **Proof:** `3c1d6e08d223df753eb88ca031d108ed1abe8ee3`
   - **Environment:** x86_64 Linux Nix package and installed Eon profile
   - **Evidence:** EONW v2 seed
     `7bb50873ae27e09dfebd8a6ca2f8075bac07afe8`; exact Venus consumer
     `19d7d28a2aba09c0afe3173d25bbb76ec3edce49`; focused codec, workspace,
     CLI, launch-command, and outer multi-tab CWD/rollback checks; complete
-    locked Rust and Nix gates; manifest validation; installed store artifact
-    `/nix/store/2vpa0l81rks8r8nmf9c83ybsidja70fy-eon-0.1.0`
+    locked Rust/Nix gates, manifest validation, and generation sensitivity;
+    installed store artifact
+    `/nix/store/a9k4k0811zkvh8wgjv74fr8gpfipxpzd-eon-0.1.0`
 - **Open proof:** Native visual and AT-SPI dogfood begin after the next normal Eon
   restart; the profile refresh intentionally preserved the older live supervisor.
 

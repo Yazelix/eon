@@ -8,7 +8,7 @@ installation, and proven contract changes.
 - Give every full-Eon tab a stable `tN` identity and one authoritative launch
   directory, expose explicit retargeting through `eon tab directory`, and start
   later panes there without changing existing Sessions. EONW v2 carries exact
-  raw directory bytes, while Venus renders numbered directory-derived tab labels.
+  raw directory bytes into Venus labels and the runtime-generation identity.
 - Compose accepted ORBS v10 native cell, word, and logical-line selection,
   terminal mouse capture with Shift override, and automatic ordinary-plus-primary
   Wayland clipboard copy for installed dogfood. Host selection keeps only the
