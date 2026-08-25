@@ -39,7 +39,7 @@
     ],
     "required_interfaces": [
       { "component": "orbit", "interface": "ORBF", "version": 1 },
-      { "component": "orbit", "interface": "ORBS", "version": 7 }
+      { "component": "orbit", "interface": "ORBS", "version": 10 }
     ]
   },
   "components": [
@@ -47,7 +47,7 @@
       "id": "orbit",
       "project": "Eon Sessions",
       "version": "0.1.0",
-      "revision": "baf8aa28dcaa50484cd221aa7730defedc2356bb",
+      "revision": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -60,21 +60,21 @@
       "contracts": [
         { "id": "ORB-C1", "proof": "d96fff2015cded947c881c454216c6bf0ad69b7b" },
         { "id": "ORB-C2", "proof": "d96fff2015cded947c881c454216c6bf0ad69b7b" },
-        { "id": "ORB-C3", "proof": "baf8aa28dcaa50484cd221aa7730defedc2356bb" },
-        { "id": "ORB-C4", "proof": "baf8aa28dcaa50484cd221aa7730defedc2356bb" },
-        { "id": "ORB-C5", "proof": "baf8aa28dcaa50484cd221aa7730defedc2356bb" },
-        { "id": "ORB-C6", "proof": "baf8aa28dcaa50484cd221aa7730defedc2356bb" },
-        { "id": "ORB-C7", "proof": "baf8aa28dcaa50484cd221aa7730defedc2356bb" },
-        { "id": "ORB-C8", "proof": "baf8aa28dcaa50484cd221aa7730defedc2356bb" },
-        { "id": "ORB-C9", "proof": "baf8aa28dcaa50484cd221aa7730defedc2356bb" },
+        { "id": "ORB-C3", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
+        { "id": "ORB-C4", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
+        { "id": "ORB-C5", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
+        { "id": "ORB-C6", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
+        { "id": "ORB-C7", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
+        { "id": "ORB-C8", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
+        { "id": "ORB-C9", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
         { "id": "ORB-C10", "proof": "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c" },
-        { "id": "ORB-C11", "proof": "baf8aa28dcaa50484cd221aa7730defedc2356bb" },
+        { "id": "ORB-C11", "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" },
         { "id": "ORB-C12", "proof": "7de9980ffbd6417758698d5c33356204eeb24de5" },
         { "id": "ORB-C13", "proof": "7de9980ffbd6417758698d5c33356204eeb24de5" }
       ],
       "interfaces": [
         { "id": "ORBF", "version": 1, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
-        { "id": "ORBS", "version": 7, "proof": "baf8aa28dcaa50484cd221aa7730defedc2356bb" }
+        { "id": "ORBS", "version": 10, "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" }
       ],
       "requires": []
     },
@@ -82,7 +82,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "f13dc7ac2e9a24c5cff5bb7e618436783ec76dbf",
+      "revision": "1034817bbe2352fb4b1026bce6b1f02eedd67e37",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -96,7 +96,7 @@
         { "id": "VEN-C2", "proof": "c0766532c7669a2ae9dac6a26ae94d467110896b" },
         { "id": "VEN-C3", "proof": "a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8" },
         { "id": "VEN-C4", "proof": "588996739aaff32756ca24960135371a94636801" },
-        { "id": "VEN-C7", "proof": "f13dc7ac2e9a24c5cff5bb7e618436783ec76dbf" },
+        { "id": "VEN-C7", "proof": "1034817bbe2352fb4b1026bce6b1f02eedd67e37" },
         { "id": "VEN-C8", "proof": "ee3defea55c77f7acc4559606965d93d39bba8b5" },
         { "id": "VEN-C9", "proof": "90988f6ebcde68338e202a9c637c59398aafe93d" },
         { "id": "VEN-C10", "proof": "9c56eb17613e10ef7712a1852b049ed63cf22b18" },
@@ -110,10 +110,10 @@
       "requires": [
         {
           "component": "orbit",
-          "revision": "baf8aa28dcaa50484cd221aa7730defedc2356bb",
+          "revision": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f",
           "interfaces": [
             { "id": "ORBF", "version": 1, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
-            { "id": "ORBS", "version": 7, "proof": "baf8aa28dcaa50484cd221aa7730defedc2356bb" }
+            { "id": "ORBS", "version": 10, "proof": "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f" }
           ]
         }
       ]

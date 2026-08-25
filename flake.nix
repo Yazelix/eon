@@ -4,11 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
     orbit = {
-      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=baf8aa28dcaa50484cd221aa7730defedc2356bb";
+      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=59975e9176f5caf8b78dc3273e88d9ecbb75dc3f";
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=f13dc7ac2e9a24c5cff5bb7e618436783ec76dbf";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=1034817bbe2352fb4b1026bce6b1f02eedd67e37";
       flake = false;
     };
     helix = {
@@ -139,7 +139,7 @@
         pkgs.vulkan-loader
         pkgs.wayland
       ];
-      venusProtocolSourceRevision = "baf8aa28dcaa50484cd221aa7730defedc2356bb";
+      venusProtocolSourceRevision = "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f";
       workspaceProtocolRevision = "4af395aea06c230ee6b18cf0755ae25915c0b88d";
       venusSource =
         assert orbit.rev == (builtins.head venusIdentity.requires).revision;

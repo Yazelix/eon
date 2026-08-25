@@ -14,11 +14,11 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The current accepted composition selects Orbit and canonical ORBS v7 proof
-`baf8aa28dcaa50484cd221aa7730defedc2356bb`, and Venus
-`f13dc7ac2e9a24c5cff5bb7e618436783ec76dbf`. The exact installed profile and
-native Wayland dogfood prove `EON-C1` through `EON-C4` at
-`b44d968e38474fc5b75a41bcde2ad750da0d1e3e`.
+The current candidate composition selects Orbit and canonical ORBS v10 proof
+`59975e9176f5caf8b78dc3273e88d9ecbb75dc3f`, and Venus
+`1034817bbe2352fb4b1026bce6b1f02eedd67e37`. Installed profile and native
+Wayland acceptance remain open before this composition replaces the accepted
+`EON-C1` through `EON-C4` proof.
 
 ## EON-C1 — Exact compatible component launch
 
