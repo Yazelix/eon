@@ -260,6 +260,9 @@ fn managed_orbit_helper() {
         )
         .unwrap();
     }
+    if std::env::var_os("EON_TEST_REMOVE_ORBIT_CWD").is_some() {
+        fs::remove_dir(std::env::current_dir().unwrap()).unwrap();
+    }
 
     let command = arguments
         .iter()
@@ -1113,6 +1116,58 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     fs::write(&stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!control.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn launch_directory_can_disappear_after_the_initial_session_starts() {
+    let root = temporary_directory();
+    let launch = root.join("launch");
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    fs::create_dir(&launch).unwrap();
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = eon_command(&binary)
+        .arg("run")
+        .current_dir(&launch)
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_REMOVE_ORBIT_CWD", "1")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    let control = generation_runtime(&runtime).join("eon.sock");
+    wait_for_connection(&control);
+
+    let snapshot = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+    assert!(snapshot.status.success());
+    assert!(stdout(&snapshot).contains(&format!(
+        "\"directory\":[{}]",
+        launch
+            .as_os_str()
+            .as_bytes()
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(",")
+    )));
+
+    fs::write(&stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
     fs::remove_dir_all(root).unwrap();
 }
 

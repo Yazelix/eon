@@ -163,7 +163,6 @@ impl Workspace {
         directory: PathBuf,
         sessions: Vec<(usize, Session)>,
     ) -> Result<Self, String> {
-        validate_initial_directory(&directory)?;
         let next_pane = sessions
             .last()
             .ok_or("cannot recover an empty workspace")?
@@ -481,9 +480,8 @@ fn directory_path(bytes: Vec<u8>) -> Result<PathBuf, Failure> {
     Ok(path)
 }
 
-fn validate_initial_directory(path: &Path) -> Result<(), String> {
-    let bytes = path.as_os_str().as_bytes();
-    if !path.is_absolute() || bytes.is_empty() || bytes.len() > MAX_DIRECTORY_BYTES {
+pub(crate) fn validate_initial_directory(path: &Path) -> Result<(), String> {
+    if !path.is_absolute() || path.as_os_str().as_bytes().len() > MAX_DIRECTORY_BYTES {
         return Err("initial tab launch directory must be a bounded absolute path".into());
     }
     if !path.is_dir() {

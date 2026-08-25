@@ -515,6 +515,9 @@ fn supervise(
     let _lifecycle_lock = lifecycle_lock;
     let launch_directory = env::current_dir()
         .map_err(|error| format!("cannot resolve Eon launch directory: {error}"))?;
+    if mode == LaunchMode::Workspace {
+        workspace::validate_initial_directory(&launch_directory)?;
+    }
     let socket = runtime.join("orbit.sock");
     let component_generation =
         eon_manifest::component_revision(MANIFEST, "orbit").map_err(|error| error.to_string())?;
