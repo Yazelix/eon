@@ -573,42 +573,59 @@ resolves this exact graph without restarting its older live generation.
 - **Open proof:** Native visual and AT-SPI dogfood begin after the next normal Eon
   restart; the profile refresh intentionally preserved the older live supervisor.
 
-## EON-C18 — Global tab directory picker
+## EON-C18 — Picker-first tab directories
 
 - **Status:** Candidate
-- **Consumer:** One person using a live full-Eon tab.
-- **Trigger:** The person presses Alt+Z while terminal, tab, or pane focus is
-  active and no directory picker is already open.
+- **Consumer:** One person starting or using full Eon.
+- **Trigger:** Eon needs the first pane for a new tab, or the person presses
+  Alt+Z in an existing tab while no directory picker is already open.
 - **Result:**
-  - Eon captures the active tab and starts one transient Orbit Session running
-    the exact packaged ranked-directory picker at that tab's launch directory.
+  - A fresh workspace and every later new tab begin as one active pending tab
+    with no durable pane. Eon starts one transient Orbit Session running the
+    exact packaged ranked-directory picker at the inherited launch directory.
     Ambient fzf default options cannot alter its command, layout, or bindings.
+  - Accepting a valid choice atomically commits the tab directory and starts
+    exactly one first `pN` Session there. First-tab cancellation falls back to
+    Eon's validated launch directory; later-tab cancellation abandons the
+    pending tab and restores the prior tab and focus.
+  - Alt+Z keeps the existing explicit retarget behavior after a tab has panes;
+    it never changes or restarts a running pane.
   - EONW exposes that picker as one explicit modal endpoint bound to the active
-    tab, never as a normal `pN` pane. The selected durable pane stays live and
-    receives no picker input.
+    tab, never as a normal `pN` pane. EONW v4 represents the pending tab with an
+    absent selected pane instead of a sentinel or placeholder process.
+    Lifecycle inspection and Stop may report zero durable Sessions during the
+    initial picker; the transient picker remains excluded from that list.
+  - Venus can start a full-Eon presentation from the workspace endpoint alone
+    while the initial tab is pending; the picker endpoint in its first snapshot
+    is the sole terminal attachment.
   - Venus keeps the tab bar visible and replaces the tab body with the picker,
     inset by one terminal cell on every side when the grid permits it. The
-    previous terminal is not composited underneath.
-  - Accepting a valid choice uses EON-C17's existing tab-directory mutation.
-    The picker exits, prior workspace focus returns, the tab label updates, and
-    the next ordinary pane starts at the accepted directory. Existing process
-    working directories do not change.
+    previous terminal is not composited underneath. Attach and recovery never
+    create an automatic picker.
 - **Important failures:** Cancel, empty or invalid selection, picker launch or
   exit, target disappearance, duplicate invocation, origin-tab loss, or
-  presentation detachment changes no directory and leaves no transient
-  process, endpoint, record, pane, or modal state.
+  presentation detachment follows the first- or later-tab fallback without a
+  partial tab, consumed pane or durable Session identity, changed existing
+  process, or transient process, endpoint, record, pane, or modal residue.
 - **Owner:** Eon owns picker policy, tab binding, command selection, lifecycle,
   validation, mutation, and cleanup. Venus owns full-Eon shortcut precedence,
   modal geometry, focus, input, notices, rendering, and accessibility. Orbit
   owns the transient PTY and child. Zoxide owns ranking and fzf owns interactive
   terminal selection.
-- **Consumes:** EON-C17; accepted EONW v3 producer and exact Venus consumer;
-  Orbit's accepted Session startup, attachment, exit, and stop contracts.
+- **Consumes:** EON-C17; accepted EONW v3 picker base and candidate EONW v4
+  pending-tab boundary; Orbit's accepted Session startup, attachment, exit, and
+  stop contracts. Exact Venus v4 consumption remains the next frontier.
 - **Boundary:** No Yazi dependency, normal-pane identity, arbitrary-command or
   generic-popup API, simultaneous terminal composition, native Venus picker,
-  automatic pane creation, current-process `cd`, persistence, EonTerm action,
-  or additional platform.
-- **Proof:** Source `9f6599d103162061ee666126c2eddce03383afb6`; candidate profile artifact
+  placeholder shell, pane replacement, current-process `cd`, persisted pending
+  tab, EonTerm action, or additional platform.
+- **Proof:** The EONW v4 protocol seed is mechanically verified as an
+  uncommitted candidate based on `021fffd2a4edd5ee51b8ee5be8520c24e2889858`:
+  focused red/green pending-tab and zero-durable-Session lifecycle round trips,
+  v3/v4 mutual rejection, invalid pending-state rejection, complete locked Rust
+  checks, and `nix flake check path:. --print-build-logs` passed on x86_64
+  Linux. Existing Alt+Z runtime proof remains source
+  `9f6599d103162061ee666126c2eddce03383afb6`; candidate profile artifact
   `/nix/store/jafvw2mipdiphsmiwhdhqqysi7sdxhxi-eon-0.1.0`, generation
   `g1-73de286734a29660b2d11564c4a012b9`
   - **Environment:** x86_64 Linux COSMIC Wayland, installed Eon profile, and an
@@ -622,9 +639,9 @@ resolves this exact graph without restarting its older live generation.
     installed modal presentation-loss cleanup with the durable Session retained,
     one-batch generation Stop with a durable-only public result, and
     transient endpoint, record, process, and runtime cleanup
-- **Open proof:** Native Alt+Z, geometry, focus, and accessibility acceptance
-  begins after the next normal Eon restart; the profile refresh intentionally
-  preserves the older live supervisor and its Sessions.
+- **Open proof:** Exact Venus pending-tab consumption, Eon runtime production,
+  and installed native accept/cancel/focus/accessibility dogfood remain pending
+  in frontier order.
 
 ## Rules
 

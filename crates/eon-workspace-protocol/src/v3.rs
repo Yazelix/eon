@@ -52,6 +52,10 @@ pub enum Response {
 pub type Result<T> = std::result::Result<T, Error>;
 
 pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
+    encode_request_version(request, VERSION)
+}
+
+pub(crate) fn encode_request_version(request: &Request, version: u16) -> Result<Vec<u8>> {
     v2::identity("request id", &request.id)?;
     let mut payload = Encoder::default();
     payload.string(&request.id);
@@ -88,11 +92,15 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
         }
         Action::PickTabDirectory => payload.byte(13),
     }
-    v2::frame_version(VERSION, v2::REQUEST, payload.bytes)
+    v2::frame_version(version, v2::REQUEST, payload.bytes)
 }
 
 pub fn decode_request(bytes: &[u8]) -> Result<Request> {
-    let (kind, payload) = v2::unframe_version(bytes, VERSION)?;
+    decode_request_version(bytes, VERSION)
+}
+
+pub(crate) fn decode_request_version(bytes: &[u8], version: u16) -> Result<Request> {
+    let (kind, payload) = v2::unframe_version(bytes, version)?;
     if kind != v2::REQUEST {
         return Err(Error::InvalidKind { value: kind });
     }
@@ -209,11 +217,11 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
 }
 
 pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>> {
-    super::v2::encode_lifecycle_response_version(response, VERSION)
+    super::v2::encode_lifecycle_response_version(response, VERSION, false)
 }
 
 pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
-    super::v2::decode_lifecycle_response_version(bytes, VERSION)
+    super::v2::decode_lifecycle_response_version(bytes, VERSION, false)
 }
 
 fn validate_snapshot(snapshot: &Snapshot) -> Result<()> {

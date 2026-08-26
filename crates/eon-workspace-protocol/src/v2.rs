@@ -296,17 +296,18 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
 }
 
 pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>> {
-    encode_lifecycle_response_version(response, VERSION)
+    encode_lifecycle_response_version(response, VERSION, false)
 }
 
 pub(crate) fn encode_lifecycle_response_version(
     response: &LifecycleResponse,
     version: u16,
+    allow_empty_sessions: bool,
 ) -> Result<Vec<u8>> {
     let mut payload = Encoder::default();
     let kind = match response {
         LifecycleResponse::Runtime(runtime) => {
-            validate_runtime(runtime)?;
+            validate_runtime(runtime, allow_empty_sessions)?;
             payload.string(&runtime.generation);
             payload.string(&runtime.eon_version);
             payload.number(runtime.workspace_protocol);
@@ -317,7 +318,7 @@ pub(crate) fn encode_lifecycle_response_version(
             RUNTIME
         }
         LifecycleResponse::Stopped(stopped) => {
-            validate_stopped(stopped)?;
+            validate_stopped(stopped, allow_empty_sessions)?;
             payload.string(&stopped.generation);
             encode_sessions(&mut payload, &stopped.sessions);
             STOPPED
@@ -331,12 +332,13 @@ pub(crate) fn encode_lifecycle_response_version(
 }
 
 pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
-    decode_lifecycle_response_version(bytes, VERSION)
+    decode_lifecycle_response_version(bytes, VERSION, false)
 }
 
 pub(crate) fn decode_lifecycle_response_version(
     bytes: &[u8],
     version: u16,
+    allow_empty_sessions: bool,
 ) -> Result<LifecycleResponse> {
     let (kind, payload) = unframe_version(bytes, version)?;
     let mut decoder = Decoder::new(payload);
@@ -351,7 +353,7 @@ pub(crate) fn decode_lifecycle_response_version(
                 attach: decode_availability(&mut decoder, "attach reason")?,
                 stop: decode_availability(&mut decoder, "stop reason")?,
             };
-            validate_runtime(&runtime)?;
+            validate_runtime(&runtime, allow_empty_sessions)?;
             LifecycleResponse::Runtime(runtime)
         }
         STOPPED => {
@@ -359,7 +361,7 @@ pub(crate) fn decode_lifecycle_response_version(
                 generation: decoder.string("generation", MAX_ID_BYTES)?,
                 sessions: decode_sessions(&mut decoder)?,
             };
-            validate_stopped(&stopped)?;
+            validate_stopped(&stopped, allow_empty_sessions)?;
             LifecycleResponse::Stopped(stopped)
         }
         FAILURE => LifecycleResponse::Failure(decode_failure(&mut decoder)?),
@@ -513,7 +515,7 @@ pub(crate) fn validate_workspace(active_tab: &str, tabs: &[Tab]) -> Result<()> {
     Ok(())
 }
 
-fn validate_runtime(runtime: &Runtime) -> Result<()> {
+fn validate_runtime(runtime: &Runtime, allow_empty_sessions: bool) -> Result<()> {
     identity("generation", &runtime.generation)?;
     nonempty("Eon version", &runtime.eon_version, MAX_VERSION_BYTES)?;
     if runtime.workspace_protocol == 0 {
@@ -526,18 +528,18 @@ fn validate_runtime(runtime: &Runtime) -> Result<()> {
         &runtime.component_report,
         MAX_COMPONENT_REPORT_BYTES,
     )?;
-    validate_sessions(&runtime.sessions)?;
+    validate_sessions(&runtime.sessions, allow_empty_sessions)?;
     validate_availability(&runtime.attach, "attach reason")?;
     validate_availability(&runtime.stop, "stop reason")
 }
 
-fn validate_stopped(stopped: &Stopped) -> Result<()> {
+fn validate_stopped(stopped: &Stopped, allow_empty_sessions: bool) -> Result<()> {
     identity("generation", &stopped.generation)?;
-    validate_sessions(&stopped.sessions)
+    validate_sessions(&stopped.sessions, allow_empty_sessions)
 }
 
-fn validate_sessions(sessions: &[String]) -> Result<()> {
-    if sessions.is_empty() || sessions.len() > MAX_PANES {
+fn validate_sessions(sessions: &[String], allow_empty: bool) -> Result<()> {
+    if (!allow_empty && sessions.is_empty()) || sessions.len() > MAX_PANES {
         return Err(Error::InvalidValue { field: "sessions" });
     }
     let mut identities = HashSet::new();
