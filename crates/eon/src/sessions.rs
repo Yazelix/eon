@@ -6,7 +6,7 @@ use super::{
     },
     workspace::{DIRECTORY_PICKER_ENDPOINT, DIRECTORY_PICKER_SESSION},
 };
-use eon_workspace_protocol::v3::MAX_PANES;
+use eon_workspace_protocol::v4::MAX_PANES;
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LiveIdentity,
     ObjectIdentity, ProcessOutcome, Record as ManagementRecord,
@@ -609,7 +609,7 @@ pub(super) fn recover_sessions(
     mode: LaunchMode,
     component_generation: &str,
     deadline: Instant,
-) -> Result<Vec<RunningSession>, String> {
+) -> Result<(Vec<RunningSession>, bool), String> {
     let mut paths = fs::read_dir(runtime)
         .map_err(|error| {
             format!(
@@ -717,6 +717,7 @@ pub(super) fn recover_sessions(
         return Err("EonTerm cannot recover more than one live Session".into());
     }
 
+    let recovered_picker = picker.is_some();
     if let Some(candidate) = picker {
         let mut picker = acquire_management(candidate, deadline)?;
         stop_managed_sessions(
@@ -725,10 +726,11 @@ pub(super) fn recover_sessions(
         )?;
     }
 
-    candidates
+    let sessions = candidates
         .into_iter()
         .map(|candidate| acquire_management(candidate, deadline))
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok((sessions, recovered_picker))
 }
 
 pub(super) struct RunningSession {

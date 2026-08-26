@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v3::{
+use eon_workspace_protocol::v4::{
     Action, HEADER_BYTES, Pane, Request, Response, Snapshot, Tab, VERSION, declared_message_len,
     decode_request, decode_response, encode_request, encode_response,
 };
@@ -527,7 +527,11 @@ fn wait_for_picker_close(socket: &Path, directory: &Path) -> Snapshot {
         );
         if let Response::Snapshot(snapshot) = response
             && snapshot.directory_picker.is_none()
-            && snapshot.tabs[0].directory == directory.as_os_str().as_bytes()
+            && snapshot
+                .tabs
+                .iter()
+                .find(|tab| tab.id == snapshot.active_tab)
+                .is_some_and(|tab| tab.directory == directory.as_os_str().as_bytes())
         {
             return snapshot;
         }
@@ -556,6 +560,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     let selection = root.join("picker-selection");
     let orbit_log = root.join("orbit-cwd.log");
     let venus_pid = root.join("venus.pid");
+    let venus_args = root.join("venus.args");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     let session_bin = root.join("session-bin");
@@ -565,7 +570,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     managed_orbit_executable(&orbit);
     executable(
         &venus,
-        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\ncat >/dev/null\n",
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\nprintf '%s' \"$*\" > \"$EON_TEST_VENUS_ARGS\"\ncat >/dev/null\n",
     );
     executable(
         &session_bin.join("zoxide"),
@@ -595,6 +600,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         .env("FZF_DEFAULT_OPTS_FILE", root.join("ambient-fzf-opts"))
         .env("EON_TEST_ORBIT_CWD_LOG", &orbit_log)
         .env("EON_TEST_VENUS_PID", &venus_pid)
+        .env("EON_TEST_VENUS_ARGS", &venus_args)
         .env("EON_TEST_STOP_DELAY", &stop_delay)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -608,8 +614,12 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     let control = generation.join("eon.sock");
     wait_for_connection(&control);
     wait_for(&venus_pid);
+    wait_for(&venus_args);
+    let args = fs::read_to_string(&venus_args).unwrap();
+    assert!(args.contains(&format!("--workspace {}", control.display())));
+    assert!(!args.contains("orbit.sock"));
 
-    let opened = workspace_action(&control, "picker-open", Action::PickTabDirectory);
+    let opened = workspace_action(&control, "picker-open", Action::Inspect);
     let Response::Snapshot(opened) = opened else {
         panic!("picker open did not return a snapshot");
     };
@@ -619,7 +629,9 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         Path::new(OsStr::from_bytes(&picker.endpoint)),
         generation.join("pick.sock")
     );
-    assert_eq!(opened.tabs[0].panes.len(), 1);
+    assert!(opened.tabs[0].panes.is_empty());
+    assert!(opened.tabs[0].selected_pane.is_none());
+    assert!(!generation.join("orbit.sock").exists());
     assert!(matches!(
         workspace_action(&control, "picker-duplicate", Action::PickTabDirectory),
         Response::Failure(failure) if failure.code == "picker-active"
@@ -628,6 +640,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     fs::write(&release, "").unwrap();
     let retargeted = wait_for_picker_close(&control, &selected);
     assert_eq!(retargeted.tabs[0].panes.len(), 1);
+    assert_eq!(retargeted.tabs[0].selected_pane.as_deref(), Some("p1"));
     assert!(!generation.join("pick.sock").exists());
     assert!(!generation.join("pick.sock.record").exists());
 
@@ -649,6 +662,32 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     fs::write(&release, "").unwrap();
     wait_for_picker_close(&control, &selected);
 
+    fs::remove_file(&release).unwrap();
+    assert!(matches!(
+        workspace_action(&control, "new-tab-cancel", Action::CreateTab),
+        Response::Snapshot(snapshot)
+            if snapshot.active_tab == "t2"
+                && snapshot.tabs[1].panes.is_empty()
+                && snapshot.tabs[1].selected_pane.is_none()
+    ));
+    fs::write(&release, "").unwrap();
+    let cancelled = wait_for_picker_close(&control, &selected);
+    assert_eq!(cancelled.active_tab, "t1");
+    assert_eq!(cancelled.tabs.len(), 1);
+
+    fs::remove_file(&release).unwrap();
+    fs::write(&selection, selected.as_os_str().as_bytes()).unwrap();
+    assert!(matches!(
+        workspace_action(&control, "new-tab-accept", Action::CreateTab),
+        Response::Snapshot(snapshot)
+            if snapshot.active_tab == "t3"
+                && snapshot.tabs[1].panes.is_empty()
+    ));
+    fs::write(&release, "").unwrap();
+    let accepted = wait_for_picker_close(&control, &selected);
+    assert_eq!(accepted.active_tab, "t3");
+    assert_eq!(accepted.tabs[1].selected_pane.as_deref(), Some("p3"));
+
     fs::write(&selection, root.join("missing").as_os_str().as_bytes()).unwrap();
     assert!(matches!(
         workspace_action(&control, "picker-invalid", Action::PickTabDirectory),
@@ -659,7 +698,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         workspace_action(&control, "picker-invalid-visible", Action::Inspect),
         Response::Snapshot(snapshot)
             if snapshot.directory_picker.is_some()
-                && snapshot.tabs[0].directory == selected.as_os_str().as_bytes()
+                && snapshot.tabs[1].directory == selected.as_os_str().as_bytes()
     ));
     wait_for_picker_close(&control, &selected);
 
@@ -691,7 +730,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         &["stop", generation_id, "--json"],
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
-    assert!(stdout(&stopped).contains("\"sessions\":[\"session-1\",\"session-2\"]"));
+    assert!(stdout(&stopped).contains("\"sessions\":[\"session-1\",\"session-2\",\"session-3\"]"));
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!generation.exists());
     fs::remove_dir_all(root).unwrap();
@@ -749,10 +788,10 @@ fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
     wait_for_connection(&control);
     wait_for(&venus_pid);
     assert!(matches!(
-        workspace_action(&control, "picker", Action::PickTabDirectory),
-        Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
+        workspace_action(&control, "picker", Action::Inspect),
+        Response::Snapshot(snapshot)
+            if snapshot.directory_picker.is_some() && snapshot.tabs[0].panes.is_empty()
     ));
-    let session = live_identity(&generation.join("orbit.sock"));
     let picker = live_identity(&generation.join("pick.sock"));
     fs::write(&fail_stop_once, "directory-picker").unwrap();
     let venus = fs::read_to_string(&venus_pid).unwrap().parse().unwrap();
@@ -766,7 +805,7 @@ fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
         .exists();
     fs::write(&stop, "").unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
-    for identity in [&picker, &session] {
+    for identity in [&picker] {
         let process = Path::new("/proc").join(identity.process_id.to_string());
         while process.exists() {
             assert!(Instant::now() < deadline, "test Session did not exit");
@@ -985,8 +1024,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--background-blur\n{}\n{}\n",
-            generation.join("orbit.sock").display(),
+            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--background-blur\n--workspace\n{}\n",
             control.display(),
         )
     );
@@ -1344,15 +1382,13 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     );
     assert_eq!(stdout(&pane).matches("\"session\":").count(), 2);
     assert!(
-        invoke(&binary, &runtime, &config, &["tab", "create", "--json"])
+        invoke(&binary, &runtime, &config, &["pane", "create", "--json"])
             .status
             .success()
     );
     for arguments in [
         &["focus", "p1", "--json"][..],
         &["focus", "down", "--json"][..],
-        &["focus", "right", "--json"][..],
-        &["focus", "left", "--json"][..],
         &["focus", "up", "--json"][..],
     ] {
         assert!(
@@ -1396,7 +1432,6 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     assert!(snapshot.status.success());
     let snapshot = stdout(&snapshot);
     assert!(snapshot.contains("\"active_tab\":\"t1\""));
-    assert!(snapshot.contains("\"id\":\"t2\""));
     assert!(snapshot.contains("\"id\":\"p3\""));
     assert_eq!(snapshot.matches("\"session\":").count(), 3);
 
@@ -1480,14 +1515,21 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     let reporter = root.join("report-cwd");
+    let picker_release = root.join("picker-release");
+    let session_bin = root.join("session-bin");
     for directory in [&first, &second, &disappearing, &config] {
         fs::create_dir(directory).unwrap();
     }
+    fs::create_dir(&session_bin).unwrap();
     managed_orbit_executable(&orbit);
     executable(&venus, "#!/bin/sh\nexit 0\n");
     executable(
         &reporter,
         "#!/bin/sh\nprintf '%s\\n' \"$PWD\" >> \"$EON_TEST_CHILD_CWD_LOG\"\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
+    );
+    executable(
+        &session_bin.join("zoxide"),
+        "#!/bin/sh\nwhile test ! -e \"$EON_TEST_PICKER_RELEASE\"; do sleep 0.01; done\nprintf '%s\\n' \"$EON_TEST_PICKER_SELECTION\"\n",
     );
     fs::write(
         config.join("config.toml"),
@@ -1496,6 +1538,7 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     .unwrap();
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
     let child = eon_command(&binary)
         .arg("run")
         .current_dir(&first)
@@ -1503,7 +1546,10 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
         .env("EON_CONFIG_HOME", &config)
         .env("EON_ORBIT", &orbit)
         .env("EON_VENUS", &venus)
+        .env("EON_SESSION_BIN", &session_bin)
         .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_PICKER_RELEASE", &picker_release)
+        .env("EON_TEST_PICKER_SELECTION", &first)
         .env("EON_TEST_ORBIT_CWD_LOG", &orbit_log)
         .env("EON_TEST_CHILD_CWD_LOG", &child_log)
         .env("EON_TEST_RUN_CHILD", "1")
@@ -1518,12 +1564,15 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     let generation = generation_runtime(&runtime);
     let control = generation.join("eon.sock");
     wait_for_connection(&control);
+    fs::write(&picker_release, "").unwrap();
+    wait_for_picker_close(&control, &first);
 
     assert!(
         invoke(&binary, &runtime, &config, &["tab", "create"])
             .status
             .success()
     );
+    wait_for_picker_close(&control, &first);
     assert!(
         invoke(
             &binary,
@@ -1743,6 +1792,10 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
     let control = generation.join("eon.sock");
     let record = artifact_path(&generation.join("orbit.sock"), ".record");
     wait_for_connection(&control);
+    assert!(matches!(
+        workspace_action(&control, "startup-ready", Action::Inspect),
+        Response::Snapshot(_)
+    ));
     wait_for(&record);
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let lifecycle_lock = fs::OpenOptions::new()
@@ -1830,6 +1883,90 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
 }
 
 #[test]
+fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    let session_bin = root.join("session-bin");
+    fs::create_dir(&session_bin).unwrap();
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
+    executable(
+        &session_bin.join("zoxide"),
+        "#!/bin/sh\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
+    );
+    executable(
+        &session_bin.join("eon-nu"),
+        "#!/bin/sh\nwhile test ! -e \"$EON_TEST_STOP\"; do sleep 0.01; done\n",
+    );
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
+    let launch = || {
+        eon_command(&binary)
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_SESSION_BIN", &session_bin)
+            .env("EON_TEST_RUN_CHILD", "1")
+            .env("EON_TEST_STOP", &stop)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
+    };
+
+    let mut first = launch();
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for_connection(&control);
+    let pending = workspace_action(&control, "pending", Action::Inspect);
+    assert!(matches!(
+        pending,
+        Response::Snapshot(snapshot)
+            if snapshot.directory_picker.is_some() && snapshot.tabs[0].panes.is_empty()
+    ));
+    let picker = live_identity(&generation.join("pick.sock"));
+    first.kill().unwrap();
+    assert!(!first.wait().unwrap().success());
+
+    let child = launch();
+    let mut replacement = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    wait_for_connection(&control);
+    let recovered = workspace_action(&control, "recovered", Action::Inspect);
+    assert!(matches!(
+        recovered,
+        Response::Snapshot(snapshot)
+            if snapshot.directory_picker.is_none()
+                && snapshot.tabs[0].selected_pane.as_deref() == Some("p1")
+                && snapshot.tabs[0].panes.len() == 1
+    ));
+    assert!(
+        !Path::new("/proc")
+            .join(picker.process_id.to_string())
+            .exists()
+    );
+
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["stop", generation_id, "--json"],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    wait_for_successful_exit(&mut replacement.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
@@ -1853,7 +1990,6 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
             .env("EON_CONFIG_HOME", &config)
             .env("EON_ORBIT", &orbit)
             .env("EON_VENUS", &venus)
-            .env("EON_SESSION_BIN", &root)
             .env("EON_TEST_STOP", &fallback_stop)
             .env("EON_TEST_ORBIT_LOG", &orbit_log)
             .env("EON_TEST_VENUS_LOG", &venus_log)
@@ -1873,11 +2009,6 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         live_identity(&generation.join("orbit.sock")),
         live_identity(&generation.join("session-2.sock")),
     ];
-    assert!(matches!(
-        workspace_action(&control, "picker-before-owner-loss", Action::PickTabDirectory),
-        Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
-    ));
-    let picker = live_identity(&generation.join("pick.sock"));
     let first_venus_log = fs::read_to_string(&venus_log).unwrap();
     let first_venus = first_venus_log.split('|').next().unwrap().to_string();
     assert!(first_venus_log.contains("|--no-decorations "));
@@ -1893,9 +2024,6 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         // SAFETY: signal 0 performs existence/permission checking without sending a signal.
         assert_eq!(unsafe { libc::kill(identity.process_id as i32, 0) }, 0);
     }
-    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-    assert_eq!(unsafe { libc::kill(picker.process_id as i32, 0) }, 0);
-
     let first_record = artifact_path(&generation.join("orbit.sock"), ".record");
     let replacement_attempt = || {
         eon_command(&binary)
@@ -1904,7 +2032,6 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
             .env("EON_CONFIG_HOME", &config)
             .env("EON_ORBIT", &orbit)
             .env("EON_VENUS", &venus)
-            .env("EON_SESSION_BIN", &root)
             .env("EON_TEST_STOP", &fallback_stop)
             .env("EON_TEST_ORBIT_LOG", &orbit_log)
             .env("EON_TEST_VENUS_LOG", &venus_log)
@@ -1925,7 +2052,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert!(String::from_utf8_lossy(&refused.stderr).contains("process start"));
     write_management_record(&first_record, &ManagementRecord::Live(initial[0].clone()));
 
-    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 3);
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 2);
     for identity in &initial {
         // SAFETY: signal 0 performs existence/permission checking without sending a signal.
         assert_eq!(unsafe { libc::kill(identity.process_id as i32, 0) }, 0);
@@ -1942,12 +2069,6 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert!(recovered.contains("\"id\":\"p1\""));
     assert!(recovered.contains("\"id\":\"p2\""));
     assert!(recovered.contains("\"directory_picker\":null"));
-    assert!(!generation.join("pick.sock").exists());
-    assert!(
-        !Path::new("/proc")
-            .join(picker.process_id.to_string())
-            .exists()
-    );
     assert_eq!(
         [
             live_identity(&generation.join("orbit.sock")),
@@ -1955,13 +2076,13 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         ],
         initial
     );
-    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 3);
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 2);
 
     let created = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
     assert!(created.status.success(), "{}", stdout(&created));
     assert!(stdout(&created).contains("\"id\":\"p3\""));
     assert!(stdout(&created).contains("\"session\":\"session-3\""));
-    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 4);
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 3);
 
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let stopped = invoke(
@@ -2407,7 +2528,7 @@ fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
                 tabs: vec![Tab {
                     id: "t1".into(),
                     directory: b"/legacy".to_vec(),
-                    selected_pane: "pane-1".into(),
+                    selected_pane: Some("pane-1".into()),
                     panes: vec![Pane {
                         id: "pane-1".into(),
                         session: "session-1".into(),
@@ -2440,8 +2561,7 @@ fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
     assert_eq!(
         fs::read_to_string(&venus_log).unwrap(),
         format!(
-            "--application-id\neon\n--background-opacity\n0.8\n--background-blur\n{}\n{}\n",
-            runtime.join("orbit.sock").display(),
+            "--application-id\neon\n--background-opacity\n0.8\n--background-blur\n--workspace\n{}\n",
             runtime.join("eon.sock").display()
         )
     );

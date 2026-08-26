@@ -16,8 +16,9 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current composition selects Orbit
 `70861097a825c2fbfaea53a8ca9437f45e8602eb` with canonical ORBS v10 and Venus
-`df88b2867d50c59a316418471abd000da02940bc`. The installed candidate Eon profile
-resolves this exact graph without restarting its older live generation.
+`2622c124be5ba8a62037c6de952ebf3928347387`. The installed candidate Eon profile
+resolves to `/nix/store/nqcjvnxyjrnjm1hwl4lcwqzi0jmyfvli-eon-0.1.0`, generation
+`g1-5cf7a15fab599220be3121a7b3a764a8`. No live supervisor was restarted.
 
 ## EON-C1 — Exact compatible component launch
 
@@ -194,7 +195,7 @@ resolves this exact graph without restarting its older live generation.
   remove nothing; losing a view never silently stops or substitutes a Session.
 - **Owner:** Eon workspace topology, identity, focus, pruning, and action policy;
   Orbit owns Sessions and Venus owns native materialization.
-- **Consumes:** EONW v3, Orbit Session identities/endpoints, and Venus `VEN-C8`.
+- **Consumes:** EONW v4, Orbit Session identities/endpoints, and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, simultaneous expanded panes,
   reordering, picker-based ordinary traversal, durable layout restoration,
   per-pane Session stop/restart, terminal content/history, provider state,
@@ -275,7 +276,7 @@ resolves this exact graph without restarting its older live generation.
   exact terminal record is complete.
 - **Owner:** Eon supervisor workspace/action state, EONW result ordering, and CLI
   projection.
-- **Consumes:** EONW v3 and accepted Orbit management operations.
+- **Consumes:** EONW v4 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
@@ -541,7 +542,7 @@ resolves this exact graph without restarting its older live generation.
   - `SetTabDirectory` changes exactly one addressed tab. Later panes in that tab
     start with the accepted directory; existing Sessions and terminal CWDs do
     not change.
-  - EONW v3 returns the exact accepted raw path bytes. Venus derives a bounded
+  - EONW v4 returns the exact accepted raw path bytes. Venus derives a bounded
     `N  leaf`, `N  ~`, or `N  /` label while retaining `tN` for actions and
     exposing identity plus bounded path context to accessibility.
   - Same-boot recovery assigns synthetic `t1` the replacement supervisor's
@@ -554,16 +555,17 @@ resolves this exact graph without restarting its older live generation.
 - **Owner:** Eon owns tab identity, launch-directory state, validation, mutation,
   inheritance, and recovery fallback; Orbit owns each Session's terminal CWD;
   Venus owns only native projection of Eon's state.
-- **Consumes:** EONW v3, Orbit Session startup, and Venus `VEN-C8`.
+- **Consumes:** EONW v4, Orbit Session startup, and Venus `VEN-C8`.
 - **Boundary:** No manual names, path canonicalization, retained directory
   handles, filesystem watching, shell-`cd` tracking, pane-CWD inference,
   retargeting of existing processes, persistence, picker UI, or compatibility
   service accepting EONW v1 and v2.
 - **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`
   - **Environment:** x86_64 Linux Nix package and installed Eon profile
-  - **Evidence:** EONW v3 seed
-    `96119f29ca2e3ec4ad19bbe272708b07d588429a`; exact Venus consumer
-    `df88b2867d50c59a316418471abd000da02940bc`; focused codec, workspace,
+  - **Evidence:** EONW v3 directory seed
+    `96119f29ca2e3ec4ad19bbe272708b07d588429a`, EONW v4 pending-tab seed
+    `aaafc9127c054e683abfceb3c8fcaae201a7a763`; exact Venus consumer
+    `2622c124be5ba8a62037c6de952ebf3928347387`; focused codec, workspace,
     CLI, launch-command, startup-disappearance, and outer multi-tab CWD/rollback
     checks; complete locked Rust/Nix gates, manifest validation, generation
     sensitivity, maximum-bound EONW snapshot round trip, and exact installed
@@ -601,7 +603,8 @@ resolves this exact graph without restarting its older live generation.
   - Venus keeps the tab bar visible and replaces the tab body with the picker,
     inset by one terminal cell on every side when the grid permits it. The
     previous terminal is not composited underneath. Attach and recovery never
-    create an automatic picker.
+    create an automatic picker; recovering only a stale initial picker stops it
+    and applies the validated launch-directory fallback.
 - **Important failures:** Cancel, empty or invalid selection, picker launch or
   exit, target disappearance, duplicate invocation, origin-tab loss, or
   presentation detachment follows the first- or later-tab fallback without a
@@ -612,9 +615,9 @@ resolves this exact graph without restarting its older live generation.
   modal geometry, focus, input, notices, rendering, and accessibility. Orbit
   owns the transient PTY and child. Zoxide owns ranking and fzf owns interactive
   terminal selection.
-- **Consumes:** EON-C17; accepted EONW v3 picker base and candidate EONW v4
-  pending-tab boundary; Orbit's accepted Session startup, attachment, exit, and
-  stop contracts. Exact Venus v4 consumption remains the next frontier.
+- **Consumes:** EON-C17; accepted EONW v4 pending-tab boundary, Orbit's accepted
+  Session startup, attachment, exit, and stop contracts, and exact Venus v4
+  consumer `2622c124be5ba8a62037c6de952ebf3928347387`.
 - **Boundary:** No Yazi dependency, normal-pane identity, arbitrary-command or
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
@@ -626,22 +629,24 @@ resolves this exact graph without restarting its older live generation.
   checks, and `nix flake check path:. --print-build-logs` passed on x86_64
   Linux. Existing Alt+Z runtime proof remains source
   `9f6599d103162061ee666126c2eddce03383afb6`; candidate profile artifact
-  `/nix/store/jafvw2mipdiphsmiwhdhqqysi7sdxhxi-eon-0.1.0`, generation
-  `g1-73de286734a29660b2d11564c4a012b9`
+  `/nix/store/nqcjvnxyjrnjm1hwl4lcwqzi0jmyfvli-eon-0.1.0`, generation
+  `g1-5cf7a15fab599220be3121a7b3a764a8`
   - **Environment:** x86_64 Linux COSMIC Wayland, installed Eon profile, and an
     isolated delegated user scope
   - **Evidence:** Exact Orbit
     `70861097a825c2fbfaea53a8ca9437f45e8602eb`, exact Venus
-    `df88b2867d50c59a316418471abd000da02940bc`, focused picker and replacement-
+    `2622c124be5ba8a62037c6de952ebf3928347387`, focused picker and replacement-
     recovery checks including bounded invalid-selection visibility and no
     mutation, complete locked Rust and Nix gates, exact packaged Zoxide and fzf
     identities, focused long-root launch, first-Stop-failure retry, and hostile-default isolation,
     installed modal presentation-loss cleanup with the durable Session retained,
-    one-batch generation Stop with a durable-only public result, and
-    transient endpoint, record, process, and runtime cleanup
-- **Open proof:** Exact Venus pending-tab consumption, Eon runtime production,
-  and installed native accept/cancel/focus/accessibility dogfood remain pending
-  in frontier order.
+    one-batch generation Stop with a durable-only public result, transient
+    endpoint, record, process, and runtime cleanup, and user-accepted native
+    Wayland presentation. An isolated installed run committed `t1` and `t2` to
+    their selected directories, started only `session-1` and `session-2`, and
+    stopped both through the durable-only generation result.
+- **Open proof:** The reviewed runtime candidate needs one immutable Eon source
+  revision before promotion to Proven.
 
 ## Rules
 

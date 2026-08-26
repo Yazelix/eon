@@ -11,7 +11,7 @@ use super::{
     },
     workspace::{self, Workspace},
 };
-use eon_workspace_protocol::v3::{
+use eon_workspace_protocol::v4::{
     Action, Availability, LifecycleResponse, Request, Response, Runtime, Stopped, VERSION,
 };
 use std::{
@@ -320,7 +320,7 @@ pub(super) fn attach_legacy(runtime: &Path) -> Result<i32, String> {
     venus_command(
         &programs,
         &config,
-        &runtime.join("orbit.sock"),
+        &runtime.join("eon.sock"),
         LaunchMode::Workspace,
         terminal,
         "eon",
@@ -382,10 +382,10 @@ fn venus_command(
     if terminal.background_blur {
         command.arg("--background-blur");
     }
-    command.arg(socket);
     if mode == LaunchMode::Workspace {
-        command.arg(socket.with_file_name("eon.sock"));
+        command.arg("--workspace");
     }
+    command.arg(socket);
     command.env("XDG_CONFIG_HOME", config);
     command
 }
@@ -518,25 +518,51 @@ fn supervise(
     if mode == LaunchMode::Workspace {
         workspace::validate_initial_directory(&launch_directory)?;
     }
-    let socket = runtime.join("orbit.sock");
     let component_generation =
         eon_manifest::component_revision(MANIFEST, "orbit").map_err(|error| error.to_string())?;
     let deadline = Instant::now() + SESSION_START_TIMEOUT;
-    let mut sessions = recover_sessions(runtime, mode, &component_generation, deadline)?;
-    if sessions.is_empty() {
+    let (mut sessions, recovered_picker) =
+        recover_sessions(runtime, mode, &component_generation, deadline)?;
+    let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
+    let mut initial_child = if sessions.is_empty() {
+        child.to_vec()
+    } else {
+        Vec::new()
+    };
+    if sessions.is_empty() && (mode == LaunchMode::Terminal || recovered_picker) {
         sessions.push(start_orbit(
             programs,
             config,
-            &socket,
+            &runtime.join("orbit.sock"),
             "session-1",
             &component_generation,
             &launch_directory,
-            child,
+            &initial_child,
             deadline,
         )?);
+        initial_child.clear();
     }
-    let workspace = (mode == LaunchMode::Workspace)
-        .then(|| {
+    let mut directory_picker = None;
+    let workspace = if mode == LaunchMode::Workspace {
+        Some(if sessions.is_empty() {
+            Workspace::pending(
+                runtime.to_path_buf(),
+                launch_directory.clone(),
+                |session, directory, picker_tab| {
+                    start_workspace_session(
+                        programs,
+                        config,
+                        &component_generation,
+                        &mut sessions,
+                        &mut directory_picker,
+                        &mut initial_child,
+                        session,
+                        directory,
+                        picker_tab,
+                    )
+                },
+            )?
+        } else {
             Workspace::with_recovered_sessions(
                 runtime.to_path_buf(),
                 launch_directory,
@@ -554,49 +580,67 @@ fn supervise(
                         ))
                     })
                     .collect::<Result<Vec<_>, String>>()?,
-            )
+            )?
         })
-        .transpose()?;
-    let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
+    } else {
+        None
+    };
+    let presentation_socket = if mode == LaunchMode::Workspace {
+        runtime.join("eon.sock")
+    } else {
+        sessions
+            .first()
+            .ok_or("EonTerm supervisor has no live Session")?
+            .endpoint
+            .clone()
+    };
     let command = venus_command(
         programs,
         config,
-        &sessions[0].endpoint,
+        &presentation_socket,
         mode,
         terminal,
         application_id,
     );
-    let venus = match PresentationProcess::start(command) {
-        Ok(venus) => venus,
-        Err(error) => {
-            let stopped = stop_managed_sessions(&mut sessions, SESSION_START_TIMEOUT)
-                .map_err(|stop_error| format!("{error}; cannot roll back Sessions: {stop_error}"));
-            drop(control_listener);
-            if stopped.is_ok() {
-                let _ = fs::remove_dir(runtime);
-            }
-            return stopped.and(Err(error));
-        }
-    };
     let mut state = SupervisorState {
         component_generation,
         application_id: application_id.into(),
         workspace,
         sessions,
-        directory_picker: None,
-        venus: Some(venus),
+        directory_picker,
+        venus: None,
+        initial_child,
         initial_status: None,
+    };
+    state.venus = match PresentationProcess::start(command) {
+        Ok(venus) => Some(venus),
+        Err(error) => {
+            let picker_cleanup = stop_directory_picker(&mut state);
+            let session_cleanup = stop_managed_sessions(&mut state.sessions, SESSION_START_TIMEOUT);
+            drop(control_listener);
+            if picker_cleanup.is_ok() && session_cleanup.is_ok() {
+                let _ = fs::remove_dir(runtime);
+            }
+            let mut errors = vec![error];
+            if let Err(cleanup) = picker_cleanup {
+                errors.push(format!("cannot roll back directory picker: {cleanup}"));
+            }
+            if let Err(cleanup) = session_cleanup {
+                errors.push(format!("cannot roll back Sessions: {cleanup}"));
+            }
+            return Err(errors.join("; "));
+        }
     };
 
     let status = (|| {
         loop {
-            reap_finished_sessions(&mut state)?;
+            reap_finished_sessions(&mut state, programs, config)?;
 
-            if state.sessions.is_empty() {
+            if state.sessions.is_empty() && state.directory_picker.is_none() {
                 return Ok(state.initial_status.unwrap_or(0));
             }
 
-            if reap_presentation(&mut state)? {
+            if reap_presentation(&mut state, programs, config)? {
                 match mode {
                     LaunchMode::Workspace => eprintln!(
                         "Eon Desktop exited; Sessions remains active. Run `eon attach {generation}` to reconnect."
@@ -608,7 +652,7 @@ fn supervise(
             }
 
             if control_listener.accept(|request| {
-                dispatch_control_request(request, &mut state, programs, config, generation)
+                dispatch_control_request(request, &mut state, programs, config, runtime, generation)
             })? {
                 return Ok(state.initial_status.unwrap_or(0));
             }
@@ -637,10 +681,15 @@ struct SupervisorState {
     sessions: Vec<RunningSession>,
     directory_picker: Option<RunningSession>,
     venus: Option<PresentationProcess>,
+    initial_child: Vec<OsString>,
     initial_status: Option<i32>,
 }
 
-fn reap_finished_sessions(state: &mut SupervisorState) -> Result<(), String> {
+fn reap_finished_sessions(
+    state: &mut SupervisorState,
+    programs: &Programs,
+    config: &Path,
+) -> Result<(), String> {
     let picker_finished = match state.directory_picker.as_mut() {
         Some(picker) => session_finished(picker)?,
         None => None,
@@ -650,12 +699,30 @@ fn reap_finished_sessions(state: &mut SupervisorState) -> Result<(), String> {
             .directory_picker
             .take()
             .ok_or("directory picker disappeared while it was reaped")?;
-        let workspace = state
-            .workspace
-            .as_mut()
-            .ok_or("directory picker has no workspace owner")?;
+        let SupervisorState {
+            component_generation,
+            workspace,
+            sessions,
+            directory_picker,
+            initial_child,
+            ..
+        } = state;
         workspace
-            .session_exited(&picker.id)
+            .as_mut()
+            .ok_or("directory picker has no workspace owner")?
+            .session_exited(&picker.id, |session, directory, picker_tab| {
+                start_workspace_session(
+                    programs,
+                    config,
+                    component_generation,
+                    sessions,
+                    directory_picker,
+                    initial_child,
+                    session,
+                    directory,
+                    picker_tab,
+                )
+            })
             .map_err(|error| error.detail)?;
     }
 
@@ -665,7 +732,9 @@ fn reap_finished_sessions(state: &mut SupervisorState) -> Result<(), String> {
             let session = state.sessions.remove(index);
             if let Some(workspace) = &mut state.workspace {
                 let stop_picker = workspace
-                    .session_exited(&session.id)
+                    .session_exited(&session.id, |_, _, _| {
+                        unreachable!("durable Session exit cannot start a Session")
+                    })
                     .map_err(|error| error.detail)?;
                 if stop_picker {
                     stop_directory_picker_session(&mut state.directory_picker)?;
@@ -721,7 +790,106 @@ fn directory_picker_command(
     ])
 }
 
-fn reap_presentation(state: &mut SupervisorState) -> Result<bool, String> {
+#[allow(clippy::too_many_arguments)]
+fn start_workspace_session(
+    programs: &Programs,
+    config: &Path,
+    component_generation: &str,
+    sessions: &mut Vec<RunningSession>,
+    directory_picker: &mut Option<RunningSession>,
+    initial_child: &mut Vec<OsString>,
+    session: &workspace::Session,
+    directory: &Path,
+    picker_tab: Option<&str>,
+) -> Result<(), String> {
+    if picker_tab.is_some() && directory_picker.is_some() {
+        return Err("a directory picker is already running".into());
+    }
+    let picker_child = picker_tab
+        .map(|tab| {
+            directory_picker_command(
+                programs,
+                session
+                    .endpoint
+                    .parent()
+                    .ok_or("directory picker endpoint has no runtime directory")?,
+                tab,
+            )
+        })
+        .transpose()?;
+    let child = if let Some(picker_child) = picker_child.as_deref() {
+        picker_child
+    } else if session.id == "session-1" {
+        initial_child.as_slice()
+    } else {
+        &[]
+    };
+    let running = start_orbit(
+        programs,
+        config,
+        &session.endpoint,
+        &session.id,
+        component_generation,
+        directory,
+        child,
+        Instant::now() + SESSION_START_TIMEOUT,
+    )?;
+    if picker_tab.is_some() {
+        *directory_picker = Some(running);
+    } else {
+        sessions.push(running);
+        if session.id == "session-1" {
+            initial_child.clear();
+        }
+    }
+    Ok(())
+}
+
+fn cancel_directory_picker(
+    state: &mut SupervisorState,
+    programs: &Programs,
+    config: &Path,
+) -> Result<(), String> {
+    if state.directory_picker.is_none() {
+        return Ok(());
+    }
+    stop_directory_picker_session(&mut state.directory_picker)?;
+    let SupervisorState {
+        component_generation,
+        workspace,
+        sessions,
+        directory_picker,
+        initial_child,
+        ..
+    } = state;
+    workspace
+        .as_mut()
+        .ok_or("directory picker has no workspace owner")?
+        .session_exited(
+            workspace::DIRECTORY_PICKER_SESSION,
+            |session, directory, picker_tab| {
+                start_workspace_session(
+                    programs,
+                    config,
+                    component_generation,
+                    sessions,
+                    directory_picker,
+                    initial_child,
+                    session,
+                    directory,
+                    picker_tab,
+                )
+            },
+        )
+        .map(|_| ())
+        .map_err(|error| error.detail)
+}
+
+fn reap_presentation(
+    state: &mut SupervisorState,
+    programs: &Programs,
+    config: &Path,
+) -> Result<bool, String> {
     let exited = match state.venus.as_mut() {
         Some(process) => process
             .child
@@ -732,7 +900,7 @@ fn reap_presentation(state: &mut SupervisorState) -> Result<bool, String> {
     };
     if exited {
         state.venus = None;
-        stop_directory_picker(state)?;
+        cancel_directory_picker(state, programs, config)?;
     }
     Ok(exited)
 }
@@ -822,6 +990,7 @@ fn dispatch_control_request(
     state: &mut SupervisorState,
     programs: &Programs,
     config: &Path,
+    runtime: &Path,
     generation: &str,
 ) -> (ControlResponse, bool) {
     let mode = if state.workspace.is_some() {
@@ -861,7 +1030,7 @@ fn dispatch_control_request(
                     false,
                 );
             }
-            if let Err(detail) = reap_finished_sessions(state) {
+            if let Err(detail) = reap_finished_sessions(state, programs, config) {
                 return (
                     ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
                         "presentation-unavailable",
@@ -870,7 +1039,7 @@ fn dispatch_control_request(
                     false,
                 );
             }
-            if state.sessions.is_empty() {
+            if state.sessions.is_empty() && state.directory_picker.is_none() {
                 return (
                     ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
                         "generation-ending",
@@ -879,16 +1048,25 @@ fn dispatch_control_request(
                     true,
                 );
             }
-            let result = reap_presentation(state).and_then(|_| {
+            let result = reap_presentation(state, programs, config).and_then(|_| {
                 if let Some(venus) = &state.venus {
                     return venus.present();
                 }
-                let session = &state.sessions[0];
+                let socket = if mode == LaunchMode::Workspace {
+                    runtime.join("eon.sock")
+                } else {
+                    state
+                        .sessions
+                        .first()
+                        .ok_or("EonTerm has no live Session")?
+                        .endpoint
+                        .clone()
+                };
                 let terminal = managed_environment::terminal_presentation(config)?;
                 let command = venus_command(
                     programs,
                     config,
-                    &session.endpoint,
+                    &socket,
                     mode,
                     terminal,
                     &state.application_id,
@@ -938,42 +1116,27 @@ fn dispatch_control_request(
             };
             (ControlResponse::Lifecycle(response), true)
         }
-        request => match state.workspace.as_mut() {
+        request => match &mut state.workspace {
             Some(workspace) => {
+                let component_generation = &state.component_generation;
+                let sessions = &mut state.sessions;
+                let directory_picker = &mut state.directory_picker;
+                let initial_child = &mut state.initial_child;
                 match workspace.dispatch(
                     &request.id,
                     request.action,
                     |session, directory, picker_tab| {
-                        if picker_tab.is_some() && state.directory_picker.is_some() {
-                            return Err("a directory picker is already running".into());
-                        }
-                        let child = picker_tab
-                            .map(|tab| {
-                                directory_picker_command(
-                                    programs,
-                                    session.endpoint.parent().ok_or(
-                                        "directory picker endpoint has no runtime directory",
-                                    )?,
-                                    tab,
-                                )
-                            })
-                            .transpose()?;
-                        let running = start_orbit(
+                        start_workspace_session(
                             programs,
                             config,
-                            &session.endpoint,
-                            &session.id,
-                            &state.component_generation,
+                            component_generation,
+                            sessions,
+                            directory_picker,
+                            initial_child,
+                            session,
                             directory,
-                            child.as_deref().unwrap_or(&[]),
-                            Instant::now() + SESSION_START_TIMEOUT,
-                        )?;
-                        if picker_tab.is_some() {
-                            state.directory_picker = Some(running);
-                        } else {
-                            state.sessions.push(running);
-                        }
-                        Ok(())
+                            picker_tab,
+                        )
                     },
                 ) {
                     Ok(()) => (
@@ -1005,7 +1168,7 @@ fn runtime_status(
     sessions: &[RunningSession],
     mode: LaunchMode,
 ) -> Result<Runtime, String> {
-    if sessions.is_empty() {
+    if mode == LaunchMode::Terminal && sessions.is_empty() {
         return Err("supervisor has no live Sessions".into());
     }
     Ok(Runtime {
@@ -1018,7 +1181,7 @@ fn runtime_status(
         attach: Availability {
             available: true,
             reason: match mode {
-                LaunchMode::Workspace => "supervisor accepts EONW v3 presentation requests",
+                LaunchMode::Workspace => "supervisor accepts EONW v4 presentation requests",
                 LaunchMode::Terminal => "supervisor owns one EonTerm Session",
             }
             .into(),
@@ -1044,21 +1207,14 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        LaunchMode, PresentationProcess, Programs, SupervisorState, effective_uid,
-        prepare_configuration, prepare_runtime, reap_presentation, temporary_directory,
-        venus_command, xdg_path,
+        LaunchMode, Programs, effective_uid, prepare_configuration, prepare_runtime,
+        temporary_directory, venus_command, xdg_path,
     };
-    use crate::workspace::{Session, Workspace};
-    use eon_workspace_protocol::v3::Action;
     use std::{
         ffi::OsString,
         fs,
-        os::unix::{
-            fs::{MetadataExt, PermissionsExt},
-            net::UnixStream,
-        },
+        os::unix::fs::{MetadataExt, PermissionsExt},
         path::{Path, PathBuf},
-        process::Command,
     };
 
     fn terminal_presentation(
@@ -1080,7 +1236,7 @@ mod tests {
             venus_decorations: true,
         };
         let config = Path::new("/config/eon");
-        let socket = Path::new("/runtime/orbit.sock");
+        let socket = Path::new("/runtime/eon.sock");
 
         let workspace = venus_command(
             &programs,
@@ -1098,7 +1254,7 @@ mod tests {
                 "--background-opacity",
                 "0.88",
                 "--background-blur",
-                "/runtime/orbit.sock",
+                "--workspace",
                 "/runtime/eon.sock",
             ]
             .map(OsString::from)
@@ -1107,7 +1263,7 @@ mod tests {
         let terminal = venus_command(
             &programs,
             config,
-            socket,
+            Path::new("/runtime/orbit.sock"),
             LaunchMode::Terminal,
             terminal_presentation(1.0, false),
             "eonterm",
@@ -1128,7 +1284,7 @@ mod tests {
         let undecorated = venus_command(
             &programs,
             config,
-            socket,
+            Path::new("/runtime/orbit.sock"),
             LaunchMode::Terminal,
             terminal_presentation(0.0, true),
             "eonova",
@@ -1149,41 +1305,6 @@ mod tests {
             ]
             .map(OsString::from)
         );
-    }
-
-    #[test]
-    fn exited_presentation_clears_directory_picker_before_reopen() {
-        let mut workspace = Workspace::with_recovered_sessions(
-            "/runtime".into(),
-            "/".into(),
-            vec![(
-                1,
-                Session {
-                    id: "session-1".into(),
-                    endpoint: "/runtime/orbit.sock".into(),
-                },
-            )],
-        )
-        .unwrap();
-        workspace
-            .dispatch("picker", Action::PickTabDirectory, |_, _, _| Ok(()))
-            .unwrap();
-        let (control, _peer) = UnixStream::pair().unwrap();
-        let mut child = Command::new("true").spawn().unwrap();
-        child.wait().unwrap();
-        let mut state = SupervisorState {
-            component_generation: String::new(),
-            application_id: String::new(),
-            workspace: Some(workspace),
-            sessions: Vec::new(),
-            directory_picker: None,
-            venus: Some(PresentationProcess { child, control }),
-            initial_status: None,
-        };
-
-        assert!(reap_presentation(&mut state).unwrap());
-        let picker = state.workspace.unwrap().snapshot().directory_picker;
-        assert!(picker.is_none());
     }
 
     #[test]

@@ -13,7 +13,7 @@ use super::{
     },
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::v3::{Action, Direction, Response, VERSION};
+use eon_workspace_protocol::v4::{Action, Direction, Response, VERSION};
 use std::{
     env,
     ffi::{OsStr, OsString},

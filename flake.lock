@@ -124,16 +124,16 @@
     "venus": {
       "flake": false,
       "locked": {
-        "lastModified": 1787708637,
-        "narHash": "sha256-XbFFvbcd6HpufmidtPcrdE2YsW2X9rcr7/5CjNh61xA=",
+        "lastModified": 1787724094,
+        "narHash": "sha256-HFm/UPra18og2WVc+RqnWcl6A82su/GO7qHK7al96lk=",
         "ref": "refs/heads/edge",
-        "rev": "df88b2867d50c59a316418471abd000da02940bc",
-        "revCount": 291,
+        "rev": "2622c124be5ba8a62037c6de952ebf3928347387",
+        "revCount": 295,
         "type": "git",
         "url": "https://github.com/Yazelix/eon-desktop.git"
       },
       "original": {
-        "rev": "df88b2867d50c59a316418471abd000da02940bc",
+        "rev": "2622c124be5ba8a62037c6de952ebf3928347387",
         "type": "git",
         "url": "https://github.com/Yazelix/eon-desktop.git"
       }

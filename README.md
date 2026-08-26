@@ -15,7 +15,7 @@ Wayland. One Rust supervisor launches the accepted Eon Sessions and Eon Desktop
 revisions. The `eon` package owns a live workspace and supplies one pinned
 interactive environment. The slimmer `eonterm` package owns one exact-command
 Session and contains no managed shell or tool bundle. Both expose lifecycle
-control through EONW v3, isolate live runtime generations, and consume the same
+control through EONW v4, isolate live runtime generations, and consume the same
 component identities. Direct bundles, Home Manager, background updates, and
 release automation remain outside this slice. X11, Xwayland, and macOS are
 unsupported. The accepted runtime proof uses COSMIC with systemd. Eon targets
@@ -175,9 +175,10 @@ retain normal OSC override and reset behavior; direct RGB and palette indices
 palette until they are started in the refreshed runtime generation.
 
 While the foreground supervisor is running, Eon owns horizontal tab order and
-one vertical pane selection per tab. Each pane starts and maps to a distinct
-Orbit session; changing focus never stops a session. The CLI reaches that owner
-through the private local Eon socket using EONW v3. Each accepted action returns
+one vertical pane selection per durable tab; the active picker-bound pending tab
+has no pane selection. Each pane starts and maps to a distinct Orbit session;
+changing focus never stops a session. The CLI reaches that owner
+through the private local Eon socket using EONW v4. Each accepted action returns
 one complete ordered workspace snapshot; incompatible or malformed requests
 receive a bounded structured failure. Additive EONW lifecycle actions report a
 supervisor's generation, component graph, live Sessions, idempotent presentation,
@@ -194,16 +195,21 @@ absolute. Overlong labels preserve their rightmost components.
 New current-generation full Eon windows omit the redundant native title bar;
 the selected terminal retains compositor title semantics, while EonTerm and
 legacy Eon attachment keep native decorations. Alt+H/L traverses tabs,
-Alt+K/J traverses panes, Alt+M creates a pane, Ctrl+T creates a tab, and Alt+Z
+Alt+K/J traverses panes, Alt+M creates a pane, Ctrl+T opens a new tab's directory
+picker, and Alt+Z
 opens the active tab's directory picker. External workspace changes appear
-within one second because Eon Desktop re-inspects EONW v3 every 250 ms; the
+within one second because Eon Desktop re-inspects EONW v4 every 250 ms; the
 protocol adds no event stream. When a shell exits, Eon removes its pane, selects
 the nearest surviving pane, removes an empty tab, and closes when the final pane
 exits.
 
-Every live tab owns one absolute launch directory. Fresh `t1` validates Eon's
-launch directory before recovering or starting Sessions. A new tab inherits the
-active tab's value for its first Session, and
+Every live tab owns one absolute launch directory. A fresh workspace validates
+Eon's launch directory, then opens `t1` with the ranked directory picker before
+starting a durable Session. A new tab inherits the active tab's directory as its
+picker starting point. Accepting starts that tab's first `pN` Session in the
+chosen directory. Cancelling fresh `t1` starts `p1` in the validated launch
+directory; cancelling a later pending tab removes it and restores the previous
+focus. Existing-generation recovery creates no automatic picker.
 `eon tab directory tN -- DIRECTORY` explicitly retargets only future Sessions
 in that tab. Existing Sessions and shell working directories do not change.
 Invalid targets or directories change no state; if an accepted path later
@@ -231,9 +237,9 @@ The command surface is small:
 
 | Command | Result |
 |---|---|
-| `eon` | Present the exact current-generation workspace, or start it with the default shell |
-| `eon run` | Explicitly start one Orbit session and one Venus window with the default shell |
-| `eon run -- COMMAND...` | Run one explicit command as the Orbit-owned PTY child |
+| `eon` | Present the exact current-generation workspace, or open its first directory picker |
+| `eon run` | Explicitly open a fresh workspace picker; acceptance starts the default shell |
+| `eon run -- COMMAND...` | Open a fresh workspace picker; acceptance starts the command as the first Orbit-owned PTY child |
 | `eonterm [--no-decorations] [--application-id ID] -- COMMAND...` | Start or present one exact command in a native terminal surface without Eon workspace or managed-environment policy |
 | `eonterm attach [GENERATION]` | Present the current or one selected compatible EonTerm generation |
 | `eonterm generations [--json]` | List validated current and older EonTerm generations |
@@ -243,7 +249,7 @@ The command surface is small:
 | `eon generations [--json]` | List validated current, previous, legacy, dead, incompatible, unreachable, and corrupt generations |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor; human mode confirms first |
 | `eon workspace [--json]` | Inspect the live Eon-owned tab, pane, and Session mapping |
-| `eon tab create [--json]` | Create and focus a tab containing a default-shell Session |
+| `eon tab create [--json]` | Create and focus a pending tab with its directory picker |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set one live `tN` tab's absolute launch directory for future Sessions |
 | `eon pane create [--json]` | Create and select a default-shell Session in the active tab |
 | `eon focus ID [--json]` | Focus a stable tab or pane identity |
@@ -253,7 +259,7 @@ The command surface is small:
 
 Workspace commands target the exact current-generation Eon supervisor. An
 EonTerm supervisor returns `workspace-unavailable` to topology actions at the
-EONW boundary. EONW v3 frames are bounded to 2 MiB. The workspace topology is
+EONW boundary. EONW v4 frames are bounded to 2 MiB. The workspace topology is
 bounded to 64 tabs and 256 panes, is not persisted, and has no per-pane or
 per-Session removal action. Whole-generation stop sends canonical management
 Stop to every validated Session lease and succeeds only after every exact
@@ -425,15 +431,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 483 |
-| README | 439 |
+| README | 445 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 829 |
+| Architecture and contracts | 835 |
 | Distribution and references | 245 |
-| Changelog | 183 |
-| Rust source and tests | 11,019 |
+| Changelog | 189 |
+| Rust source and tests | 11,571 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
 | Nix composition | 733 |
 | Product defaults | 0 |
-| **Total** | **14,518** |
+| **Total** | **15,088** |

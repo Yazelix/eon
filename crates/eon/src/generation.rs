@@ -9,7 +9,7 @@ use super::supervisor::{
     validate_private_directory,
 };
 use super::workspace::json_escape;
-use eon_workspace_protocol::v3::{
+use eon_workspace_protocol::v4::{
     Action, Availability, LifecycleResponse, Response, Stopped, VERSION,
 };
 use std::{
@@ -36,6 +36,7 @@ pub(super) fn current_generation() -> Result<String, String> {
         include_bytes!("../../eon-workspace-protocol/src/lib.rs"),
         include_bytes!("../../eon-workspace-protocol/src/v2.rs"),
         include_bytes!("../../eon-workspace-protocol/src/v3.rs"),
+        include_bytes!("../../eon-workspace-protocol/src/v4.rs"),
         include_bytes!("../../eon-workspace-protocol/Cargo.toml"),
         include_bytes!("../../eon-manifest/src/lib.rs"),
         include_bytes!("../../eon-manifest/Cargo.toml"),
@@ -308,7 +309,7 @@ fn inspect_legacy(root: &Path) -> GenerationRecord {
                 .collect(),
             attach: Availability {
                 available: true,
-                reason: "legacy supervisor returned a valid EONW v3 workspace".into(),
+                reason: "legacy supervisor returned a valid EONW v4 workspace".into(),
             },
             stop: Availability {
                 available: false,

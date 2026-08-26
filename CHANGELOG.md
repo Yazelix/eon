@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Open the ranked directory picker before the first durable Session in a fresh
+  full-Eon workspace and in every Ctrl+T tab. Accepting starts exactly one first
+  pane in the chosen directory. Cancelling fresh `t1` falls back to Eon's
+  validated launch directory; cancelling a later pending tab removes it and
+  restores prior focus. EONW v4 represents the pane-free pending tab, and Venus
+  starts full Eon from the workspace endpoint without an initial Orbit endpoint.
 - Open one tab-bound ranked directory picker from anywhere in a full-Eon tab
   with Alt+Z. Eon runs the packaged Zoxide and fzf in a transient Orbit Session;
   Venus keeps the tab bar visible and presents the picker with a one-cell inset.
@@ -13,17 +19,17 @@ installation, and proven contract changes.
   Accepting a valid path retargets only future Sessions in the captured tab,
   cancel changes nothing, and an actionable error remains visible for a bounded
   interval before cleanup. Tab or presentation loss retries transient Orbit Stop
-  failure and leaves no picker state. EONW v3 carries the semantic action and
+  failure and leaves no picker state. EONW v4 carries the semantic action and
   modal endpoint.
 - Validate full Eon's initial tab launch directory before recovering or starting
   Sessions, so a startup filesystem race cannot report failure after launching
   a persistent Session.
-- Keep every valid EONW v3 workspace snapshot representable within its bounded
+- Keep every valid EONW v4 workspace snapshot representable within its bounded
   2 MiB frame, so accepted high-bound workspace actions still return their
   complete typed result.
 - Give every full-Eon tab a stable `tN` identity and one authoritative launch
   directory, expose explicit retargeting through `eon tab directory`, and start
-  later panes there without changing existing Sessions. EONW v3 carries exact
+  later panes there without changing existing Sessions. EONW v4 carries exact
   raw directory bytes into Venus labels and the runtime-generation identity.
 - Compose accepted ORBS v10 native cell, word, and logical-line selection,
   terminal mouse capture with Shift override, and automatic ordinary-plus-primary
