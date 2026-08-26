@@ -619,8 +619,8 @@ resolves this exact graph without restarting its older live generation.
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
-- **Proof:** The EONW v4 protocol seed is mechanically verified as an
-  uncommitted candidate based on `021fffd2a4edd5ee51b8ee5be8520c24e2889858`:
+- **Proof:** EONW v4 protocol seed
+  `aaafc9127c054e683abfceb3c8fcaae201a7a763` is mechanically verified:
   focused red/green pending-tab and zero-durable-Session lifecycle round trips,
   v3/v4 mutual rejection, invalid pending-state rejection, complete locked Rust
   checks, and `nix flake check path:. --print-build-logs` passed on x86_64
