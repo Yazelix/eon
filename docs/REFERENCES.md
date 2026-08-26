@@ -5,9 +5,9 @@ start with `Read first`, and inspect an additional source only when its conditio
 applies. Adjacent rows are not required reading. `Owner` identifies the
 subsystem that may adopt the evidence; a reference does not transfer ownership.
 
-Record the inspected revision, useful constraints, and rejected approaches in
-the implementation bead. Keep historical evidence in that bead instead of this
-active routing map.
+Eon keeps cross-product comparisons and cross-repository routes here. Child
+repositories keep evidence for their own contracts and link here instead of
+duplicating product pins. Implementing Beads record exact inspected revisions.
 
 ## Orbit and terminal architecture
 
@@ -15,6 +15,12 @@ active routing map.
 |---|---|---|---|---|
 | Does an Eon design question depend on terminal service, engine, attachment, or diagnostic-client internals? | Orbit through Eon Sessions | [Eon Sessions contracts](https://github.com/Yazelix/eon-sessions/blob/edge/docs/CONTRACTS.md) and [reference routing](https://github.com/Yazelix/eon-sessions/blob/edge/docs/REFERENCES.md) | Follow only the child route matching a demonstrated Orbit contract gap. | Consume accepted Orbit contracts. Do not repeat or reopen engine and diagnostic-client decisions in Eon. |
 | If Eon for the web is activated, should its browser client consume canonical Orbit frames or restore a libghostty-vt WebAssembly snapshot plus ordered tail? | Eon client policy and Orbit protocol ownership | [Ghostty at `d760ee96e546`](https://github.com/ghostty-org/ghostty/tree/d760ee96e54657416eb427b793c7e839f003df7d) and its [WebAssembly example](https://github.com/ghostty-org/ghostty/tree/d760ee96e54657416eb427b793c7e839f003df7d/example/wasm-vt) | Read the [snapshot API](https://github.com/ghostty-org/ghostty/blob/d760ee96e54657416eb427b793c7e839f003df7d/include/ghostty/vt/snapshot.h) only when checkpoint-plus-tail replication is a measured candidate; inspect the [signed nightly artifact workflow](https://github.com/ghostty-org/ghostty/blob/d760ee96e54657416eb427b793c7e839f003df7d/.github/workflows/release-tip.yml) only when packaging a prebuilt artifact is in scope. | Keep canonical Orbit frames and one terminal authority as the default. Compare a non-authoritative snapshot replica only after measured transport or rendering pressure. Reject benchmark extrapolation to complete browser UX, moving nightly artifacts as stable dependencies, snapshot v1 as a durable compatibility promise, a second terminal-query owner, and implied Eon-web scope. |
+
+## Terminal product comparisons
+
+| Question or trigger | Owner | Read first | Read additionally only if | Preserve / reject |
+|---|---|---|---|---|
+| How should Eon compare terminal completeness, native Linux integration, performance evidence, and direct distribution without importing another terminal's ownership? | Eon product policy; Orbit and Venus retain their accepted mechanisms | [Monstar 1.0.1 at `b801befec37b`](https://github.com/rockorager/monstar/tree/b801befec37b1ef82302caf6542bb8bb133c0ff1), its [documented surface](https://github.com/rockorager/monstar/blob/b801befec37b1ef82302caf6542bb8bb133c0ff1/README.md), and [MIT license](https://github.com/rockorager/monstar/blob/b801befec37b1ef82302caf6542bb8bb133c0ff1/LICENSE) | Read its exact [`Window.zig`](https://github.com/rockorager/monstar/blob/b801befec37b1ef82302caf6542bb8bb133c0ff1/src/Window.zig), [`App.zig`](https://github.com/rockorager/monstar/blob/b801befec37b1ef82302caf6542bb8bb133c0ff1/src/App.zig), or [`Pty.zig`](https://github.com/rockorager/monstar/blob/b801befec37b1ef82302caf6542bb8bb133c0ff1/src/Pty.zig) only for a named host, interaction, or performance question. Read its [release workflow](https://github.com/rockorager/monstar/blob/b801befec37b1ef82302caf6542bb8bb133c0ff1/.github/workflows/release.yml), [binary assembler](https://github.com/rockorager/monstar/blob/b801befec37b1ef82302caf6542bb8bb133c0ff1/packaging/build-binary-dist.sh), and [AUR templates](https://github.com/rockorager/monstar/tree/b801befec37b1ef82302caf6542bb8bb133c0ff1/packaging/arch) only after Eon activates distribution graduation. | Study terminal search, graphics, URI handling, native Wayland integration, damage, benchmark methods, stripped archives, and package publication. Preserve durable Orbit Sessions, Venus presentation, Eon workspace authority, and the canonical component graph. Reject Monstar's PTY and terminal ownership, single-process architecture, renderer, Zig toolchain, direct dependency selection, feature-parity roadmap, and size or performance extrapolation across Eon's process boundary. |
 
 ## Session workspace experience
 
