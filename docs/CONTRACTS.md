@@ -577,6 +577,44 @@ this exact graph without restarting its older live generation.
 - **Open proof:** Native visual and AT-SPI dogfood begin after the next normal Eon
   restart; the profile refresh intentionally preserved the older live supervisor.
 
+## EON-C18 — Global tab directory picker
+
+- **Status:** Candidate
+- **Consumer:** One person using a live full-Eon tab.
+- **Trigger:** The person presses Alt+Z while terminal, tab, or pane focus is
+  active and no directory picker is already open.
+- **Result:**
+  - Eon captures the active tab and starts one transient Orbit Session running
+    the exact packaged ranked-directory picker at that tab's launch directory.
+  - EONW exposes that picker as one explicit modal endpoint bound to the active
+    tab, never as a normal `pN` pane. The selected durable pane stays live and
+    receives no picker input.
+  - Venus keeps the tab bar visible and replaces the tab body with the picker,
+    inset by one terminal cell on every side when the grid permits it. The
+    previous terminal is not composited underneath.
+  - Accepting a valid choice uses EON-C17's existing tab-directory mutation.
+    The picker exits, prior workspace focus returns, the tab label updates, and
+    the next ordinary pane starts at the accepted directory. Existing process
+    working directories do not change.
+- **Important failures:** Cancel, empty or invalid selection, picker launch or
+  exit, target disappearance, duplicate invocation, origin-tab loss, or
+  presentation detachment changes no directory and leaves no transient
+  process, endpoint, record, pane, or modal state.
+- **Owner:** Eon owns picker policy, tab binding, command selection, lifecycle,
+  validation, mutation, and cleanup. Venus owns full-Eon shortcut precedence,
+  modal geometry, focus, input, notices, rendering, and accessibility. Orbit
+  owns the transient PTY and child. Zoxide owns ranking and fzf owns interactive
+  terminal selection.
+- **Consumes:** EON-C17; accepted EONW v3 producer and exact Venus consumer;
+  Orbit's accepted Session startup, attachment, exit, and stop contracts.
+- **Boundary:** No Yazi dependency, normal-pane identity, arbitrary-command or
+  generic-popup API, simultaneous terminal composition, native Venus picker,
+  automatic pane creation, current-process `cd`, persistence, EonTerm action,
+  or additional platform.
+- **Proof:** Open. The current protocol seed is mechanically verified only for
+  the independently consumable EONW v3 action and modal state; runtime and UI
+  behavior remain unproved.
+
 ## Rules
 
 - Each contract uses one `## EON-CN — Name` heading and the required fields

@@ -6,8 +6,8 @@ pub const VERSION: u16 = 2;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
-const MAX_ID_BYTES: usize = 128;
-const MAX_ENDPOINT_BYTES: usize = 4096;
+pub(crate) const MAX_ID_BYTES: usize = 128;
+pub(crate) const MAX_ENDPOINT_BYTES: usize = 4096;
 const MAX_VERSION_BYTES: usize = 128;
 const MAX_COMPONENT_REPORT_BYTES: usize = 32 * 1024;
 pub const MAX_DETAIL_BYTES: usize = 1024;
@@ -15,9 +15,9 @@ pub const MAX_TABS: usize = 64;
 pub const MAX_PANES: usize = 256;
 pub const MAX_DIRECTORY_BYTES: usize = 4096;
 
-const REQUEST: u8 = 1;
-const SNAPSHOT: u8 = 129;
-const FAILURE: u8 = 130;
+pub(crate) const REQUEST: u8 = 1;
+pub(crate) const SNAPSHOT: u8 = 129;
+pub(crate) const FAILURE: u8 = 130;
 const RUNTIME: u8 = 131;
 const STOPPED: u8 = 132;
 
@@ -267,27 +267,11 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
     let kind = match response {
         Response::Snapshot(snapshot) => {
             validate_snapshot(snapshot)?;
-            payload.string(&snapshot.active_tab);
-            payload.count(snapshot.tabs.len());
-            for tab in &snapshot.tabs {
-                payload.string(&tab.id);
-                payload.raw(&tab.directory);
-                payload.string(&tab.selected_pane);
-                payload.count(tab.panes.len());
-                for pane in &tab.panes {
-                    payload.string(&pane.id);
-                    payload.string(&pane.session);
-                    payload.raw(&pane.endpoint);
-                    payload.byte(u8::from(pane.live));
-                }
-            }
+            encode_workspace(&mut payload, &snapshot.active_tab, &snapshot.tabs);
             SNAPSHOT
         }
         Response::Failure(failure) => {
-            identity("failure code", &failure.code)?;
-            nonempty("failure detail", &failure.detail, MAX_DETAIL_BYTES)?;
-            payload.string(&failure.code);
-            payload.string(&failure.detail);
+            encode_failure(&mut payload, failure)?;
             FAILURE
         }
     };
@@ -299,50 +283,12 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
     let mut decoder = Decoder::new(payload);
     let response = match kind {
         SNAPSHOT => {
-            let active_tab = decoder.string("active tab", MAX_ID_BYTES)?;
-            let tab_count = decoder.count("tabs", MAX_TABS)?;
-            let mut tabs = Vec::with_capacity(tab_count);
-            let mut pane_count = 0;
-            for _ in 0..tab_count {
-                let id = decoder.string("tab id", MAX_ID_BYTES)?;
-                let directory = decoder.raw("directory", MAX_DIRECTORY_BYTES)?.to_vec();
-                let selected_pane = decoder.string("selected pane", MAX_ID_BYTES)?;
-                let count = decoder.count("panes", MAX_PANES)?;
-                pane_count += count;
-                if pane_count > MAX_PANES {
-                    return Err(Error::InvalidSnapshot { field: "panes" });
-                }
-                let mut panes = Vec::with_capacity(count);
-                for _ in 0..count {
-                    panes.push(Pane {
-                        id: decoder.string("pane id", MAX_ID_BYTES)?,
-                        session: decoder.string("session id", MAX_ID_BYTES)?,
-                        endpoint: decoder.raw("endpoint", MAX_ENDPOINT_BYTES)?.to_vec(),
-                        live: match decoder.byte()? {
-                            0 => false,
-                            1 => true,
-                            _ => return Err(Error::InvalidValue { field: "liveness" }),
-                        },
-                    });
-                }
-                tabs.push(Tab {
-                    id,
-                    directory,
-                    selected_pane,
-                    panes,
-                });
-            }
+            let (active_tab, tabs) = decode_workspace(&mut decoder)?;
             let snapshot = Snapshot { active_tab, tabs };
             validate_snapshot(&snapshot)?;
             Response::Snapshot(snapshot)
         }
-        FAILURE => {
-            let code = decoder.string("failure code", MAX_ID_BYTES)?;
-            identity("failure code", &code)?;
-            let detail = decoder.string("failure detail", MAX_DETAIL_BYTES)?;
-            nonempty("failure detail", &detail, MAX_DETAIL_BYTES)?;
-            Response::Failure(Failure { code, detail })
-        }
+        FAILURE => Response::Failure(decode_failure(&mut decoder)?),
         value => return Err(Error::InvalidKind { value }),
     };
     decoder.finish()?;
@@ -350,6 +296,13 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
 }
 
 pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>> {
+    encode_lifecycle_response_version(response, VERSION)
+}
+
+pub(crate) fn encode_lifecycle_response_version(
+    response: &LifecycleResponse,
+    version: u16,
+) -> Result<Vec<u8>> {
     let mut payload = Encoder::default();
     let kind = match response {
         LifecycleResponse::Runtime(runtime) => {
@@ -370,18 +323,22 @@ pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>
             STOPPED
         }
         LifecycleResponse::Failure(failure) => {
-            identity("failure code", &failure.code)?;
-            nonempty("failure detail", &failure.detail, MAX_DETAIL_BYTES)?;
-            payload.string(&failure.code);
-            payload.string(&failure.detail);
+            encode_failure(&mut payload, failure)?;
             FAILURE
         }
     };
-    frame(kind, payload.bytes)
+    frame_version(version, kind, payload.bytes)
 }
 
 pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
-    let (kind, payload) = unframe(bytes)?;
+    decode_lifecycle_response_version(bytes, VERSION)
+}
+
+pub(crate) fn decode_lifecycle_response_version(
+    bytes: &[u8],
+    version: u16,
+) -> Result<LifecycleResponse> {
+    let (kind, payload) = unframe_version(bytes, version)?;
     let mut decoder = Decoder::new(payload);
     let response = match kind {
         RUNTIME => {
@@ -405,13 +362,7 @@ pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
             validate_stopped(&stopped)?;
             LifecycleResponse::Stopped(stopped)
         }
-        FAILURE => {
-            let code = decoder.string("failure code", MAX_ID_BYTES)?;
-            identity("failure code", &code)?;
-            let detail = decoder.string("failure detail", MAX_DETAIL_BYTES)?;
-            nonempty("failure detail", &detail, MAX_DETAIL_BYTES)?;
-            LifecycleResponse::Failure(Failure { code, detail })
-        }
+        FAILURE => LifecycleResponse::Failure(decode_failure(&mut decoder)?),
         value => return Err(Error::InvalidKind { value }),
     };
     decoder.finish()?;
@@ -433,7 +384,61 @@ pub fn declared_message_len(header: &[u8]) -> Result<usize> {
     Ok(size)
 }
 
-fn validate_directory(directory: &[u8]) -> Result<()> {
+pub(crate) fn encode_workspace(encoder: &mut Encoder, active_tab: &str, tabs: &[Tab]) {
+    encoder.string(active_tab);
+    encoder.count(tabs.len());
+    for tab in tabs {
+        encoder.string(&tab.id);
+        encoder.raw(&tab.directory);
+        encoder.string(&tab.selected_pane);
+        encoder.count(tab.panes.len());
+        for pane in &tab.panes {
+            encoder.string(&pane.id);
+            encoder.string(&pane.session);
+            encoder.raw(&pane.endpoint);
+            encoder.byte(u8::from(pane.live));
+        }
+    }
+}
+
+pub(crate) fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(String, Vec<Tab>)> {
+    let active_tab = decoder.string("active tab", MAX_ID_BYTES)?;
+    let tab_count = decoder.count("tabs", MAX_TABS)?;
+    let mut tabs = Vec::with_capacity(tab_count);
+    let mut pane_count = 0;
+    for _ in 0..tab_count {
+        let id = decoder.string("tab id", MAX_ID_BYTES)?;
+        let directory = decoder.raw("directory", MAX_DIRECTORY_BYTES)?.to_vec();
+        let selected_pane = decoder.string("selected pane", MAX_ID_BYTES)?;
+        let count = decoder.count("panes", MAX_PANES)?;
+        pane_count += count;
+        if pane_count > MAX_PANES {
+            return Err(Error::InvalidSnapshot { field: "panes" });
+        }
+        let mut panes = Vec::with_capacity(count);
+        for _ in 0..count {
+            panes.push(Pane {
+                id: decoder.string("pane id", MAX_ID_BYTES)?,
+                session: decoder.string("session id", MAX_ID_BYTES)?,
+                endpoint: decoder.raw("endpoint", MAX_ENDPOINT_BYTES)?.to_vec(),
+                live: match decoder.byte()? {
+                    0 => false,
+                    1 => true,
+                    _ => return Err(Error::InvalidValue { field: "liveness" }),
+                },
+            });
+        }
+        tabs.push(Tab {
+            id,
+            directory,
+            selected_pane,
+            panes,
+        });
+    }
+    Ok((active_tab, tabs))
+}
+
+pub(crate) fn validate_directory(directory: &[u8]) -> Result<()> {
     if directory.is_empty() || directory.contains(&0) {
         return Err(Error::InvalidValue { field: "directory" });
     }
@@ -447,24 +452,28 @@ fn validate_directory(directory: &[u8]) -> Result<()> {
 }
 
 fn validate_snapshot(snapshot: &Snapshot) -> Result<()> {
-    if snapshot.tabs.is_empty() || snapshot.tabs.len() > MAX_TABS {
+    validate_workspace(&snapshot.active_tab, &snapshot.tabs)
+}
+
+pub(crate) fn validate_workspace(active_tab: &str, tabs: &[Tab]) -> Result<()> {
+    if tabs.is_empty() || tabs.len() > MAX_TABS {
         return Err(Error::InvalidSnapshot { field: "tabs" });
     }
-    identity("active tab", &snapshot.active_tab)?;
+    identity("active tab", active_tab)?;
 
     let mut focus_ids = HashSet::new();
     let mut sessions = HashSet::new();
     let mut endpoints = HashSet::new();
     let mut pane_count = 0;
     let mut active_tab_present = false;
-    for tab in &snapshot.tabs {
+    for tab in tabs {
         identity("tab id", &tab.id)?;
         validate_directory(&tab.directory)?;
         identity("selected pane", &tab.selected_pane)?;
         if !focus_ids.insert(tab.id.as_str()) {
             return Err(Error::InvalidSnapshot { field: "tab id" });
         }
-        active_tab_present |= tab.id == snapshot.active_tab;
+        active_tab_present |= tab.id == active_tab;
         if tab.panes.is_empty() {
             return Err(Error::InvalidSnapshot { field: "panes" });
         }
@@ -484,15 +493,7 @@ fn validate_snapshot(snapshot: &Snapshot) -> Result<()> {
                     field: "session id",
                 });
             }
-            if pane.endpoint.is_empty() {
-                return Err(Error::InvalidSnapshot { field: "endpoint" });
-            }
-            if pane.endpoint.len() > MAX_ENDPOINT_BYTES {
-                return Err(Error::FieldTooLong {
-                    field: "endpoint",
-                    length: pane.endpoint.len(),
-                });
-            }
+            validate_endpoint(&pane.endpoint, "endpoint")?;
             if !endpoints.insert(pane.endpoint.as_slice()) {
                 return Err(Error::InvalidSnapshot { field: "endpoint" });
             }
@@ -588,7 +589,36 @@ fn decode_availability(decoder: &mut Decoder<'_>, field: &'static str) -> Result
     })
 }
 
-fn identity(field: &'static str, value: &str) -> Result<()> {
+pub(crate) fn validate_endpoint(endpoint: &[u8], field: &'static str) -> Result<()> {
+    if endpoint.is_empty() {
+        return Err(Error::InvalidSnapshot { field });
+    }
+    if endpoint.len() > MAX_ENDPOINT_BYTES {
+        return Err(Error::FieldTooLong {
+            field,
+            length: endpoint.len(),
+        });
+    }
+    Ok(())
+}
+
+pub(crate) fn encode_failure(encoder: &mut Encoder, failure: &Failure) -> Result<()> {
+    identity("failure code", &failure.code)?;
+    nonempty("failure detail", &failure.detail, MAX_DETAIL_BYTES)?;
+    encoder.string(&failure.code);
+    encoder.string(&failure.detail);
+    Ok(())
+}
+
+pub(crate) fn decode_failure(decoder: &mut Decoder<'_>) -> Result<Failure> {
+    let code = decoder.string("failure code", MAX_ID_BYTES)?;
+    identity("failure code", &code)?;
+    let detail = decoder.string("failure detail", MAX_DETAIL_BYTES)?;
+    nonempty("failure detail", &detail, MAX_DETAIL_BYTES)?;
+    Ok(Failure { code, detail })
+}
+
+pub(crate) fn identity(field: &'static str, value: &str) -> Result<()> {
     nonempty(field, value, MAX_ID_BYTES)?;
     if !value
         .bytes()
@@ -599,7 +629,7 @@ fn identity(field: &'static str, value: &str) -> Result<()> {
     Ok(())
 }
 
-fn nonempty(field: &'static str, value: &str, maximum: usize) -> Result<()> {
+pub(crate) fn nonempty(field: &'static str, value: &str, maximum: usize) -> Result<()> {
     if value.len() > maximum {
         return Err(Error::FieldTooLong {
             field,
@@ -613,13 +643,17 @@ fn nonempty(field: &'static str, value: &str, maximum: usize) -> Result<()> {
 }
 
 fn frame(kind: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
+    frame_version(VERSION, kind, payload)
+}
+
+pub(crate) fn frame_version(version: u16, kind: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
     let size = HEADER_BYTES + payload.len();
     if size > MAX_MESSAGE_BYTES {
         return Err(Error::MessageTooLarge { size });
     }
     let mut message = Vec::with_capacity(size);
     message.extend_from_slice(MAGIC);
-    message.extend_from_slice(&VERSION.to_le_bytes());
+    message.extend_from_slice(&version.to_le_bytes());
     message.push(kind);
     message.push(0);
     message.extend_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -628,6 +662,10 @@ fn frame(kind: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
 }
 
 fn unframe(bytes: &[u8]) -> Result<(u8, &[u8])> {
+    unframe_version(bytes, VERSION)
+}
+
+pub(crate) fn unframe_version(bytes: &[u8], expected_version: u16) -> Result<(u8, &[u8])> {
     if bytes.len() > MAX_MESSAGE_BYTES {
         return Err(Error::MessageTooLarge { size: bytes.len() });
     }
@@ -638,7 +676,7 @@ fn unframe(bytes: &[u8]) -> Result<(u8, &[u8])> {
         return Err(Error::InvalidMagic);
     }
     let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-    if version != VERSION {
+    if version != expected_version {
         return Err(Error::UnsupportedVersion { version });
     }
     if bytes[7] != 0 {
@@ -657,50 +695,50 @@ fn unframe(bytes: &[u8]) -> Result<(u8, &[u8])> {
 }
 
 #[derive(Default)]
-struct Encoder {
-    bytes: Vec<u8>,
+pub(crate) struct Encoder {
+    pub(crate) bytes: Vec<u8>,
 }
 
 impl Encoder {
-    fn byte(&mut self, value: u8) {
+    pub(crate) fn byte(&mut self, value: u8) {
         self.bytes.push(value);
     }
 
-    fn count(&mut self, value: usize) {
+    pub(crate) fn count(&mut self, value: usize) {
         let value = u16::try_from(value).expect("validated EONW count");
         self.number(value);
     }
 
-    fn number(&mut self, value: u16) {
+    pub(crate) fn number(&mut self, value: u16) {
         self.bytes.extend_from_slice(&value.to_le_bytes());
     }
 
-    fn string(&mut self, value: &str) {
+    pub(crate) fn string(&mut self, value: &str) {
         self.raw(value.as_bytes());
     }
 
-    fn raw(&mut self, value: &[u8]) {
+    pub(crate) fn raw(&mut self, value: &[u8]) {
         let length = u16::try_from(value.len()).expect("validated EONW field length");
         self.bytes.extend_from_slice(&length.to_le_bytes());
         self.bytes.extend_from_slice(value);
     }
 }
 
-struct Decoder<'a> {
+pub(crate) struct Decoder<'a> {
     bytes: &'a [u8],
     offset: usize,
 }
 
 impl<'a> Decoder<'a> {
-    fn new(bytes: &'a [u8]) -> Self {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, offset: 0 }
     }
 
-    fn byte(&mut self) -> Result<u8> {
+    pub(crate) fn byte(&mut self) -> Result<u8> {
         Ok(self.take(1)?[0])
     }
 
-    fn count(&mut self, field: &'static str, maximum: usize) -> Result<usize> {
+    pub(crate) fn count(&mut self, field: &'static str, maximum: usize) -> Result<usize> {
         let value = self.number()? as usize;
         if value > maximum {
             return Err(Error::InvalidSnapshot { field });
@@ -708,18 +746,18 @@ impl<'a> Decoder<'a> {
         Ok(value)
     }
 
-    fn number(&mut self) -> Result<u16> {
+    pub(crate) fn number(&mut self) -> Result<u16> {
         let bytes = self.take(2)?;
         Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
-    fn string(&mut self, field: &'static str, maximum: usize) -> Result<String> {
+    pub(crate) fn string(&mut self, field: &'static str, maximum: usize) -> Result<String> {
         str::from_utf8(self.raw(field, maximum)?)
             .map(str::to_owned)
             .map_err(|_| Error::InvalidUtf8 { field })
     }
 
-    fn raw(&mut self, field: &'static str, maximum: usize) -> Result<&'a [u8]> {
+    pub(crate) fn raw(&mut self, field: &'static str, maximum: usize) -> Result<&'a [u8]> {
         let bytes = self.take(2)?;
         let length = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
         if length > maximum {
@@ -735,7 +773,7 @@ impl<'a> Decoder<'a> {
         Ok(value)
     }
 
-    fn finish(self) -> Result<()> {
+    pub(crate) fn finish(self) -> Result<()> {
         if self.offset == self.bytes.len() {
             Ok(())
         } else {
