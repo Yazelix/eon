@@ -13,12 +13,13 @@ use super::{
     },
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::v2::{Action, Direction, Response, VERSION};
+use eon_workspace_protocol::v3::{Action, Direction, Response, VERSION};
 use std::{
     env,
     ffi::{OsStr, OsString},
     os::unix::{ffi::OsStrExt, process::CommandExt},
     path::Path,
+    process::{Command, Stdio},
 };
 
 const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | tab directory TAB [--json] -- DIRECTORY | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
@@ -27,7 +28,14 @@ const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id
 pub(super) fn run() -> (&'static str, Result<i32, String>) {
     let mut arguments = env::args_os();
     let invocation = arguments.next().unwrap_or_default();
-    let arguments = arguments.collect();
+    let mut arguments: Vec<OsString> = arguments.collect();
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == OsStr::new("__directory-picker"))
+    {
+        arguments.remove(0);
+        return ("eon-directory-picker", directory_picker(arguments));
+    }
     let eonterm = Path::new(&invocation).file_name() == Some(OsStr::new("eonterm"));
     let product = if eonterm { "eonterm" } else { "eon" };
     let result = if eonterm {
@@ -39,6 +47,60 @@ pub(super) fn run() -> (&'static str, Result<i32, String>) {
         }
     };
     (product, result)
+}
+
+fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
+    let [socket, tab] = arguments.as_slice() else {
+        return Err("usage: eon-directory-picker EON_SOCKET TAB".into());
+    };
+    let tab = tab
+        .to_str()
+        .ok_or_else(|| "directory picker tab identity must be UTF-8".to_string())?;
+    let output = Command::new("zoxide")
+        .args(["query", "--interactive"])
+        .env(
+            "_ZO_FZF_OPTS",
+            "--exact --no-sort --bind=ctrl-z:ignore,btab:up,tab:down --cycle --keep-right --info=inline --layout=reverse --tabstop=1 --exit-0 --border=none",
+        )
+        .env_remove("FZF_DEFAULT_OPTS")
+        .env_remove("FZF_DEFAULT_OPTS_FILE")
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|error| format!("cannot launch packaged directory picker: {error}"))?;
+    if output.status.code() == Some(130) {
+        return Ok(0);
+    }
+    if !output.status.success() {
+        return Err(format!(
+            "packaged directory picker exited with status {}",
+            output.status
+        ));
+    }
+    let mut directory = output.stdout;
+    while matches!(directory.last(), Some(b'\n' | b'\r')) {
+        directory.pop();
+    }
+    if directory.is_empty() {
+        return Ok(0);
+    }
+    match send_action(
+        Path::new(socket),
+        Action::SetTabDirectory {
+            tab: tab.into(),
+            directory,
+        },
+    ) {
+        Ok(ControlResponse::Workspace(Response::Snapshot(_))) => Ok(0),
+        Ok(ControlResponse::Workspace(Response::Failure(failure))) => Err(format!(
+            "cannot retarget tab: {}: {}",
+            failure.code, failure.detail
+        )),
+        Ok(ControlResponse::Lifecycle(_)) => {
+            Err("Eon returned a lifecycle result for the directory picker".into())
+        }
+        Err(error) => Err(format!("cannot retarget tab: {}", error.detail)),
+    }
 }
 
 fn launch_managed(

@@ -11,7 +11,7 @@ use super::{
     },
     workspace::{self, Workspace},
 };
-use eon_workspace_protocol::v2::{
+use eon_workspace_protocol::v3::{
     Action, Availability, LifecycleResponse, Request, Response, Runtime, Stopped, VERSION,
 };
 use std::{
@@ -543,15 +543,17 @@ fn supervise(
                 sessions
                     .iter()
                     .map(|session| {
-                        (
-                            session.number,
+                        Ok((
+                            session
+                                .number
+                                .ok_or("recovered a transient Session as a durable pane")?,
                             workspace::Session {
                                 id: session.id.clone(),
                                 endpoint: session.endpoint.clone(),
                             },
-                        )
+                        ))
                     })
-                    .collect(),
+                    .collect::<Result<Vec<_>, String>>()?,
             )
         })
         .transpose()?;
@@ -581,6 +583,7 @@ fn supervise(
         application_id: application_id.into(),
         workspace,
         sessions,
+        directory_picker: None,
         venus: Some(venus),
         initial_status: None,
     };
@@ -593,7 +596,7 @@ fn supervise(
                 return Ok(state.initial_status.unwrap_or(0));
             }
 
-            if reap_desktop(&mut state.venus)? {
+            if reap_presentation(&mut state)? {
                 match mode {
                     LaunchMode::Workspace => eprintln!(
                         "Eon Desktop exited; Sessions remains active. Run `eon attach {generation}` to reconnect."
@@ -616,8 +619,15 @@ fn supervise(
     if let Some(process) = state.venus.take() {
         close_presentation(process);
     }
+    let picker_cleanup = stop_directory_picker(&mut state);
     let _ = fs::remove_dir(runtime);
-    status
+    match (status, picker_cleanup) {
+        (Ok(code), Ok(())) => Ok(code),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(cleanup)) => Err(format!(
+            "{error}; cannot clean up directory picker: {cleanup}"
+        )),
+    }
 }
 
 struct SupervisorState {
@@ -625,19 +635,41 @@ struct SupervisorState {
     application_id: String,
     workspace: Option<Workspace>,
     sessions: Vec<RunningSession>,
+    directory_picker: Option<RunningSession>,
     venus: Option<PresentationProcess>,
     initial_status: Option<i32>,
 }
 
 fn reap_finished_sessions(state: &mut SupervisorState) -> Result<(), String> {
+    let picker_finished = match state.directory_picker.as_mut() {
+        Some(picker) => session_finished(picker)?,
+        None => None,
+    };
+    if picker_finished.is_some() {
+        let picker = state
+            .directory_picker
+            .take()
+            .ok_or("directory picker disappeared while it was reaped")?;
+        let workspace = state
+            .workspace
+            .as_mut()
+            .ok_or("directory picker has no workspace owner")?;
+        workspace
+            .session_exited(&picker.id)
+            .map_err(|error| error.detail)?;
+    }
+
     let mut index = 0;
     while index < state.sessions.len() {
         if let Some(code) = session_finished(&mut state.sessions[index])? {
             let session = state.sessions.remove(index);
             if let Some(workspace) = &mut state.workspace {
-                workspace
+                let stop_picker = workspace
                     .session_exited(&session.id)
                     .map_err(|error| error.detail)?;
+                if stop_picker {
+                    stop_directory_picker_session(&mut state.directory_picker)?;
+                }
             }
             if session.id == "session-1" {
                 state.initial_status = Some(code);
@@ -649,8 +681,48 @@ fn reap_finished_sessions(state: &mut SupervisorState) -> Result<(), String> {
     Ok(())
 }
 
-fn reap_desktop(desktop: &mut Option<PresentationProcess>) -> Result<bool, String> {
-    let exited = match desktop.as_mut() {
+fn take_directory_picker(state: &mut SupervisorState) -> Option<RunningSession> {
+    if let Some(workspace) = state.workspace.as_mut() {
+        workspace.clear_directory_picker();
+    }
+    state.directory_picker.take()
+}
+
+fn stop_directory_picker(state: &mut SupervisorState) -> Result<(), String> {
+    if let Some(workspace) = state.workspace.as_mut() {
+        workspace.clear_directory_picker();
+    }
+    stop_directory_picker_session(&mut state.directory_picker)
+}
+
+fn stop_directory_picker_session(running: &mut Option<RunningSession>) -> Result<(), String> {
+    let Some(session) = running.as_mut() else {
+        return Ok(());
+    };
+    stop_managed_sessions(std::slice::from_mut(session), SESSION_START_TIMEOUT)?;
+    running.take();
+    Ok(())
+}
+
+fn directory_picker_command(
+    programs: &Programs,
+    runtime: &Path,
+    tab: &str,
+) -> Result<Vec<OsString>, String> {
+    let session_bin = programs
+        .session_bin
+        .as_ref()
+        .ok_or("the installed Eon package has no directory picker")?;
+    Ok(vec![
+        session_bin.join("eon-directory-picker").into_os_string(),
+        "__directory-picker".into(),
+        runtime.join("eon.sock").into_os_string(),
+        tab.into(),
+    ])
+}
+
+fn reap_presentation(state: &mut SupervisorState) -> Result<bool, String> {
+    let exited = match state.venus.as_mut() {
         Some(process) => process
             .child
             .try_wait()
@@ -659,7 +731,8 @@ fn reap_desktop(desktop: &mut Option<PresentationProcess>) -> Result<bool, Strin
         None => false,
     };
     if exited {
-        *desktop = None;
+        state.venus = None;
+        stop_directory_picker(state)?;
     }
     Ok(exited)
 }
@@ -806,7 +879,7 @@ fn dispatch_control_request(
                     true,
                 );
             }
-            let result = reap_desktop(&mut state.venus).and_then(|_| {
+            let result = reap_presentation(state).and_then(|_| {
                 if let Some(venus) = &state.venus {
                     return venus.present();
                 }
@@ -850,31 +923,59 @@ fn dispatch_control_request(
                     false,
                 );
             }
+            if let Some(picker) = take_directory_picker(state) {
+                state.sessions.push(picker);
+            }
             let response = match stop_managed_sessions(&mut state.sessions, SESSION_START_TIMEOUT) {
-                Ok(sessions) => LifecycleResponse::Stopped(Stopped {
-                    generation: generation.into(),
-                    sessions,
-                }),
+                Ok(mut sessions) => {
+                    sessions.retain(|session| session != workspace::DIRECTORY_PICKER_SESSION);
+                    LifecycleResponse::Stopped(Stopped {
+                        generation: generation.into(),
+                        sessions,
+                    })
+                }
                 Err(detail) => LifecycleResponse::Failure(failure("stop-failed", detail)),
             };
             (ControlResponse::Lifecycle(response), true)
         }
         request => match state.workspace.as_mut() {
             Some(workspace) => {
-                match workspace.dispatch(&request.id, request.action, |session, directory| {
-                    let running = start_orbit(
-                        programs,
-                        config,
-                        &session.endpoint,
-                        &session.id,
-                        &state.component_generation,
-                        directory,
-                        &[],
-                        Instant::now() + SESSION_START_TIMEOUT,
-                    )?;
-                    state.sessions.push(running);
-                    Ok(())
-                }) {
+                match workspace.dispatch(
+                    &request.id,
+                    request.action,
+                    |session, directory, picker_tab| {
+                        if picker_tab.is_some() && state.directory_picker.is_some() {
+                            return Err("a directory picker is already running".into());
+                        }
+                        let child = picker_tab
+                            .map(|tab| {
+                                directory_picker_command(
+                                    programs,
+                                    session.endpoint.parent().ok_or(
+                                        "directory picker endpoint has no runtime directory",
+                                    )?,
+                                    tab,
+                                )
+                            })
+                            .transpose()?;
+                        let running = start_orbit(
+                            programs,
+                            config,
+                            &session.endpoint,
+                            &session.id,
+                            &state.component_generation,
+                            directory,
+                            child.as_deref().unwrap_or(&[]),
+                            Instant::now() + SESSION_START_TIMEOUT,
+                        )?;
+                        if picker_tab.is_some() {
+                            state.directory_picker = Some(running);
+                        } else {
+                            state.sessions.push(running);
+                        }
+                        Ok(())
+                    },
+                ) {
                     Ok(()) => (
                         ControlResponse::Workspace(Response::Snapshot(workspace.snapshot())),
                         false,
@@ -917,7 +1018,7 @@ fn runtime_status(
         attach: Availability {
             available: true,
             reason: match mode {
-                LaunchMode::Workspace => "supervisor accepts EONW v2 presentation requests",
+                LaunchMode::Workspace => "supervisor accepts EONW v3 presentation requests",
                 LaunchMode::Terminal => "supervisor owns one EonTerm Session",
             }
             .into(),
@@ -943,15 +1044,21 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        LaunchMode, Programs, effective_uid, prepare_configuration, prepare_runtime, venus_command,
-        xdg_path,
+        LaunchMode, PresentationProcess, Programs, SupervisorState, effective_uid,
+        prepare_configuration, prepare_runtime, reap_presentation, temporary_directory,
+        venus_command, xdg_path,
     };
-    use crate::supervisor::temporary_directory;
+    use crate::workspace::{Session, Workspace};
+    use eon_workspace_protocol::v3::Action;
     use std::{
         ffi::OsString,
         fs,
-        os::unix::fs::{MetadataExt, PermissionsExt},
+        os::unix::{
+            fs::{MetadataExt, PermissionsExt},
+            net::UnixStream,
+        },
         path::{Path, PathBuf},
+        process::Command,
     };
 
     fn terminal_presentation(
@@ -1042,6 +1149,41 @@ mod tests {
             ]
             .map(OsString::from)
         );
+    }
+
+    #[test]
+    fn exited_presentation_clears_directory_picker_before_reopen() {
+        let mut workspace = Workspace::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+        )
+        .unwrap();
+        workspace
+            .dispatch("picker", Action::PickTabDirectory, |_, _, _| Ok(()))
+            .unwrap();
+        let (control, _peer) = UnixStream::pair().unwrap();
+        let mut child = Command::new("true").spawn().unwrap();
+        child.wait().unwrap();
+        let mut state = SupervisorState {
+            component_generation: String::new(),
+            application_id: String::new(),
+            workspace: Some(workspace),
+            sessions: Vec::new(),
+            directory_picker: None,
+            venus: Some(PresentationProcess { child, control }),
+            initial_status: None,
+        };
+
+        assert!(reap_presentation(&mut state).unwrap());
+        let picker = state.workspace.unwrap().snapshot().directory_picker;
+        assert!(picker.is_none());
     }
 
     #[test]

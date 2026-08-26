@@ -7,7 +7,7 @@
   "composition": {
     "services": ["orbit"],
     "clients": ["venus"],
-    "tools": ["nushell", "bash", "zsh", "fish", "starship", "zoxide", "atuin", "carapace", "helix", "yazi", "lazygit"],
+    "tools": ["nushell", "bash", "zsh", "fish", "starship", "zoxide", "fzf", "atuin", "carapace", "helix", "yazi", "lazygit"],
     "libraries": ["ratconfig"]
   },
   "activation": {
@@ -35,7 +35,8 @@
       { "component": "venus", "contract": "VEN-C11" },
       { "component": "venus", "contract": "VEN-C13" },
       { "component": "venus", "contract": "VEN-C14" },
-      { "component": "venus", "contract": "VEN-C15" }
+      { "component": "venus", "contract": "VEN-C15" },
+      { "component": "venus", "contract": "VEN-C18" }
     ],
     "required_interfaces": [
       { "component": "orbit", "interface": "ORBF", "version": 1 },
@@ -82,7 +83,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "19d7d28a2aba09c0afe3173d25bbb76ec3edce49",
+      "revision": "df88b2867d50c59a316418471abd000da02940bc",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -104,7 +105,8 @@
         { "id": "VEN-C13", "proof": "2d3498258920736eb1bdae2b8869b6547b9735d4" },
         { "id": "VEN-C14", "proof": "a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8" },
         { "id": "VEN-C15", "proof": "7fc7e4ba97aaf48b586002934a580ef2d1c31694" },
-        { "id": "VEN-C17", "proof": "ab24961bd6b2f9403736e52ebbac8cc266488a41" }
+        { "id": "VEN-C17", "proof": "ab24961bd6b2f9403736e52ebbac8cc266488a41" },
+        { "id": "VEN-C18", "proof": "df88b2867d50c59a316418471abd000da02940bc" }
       ],
       "interfaces": [],
       "requires": [
@@ -212,6 +214,23 @@
       "source": {
         "kind": "git",
         "url": "https://github.com/ajeetdsouza/zoxide.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "fzf",
+      "project": "fzf",
+      "version": "0.73.1",
+      "revision": "ce4bef75954bebd87e0886435bcf8c6904328ab0",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/junegunn/fzf.git"
       },
       "artifacts": [
         { "id": "executable", "kind": "file" }

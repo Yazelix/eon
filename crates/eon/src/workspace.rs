@@ -1,6 +1,6 @@
-use eon_workspace_protocol::v2::{
-    Action, Direction, Failure, MAX_DIRECTORY_BYTES, MAX_PANES, MAX_TABS, Pane as SnapshotPane,
-    Snapshot, Tab as SnapshotTab,
+use eon_workspace_protocol::v3::{
+    Action, Direction, DirectoryPicker as SnapshotDirectoryPicker, Failure, MAX_DIRECTORY_BYTES,
+    MAX_PANES, MAX_TABS, Pane as SnapshotPane, Snapshot, Tab as SnapshotTab,
 };
 use std::{
     collections::VecDeque,
@@ -11,6 +11,8 @@ use std::{
 };
 
 const MAX_RECENT_REQUESTS: usize = 256;
+pub(crate) const DIRECTORY_PICKER_SESSION: &str = "directory-picker";
+pub(crate) const DIRECTORY_PICKER_ENDPOINT: &str = "pick.sock";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Session {
@@ -39,6 +41,7 @@ pub(crate) struct Workspace {
     active: usize,
     next_tab: usize,
     next_pane: usize,
+    directory_picker: Option<String>,
     recent_requests: VecDeque<String>,
 }
 
@@ -65,6 +68,18 @@ impl Workspace {
                         .collect(),
                 })
                 .collect(),
+            directory_picker: self
+                .directory_picker
+                .as_ref()
+                .map(|tab| SnapshotDirectoryPicker {
+                    tab: tab.clone(),
+                    endpoint: self
+                        .runtime
+                        .join(DIRECTORY_PICKER_ENDPOINT)
+                        .as_os_str()
+                        .as_bytes()
+                        .to_vec(),
+                }),
         }
     }
 }
@@ -72,6 +87,13 @@ impl Workspace {
 pub(crate) fn human(snapshot: &Snapshot) -> String {
     let active = &snapshot.active_tab;
     let mut output = format!("active {active}\n");
+    if let Some(picker) = &snapshot.directory_picker {
+        output.push_str(&format!(
+            "picker tab={} endpoint={}\n",
+            picker.tab,
+            String::from_utf8_lossy(&picker.endpoint).escape_debug()
+        ));
+    }
     for tab in &snapshot.tabs {
         output.push_str(&format!(
             "tab {} directory={} selected={} active={}\n",
@@ -105,11 +127,7 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
         output.push_str(&format!(
             "{{\"id\":\"{}\",\"directory\":[{}],\"selected_pane\":\"{}\",\"panes\":[",
             json_escape(&tab.id),
-            tab.directory
-                .iter()
-                .map(u8::to_string)
-                .collect::<Vec<_>>()
-                .join(","),
+            json_bytes(&tab.directory),
             json_escape(&tab.selected_pane)
         ));
         for (pane_index, pane) in tab.panes.iter().enumerate() {
@@ -120,18 +138,31 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
                 "{{\"id\":\"{}\",\"session\":\"{}\",\"endpoint\":[{}],\"live\":{}}}",
                 json_escape(&pane.id),
                 json_escape(&pane.session),
-                pane.endpoint
-                    .iter()
-                    .map(u8::to_string)
-                    .collect::<Vec<_>>()
-                    .join(","),
+                json_bytes(&pane.endpoint),
                 pane.live
             ));
         }
         output.push_str("]}");
     }
-    output.push_str("]}\n");
+    output.push_str("],\"directory_picker\":");
+    match &snapshot.directory_picker {
+        Some(picker) => output.push_str(&format!(
+            "{{\"tab\":\"{}\",\"endpoint\":[{}]}}",
+            json_escape(&picker.tab),
+            json_bytes(&picker.endpoint)
+        )),
+        None => output.push_str("null"),
+    }
+    output.push_str("}\n");
     output
+}
+
+fn json_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(u8::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 pub(crate) fn failure_human(failure: &Failure) -> String {
@@ -186,6 +217,7 @@ impl Workspace {
             active: 0,
             next_tab: 2,
             next_pane,
+            directory_picker: None,
             recent_requests: VecDeque::new(),
         })
     }
@@ -194,13 +226,26 @@ impl Workspace {
         &mut self,
         request_id: &str,
         action: Action,
-        mut start: impl FnMut(&Session, &Path) -> Result<(), String>,
+        mut start: impl FnMut(&Session, &Path, Option<&str>) -> Result<(), String>,
     ) -> Result<(), Failure> {
         if self.recent_requests.iter().any(|seen| seen == request_id) {
             return Err(action_error(
                 "duplicate-request",
                 format!("request {request_id} was already accepted"),
             ));
+        }
+
+        if let Some(picker_tab) = &self.directory_picker {
+            match &action {
+                Action::Inspect => {}
+                Action::SetTabDirectory { tab, .. } if tab == picker_tab => {}
+                _ => {
+                    return Err(action_error(
+                        "picker-active",
+                        format!("tab {picker_tab} already has an active directory picker"),
+                    ));
+                }
+            }
         }
 
         match action {
@@ -221,12 +266,17 @@ impl Workspace {
             Action::SetTabDirectory { tab, directory } => {
                 self.set_tab_directory(&tab, directory)?;
             }
+            Action::PickTabDirectory => self.create_directory_picker(&mut start)?,
         }
         self.remember(request_id);
         Ok(())
     }
 
-    pub(crate) fn session_exited(&mut self, session_id: &str) -> Result<(), Failure> {
+    pub(crate) fn session_exited(&mut self, session_id: &str) -> Result<bool, Failure> {
+        if session_id == DIRECTORY_PICKER_SESSION && self.directory_picker.is_some() {
+            self.directory_picker = None;
+            return Ok(false);
+        }
         let (tab_index, pane_index) = self
             .tabs
             .iter()
@@ -248,17 +298,25 @@ impl Workspace {
         tab.panes.remove(pane_index);
         tab.selected = index_after_removal(tab.selected, pane_index, tab.panes.len());
         if !tab.panes.is_empty() {
-            return Ok(());
+            return Ok(false);
         }
 
+        let removed_tab = tab.id.clone();
         self.tabs.remove(tab_index);
         self.active = index_after_removal(self.active, tab_index, self.tabs.len());
-        Ok(())
+        Ok(self
+            .directory_picker
+            .take_if(|picker_tab| picker_tab == &removed_tab)
+            .is_some())
+    }
+
+    pub(crate) fn clear_directory_picker(&mut self) {
+        self.directory_picker = None;
     }
 
     fn create_tab(
         &mut self,
-        start: &mut impl FnMut(&Session, &Path) -> Result<(), String>,
+        start: &mut impl FnMut(&Session, &Path, Option<&str>) -> Result<(), String>,
     ) -> Result<(), Failure> {
         if self.tabs.len() >= MAX_TABS {
             return Err(action_error(
@@ -275,7 +333,8 @@ impl Workspace {
         self.check_pane_capacity()?;
         let (tab_id, pane) = self.next_tab_and_pane();
         let directory = self.tabs[self.active].directory.clone();
-        start(&pane.session, &directory).map_err(|detail| action_error("session-start", detail))?;
+        start(&pane.session, &directory, None)
+            .map_err(|detail| action_error("session-start", detail))?;
         self.next_tab += 1;
         self.next_pane += 1;
         self.tabs.push(Tab {
@@ -290,16 +349,32 @@ impl Workspace {
 
     fn create_pane(
         &mut self,
-        start: &mut impl FnMut(&Session, &Path) -> Result<(), String>,
+        start: &mut impl FnMut(&Session, &Path, Option<&str>) -> Result<(), String>,
     ) -> Result<(), Failure> {
         self.check_pane_capacity()?;
         let pane = self.next_pane();
         let directory = self.tabs[self.active].directory.clone();
-        start(&pane.session, &directory).map_err(|detail| action_error("session-start", detail))?;
+        start(&pane.session, &directory, None)
+            .map_err(|detail| action_error("session-start", detail))?;
         self.next_pane += 1;
         let active = &mut self.tabs[self.active];
         active.panes.push(pane);
         active.selected = active.panes.len() - 1;
+        Ok(())
+    }
+
+    fn create_directory_picker(
+        &mut self,
+        start: &mut impl FnMut(&Session, &Path, Option<&str>) -> Result<(), String>,
+    ) -> Result<(), Failure> {
+        let tab = &self.tabs[self.active];
+        let session = Session {
+            id: DIRECTORY_PICKER_SESSION.into(),
+            endpoint: self.runtime.join(DIRECTORY_PICKER_ENDPOINT),
+        };
+        start(&session, &tab.directory, Some(&tab.id))
+            .map_err(|detail| action_error("picker-start", detail))?;
+        self.directory_picker = Some(tab.id.clone());
         Ok(())
     }
 
@@ -544,7 +619,7 @@ mod tests {
         .unwrap();
         let mut launches = Vec::new();
         workspace
-            .dispatch("request-1", Action::CreateTab, |_, directory| {
+            .dispatch("request-1", Action::CreateTab, |_, directory, _| {
                 launches.push(directory.to_path_buf());
                 Ok(())
             })
@@ -562,18 +637,18 @@ mod tests {
                     tab: "t1".into(),
                     directory: second.as_os_str().as_bytes().to_vec(),
                 },
-                |_, _| unreachable!(),
+                |_, _, _| unreachable!(),
             )
             .unwrap();
         workspace
             .dispatch(
                 "request-3",
                 Action::FocusId("t1".into()),
-                |_, _| unreachable!(),
+                |_, _, _| unreachable!(),
             )
             .unwrap();
         workspace
-            .dispatch("request-4", Action::CreatePane, |_, directory| {
+            .dispatch("request-4", Action::CreatePane, |_, directory, _| {
                 assert_eq!(directory, second);
                 Ok(())
             })
@@ -588,7 +663,7 @@ mod tests {
                         tab: "t9".into(),
                         directory: second.as_os_str().as_bytes().to_vec(),
                     },
-                    |_, _| unreachable!(),
+                    |_, _, _| unreachable!(),
                 )
                 .unwrap_err()
                 .code,
@@ -605,7 +680,7 @@ mod tests {
                             tab: id.into(),
                             directory: second.as_os_str().as_bytes().to_vec(),
                         },
-                        |_, _| unreachable!(),
+                        |_, _, _| unreachable!(),
                     )
                     .unwrap_err()
                     .code,
@@ -636,7 +711,7 @@ mod tests {
                             tab: "t1".into(),
                             directory,
                         },
-                        |_, _| unreachable!(),
+                        |_, _, _| unreachable!(),
                     )
                     .unwrap_err()
                     .code,
@@ -649,7 +724,7 @@ mod tests {
         let before_panes = workspace.tabs[0].panes.len();
         assert_eq!(
             workspace
-                .dispatch("request-6", Action::CreatePane, |_, directory| {
+                .dispatch("request-6", Action::CreatePane, |_, directory, _| {
                     directory
                         .is_dir()
                         .then_some(())
@@ -685,7 +760,7 @@ mod tests {
         let initial = workspace.clone();
         assert_eq!(
             workspace
-                .dispatch("request-1", Action::CreatePane, |_, _| {
+                .dispatch("request-1", Action::CreatePane, |_, _, _| {
                     Err("offline".into())
                 })
                 .unwrap_err()
@@ -693,7 +768,7 @@ mod tests {
             "session-start"
         );
         assert_eq!(workspace, initial);
-        let mut start = |_: &Session, _: &Path| Ok(());
+        let mut start = |_: &Session, _: &Path, _: Option<&str>| Ok(());
 
         workspace
             .dispatch("request-1", Action::CreatePane, &mut start)
@@ -778,7 +853,7 @@ mod tests {
     #[test]
     fn session_exit_removes_panes_and_empty_tabs_without_reusing_ids() {
         let mut workspace = initial_workspace();
-        let mut start = |_: &Session, _: &Path| Ok(());
+        let mut start = |_: &Session, _: &Path, _: Option<&str>| Ok(());
 
         workspace
             .dispatch("request-1", Action::CreatePane, &mut start)
@@ -829,6 +904,71 @@ mod tests {
     }
 
     #[test]
+    fn directory_picker_is_one_tab_bound_non_pane_session() {
+        let mut workspace = initial_workspace();
+        let mut launches = Vec::new();
+
+        workspace
+            .dispatch(
+                "picker-1",
+                Action::PickTabDirectory,
+                |session, directory, picker_tab| {
+                    launches.push((
+                        session.clone(),
+                        directory.to_path_buf(),
+                        picker_tab.map(str::to_owned),
+                    ));
+                    Ok(())
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            launches,
+            [(
+                Session {
+                    id: DIRECTORY_PICKER_SESSION.into(),
+                    endpoint: "/runtime/pick.sock".into(),
+                },
+                "/".into(),
+                Some("t1".into()),
+            )]
+        );
+        let snapshot = workspace.snapshot();
+        assert_eq!(snapshot.tabs[0].panes.len(), 1);
+        assert_eq!(snapshot.directory_picker.unwrap().tab, "t1");
+
+        let before = workspace.clone();
+        assert_eq!(
+            workspace
+                .dispatch("picker-2", Action::PickTabDirectory, |_, _, _| Ok(()))
+                .unwrap_err()
+                .code,
+            "picker-active"
+        );
+        assert_eq!(workspace, before);
+        assert_eq!(
+            workspace
+                .dispatch(
+                    "focus-while-picker",
+                    Action::Focus(Direction::Right),
+                    |_, _, _| Ok(()),
+                )
+                .unwrap_err()
+                .code,
+            "picker-active"
+        );
+
+        assert!(!workspace.session_exited(DIRECTORY_PICKER_SESSION).unwrap());
+        assert!(workspace.snapshot().directory_picker.is_none());
+
+        workspace
+            .dispatch("picker-3", Action::PickTabDirectory, |_, _, _| Ok(()))
+            .unwrap();
+        assert!(workspace.session_exited("session-1").unwrap());
+    }
+
+    #[test]
     fn recovered_sessions_have_one_numeric_projection_without_reusing_ids() {
         let sessions = vec![
             (
@@ -862,10 +1002,10 @@ mod tests {
         );
 
         workspace
-            .dispatch("request-1", Action::CreatePane, |_, _| Ok(()))
+            .dispatch("request-1", Action::CreatePane, |_, _, _| Ok(()))
             .unwrap();
         workspace
-            .dispatch("request-2", Action::CreateTab, |_, _| Ok(()))
+            .dispatch("request-2", Action::CreateTab, |_, _, _| Ok(()))
             .unwrap();
         let snapshot = workspace.snapshot();
         assert_eq!(snapshot.tabs[0].panes[2].id, "p10");
@@ -900,7 +1040,7 @@ mod tests {
         )
         .unwrap();
         let failure = exhausted
-            .dispatch("request-1", Action::CreatePane, |_, _| {
+            .dispatch("request-1", Action::CreatePane, |_, _, _| {
                 unreachable!("capacity check must prevent Session start")
             })
             .unwrap_err();
@@ -930,11 +1070,12 @@ mod tests {
                     },
                 ],
             }],
+            directory_picker: None,
         };
 
         assert_eq!(
             json(&snapshot),
-            "{\"active_tab\":\"t1\",\"tabs\":[{\"id\":\"t1\",\"directory\":[47,116,109,112,47,101,111,110,45,255],\"selected_pane\":\"pane-1\",\"panes\":[{\"id\":\"pane-1\",\"session\":\"session-1\",\"endpoint\":[47,97],\"live\":true},{\"id\":\"pane-2\",\"session\":\"session-2\",\"endpoint\":[47,255],\"live\":false}]}]}\n"
+            "{\"active_tab\":\"t1\",\"tabs\":[{\"id\":\"t1\",\"directory\":[47,116,109,112,47,101,111,110,45,255],\"selected_pane\":\"pane-1\",\"panes\":[{\"id\":\"pane-1\",\"session\":\"session-1\",\"endpoint\":[47,97],\"live\":true},{\"id\":\"pane-2\",\"session\":\"session-2\",\"endpoint\":[47,255],\"live\":false}]}],\"directory_picker\":null}\n"
         );
     }
 }

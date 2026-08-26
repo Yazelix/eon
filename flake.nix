@@ -8,7 +8,7 @@
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=19d7d28a2aba09c0afe3173d25bbb76ec3edce49";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=df88b2867d50c59a316418471abd000da02940bc";
       flake = false;
     };
     helix = {
@@ -66,6 +66,7 @@
       fishIdentity = component "fish";
       starshipIdentity = component "starship";
       zoxideIdentity = component "zoxide";
+      fzfIdentity = component "fzf";
       atuinIdentity = component "atuin";
       carapaceIdentity = component "carapace";
       helixIdentity = component "helix";
@@ -140,7 +141,7 @@
         pkgs.wayland
       ];
       venusProtocolSourceRevision = "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f";
-      workspaceProtocolRevision = "7bb50873ae27e09dfebd8a6ca2f8075bac07afe8";
+      workspaceProtocolRevision = "96119f29ca2e3ec4ad19bbe272708b07d588429a";
       venusSource =
         assert orbit.rev == (builtins.head venusIdentity.requires).revision;
         pkgs.runCommand "eon-desktop-${venusIdentity.revision}" { } ''
@@ -225,6 +226,7 @@
       fishPackage = managedPackage fishIdentity pkgs.fish;
       starshipPackage = managedPackage starshipIdentity pkgs.starship;
       zoxidePackage = managedPackage zoxideIdentity pkgs.zoxide;
+      fzfPackage = managedPackage fzfIdentity pkgs.fzf;
       atuinPackage = managedPackage atuinIdentity pkgs.atuin;
       carapacePackage = managedPackage carapaceIdentity pkgs.carapace;
       lazygitPackage = managedPackage lazygitIdentity pkgs.lazygit;
@@ -610,6 +612,8 @@
             done
             ln -s ${starshipPackage}/bin/starship "$out/libexec/eon/bin/starship"
             ln -s ${zoxidePackage}/bin/zoxide "$out/libexec/eon/bin/zoxide"
+            ln -s ${fzfPackage}/bin/fzf "$out/libexec/eon/bin/fzf"
+            ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-directory-picker"
             ln -s ${atuinPackage}/bin/atuin "$out/libexec/eon/bin/atuin"
             ln -s ${carapacePackage}/bin/carapace "$out/libexec/eon/bin/carapace"
             install -Dm444 ${./LICENSE} "$out/share/licenses/eon/LICENSE"
@@ -619,6 +623,7 @@
             install -Dm444 ${fishPackage.src}/COPYING "$out/share/licenses/eon/fish/COPYING"
             install -Dm444 ${starshipPackage.src}/LICENSE "$out/share/licenses/eon/starship/LICENSE"
             install -Dm444 ${zoxidePackage.src}/LICENSE "$out/share/licenses/eon/zoxide/LICENSE"
+            install -Dm444 ${fzfPackage.src}/LICENSE "$out/share/licenses/eon/fzf/LICENSE"
             install -Dm444 ${atuinPackage.src}/LICENSE "$out/share/licenses/eon/atuin/LICENSE"
             install -Dm444 ${carapacePackage.src}/LICENSE "$out/share/licenses/eon/carapace/LICENSE"
             install -Dm444 ${helix}/LICENSE "$out/share/licenses/eon/helix/LICENSE"
@@ -686,7 +691,7 @@
           ${eonPackage} \
           ${nushellPackage} ${bashPackage} ${zshPackage} ${fishPackage} \
           ${starshipPackage} ${zoxidePackage} ${atuinPackage} ${carapacePackage} \
-          ${helixPackage} ${yaziPackage} ${lazygitPackage}; do
+          ${fzfPackage} ${helixPackage} ${yaziPackage} ${lazygitPackage}; do
           ! ${pkgs.gnugrep}/bin/grep -Fx "$forbidden" ${eontermClosure}/store-paths
         done
         test ! -e ${eontermPackage}/libexec/eon

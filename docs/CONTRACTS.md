@@ -14,14 +14,14 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The current accepted composition selects Orbit
+The current candidate composition selects Orbit
 `70861097a825c2fbfaea53a8ca9437f45e8602eb` with canonical ORBS v10 and Venus
-`19d7d28a2aba09c0afe3173d25bbb76ec3edce49`. The installed Eon profile resolves
-this exact graph without restarting its older live generation.
+`df88b2867d50c59a316418471abd000da02940bc`. The installed candidate Eon profile
+resolves this exact graph without restarting its older live generation.
 
 ## EON-C1 — Exact compatible component launch
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** A user launching Eon or EonTerm from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -55,10 +55,12 @@ this exact graph without restarting its older live generation.
     `33ec3062f72a732290dcd6c6f40a2d5f535d6a7cbfcaf7455a0a5c4f03a52e0d`,
     launcher action `32c768e0d9a62984640a516c34d0cb0db16e8adb`, and accepted
     installed native-Wayland launch and scrollback dogfood
+- **Open proof:** The exact current Venus/fzf graph and installed profile await
+  an immutable Eon source revision; current candidate evidence is under EON-C18.
 
 ## EON-C2 — One component compatibility graph
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** Every Eon distribution and runtime launch path.
 - **Trigger:** A product generation resolves or validates its component set.
 - **Result:** One versioned manifest defines component identity, compatibility,
@@ -75,6 +77,8 @@ this exact graph without restarting its older live generation.
     consumption by installed Eon, EonTerm, and Eonova; accepted manifest base
     `234ad77ced4924d95400b5c39822b3fb9b928c95` and ORBS v7 graph refresh
     `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`
+- **Open proof:** The current graph validation and installed Eon consumption
+  await the EON-C18 candidate's immutable source revision.
 
 ## EON-C3 — Distribution-neutral runtime inputs
 
@@ -196,7 +200,7 @@ this exact graph without restarting its older live generation.
   remove nothing; losing a view never silently stops or substitutes a Session.
 - **Owner:** Eon workspace topology, identity, focus, pruning, and action policy;
   Orbit owns Sessions and Venus owns native materialization.
-- **Consumes:** EONW v2, Orbit Session identities/endpoints, and Venus `VEN-C8`.
+- **Consumes:** EONW v3, Orbit Session identities/endpoints, and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, simultaneous expanded panes,
   reordering, picker-based ordinary traversal, durable layout restoration,
   per-pane Session stop/restart, terminal content/history, provider state,
@@ -212,11 +216,11 @@ this exact graph without restarting its older live generation.
 
 ## EON-C9 — Managed shell environment
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** Eon Sessions launched under Nushell, Bash, Zsh, or Fish.
 - **Trigger:** Eon constructs a child launch environment.
 - **Result:**
-  - Eon selects exact Nushell, Bash, Zsh, Fish, Starship, Zoxide, Atuin,
+  - Eon selects exact Nushell, Bash, Zsh, Fish, Starship, Zoxide, fzf, Atuin,
     Carapace, Helix, Yazi, and LazyGit artifacts.
   - Stable `eon-*` commands expose managed shells and tools outside Eon; one
     child-private PATH exposes accepted unprefixed names inside Sessions.
@@ -248,10 +252,12 @@ this exact graph without restarting its older live generation.
     `6dfcb473beccadd6e145235009240c81dd570fe5`, glyph proof
     `fb95671d855fa944c3717103cb13bd0135f8aec8`, and private PATH
     `c0d044c69318a921f9f9139bcaf2de9afce683d3`
+- **Open proof:** The exact fzf addition and ambient-option isolation await the
+  EON-C18 candidate's immutable source revision.
 
 ## EON-C10 — Typed workspace control
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -278,7 +284,7 @@ this exact graph without restarting its older live generation.
   exact terminal record is complete.
 - **Owner:** Eon supervisor workspace/action state, EONW result ordering, and CLI
   projection.
-- **Consumes:** EONW v2 and accepted Orbit management operations.
+- **Consumes:** EONW v3 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
@@ -295,6 +301,8 @@ this exact graph without restarting its older live generation.
     `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`, response-loss correction
     `56fcae2d00baecf9b69e4650882a69e50419f56b`, and maximum-bound snapshot
     correction `10c29edf861fac28db48f41a4546165f79777ee6`
+- **Open proof:** EONW v3 runtime consumption awaits the EON-C18 candidate's
+  immutable source revision.
 
 ## EON-C11 — Runtime generations and presentation
 
@@ -545,7 +553,7 @@ this exact graph without restarting its older live generation.
   - `SetTabDirectory` changes exactly one addressed tab. Later panes in that tab
     start with the accepted directory; existing Sessions and terminal CWDs do
     not change.
-  - EONW v2 returns the exact accepted raw path bytes. Venus derives a bounded
+  - EONW v3 returns the exact accepted raw path bytes. Venus derives a bounded
     `N  leaf`, `N  ~`, or `N  /` label while retaining `tN` for actions and
     exposing identity plus bounded path context to accessibility.
   - Same-boot recovery assigns synthetic `t1` the replacement supervisor's
@@ -558,7 +566,7 @@ this exact graph without restarting its older live generation.
 - **Owner:** Eon owns tab identity, launch-directory state, validation, mutation,
   inheritance, and recovery fallback; Orbit owns each Session's terminal CWD;
   Venus owns only native projection of Eon's state.
-- **Consumes:** EONW v2, Orbit Session startup, and Venus `VEN-C8`.
+- **Consumes:** EONW v3, Orbit Session startup, and Venus `VEN-C8`.
 - **Boundary:** No manual names, path canonicalization, retained directory
   handles, filesystem watching, shell-`cd` tracking, pane-CWD inference,
   retargeting of existing processes, persistence, picker UI, or compatibility
@@ -586,6 +594,7 @@ this exact graph without restarting its older live generation.
 - **Result:**
   - Eon captures the active tab and starts one transient Orbit Session running
     the exact packaged ranked-directory picker at that tab's launch directory.
+    Ambient fzf default options cannot alter its command, layout, or bindings.
   - EONW exposes that picker as one explicit modal endpoint bound to the active
     tab, never as a normal `pN` pane. The selected durable pane stays live and
     receives no picker input.
@@ -611,9 +620,23 @@ this exact graph without restarting its older live generation.
   generic-popup API, simultaneous terminal composition, native Venus picker,
   automatic pane creation, current-process `cd`, persistence, EonTerm action,
   or additional platform.
-- **Proof:** Open. The current protocol seed is mechanically verified only for
-  the independently consumable EONW v3 action and modal state; runtime and UI
-  behavior remain unproved.
+- **Proof:** Candidate profile artifact
+  `/nix/store/jafvw2mipdiphsmiwhdhqqysi7sdxhxi-eon-0.1.0`, generation
+  `g1-73de286734a29660b2d11564c4a012b9`
+  - **Environment:** x86_64 Linux COSMIC Wayland, installed Eon profile, and an
+    isolated delegated user scope
+  - **Evidence:** Exact Orbit
+    `70861097a825c2fbfaea53a8ca9437f45e8602eb`, exact Venus
+    `df88b2867d50c59a316418471abd000da02940bc`, focused picker and replacement-
+    recovery checks including bounded invalid-selection visibility and no
+    mutation, complete locked Rust and Nix gates, exact packaged Zoxide and fzf
+    identities, focused long-root launch, first-Stop-failure retry, and hostile-default isolation,
+    installed modal presentation-loss cleanup with the durable Session retained,
+    one-batch generation Stop with a durable-only public result, and
+    transient endpoint, record, process, and runtime cleanup
+- **Open proof:** Native Alt+Z, geometry, focus, and accessibility acceptance
+  begins after the next normal Eon restart; the profile refresh intentionally
+  preserves the older live supervisor and its Sessions.
 
 ## Rules
 

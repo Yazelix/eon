@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v2::{
+use eon_workspace_protocol::v3::{
     Action, HEADER_BYTES, Pane, Request, Response, Snapshot, Tab, VERSION, declared_message_len,
     decode_request, decode_response, encode_request, encode_response,
 };
@@ -19,7 +19,7 @@ use std::{
         process::ExitStatusExt,
     },
     path::{Path, PathBuf},
-    process::{Child, Command, Output, Stdio},
+    process::{Child, Command, ExitStatus, Output, Stdio},
     sync::atomic::{AtomicU64, Ordering},
     thread,
     time::{Duration, Instant},
@@ -338,6 +338,24 @@ fn managed_orbit_helper() {
             }
         }
         if stop {
+            if let Some(path) = std::env::var_os("EON_TEST_FAIL_STOP_ONCE")
+                && fs::read_to_string(&path).ok().as_deref() == Some(&identity.session_id)
+            {
+                fs::remove_file(path).unwrap();
+                write_management(
+                    &mut client.as_mut().unwrap().0,
+                    ManagementServerMessage::Failure(Failure {
+                        code: FailureCode::InvalidRequest,
+                        detail: "injected stop failure".into(),
+                    }),
+                );
+                continue;
+            }
+            if let Some(delay) = std::env::var_os("EON_TEST_STOP_DELAY")
+                .and_then(|path| fs::read_to_string(path).ok())
+            {
+                thread::sleep(Duration::from_millis(delay.parse().unwrap()));
+            }
             if let Some(child) = &mut child {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -455,16 +473,20 @@ fn overfill_generation_directory(root: &Path) {
     }
 }
 
-fn wait_for_successful_exit(child: &mut Child) {
+fn wait_for_exit(child: &mut Child) -> ExitStatus {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
         if let Some(status) = child.try_wait().unwrap() {
-            assert!(status.success(), "process exited with {status}");
-            return;
+            return status;
         }
         assert!(Instant::now() < deadline, "Eon process did not exit");
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn wait_for_successful_exit(child: &mut Child) {
+    let status = wait_for_exit(child);
+    assert!(status.success(), "process exited with {status}");
 }
 
 fn invoke(binary: &Path, runtime: &Path, config: &Path, arguments: &[&str]) -> Output {
@@ -476,10 +498,283 @@ fn invoke(binary: &Path, runtime: &Path, config: &Path, arguments: &[&str]) -> O
         .unwrap()
 }
 
+fn workspace_action(socket: &Path, id: &str, action: Action) -> Response {
+    let request = encode_request(&Request {
+        id: id.into(),
+        action,
+    })
+    .unwrap();
+    let mut stream = UnixStream::connect(socket).unwrap();
+    stream.write_all(&request).unwrap();
+    let mut response = vec![0; HEADER_BYTES];
+    stream
+        .read_exact(&mut response)
+        .unwrap_or_else(|error| panic!("{id} response header failed: {error}"));
+    let length = declared_message_len(&response).unwrap();
+    response.resize(length, 0);
+    stream.read_exact(&mut response[HEADER_BYTES..]).unwrap();
+    decode_response(&response).unwrap()
+}
+
+fn wait_for_picker_close(socket: &Path, directory: &Path) -> Snapshot {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut sequence = 0;
+    loop {
+        let response = workspace_action(
+            socket,
+            &format!("picker-inspect-{sequence}"),
+            Action::Inspect,
+        );
+        if let Response::Snapshot(snapshot) = response
+            && snapshot.directory_picker.is_none()
+            && snapshot.tabs[0].directory == directory.as_os_str().as_bytes()
+        {
+            return snapshot;
+        }
+        assert!(Instant::now() < deadline, "directory picker did not close");
+        sequence += 1;
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn eon_command(binary: &Path) -> Command {
     let mut command = Command::new(binary);
     command.env("EON_TEST_MANAGED_ORBIT", "1");
     command
+}
+
+#[test]
+fn directory_picker_retargets_cancels_and_stops_with_venus() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime-padding");
+    let config = root.join("config");
+    let initial = root.join("initial");
+    let selected = root.join("selected");
+    let stop = root.join("stop");
+    let stop_delay = root.join("stop-delay");
+    let release = root.join("picker-release");
+    let selection = root.join("picker-selection");
+    let orbit_log = root.join("orbit-cwd.log");
+    let venus_pid = root.join("venus.pid");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    let session_bin = root.join("session-bin");
+    fs::create_dir(&initial).unwrap();
+    fs::create_dir(&selected).unwrap();
+    fs::create_dir(&session_bin).unwrap();
+    managed_orbit_executable(&orbit);
+    executable(
+        &venus,
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\ncat >/dev/null\n",
+    );
+    executable(
+        &session_bin.join("zoxide"),
+        "#!/bin/sh\n[ -z \"$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE\" ] || exit 99\nwhile [ ! -e \"$EON_TEST_PICKER_RELEASE\" ]; do sleep 0.01; done\nif [ \"$(cat \"$EON_TEST_PICKER_SELECTION\")\" = cancel ]; then exit 130; fi\ncat \"$EON_TEST_PICKER_SELECTION\"\n",
+    );
+    executable(
+        &session_bin.join("eon-nu"),
+        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+    );
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
+    fs::write(&selection, selected.as_os_str().as_bytes()).unwrap();
+
+    let child = eon_command(&binary)
+        .arg("run")
+        .current_dir(&initial)
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_SESSION_BIN", &session_bin)
+        .env("EON_TEST_RUN_CHILD", "1")
+        .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_PICKER_RELEASE", &release)
+        .env("EON_TEST_PICKER_SELECTION", &selection)
+        .env("FZF_DEFAULT_OPTS", "--preview=cat {}")
+        .env("FZF_DEFAULT_OPTS_FILE", root.join("ambient-fzf-opts"))
+        .env("EON_TEST_ORBIT_CWD_LOG", &orbit_log)
+        .env("EON_TEST_VENUS_PID", &venus_pid)
+        .env("EON_TEST_STOP_DELAY", &stop_delay)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for_connection(&control);
+    wait_for(&venus_pid);
+
+    let opened = workspace_action(&control, "picker-open", Action::PickTabDirectory);
+    let Response::Snapshot(opened) = opened else {
+        panic!("picker open did not return a snapshot");
+    };
+    let picker = opened.directory_picker.unwrap();
+    assert_eq!(picker.tab, "t1");
+    assert_eq!(
+        Path::new(OsStr::from_bytes(&picker.endpoint)),
+        generation.join("pick.sock")
+    );
+    assert_eq!(opened.tabs[0].panes.len(), 1);
+    assert!(matches!(
+        workspace_action(&control, "picker-duplicate", Action::PickTabDirectory),
+        Response::Failure(failure) if failure.code == "picker-active"
+    ));
+
+    fs::write(&release, "").unwrap();
+    let retargeted = wait_for_picker_close(&control, &selected);
+    assert_eq!(retargeted.tabs[0].panes.len(), 1);
+    assert!(!generation.join("pick.sock").exists());
+    assert!(!generation.join("pick.sock.record").exists());
+
+    let created = workspace_action(&control, "pane-after-picker", Action::CreatePane);
+    assert!(matches!(
+        created,
+        Response::Snapshot(snapshot) if snapshot.tabs[0].panes.len() == 2
+    ));
+    wait_for(&orbit_log);
+    let launches = fs::read_to_string(&orbit_log).unwrap();
+    assert!(launches.contains(&format!("session-2 {}", selected.display())));
+
+    fs::remove_file(&release).unwrap();
+    fs::write(&selection, "cancel").unwrap();
+    assert!(matches!(
+        workspace_action(&control, "picker-cancel", Action::PickTabDirectory),
+        Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
+    ));
+    fs::write(&release, "").unwrap();
+    wait_for_picker_close(&control, &selected);
+
+    fs::write(&selection, root.join("missing").as_os_str().as_bytes()).unwrap();
+    assert!(matches!(
+        workspace_action(&control, "picker-invalid", Action::PickTabDirectory),
+        Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
+    ));
+    thread::sleep(Duration::from_millis(100));
+    assert!(matches!(
+        workspace_action(&control, "picker-invalid-visible", Action::Inspect),
+        Response::Snapshot(snapshot)
+            if snapshot.directory_picker.is_some()
+                && snapshot.tabs[0].directory == selected.as_os_str().as_bytes()
+    ));
+    wait_for_picker_close(&control, &selected);
+
+    fs::remove_file(&release).unwrap();
+    fs::write(&selection, initial.as_os_str().as_bytes()).unwrap();
+    assert!(matches!(
+        workspace_action(&control, "picker-client-loss", Action::PickTabDirectory),
+        Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
+    ));
+    let pid = fs::read_to_string(&venus_pid)
+        .unwrap()
+        .parse::<i32>()
+        .unwrap();
+    // SAFETY: the PID came from this test's live Venus child.
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+    wait_for_picker_close(&control, &selected);
+    assert!(!generation.join("pick.sock").exists());
+
+    assert!(matches!(
+        workspace_action(&control, "picker-before-stop", Action::PickTabDirectory),
+        Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
+    ));
+    fs::write(&stop_delay, "3500").unwrap();
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["stop", generation_id, "--json"],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    assert!(stdout(&stopped).contains("\"sessions\":[\"session-1\",\"session-2\"]"));
+    wait_for_successful_exit(&mut supervisor.child);
+    assert!(!generation.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let stop = root.join("stop");
+    let fail_stop_once = root.join("fail-stop-once");
+    let venus_pid = root.join("venus.pid");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    let session_bin = root.join("session-bin");
+    fs::create_dir(&session_bin).unwrap();
+    managed_orbit_executable(&orbit);
+    executable(
+        &venus,
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\ncat >/dev/null\n",
+    );
+    executable(
+        &session_bin.join("zoxide"),
+        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+    );
+    executable(
+        &session_bin.join("eon-nu"),
+        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+    );
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
+
+    let child = eon_command(&binary)
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_SESSION_BIN", &session_bin)
+        .env("EON_TEST_RUN_CHILD", "1")
+        .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_FAIL_STOP_ONCE", &fail_stop_once)
+        .env("EON_TEST_VENUS_PID", &venus_pid)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for_connection(&control);
+    wait_for(&venus_pid);
+    assert!(matches!(
+        workspace_action(&control, "picker", Action::PickTabDirectory),
+        Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
+    ));
+    let session = live_identity(&generation.join("orbit.sock"));
+    let picker = live_identity(&generation.join("pick.sock"));
+    fs::write(&fail_stop_once, "directory-picker").unwrap();
+    let venus = fs::read_to_string(&venus_pid).unwrap().parse().unwrap();
+    // SAFETY: the PID came from this test's live Venus child.
+    assert_eq!(unsafe { libc::kill(venus, libc::SIGTERM) }, 0);
+
+    let status = wait_for_exit(&mut supervisor.child);
+    assert!(!status.success());
+    let picker_survived_cleanup = Path::new("/proc")
+        .join(picker.process_id.to_string())
+        .exists();
+    fs::write(&stop, "").unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    for identity in [&picker, &session] {
+        let process = Path::new("/proc").join(identity.process_id.to_string());
+        while process.exists() {
+            assert!(Instant::now() < deadline, "test Session did not exit");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+    assert!(!picker_survived_cleanup);
 }
 
 fn stdout(output: &Output) -> &str {
@@ -1558,6 +1853,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
             .env("EON_CONFIG_HOME", &config)
             .env("EON_ORBIT", &orbit)
             .env("EON_VENUS", &venus)
+            .env("EON_SESSION_BIN", &root)
             .env("EON_TEST_STOP", &fallback_stop)
             .env("EON_TEST_ORBIT_LOG", &orbit_log)
             .env("EON_TEST_VENUS_LOG", &venus_log)
@@ -1577,6 +1873,11 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         live_identity(&generation.join("orbit.sock")),
         live_identity(&generation.join("session-2.sock")),
     ];
+    assert!(matches!(
+        workspace_action(&control, "picker-before-owner-loss", Action::PickTabDirectory),
+        Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
+    ));
+    let picker = live_identity(&generation.join("pick.sock"));
     let first_venus_log = fs::read_to_string(&venus_log).unwrap();
     let first_venus = first_venus_log.split('|').next().unwrap().to_string();
     assert!(first_venus_log.contains("|--no-decorations "));
@@ -1592,6 +1893,8 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         // SAFETY: signal 0 performs existence/permission checking without sending a signal.
         assert_eq!(unsafe { libc::kill(identity.process_id as i32, 0) }, 0);
     }
+    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
+    assert_eq!(unsafe { libc::kill(picker.process_id as i32, 0) }, 0);
 
     let first_record = artifact_path(&generation.join("orbit.sock"), ".record");
     let replacement_attempt = || {
@@ -1601,6 +1904,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
             .env("EON_CONFIG_HOME", &config)
             .env("EON_ORBIT", &orbit)
             .env("EON_VENUS", &venus)
+            .env("EON_SESSION_BIN", &root)
             .env("EON_TEST_STOP", &fallback_stop)
             .env("EON_TEST_ORBIT_LOG", &orbit_log)
             .env("EON_TEST_VENUS_LOG", &venus_log)
@@ -1621,7 +1925,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert!(String::from_utf8_lossy(&refused.stderr).contains("process start"));
     write_management_record(&first_record, &ManagementRecord::Live(initial[0].clone()));
 
-    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 2);
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 3);
     for identity in &initial {
         // SAFETY: signal 0 performs existence/permission checking without sending a signal.
         assert_eq!(unsafe { libc::kill(identity.process_id as i32, 0) }, 0);
@@ -1637,6 +1941,13 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert_eq!(recovered.matches("\"session\":").count(), 2);
     assert!(recovered.contains("\"id\":\"p1\""));
     assert!(recovered.contains("\"id\":\"p2\""));
+    assert!(recovered.contains("\"directory_picker\":null"));
+    assert!(!generation.join("pick.sock").exists());
+    assert!(
+        !Path::new("/proc")
+            .join(picker.process_id.to_string())
+            .exists()
+    );
     assert_eq!(
         [
             live_identity(&generation.join("orbit.sock")),
@@ -1644,13 +1955,13 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         ],
         initial
     );
-    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 2);
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 3);
 
     let created = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
     assert!(created.status.success(), "{}", stdout(&created));
     assert!(stdout(&created).contains("\"id\":\"p3\""));
     assert!(stdout(&created).contains("\"session\":\"session-3\""));
-    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 3);
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 4);
 
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let stopped = invoke(
@@ -2104,6 +2415,7 @@ fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
                         live: true,
                     }],
                 }],
+                directory_picker: None,
             }))
             .unwrap();
             stream.write_all(&response).unwrap();

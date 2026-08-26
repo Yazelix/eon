@@ -4,8 +4,9 @@ use super::{
         EON_ANSI_PALETTE, LaunchMode, Programs, SESSION_START_TIMEOUT, effective_uid, request_id,
         status_code, stop, validate_private_directory,
     },
+    workspace::{DIRECTORY_PICKER_ENDPOINT, DIRECTORY_PICKER_SESSION},
 };
-use eon_workspace_protocol::v2::MAX_PANES;
+use eon_workspace_protocol::v3::MAX_PANES;
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LiveIdentity,
     ObjectIdentity, ProcessOutcome, Record as ManagementRecord,
@@ -35,6 +36,16 @@ fn session_number(value: &str) -> Option<usize> {
         return None;
     }
     number.parse().ok()
+}
+
+fn managed_session_number(value: &str) -> Result<Option<usize>, String> {
+    if value == DIRECTORY_PICKER_SESSION {
+        Ok(None)
+    } else {
+        session_number(value)
+            .map(Some)
+            .ok_or_else(|| format!("invalid Sessions identity {value:?}"))
+    }
 }
 
 struct RecordSnapshot {
@@ -187,7 +198,7 @@ impl Drop for ReadyClaim {
 }
 
 struct ManagedCandidate {
-    number: usize,
+    number: Option<usize>,
     endpoint: PathBuf,
     record_path: PathBuf,
     record: ObjectIdentity,
@@ -297,11 +308,11 @@ fn endpoint_matches(path: &Path, expected: &EndpointIdentity) -> Result<(), Stri
     Ok(())
 }
 
-fn expected_session_endpoint(runtime: &Path, number: usize) -> PathBuf {
-    if number == 1 {
-        runtime.join("orbit.sock")
-    } else {
-        runtime.join(format!("session-{number}.sock"))
+fn expected_session_endpoint(runtime: &Path, number: Option<usize>) -> PathBuf {
+    match number {
+        None => runtime.join(DIRECTORY_PICKER_ENDPOINT),
+        Some(1) => runtime.join("orbit.sock"),
+        Some(number) => runtime.join(format!("session-{number}.sock")),
     }
 }
 
@@ -310,9 +321,8 @@ fn validate_management_identity(
     component_generation: &str,
     expected_run: Option<&str>,
     require_live_endpoints: bool,
-) -> Result<(usize, PathBuf), String> {
-    let number = session_number(&identity.session_id)
-        .ok_or_else(|| format!("invalid Sessions identity {:?}", identity.session_id))?;
+) -> Result<(Option<usize>, PathBuf), String> {
+    let number = managed_session_number(&identity.session_id)?;
     if expected_run.is_some_and(|expected| identity.run_id != expected) {
         return Err("Sessions record reports a different run identity".into());
     }
@@ -618,10 +628,11 @@ pub(super) fn recover_sessions(
             ))),
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if paths.len() > MAX_PANES {
+    if paths.len() > MAX_PANES + 1 {
         return Err(format!(
-            "Sessions runtime {} exceeds the {MAX_PANES}-record recovery limit",
-            runtime.display()
+            "Sessions runtime {} exceeds the {}-record recovery limit",
+            runtime.display(),
+            MAX_PANES + 1
         ));
     }
     paths.sort_by(|left, right| {
@@ -631,6 +642,7 @@ pub(super) fn recover_sessions(
     });
 
     let mut candidates = Vec::new();
+    let mut picker = None;
     let mut numbers = HashSet::new();
     for record_path in paths {
         operation_timeout(deadline, "Sessions recovery")?;
@@ -684,20 +696,33 @@ pub(super) fn recover_sessions(
             continue;
         }
         validate_management_identity(&identity, component_generation, None, true)?;
-        if !numbers.insert(number) {
-            return Err(format!("duplicate live Sessions identity session-{number}"));
-        }
-        candidates.push(ManagedCandidate {
+        let candidate = ManagedCandidate {
             number,
             endpoint,
             record_path,
             record: snapshot.object,
             identity,
-        });
+        };
+        if let Some(number) = number {
+            if !numbers.insert(number) {
+                return Err(format!("duplicate live Sessions identity session-{number}"));
+            }
+            candidates.push(candidate);
+        } else if picker.replace(candidate).is_some() {
+            return Err("duplicate live directory-picker Session".into());
+        }
     }
     candidates.sort_by_key(|candidate| candidate.number);
     if mode == LaunchMode::Terminal && candidates.len() > 1 {
         return Err("EonTerm cannot recover more than one live Session".into());
+    }
+
+    if let Some(candidate) = picker {
+        let mut picker = acquire_management(candidate, deadline)?;
+        stop_managed_sessions(
+            std::slice::from_mut(&mut picker),
+            operation_timeout(deadline, "stale directory-picker cleanup")?,
+        )?;
     }
 
     candidates
@@ -707,7 +732,7 @@ pub(super) fn recover_sessions(
 }
 
 pub(super) struct RunningSession {
-    pub(super) number: usize,
+    pub(super) number: Option<usize>,
     pub(super) id: String,
     pub(super) endpoint: PathBuf,
     record: PathBuf,
@@ -927,7 +952,7 @@ fn rollback_unleased_orbit(
     }
     let mut session = acquire_management(
         ManagedCandidate {
-            number: session_number(&identity.session_id).unwrap_or(1),
+            number: managed_session_number(&identity.session_id)?,
             endpoint: PathBuf::from(OsStr::from_bytes(&identity.presentation.path)),
             record_path: claim.path.clone(),
             record: object,
@@ -1145,8 +1170,9 @@ pub(super) fn stop_managed_sessions(
 #[cfg(test)]
 mod tests {
     use super::{
-        EON_ANSI_PALETTE, Programs, management, orbit_command, read_management_response,
-        session_number, unix_connect_with_timeout, wait_for_orbit_parent_cgroup,
+        EON_ANSI_PALETTE, Programs, managed_session_number, management, orbit_command,
+        read_management_response, session_number, unix_connect_with_timeout,
+        wait_for_orbit_parent_cgroup,
     };
     use crate::supervisor::temporary_directory;
     use orbit_protocol::management::ServerMessage as ManagementServerMessage;
@@ -1165,6 +1191,7 @@ mod tests {
     fn session_identity_is_positive_canonical_decimal() {
         assert_eq!(session_number("session-1"), Some(1));
         assert_eq!(session_number("session-256"), Some(256));
+        assert_eq!(managed_session_number("directory-picker"), Ok(None));
         for invalid in [
             "session-0",
             "session-01",

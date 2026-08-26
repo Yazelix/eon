@@ -5,15 +5,25 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Open one tab-bound ranked directory picker from anywhere in a full-Eon tab
+  with Alt+Z. Eon runs the packaged Zoxide and fzf in a transient Orbit Session;
+  Venus keeps the tab bar visible and presents the picker with a one-cell inset.
+  The exact picker ignores ambient fzf default options and uses a private socket
+  no longer than the primary Session socket.
+  Accepting a valid path retargets only future Sessions in the captured tab,
+  cancel changes nothing, and an actionable error remains visible for a bounded
+  interval before cleanup. Tab or presentation loss retries transient Orbit Stop
+  failure and leaves no picker state. EONW v3 carries the semantic action and
+  modal endpoint.
 - Validate full Eon's initial tab launch directory before recovering or starting
   Sessions, so a startup filesystem race cannot report failure after launching
   a persistent Session.
-- Keep every valid EONW v2 workspace snapshot representable within its bounded
+- Keep every valid EONW v3 workspace snapshot representable within its bounded
   2 MiB frame, so accepted high-bound workspace actions still return their
   complete typed result.
 - Give every full-Eon tab a stable `tN` identity and one authoritative launch
   directory, expose explicit retargeting through `eon tab directory`, and start
-  later panes there without changing existing Sessions. EONW v2 carries exact
+  later panes there without changing existing Sessions. EONW v3 carries exact
   raw directory bytes into Venus labels and the runtime-generation identity.
 - Compose accepted ORBS v10 native cell, word, and logical-line selection,
   terminal mouse capture with Shift override, and automatic ordinary-plus-primary

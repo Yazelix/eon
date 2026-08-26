@@ -465,13 +465,14 @@ mod tests {
             report,
             "eon-alpha x86_64-linux\n\
 orbit 0.1.0 70861097a825c2fbfaea53a8ca9437f45e8602eb x86_64-linux\n\
-venus 0.1.0 19d7d28a2aba09c0afe3173d25bbb76ec3edce49 x86_64-linux\n\
+venus 0.1.0 df88b2867d50c59a316418471abd000da02940bc x86_64-linux\n\
 nushell 0.113.1 7b7df4aa68e957cf38b9d8157c35fa7523f44a6d x86_64-linux\n\
 bash 5.3p9 b8c60bc9ca365f8261fa97900b6fa939f6ebc303 x86_64-linux\n\
 zsh 5.9.1 0e0d4ea11731c47f57bad042fbe75e3979d8a1d2 x86_64-linux\n\
 fish 4.7.1 efb0223da10367031b7c887a3e40eccdf9bf7b06 x86_64-linux\n\
 starship 1.25.1 8758daa7767d4e73874330b1e262fca66a7ffd30 x86_64-linux\n\
 zoxide 0.9.9 9cdc6aa3740b4d8a9d62406c99e84c5de49645e9 x86_64-linux\n\
+fzf 0.73.1 ce4bef75954bebd87e0886435bcf8c6904328ab0 x86_64-linux\n\
 atuin 18.16.1 671f96b60dac49d1d2de73cc0812986a5e22ce7b x86_64-linux\n\
 carapace 1.6.3 e4ed2a5ae661848b228224ad7edb20ea678d33d4 x86_64-linux\n\
 helix 25.7.1 7e6cd307d00783c16ad4cff99ed71936d34f6572 x86_64-linux\n\

@@ -15,7 +15,7 @@ Wayland. One Rust supervisor launches the accepted Eon Sessions and Eon Desktop
 revisions. The `eon` package owns a live workspace and supplies one pinned
 interactive environment. The slimmer `eonterm` package owns one exact-command
 Session and contains no managed shell or tool bundle. Both expose lifecycle
-control through EONW v2, isolate live runtime generations, and consume the same
+control through EONW v3, isolate live runtime generations, and consume the same
 component identities. Direct bundles, Home Manager, background updates, and
 release automation remain outside this slice. X11, Xwayland, and macOS are
 unsupported. The accepted runtime proof uses COSMIC with systemd. Eon targets
@@ -47,7 +47,7 @@ Eon / product orchestrator
         +---- Eon Desktop / Venus client subsystem
         +---- Eon Sessions / Orbit session subsystem
         +---- Nushell + Bash + Zsh + Fish
-        |       +---- Starship + Zoxide + Atuin + Carapace
+        |       +---- Starship + Zoxide + fzf + Atuin + Carapace
         +---- Helix
         +---- Yazi
         +---- LazyGit
@@ -177,7 +177,7 @@ palette until they are started in the refreshed runtime generation.
 While the foreground supervisor is running, Eon owns horizontal tab order and
 one vertical pane selection per tab. Each pane starts and maps to a distinct
 Orbit session; changing focus never stops a session. The CLI reaches that owner
-through the private local Eon socket using EONW v2. Each accepted action returns
+through the private local Eon socket using EONW v3. Each accepted action returns
 one complete ordered workspace snapshot; incompatible or malformed requests
 receive a bounded structured failure. Additive EONW lifecycle actions report a
 supervisor's generation, component graph, live Sessions, idempotent presentation,
@@ -194,11 +194,12 @@ absolute. Overlong labels preserve their rightmost components.
 New current-generation full Eon windows omit the redundant native title bar;
 the selected terminal retains compositor title semantics, while EonTerm and
 legacy Eon attachment keep native decorations. Alt+H/L traverses tabs,
-Alt+K/J traverses panes, Alt+M creates a
-pane, and Ctrl+T creates a tab. External workspace changes appear within one
-second because Eon Desktop re-inspects EONW v2 every 250 ms; the protocol adds
-no event stream. When a shell exits, Eon removes its pane, selects the nearest
-surviving pane, removes an empty tab, and closes when the final pane exits.
+Alt+K/J traverses panes, Alt+M creates a pane, Ctrl+T creates a tab, and Alt+Z
+opens the active tab's directory picker. External workspace changes appear
+within one second because Eon Desktop re-inspects EONW v3 every 250 ms; the
+protocol adds no event stream. When a shell exits, Eon removes its pane, selects
+the nearest surviving pane, removes an empty tab, and closes when the final pane
+exits.
 
 Every live tab owns one absolute launch directory. Fresh `t1` validates Eon's
 launch directory before recovering or starting Sessions. A new tab inherits the
@@ -208,6 +209,15 @@ in that tab. Existing Sessions and shell working directories do not change.
 Invalid targets or directories change no state; if an accepted path later
 disappears, Session creation fails without adding a pane and the tab retains its
 accepted value.
+
+Alt+Z works from anywhere in a full-Eon tab. It keeps the tab bar visible and
+replaces the tab body with a one-cell-inset ranked-directory picker backed by
+the packaged Zoxide and fzf, independent of ambient fzf default options. Accepting
+a valid path retargets that captured tab for future Sessions; cancel or failure
+changes nothing, and an actionable error stays visible briefly before cleanup.
+The picker is one transient Orbit Session rather than a normal pane, and it
+closes with its tab, Eon Desktop surface, process, or supervisor. Existing
+Sessions and working directories remain untouched.
 
 Workspace topology is live-only. After same-boot supervisor loss, full Eon
 projects surviving canonical `session-N` runs into one synthetic `t1` as `pN`
@@ -243,14 +253,15 @@ The command surface is small:
 
 Workspace commands target the exact current-generation Eon supervisor. An
 EonTerm supervisor returns `workspace-unavailable` to topology actions at the
-EONW boundary. EONW v2 frames are bounded to 2 MiB. The workspace topology is
+EONW boundary. EONW v3 frames are bounded to 2 MiB. The workspace topology is
 bounded to 64 tabs and 256 panes, is not persisted, and has no per-pane or
 per-Session removal action. Whole-generation stop sends canonical management
 Stop to every validated Session lease and succeeds only after every exact
 terminal record is complete. `--json` reports the same
 accepted EONW result as the human view; neither output format is the protocol
-schema. Its tab `directory` and pane `endpoint` fields are ordered integer arrays
-that preserve every opaque Unix path or endpoint byte.
+schema. Its tab `directory`, pane `endpoint`, and optional picker `endpoint`
+fields are ordered integer arrays that preserve every opaque Unix path or
+endpoint byte.
 
 ## Terminal presentation
 
@@ -339,7 +350,7 @@ The package exposes managed tools outside Eon through these names:
 
 Outside a Session, prefixed non-shell commands inherit the ambient PATH.
 Managed shell launchers and Sessions prepend one process-local private PATH
-that resolves the four shells, four integrations, `hx`, `yazi`, `ya`, and
+that resolves the four shells, four integrations, `fzf`, `hx`, `yazi`, `ya`, and
 `lazygit` to pinned artifacts. Eon does not alter the parent process's PATH,
 aliases, or shell startup files. At launch, Eon ignores
 ambient Helix runtime and Steel configuration paths and Yazi or LazyGit
@@ -414,15 +425,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 483 |
-| README | 428 |
+| README | 439 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 800 |
+| Architecture and contracts | 824 |
 | Distribution and references | 245 |
-| Changelog | 173 |
-| Rust source and tests | 9,786 |
+| Changelog | 183 |
+| Rust source and tests | 10,475 |
 | Cargo manifests | 37 |
-| Component manifest | 327 |
-| Nix composition | 728 |
+| Component manifest | 346 |
+| Nix composition | 733 |
 | Product defaults | 0 |
-| **Total** | **13,211** |
+| **Total** | **13,969** |
