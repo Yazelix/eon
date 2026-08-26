@@ -14,14 +14,14 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The current candidate composition selects Orbit
+The current composition selects Orbit
 `70861097a825c2fbfaea53a8ca9437f45e8602eb` with canonical ORBS v10 and Venus
 `df88b2867d50c59a316418471abd000da02940bc`. The installed candidate Eon profile
 resolves this exact graph without restarting its older live generation.
 
 ## EON-C1 — Exact compatible component launch
 
-- **Status:** Candidate
+- **Status:** Proven
 - **Consumer:** A user launching Eon or EonTerm from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -44,10 +44,10 @@ resolves this exact graph without restarting its older live generation.
   Venus native launch contracts.
 - **Boundary:** Eon does not infer compatibility from executables, store paths,
   process names, or moving branches.
-- **Proof:** `df8e07462a8faf548b1afde89b77b96b8095b194`
+- **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`
   - **Environment:** Nix-built x86_64 Linux Wayland alpha
   - **Evidence:** Exact graph validation, Ready-boundary failure/recovery,
-    component revision reporting, and composed package checks; accepted base
+    current Venus/fzf reporting, and composed package checks; accepted base
     `a2792cc77f8254cc277d64eb41f65725b69ccf70`, ORB-C13/ORBS v4 refresh
     `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`, and Ready base
     `7cbcf1d4ce8ac186dc3ceff48240f04c437709af`; icon selection
@@ -55,12 +55,9 @@ resolves this exact graph without restarting its older live generation.
     `33ec3062f72a732290dcd6c6f40a2d5f535d6a7cbfcaf7455a0a5c4f03a52e0d`,
     launcher action `32c768e0d9a62984640a516c34d0cb0db16e8adb`, and accepted
     installed native-Wayland launch and scrollback dogfood
-- **Open proof:** The exact current Venus/fzf graph and installed profile await
-  an immutable Eon source revision; current candidate evidence is under EON-C18.
-
 ## EON-C2 — One component compatibility graph
 
-- **Status:** Candidate
+- **Status:** Proven
 - **Consumer:** Every Eon distribution and runtime launch path.
 - **Trigger:** A product generation resolves or validates its component set.
 - **Result:** One versioned manifest defines component identity, compatibility,
@@ -71,15 +68,12 @@ resolves this exact graph without restarting its older live generation.
 - **Owner:** Eon's component manifest and validator.
 - **Boundary:** The manifest does not own process lifecycle, platform launch
   mechanics, package-manager policy, or child state.
-- **Proof:** `df8e07462a8faf548b1afde89b77b96b8095b194`
+- **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`
   - **Environment:** x86_64 Linux Nix alpha
-  - **Evidence:** Manifest parser/compatibility checks and exact current graph
-    consumption by installed Eon, EonTerm, and Eonova; accepted manifest base
+  - **Evidence:** Manifest parser/compatibility checks, exact graph consumption
+    by installed Eon and EonTerm, and prior Eonova proof; accepted manifest base
     `234ad77ced4924d95400b5c39822b3fb9b928c95` and ORBS v7 graph refresh
     `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`
-- **Open proof:** The current graph validation and installed Eon consumption
-  await the EON-C18 candidate's immutable source revision.
-
 ## EON-C3 — Distribution-neutral runtime inputs
 
 - **Status:** Proven
@@ -216,7 +210,7 @@ resolves this exact graph without restarting its older live generation.
 
 ## EON-C9 — Managed shell environment
 
-- **Status:** Candidate
+- **Status:** Proven
 - **Consumer:** Eon Sessions launched under Nushell, Bash, Zsh, or Fish.
 - **Trigger:** Eon constructs a child launch environment.
 - **Result:**
@@ -245,19 +239,16 @@ resolves this exact graph without restarting its older live generation.
   shell framework, automatic Direnv/Mise, history/sync policy, plugin surface,
   or editor replacement. Arbitrary argv remains unmanaged and
   `eon run -- COMMAND...` remains the explicit escape hatch.
-- **Proof:** `194076f66f91c8823b03c3ee6d3a1706eb8ea4e4`
+- **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`
   - **Environment:** x86_64 Linux Nix alpha
-  - **Evidence:** Four-shell environment checks, private Session PATH, tool
-    glyphs, Fish preservation, and packaged command dogfood; accepted base
+  - **Evidence:** Four-shell environment checks, private Session PATH, fzf option
+    isolation, tool glyphs, Fish preservation, and packaged command dogfood; accepted base
     `6dfcb473beccadd6e145235009240c81dd570fe5`, glyph proof
     `fb95671d855fa944c3717103cb13bd0135f8aec8`, and private PATH
     `c0d044c69318a921f9f9139bcaf2de9afce683d3`
-- **Open proof:** The exact fzf addition and ambient-option isolation await the
-  EON-C18 candidate's immutable source revision.
-
 ## EON-C10 — Typed workspace control
 
-- **Status:** Candidate
+- **Status:** Proven
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -289,21 +280,18 @@ resolves this exact graph without restarting its older live generation.
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content, or direct child-protocol escape hatch.
-- **Proof:** `10c29edf861fac28db48f41a4546165f79777ee6`
+- **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`
   - **Environment:** x86_64 Linux Nix package and installed profile
-  - **Evidence:** EONW v2 codec/version rejection, raw directory snapshot and
+  - **Evidence:** EONW v2/v3 codec/version rejection, raw directory snapshot and
     retarget action, CLI projection, absolute connection/read deadlines,
-    management Stop, response-loss finality, and source ownership; EONW v2 seed
-    `7bb50873ae27e09dfebd8a6ca2f8075bac07afe8`, lifecycle
+    management Stop, response-loss finality, and source ownership; EONW v3 seed
+    `96119f29ca2e3ec4ad19bbe272708b07d588429a`, v2 base `7bb50873ae27e09dfebd8a6ca2f8075bac07afe8`, lifecycle
     actions `fd6b348494111a0d18e241787da14ea99ee117a9`, CLI proof
     `d0c2208d628fa0dc1e186899b45e0b73534ff9bc`, deadline hardening
     `a390fc5c007900c3fc8c9c49df85f9b8acc06d4a`, management Stop
     `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`, response-loss correction
     `56fcae2d00baecf9b69e4650882a69e50419f56b`, and maximum-bound snapshot
     correction `10c29edf861fac28db48f41a4546165f79777ee6`
-- **Open proof:** EONW v3 runtime consumption awaits the EON-C18 candidate's
-  immutable source revision.
-
 ## EON-C11 — Runtime generations and presentation
 
 - **Status:** Candidate
@@ -571,11 +559,11 @@ resolves this exact graph without restarting its older live generation.
   handles, filesystem watching, shell-`cd` tracking, pane-CWD inference,
   retargeting of existing processes, persistence, picker UI, or compatibility
   service accepting EONW v1 and v2.
-- **Proof:** `06325620f700702c71acc5c5ae3f3131612a76a1`
+- **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`
   - **Environment:** x86_64 Linux Nix package and installed Eon profile
-  - **Evidence:** EONW v2 seed
-    `7bb50873ae27e09dfebd8a6ca2f8075bac07afe8`; exact Venus consumer
-    `19d7d28a2aba09c0afe3173d25bbb76ec3edce49`; focused codec, workspace,
+  - **Evidence:** EONW v3 seed
+    `96119f29ca2e3ec4ad19bbe272708b07d588429a`; exact Venus consumer
+    `df88b2867d50c59a316418471abd000da02940bc`; focused codec, workspace,
     CLI, launch-command, startup-disappearance, and outer multi-tab CWD/rollback
     checks; complete locked Rust/Nix gates, manifest validation, generation
     sensitivity, maximum-bound EONW snapshot round trip, and exact installed
@@ -620,7 +608,7 @@ resolves this exact graph without restarting its older live generation.
   generic-popup API, simultaneous terminal composition, native Venus picker,
   automatic pane creation, current-process `cd`, persistence, EonTerm action,
   or additional platform.
-- **Proof:** Candidate profile artifact
+- **Proof:** Source `9f6599d103162061ee666126c2eddce03383afb6`; candidate profile artifact
   `/nix/store/jafvw2mipdiphsmiwhdhqqysi7sdxhxi-eon-0.1.0`, generation
   `g1-73de286734a29660b2d11564c4a012b9`
   - **Environment:** x86_64 Linux COSMIC Wayland, installed Eon profile, and an
