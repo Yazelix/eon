@@ -16,7 +16,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current composition selects Orbit
 `70861097a825c2fbfaea53a8ca9437f45e8602eb` with canonical ORBS v10 and Venus
-`2622c124be5ba8a62037c6de952ebf3928347387`. The installed candidate Eon profile
+`2622c124be5ba8a62037c6de952ebf3928347387`. The installed Eon profile
 resolves to `/nix/store/nqcjvnxyjrnjm1hwl4lcwqzi0jmyfvli-eon-0.1.0`, generation
 `g1-5cf7a15fab599220be3121a7b3a764a8`. No live supervisor was restarted.
 
@@ -577,7 +577,7 @@ resolves to `/nix/store/nqcjvnxyjrnjm1hwl4lcwqzi0jmyfvli-eon-0.1.0`, generation
 
 ## EON-C18 — Picker-first tab directories
 
-- **Status:** Candidate
+- **Status:** Proven
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z in an existing tab while no directory picker is already open.
@@ -622,13 +622,14 @@ resolves to `/nix/store/nqcjvnxyjrnjm1hwl4lcwqzi0jmyfvli-eon-0.1.0`, generation
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
-- **Proof:** EONW v4 protocol seed
-  `aaafc9127c054e683abfceb3c8fcaae201a7a763` is mechanically verified:
+- **Proof:** Runtime source `53004af9a18be68a58713ef9461a2cd336e246e5`
+  consumes EONW v4 protocol seed
+  `aaafc9127c054e683abfceb3c8fcaae201a7a763`, mechanically verified through
   focused red/green pending-tab and zero-durable-Session lifecycle round trips,
   v3/v4 mutual rejection, invalid pending-state rejection, complete locked Rust
   checks, and `nix flake check path:. --print-build-logs` passed on x86_64
   Linux. Existing Alt+Z runtime proof remains source
-  `9f6599d103162061ee666126c2eddce03383afb6`; candidate profile artifact
+  `9f6599d103162061ee666126c2eddce03383afb6`; installed profile artifact
   `/nix/store/nqcjvnxyjrnjm1hwl4lcwqzi0jmyfvli-eon-0.1.0`, generation
   `g1-5cf7a15fab599220be3121a7b3a764a8`
   - **Environment:** x86_64 Linux COSMIC Wayland, installed Eon profile, and an
@@ -645,8 +646,6 @@ resolves to `/nix/store/nqcjvnxyjrnjm1hwl4lcwqzi0jmyfvli-eon-0.1.0`, generation
     Wayland presentation. An isolated installed run committed `t1` and `t2` to
     their selected directories, started only `session-1` and `session-2`, and
     stopped both through the durable-only generation result.
-- **Open proof:** The reviewed runtime candidate needs one immutable Eon source
-  revision before promotion to Proven.
 
 ## Rules
 
