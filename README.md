@@ -414,6 +414,8 @@ The documents in [`docs/`](docs/) hold the current planning truth:
 - [`DISTRIBUTION.md`](docs/DISTRIBUTION.md) defines composition and release policy.
 - [`REFERENCES.md`](docs/REFERENCES.md) routes design work to primary sources and
   comparable projects.
+- [`VISUAL-REFERENCES.md`](docs/VISUAL-REFERENCES.md) keeps discovery-only visual
+  inspiration outside implementation reference gates.
 
 Use Beads for implementation plans and deferred decisions:
 
@@ -431,15 +433,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 483 |
-| README | 445 |
+| README | 447 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 834 |
-| Distribution and references | 245 |
+| Distribution and references | 284 |
 | Changelog | 189 |
 | Rust source and tests | 11,571 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
 | Nix composition | 733 |
 | Product defaults | 0 |
-| **Total** | **15,087** |
+| **Total** | **15,128** |
