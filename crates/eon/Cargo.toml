@@ -10,7 +10,7 @@ publish = false
 eon-manifest = { path = "../eon-manifest" }
 eon-workspace-protocol = { path = "../eon-workspace-protocol" }
 libc = "=0.2.189"
-orbit-protocol = { git = "https://github.com/Yazelix/eon-sessions.git", rev = "70861097a825c2fbfaea53a8ca9437f45e8602eb" }
+orbit-protocol = { git = "https://github.com/Yazelix/eon-sessions.git", rev = "a65e199e16e97330175e314cacf791fa00f53069" }
 serde = { version = "=1.0.228", features = ["derive"] }
 socket2 = "=0.6.5"
 toml = { version = "=1.1.4", default-features = false, features = ["parse", "serde", "std"] }

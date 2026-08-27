@@ -4,11 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
     orbit = {
-      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=70861097a825c2fbfaea53a8ca9437f45e8602eb";
+      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=a65e199e16e97330175e314cacf791fa00f53069";
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=2622c124be5ba8a62037c6de952ebf3928347387";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=3ddacb8d75b3d26a7beba60aef168e5ed5de19bc";
       flake = false;
     };
     helix = {
@@ -140,7 +140,7 @@
         pkgs.vulkan-loader
         pkgs.wayland
       ];
-      venusProtocolSourceRevision = "59975e9176f5caf8b78dc3273e88d9ecbb75dc3f";
+      venusProtocolSourceRevision = "a65e199e16e97330175e314cacf791fa00f53069";
       workspaceProtocolRevision = "aaafc9127c054e683abfceb3c8fcaae201a7a763";
       venusSource =
         assert orbit.rev == (builtins.head venusIdentity.requires).revision;
@@ -588,6 +588,7 @@
             "--package"
             "eon"
           ];
+          dontUseCargoParallelTests = true;
           nativeBuildInputs = [
             pkgs.copyDesktopItems
             pkgs.makeWrapper

@@ -297,7 +297,12 @@ fn managed_orbit_helper() {
         if let Some((stream, input, leased)) = &mut client {
             let mut bytes = [0; management::MAX_MESSAGE_BYTES];
             match stream.read(&mut bytes) {
-                Ok(0) => client = None,
+                Ok(0) => {
+                    client = None;
+                    if let Some(path) = std::env::var_os("EON_TEST_LEASE_RELEASED") {
+                        fs::write(path, "released").unwrap();
+                    }
+                }
                 Ok(count) => {
                     input.extend_from_slice(&bytes[..count]);
                     if let Some(length) = management::client_message_len(input).unwrap()
@@ -334,7 +339,12 @@ fn managed_orbit_helper() {
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(_) => client = None,
+                Err(_) => {
+                    client = None;
+                    if let Some(path) = std::env::var_os("EON_TEST_LEASE_RELEASED") {
+                        fs::write(path, "released").unwrap();
+                    }
+                }
             }
         }
         if stop {
@@ -413,10 +423,20 @@ fn managed_orbit_helper() {
 }
 
 fn live_identity(endpoint: &Path) -> LiveIdentity {
-    let bytes = fs::read(artifact_path(endpoint, ".record")).unwrap();
-    match management::decode_record(&bytes).unwrap() {
-        ManagementRecord::Live(identity) => identity,
-        record => panic!("expected live management record, got {record:?}"),
+    let record = artifact_path(endpoint, ".record");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Ok(bytes) = fs::read(&record)
+            && let Ok(ManagementRecord::Live(identity)) = management::decode_record(&bytes)
+        {
+            return identity;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} was not live",
+            record.display()
+        );
+        thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -1314,6 +1334,8 @@ fn eonterm_replaces_exact_residue_after_its_supervisor_and_session_die() {
     let control = generation.join("eon.sock");
     let orbit_socket = generation.join("orbit.sock");
     wait_for_connection(&control);
+    wait_for(&orbit_log);
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
     let orbit_pid = live_identity(&orbit_socket).process_id as i32;
     first.kill().unwrap();
     first.wait().unwrap();
@@ -1325,10 +1347,12 @@ fn eonterm_replaces_exact_residue_after_its_supervisor_and_session_die() {
         thread::sleep(Duration::from_millis(10));
     }
     assert!(artifact_path(&orbit_socket, ".record").exists());
+    fs::remove_file(&orbit_log).unwrap();
 
     let mut second = launch(&second_stop);
     wait_for_connection(&control);
-    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 2);
+    wait_for(&orbit_log);
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let stopped = invoke(&eon, &runtime, &config, &["stop", generation_id, "--json"]);
     assert!(stopped.status.success(), "{}", stdout(&stopped));
@@ -1888,6 +1912,7 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
     let runtime = root.join("runtime");
     let config = root.join("config");
     let stop = root.join("stop");
+    let lease_released = root.join("lease-released");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     let session_bin = root.join("session-bin");
@@ -1914,6 +1939,7 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
             .env("EON_SESSION_BIN", &session_bin)
             .env("EON_TEST_RUN_CHILD", "1")
             .env("EON_TEST_STOP", &stop)
+            .env("EON_TEST_LEASE_RELEASED", &lease_released)
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -1933,6 +1959,7 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
     let picker = live_identity(&generation.join("pick.sock"));
     first.kill().unwrap();
     assert!(!first.wait().unwrap().success());
+    wait_for(&lease_released);
 
     let child = launch();
     let mut replacement = TestProcess {
