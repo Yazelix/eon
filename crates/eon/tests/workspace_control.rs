@@ -562,6 +562,7 @@ fn wait_for_picker_close(socket: &Path, directory: &Path) -> Snapshot {
 fn eon_command(binary: &Path) -> Command {
     let mut command = Command::new(binary);
     command.env("EON_TEST_MANAGED_ORBIT", "1");
+    command.env_remove("EON_SESSION_BIN");
     command
 }
 
@@ -1420,9 +1421,13 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         );
     }
 
+    let wrapped = invoke(&binary, &runtime, &config, &["focus", "up", "--json"]);
+    assert!(wrapped.status.success());
+    assert!(stdout(&wrapped).contains("\"selected_pane\":\"p3\""));
+
     let before = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert!(before.status.success());
-    let rejected = invoke(&binary, &runtime, &config, &["focus", "up", "--json"]);
+    let rejected = invoke(&binary, &runtime, &config, &["focus", "left", "--json"]);
     assert_eq!(rejected.status.code(), Some(2));
     assert!(stdout(&rejected).contains("\"code\":\"unavailable\""));
     let after = invoke(&binary, &runtime, &config, &["workspace", "--json"]);

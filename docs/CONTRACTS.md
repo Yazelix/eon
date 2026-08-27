@@ -190,8 +190,9 @@ The accepted composition selects Orbit
   - Each pane is identified as `pN`, two ASCII spaces, and a compact working-
     directory label; home uses the packaged marker, descendants use `~/`, and
     external paths remain absolute.
-  - Users can traverse tabs and panes directly and create new panes or tabs
-    through the accepted semantic actions.
+  - Left/right tab traversal and up/down pane traversal wrap at ordered edges
+    when the axis has at least two targets; singleton axes remain unavailable.
+    Users can create new panes or tabs through the accepted semantic actions.
   - Ended Sessions leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
     removed index, otherwise the preceding sibling; an empty workspace closes
@@ -201,9 +202,9 @@ The accepted composition selects Orbit
   - New current-generation full Eon surfaces omit the redundant native title
     bar while retaining the selected terminal title for compositor semantics.
 - **Important failures:** Unknown or stale identity, invalid transition,
-  direction without a target, unavailable endpoint, duplicate identity, or
-  partial recovery leaves the last accepted topology unchanged. Exhausted pane
-  numbers fail before Session start; unknown or repeated Session-exit notices
+  a directional axis without another target, unavailable endpoint, duplicate
+  identity, or partial recovery leaves accepted topology unchanged. Exhausted
+  pane numbers fail before Session start; unknown or repeated Session-exit notices
   remove nothing; losing a view never silently stops or substitutes a Session.
 - **Owner:** Eon workspace topology, identity, focus, pruning, and action policy;
   Orbit owns Sessions and Venus owns native materialization.

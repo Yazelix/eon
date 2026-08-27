@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Wrap left/right tab traversal and up/down pane traversal at ordered workspace
+  edges when at least two targets exist; singleton axes remain unavailable
+  without changing topology or Sessions.
 - Keep retained scrollback responsive under continuous terminal output by
   composing Orbit's corrected bounded scroll-outcome queue admission with
   Venus's compatible viewport retention, transient routing retirement, and

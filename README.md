@@ -253,7 +253,7 @@ The command surface is small:
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set one live `tN` tab's absolute launch directory for future Sessions |
 | `eon pane create [--json]` | Create and select a default-shell Session in the active tab |
 | `eon focus ID [--json]` | Focus a stable tab or pane identity |
-| `eon focus left\|right\|up\|down [--json]` | Traverse tabs or panes directly without wrapping |
+| `eon focus left\|right\|up\|down [--json]` | Traverse tabs or panes directly, wrapping at multi-target edges |
 | `eon versions` | Print the runtime generation, EONW version, and stable component identities |
 | `eon config-path` | Create and print the Eon configuration root |
 
@@ -436,12 +436,12 @@ Beads data, lock files, and generated artifacts.
 | README | 447 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 846 |
+| Architecture and contracts | 847 |
 | Distribution and references | 291 |
-| Changelog | 193 |
-| Rust source and tests | 11,596 |
+| Changelog | 196 |
+| Rust source and tests | 11,633 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
 | Nix composition | 734 |
 | Product defaults | 0 |
-| **Total** | **15,177** |
+| **Total** | **15,218** |

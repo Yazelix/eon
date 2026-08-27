@@ -539,36 +539,36 @@ impl Workspace {
     fn focus_direction(&mut self, direction: Direction) -> Result<(), Failure> {
         match direction {
             Direction::Left => {
-                let target = self
-                    .active
-                    .checked_sub(1)
-                    .ok_or_else(|| action_error("unavailable", "no tab exists to the left"))?;
-                self.active = target;
+                if self.tabs.len() == 1 {
+                    return Err(action_error("unavailable", "no tab exists to the left"));
+                }
+                self.active = self.active.checked_sub(1).unwrap_or(self.tabs.len() - 1);
             }
             Direction::Right => {
-                let target = self.active + 1;
-                if target >= self.tabs.len() {
+                if self.tabs.len() == 1 {
                     return Err(action_error("unavailable", "no tab exists to the right"));
                 }
-                self.active = target;
+                self.active = (self.active + 1) % self.tabs.len();
             }
             Direction::Up => {
-                let target = self.tabs[self.active]
+                let tab = &mut self.tabs[self.active];
+                let selected = tab
                     .selected
-                    .ok_or_else(|| action_error("unavailable", "active tab has no pane"))?
-                    .checked_sub(1)
-                    .ok_or_else(|| action_error("unavailable", "no pane exists above"))?;
-                self.tabs[self.active].selected = Some(target);
+                    .ok_or_else(|| action_error("unavailable", "active tab has no pane"))?;
+                if tab.panes.len() == 1 {
+                    return Err(action_error("unavailable", "no pane exists above"));
+                }
+                tab.selected = Some(selected.checked_sub(1).unwrap_or(tab.panes.len() - 1));
             }
             Direction::Down => {
-                let target = self.tabs[self.active]
+                let tab = &mut self.tabs[self.active];
+                let selected = tab
                     .selected
-                    .ok_or_else(|| action_error("unavailable", "active tab has no pane"))?
-                    + 1;
-                if target >= self.tabs[self.active].panes.len() {
+                    .ok_or_else(|| action_error("unavailable", "active tab has no pane"))?;
+                if tab.panes.len() == 1 {
                     return Err(action_error("unavailable", "no pane exists below"));
                 }
-                self.tabs[self.active].selected = Some(target);
+                tab.selected = Some((selected + 1) % tab.panes.len());
             }
         }
         Ok(())
@@ -988,7 +988,7 @@ mod tests {
     }
 
     #[test]
-    fn ordered_topology_rejects_invalid_actions_without_mutation() {
+    fn ordered_topology_wraps_focus_and_rejects_invalid_actions_without_mutation() {
         let mut workspace = initial_workspace();
         let initial = workspace.clone();
         assert_eq!(
@@ -1002,6 +1002,23 @@ mod tests {
         );
         assert_eq!(workspace, initial);
         let mut start = |_: &Session, _: &Path, _: Option<&str>| Ok(());
+
+        for direction in [
+            Direction::Left,
+            Direction::Right,
+            Direction::Up,
+            Direction::Down,
+        ] {
+            let before = workspace.clone();
+            assert_eq!(
+                workspace
+                    .dispatch("singleton", Action::Focus(direction), &mut start)
+                    .unwrap_err()
+                    .code,
+                "unavailable"
+            );
+            assert_eq!(workspace, before);
+        }
 
         workspace
             .dispatch("request-1", Action::CreatePane, &mut start)
@@ -1042,37 +1059,36 @@ mod tests {
         workspace
             .dispatch("request-3", Action::FocusId("p1".into()), &mut start)
             .unwrap();
-        workspace
-            .dispatch("request-4", Action::Focus(Direction::Down), &mut start)
-            .unwrap();
-        workspace
-            .dispatch("request-5", Action::Focus(Direction::Right), &mut start)
-            .unwrap();
-        workspace
-            .dispatch("request-6", Action::Focus(Direction::Left), &mut start)
-            .unwrap();
-        workspace
-            .dispatch("request-7", Action::Focus(Direction::Up), &mut start)
-            .unwrap();
-        assert_eq!(
-            workspace.tabs[0].panes[workspace.tabs[0].selected.unwrap()].id,
-            "p1"
-        );
+        for (request, direction, expected_tab, expected_pane) in [
+            ("request-4", Direction::Down, "t1", "p2"),
+            ("request-5", Direction::Up, "t1", "p1"),
+            ("request-6", Direction::Up, "t1", "p2"),
+            ("request-7", Direction::Down, "t1", "p1"),
+            ("request-8", Direction::Left, "t2", "p3"),
+            ("request-9", Direction::Left, "t1", "p1"),
+            ("request-10", Direction::Right, "t2", "p3"),
+            ("request-11", Direction::Right, "t1", "p1"),
+        ] {
+            workspace
+                .dispatch(request, Action::Focus(direction), &mut start)
+                .unwrap();
+            let active = &workspace.tabs[workspace.active];
+            assert_eq!(active.id, expected_tab);
+            assert_eq!(active.panes[active.selected.unwrap()].id, expected_pane);
+        }
 
         for (request, action, code) in [
-            ("request-8", Action::Focus(Direction::Up), "unavailable"),
-            ("request-9", Action::Focus(Direction::Left), "unavailable"),
             (
-                "request-10",
+                "request-12",
                 Action::FocusId("p1".into()),
                 "already-focused",
             ),
             (
-                "request-11",
+                "request-13",
                 Action::FocusId("pane-stale".into()),
                 "unknown-id",
             ),
-            ("request-7", Action::Inspect, "duplicate-request"),
+            ("request-11", Action::Inspect, "duplicate-request"),
         ] {
             let before = workspace.clone();
             assert_eq!(
@@ -1088,7 +1104,7 @@ mod tests {
         let before = workspace.clone();
         let error = workspace
             .dispatch(
-                "request-12",
+                "request-14",
                 Action::FocusId("pane\nforged".into()),
                 &mut start,
             )
