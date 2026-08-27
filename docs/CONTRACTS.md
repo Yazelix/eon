@@ -653,9 +653,10 @@ restarted.
   `963bdaf4d9816f27a26c7bdb6ee122855566a222` admits one inactive live picker
   tab, including the sole pane-free pending tab, with focused red/green codec,
   complete locked Rust, exact pinned Venus consumer, and full Nix checks on
-  x86_64 Linux. The current mechanically verified candidate preserves picker
-  identity and the pane-free pending tab across owner- and process-level wrapped
-  traversal; complete locked Rust and Nix checks produced profile artifact
+  x86_64 Linux. Candidate source
+  `9af359e964e6cb1fc53548d6779456c11343c7e1` preserves picker identity and the
+  pane-free pending tab across owner- and process-level wrapped traversal;
+  complete locked Rust and Nix checks produced profile artifact
   `/nix/store/w2f3wd5vz40p0m95miph0x7a64mzlxxa-eon-0.1.0`, generation
   `g1-e4cae4b6bcd7489a7f604f229736f8aa`. Runtime source
   `53004af9a18be68a58713ef9461a2cd336e246e5` consumes original EONW v4 seed
@@ -678,9 +679,9 @@ restarted.
     Wayland presentation. An isolated installed run committed `t1` and `t2` to
     their selected directories, started only `session-1` and `session-2`, and
     stopped both through the durable-only generation result.
-- **Open proof:** Exact-current installed native Alt+H/L acceptance and immutable
-  final source remain pending. The prior picker-first and existing-tab Alt+Z
-  behavior remains proved at the revisions above.
+- **Open proof:** Exact-current installed native Alt+H/L acceptance remains
+  pending. The prior picker-first and existing-tab Alt+Z behavior remains proved
+  at the revisions above.
 
 ## Rules
 
