@@ -14,12 +14,12 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The source candidate selects Orbit
+The accepted composition selects Orbit
 `a65e199e16e97330175e314cacf791fa00f53069` with canonical ORBS v10 and Venus
-`3ddacb8d75b3d26a7beba60aef168e5ed5de19bc`. The active profile still resolves
-to the failed predecessor candidate; no live supervisor was restarted. This
-candidate remains unaccepted until rebuilt, installed, and dogfooded, and
-EON-C1 through EON-C4 retain their indexed prior proofs.
+`3ddacb8d75b3d26a7beba60aef168e5ed5de19bc`. The active profile resolves to
+`/nix/store/903n9xsvkpz4lfmywm9qf2rhzxmirgdv-eon-0.1.0` and EonTerm to
+`/nix/store/mnbc7nzvq5zb5y65ky9aayvwkcvp3i5j-eonterm-0.1.0`, generation
+`g1-fe182637e5909cf8ad521c629e14d132`. No live supervisor was restarted.
 
 ## EON-C1 — Exact compatible component launch
 
@@ -46,7 +46,7 @@ EON-C1 through EON-C4 retain their indexed prior proofs.
   Venus native launch contracts.
 - **Boundary:** Eon does not infer compatibility from executables, store paths,
   process names, or moving branches.
-- **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`
+- **Proof:** `5007935b4af1dabe296837b6bb2cebb7846eb4a5`
   - **Environment:** Nix-built x86_64 Linux Wayland alpha
   - **Evidence:** Exact graph validation, Ready-boundary failure/recovery,
     current Venus/fzf reporting, and composed package checks; accepted base
@@ -56,7 +56,11 @@ EON-C1 through EON-C4 retain their indexed prior proofs.
     `32936b92e9c20a000d21f123869e0b749ff39618`, canonical master SHA-256
     `33ec3062f72a732290dcd6c6f40a2d5f535d6a7cbfcaf7455a0a5c4f03a52e0d`,
     launcher action `32c768e0d9a62984640a516c34d0cb0db16e8adb`, and accepted
-    installed native-Wayland launch and scrollback dogfood
+    installed native-Wayland launch and scrollback dogfood. Exact Orbit
+    `a65e199e16e97330175e314cacf791fa00f53069` and Venus
+    `3ddacb8d75b3d26a7beba60aef168e5ed5de19bc` passed the 30 ms continuous-
+    output retained-scrollback acceptance without queue failure, starvation,
+    shake, or snap-to-live.
 ## EON-C2 — One component compatibility graph
 
 - **Status:** Proven
@@ -70,12 +74,13 @@ EON-C1 through EON-C4 retain their indexed prior proofs.
 - **Owner:** Eon's component manifest and validator.
 - **Boundary:** The manifest does not own process lifecycle, platform launch
   mechanics, package-manager policy, or child state.
-- **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`
+- **Proof:** `5007935b4af1dabe296837b6bb2cebb7846eb4a5`
   - **Environment:** x86_64 Linux Nix alpha
   - **Evidence:** Manifest parser/compatibility checks, exact graph consumption
     by installed Eon and EonTerm, and prior Eonova proof; accepted manifest base
     `234ad77ced4924d95400b5c39822b3fb9b928c95` and ORBS v7 graph refresh
-    `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`
+    `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`; the current graph selects the
+    exact accepted Orbit/Venus pair above with unchanged ORBS v10 and ORBF v1
 ## EON-C3 — Distribution-neutral runtime inputs
 
 - **Status:** Proven
@@ -89,12 +94,14 @@ EON-C1 through EON-C4 retain their indexed prior proofs.
 - **Consumes:** EON-C2's component graph.
 - **Boundary:** Runtime code does not construct, persist, inspect, or derive
   identity from Nix store paths.
-- **Proof:** `df8e07462a8faf548b1afde89b77b96b8095b194`
+- **Proof:** `5007935b4af1dabe296837b6bb2cebb7846eb4a5`
   - **Environment:** Nix-built x86_64 Linux alpha
   - **Evidence:** Exact protocol-source substitution, package tests, and
     evaluator-absence checks; accepted launch-input base
     `a2792cc77f8254cc277d64eb41f65725b69ccf70` and exact installed ORBS v7
-    composition `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`
+    composition `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`;
+    the current installed artifacts are the exact opaque store paths indexed
+    above
 
 ## EON-C4 — Thin orchestrator ownership
 
@@ -111,11 +118,13 @@ EON-C1 through EON-C4 retain their indexed prior proofs.
 - **Consumes:** Accepted child contracts through EON-C2's exact graph.
 - **Boundary:** No copied child schema, hidden fork, compatibility adapter, or
   second terminal/rendering owner.
-- **Proof:** `df8e07462a8faf548b1afde89b77b96b8095b194`
+- **Proof:** `5007935b4af1dabe296837b6bb2cebb7846eb4a5`
   - **Environment:** x86_64 Linux composed alpha
   - **Evidence:** Component-boundary checks, management consumer proof, package
     closure inspection, and accepted installed native-Wayland runtime dogfood;
-    accepted composition base `a2792cc77f8254cc277d64eb41f65725b69ccf70`
+    accepted composition base `a2792cc77f8254cc277d64eb41f65725b69ccf70`;
+    the current acceptance adds no Eon scrolling implementation, compatibility
+    adapter, dependency, or second component graph
 
 ## EON-C5 — Direct bundle lifecycle
 
