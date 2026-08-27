@@ -302,6 +302,7 @@ impl Workspace {
             Action::CreatePane => self.create_pane(&mut start)?,
             Action::FocusId(id) => self.focus_id(&id)?,
             Action::Focus(direction) => self.focus_direction(direction)?,
+            Action::Move(direction) => self.move_direction(direction)?,
             Action::SetTabDirectory { tab, directory } => {
                 self.set_tab_directory(&tab, directory, &mut start)?;
             }
@@ -570,6 +571,51 @@ impl Workspace {
                     return Err(action_error("unavailable", "no pane exists below"));
                 }
                 tab.selected = Some((selected + 1) % tab.panes.len());
+            }
+        }
+        Ok(())
+    }
+
+    fn move_direction(&mut self, direction: Direction) -> Result<(), Failure> {
+        match direction {
+            Direction::Left => {
+                if self.active == 0 {
+                    return Err(action_error("unavailable", "active tab is already first"));
+                }
+                self.tabs.swap(self.active, self.active - 1);
+                self.active -= 1;
+            }
+            Direction::Right => {
+                if self.active + 1 == self.tabs.len() {
+                    return Err(action_error("unavailable", "active tab is already last"));
+                }
+                self.tabs.swap(self.active, self.active + 1);
+                self.active += 1;
+            }
+            Direction::Up => {
+                let tab = &mut self.tabs[self.active];
+                let selected = tab
+                    .selected
+                    .ok_or_else(|| action_error("unavailable", "active tab has no pane"))?;
+                if selected == 0 {
+                    return Err(action_error(
+                        "unavailable",
+                        "selected pane is already first",
+                    ));
+                }
+                tab.panes.swap(selected, selected - 1);
+                tab.selected = Some(selected - 1);
+            }
+            Direction::Down => {
+                let tab = &mut self.tabs[self.active];
+                let selected = tab
+                    .selected
+                    .ok_or_else(|| action_error("unavailable", "active tab has no pane"))?;
+                if selected + 1 == tab.panes.len() {
+                    return Err(action_error("unavailable", "selected pane is already last"));
+                }
+                tab.panes.swap(selected, selected + 1);
+                tab.selected = Some(selected + 1);
             }
         }
         Ok(())
@@ -870,6 +916,18 @@ mod tests {
         .unwrap()
     }
 
+    fn assert_move_unavailable(workspace: &mut Workspace, request: &str, direction: Direction) {
+        let before = workspace.clone();
+        assert_eq!(
+            workspace
+                .dispatch(request, Action::Move(direction), |_, _, _| unreachable!())
+                .unwrap_err()
+                .code,
+            "unavailable"
+        );
+        assert_eq!(*workspace, before);
+    }
+
     #[test]
     fn pending_tabs_start_picker_before_their_first_session_and_cancel_cleanly() {
         let mut fallback_attempts = Vec::new();
@@ -1058,6 +1116,30 @@ mod tests {
         assert!(human(&projection).contains("endpoint=/runtime/\\u{1b}[2J\\n.sock\n"));
 
         workspace
+            .dispatch("move-tab-left", Action::Move(Direction::Left), &mut start)
+            .unwrap();
+        assert_eq!(workspace.snapshot().active_tab, "t2");
+        assert_eq!(workspace.tabs[0].id, "t2");
+        assert_move_unavailable(&mut workspace, "move-tab-left-edge", Direction::Left);
+        workspace
+            .dispatch("move-tab-right", Action::Move(Direction::Right), &mut start)
+            .unwrap();
+        assert_move_unavailable(&mut workspace, "move-tab-right-edge", Direction::Right);
+
+        workspace
+            .dispatch("select-p2", Action::FocusId("p2".into()), &mut start)
+            .unwrap();
+        workspace
+            .dispatch("move-pane-up", Action::Move(Direction::Up), &mut start)
+            .unwrap();
+        assert_eq!(workspace.tabs[0].panes[0].id, "p2");
+        assert_move_unavailable(&mut workspace, "move-pane-up-edge", Direction::Up);
+        workspace
+            .dispatch("move-pane-down", Action::Move(Direction::Down), &mut start)
+            .unwrap();
+        assert_move_unavailable(&mut workspace, "move-pane-down-edge", Direction::Down);
+
+        workspace
             .dispatch("request-3", Action::FocusId("p1".into()), &mut start)
             .unwrap();
         for (request, direction, expected_tab, expected_pane) in [
@@ -1239,6 +1321,10 @@ mod tests {
             ("picker-id", Action::FocusId("t1".into())),
             ("picker-tab", Action::CreateTab),
             ("picker-pane", Action::CreatePane),
+            ("picker-move-left", Action::Move(Direction::Left)),
+            ("picker-move-right", Action::Move(Direction::Right)),
+            ("picker-move-up", Action::Move(Direction::Up)),
+            ("picker-move-down", Action::Move(Direction::Down)),
             ("picker-again", Action::PickTabDirectory),
         ] {
             let before = workspace.clone();

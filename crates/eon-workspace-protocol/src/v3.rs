@@ -19,6 +19,7 @@ pub enum Action {
     CreatePane,
     FocusId(String),
     Focus(Direction),
+    Move(Direction),
     Stop { generation: String },
     SetTabDirectory { tab: String, directory: Vec<u8> },
     PickTabDirectory,
@@ -72,6 +73,13 @@ pub(crate) fn encode_request_version(request: &Request, version: u16) -> Result<
         Action::Focus(Direction::Right) => payload.byte(5),
         Action::Focus(Direction::Up) => payload.byte(6),
         Action::Focus(Direction::Down) => payload.byte(7),
+        Action::Move(direction) if version > VERSION => payload.byte(match direction {
+            Direction::Left => 14,
+            Direction::Right => 15,
+            Direction::Up => 16,
+            Direction::Down => 17,
+        }),
+        Action::Move(_) => return Err(Error::InvalidValue { field: "action" }),
         Action::InspectRuntime => payload.byte(8),
         Action::Stop { generation } => {
             v2::identity("generation", generation)?;
@@ -146,6 +154,10 @@ pub(crate) fn decode_request_version(bytes: &[u8], version: u16) -> Result<Reque
             Action::SetTabDirectory { tab, directory }
         }
         13 => Action::PickTabDirectory,
+        14 if version > VERSION => Action::Move(Direction::Left),
+        15 if version > VERSION => Action::Move(Direction::Right),
+        16 if version > VERSION => Action::Move(Direction::Up),
+        17 if version > VERSION => Action::Move(Direction::Down),
         value => {
             return Err(Error::InvalidTag {
                 field: "action",

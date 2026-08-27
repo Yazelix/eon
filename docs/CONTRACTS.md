@@ -16,11 +16,11 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current candidate composition selects Orbit
 `a65e199e16e97330175e314cacf791fa00f53069` with canonical ORBS v10 and Venus
-`a6e6846fe0c6039759b526b936704a3146fcad9c`. The active profile resolves to
-`/nix/store/w2f3wd5vz40p0m95miph0x7a64mzlxxa-eon-0.1.0` and EonTerm to
-`/nix/store/6rhzmxdp0s5xng4061sqq360h9w32850-eonterm-0.1.0`, generation
-`g1-e4cae4b6bcd7489a7f604f229736f8aa`. Existing live supervisors were not
-restarted.
+`a6e6846fe0c6039759b526b936704a3146fcad9c`. The active Eon profile resolves to
+`/nix/store/f1yy9h78wnmdmrgxjhnagshkk959q7j3-eon-0.1.0` and reports generation
+`g1-8943184e88400894d872d77af508d578`. The active EonTerm profile remains
+`/nix/store/n5bmygd82arnfhzlcgz6llydap8rr7lw-eonterm-0.1.0`. Existing live
+supervisors were not restarted.
 
 ## EON-C1 — Exact compatible component launch
 
@@ -180,8 +180,8 @@ restarted.
 
 - **Status:** Candidate
 - **Consumer:** One local Eon workspace user.
-- **Trigger:** Launch, create tab or pane, traverse focus, receive Session exit,
-  or recover accepted same-boot runs.
+- **Trigger:** Launch, create tab or pane, traverse focus, reorder the active tab
+  or selected pane, receive Session exit, or recover accepted same-boot runs.
 - **Result:**
   - Independent durable Sessions appear as horizontal tabs containing vertical
     accordion panes with exactly one expanded pane.
@@ -197,6 +197,10 @@ restarted.
     stays bound to its original live tab while another active tab presents its
     selected pane. Users can create new panes or tabs through the accepted
     semantic actions only when no picker is open.
+  - Moving left/right swaps the active tab with exactly one adjacent tab;
+    moving up/down swaps the selected pane with exactly one adjacent pane in
+    the active tab. The moved stable identity remains selected. Movement stops
+    at ordered edges and remains unavailable while a picker is open.
   - Ended Sessions leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
     removed index, otherwise the preceding sibling; an empty workspace closes
@@ -206,17 +210,18 @@ restarted.
   - New current-generation full Eon surfaces omit the redundant native title
     bar while retaining the selected terminal title for compositor semantics.
 - **Important failures:** Unknown or stale identity, invalid transition,
-  a directional axis without another target, unavailable endpoint, duplicate
-  identity, or partial recovery leaves accepted topology unchanged. Exhausted
-  pane numbers fail before Session start; unknown or repeated Session-exit notices
-  remove nothing; losing a view never silently stops or substitutes a Session.
+  a directional axis without another target, movement at an ordered edge,
+  unavailable endpoint, duplicate identity, or partial recovery leaves accepted
+  topology unchanged. Exhausted pane numbers fail before Session start; unknown
+  or repeated Session-exit notices remove nothing; losing a view never silently
+  stops or substitutes a Session.
 - **Owner:** Eon workspace topology, identity, focus, pruning, and action policy;
   Orbit owns Sessions and Venus owns native materialization.
 - **Consumes:** EONW v4, Orbit Session identities/endpoints, and Venus `VEN-C8`.
-- **Boundary:** No arbitrary split tree, simultaneous expanded panes,
-  reordering, picker relocation, durable layout restoration, per-pane Session
-  stop/restart, terminal content/history, provider state, plugin surface,
-  remote access, or reconstructed Session state.
+- **Boundary:** No arbitrary split tree, simultaneous expanded panes, arbitrary
+  reorder target or cross-tab pane movement, picker relocation, durable layout
+  restoration, per-pane Session stop/restart, terminal content/history,
+  provider state, plugin surface, remote access, or reconstructed Session state.
 - **Proof:** `5f23a7bac127785d913a718e5fb1afc53d9d91ae`
   - **Environment:** x86_64 Linux Nix candidate and installed profile
   - **Evidence:** Deterministic and process-level wrapped traversal, workspace
@@ -226,6 +231,14 @@ restarted.
     `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`, compact-header proof
     `e77e842fe8c7070a96047dff1bf028ccbd49b788` and exact Venus consumer
     `19d7d28a2aba09c0afe3173d25bbb76ec3edce49`
+  - **Movement revision:** dogfooded installed package
+    `/nix/store/dbxxlkrh6ygvksra9rxdvqzzj4228jbq-eon-0.1.0`, built from the
+    reviewed working tree based on `9f420ad7f7d4a09ec4294e5ecb191ca2a3d2b7d3`
+  - **Movement evidence:** Full locked Rust and Nix checks plus an isolated
+    installed CLI run moved `t2` and `p2` by one adjacent position, retained
+    all three Session mappings, rejected edge moves without mutation, restored
+    both orders, and stopped exactly its isolated Sessions. The profile refresh
+    preserved the older live two-Session supervisor without restarting it.
 - **Open proof:** Native current-generation tab-label acceptance remains pending.
 
 ## EON-C9 — Managed shell environment
@@ -596,7 +609,7 @@ restarted.
 
 ## EON-C18 — Picker-first tab directories
 
-- **Status:** Candidate
+- **Status:** Proven
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z in an existing tab while no directory picker is already open.
@@ -678,10 +691,9 @@ restarted.
     endpoint, record, process, and runtime cleanup, and user-accepted native
     Wayland presentation. An isolated installed run committed `t1` and `t2` to
     their selected directories, started only `session-1` and `session-2`, and
-    stopped both through the durable-only generation result.
-- **Open proof:** Exact-current installed native Alt+H/L acceptance remains
-  pending. The prior picker-first and existing-tab Alt+Z behavior remains proved
-  at the revisions above.
+    stopped both through the durable-only generation result. The user accepted
+    exact-current native Alt+H/L traversal with the picker retained at source
+    `9af359e964e6cb1fc53548d6779456c11343c7e1` and the profile above.
 
 ## Rules
 

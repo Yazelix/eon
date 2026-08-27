@@ -728,6 +728,19 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     assert_eq!(accepted.active_tab, "t3");
     assert_eq!(accepted.tabs[1].selected_pane.as_deref(), Some("p3"));
 
+    let invoke_ok = |arguments: &[&str]| {
+        let output = invoke(&binary, &runtime, &config, arguments);
+        assert!(output.status.success());
+        output
+    };
+    let moved_tab = invoke_ok(&["tab", "move", "left", "--json"]);
+    assert!(stdout(&moved_tab).contains("\"active_tab\":\"t3\",\"tabs\":[{\"id\":\"t3\""));
+    invoke_ok(&["tab", "move", "right", "--json"]);
+    invoke_ok(&["focus", "t1", "--json"]);
+    let moved_pane = invoke_ok(&["pane", "move", "up", "--json"]);
+    assert!(stdout(&moved_pane).contains("\"panes\":[{\"id\":\"p2\""));
+    invoke_ok(&["pane", "move", "down", "--json"]);
+
     fs::write(&selection, root.join("missing").as_os_str().as_bytes()).unwrap();
     assert!(matches!(
         workspace_action(&control, "picker-invalid", Action::PickTabDirectory),

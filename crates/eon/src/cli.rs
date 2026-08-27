@@ -22,7 +22,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | tab directory TAB [--json] -- DIRECTORY | pane create [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
+const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | tab directory TAB [--json] -- DIRECTORY | tab move <left|right> [--json] | pane create [--json] | pane move <up|down> [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
 pub(super) fn run() -> (&'static str, Result<i32, String>) {
@@ -308,7 +308,11 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Str
     let action = match values.as_slice() {
         ["workspace"] => Action::Inspect,
         ["tab", "create"] => Action::CreateTab,
+        ["tab", "move", "left"] => Action::Move(Direction::Left),
+        ["tab", "move", "right"] => Action::Move(Direction::Right),
         ["pane", "create"] => Action::CreatePane,
+        ["pane", "move", "up"] => Action::Move(Direction::Up),
+        ["pane", "move", "down"] => Action::Move(Direction::Down),
         ["focus", "left"] => Action::Focus(Direction::Left),
         ["focus", "right"] => Action::Focus(Direction::Right),
         ["focus", "up"] => Action::Focus(Direction::Up),
@@ -386,5 +390,28 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn reorder_parser_accepts_only_each_workspace_axis() {
+        for (scope, name, direction) in [
+            ("tab", "left", Direction::Left),
+            ("tab", "right", Direction::Right),
+            ("pane", "up", Direction::Up),
+            ("pane", "down", Direction::Down),
+        ] {
+            assert_eq!(
+                parse_control_arguments(&[scope, "move", name, "--json"].map(Into::into)).unwrap(),
+                (Action::Move(direction), true)
+            );
+        }
+        for (scope, name) in [
+            ("tab", "up"),
+            ("tab", "down"),
+            ("pane", "left"),
+            ("pane", "right"),
+        ] {
+            assert!(parse_control_arguments(&[scope, "move", name].map(Into::into)).is_err());
+        }
     }
 }

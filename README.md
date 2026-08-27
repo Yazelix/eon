@@ -202,6 +202,9 @@ within one second because Eon Desktop re-inspects EONW v4 every 250 ms; the
 protocol adds no event stream. When a shell exits, Eon removes its pane, selects
 the nearest surviving pane, removes an empty tab, and closes when the final pane
 exits.
+The CLI can move the active tab left or right and the selected pane up or down
+by one position, stopping at ordered edges without changing stable identities
+or Session mappings. Eon Desktop has no movement shortcut yet.
 
 Every live tab owns one absolute launch directory. A fresh workspace validates
 Eon's launch directory, then opens `t1` with the ranked directory picker before
@@ -253,7 +256,9 @@ The command surface is small:
 | `eon workspace [--json]` | Inspect the live Eon-owned tab, pane, and Session mapping |
 | `eon tab create [--json]` | Create and focus a pending tab with its directory picker |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set one live `tN` tab's absolute launch directory for future Sessions |
+| `eon tab move left\|right [--json]` | Move the active tab by one position without wrapping |
 | `eon pane create [--json]` | Create and select a default-shell Session in the active tab |
+| `eon pane move up\|down [--json]` | Move the selected pane by one position without wrapping |
 | `eon focus ID [--json]` | Focus a stable tab or pane identity |
 | `eon focus left\|right\|up\|down [--json]` | Traverse tabs or panes directly, wrapping at multi-target edges |
 | `eon versions` | Print the runtime generation, EONW version, and stable component identities |
@@ -435,15 +440,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 483 |
-| README | 449 |
+| README | 454 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 870 |
+| Architecture and contracts | 882 |
 | Distribution and references | 291 |
-| Changelog | 199 |
-| Rust source and tests | 11,738 |
+| Changelog | 202 |
+| Rust source and tests | 11,909 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
 | Nix composition | 734 |
 | Product defaults | 0 |
-| **Total** | **15,351** |
+| **Total** | **15,542** |

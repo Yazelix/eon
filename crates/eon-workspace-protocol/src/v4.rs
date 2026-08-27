@@ -563,4 +563,37 @@ mod tests {
         );
         assert_eq!(decode_response(&encoded_maximal).unwrap(), maximal);
     }
+
+    #[test]
+    fn round_trips_v4_movement_without_widening_v3() {
+        for (direction, tag) in [
+            (Direction::Left, 14),
+            (Direction::Right, 15),
+            (Direction::Up, 16),
+            (Direction::Down, 17),
+        ] {
+            let request = Request {
+                id: "move-1".into(),
+                action: Action::Move(direction),
+            };
+            let mut payload = v2::Encoder::default();
+            payload.string(&request.id);
+            payload.byte(tag);
+            let encoded = v2::frame_version(VERSION, v2::REQUEST, payload.bytes.clone()).unwrap();
+            assert_eq!(encode_request(&request).unwrap(), encoded);
+            assert_eq!(decode_request(&encoded).unwrap(), request);
+            assert_eq!(
+                v3::encode_request(&request),
+                Err(Error::InvalidValue { field: "action" })
+            );
+            let encoded = v2::frame_version(v3::VERSION, v2::REQUEST, payload.bytes).unwrap();
+            assert_eq!(
+                v3::decode_request(&encoded),
+                Err(Error::InvalidTag {
+                    field: "action",
+                    value: tag,
+                })
+            );
+        }
+    }
 }
