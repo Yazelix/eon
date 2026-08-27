@@ -111,18 +111,92 @@ its Eon owner by a private stream and exits on owner EOF.
 Eon's internal boundaries follow owned invariants rather than delivery phases.
 They route changes and audits without creating additional product scope.
 
-| Subsystem | Owning surfaces | Owns | Does not own |
-|---|---|---|---|
-| CLI and executable boundary | `crates/eon/src/cli.rs` and `crates/eon/src/main.rs` | `cli.rs` owns invocation selection, CLI argument and output projection, and managed-tool dispatch; `main.rs` owns executable composition and top-level error-to-exit mapping | Supervisor lifecycle, generation policy, EONW transport, workspace state, child mechanisms, or rendering |
-| Runtime and supervisor lifecycle | `crates/eon/src/supervisor.rs` | Launch mode, private configuration and product runtime roots, startup serialization, supervisor composition, presentation policy, component selection, and child lifecycle coordination | CLI parsing, generation discovery policy, EONW transport, Orbit Session mechanisms, PTYs, terminal state, native rendering, persistent topology, or managed-tool behavior |
-| EONW transport | `crates/eon/src/control.rs` | Owned mode-`0600` endpoint validation, bounded client connection and length-delimited request/response I/O, listener lifetime, socket identity, protocol failure projection, and concrete client probes | Workspace or supervisor action policy, Orbit lifecycle, EONW values and codec, authorization, or rendering |
-| Generation lifecycle | `crates/eon/src/generation.rs` | Runtime-source identity and generation-directory projection, bounded discovery and classification, list output, explicit attachment selection, and validated owner-routed stop initiation | EONW transport, Orbit Session lifecycle, component launch, topology, or CLI dispatch |
-| Orbit Session lifecycle adapter | `crates/eon/src/sessions.rs` | Ready-claim authority, management-record and peer validation, lease acquisition, same-boot recovery, Orbit launch and rollback, management Stop, terminal-record and endpoint reconciliation, durable and transient Session cleanup, and live Session bookkeeping | Orbit-owned shutdown mechanics and terminal state, workspace topology, EONW transport, Venus presentation, or generation discovery |
-| Workspace state | `crates/eon/src/workspace.rs` | Live ordered tabs and panes, stable identities, authoritative tab launch directories, active selection, Session-to-endpoint mapping, one captured-tab directory-picker state, deterministic recovered-Session projection, semantic action results, and complete snapshots | EONW encoding, Orbit state, prior-topology persistence, shell-CWD inference, picker rendering, or Venus geometry |
-| EONW boundary | `crates/eon-workspace-protocol` | Versioned values, bounded message codec, validation, complete workspace snapshots, supervisor identity and capabilities, presentation and stop results, and structured failures | Live topology, lifecycle policy, transport ownership, authorization, or rendering |
-| Component graph | `components/eon-alpha-v3.json` and `crates/eon-manifest` | Stable component identity, compatibility requirements, abstract artifact declarations, graph validation, and version reporting | Resolved package paths, launch policy, or package construction |
-| Managed environment | `crates/eon/src/managed_environment.rs` and its `flake.nix` wiring | Stable managed command names, private configuration projection, exact tool selection, and default interactive policy | Shell, prompt, editor, file-manager, or Git-TUI native behavior |
-| Nix alpha composition | `flake.nix` | Exact source resolution, child builds, opaque launch-path injection, full Eon desktop packaging, and the slim EonTerm package | Runtime product semantics or a second component graph |
+### CLI and executable boundary
+
+- **Owning surfaces:** `crates/eon/src/cli.rs` and `crates/eon/src/main.rs`
+- **Owns:** `cli.rs` owns invocation selection, CLI argument and output projection, and
+  managed-tool dispatch; `main.rs` owns executable composition and top-level error-to-exit
+  mapping
+- **Does not own:** Supervisor lifecycle, generation policy, EONW transport, workspace
+  state, child mechanisms, or rendering
+
+### Runtime and supervisor lifecycle
+
+- **Owning surfaces:** `crates/eon/src/supervisor.rs`
+- **Owns:** Launch mode, private configuration and product runtime roots, startup
+  serialization, supervisor composition, presentation policy, component selection, and child
+  lifecycle coordination
+- **Does not own:** CLI parsing, generation discovery policy, EONW transport, Orbit Session
+  mechanisms, PTYs, terminal state, native rendering, persistent topology, or managed-tool
+  behavior
+
+### EONW transport
+
+- **Owning surfaces:** `crates/eon/src/control.rs`
+- **Owns:** Owned mode-`0600` endpoint validation, bounded client connection and
+  length-delimited request/response I/O, listener lifetime, socket identity, protocol
+  failure projection, and concrete client probes
+- **Does not own:** Workspace or supervisor action policy, Orbit lifecycle, EONW values and
+  codec, authorization, or rendering
+
+### Generation lifecycle
+
+- **Owning surfaces:** `crates/eon/src/generation.rs`
+- **Owns:** Runtime-source identity and generation-directory projection, bounded discovery
+  and classification, list output, explicit attachment selection, and validated owner-routed
+  stop initiation
+- **Does not own:** EONW transport, Orbit Session lifecycle, component launch, topology, or
+  CLI dispatch
+
+### Orbit Session lifecycle adapter
+
+- **Owning surfaces:** `crates/eon/src/sessions.rs`
+- **Owns:** Ready-claim authority, management-record and peer validation, lease acquisition,
+  same-boot recovery, Orbit launch and rollback, management Stop, terminal-record and
+  endpoint reconciliation, durable and transient Session cleanup, and live Session
+  bookkeeping
+- **Does not own:** Orbit-owned shutdown mechanics and terminal state, workspace topology,
+  EONW transport, Venus presentation, or generation discovery
+
+### Workspace state
+
+- **Owning surfaces:** `crates/eon/src/workspace.rs`
+- **Owns:** Live ordered tabs and panes, stable identities, authoritative tab launch
+  directories, active selection, Session-to-endpoint mapping, one captured-tab
+  directory-picker state, deterministic recovered-Session projection, semantic action
+  results, and complete snapshots
+- **Does not own:** EONW encoding, Orbit state, prior-topology persistence, shell-CWD
+  inference, picker rendering, or Venus geometry
+
+### EONW boundary
+
+- **Owning surfaces:** `crates/eon-workspace-protocol`
+- **Owns:** Versioned values, bounded message codec, validation, complete workspace
+  snapshots, supervisor identity and capabilities, presentation and stop results, and
+  structured failures
+- **Does not own:** Live topology, lifecycle policy, transport ownership, authorization, or
+  rendering
+
+### Component graph
+
+- **Owning surfaces:** `components/eon-alpha-v3.json` and `crates/eon-manifest`
+- **Owns:** Stable component identity, compatibility requirements, abstract artifact
+  declarations, graph validation, and version reporting
+- **Does not own:** Resolved package paths, launch policy, or package construction
+
+### Managed environment
+
+- **Owning surfaces:** `crates/eon/src/managed_environment.rs` and its `flake.nix` wiring
+- **Owns:** Stable managed command names, private configuration projection, exact tool
+  selection, and default interactive policy
+- **Does not own:** Shell, prompt, editor, file-manager, or Git-TUI native behavior
+
+### Nix alpha composition
+
+- **Owning surfaces:** `flake.nix`
+- **Owns:** Exact source resolution, child builds, opaque launch-path injection, full Eon
+  desktop packaging, and the slim EonTerm package
+- **Does not own:** Runtime product semantics or a second component graph
 
 The supervisor is the composition root for runtime policy. An opaque source-
 and-graph digest selects its private generation namespace. Candidate directories
@@ -133,7 +207,7 @@ EONW for Eon clients; canonical Orbit management records and leases remain the
 private child-lifecycle boundary. Nix resolves the canonical component graph and
 injects paths without becoming a runtime owner. A subsystem review includes its
 direct callers and consumers; a separate repository integration review
-reconciles invariants that cross these rows.
+reconciles invariants that cross these boundaries.
 
 ## Composition unit
 

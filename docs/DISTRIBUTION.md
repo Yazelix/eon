@@ -59,20 +59,70 @@ does not activate every package channel.
 
 ## Reference routing
 
-These routes remain conditional during the Nix-only alpha. Read only the row
+These routes remain conditional during the Nix-only alpha. Read only the record
 matching an activated distribution question, start with `Read first`, and
 inspect an additional source only when its condition applies. Record exact
 revisions, constraints, and rejections in the owning Bead.
 
-| Question or trigger | Read first | Read additionally only if | Boundary |
-|---|---|---|---|
-| Distribution graduation is active and one release graph must drive direct archives and package-manager outputs. | [dist documentation](https://axodotdev.github.io/cargo-dist/) | Read [dist configuration](https://axodotdev.github.io/cargo-dist/book/reference/config.html) only when evaluating its exact artifact, installer, Homebrew, or generated-CI shape. | Apply the tool gate and compare an owned assembler. Do not select dist before graduation. |
-| GitHub-hosted artifacts must preserve release identity. | [GitHub immutable releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) | None by default. | Prove tag protection, attestations, and asset immutability for the selected workflow. |
-| Hosted Actions minutes, queues, or spending create a demonstrated local-release requirement. | [Doodlestein Self Releaser](https://github.com/Dicklesworthstone/doodlestein_self_releaser) | Inspect `act` and the selected workflow only after exact compatibility and cost questions are named. | Comparison evidence only. A local run does not prove hosted parity, signing isolation, or provenance. |
-| Product or desktop work could widen the native platform boundary. | [foot at `85655c74a4de`](https://codeberg.org/dnkl/foot/src/commit/85655c74a4ded119392ea8b632626c3920042807) | Follow Eon's [central Monstar route](REFERENCES.md#terminal-product-comparisons) only when direct Wayland ownership is in question. | Preserve a maintained Wayland-only product and headless Wayland proof. Keep presentation in Venus; reject X11, Xwayland, macOS, and an Eon-owned raw-Wayland rewrite. |
-| Distribution graduation needs a compact Linux archive and package-publishing comparison. | Eon's [central Monstar route](REFERENCES.md#terminal-product-comparisons) | Follow its exact release workflow, binary assembler, and AUR templates only after Eon activates distribution graduation. | Study release-built archives, debug stripping, and package publication. Preserve Eon's canonical component graph, exact child artifacts, verification, and multi-process ownership; reject single-binary size parity as an Eon release goal. |
-| Direct-bundle dogfood demonstrates a need for a portable Nix artifact. | [Nix `bundle` command](https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-bundle) | None by default. | Inspect experimental status, bundler constraints, closure size, and portability. Do not make an experimental interface canonical. |
-| Direct-bundle dogfood demonstrates an AppImage-specific user need. | [AppImage documentation](https://docs.appimage.org/) | None by default. | Inspect integration, updates, sandbox assumptions, and filesystem support. Do not treat format availability as product demand. |
+### Distribution graduation is active and one release graph must drive direct archives and package-manager outputs.
+
+- **Read first:** [dist documentation](https://axodotdev.github.io/cargo-dist/)
+- **Read additionally only if:** Read [dist
+  configuration](https://axodotdev.github.io/cargo-dist/book/reference/config.html) only
+  when evaluating its exact artifact, installer, Homebrew, or generated-CI shape.
+- **Boundary:** Apply the tool gate and compare an owned assembler. Do not select dist
+  before graduation.
+
+### GitHub-hosted artifacts must preserve release identity.
+
+- **Read first:** [GitHub immutable
+  releases](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
+- **Read additionally only if:** None by default.
+- **Boundary:** Prove tag protection, attestations, and asset immutability for the selected
+  workflow.
+
+### Hosted Actions minutes, queues, or spending create a demonstrated local-release requirement.
+
+- **Read first:** [Doodlestein Self
+  Releaser](https://github.com/Dicklesworthstone/doodlestein_self_releaser)
+- **Read additionally only if:** Inspect `act` and the selected workflow only after exact
+  compatibility and cost questions are named.
+- **Boundary:** Comparison evidence only. A local run does not prove hosted parity, signing
+  isolation, or provenance.
+
+### Product or desktop work could widen the native platform boundary.
+
+- **Read first:** [foot at
+  `85655c74a4de`](https://codeberg.org/dnkl/foot/src/commit/85655c74a4ded119392ea8b632626c3920042807)
+- **Read additionally only if:** Follow Eon's [central Monstar
+  route](REFERENCES.md#terminal-product-comparisons) only when direct Wayland ownership is
+  in question.
+- **Boundary:** Preserve a maintained Wayland-only product and headless Wayland proof. Keep
+  presentation in Venus; reject X11, Xwayland, macOS, and an Eon-owned raw-Wayland rewrite.
+
+### Distribution graduation needs a compact Linux archive and package-publishing comparison.
+
+- **Read first:** Eon's [central Monstar route](REFERENCES.md#terminal-product-comparisons)
+- **Read additionally only if:** Follow its exact release workflow, binary assembler, and
+  AUR templates only after Eon activates distribution graduation.
+- **Boundary:** Study release-built archives, debug stripping, and package publication.
+  Preserve Eon's canonical component graph, exact child artifacts, verification, and
+  multi-process ownership; reject single-binary size parity as an Eon release goal.
+
+### Direct-bundle dogfood demonstrates a need for a portable Nix artifact.
+
+- **Read first:** [Nix `bundle`
+  command](https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-bundle)
+- **Read additionally only if:** None by default.
+- **Boundary:** Inspect experimental status, bundler constraints, closure size, and
+  portability. Do not make an experimental interface canonical.
+
+### Direct-bundle dogfood demonstrates an AppImage-specific user need.
+
+- **Read first:** [AppImage documentation](https://docs.appimage.org/)
+- **Read additionally only if:** None by default.
+- **Boundary:** Inspect integration, updates, sandbox assumptions, and filesystem support.
+  Do not treat format availability as product demand.
 
 ## Cost-bounded CI and release execution
 
