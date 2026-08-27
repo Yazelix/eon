@@ -213,11 +213,13 @@ The accepted composition selects Orbit
   reordering, picker-based ordinary traversal, durable layout restoration,
   per-pane Session stop/restart, terminal content/history, provider state,
   plugin surface, remote access, or reconstructed Session state.
-- **Proof:** `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
+- **Proof:** `5f23a7bac127785d913a718e5fb1afc53d9d91ae`
   - **Environment:** x86_64 Linux Nix candidate and installed profile
-  - **Evidence:** Workspace composition, traversal, creation, exit pruning,
-    `tN`/`pN` projection, exact tab launch-directory labels and accessibility,
-    and full Rust/Nix checks; prior compact-header proof
+  - **Evidence:** Deterministic and process-level wrapped traversal, workspace
+    composition, creation, exit pruning, `tN`/`pN` projection, exact tab
+    launch-directory labels and accessibility, full locked Rust/Nix checks, and
+    installed native user acceptance; prior topology proof
+    `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`, compact-header proof
     `e77e842fe8c7070a96047dff1bf028ccbd49b788` and exact Venus consumer
     `19d7d28a2aba09c0afe3173d25bbb76ec3edce49`
 - **Open proof:** Native current-generation tab-label acceptance remains pending.
