@@ -592,7 +592,7 @@ The accepted composition selects Orbit
 
 ## EON-C18 — Picker-first tab directories
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z in an existing tab while no directory picker is already open.
@@ -607,9 +607,11 @@ The accepted composition selects Orbit
     pending tab and restores the prior tab and focus.
   - Alt+Z keeps the existing explicit retarget behavior after a tab has panes;
     it never changes or restarts a running pane.
-  - EONW exposes that picker as one explicit modal endpoint bound to the active
-    tab, never as a normal `pN` pane. EONW v4 represents the pending tab with an
-    absent selected pane instead of a sentinel or placeholder process.
+  - EONW exposes that picker as one explicit modal endpoint bound to one live
+    tab, never as a normal `pN` pane. The picker tab may remain live while
+    another durable tab is active. EONW v4 represents a picker-owned pending tab
+    as the sole pane-free tab, with an absent selected pane instead of a sentinel
+    or placeholder process.
     Lifecycle inspection and Stop may report zero durable Sessions during the
     initial picker; the transient picker remains excluded from that list.
   - Venus can start a full-Eon presentation from the workspace endpoint alone
@@ -661,6 +663,10 @@ The accepted composition selects Orbit
     Wayland presentation. An isolated installed run committed `t1` and `t2` to
     their selected directories, started only `session-1` and `session-2`, and
     stopped both through the durable-only generation result.
+- **Open proof:** EONW validation for an inactive picker-owning tab, exact Venus
+  presentation consumption, Eon traversal production, and installed native
+  acceptance remain pending in frontier order. The prior picker-first and
+  existing-tab Alt+Z behavior remains proved at the revisions above.
 
 ## Rules
 

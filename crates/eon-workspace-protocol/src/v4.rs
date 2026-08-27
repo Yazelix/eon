@@ -183,11 +183,6 @@ fn validate_snapshot(snapshot: &Snapshot) -> Result<()> {
     v2::identity("active tab", &snapshot.active_tab)?;
     if let Some(picker) = &snapshot.directory_picker {
         v2::identity("directory picker tab", &picker.tab)?;
-        if picker.tab != snapshot.active_tab {
-            return Err(Error::InvalidSnapshot {
-                field: "directory picker tab",
-            });
-        }
         v2::validate_endpoint(&picker.endpoint, "directory picker endpoint")?;
     }
 
@@ -209,9 +204,7 @@ fn validate_snapshot(snapshot: &Snapshot) -> Result<()> {
                     field: "selected_pane",
                 });
             }
-            if tab.id != snapshot.active_tab
-                || snapshot.directory_picker.as_ref().map(|picker| &picker.tab) != Some(&tab.id)
-            {
+            if snapshot.directory_picker.as_ref().map(|picker| &picker.tab) != Some(&tab.id) {
                 return Err(Error::InvalidSnapshot {
                     field: "pending tab",
                 });
@@ -254,6 +247,15 @@ fn validate_snapshot(snapshot: &Snapshot) -> Result<()> {
     if !active_tab_present {
         return Err(Error::InvalidSnapshot {
             field: "active_tab",
+        });
+    }
+    if snapshot
+        .directory_picker
+        .as_ref()
+        .is_some_and(|picker| !snapshot.tabs.iter().any(|tab| tab.id == picker.tab))
+    {
+        return Err(Error::InvalidSnapshot {
+            field: "directory picker tab",
         });
     }
     if snapshot
@@ -307,6 +309,37 @@ mod tests {
                 endpoint: b"/run/eon/pick.sock".to_vec(),
             }),
         }
+    }
+
+    #[test]
+    fn round_trips_picker_bound_to_inactive_tab() {
+        let inactive_durable = Snapshot {
+            active_tab: "t2".into(),
+            tabs: vec![durable_tab(1), durable_tab(2)],
+            directory_picker: Some(DirectoryPicker {
+                tab: "t1".into(),
+                endpoint: b"/run/eon/pick.sock".to_vec(),
+            }),
+        };
+        let mut inactive_pending = pending_snapshot();
+        inactive_pending.active_tab = "t1".into();
+
+        for snapshot in [&inactive_durable, &inactive_pending] {
+            let encoded = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
+            assert_eq!(
+                decode_response(&encoded).unwrap(),
+                Response::Snapshot(snapshot.clone())
+            );
+        }
+
+        let mut missing_picker_tab = inactive_durable.clone();
+        missing_picker_tab.directory_picker.as_mut().unwrap().tab = "t3".into();
+        assert_eq!(
+            encode_response(&Response::Snapshot(missing_picker_tab)),
+            Err(Error::InvalidSnapshot {
+                field: "directory picker tab",
+            })
+        );
     }
 
     #[test]
@@ -443,14 +476,14 @@ mod tests {
                 field: "selected_pane",
             })
         );
-        let mut nonactive_pending = pending_snapshot();
-        nonactive_pending.active_tab = "t1".into();
-        nonactive_pending.directory_picker = Some(DirectoryPicker {
+        let mut unbound_pending = pending_snapshot();
+        unbound_pending.active_tab = "t1".into();
+        unbound_pending.directory_picker = Some(DirectoryPicker {
             tab: "t1".into(),
             endpoint: b"/run/eon/pick.sock".to_vec(),
         });
         assert_eq!(
-            encode_response(&Response::Snapshot(nonactive_pending)),
+            encode_response(&Response::Snapshot(unbound_pending)),
             Err(Error::InvalidSnapshot {
                 field: "pending tab",
             })

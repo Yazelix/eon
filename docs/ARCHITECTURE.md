@@ -77,9 +77,9 @@ EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
 snapshots, supervisor lifecycle results, structured failures, and bounded
 framing. EONW v4 carries Eon-owned raw tab launch directories, the explicit
-retarget action, one tab-bound transient picker endpoint, and the active pending
-tab's absent pane selection without interpreting Orbit terminal metadata or
-creating a generic popup surface. Workspace and
+retarget action, one live-tab-bound transient picker endpoint, and its optional
+pending tab's absent pane selection without interpreting Orbit terminal metadata
+or creating a generic popup surface. Workspace and
 lifecycle results are separate types, so the pinned
 Venus consumer remains source- and wire-compatible with additive lifecycle
 tags it never requests. The running Eon supervisor remains the only live
