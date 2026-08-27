@@ -8,7 +8,7 @@
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=a6e6846fe0c6039759b526b936704a3146fcad9c";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=d2d798099934dcf8037bfad6ab856e40c9b989fe";
       flake = false;
     };
     helix = {
@@ -141,7 +141,7 @@
         pkgs.wayland
       ];
       venusProtocolSourceRevision = "a65e199e16e97330175e314cacf791fa00f53069";
-      workspaceProtocolRevision = "963bdaf4d9816f27a26c7bdb6ee122855566a222";
+      workspaceProtocolRevision = "c305453bba4fe50c29f65e829b9cd65af31ced8a";
       venusSource =
         assert orbit.rev == (builtins.head venusIdentity.requires).revision;
         pkgs.runCommand "eon-desktop-${venusIdentity.revision}" { } ''

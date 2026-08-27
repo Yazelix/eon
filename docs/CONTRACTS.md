@@ -16,11 +16,10 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current candidate composition selects Orbit
 `a65e199e16e97330175e314cacf791fa00f53069` with canonical ORBS v10 and Venus
-`a6e6846fe0c6039759b526b936704a3146fcad9c`. The active Eon profile resolves to
-`/nix/store/f1yy9h78wnmdmrgxjhnagshkk959q7j3-eon-0.1.0` and reports generation
-`g1-8943184e88400894d872d77af508d578`. The active EonTerm profile remains
-`/nix/store/n5bmygd82arnfhzlcgz6llydap8rr7lw-eonterm-0.1.0`. Existing live
-supervisors were not restarted.
+`d2d798099934dcf8037bfad6ab856e40c9b989fe`. The active Eon profile resolves to
+`/nix/store/x408dv5djxnia3sh88jwalhpqxfbmh2r-eon-0.1.0`. The active EonTerm
+profile remains `/nix/store/n5bmygd82arnfhzlcgz6llydap8rr7lw-eonterm-0.1.0`.
+Existing live supervisors were not restarted.
 
 ## EON-C1 — Exact compatible component launch
 
@@ -202,6 +201,8 @@ supervisors were not restarted.
     moving up/down swaps the selected pane with exactly one adjacent pane in
     the active tab. The moved stable identity remains selected. Movement stops
     at ordered edges and remains unavailable while a picker is open.
+    Venus maps Ctrl+Alt+H/L and Ctrl+Alt+K/J directly to these actions without a
+    mode.
   - Closing names the expected active `tN` and requires another live tab. A
     non-final pending tab first stops its exact picker, then disappears and
     restores its prior tab. A durable tab closes only while no picker exists:
@@ -212,6 +213,8 @@ supervisors were not restarted.
     failure, and every remaining live Session stays represented in the
     partially pruned tab. A Session that ended naturally during the request is
     reconciled and pruned as an exit rather than reported as a successful Stop.
+    Venus maps Ctrl+Shift+W directly to this stable-target action; lowercase
+    Ctrl+W remains terminal input.
   - Ended Sessions leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
     removed index, otherwise the preceding sibling; an empty workspace closes
@@ -255,6 +258,16 @@ supervisors were not restarted.
     all three Session mappings, rejected edge moves without mutation, restored
     both orders, and stopped exactly its isolated Sessions. The profile refresh
     preserved the older live two-Session supervisor without restarting it.
+  - **Close and shortcut revision:** EONW owner
+    `c305453bba4fe50c29f65e829b9cd65af31ced8a`, exact Venus consumer
+    `d2d798099934dcf8037bfad6ab856e40c9b989fe`, and installed profile
+    `/nix/store/x408dv5djxnia3sh88jwalhpqxfbmh2r-eon-0.1.0`
+  - **Close and shortcut evidence:** Full locked Rust and Nix checks prove
+    stable-target close, ordered moves, edge rejection, deduplication, and
+    partial-stop topology. Isolated native Wayland input emitted EONW actions
+    14/15/16/17/18 for Ctrl+Alt+H/L/K/J and Ctrl+Shift+W; close removed `t2`'s
+    pending picker and restored durable `t1`. The isolated generation stopped
+    cleanly, and both pre-existing live supervisors retained their PIDs.
 - **Open proof:** Native current-generation tab-label acceptance remains pending.
 
 ## EON-C9 — Managed shell environment
@@ -658,11 +671,11 @@ supervisors were not restarted.
   - Existing left/right focus actions continue to traverse and wrap live tabs
     while the picker stays bound to its original tab. Another active tab shows
     its selected pane; returning shows the same picker for normal acceptance or
-    cancellation. Closing is admitted only for the active non-final pending tab
-    owned by that picker; it stops the transient Session before removing the
-    tab and restoring its prior focus. Up/down, focus by identity, creation, a
-    second picker, durable-tab close, and unrelated topology changes remain
-    unavailable until the picker exits.
+    cancellation. Ctrl+Shift+W closing is admitted only for the active non-final
+    pending tab owned by that picker; it stops the transient Session before
+    removing the tab and restoring its prior focus. Up/down, focus by identity,
+    creation, a second picker, durable-tab close, and unrelated topology changes
+    remain unavailable until the picker exits.
 - **Important failures:** Cancel, empty or invalid selection, picker launch or
   exit, target disappearance, duplicate invocation, origin-tab loss, or
   presentation detachment follows the first- or later-tab fallback without a
@@ -678,18 +691,21 @@ supervisors were not restarted.
   terminal selection.
 - **Consumes:** EON-C17; accepted EONW v4 pending-tab boundary, Orbit's accepted
   Session startup, attachment, exit, and stop contracts, and exact Venus v4
-  consumer `a6e6846fe0c6039759b526b936704a3146fcad9c`.
+  consumer `d2d798099934dcf8037bfad6ab856e40c9b989fe`.
 - **Boundary:** No Yazi dependency, normal-pane identity, arbitrary-command or
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
 - **Proof:** EONW v4 owner source
-  `963bdaf4d9816f27a26c7bdb6ee122855566a222` admits one inactive live picker
+  `c305453bba4fe50c29f65e829b9cd65af31ced8a` admits one inactive live picker
   tab, including the sole pane-free pending tab, with focused red/green codec,
   complete locked Rust, exact pinned Venus consumer, and full Nix checks on
-  x86_64 Linux. Candidate source
-  `9af359e964e6cb1fc53548d6779456c11343c7e1` preserves picker identity and the
-  pane-free pending tab across owner- and process-level wrapped traversal;
+  x86_64 Linux. Installed native Wayland input through Venus
+  `d2d798099934dcf8037bfad6ab856e40c9b989fe` used Ctrl+Shift+W to stop and
+  remove a pending `t2`, restore durable `t1`, and leave no picker residue in
+  profile `/nix/store/x408dv5djxnia3sh88jwalhpqxfbmh2r-eon-0.1.0`. Candidate
+  source `9af359e964e6cb1fc53548d6779456c11343c7e1` preserves picker identity and
+  the pane-free pending tab across owner- and process-level wrapped traversal;
   complete locked Rust and Nix checks produced profile artifact
   `/nix/store/w2f3wd5vz40p0m95miph0x7a64mzlxxa-eon-0.1.0`, generation
   `g1-e4cae4b6bcd7489a7f604f229736f8aa`. Runtime source
