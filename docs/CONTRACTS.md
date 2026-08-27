@@ -639,13 +639,13 @@ The accepted composition selects Orbit
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
-- **Proof:** Runtime source `53004af9a18be68a58713ef9461a2cd336e246e5`
-  consumes EONW v4 protocol seed
-  `aaafc9127c054e683abfceb3c8fcaae201a7a763`, mechanically verified through
-  focused red/green pending-tab and zero-durable-Session lifecycle round trips,
-  v3/v4 mutual rejection, invalid pending-state rejection, complete locked Rust
-  checks, and `nix flake check path:. --print-build-logs` passed on x86_64
-  Linux. Existing Alt+Z runtime proof remains source
+- **Proof:** EONW v4 owner source
+  `963bdaf4d9816f27a26c7bdb6ee122855566a222` admits one inactive live picker
+  tab, including the sole pane-free pending tab, with focused red/green codec,
+  complete locked Rust, exact pinned Venus consumer, and full Nix checks on
+  x86_64 Linux. Runtime source `53004af9a18be68a58713ef9461a2cd336e246e5`
+  consumes original EONW v4 seed `aaafc9127c054e683abfceb3c8fcaae201a7a763`.
+  Existing Alt+Z runtime proof remains source
   `9f6599d103162061ee666126c2eddce03383afb6`; installed profile artifact
   `/nix/store/nqcjvnxyjrnjm1hwl4lcwqzi0jmyfvli-eon-0.1.0`, generation
   `g1-5cf7a15fab599220be3121a7b3a764a8`
@@ -663,10 +663,10 @@ The accepted composition selects Orbit
     Wayland presentation. An isolated installed run committed `t1` and `t2` to
     their selected directories, started only `session-1` and `session-2`, and
     stopped both through the durable-only generation result.
-- **Open proof:** EONW validation for an inactive picker-owning tab, exact Venus
-  presentation consumption, Eon traversal production, and installed native
-  acceptance remain pending in frontier order. The prior picker-first and
-  existing-tab Alt+Z behavior remains proved at the revisions above.
+- **Open proof:** Exact Venus presentation consumption, Eon traversal production,
+  and installed native acceptance remain pending in frontier order. The prior
+  picker-first and existing-tab Alt+Z behavior remains proved at the revisions
+  above.
 
 ## Rules
 
