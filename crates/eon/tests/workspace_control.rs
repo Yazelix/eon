@@ -296,13 +296,8 @@ fn managed_orbit_helper() {
         let mut stop = false;
         if let Some((stream, input, leased)) = &mut client {
             let mut bytes = [0; management::MAX_MESSAGE_BYTES];
-            match stream.read(&mut bytes) {
-                Ok(0) => {
-                    client = None;
-                    if let Some(path) = std::env::var_os("EON_TEST_LEASE_RELEASED") {
-                        fs::write(path, "released").unwrap();
-                    }
-                }
+            let disconnected = match stream.read(&mut bytes) {
+                Ok(0) => true,
                 Ok(count) => {
                     input.extend_from_slice(&bytes[..count]);
                     if let Some(length) = management::client_message_len(input).unwrap()
@@ -336,14 +331,17 @@ fn managed_orbit_helper() {
                             ),
                         }
                     }
+                    false
                 }
-                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
-                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(_) => {
-                    client = None;
-                    if let Some(path) = std::env::var_os("EON_TEST_LEASE_RELEASED") {
-                        fs::write(path, "released").unwrap();
-                    }
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => false,
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => false,
+                Err(_) => true,
+            };
+            if disconnected {
+                let lease_released = *leased;
+                client = None;
+                if lease_released && let Some(path) = std::env::var_os("EON_TEST_LEASE_RELEASED") {
+                    fs::write(path, "released").unwrap();
                 }
             }
         }
