@@ -22,7 +22,7 @@ use std::{
     process::{Command, Stdio},
 };
 
-const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | tab directory TAB [--json] -- DIRECTORY | tab move <left|right> [--json] | pane create [--json] | pane move <up|down> [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
+const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | tab close TAB [--json] | tab directory TAB [--json] -- DIRECTORY | tab move <left|right> [--json] | pane create [--json] | pane move <up|down> [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
 pub(super) fn run() -> (&'static str, Result<i32, String>) {
@@ -308,6 +308,7 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Str
     let action = match values.as_slice() {
         ["workspace"] => Action::Inspect,
         ["tab", "create"] => Action::CreateTab,
+        ["tab", "close", tab] => Action::CloseTab { tab: (*tab).into() },
         ["tab", "move", "left"] => Action::Move(Direction::Left),
         ["tab", "move", "right"] => Action::Move(Direction::Right),
         ["pane", "create"] => Action::CreatePane,
@@ -413,5 +414,14 @@ mod tests {
         ] {
             assert!(parse_control_arguments(&[scope, "move", name].map(Into::into)).is_err());
         }
+    }
+
+    #[test]
+    fn tab_close_parser_requires_one_stable_identity() {
+        assert_eq!(
+            parse_control_arguments(&["tab", "close", "t2", "--json"].map(Into::into)).unwrap(),
+            (Action::CloseTab { tab: "t2".into() }, true)
+        );
+        assert!(parse_control_arguments(&["tab", "close"].map(Into::into)).is_err());
     }
 }

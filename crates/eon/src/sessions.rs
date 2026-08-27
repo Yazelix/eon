@@ -1165,6 +1165,19 @@ pub(super) fn stop_managed_sessions(
     if errors.is_empty() {
         Ok(sessions.iter().map(|session| session.id.clone()).collect())
     } else {
+        for session in sessions {
+            if let Err(error) = session
+                .lease
+                .set_read_timeout(None)
+                .and_then(|()| session.lease.set_write_timeout(None))
+                .and_then(|()| session.lease.set_nonblocking(true))
+            {
+                errors.push(format!(
+                    "{}: cannot restore Sessions management lease after failed stop: {error}",
+                    session.id
+                ));
+            }
+        }
         Err(errors.join("; "))
     }
 }

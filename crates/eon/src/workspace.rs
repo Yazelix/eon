@@ -266,12 +266,7 @@ impl Workspace {
         action: Action,
         mut start: impl FnMut(&Session, &Path, Option<&str>) -> Result<(), String>,
     ) -> Result<(), Failure> {
-        if self.recent_requests.iter().any(|seen| seen == request_id) {
-            return Err(action_error(
-                "duplicate-request",
-                format!("request {request_id} was already accepted"),
-            ));
-        }
+        self.reject_duplicate(request_id)?;
 
         if let Some(picker) = &self.directory_picker {
             match &action {
@@ -292,6 +287,7 @@ impl Workspace {
             Action::InspectRuntime
             | Action::InspectPresentation
             | Action::Present { .. }
+            | Action::CloseTab { .. }
             | Action::Stop { .. } => {
                 return Err(action_error(
                     "unavailable",
@@ -310,6 +306,49 @@ impl Workspace {
         }
         self.remember(request_id);
         Ok(())
+    }
+
+    pub(crate) fn prepare_close_tab(
+        &mut self,
+        request_id: &str,
+        id: &str,
+    ) -> Result<Option<Vec<String>>, Failure> {
+        self.reject_duplicate(request_id)?;
+        let index = self
+            .tabs
+            .iter()
+            .position(|tab| tab.id == id)
+            .ok_or_else(|| action_error("unknown-tab", format!("tab {id} is not live")))?;
+        if index != self.active {
+            return Err(action_error(
+                "not-active",
+                format!("tab {id} is not the active tab"),
+            ));
+        }
+        if self.tabs.len() == 1 {
+            return Err(action_error(
+                "unavailable",
+                "the final tab cannot be closed",
+            ));
+        }
+        let sessions = match &self.directory_picker {
+            Some(picker) if picker.tab == id && self.tabs[index].panes.is_empty() => None,
+            Some(picker) => {
+                return Err(action_error(
+                    "picker-active",
+                    format!("tab {} already has an active directory picker", picker.tab),
+                ));
+            }
+            None => Some(
+                self.tabs[index]
+                    .panes
+                    .iter()
+                    .map(|pane| pane.session.id.clone())
+                    .collect(),
+            ),
+        };
+        self.remember(request_id);
+        Ok(sessions)
     }
 
     pub(crate) fn session_exited(
@@ -659,6 +698,16 @@ impl Workspace {
         self.tabs.iter().map(|tab| tab.panes.len()).sum()
     }
 
+    fn reject_duplicate(&self, request_id: &str) -> Result<(), Failure> {
+        if self.recent_requests.iter().any(|seen| seen == request_id) {
+            return Err(action_error(
+                "duplicate-request",
+                format!("request {request_id} was already accepted"),
+            ));
+        }
+        Ok(())
+    }
+
     fn remember(&mut self, request_id: &str) {
         if self.recent_requests.len() == MAX_RECENT_REQUESTS {
             self.recent_requests.pop_front();
@@ -926,6 +975,98 @@ mod tests {
             "unavailable"
         );
         assert_eq!(*workspace, before);
+    }
+
+    #[test]
+    fn tab_close_preparation_is_stable_deduplicated_and_picker_narrow() {
+        let mut singleton = initial_workspace();
+        let before = singleton.clone();
+        assert_eq!(
+            singleton.prepare_close_tab("final", "t1").unwrap_err().code,
+            "unavailable"
+        );
+        assert_eq!(singleton, before);
+
+        singleton
+            .dispatch("new-tab", Action::CreateTab, |_, _, _| Ok(()))
+            .unwrap();
+        assert_eq!(singleton.prepare_close_tab("pending", "t2").unwrap(), None);
+        assert_eq!(
+            singleton
+                .prepare_close_tab("pending", "t2")
+                .unwrap_err()
+                .code,
+            "duplicate-request"
+        );
+        singleton
+            .session_exited(DIRECTORY_PICKER_SESSION, |_, _, _| unreachable!())
+            .unwrap();
+        assert_eq!(singleton.snapshot().active_tab, "t1");
+
+        singleton
+            .dispatch("new-tab-again", Action::CreateTab, |_, _, _| Ok(()))
+            .unwrap();
+        singleton
+            .dispatch(
+                "commit-tab",
+                Action::SetTabDirectory {
+                    tab: "t3".into(),
+                    directory: b"/".to_vec(),
+                },
+                |_, _, _| Ok(()),
+            )
+            .unwrap();
+        singleton
+            .session_exited(DIRECTORY_PICKER_SESSION, |_, _, _| unreachable!())
+            .unwrap();
+        singleton
+            .dispatch("second-pane", Action::CreatePane, |_, _, _| Ok(()))
+            .unwrap();
+        assert_eq!(
+            singleton
+                .prepare_close_tab("wrong-active", "t1")
+                .unwrap_err()
+                .code,
+            "not-active"
+        );
+        assert_eq!(
+            singleton.prepare_close_tab("stale", "t2").unwrap_err().code,
+            "unknown-tab"
+        );
+
+        singleton
+            .dispatch("durable-picker", Action::PickTabDirectory, |_, _, _| Ok(()))
+            .unwrap();
+        assert_eq!(
+            singleton
+                .prepare_close_tab("picker-close", "t3")
+                .unwrap_err()
+                .code,
+            "picker-active"
+        );
+        singleton
+            .session_exited(DIRECTORY_PICKER_SESSION, |_, _, _| unreachable!())
+            .unwrap();
+
+        assert_eq!(
+            singleton.prepare_close_tab("durable-close", "t3").unwrap(),
+            Some(vec!["session-2".into(), "session-3".into()])
+        );
+        assert_eq!(
+            singleton
+                .prepare_close_tab("durable-close", "t3")
+                .unwrap_err()
+                .code,
+            "duplicate-request"
+        );
+        singleton
+            .session_exited("session-2", |_, _, _| unreachable!())
+            .unwrap();
+        singleton
+            .session_exited("session-3", |_, _, _| unreachable!())
+            .unwrap();
+        assert_eq!(singleton.snapshot().active_tab, "t1");
+        assert_eq!(singleton.snapshot().tabs.len(), 1);
     }
 
     #[test]

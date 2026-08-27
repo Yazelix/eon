@@ -596,4 +596,31 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn round_trips_v4_tab_close_without_widening_v3() {
+        let request = Request {
+            id: "close-1".into(),
+            action: Action::CloseTab { tab: "t2".into() },
+        };
+        let mut payload = v2::Encoder::default();
+        payload.string(&request.id);
+        payload.byte(18);
+        payload.string("t2");
+        let encoded = v2::frame_version(VERSION, v2::REQUEST, payload.bytes.clone()).unwrap();
+        assert_eq!(encode_request(&request).unwrap(), encoded);
+        assert_eq!(decode_request(&encoded).unwrap(), request);
+        assert_eq!(
+            v3::encode_request(&request),
+            Err(Error::InvalidValue { field: "action" })
+        );
+        let encoded = v2::frame_version(v3::VERSION, v2::REQUEST, payload.bytes).unwrap();
+        assert_eq!(
+            v3::decode_request(&encoded),
+            Err(Error::InvalidTag {
+                field: "action",
+                value: 18,
+            })
+        );
+    }
 }

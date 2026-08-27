@@ -20,6 +20,7 @@ pub enum Action {
     FocusId(String),
     Focus(Direction),
     Move(Direction),
+    CloseTab { tab: String },
     Stop { generation: String },
     SetTabDirectory { tab: String, directory: Vec<u8> },
     PickTabDirectory,
@@ -80,6 +81,12 @@ pub(crate) fn encode_request_version(request: &Request, version: u16) -> Result<
             Direction::Down => 17,
         }),
         Action::Move(_) => return Err(Error::InvalidValue { field: "action" }),
+        Action::CloseTab { tab } if version > VERSION => {
+            v2::identity("tab id", tab)?;
+            payload.byte(18);
+            payload.string(tab);
+        }
+        Action::CloseTab { .. } => return Err(Error::InvalidValue { field: "action" }),
         Action::InspectRuntime => payload.byte(8),
         Action::Stop { generation } => {
             v2::identity("generation", generation)?;
@@ -158,6 +165,11 @@ pub(crate) fn decode_request_version(bytes: &[u8], version: u16) -> Result<Reque
         15 if version > VERSION => Action::Move(Direction::Right),
         16 if version > VERSION => Action::Move(Direction::Up),
         17 if version > VERSION => Action::Move(Direction::Down),
+        18 if version > VERSION => {
+            let tab = decoder.string("tab id", v2::MAX_ID_BYTES)?;
+            v2::identity("tab id", &tab)?;
+            Action::CloseTab { tab }
+        }
         value => {
             return Err(Error::InvalidTag {
                 field: "action",

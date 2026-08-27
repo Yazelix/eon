@@ -5,9 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Add stable-target `eon tab close TAB` for non-final tabs. Pending tabs stop
+  their picker before removal; durable tabs stop and prune each confirmed Orbit
+  Session and retain every still-live mapping after a partial failure.
 - Add semantic CLI actions that move the active tab left/right or selected pane
   up/down by one adjacent position without wrapping, changing identity, or
-  stopping any Orbit Session. No native shortcut is assigned yet.
+  stopping any Orbit Session. No native close or movement shortcut is assigned
+  yet.
 - Keep Alt+H/L and CLI left/right tab traversal available while a directory
   picker is open. The picker stays bound to its original tab across ordinary
   and wrapped traversal, while unrelated picker-blocked actions remain blocked.

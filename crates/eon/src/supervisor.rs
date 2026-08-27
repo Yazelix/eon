@@ -12,7 +12,8 @@ use super::{
     workspace::{self, Workspace},
 };
 use eon_workspace_protocol::v4::{
-    Action, Availability, LifecycleResponse, Request, Response, Runtime, Stopped, VERSION,
+    Action, Availability, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
+    Stopped, VERSION,
 };
 use std::{
     env,
@@ -768,9 +769,85 @@ fn stop_directory_picker_session(running: &mut Option<RunningSession>) -> Result
     let Some(session) = running.as_mut() else {
         return Ok(());
     };
-    stop_managed_sessions(std::slice::from_mut(session), SESSION_START_TIMEOUT)?;
+    stop_workspace_session(session)?;
     running.take();
     Ok(())
+}
+
+fn stop_workspace_session(session: &mut RunningSession) -> Result<Option<i32>, String> {
+    if let Some(status) = session_finished(session)? {
+        return Ok(Some(status));
+    }
+    match stop_managed_sessions(std::slice::from_mut(session), SESSION_START_TIMEOUT) {
+        Ok(_) => Ok(None),
+        Err(stop_error) => match session_finished(session) {
+            Ok(Some(status)) => Ok(Some(status)),
+            Ok(None) => Err(stop_error),
+            Err(reconcile_error) => Err(format!(
+                "{stop_error}; cannot reconcile Session after failed stop: {reconcile_error}"
+            )),
+        },
+    }
+}
+
+fn close_workspace_tab(
+    request_id: &str,
+    tab: &str,
+    state: &mut SupervisorState,
+    programs: &Programs,
+    config: &Path,
+) -> Result<Snapshot, Failure> {
+    reap_finished_sessions(state, programs, config)
+        .map_err(|detail| failure("tab-close-failed", detail))?;
+    let sessions = state
+        .workspace
+        .as_mut()
+        .ok_or_else(|| failure("workspace-unavailable", "EonTerm has no Eon workspace"))?
+        .prepare_close_tab(request_id, tab)?;
+
+    if let Some(sessions) = sessions {
+        for id in sessions {
+            let index = state
+                .sessions
+                .iter()
+                .position(|session| session.id == id)
+                .ok_or_else(|| {
+                    failure(
+                        "tab-close-failed",
+                        format!("Session {id} is missing from the supervisor"),
+                    )
+                })?;
+            let natural_status = stop_workspace_session(&mut state.sessions[index])
+                .map_err(|detail| failure("tab-close-failed", format!("{id}: {detail}")))?;
+            let session = state.sessions.remove(index);
+            state
+                .workspace
+                .as_mut()
+                .expect("workspace close retains its owner")
+                .session_exited(&session.id, |_, _, _| {
+                    unreachable!("closing a durable tab cannot start a Session")
+                })?;
+            if session.id == "session-1" && natural_status.is_some() {
+                state.initial_status = natural_status;
+            }
+        }
+    } else {
+        stop_directory_picker_session(&mut state.directory_picker)
+            .map_err(|detail| failure("tab-close-failed", detail))?;
+        state
+            .workspace
+            .as_mut()
+            .expect("pending-tab close retains its workspace")
+            .session_exited(workspace::DIRECTORY_PICKER_SESSION, |_, _, _| {
+                unreachable!("closing a non-final pending tab cannot start a Session")
+            })?;
+    }
+
+    Ok(state
+        .workspace
+        .as_ref()
+        .expect("tab close retains a non-final workspace")
+        .snapshot())
 }
 
 fn directory_picker_command(
@@ -1116,6 +1193,16 @@ fn dispatch_control_request(
             };
             (ControlResponse::Lifecycle(response), true)
         }
+        Request {
+            id,
+            action: Action::CloseTab { tab },
+        } => match close_workspace_tab(&id, &tab, state, programs, config) {
+            Ok(snapshot) => (
+                ControlResponse::Workspace(Response::Snapshot(snapshot)),
+                false,
+            ),
+            Err(error) => (ControlResponse::Workspace(Response::Failure(error)), false),
+        },
         request => match &mut state.workspace {
             Some(workspace) => {
                 let component_generation = &state.component_generation;

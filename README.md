@@ -196,15 +196,16 @@ New current-generation full Eon windows omit the redundant native title bar;
 the selected terminal retains compositor title semantics, while EonTerm and
 legacy Eon attachment keep native decorations. Alt+H/L traverses tabs,
 Alt+K/J traverses panes, Alt+M creates a pane, Ctrl+T opens a new tab's directory
-picker, and Alt+Z
-opens the active tab's directory picker. External workspace changes appear
+picker, and Alt+Z opens the active tab's directory picker. External workspace
+changes appear
 within one second because Eon Desktop re-inspects EONW v4 every 250 ms; the
 protocol adds no event stream. When a shell exits, Eon removes its pane, selects
 the nearest surviving pane, removes an empty tab, and closes when the final pane
 exits.
-The CLI can move the active tab left or right and the selected pane up or down
-by one position, stopping at ordered edges without changing stable identities
-or Session mappings. Eon Desktop has no movement shortcut yet.
+Movement stops at ordered edges without changing stable identities or Session
+mappings. `eon tab close tN` names the expected active tab; it never closes the
+final tab or silently advances a stale request to another tab. Eon Desktop has
+no native close or movement shortcut yet.
 
 Every live tab owns one absolute launch directory. A fresh workspace validates
 Eon's launch directory, then opens `t1` with the ranked directory picker before
@@ -228,7 +229,9 @@ The picker is one transient Orbit Session rather than a normal pane, and it
 closes with its tab, Eon Desktop surface, process, or supervisor. Existing
 Sessions and working directories remain untouched. Alt+H/L continues to
 traverse and wrap live tabs while the picker stays bound to its original tab;
-returning shows the same picker for normal acceptance or cancellation.
+returning shows the same picker for normal acceptance or cancellation. The CLI
+can discard the active non-final pending tab after its picker stops; other close
+and movement requests remain blocked until the picker exits.
 
 Workspace topology is live-only. After same-boot supervisor loss, full Eon
 projects surviving canonical `session-N` runs into one synthetic `t1` as `pN`
@@ -255,6 +258,7 @@ The command surface is small:
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor; human mode confirms first |
 | `eon workspace [--json]` | Inspect the live Eon-owned tab, pane, and Session mapping |
 | `eon tab create [--json]` | Create and focus a pending tab with its directory picker |
+| `eon tab close TAB [--json]` | Close the expected active non-final `tN` and its Sessions |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set one live `tN` tab's absolute launch directory for future Sessions |
 | `eon tab move left\|right [--json]` | Move the active tab by one position without wrapping |
 | `eon pane create [--json]` | Create and select a default-shell Session in the active tab |
@@ -440,15 +444,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 483 |
-| README | 454 |
+| README | 458 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 956 |
+| Architecture and contracts | 977 |
 | Distribution and references | 609 |
-| Changelog | 202 |
-| Rust source and tests | 11,909 |
+| Changelog | 206 |
+| Rust source and tests | 12,266 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
 | Nix composition | 734 |
 | Product defaults | 0 |
-| **Total** | **15,934** |
+| **Total** | **16,320** |

@@ -180,8 +180,9 @@ supervisors were not restarted.
 
 - **Status:** Candidate
 - **Consumer:** One local Eon workspace user.
-- **Trigger:** Launch, create tab or pane, traverse focus, reorder the active tab
-  or selected pane, receive Session exit, or recover accepted same-boot runs.
+- **Trigger:** Launch, create or close a tab, create a pane, traverse focus,
+  reorder the active tab or selected pane, receive Session exit, or recover
+  accepted same-boot runs.
 - **Result:**
   - Independent durable Sessions appear as horizontal tabs containing vertical
     accordion panes with exactly one expanded pane.
@@ -201,6 +202,16 @@ supervisors were not restarted.
     moving up/down swaps the selected pane with exactly one adjacent pane in
     the active tab. The moved stable identity remains selected. Movement stops
     at ordered edges and remains unavailable while a picker is open.
+  - Closing names the expected active `tN` and requires another live tab. A
+    non-final pending tab first stops its exact picker, then disappears and
+    restores its prior tab. A durable tab closes only while no picker exists:
+    Eon stops its Orbit Sessions one at a time in pane order and prunes each
+    confirmed end through the normal Session-exit owner. Complete success
+    removes the tab with the same deterministic focus rule as natural exit.
+    If a later stop fails, no later Session is stopped, the action reports
+    failure, and every remaining live Session stays represented in the
+    partially pruned tab. A Session that ended naturally during the request is
+    reconciled and pruned as an exit rather than reported as a successful Stop.
   - Ended Sessions leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
     removed index, otherwise the preceding sibling; an empty workspace closes
@@ -209,19 +220,24 @@ supervisors were not restarted.
     without claiming restoration of prior topology or launch-directory policy.
   - New current-generation full Eon surfaces omit the redundant native title
     bar while retaining the selected terminal title for compositor semantics.
-- **Important failures:** Unknown or stale identity, invalid transition,
-  a directional axis without another target, movement at an ordered edge,
-  unavailable endpoint, duplicate identity, or partial recovery leaves accepted
-  topology unchanged. Exhausted pane numbers fail before Session start; unknown
-  or repeated Session-exit notices remove nothing; losing a view never silently
-  stops or substitutes a Session.
+- **Important failures:** Unknown or stale identity, a close target other than
+  the active tab, final-tab close, durable close while any picker exists,
+  invalid transition, a directional axis without another target, movement at
+  an ordered edge, unavailable endpoint, duplicate identity, or partial
+  recovery leaves accepted topology unchanged. A repeated request ID never
+  repeats a stop, and a replay naming a removed tab cannot close its successor.
+  Picker-stop failure changes no topology; durable partial-stop behavior is the
+  explicit result above. Exhausted pane numbers fail before Session start;
+  unknown or repeated Session-exit notices remove nothing; losing a view never
+  silently stops or substitutes a Session.
 - **Owner:** Eon workspace topology, identity, focus, pruning, and action policy;
   Orbit owns Sessions and Venus owns native materialization.
 - **Consumes:** EONW v4, Orbit Session identities/endpoints, and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, simultaneous expanded panes, arbitrary
   reorder target or cross-tab pane movement, picker relocation, durable layout
-  restoration, per-pane Session stop/restart, terminal content/history,
-  provider state, plugin surface, remote access, or reconstructed Session state.
+  restoration, a user-facing per-pane Session stop/restart action, terminal
+  content/history, provider state, plugin surface, remote access, or
+  reconstructed Session state.
 - **Proof:** `5f23a7bac127785d913a718e5fb1afc53d9d91ae`
   - **Environment:** x86_64 Linux Nix candidate and installed profile
   - **Evidence:** Deterministic and process-level wrapped traversal, workspace
@@ -642,14 +658,19 @@ supervisors were not restarted.
   - Existing left/right focus actions continue to traverse and wrap live tabs
     while the picker stays bound to its original tab. Another active tab shows
     its selected pane; returning shows the same picker for normal acceptance or
-    cancellation. Up/down, focus by identity, creation, a second picker, and
-    unrelated topology changes remain unavailable until the picker exits.
+    cancellation. Closing is admitted only for the active non-final pending tab
+    owned by that picker; it stops the transient Session before removing the
+    tab and restoring its prior focus. Up/down, focus by identity, creation, a
+    second picker, durable-tab close, and unrelated topology changes remain
+    unavailable until the picker exits.
 - **Important failures:** Cancel, empty or invalid selection, picker launch or
   exit, target disappearance, duplicate invocation, origin-tab loss, or
   presentation detachment follows the first- or later-tab fallback without a
   partial tab, consumed pane or durable Session identity, changed existing
   process, or transient process, endpoint, record, pane, or modal residue.
-  Left/right with only one live tab remains unavailable without mutation.
+  Left/right or close with only one live tab remains unavailable without
+  mutation. A duplicate close cannot stop the picker twice or remove another
+  tab.
 - **Owner:** Eon owns picker policy, tab binding, command selection, lifecycle,
   validation, mutation, and cleanup. Venus owns full-Eon shortcut precedence,
   modal geometry, focus, input, notices, rendering, and accessibility. Orbit

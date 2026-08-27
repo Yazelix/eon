@@ -346,6 +346,27 @@ fn managed_orbit_helper() {
             }
         }
         if stop {
+            if std::env::var("EON_TEST_NATURAL_EXIT_ON_STOP")
+                .ok()
+                .as_deref()
+                == Some(&identity.session_id)
+            {
+                if let Some(child) = &mut child {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                finish_managed_orbit(
+                    &record_path,
+                    &presentation,
+                    &management_path,
+                    &identity,
+                    TerminationReason::NaturalExit,
+                    ProcessOutcome::ExitCode(0),
+                    client.as_mut().map(|client| &mut client.0),
+                );
+                drop(presentation_listener);
+                return;
+            }
             if let Some(path) = std::env::var_os("EON_TEST_FAIL_STOP_ONCE")
                 && fs::read_to_string(&path).ok().as_deref() == Some(&identity.session_id)
             {
@@ -575,6 +596,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     let selected = root.join("selected");
     let stop = root.join("stop");
     let stop_delay = root.join("stop-delay");
+    let fail_stop_once = root.join("fail-stop-once");
     let release = root.join("picker-release");
     let selection = root.join("picker-selection");
     let orbit_log = root.join("orbit-cwd.log");
@@ -613,6 +635,8 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         .env("EON_SESSION_BIN", &session_bin)
         .env("EON_TEST_RUN_CHILD", "1")
         .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_FAIL_STOP_ONCE", &fail_stop_once)
+        .env("EON_TEST_NATURAL_EXIT_ON_STOP", "session-1")
         .env("EON_TEST_PICKER_RELEASE", &release)
         .env("EON_TEST_PICKER_SELECTION", &selection)
         .env("FZF_DEFAULT_OPTS", "--preview=cat {}")
@@ -693,12 +717,17 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
                 && snapshot.tabs[1].panes.is_empty()
                 && snapshot.tabs[1].selected_pane.is_none()
     ));
-    fs::write(&release, "").unwrap();
-    let cancelled = wait_for_picker_close(&control, &selected);
-    assert_eq!(cancelled.active_tab, "t1");
-    assert_eq!(cancelled.tabs.len(), 1);
+    assert!(matches!(
+        workspace_action(
+            &control,
+            "close-pending-tab",
+            Action::CloseTab { tab: "t2".into() },
+        ),
+        Response::Snapshot(snapshot)
+            if snapshot.active_tab == "t1" && snapshot.tabs.len() == 1
+    ));
+    assert!(!generation.join("pick.sock").exists());
 
-    fs::remove_file(&release).unwrap();
     fs::write(&selection, selected.as_os_str().as_bytes()).unwrap();
     let traversed_picker = match workspace_action(&control, "new-tab-accept", Action::CreateTab) {
         Response::Snapshot(snapshot)
@@ -770,6 +799,44 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     wait_for_picker_close(&control, &selected);
     assert!(!generation.join("pick.sock").exists());
 
+    fs::write(&fail_stop_once, "session-2").unwrap();
+    assert!(matches!(
+        workspace_action(
+            &control,
+            "close-t1-partial",
+            Action::CloseTab { tab: "t1".into() },
+        ),
+        Response::Failure(failure) if failure.code == "tab-close-failed"
+    ));
+    assert!(matches!(
+        workspace_action(&control, "close-t1-partial", Action::CloseTab { tab: "t1".into() }),
+        Response::Failure(failure) if failure.code == "duplicate-request"
+    ));
+    assert!(matches!(
+        workspace_action(&control, "close-partial-inspect", Action::Inspect),
+        Response::Snapshot(snapshot)
+            if snapshot.active_tab == "t1"
+                && snapshot.tabs[0].panes.len() == 1
+                && snapshot.tabs[0].panes[0].session == "session-2"
+                && snapshot.tabs[1].panes[0].session == "session-3"
+    ));
+    let closed = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["tab", "close", "t1", "--json"],
+    );
+    assert!(closed.status.success(), "{}", stdout(&closed));
+    assert!(stdout(&closed).contains("\"active_tab\":\"t3\""));
+    assert!(matches!(
+        workspace_action(
+            &control,
+            "close-final-tab",
+            Action::CloseTab { tab: "t3".into() },
+        ),
+        Response::Failure(failure) if failure.code == "unavailable"
+    ));
+
     assert!(matches!(
         workspace_action(&control, "picker-before-stop", Action::PickTabDirectory),
         Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
@@ -783,7 +850,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         &["stop", generation_id, "--json"],
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
-    assert!(stdout(&stopped).contains("\"sessions\":[\"session-1\",\"session-2\",\"session-3\"]"));
+    assert!(stdout(&stopped).contains("\"sessions\":[\"session-3\"]"));
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!generation.exists());
     fs::remove_dir_all(root).unwrap();
