@@ -14,14 +14,12 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The source candidate selects Orbit
+The accepted composition selects Orbit
 `a65e199e16e97330175e314cacf791fa00f53069` with canonical ORBS v10 and Venus
-`bdd8b3628452b1dba8c4d4b2ad9bc2e802659d29`. The active profile still
-resolves to `/nix/store/903n9xsvkpz4lfmywm9qf2rhzxmirgdv-eon-0.1.0` and EonTerm to
-`/nix/store/mnbc7nzvq5zb5y65ky9aayvwkcvp3i5j-eonterm-0.1.0`, generation
-`g1-fe182637e5909cf8ad521c629e14d132`. This candidate remains unaccepted until
-rebuilt, installed, and dogfooded; EON-C1 through EON-C4 retain their prior
-proofs. No live supervisor was restarted.
+`bdd8b3628452b1dba8c4d4b2ad9bc2e802659d29`. The active profile resolves to
+`/nix/store/4sxx1qwbphqrwnhlgz7f2f0ljb0hn6s5-eon-0.1.0` and EonTerm to
+`/nix/store/n5bmygd82arnfhzlcgz6llydap8rr7lw-eonterm-0.1.0`, generation
+`g1-d6c7ecee86b0ef8b6617526e8e708595`. No live supervisor was restarted.
 
 ## EON-C1 — Exact compatible component launch
 
@@ -48,7 +46,7 @@ proofs. No live supervisor was restarted.
   Venus native launch contracts.
 - **Boundary:** Eon does not infer compatibility from executables, store paths,
   process names, or moving branches.
-- **Proof:** `5007935b4af1dabe296837b6bb2cebb7846eb4a5`
+- **Proof:** `71e8f5a8cac938ed7f065890c83d9376551f6014`
   - **Environment:** Nix-built x86_64 Linux Wayland alpha
   - **Evidence:** Exact graph validation, Ready-boundary failure/recovery,
     current Venus/fzf reporting, and composed package checks; accepted base
@@ -60,9 +58,10 @@ proofs. No live supervisor was restarted.
     launcher action `32c768e0d9a62984640a516c34d0cb0db16e8adb`, and accepted
     installed native-Wayland launch and scrollback dogfood. Exact Orbit
     `a65e199e16e97330175e314cacf791fa00f53069` and Venus
-    `3ddacb8d75b3d26a7beba60aef168e5ed5de19bc` passed the 30 ms continuous-
+    `bdd8b3628452b1dba8c4d4b2ad9bc2e802659d29` passed the 30 ms continuous-
     output retained-scrollback acceptance without queue failure, starvation,
     shake, or snap-to-live.
+
 ## EON-C2 — One component compatibility graph
 
 - **Status:** Proven
@@ -76,13 +75,14 @@ proofs. No live supervisor was restarted.
 - **Owner:** Eon's component manifest and validator.
 - **Boundary:** The manifest does not own process lifecycle, platform launch
   mechanics, package-manager policy, or child state.
-- **Proof:** `5007935b4af1dabe296837b6bb2cebb7846eb4a5`
+- **Proof:** `71e8f5a8cac938ed7f065890c83d9376551f6014`
   - **Environment:** x86_64 Linux Nix alpha
   - **Evidence:** Manifest parser/compatibility checks, exact graph consumption
     by installed Eon and EonTerm, and prior Eonova proof; accepted manifest base
     `234ad77ced4924d95400b5c39822b3fb9b928c95` and ORBS v7 graph refresh
     `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`; the current graph selects the
     exact accepted Orbit/Venus pair above with unchanged ORBS v10 and ORBF v1
+
 ## EON-C3 — Distribution-neutral runtime inputs
 
 - **Status:** Proven
@@ -96,7 +96,7 @@ proofs. No live supervisor was restarted.
 - **Consumes:** EON-C2's component graph.
 - **Boundary:** Runtime code does not construct, persist, inspect, or derive
   identity from Nix store paths.
-- **Proof:** `5007935b4af1dabe296837b6bb2cebb7846eb4a5`
+- **Proof:** `71e8f5a8cac938ed7f065890c83d9376551f6014`
   - **Environment:** Nix-built x86_64 Linux alpha
   - **Evidence:** Exact protocol-source substitution, package tests, and
     evaluator-absence checks; accepted launch-input base
@@ -120,7 +120,7 @@ proofs. No live supervisor was restarted.
 - **Consumes:** Accepted child contracts through EON-C2's exact graph.
 - **Boundary:** No copied child schema, hidden fork, compatibility adapter, or
   second terminal/rendering owner.
-- **Proof:** `5007935b4af1dabe296837b6bb2cebb7846eb4a5`
+- **Proof:** `71e8f5a8cac938ed7f065890c83d9376551f6014`
   - **Environment:** x86_64 Linux composed alpha
   - **Evidence:** Component-boundary checks, management consumer proof, package
     closure inspection, and accepted installed native-Wayland runtime dogfood;

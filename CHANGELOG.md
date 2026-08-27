@@ -7,7 +7,8 @@ installation, and proven contract changes.
 
 - Keep retained scrollback responsive under continuous terminal output by
   composing Orbit's corrected bounded scroll-outcome queue admission with
-  Venus's stable fractional preview presentation.
+  Venus's compatible viewport retention, transient routing retirement, and
+  exact in-flight outcome admission.
 - Open the ranked directory picker before the first durable Session in a fresh
   full-Eon workspace and in every Ctrl+T tab. Accepting starts exactly one first
   pane in the chosen directory. Cancelling fresh `t1` falls back to Eon's
