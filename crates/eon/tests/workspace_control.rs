@@ -1,6 +1,6 @@
 use eon_workspace_protocol::v4::{
-    Action, HEADER_BYTES, Pane, Request, Response, Snapshot, Tab, VERSION, declared_message_len,
-    decode_request, decode_response, encode_request, encode_response,
+    Action, Direction, HEADER_BYTES, Pane, Request, Response, Snapshot, Tab, VERSION,
+    declared_message_len, decode_request, decode_response, encode_request, encode_response,
 };
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, Failure,
@@ -655,6 +655,10 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         workspace_action(&control, "picker-duplicate", Action::PickTabDirectory),
         Response::Failure(failure) if failure.code == "picker-active"
     ));
+    assert!(matches!(
+        workspace_action(&control, "picker-singleton", Action::Focus(Direction::Left)),
+        Response::Failure(failure) if failure.code == "unavailable"
+    ));
 
     fs::write(&release, "").unwrap();
     let retargeted = wait_for_picker_close(&control, &selected);
@@ -696,11 +700,28 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
 
     fs::remove_file(&release).unwrap();
     fs::write(&selection, selected.as_os_str().as_bytes()).unwrap();
+    let traversed_picker = match workspace_action(&control, "new-tab-accept", Action::CreateTab) {
+        Response::Snapshot(snapshot)
+            if snapshot.active_tab == "t3" && snapshot.tabs[1].panes.is_empty() =>
+        {
+            snapshot.directory_picker.unwrap()
+        }
+        _ => panic!("new tab did not open its picker"),
+    };
     assert!(matches!(
-        workspace_action(&control, "new-tab-accept", Action::CreateTab),
+        workspace_action(&control, "picker-traverse-left", Action::Focus(Direction::Left)),
+        Response::Snapshot(snapshot)
+            if snapshot.active_tab == "t1"
+                && snapshot.directory_picker.as_ref() == Some(&traversed_picker)
+                && snapshot.tabs[0].selected_pane.as_deref() == Some("p2")
+    ));
+    assert!(matches!(
+        workspace_action(&control, "picker-traverse-right", Action::Focus(Direction::Right)),
         Response::Snapshot(snapshot)
             if snapshot.active_tab == "t3"
+                && snapshot.directory_picker.as_ref() == Some(&traversed_picker)
                 && snapshot.tabs[1].panes.is_empty()
+                && snapshot.tabs[1].selected_pane.is_none()
     ));
     fs::write(&release, "").unwrap();
     let accepted = wait_for_picker_close(&control, &selected);

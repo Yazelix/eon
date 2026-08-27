@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keep Alt+H/L and CLI left/right tab traversal available while a directory
+  picker is open. The picker stays bound to its original tab across ordinary
+  and wrapped traversal, while unrelated picker-blocked actions remain blocked.
 - Wrap left/right tab traversal and up/down pane traversal at ordered workspace
   edges when at least two targets exist; singleton axes remain unavailable
   without changing topology or Sessions.

@@ -14,12 +14,13 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The accepted composition selects Orbit
+The current candidate composition selects Orbit
 `a65e199e16e97330175e314cacf791fa00f53069` with canonical ORBS v10 and Venus
-`bdd8b3628452b1dba8c4d4b2ad9bc2e802659d29`. The active profile resolves to
-`/nix/store/4sxx1qwbphqrwnhlgz7f2f0ljb0hn6s5-eon-0.1.0` and EonTerm to
-`/nix/store/n5bmygd82arnfhzlcgz6llydap8rr7lw-eonterm-0.1.0`, generation
-`g1-d6c7ecee86b0ef8b6617526e8e708595`. No live supervisor was restarted.
+`a6e6846fe0c6039759b526b936704a3146fcad9c`. The active profile resolves to
+`/nix/store/w2f3wd5vz40p0m95miph0x7a64mzlxxa-eon-0.1.0` and EonTerm to
+`/nix/store/6rhzmxdp0s5xng4061sqq360h9w32850-eonterm-0.1.0`, generation
+`g1-e4cae4b6bcd7489a7f604f229736f8aa`. Existing live supervisors were not
+restarted.
 
 ## EON-C1 — Exact compatible component launch
 
@@ -192,7 +193,10 @@ The accepted composition selects Orbit
     external paths remain absolute.
   - Left/right tab traversal and up/down pane traversal wrap at ordered edges
     when the axis has at least two targets; singleton axes remain unavailable.
-    Users can create new panes or tabs through the accepted semantic actions.
+    Left/right remains available while a directory picker is open: the picker
+    stays bound to its original live tab while another active tab presents its
+    selected pane. Users can create new panes or tabs through the accepted
+    semantic actions only when no picker is open.
   - Ended Sessions leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
     removed index, otherwise the preceding sibling; an empty workspace closes
@@ -210,9 +214,9 @@ The accepted composition selects Orbit
   Orbit owns Sessions and Venus owns native materialization.
 - **Consumes:** EONW v4, Orbit Session identities/endpoints, and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, simultaneous expanded panes,
-  reordering, picker-based ordinary traversal, durable layout restoration,
-  per-pane Session stop/restart, terminal content/history, provider state,
-  plugin surface, remote access, or reconstructed Session state.
+  reordering, picker relocation, durable layout restoration, per-pane Session
+  stop/restart, terminal content/history, provider state, plugin surface,
+  remote access, or reconstructed Session state.
 - **Proof:** `5f23a7bac127785d913a718e5fb1afc53d9d91ae`
   - **Environment:** x86_64 Linux Nix candidate and installed profile
   - **Evidence:** Deterministic and process-level wrapped traversal, workspace
@@ -622,11 +626,17 @@ The accepted composition selects Orbit
     previous terminal is not composited underneath. Attach and recovery never
     create an automatic picker; recovering only a stale initial picker stops it
     and applies the validated launch-directory fallback.
+  - Existing left/right focus actions continue to traverse and wrap live tabs
+    while the picker stays bound to its original tab. Another active tab shows
+    its selected pane; returning shows the same picker for normal acceptance or
+    cancellation. Up/down, focus by identity, creation, a second picker, and
+    unrelated topology changes remain unavailable until the picker exits.
 - **Important failures:** Cancel, empty or invalid selection, picker launch or
   exit, target disappearance, duplicate invocation, origin-tab loss, or
   presentation detachment follows the first- or later-tab fallback without a
   partial tab, consumed pane or durable Session identity, changed existing
   process, or transient process, endpoint, record, pane, or modal residue.
+  Left/right with only one live tab remains unavailable without mutation.
 - **Owner:** Eon owns picker policy, tab binding, command selection, lifecycle,
   validation, mutation, and cleanup. Venus owns full-Eon shortcut precedence,
   modal geometry, focus, input, notices, rendering, and accessibility. Orbit
@@ -634,7 +644,7 @@ The accepted composition selects Orbit
   terminal selection.
 - **Consumes:** EON-C17; accepted EONW v4 pending-tab boundary, Orbit's accepted
   Session startup, attachment, exit, and stop contracts, and exact Venus v4
-  consumer `2622c124be5ba8a62037c6de952ebf3928347387`.
+  consumer `a6e6846fe0c6039759b526b936704a3146fcad9c`.
 - **Boundary:** No Yazi dependency, normal-pane identity, arbitrary-command or
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
@@ -643,8 +653,13 @@ The accepted composition selects Orbit
   `963bdaf4d9816f27a26c7bdb6ee122855566a222` admits one inactive live picker
   tab, including the sole pane-free pending tab, with focused red/green codec,
   complete locked Rust, exact pinned Venus consumer, and full Nix checks on
-  x86_64 Linux. Runtime source `53004af9a18be68a58713ef9461a2cd336e246e5`
-  consumes original EONW v4 seed `aaafc9127c054e683abfceb3c8fcaae201a7a763`.
+  x86_64 Linux. The current mechanically verified candidate preserves picker
+  identity and the pane-free pending tab across owner- and process-level wrapped
+  traversal; complete locked Rust and Nix checks produced profile artifact
+  `/nix/store/w2f3wd5vz40p0m95miph0x7a64mzlxxa-eon-0.1.0`, generation
+  `g1-e4cae4b6bcd7489a7f604f229736f8aa`. Runtime source
+  `53004af9a18be68a58713ef9461a2cd336e246e5` consumes original EONW v4 seed
+  `aaafc9127c054e683abfceb3c8fcaae201a7a763`.
   Existing Alt+Z runtime proof remains source
   `9f6599d103162061ee666126c2eddce03383afb6`; installed profile artifact
   `/nix/store/nqcjvnxyjrnjm1hwl4lcwqzi0jmyfvli-eon-0.1.0`, generation
@@ -663,10 +678,9 @@ The accepted composition selects Orbit
     Wayland presentation. An isolated installed run committed `t1` and `t2` to
     their selected directories, started only `session-1` and `session-2`, and
     stopped both through the durable-only generation result.
-- **Open proof:** Exact Venus presentation consumption, Eon traversal production,
-  and installed native acceptance remain pending in frontier order. The prior
-  picker-first and existing-tab Alt+Z behavior remains proved at the revisions
-  above.
+- **Open proof:** Exact-current installed native Alt+H/L acceptance and immutable
+  final source remain pending. The prior picker-first and existing-tab Alt+Z
+  behavior remains proved at the revisions above.
 
 ## Rules
 

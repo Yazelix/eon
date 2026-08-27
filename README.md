@@ -223,7 +223,9 @@ a valid path retargets that captured tab for future Sessions; cancel or failure
 changes nothing, and an actionable error stays visible briefly before cleanup.
 The picker is one transient Orbit Session rather than a normal pane, and it
 closes with its tab, Eon Desktop surface, process, or supervisor. Existing
-Sessions and working directories remain untouched.
+Sessions and working directories remain untouched. Alt+H/L continues to
+traverse and wrap live tabs while the picker stays bound to its original tab;
+returning shows the same picker for normal acceptance or cancellation.
 
 Workspace topology is live-only. After same-boot supervisor loss, full Eon
 projects surviving canonical `session-N` runs into one synthetic `t1` as `pN`
@@ -433,15 +435,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 483 |
-| README | 447 |
+| README | 449 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 855 |
+| Architecture and contracts | 869 |
 | Distribution and references | 291 |
-| Changelog | 196 |
-| Rust source and tests | 11,650 |
+| Changelog | 199 |
+| Rust source and tests | 11,738 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
 | Nix composition | 734 |
 | Product defaults | 0 |
-| **Total** | **15,243** |
+| **Total** | **15,350** |

@@ -276,6 +276,7 @@ impl Workspace {
         if let Some(picker) = &self.directory_picker {
             match &action {
                 Action::Inspect => {}
+                Action::Focus(Direction::Left | Direction::Right) => {}
                 Action::SetTabDirectory { tab, .. } if tab == &picker.tab => {}
                 _ => {
                     return Err(action_error(
@@ -1210,60 +1211,46 @@ mod tests {
     }
 
     #[test]
-    fn directory_picker_is_one_tab_bound_non_pane_session() {
+    fn directory_picker_stays_bound_across_tab_traversal() {
         let mut workspace = initial_workspace();
-        let mut launches = Vec::new();
 
         workspace
-            .dispatch(
-                "picker-1",
-                Action::PickTabDirectory,
-                |session, directory, picker_tab| {
-                    launches.push((
-                        session.clone(),
-                        directory.to_path_buf(),
-                        picker_tab.map(str::to_owned),
-                    ));
-                    Ok(())
-                },
-            )
+            .dispatch("picker-1", Action::PickTabDirectory, |_, _, _| Ok(()))
             .unwrap();
+        assert_eq!(workspace.snapshot().directory_picker.unwrap().tab, "t1");
 
-        assert_eq!(
-            launches,
-            [(
-                Session {
-                    id: DIRECTORY_PICKER_SESSION.into(),
-                    endpoint: "/runtime/pick.sock".into(),
-                },
-                "/".into(),
-                Some("t1".into()),
-            )]
-        );
-        let snapshot = workspace.snapshot();
-        assert_eq!(snapshot.tabs[0].panes.len(), 1);
-        assert_eq!(snapshot.directory_picker.unwrap().tab, "t1");
-
-        let before = workspace.clone();
-        assert_eq!(
-            workspace
-                .dispatch("picker-2", Action::PickTabDirectory, |_, _, _| Ok(()))
-                .unwrap_err()
-                .code,
-            "picker-active"
-        );
-        assert_eq!(workspace, before);
-        assert_eq!(
-            workspace
-                .dispatch(
-                    "focus-while-picker",
-                    Action::Focus(Direction::Right),
-                    |_, _, _| Ok(()),
-                )
-                .unwrap_err()
-                .code,
-            "picker-active"
-        );
+        for (request, direction) in [
+            ("singleton-left", Direction::Left),
+            ("singleton-right", Direction::Right),
+        ] {
+            let before = workspace.clone();
+            assert_eq!(
+                workspace
+                    .dispatch(request, Action::Focus(direction), |_, _, _| unreachable!())
+                    .unwrap_err()
+                    .code,
+                "unavailable"
+            );
+            assert_eq!(workspace, before);
+        }
+        for (request, action) in [
+            ("picker-up", Action::Focus(Direction::Up)),
+            ("picker-down", Action::Focus(Direction::Down)),
+            ("picker-id", Action::FocusId("t1".into())),
+            ("picker-tab", Action::CreateTab),
+            ("picker-pane", Action::CreatePane),
+            ("picker-again", Action::PickTabDirectory),
+        ] {
+            let before = workspace.clone();
+            assert_eq!(
+                workspace
+                    .dispatch(request, action, |_, _, _| unreachable!())
+                    .unwrap_err()
+                    .code,
+                "picker-active"
+            );
+            assert_eq!(workspace, before);
+        }
 
         assert!(
             !workspace
@@ -1273,13 +1260,93 @@ mod tests {
         assert!(workspace.snapshot().directory_picker.is_none());
 
         workspace
-            .dispatch("picker-3", Action::PickTabDirectory, |_, _, _| Ok(()))
+            .dispatch("pending-tab", Action::CreateTab, |_, _, _| Ok(()))
             .unwrap();
+        let pending_picker = workspace.snapshot().directory_picker.unwrap();
+        assert_eq!(pending_picker.tab, "t2");
+        assert!(workspace.snapshot().tabs[1].panes.is_empty());
+        for (request, direction, active) in [
+            ("pending-left", Direction::Left, "t1"),
+            ("pending-wrap-left", Direction::Left, "t2"),
+            ("pending-wrap-right", Direction::Right, "t1"),
+            ("pending-right", Direction::Right, "t2"),
+        ] {
+            workspace
+                .dispatch(request, Action::Focus(direction), |_, _, _| unreachable!())
+                .unwrap();
+            let snapshot = workspace.snapshot();
+            assert_eq!(snapshot.active_tab, active);
+            assert_eq!(snapshot.directory_picker.as_ref(), Some(&pending_picker));
+        }
+        let pending = workspace.snapshot();
+        assert!(pending.tabs[1].panes.is_empty());
+        assert!(pending.tabs[1].selected_pane.is_none());
+        let before = workspace.clone();
+        assert_eq!(
+            workspace
+                .dispatch(
+                    "retarget-other-tab",
+                    Action::SetTabDirectory {
+                        tab: "t1".into(),
+                        directory: b"/".to_vec(),
+                    },
+                    |_, _, _| unreachable!(),
+                )
+                .unwrap_err()
+                .code,
+            "picker-active"
+        );
+        assert_eq!(workspace, before);
+        workspace
+            .dispatch(
+                "accept-pending",
+                Action::SetTabDirectory {
+                    tab: "t2".into(),
+                    directory: b"/".to_vec(),
+                },
+                |_, _, _| Ok(()),
+            )
+            .unwrap();
+        workspace
+            .session_exited(DIRECTORY_PICKER_SESSION, |_, _, _| unreachable!())
+            .unwrap();
+        assert_eq!(
+            workspace.snapshot().tabs[1].selected_pane.as_deref(),
+            Some("p2")
+        );
+
+        workspace
+            .dispatch("durable-picker", Action::PickTabDirectory, |_, _, _| Ok(()))
+            .unwrap();
+        let durable_picker = workspace.snapshot().directory_picker.unwrap();
+        workspace
+            .dispatch(
+                "durable-left",
+                Action::Focus(Direction::Left),
+                |_, _, _| unreachable!(),
+            )
+            .unwrap();
+        let away = workspace.snapshot();
+        assert_eq!(away.active_tab, "t1");
+        assert_eq!(away.tabs[0].selected_pane.as_deref(), Some("p1"));
+        assert_eq!(away.directory_picker.as_ref(), Some(&durable_picker));
+        workspace
+            .dispatch(
+                "durable-return",
+                Action::Focus(Direction::Right),
+                |_, _, _| unreachable!(),
+            )
+            .unwrap();
+        assert_eq!(
+            workspace.snapshot().directory_picker.as_ref(),
+            Some(&durable_picker)
+        );
         assert!(
             workspace
-                .session_exited("session-1", |_, _, _| unreachable!())
+                .session_exited("session-2", |_, _, _| unreachable!())
                 .unwrap()
         );
+        assert!(workspace.snapshot().directory_picker.is_none());
     }
 
     #[test]
