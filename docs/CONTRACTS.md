@@ -14,12 +14,14 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The accepted composition selects Orbit
+The source candidate selects Orbit
 `a65e199e16e97330175e314cacf791fa00f53069` with canonical ORBS v10 and Venus
-`3ddacb8d75b3d26a7beba60aef168e5ed5de19bc`. The active profile resolves to
-`/nix/store/903n9xsvkpz4lfmywm9qf2rhzxmirgdv-eon-0.1.0` and EonTerm to
+`bdd8b3628452b1dba8c4d4b2ad9bc2e802659d29`. The active profile still
+resolves to `/nix/store/903n9xsvkpz4lfmywm9qf2rhzxmirgdv-eon-0.1.0` and EonTerm to
 `/nix/store/mnbc7nzvq5zb5y65ky9aayvwkcvp3i5j-eonterm-0.1.0`, generation
-`g1-fe182637e5909cf8ad521c629e14d132`. No live supervisor was restarted.
+`g1-fe182637e5909cf8ad521c629e14d132`. This candidate remains unaccepted until
+rebuilt, installed, and dogfooded; EON-C1 through EON-C4 retain their prior
+proofs. No live supervisor was restarted.
 
 ## EON-C1 — Exact compatible component launch
 
