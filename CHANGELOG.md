@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Preserve touchpad fling momentum when Venus transiently times out acquiring a
+  presentation texture during live output; explicit surface occlusion still
+  cancels the gesture.
 - Add stable-target `eon tab close TAB` and Ctrl+Shift+W closing for non-final
   tabs. Pending tabs stop their picker before removal; durable tabs stop and
   prune each confirmed Orbit Session and retain every still-live mapping after

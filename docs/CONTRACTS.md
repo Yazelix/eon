@@ -16,8 +16,8 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current candidate composition selects Orbit
 `a65e199e16e97330175e314cacf791fa00f53069` with canonical ORBS v10 and Venus
-`d2d798099934dcf8037bfad6ab856e40c9b989fe`. The active Eon profile resolves to
-`/nix/store/x408dv5djxnia3sh88jwalhpqxfbmh2r-eon-0.1.0`. The active EonTerm
+`7f325a31d0052d84a1a09ff065c0e9103563c0e8`. The active Eon profile resolves to
+`/nix/store/l7k7ibb0qpc1ils8nx38hq0xn99i5zs5-eon-0.1.0`. The active EonTerm
 profile remains `/nix/store/n5bmygd82arnfhzlcgz6llydap8rr7lw-eonterm-0.1.0`.
 Existing live supervisors were not restarted.
 
@@ -57,10 +57,10 @@ Existing live supervisors were not restarted.
     `33ec3062f72a732290dcd6c6f40a2d5f535d6a7cbfcaf7455a0a5c4f03a52e0d`,
     launcher action `32c768e0d9a62984640a516c34d0cb0db16e8adb`, and accepted
     installed native-Wayland launch and scrollback dogfood. Exact Orbit
-    `a65e199e16e97330175e314cacf791fa00f53069` and Venus
-    `bdd8b3628452b1dba8c4d4b2ad9bc2e802659d29` passed the 30 ms continuous-
-    output retained-scrollback acceptance without queue failure, starvation,
-    shake, or snap-to-live.
+    `a65e199e16e97330175e314cacf791fa00f53069` and Venus proof
+    `d3e63ae6e9fa0b72df426dbfc9bd29a96148577a` passed 30 ms continuous-output
+    retained-scrollback and hard-fling acceptance without queue failure,
+    starvation, snap-to-live, or timeout-truncated momentum.
 
 ## EON-C2 — One component compatibility graph
 
