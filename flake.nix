@@ -4,7 +4,7 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
     orbit = {
-      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=a65e199e16e97330175e314cacf791fa00f53069";
+      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=64b225eb249490c9075894814942652a8b9d6192";
       flake = false;
     };
     venus = {

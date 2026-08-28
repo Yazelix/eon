@@ -15,7 +15,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
 The current candidate composition selects Orbit
-`a65e199e16e97330175e314cacf791fa00f53069` with canonical ORBS v10 and Venus
+`64b225eb249490c9075894814942652a8b9d6192` with canonical ORBS v10 and Venus
 `7f325a31d0052d84a1a09ff065c0e9103563c0e8`. The active Eon profile resolves to
 `/nix/store/l7k7ibb0qpc1ils8nx38hq0xn99i5zs5-eon-0.1.0`. The active EonTerm
 profile remains `/nix/store/n5bmygd82arnfhzlcgz6llydap8rr7lw-eonterm-0.1.0`.
@@ -23,7 +23,7 @@ Existing live supervisors were not restarted.
 
 ## EON-C1 — Exact compatible component launch
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** A user launching Eon or EonTerm from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -64,7 +64,7 @@ Existing live supervisors were not restarted.
 
 ## EON-C2 — One component compatibility graph
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** Every Eon distribution and runtime launch path.
 - **Trigger:** A product generation resolves or validates its component set.
 - **Result:** One versioned manifest defines component identity, compatibility,
