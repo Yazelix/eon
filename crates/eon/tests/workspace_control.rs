@@ -1,5 +1,5 @@
 use eon_workspace_protocol::v4::{
-    Action, Direction, HEADER_BYTES, Pane, Request, Response, Snapshot, Tab, VERSION,
+    Action, Direction, HEADER_BYTES, MAX_PANES, Pane, Request, Response, Snapshot, Tab, VERSION,
     declared_message_len, decode_request, decode_response, encode_request, encode_response,
 };
 use orbit_protocol::management::{
@@ -484,6 +484,15 @@ fn wait_for_connection(path: &Path) {
     }
 }
 
+fn wait_for_process_removal(process_id: u32, failure: &str) {
+    let process = Path::new("/proc").join(process_id.to_string());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while process.exists() {
+        assert!(Instant::now() < deadline, "{failure}");
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn generation_runtime(root: &Path) -> PathBuf {
     let parent = root.join("generations");
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -924,14 +933,7 @@ fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
         .join(picker.process_id.to_string())
         .exists();
     fs::write(&stop, "").unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    for identity in [&picker] {
-        let process = Path::new("/proc").join(identity.process_id.to_string());
-        while process.exists() {
-            assert!(Instant::now() < deadline, "test Session did not exit");
-            thread::sleep(Duration::from_millis(10));
-        }
-    }
+    wait_for_process_removal(picker.process_id, "test Session did not exit");
     fs::remove_dir_all(root).unwrap();
     assert!(!picker_survived_cleanup);
 }
@@ -1228,12 +1230,13 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     wait_for(&generation.join("eon.sock"));
     wait_for(&venus_log);
     wait_for(&child_pid);
-    let initial_venus = fs::read_to_string(&venus_log)
+    let initial_venus: u32 = fs::read_to_string(&venus_log)
         .unwrap()
         .split('|')
         .next()
         .unwrap()
-        .to_string();
+        .parse()
+        .unwrap();
     let listed = eon_command(&binary)
         .args(["generations", "--json"])
         .env_remove("EON_RUNTIME_DIR")
@@ -1260,18 +1263,12 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     assert_eq!(fs::read_to_string(&venus_log).unwrap().lines().count(), 1);
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
 
-    assert!(
-        Command::new("kill")
-            .arg(&initial_venus)
-            .status()
-            .unwrap()
-            .success()
+    // SAFETY: the PID came from this test's live Venus child.
+    assert_eq!(
+        unsafe { libc::kill(initial_venus as i32, libc::SIGTERM) },
+        0
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Path::new("/proc").join(&initial_venus).exists() {
-        assert!(Instant::now() < deadline, "terminal surface did not exit");
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_for_process_removal(initial_venus, "terminal surface did not exit");
     wait_for(&supervisor_log);
     assert!(
         fs::read_to_string(&supervisor_log)
@@ -1436,16 +1433,12 @@ fn eonterm_replaces_exact_residue_after_its_supervisor_and_session_die() {
     wait_for_connection(&control);
     wait_for(&orbit_log);
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
-    let orbit_pid = live_identity(&orbit_socket).process_id as i32;
+    let orbit_pid = live_identity(&orbit_socket).process_id;
     first.kill().unwrap();
     first.wait().unwrap();
     // SAFETY: the test owns this exact process identity.
-    assert_eq!(unsafe { libc::kill(orbit_pid, libc::SIGKILL) }, 0);
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Path::new("/proc").join(orbit_pid.to_string()).exists() {
-        assert!(Instant::now() < deadline, "dead Session was not reaped");
-        thread::sleep(Duration::from_millis(10));
-    }
+    assert_eq!(unsafe { libc::kill(orbit_pid as i32, libc::SIGKILL) }, 0);
+    wait_for_process_removal(orbit_pid, "dead Session was not reaped");
     assert!(artifact_path(&orbit_socket, ".record").exists());
     fs::remove_file(&orbit_log).unwrap();
 
@@ -2011,6 +2004,135 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
 }
 
 #[test]
+fn replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacements() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let stop = root.join("stop");
+    let orbit_log = root.join("orbit.log");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let replacement = || {
+        let mut command = eon_command(&binary);
+        command
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop)
+            .env("EON_TEST_ORBIT_LOG", &orbit_log)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        command
+    };
+    let mut first = TestProcess {
+        child: replacement().spawn().unwrap(),
+        stop: stop.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    let presentation = generation.join("orbit.sock");
+    let management = artifact_path(&presentation, ".management");
+    let record = artifact_path(&presentation, ".record");
+    wait_for_connection(&control);
+    wait_for(&orbit_log);
+    let identity = live_identity(&presentation);
+
+    first.child.kill().unwrap();
+    assert!(!first.child.wait().unwrap().success());
+    // SAFETY: the test owns this exact managed-Orbit process identity.
+    assert_eq!(
+        unsafe { libc::kill(identity.process_id as i32, libc::SIGKILL) },
+        0
+    );
+    wait_for_process_removal(identity.process_id, "dead Session was not reaped");
+    let tombstone = |identity: &LiveIdentity| {
+        ManagementRecord::Tombstone(Tombstone {
+            identity: identity.clone(),
+            reason: TerminationReason::NaturalExit,
+            outcome: ProcessOutcome::Signal(libc::SIGKILL),
+        })
+    };
+    write_management_record(&record, &tombstone(&identity));
+    let retained_record = object_identity(&record);
+    fs::remove_file(&control).unwrap();
+
+    let refused = replacement().spawn().unwrap();
+    fs::remove_file(&presentation).unwrap();
+    let mut presentation_listener = UnixListener::bind(&presentation).unwrap();
+    if object_identity(&presentation) == identity.presentation.object {
+        fs::remove_file(&presentation).unwrap();
+        let collision_guard = presentation_listener;
+        presentation_listener = UnixListener::bind(&presentation).unwrap();
+        drop(collision_guard);
+    }
+    fs::set_permissions(&presentation, fs::Permissions::from_mode(0o600)).unwrap();
+    let replacement_object = object_identity(&presentation);
+    assert_ne!(replacement_object, identity.presentation.object);
+    fs::remove_file(&management).unwrap();
+    let refused = refused.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert_eq!(refused.status.code(), Some(1), "{stderr}");
+    assert!(stderr.contains("replaced during cleanup"), "{stderr}");
+    assert_eq!(object_identity(&presentation), replacement_object);
+    assert_eq!(object_identity(&record), retained_record);
+    assert!(!control.exists());
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
+
+    let management_listener = UnixListener::bind(&management).unwrap();
+    fs::set_permissions(&management, fs::Permissions::from_mode(0o600)).unwrap();
+    let mut reconciled = identity;
+    reconciled.presentation = endpoint_identity(&presentation);
+    reconciled.management = endpoint_identity(&management);
+    write_management_record(&record, &tombstone(&reconciled));
+    let tombstone_record = object_identity(&record);
+
+    let waiting = replacement().spawn().unwrap();
+    fs::remove_file(&presentation).unwrap();
+    drop(presentation_listener);
+    let waiting = waiting.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&waiting.stderr);
+    assert_eq!(waiting.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("ended Sessions cleanup exceeded five seconds"),
+        "{stderr}"
+    );
+    assert_eq!(object_identity(&record), tombstone_record);
+    assert!(!control.exists());
+    assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 1);
+    fs::remove_file(&management).unwrap();
+    drop(management_listener);
+
+    let mut recovered = TestProcess {
+        child: replacement().spawn().unwrap(),
+        stop: stop.clone(),
+    };
+    wait_for_connection(&control);
+    assert_ne!(live_identity(&presentation).run_id, reconciled.run_id);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while fs::read_to_string(&orbit_log).unwrap().lines().count() != 2 {
+        assert!(Instant::now() < deadline, "fresh Session count changed");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["stop", generation_id, "--json"],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    wait_for_successful_exit(&mut recovered.child);
+    assert!(!generation.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
@@ -2141,24 +2263,20 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         live_identity(&generation.join("session-2.sock")),
     ];
     let first_venus_log = fs::read_to_string(&venus_log).unwrap();
-    let first_venus = first_venus_log.split('|').next().unwrap().to_string();
+    let first_venus: u32 = first_venus_log.split('|').next().unwrap().parse().unwrap();
     assert!(first_venus_log.contains("|--no-decorations "));
 
     first.kill().unwrap();
     assert!(!first.wait().unwrap().success());
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while Path::new("/proc").join(&first_venus).exists() {
-        assert!(Instant::now() < deadline, "owner-loss Venus did not exit");
-        thread::sleep(Duration::from_millis(10));
-    }
+    wait_for_process_removal(first_venus, "owner-loss Venus did not exit");
     for identity in &initial {
         // SAFETY: signal 0 performs existence/permission checking without sending a signal.
         assert_eq!(unsafe { libc::kill(identity.process_id as i32, 0) }, 0);
     }
     let first_record = artifact_path(&generation.join("orbit.sock"), ".record");
-    let replacement_attempt = || {
-        eon_command(&binary)
-            .arg("run")
+    let assert_recovery_failure = |program: &Path, arguments: &[&str], expected: &str| {
+        let refused = eon_command(program)
+            .args(arguments)
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
             .env("EON_ORBIT", &orbit)
@@ -2167,20 +2285,44 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
             .env("EON_TEST_ORBIT_LOG", &orbit_log)
             .env("EON_TEST_VENUS_LOG", &venus_log)
             .output()
-            .unwrap()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&refused.stderr);
+        assert_eq!(refused.status.code(), Some(1), "{stderr}");
+        assert!(stderr.contains(expected), "{stderr}");
+        assert!(UnixStream::connect(&control).is_err());
     };
+    let decoys = (0..MAX_PANES)
+        .map(|number| generation.join(format!("limit-{number}.record")))
+        .collect::<Vec<_>>();
+    for decoy in &decoys {
+        fs::write(decoy, []).unwrap();
+    }
+    assert_recovery_failure(&binary, &["run"], "recovery limit");
+    for decoy in decoys {
+        fs::remove_file(decoy).unwrap();
+    }
+
+    let wrong_record = generation.join("wrong.record");
+    fs::rename(&first_record, &wrong_record).unwrap();
+    assert_recovery_failure(&binary, &["run"], "wrong presentation identity");
+    fs::rename(&wrong_record, &first_record).unwrap();
+
+    let eonterm = root.join("eonterm");
+    symlink(&binary, &eonterm).unwrap();
+    assert_recovery_failure(
+        &eonterm,
+        &["--", "/bin/false"],
+        "EonTerm cannot recover more than one live Session",
+    );
+
     fs::set_permissions(&first_record, fs::Permissions::from_mode(0o640)).unwrap();
-    let refused = replacement_attempt();
-    assert_eq!(refused.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("mode-0600"));
+    assert_recovery_failure(&binary, &["run"], "mode-0600");
     fs::set_permissions(&first_record, fs::Permissions::from_mode(0o600)).unwrap();
 
     let mut wrong_process = initial[0].clone();
     wrong_process.process_start += 1;
     write_management_record(&first_record, &ManagementRecord::Live(wrong_process));
-    let refused = replacement_attempt();
-    assert_eq!(refused.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&refused.stderr).contains("process start"));
+    assert_recovery_failure(&binary, &["run"], "process start");
     write_management_record(&first_record, &ManagementRecord::Live(initial[0].clone()));
 
     assert_eq!(fs::read_to_string(&orbit_log).unwrap().lines().count(), 2);
