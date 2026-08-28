@@ -448,12 +448,12 @@ Beads data, lock files, and generated artifacts.
 | README | 459 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 993 |
+| Architecture and contracts | 999 |
 | Distribution and references | 609 |
-| Changelog | 210 |
+| Changelog | 215 |
 | Rust source and tests | 12,485 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
 | Nix composition | 734 |
 | Product defaults | 0 |
-| **Total** | **16,560** |
+| **Total** | **16,571** |

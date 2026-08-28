@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Preserve retained scrollback motion when DEC 2026 synchronized output overlaps
+  a semantic preview or signed scroll. Eon composes Orbit
+  `64b225eb249490c9075894814942652a8b9d6192` with unchanged ORBS v10 and Venus
+  `7f325a31d0052d84a1a09ff065c0e9103563c0e8`; Orbit holds one unresolved
+  request until normal or watchdog release instead of failing it.
 - Preserve touchpad fling momentum when Venus transiently times out acquiring a
   presentation texture during live output; explicit surface occlusion still
   cancels the gesture.

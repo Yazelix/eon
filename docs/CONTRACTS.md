@@ -14,16 +14,16 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The current candidate composition selects Orbit
+The current accepted composition selects Orbit
 `64b225eb249490c9075894814942652a8b9d6192` with canonical ORBS v10 and Venus
 `7f325a31d0052d84a1a09ff065c0e9103563c0e8`. The active Eon profile resolves to
-`/nix/store/l7k7ibb0qpc1ils8nx38hq0xn99i5zs5-eon-0.1.0`. The active EonTerm
+`/nix/store/f46g210pffvzlyix6nv0rh3dsl5arv5m-eon-0.1.0`. The active EonTerm
 profile remains `/nix/store/n5bmygd82arnfhzlcgz6llydap8rr7lw-eonterm-0.1.0`.
 Existing live supervisors were not restarted.
 
 ## EON-C1 — Exact compatible component launch
 
-- **Status:** Candidate
+- **Status:** Proven
 - **Consumer:** A user launching Eon or EonTerm from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -46,7 +46,7 @@ Existing live supervisors were not restarted.
   Venus native launch contracts.
 - **Boundary:** Eon does not infer compatibility from executables, store paths,
   process names, or moving branches.
-- **Proof:** `71e8f5a8cac938ed7f065890c83d9376551f6014`
+- **Proof:** `e1a5a9e02f7102cef48b25a83f740ea716647fa1`
   - **Environment:** Nix-built x86_64 Linux Wayland alpha
   - **Evidence:** Exact graph validation, Ready-boundary failure/recovery,
     current Venus/fzf reporting, and composed package checks; accepted base
@@ -60,11 +60,17 @@ Existing live supervisors were not restarted.
     `a65e199e16e97330175e314cacf791fa00f53069` and Venus proof
     `d3e63ae6e9fa0b72df426dbfc9bd29a96148577a` passed 30 ms continuous-output
     retained-scrollback and hard-fling acceptance without queue failure,
-    starvation, snap-to-live, or timeout-truncated momentum.
+    starvation, snap-to-live, or timeout-truncated momentum. The current
+    acceptance composes Orbit `64b225eb249490c9075894814942652a8b9d6192`
+    with Venus `7f325a31d0052d84a1a09ff065c0e9103563c0e8`, passes the complete locked
+    Rust and Nix checks, refreshes the profile above, and points the split 16 KiB
+    DEC 2026 real-PTY regression at its installed Orbit binary. The held signed
+    scroll resolves once after normal release, and held preview resolves after
+    watchdog release without restarting any existing supervisor.
 
 ## EON-C2 — One component compatibility graph
 
-- **Status:** Candidate
+- **Status:** Proven
 - **Consumer:** Every Eon distribution and runtime launch path.
 - **Trigger:** A product generation resolves or validates its component set.
 - **Result:** One versioned manifest defines component identity, compatibility,
@@ -75,13 +81,13 @@ Existing live supervisors were not restarted.
 - **Owner:** Eon's component manifest and validator.
 - **Boundary:** The manifest does not own process lifecycle, platform launch
   mechanics, package-manager policy, or child state.
-- **Proof:** `71e8f5a8cac938ed7f065890c83d9376551f6014`
+- **Proof:** `e1a5a9e02f7102cef48b25a83f740ea716647fa1`
   - **Environment:** x86_64 Linux Nix alpha
   - **Evidence:** Manifest parser/compatibility checks, exact graph consumption
     by installed Eon and EonTerm, and prior Eonova proof; accepted manifest base
     `234ad77ced4924d95400b5c39822b3fb9b928c95` and ORBS v7 graph refresh
     `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`; the current graph selects the
-    exact accepted Orbit/Venus pair above with unchanged ORBS v10 and ORBF v1
+    exact accepted Orbit/Venus pair above with unchanged ORBS v10 and ORBF v1.
 
 ## EON-C3 — Distribution-neutral runtime inputs
 
