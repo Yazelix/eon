@@ -808,17 +808,94 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_v2_bounds_and_rejects_invalid_inputs() {
-        let request = Request {
-            id: "client-1".into(),
-            action: Action::SetTabDirectory {
-                tab: "t1".into(),
-                directory: b"/tmp/eon-\xff".to_vec(),
-            },
+    fn request_actions_have_stable_v2_wire_bytes() {
+        let frame_request = |action_payload: &[u8]| {
+            let mut payload = Encoder::default();
+            payload.string("client-1");
+            payload.bytes.extend_from_slice(action_payload);
+            frame(REQUEST, payload.bytes).unwrap()
         };
-        let encoded_request = encode_request(&request).unwrap();
-        assert_eq!(decode_request(&encoded_request).unwrap(), request);
-        let mut v1 = encoded_request.clone();
+        let cases: [(Action, &[u8]); 14] = [
+            (Action::Inspect, &[0]),
+            (Action::CreateTab, &[1]),
+            (Action::CreatePane, &[2]),
+            (Action::FocusId("p1".into()), &[3, 2, 0, b'p', b'1']),
+            (Action::Focus(Direction::Left), &[4]),
+            (Action::Focus(Direction::Right), &[5]),
+            (Action::Focus(Direction::Up), &[6]),
+            (Action::Focus(Direction::Down), &[7]),
+            (Action::InspectRuntime, &[8]),
+            (
+                Action::Stop {
+                    generation: "g1".into(),
+                },
+                &[9, 2, 0, b'g', b'1'],
+            ),
+            (Action::Present { workspace: false }, &[10, 0]),
+            (Action::Present { workspace: true }, &[10, 1]),
+            (Action::InspectPresentation, &[11]),
+            (
+                Action::SetTabDirectory {
+                    tab: "t1".into(),
+                    directory: b"/x\xff".to_vec(),
+                },
+                &[12, 2, 0, b't', b'1', 3, 0, b'/', b'x', 0xff],
+            ),
+        ];
+        for (action, action_payload) in cases {
+            let request = Request {
+                id: "client-1".into(),
+                action,
+            };
+            let encoded = frame_request(action_payload);
+            assert_eq!(encode_request(&request).unwrap(), encoded);
+            assert_eq!(decode_request(&encoded).unwrap(), request);
+        }
+
+        let malformed: [(&[u8], Error); 7] = [
+            (
+                &[13],
+                Error::InvalidTag {
+                    field: "action",
+                    value: 13,
+                },
+            ),
+            (
+                &[10, 2],
+                Error::InvalidValue {
+                    field: "presentation mode",
+                },
+            ),
+            (&[3, 0, 0], Error::InvalidValue { field: "focus id" }),
+            (
+                &[3, (MAX_ID_BYTES + 1) as u8, 0],
+                Error::FieldTooLong {
+                    field: "focus id",
+                    length: MAX_ID_BYTES + 1,
+                },
+            ),
+            (
+                &[12, 0, 0, 1, 0, b'/'],
+                Error::InvalidValue { field: "tab id" },
+            ),
+            (
+                &[12, 2, 0, b't', b'1', 0, 0],
+                Error::InvalidValue { field: "directory" },
+            ),
+            (&[0, 0], Error::TrailingBytes { count: 1 }),
+        ];
+        for (action_payload, error) in malformed {
+            assert_eq!(decode_request(&frame_request(action_payload)), Err(error));
+        }
+    }
+
+    #[test]
+    fn round_trips_v2_bounds_and_rejects_invalid_inputs() {
+        let mut v1 = encode_request(&Request {
+            id: "client-1".into(),
+            action: Action::Inspect,
+        })
+        .unwrap();
         v1[4..6].copy_from_slice(&1_u16.to_le_bytes());
         assert_eq!(
             decode_request(&v1),
