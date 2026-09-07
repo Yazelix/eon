@@ -17,9 +17,9 @@ and remaining limitations. Owning Beads and Git retain execution history;
 The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
 `e13970e90289d0d86f0adcbf350e4b9c1d5e5219`. Source
-`e1896db32e1780ad8c29db40a3f22fa9b6bbf252` reports generation
-`g1-4548313276c17a701bd60a3f5a480af9`. The active Eon profile resolves to
-`/nix/store/7mw0bjk12r5mbw5r5br3sg77nm0f62s5-eon-0.1.0`; the active EonTerm
+`4298fbb8868752e3d6c8eb4fd79fae067ab3e2a1` reports generation
+`g1-dce7143d7806f6edcd9ccb535267e0bb`. The active Eon profile resolves to
+`/nix/store/008jbiqsprwvyn2w7bfnc7rqhd1vk36x-eon-0.1.0`; the active EonTerm
 profile resolves to `/nix/store/pd5c82936b6z24ss03dhdvrb0zmq8v90-eonterm-0.1.0`.
 Existing live supervisors and separate dogfood Sessions were not restarted.
 
@@ -740,6 +740,23 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
+- **Picker review proof (dogfooded):** Runtime source
+  `4298fbb8868752e3d6c8eb4fd79fae067ab3e2a1`, regular Eon artifact
+  `/nix/store/008jbiqsprwvyn2w7bfnc7rqhd1vk36x-eon-0.1.0`, generation
+  `g1-dce7143d7806f6edcd9ccb535267e0bb`, with unchanged Orbit `91999d7`
+  and Venus `e13970e` on x86_64 Linux, isolated Sway 1.12 native Wayland.
+  The locked Rust workspace passes 69 tests; `nix flake check path:.`,
+  `nix profile upgrade eon`, and exact installed-artifact comparison pass.
+  Focused regressions prove cancellation reaps a blocked history child,
+  successive picker instances have distinct endpoints, and managed cleanup
+  and crash recovery consume those exact endpoints. Installed empty-history
+  Browse, Shift+Z, untracked-child commitment, new-pane CWD, browser cancel,
+  ranked acceptance and quick cancel pass. Immediate cancel/reopen remains
+  attached to the current picker; native Ctrl+C reaps actual packaged Zoxide
+  blocked opening a private FIFO and restores the prior workspace. Two native
+  Alt+Z/Ctrl+C retarget cycles in the same tab use distinct endpoints and retain
+  all panes. The earlier reused-endpoint failure and faulty natural-exit test
+  fixture are recorded in the owning bead; no latency bound is claimed.
 - **Browser discovery proof (dogfooded):** Runtime source
   `e1896db32e1780ad8c29db40a3f22fa9b6bbf252`, installed regular Eon profile
   `/nix/store/7mw0bjk12r5mbw5r5br3sg77nm0f62s5-eon-0.1.0`, generation
