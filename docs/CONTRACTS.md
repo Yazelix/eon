@@ -259,6 +259,8 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
   restoration, a user-facing per-pane Session stop/restart action, terminal
   content/history, provider state, plugin surface, remote access, or
   reconstructed Session state.
+- **Picker scope evidence:** EON-C18 records the installed other-tab action and
+  close proof while a picker remains bound to its own tab.
 - **Proof:** `5f23a7bac127785d913a718e5fb1afc53d9d91ae`
   - **Environment:** x86_64 Linux Nix candidate and installed profile
   - **Evidence:** Deterministic and process-level wrapped traversal, workspace
@@ -718,6 +720,19 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
+- **Picker scope proof (dogfooded):** Runtime source
+  `6879dbc78975c135f9d794759b0fa6485ad207eb`, installed profile artifact
+  `/nix/store/23shhmi4q15blg0y2a56718s6xyfz821-eon-0.1.0`, generation
+  `g1-06d7a5a01f5f07e88f9191987ac6c19a`, exact Orbit
+  `91999d79546422b49bdbc124166a65859d0bd872` and Venus
+  `e13970e90289d0d86f0adcbf350e4b9c1d5e5219` on x86_64 Linux, isolated
+  Sway Wayland. Focused red/green owner checks and all Nix flake checks passed.
+  Installed native pane creation, focus, pane/tab movement, header clicks, and
+  Ctrl+Shift+W close preserved the other tab's exact picker record. CLI directory
+  updates succeeded and a second picker-first tab failed without mutation.
+  Native Enter accepted after the previous tab closed; native Escape in a later
+  final pending tab ended the empty workspace and removed its runtime. Existing
+  user supervisors and Sessions retained their process identities.
 - **Proof:** EONW v4 owner source
   `c305453bba4fe50c29f65e829b9cd65af31ced8a` admits one inactive live picker
   tab, including the sole pane-free pending tab, with focused red/green codec,
