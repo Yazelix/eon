@@ -15,11 +15,13 @@ and remaining limitations. Owning Beads and Git retain execution history;
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
 The current accepted composition selects Orbit
-`64b225eb249490c9075894814942652a8b9d6192` with canonical ORBS v10 and Venus
-`7f325a31d0052d84a1a09ff065c0e9103563c0e8`. The active Eon profile resolves to
-`/nix/store/f46g210pffvzlyix6nv0rh3dsl5arv5m-eon-0.1.0`. The active EonTerm
-profile remains `/nix/store/n5bmygd82arnfhzlcgz6llydap8rr7lw-eonterm-0.1.0`.
-Existing live supervisors were not restarted.
+`91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
+`e13970e90289d0d86f0adcbf350e4b9c1d5e5219`. Source
+`91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f` reports generation
+`g1-9633445cc8bfb2bd41a4f6c994070dff`. The active Eon profile resolves to
+`/nix/store/jy82yqqn0sinvjkl9n405742q8483f5y-eon-0.1.0`; the active EonTerm
+profile resolves to `/nix/store/pd5c82936b6z24ss03dhdvrb0zmq8v90-eonterm-0.1.0`.
+Existing live supervisors and separate dogfood Sessions were not restarted.
 
 ## EON-C1 — Exact compatible component launch
 
@@ -50,7 +52,7 @@ Existing live supervisors were not restarted.
   Venus native launch contracts.
 - **Boundary:** Eon does not infer compatibility from executables, store paths,
   process names, or moving branches.
-- **Proof:** `e1a5a9e02f7102cef48b25a83f740ea716647fa1`
+- **Proof:** `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`
   - **Environment:** Nix-built x86_64 Linux Wayland alpha
   - **Evidence:** Exact graph validation, Ready-boundary failure/recovery,
     current Venus/fzf reporting, and composed package checks; accepted base
@@ -64,13 +66,19 @@ Existing live supervisors were not restarted.
     `a65e199e16e97330175e314cacf791fa00f53069` and Venus proof
     `d3e63ae6e9fa0b72df426dbfc9bd29a96148577a` passed 30 ms continuous-output
     retained-scrollback and hard-fling acceptance without queue failure,
-    starvation, snap-to-live, or timeout-truncated momentum. The current
-    acceptance composes Orbit `64b225eb249490c9075894814942652a8b9d6192`
-    with Venus `7f325a31d0052d84a1a09ff065c0e9103563c0e8`, passes the complete locked
-    Rust and Nix checks, refreshes the profile above, and points the split 16 KiB
-    DEC 2026 real-PTY regression at its installed Orbit binary. The held signed
-    scroll resolves once after normal release, and held preview resolves after
-    watchdog release without restarting any existing supervisor.
+    starvation, snap-to-live, or timeout-truncated momentum. Synchronized-scroll
+    composition proof `e1a5a9e02f7102cef48b25a83f740ea716647fa1` remains retained.
+    The current acceptance validates the exact graph and both installed profile
+    artifacts, passes `nix flake check` (including both package test surfaces),
+    and exercises the installed commands on isolated Sway 1.12 native Wayland.
+    EonTerm preserves anchored history while PTY query replies continue during
+    appends, split 16 KiB DEC 2026 output, and active-screen redraws. Cell drag,
+    word/line repeat-click and drag, both clipboards, explicit frozen copy,
+    further history movement, and return to live pass. Full Eon has two durable
+    tabs and three panes; native Alt+H/L, F6 and tab/pane arrows, and displayed
+    tab clicks reach the expected EONW identities during output. Exact
+    observations and inherited regression evidence live in
+    `eon-accept-live-output-input-nxh`; no performance bound is claimed.
 
 ## EON-C2 — One component compatibility graph
 
@@ -85,7 +93,7 @@ Existing live supervisors were not restarted.
 - **Owner:** Eon's component manifest and validator.
 - **Boundary:** The manifest does not own process lifecycle, platform launch
   mechanics, package-manager policy, or child state.
-- **Proof:** `e1a5a9e02f7102cef48b25a83f740ea716647fa1`
+- **Proof:** `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`
   - **Environment:** x86_64 Linux Nix alpha
   - **Evidence:** Manifest parser/compatibility checks, exact graph consumption
     by installed Eon and EonTerm, and prior Eonova proof; accepted manifest base
@@ -106,14 +114,14 @@ Existing live supervisors were not restarted.
 - **Consumes:** EON-C2's component graph.
 - **Boundary:** Runtime code does not construct, persist, inspect, or derive
   identity from Nix store paths.
-- **Proof:** `71e8f5a8cac938ed7f065890c83d9376551f6014`
+- **Proof:** `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`
   - **Environment:** Nix-built x86_64 Linux alpha
   - **Evidence:** Exact protocol-source substitution, package tests, and
     evaluator-absence checks; accepted launch-input base
     `a2792cc77f8254cc277d64eb41f65725b69ccf70` and exact installed ORBS v7
     composition `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`;
     the current installed artifacts are the exact opaque store paths indexed
-    above
+    above.
 
 ## EON-C4 — Thin orchestrator ownership
 
@@ -130,13 +138,13 @@ Existing live supervisors were not restarted.
 - **Consumes:** Accepted child contracts through EON-C2's exact graph.
 - **Boundary:** No copied child schema, hidden fork, compatibility adapter, or
   second terminal/rendering owner.
-- **Proof:** `71e8f5a8cac938ed7f065890c83d9376551f6014`
+- **Proof:** `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`
   - **Environment:** x86_64 Linux composed alpha
   - **Evidence:** Component-boundary checks, management consumer proof, package
     closure inspection, and accepted installed native-Wayland runtime dogfood;
     accepted composition base `a2792cc77f8254cc277d64eb41f65725b69ccf70`;
-    the current acceptance adds no Eon scrolling implementation, compatibility
-    adapter, dependency, or second component graph
+    the current acceptance adds no Eon scrolling or input implementation,
+    compatibility adapter, dependency, or second component graph
 
 ## EON-C5 — Direct bundle lifecycle
 
