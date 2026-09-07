@@ -13,9 +13,9 @@ work.
 
 No channel requires systemd or another specific init or service manager. The
 accepted runtime proof uses COSMIC with systemd, so non-systemd native Wayland
-remains unproved. This target preserves child-owned kernel requirements:
-Orbit's accepted Linux lifecycle requires a user-owned writable cgroup-v2
-parent with `cgroup.kill`.
+remains unproved. Eon and Orbit require no cgroup delegation. Orbit's accepted
+Linux lifecycle uses bounded PTY process-group shutdown and direct-child
+reaping; deliberately detached processes may survive Session stop.
 
 Direct installation remains the long-term adoption path. It begins after Nix
 dogfood proves a useful product and the user approves distribution graduation.

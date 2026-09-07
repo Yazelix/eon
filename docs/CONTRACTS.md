@@ -16,12 +16,9 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
-`e13970e90289d0d86f0adcbf350e4b9c1d5e5219`. Source
-`9a49d214e708f97a4c14c42e11d89f7d7b8cb7c5` reports generation
-`g1-f95b129cfb05da8addc0c1cd9481e51a`. The active Eon profile resolves to
-`/nix/store/02bfniixmyzxbqgknx3njw0fm96iyzmw-eon-0.1.0`; the active EonTerm
-profile resolves to `/nix/store/pd5c82936b6z24ss03dhdvrb0zmq8v90-eonterm-0.1.0`.
-Existing live supervisors and separate dogfood Sessions were not restarted.
+`94b15af20d1798b648f4d9945fd6bb647f10add8`. Exact source, installed artifact,
+environment, and remaining gaps belong to each contract's proof below.
+Profile refreshes preserve existing live supervisors and their Sessions.
 
 ## EON-C1 — Exact compatible component launch
 
@@ -120,8 +117,7 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
     evaluator-absence checks; accepted launch-input base
     `a2792cc77f8254cc277d64eb41f65725b69ccf70` and exact installed ORBS v7
     composition `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`;
-    the current installed artifacts are the exact opaque store paths indexed
-    above.
+    exact installed artifacts are recorded in `eon-accept-live-output-input-nxh`.
 
 ## EON-C4 — Thin orchestrator ownership
 
@@ -288,7 +284,15 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
     14/15/16/17/18 for Ctrl+Alt+H/L/K/J and Ctrl+Shift+W; close removed `t2`'s
     pending picker and restored durable `t1`. The isolated generation stopped
     cleanly, and both pre-existing live supervisors retained their PIDs.
-- **Open proof:** Native current-generation tab-label acceptance remains pending.
+  - **Header correction (accepted):** Source
+    `0f2b76d2153db8e5716d0cccd78b26802684b5be` consumes accepted Venus
+    `94b15af20d1798b648f4d9945fd6bb647f10add8` and unchanged Orbit `91999d7`.
+    Installed Eon `/nix/store/j4n3j5r9mfj7xpkj6sjnb9cns11ffsly-eon-0.1.0`
+    matches the current-tree output. `ven-2fq` in Eon Desktop records exact
+    source hashes, package checks, and isolated Sway 1.12 scale-1 observation:
+    two real Sessions retain their directory identities and the long second
+    label stays visible with underscores. The private generation stops cleanly;
+    existing user Sessions remain running. Fractional scale remains unproved.
 
 ## EON-C9 — Managed shell environment
 
@@ -404,11 +408,10 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
     presentation success against ended state.
 - **Important failures:** Incompatible generation, stale or mismatched process
   identity, lost control, partial Stop, or live foreign residue fails closed
-  without PID/process-name fallback or duplicate Orbit launch. Before forking
-  Orbit, Eon waits within the shared five-second deadline until its current
-  cgroup-v2 directory is user-owned, not writable by group or others, and
-  contains Eon's process; failure is explicit and uses no compositor, init, or
-  service-manager API.
+  without PID/process-name fallback or duplicate Orbit launch. Orbit startup
+  and Ready negotiation remain bounded by the shared five-second deadline.
+  Eon requires no cgroup membership or delegation; Orbit owns bounded PTY
+  shutdown through its accepted ORB-C12/ORB-C13 management boundary.
 - **Owner:** Eon generation selection, runtime namespaces, discovery, Present,
   explicit Stop, and exact owned residue.
 - **Consumes:** Orbit management v1 and Venus `VEN-C14`.
@@ -434,6 +437,19 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
     `10c29edf861fac28db48f41a4546165f79777ee6`; installed artifact
     `/nix/store/dbiv438iwn9mljrwfg6d29ypg96hp00c-eon-0.1.0`
 - **Open proof:** Current-generation native acceptance remains candidate evidence.
+- **Cgroup-free launch (accepted):** Source
+  `76b9f5635d9ae545dadb0326976f309afae8fd25`, with exact runtime/test hashes
+  recorded in `eon-uj7`; generation `g1-0052f7c409b6505fc4180b69142cc5fe`.
+  Eon `/nix/store/p4hbh2jlr6i22mah8r3f5g2lc696m0r6-eon-0.1.0`
+  and EonTerm `/nix/store/i53rvda2crdyv4fzsy6vyawzgvd4yb9f-eonterm-0.1.0`
+  were verified against that candidate's Nix outputs. Locked Rust checks and Nix flake
+  checks pass. With `/sys/fs/cgroup` hidden by an empty private tmpfs, both
+  installed products launch real Orbit PTYs and native Sway 1.12 Wayland
+  surfaces, preserve exact Orbit/child identities across detach and reopen,
+  and complete management Stop with child reaping and generation cleanup.
+  Existing user Sessions remain running. This does not promote non-systemd
+  support, fractional scale, whole-descendant cleanup, or other candidate
+  contracts; Orbit's bounded shutdown remains authoritative.
 
 ## EON-C12 — Standalone exact-command terminal
 

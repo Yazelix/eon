@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keep long tab directory names visible on one header line, including
+  underscores, through Venus `94b15af20d1798b648f4d9945fd6bb647f10add8`.
+- Launch Eon and EonTerm without a delegated cgroup, consuming Orbit's accepted
+  bounded PTY shutdown contract through the existing Ready and management checks.
 - Show shortcuts in the screen where they work: quick search, Yazi folder
   browsing, and nested history search each have their own persistent footer.
   Browser hints hide while a Yazi prompt or overlay handles input.

@@ -390,10 +390,10 @@ seams for them.
 
 Keep Eon's Linux and Wayland contracts independent of any specific init or
 service manager. Proof on systemd does not authorize a systemd runtime or
-distribution requirement. Treat child-owned kernel capabilities separately:
-Orbit's accepted Linux lifecycle currently requires a user-owned writable
-cgroup-v2 parent with `cgroup.kill`. Claim non-systemd support only after
-installed dogfood in such an environment.
+distribution requirement. Orbit owns bounded PTY process-group shutdown and
+direct-child reaping without cgroup delegation; deliberately detached processes
+may survive Session stop. Claim non-systemd support only after installed
+dogfood in such an environment.
 
 Keep wire contracts, component identity, and product state platform-neutral
 when that follows their existing ownership. Neutral data is not a portability

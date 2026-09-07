@@ -20,8 +20,9 @@ component identities. Direct bundles, Home Manager, background updates, and
 release automation remain outside this slice. X11, Xwayland, and macOS are
 unsupported. The accepted runtime proof uses COSMIC with systemd. Eon targets
 native Wayland without requiring a specific init or service manager, but
-non-systemd use remains unproved. Orbit's accepted Linux lifecycle still
-requires a user-owned writable cgroup-v2 parent with `cgroup.kill`.
+non-systemd use remains unproved. Launch requires no cgroup delegation. Orbit
+owns bounded PTY process-group shutdown and direct-child reaping; deliberately
+detached processes may survive an explicit Session stop.
 
 ## Naming model
 
@@ -121,10 +122,9 @@ rejected Ready identities are stopped only through that management owner.
 Concurrent starts converge on one supervisor and one complete Session set;
 every attach-capable peer presents that owner. If a launch overlaps clean exit
 of the last Session, it waits for the retiring owner and starts one fresh
-Session. Before starting a new Orbit process, Eon waits within the existing
-startup deadline until its current cgroup is safe for Orbit to inherit. This
-uses no compositor, init, or service-manager API; Orbit still validates and
-owns Session containment. Its Nix closure
+Session. Eon validates Orbit's Ready identity and acquires its management lease
+within the existing startup deadline. Orbit owns PTY startup and bounded
+shutdown without a cgroup or service-manager requirement. Its Nix closure
 supplies Mesa's open-source Vulkan drivers; the current graphics proof uses
 Intel hardware, while proprietary NVIDIA remains unproved. Run Eon from a
 terminal when you need foreground lifecycle control.
@@ -470,16 +470,16 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy | 483 |
+| Agent policy inputs | 257 |
 | README | 485 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,131 |
+| Architecture and contracts | 1,147 |
 | Distribution and references | 666 |
-| Changelog | 235 |
-| Rust source and tests | 12,975 |
+| Changelog | 239 |
+| Rust source and tests | 12,893 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
 | Nix composition | 783 |
 | Product defaults | 0 |
-| **Total** | **17,345** |
+| **Total** | **17,057** |
