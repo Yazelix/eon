@@ -17,9 +17,9 @@ and remaining limitations. Owning Beads and Git retain execution history;
 The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
 `e13970e90289d0d86f0adcbf350e4b9c1d5e5219`. Source
-`91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f` reports generation
-`g1-9633445cc8bfb2bd41a4f6c994070dff`. The active Eon profile resolves to
-`/nix/store/jy82yqqn0sinvjkl9n405742q8483f5y-eon-0.1.0`; the active EonTerm
+`e1896db32e1780ad8c29db40a3f22fa9b6bbf252` reports generation
+`g1-4548313276c17a701bd60a3f5a480af9`. The active Eon profile resolves to
+`/nix/store/7mw0bjk12r5mbw5r5br3sg77nm0f62s5-eon-0.1.0`; the active EonTerm
 profile resolves to `/nix/store/pd5c82936b6z24ss03dhdvrb0zmq8v90-eonterm-0.1.0`.
 Existing live supervisors and separate dogfood Sessions were not restarted.
 
@@ -658,8 +658,7 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
 
 ## EON-C18 — Picker-first tab directories
 
-- **Status:** Browser fallback implemented; installed proof pending.
-  Existing picker lifecycle proofs below retain their recorded scope.
+- **Status:** Proven
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z in an existing tab while no directory picker is already open.
@@ -737,6 +736,30 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
+- **Browser discovery proof (dogfooded):** Runtime source
+  `e1896db32e1780ad8c29db40a3f22fa9b6bbf252`, installed regular Eon profile
+  `/nix/store/7mw0bjk12r5mbw5r5br3sg77nm0f62s5-eon-0.1.0`, generation
+  `g1-4548313276c17a701bd60a3f5a480af9`, on x86_64 Linux with native Wayland
+  under an isolated headless Sway compositor. `nix profile upgrade eon` built
+  the affected package and passed 31 unit plus 27 process/integration tests;
+  `nix path-info path:.#default` matched the installed profile artifact.
+  - Empty-history Esc opened Yazi at the launch directory while retaining the
+    exact pending-tab snapshot. Shift+Z jumped to a seeded parent without
+    commitment; navigating into an untracked child and pressing Enter started
+    `p1` there. Creating `p2` used the same directory; both actual shell CWDs
+    were observed through isolated launch logging.
+  - q in a later tab's browser restored the previous tab and pane. Ordinary
+    quick-search Enter created a tab at the ranked parent; Ctrl+C abandoned
+    the next pending tab. The isolated Zoxide history still contained only the
+    deliberately seeded parent. Hostile ambient fzf/Yazi picker options did
+    not change these outcomes. Stop removed the three exact proof Sessions
+    and their generation; existing user supervisors and Sessions were preserved.
+  - Exact packaged Yazi PTY checks additionally covered home/root anchors,
+    raw non-UTF-8 and trailing-newline directory output, and q/Q/Ctrl+C
+    cancellation. The browser clears inherited `PWD` because Yazi otherwise
+    prefers it over the actual Session CWD. A red/green regression protects
+    fzf's explicit Esc result with status 1 when there are no matches; other
+    picker failures never become implicit Browse actions.
 - **Picker scope proof (dogfooded):** Runtime source
   `6879dbc78975c135f9d794759b0fa6485ad207eb`, installed profile artifact
   `/nix/store/23shhmi4q15blg0y2a56718s6xyfz821-eon-0.1.0`, generation
