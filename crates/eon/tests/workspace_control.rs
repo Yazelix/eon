@@ -612,7 +612,6 @@ fn picker_endpoint(socket: &Path) -> PathBuf {
 
 fn eon_command(binary: &Path) -> Command {
     let mut command = Command::new(binary);
-    command.env("EON_TEST_MANAGED_ORBIT", "1");
     command.env_remove("EON_SESSION_BIN");
     command
 }

@@ -14,7 +14,6 @@ use orbit_protocol::management::{
 };
 use std::{
     collections::HashSet,
-    env,
     ffi::{OsStr, OsString},
     fs,
     io::{Read, Write},
@@ -24,7 +23,7 @@ use std::{
         fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
         net::UnixStream,
     },
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     thread,
     time::{Duration, Instant},
@@ -742,62 +741,6 @@ pub(super) struct RunningSession {
     child: Option<Child>,
 }
 
-fn current_cgroup_is_inheritable() -> Result<(), String> {
-    let memberships = fs::read_to_string("/proc/self/cgroup")
-        .map_err(|error| format!("cannot inspect Eon cgroup membership: {error}"))?;
-    let relative = memberships
-        .lines()
-        .find_map(|line| line.strip_prefix("0::"))
-        .ok_or("Eon requires a cgroup-v2 hierarchy")?
-        .strip_prefix('/')
-        .ok_or("Eon cgroup-v2 path is not absolute")?;
-    if !Path::new(relative)
-        .components()
-        .all(|component| matches!(component, Component::Normal(_)))
-    {
-        return Err("Eon cgroup-v2 path contains an unsafe component".into());
-    }
-    let parent = Path::new("/sys/fs/cgroup").join(relative);
-    let metadata = fs::metadata(&parent)
-        .map_err(|error| format!("cannot inspect Eon cgroup {}: {error}", parent.display()))?;
-    if !metadata.is_dir() || metadata.uid() != effective_uid() || metadata.mode() & 0o022 != 0 {
-        return Err(format!(
-            "Eon cgroup {} is not a user-owned non-writable-by-others directory",
-            parent.display()
-        ));
-    }
-    let own_pid = std::process::id().to_string();
-    if !fs::read_to_string(parent.join("cgroup.procs"))
-        .map_err(|error| format!("cannot inspect Eon cgroup membership: {error}"))?
-        .lines()
-        .any(|pid| pid == own_pid)
-    {
-        return Err(format!(
-            "Eon cgroup {} does not contain Eon",
-            parent.display()
-        ));
-    }
-    Ok(())
-}
-
-fn wait_for_orbit_parent_cgroup(
-    deadline: Instant,
-    mut inspect: impl FnMut() -> Result<(), String>,
-) -> Result<(), String> {
-    loop {
-        match inspect() {
-            Ok(()) => return Ok(()),
-            Err(error) => {
-                let now = Instant::now();
-                if now >= deadline {
-                    return Err(error);
-                }
-                thread::sleep(Duration::from_millis(25).min(deadline.duration_since(now)));
-            }
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn start_orbit(
     programs: &Programs,
@@ -821,9 +764,6 @@ pub(super) fn start_orbit(
         directory,
         child,
     )?;
-    if env::var_os("EON_TEST_MANAGED_ORBIT").is_none() {
-        wait_for_orbit_parent_cgroup(deadline, current_cgroup_is_inheritable)?;
-    }
     let claim = ReadyClaim::create(&record_path)?;
     let mut orbit = match orbit_command.spawn() {
         Ok(orbit) => orbit,
@@ -1186,7 +1126,7 @@ mod tests {
     use super::{
         EON_ANSI_PALETTE, Programs, is_directory_picker_endpoint, managed_session_number,
         management, orbit_command, read_management_response, session_number,
-        unix_connect_with_timeout, wait_for_orbit_parent_cgroup,
+        unix_connect_with_timeout,
     };
     use crate::supervisor::temporary_directory;
     use orbit_protocol::management::ServerMessage as ManagementServerMessage;
@@ -1231,27 +1171,6 @@ mod tests {
         ] {
             assert!(!is_directory_picker_endpoint(invalid), "accepted {invalid}");
         }
-    }
-
-    #[test]
-    fn orbit_launch_waits_for_an_inheritable_cgroup() {
-        let mut attempts = 0;
-        wait_for_orbit_parent_cgroup(Instant::now() + Duration::from_millis(100), || {
-            attempts += 1;
-            if attempts < 3 {
-                Err("Eon is still in the login cgroup".into())
-            } else {
-                Ok(())
-            }
-        })
-        .unwrap();
-        assert_eq!(attempts, 3);
-
-        let error = wait_for_orbit_parent_cgroup(Instant::now(), || {
-            Err("Eon cgroup is not delegated".into())
-        })
-        .unwrap_err();
-        assert_eq!(error, "Eon cgroup is not delegated");
     }
 
     #[test]

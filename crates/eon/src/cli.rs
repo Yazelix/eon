@@ -102,8 +102,8 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
     if output.status.code() == Some(130) {
         return Ok(0);
     }
-    if !history_status.success()
-        && !(history_stopped && history_status.signal() == Some(libc::SIGKILL))
+    if !(history_status.success()
+        || history_stopped && history_status.signal() == Some(libc::SIGKILL))
     {
         return Err(format!(
             "packaged directory history exited with status {history_status}"
