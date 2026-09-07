@@ -597,6 +597,108 @@ fn eon_command(binary: &Path) -> Command {
 }
 
 #[test]
+fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
+    let root = temporary_directory();
+    let socket = root.join("eon.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    executable(&root.join("zoxide"), "#!/bin/sh\nprintf '/known\\n'\n");
+    executable(
+        &root.join("fzf"),
+        "#!/bin/sh\ncat >/dev/null\nprintf 'esc\\0'\nexit 1\n",
+    );
+    executable(
+        &root.join("yazi"),
+        "#!/bin/sh\nprintf '/untracked-\\377\\n'\n",
+    );
+    let mut command = Command::new(env!("CARGO_BIN_EXE_eon"));
+    command
+        .args([
+            OsStr::new("__directory-picker"),
+            socket.as_os_str(),
+            OsStr::new("t1"),
+        ])
+        .env("PATH", format!("{}:/bin", root.display()))
+        .env("EON_YAZI", root.join("yazi"))
+        .env("EON_DIRECTORY_PICKER_CONFIG", &root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = command.spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut stream = loop {
+        if let Ok((stream, _)) = listener.accept() {
+            break stream;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "picker did not submit its directory"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    let mut request = vec![0; HEADER_BYTES];
+    stream.read_exact(&mut request).unwrap();
+    request.resize(declared_message_len(&request).unwrap(), 0);
+    stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
+    let request = decode_request(&request).unwrap();
+    assert_eq!(
+        request.action,
+        Action::SetTabDirectory {
+            tab: "t1".into(),
+            directory: b"/untracked-\xff\n".to_vec(),
+        }
+    );
+    stream
+        .write_all(
+            &encode_response(&Response::Snapshot(Snapshot {
+                active_tab: "t1".into(),
+                tabs: vec![Tab {
+                    id: "t1".into(),
+                    directory: b"/untracked-\xff\n".to_vec(),
+                    selected_pane: Some("p1".into()),
+                    panes: vec![Pane {
+                        id: "p1".into(),
+                        session: "session-1".into(),
+                        endpoint: b"/test.sock".to_vec(),
+                        live: true,
+                    }],
+                }],
+                directory_picker: None,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    wait_for_successful_exit(&mut child);
+    for program in ["fzf", "yazi"] {
+        executable(&root.join(program), "#!/bin/sh\nexit 130\n");
+        let mut child = command.spawn().unwrap();
+        wait_for_successful_exit(&mut child);
+        assert!(
+            listener.accept().is_err(),
+            "cancellation sent a directory action"
+        );
+        executable(
+            &root.join("fzf"),
+            "#!/bin/sh\ncat >/dev/null\nprintf 'esc\\0'\nexit 1\n",
+        );
+    }
+    for (program, script) in [
+        ("yazi", "#!/bin/sh\nexit 2\n"),
+        ("fzf", "#!/bin/sh\ncat >/dev/null\nprintf 'unexpected\\0'\n"),
+        ("zoxide", "#!/bin/sh\nexit 2\n"),
+    ] {
+        executable(&root.join(program), script);
+        let mut child = command.spawn().unwrap();
+        assert!(!wait_for_exit(&mut child).success());
+        assert!(
+            listener.accept().is_err(),
+            "failure sent a directory action"
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn directory_picker_retargets_cancels_and_stops_with_venus() {
     let root = temporary_directory();
     let runtime = root.join("runtime-padding");
@@ -624,7 +726,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     );
     executable(
         &session_bin.join("zoxide"),
-        "#!/bin/sh\n[ -z \"$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE\" ] || exit 99\nwhile [ ! -e \"$EON_TEST_PICKER_RELEASE\" ]; do sleep 0.01; done\nif [ \"$(cat \"$EON_TEST_PICKER_SELECTION\")\" = cancel ]; then exit 130; fi\ncat \"$EON_TEST_PICKER_SELECTION\"\n",
+        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_PICKER_RELEASE\" ]; do sleep 0.01; done\ncat \"$EON_TEST_PICKER_SELECTION\"\n",
     );
     executable(
         &session_bin.join("eon-nu"),
@@ -632,6 +734,10 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     );
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
+    executable(
+        &session_bin.join("fzf"),
+        "#!/bin/sh\n[ -z \"$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE\" ] || exit 99\nselection=$(cat)\n[ \"$selection\" != cancel ] || exit 130\nprintf '\\0%s\\0' \"$selection\"\n",
+    );
     fs::write(&selection, selected.as_os_str().as_bytes()).unwrap();
 
     let child = eon_command(&binary)
@@ -892,6 +998,10 @@ fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
     );
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
+    executable(
+        &session_bin.join("fzf"),
+        "#!/bin/sh\n[ -z \"$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE\" ] || exit 99\nselection=$(cat)\n[ \"$selection\" != cancel ] || exit 130\nprintf '\\0%s\\0' \"$selection\"\n",
+    );
 
     let child = eon_command(&binary)
         .arg("run")
@@ -1660,6 +1770,10 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
+    executable(
+        &session_bin.join("fzf"),
+        "#!/bin/sh\n[ -z \"$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE\" ] || exit 99\nselection=$(cat)\n[ \"$selection\" != cancel ] || exit 130\nprintf '\\0%s\\0' \"$selection\"\n",
+    );
     let child = eon_command(&binary)
         .arg("run")
         .current_dir(&first)
@@ -2155,6 +2269,10 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
     );
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
+    executable(
+        &session_bin.join("fzf"),
+        "#!/bin/sh\n[ -z \"$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE\" ] || exit 99\nselection=$(cat)\n[ \"$selection\" != cancel ] || exit 130\nprintf '\\0%s\\0' \"$selection\"\n",
+    );
     let launch = || {
         eon_command(&binary)
             .arg("run")

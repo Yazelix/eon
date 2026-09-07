@@ -658,7 +658,8 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
 
 ## EON-C18 — Picker-first tab directories
 
-- **Status:** Proven
+- **Status:** Browser fallback implemented; installed proof pending.
+  Existing picker lifecycle proofs below retain their recorded scope.
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z in an existing tab while no directory picker is already open.
@@ -667,6 +668,20 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
     with no durable pane. Eon starts one transient Orbit Session running the
     exact packaged ranked-directory picker at the inherited launch directory.
     Ambient fzf default options cannot alter its command, layout, or bindings.
+  - Quick search ranks Zoxide history through fzf. Enter accepts one result;
+    Esc opens packaged Yazi without cancelling the picker; Ctrl+C cancels.
+    Empty history still shows the Browse action. Arrows and Tab/Shift+Tab move
+    through quick-search results.
+  - Yazi begins at the inherited tab directory. Arrows/hjkl browse parent and
+    child directories; Shift+Z searches history and only moves the browser.
+    Enter uses the current folder; q, Q, and Ctrl+C cancel. Escape clears
+    Yazi's contextual search/filter state. `g h` reaches home, `g /` root,
+    `g Space` accepts a typed path, and `.` toggles hidden entries. The fixed
+    picker keymap excludes file opening and file-management operations.
+    Files remain visible for orientation. Browsing does not add Zoxide history.
+    Yazi owns directory enumeration and navigation; Eon performs no recursive
+    filesystem scan. A vanished or inaccessible final folder fails EON-C17
+    validation without mutation.
   - Accepting a valid choice atomically commits the tab directory and starts
     exactly one first `pN` Session there. First-tab cancellation falls back to
     Eon's validated launch directory; later-tab cancellation abandons the
@@ -711,12 +726,14 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
 - **Owner:** Eon owns picker policy, tab binding, command selection, lifecycle,
   validation, mutation, and cleanup. Venus owns full-Eon shortcut precedence,
   modal geometry, focus, input, notices, rendering, and accessibility. Orbit
-  owns the transient PTY and child. Zoxide owns ranking and fzf owns interactive
-  terminal selection.
+  owns the transient PTY and child. Zoxide owns ranking, fzf owns quick
+  selection, and Yazi owns filesystem browsing. Eon consumes one directory
+  result without interpreting Yazi's navigation state.
 - **Consumes:** EON-C17; accepted EONW v4 pending-tab boundary, Orbit's accepted
   Session startup, attachment, exit, and stop contracts, and exact Venus v4
   consumer `d2d798099934dcf8037bfad6ab856e40c9b989fe`.
-- **Boundary:** No Yazi dependency, normal-pane identity, arbitrary-command or
+- **Boundary:** No custom filesystem walker, editor/file-opening integration,
+  copied Nova plugin, normal-pane identity, arbitrary-command or
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.

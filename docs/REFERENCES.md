@@ -169,6 +169,24 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
   client-supplied commands, native directory ranking, simultaneous terminal composition, and
   a generic popup protocol.
 
+### How should a tab picker reach folders absent from Zoxide history?
+
+- **Owner:** Eon selection policy; Yazi filesystem navigation
+- **Read first:** [Yazi 26.5.6](https://github.com/sxyazi/yazi/tree/aa526434f00bb44e2e902d9a4ac5f810da1018b9),
+  especially its default keymap, built-in Zoxide plugin, `--cwd-file`, quit action,
+  and terminal writer; [fzf 0.73.1](https://github.com/junegunn/fzf/tree/ce4bef75954bebd87e0886435bcf8c6904328ab0)
+  expected-key and NUL-output behavior; Zoxide's pinned query/list behavior above.
+- **Comparable implementation:** Nova `29514faf4a25` Yazi keymap and
+  `zoxide-editor` plugin distinguish Alt+Z workspace commitment from Shift+Z
+  browser navigation. Inspect the distinction; do not copy Nova coordination.
+- **Preserve / reject:** Preserve default quick search, explicit Browse versus
+  Cancel, navigation before commitment, one validated directory, and EON-C18
+  lifecycle. Prefer packaged Yazi over an Eon walker; reject typed-path-only
+  discovery, recursive root scans, ambient picker keymaps, shell-evaluated paths,
+  and file-opening scope. Prove actual packaged terminal and directory-output
+  behavior before claiming installed integration.
+
+
 ## Managed shell environment
 
 ### How should Eon activate a consistent optional tool set after native Nushell, Bash, Zsh, and Fish configuration?

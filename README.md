@@ -222,9 +222,22 @@ accepted value.
 
 Alt+Z works from anywhere in a full-Eon tab. It keeps the tab bar visible and
 replaces the tab body with a one-cell-inset ranked-directory picker backed by
-the packaged Zoxide and fzf, independent of ambient fzf default options. Accepting
-a valid path retargets that captured tab for future Sessions; cancel or failure
-changes nothing, and an actionable error stays visible briefly before cleanup.
+the packaged Zoxide and fzf, independent of ambient fzf default options.
+Enter opens a history match; Esc switches to Yazi to browse folders, including
+those absent from history. Ctrl+C cancels. Empty history still offers Esc to
+browse. Arrows and Tab/Shift+Tab move through quick-search results.
+
+In the folder browser, arrows or hjkl navigate; Enter uses the **current folder**.
+Shift+Z searches Zoxide history and moves the browser without committing the
+tab, so you can jump to a known parent and walk the remaining directories.
+`g h` goes home, `g /` goes to root, `g Space` accepts a folder path, `.` toggles
+hidden entries, and F1 lists the keys. q, Q, or Ctrl+C cancel; Esc clears a
+filter or returns from nested search. Files are visible for orientation; the
+picker does not open, edit, or manage them. Browsing does not add Zoxide entries.
+Yazi uses a packaged picker keymap independent of your regular Yazi configuration.
+
+Accepting a valid path retargets that captured tab for future Sessions; cancel
+or failure changes nothing, and an actionable error stays visible briefly before cleanup.
 The picker is one transient Orbit Session rather than a normal pane, and it
 closes with its tab, Eon Desktop surface, process, or supervisor. Existing
 Sessions and working directories remain untouched. Alt+H/L continues to
@@ -453,15 +466,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 483 |
-| README | 467 |
+| README | 480 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,030 |
-| Distribution and references | 648 |
-| Changelog | 223 |
-| Rust source and tests | 12,601 |
+| Architecture and contracts | 1,047 |
+| Distribution and references | 666 |
+| Changelog | 227 |
+| Rust source and tests | 12,776 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
-| Nix composition | 734 |
+| Nix composition | 772 |
 | Product defaults | 0 |
-| **Total** | **16,773** |
+| **Total** | **17,038** |

@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Browse tab directories outside Zoxide history: Esc switches quick search to
+  Yazi; Shift+Z jumps to a known folder without committing; Enter uses the
+  current folder. Ctrl+C cancels, preserving existing tab lifecycle behavior.
+
 - Keep other tabs usable while a directory picker is open: create and focus
   panes, reorder panes or tabs, update launch directories, and close unrelated
   tabs without disturbing the picker. Tab selection by identity remains

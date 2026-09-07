@@ -534,6 +534,43 @@
         ];
       };
 
+      directoryPickerConfig = pkgs.runCommand "eon-directory-picker-config" { } ''
+        mkdir -p "$out"
+        cat > "$out/keymap.toml" <<'EOF'
+        [mgr]
+        keymap = [
+          { on = "<Enter>", run = "quit", desc = "Use this folder for the Eon tab" },
+          { on = "q", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
+          { on = "Q", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
+          { on = "<C-c>", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
+          { on = "<Esc>", run = "escape", desc = "Clear search or filter" },
+          { on = "<Up>", run = "arrow prev", desc = "Previous entry" },
+          { on = "k", run = "arrow prev", desc = "Previous entry" },
+          { on = "<Down>", run = "arrow next", desc = "Next entry" },
+          { on = "j", run = "arrow next", desc = "Next entry" },
+          { on = "<Left>", run = "leave", desc = "Parent folder" },
+          { on = "h", run = "leave", desc = "Parent folder" },
+          { on = "<Right>", run = "enter", desc = "Enter folder" },
+          { on = "l", run = "enter", desc = "Enter folder" },
+          { on = "<PageUp>", run = "arrow -100%", desc = "Previous page" },
+          { on = "<PageDown>", run = "arrow 100%", desc = "Next page" },
+          { on = "Z", run = "plugin zoxide", desc = "Jump to a known folder without selecting it" },
+          { on = ["g", "h"], run = "cd ~", desc = "Home folder" },
+          { on = ["g", "/"], run = "cd /", desc = "Filesystem root" },
+          { on = ["g", "<Space>"], run = "cd --interactive", desc = "Go to a folder path" },
+          { on = ".", run = "hidden toggle", desc = "Show or hide hidden entries" },
+          { on = "f", run = "filter --smart", desc = "Filter entries in this folder" },
+          { on = "<F1>", run = "help", desc = "Folder picker keys" },
+        ]
+        EOF
+        cat > "$out/yazi.toml" <<'EOF'
+        [plugin]
+        fetchers = []
+        preloaders = []
+        previewers = [{ url = "*/", run = "folder" }]
+        EOF
+      '';
+
       eonSource =
         let
           source = lib.fileset.toSource {
@@ -643,6 +680,7 @@
               --set EON_FISH "${fishPackage}/bin/fish" \
               --set EON_HX "${helixPackage}/bin/hx" \
               --set EON_YAZI "${yaziPackage}/bin/yazi" \
+              --set EON_DIRECTORY_PICKER_CONFIG "${directoryPickerConfig}" \
               --set EON_YA "${yaziPackage}/bin/ya" \
               --set EON_LAZYGIT "${lazygitPackage}/bin/lazygit" \
               --set EON_NU_VENDOR_AUTOLOAD "${nuVendorAutoload}" \

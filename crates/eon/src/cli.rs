@@ -56,34 +56,57 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
     let tab = tab
         .to_str()
         .ok_or_else(|| "directory picker tab identity must be UTF-8".to_string())?;
-    let output = Command::new("zoxide")
-        .args(["query", "--interactive"])
-        .env(
-            "_ZO_FZF_OPTS",
-            "--exact --no-sort --bind=ctrl-z:ignore,btab:up,tab:down --cycle --keep-right --info=inline --layout=reverse --tabstop=1 --exit-0 --border=none",
-        )
+    let mut history = Command::new("zoxide")
+        .args(["query", "--list"])
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("cannot launch packaged directory history: {error}"))?;
+    let output = Command::new("fzf")
+        .args([
+            "--exact", "--no-sort", "--bind=ctrl-z:ignore,btab:up,tab:down",
+            "--cycle", "--keep-right", "--info=inline", "--layout=reverse",
+            "--tabstop=1", "--border=none", "--expect=esc", "--print0",
+            "--prompt=Quick search > ",
+            "--header=Enter Open · Esc Browse folders · Ctrl+C Cancel\nBrowser: arrows Navigate · Enter Use current folder · Shift+Z Search · F1 Help",
+        ])
         .env_remove("FZF_DEFAULT_OPTS")
         .env_remove("FZF_DEFAULT_OPTS_FILE")
-        .stdin(Stdio::inherit())
+        .stdin(history.stdout.take().expect("directory history stdout is piped"))
         .stderr(Stdio::inherit())
-        .output()
-        .map_err(|error| format!("cannot launch packaged directory picker: {error}"))?;
+        .output();
+    if output.is_err() {
+        let _ = history.kill();
+    }
+    let history_status = history
+        .wait()
+        .map_err(|error| format!("cannot reap directory history: {error}"))?;
+    let output =
+        output.map_err(|error| format!("cannot launch packaged directory picker: {error}"))?;
+    if !history_status.success() {
+        return Err(format!(
+            "packaged directory history exited with status {history_status}"
+        ));
+    }
     if output.status.code() == Some(130) {
         return Ok(0);
     }
-    if !output.status.success() {
+    let fields: Vec<_> = output.stdout.split(|byte| *byte == 0).collect();
+    let browse = matches!(fields.as_slice(), [b"esc", b""] | [b"esc", _, b""]);
+    // fzf reports status 1 for an expected key when the result list is empty.
+    if !output.status.success() && !(browse && output.status.code() == Some(1)) {
         return Err(format!(
             "packaged directory picker exited with status {}",
             output.status
         ));
     }
-    let mut directory = output.stdout;
-    while matches!(directory.last(), Some(b'\n' | b'\r')) {
-        directory.pop();
-    }
-    if directory.is_empty() {
-        return Ok(0);
-    }
+    let directory = match fields.as_slice() {
+        [b"esc", b""] | [b"esc", _, b""] => match browse_directory()? {
+            Some(directory) => directory,
+            None => return Ok(0),
+        },
+        [b"", directory, b""] if !directory.is_empty() => directory.to_vec(),
+        _ => return Err("directory picker returned an invalid selection".into()),
+    };
     match send_action(
         Path::new(socket),
         Action::SetTabDirectory {
@@ -101,6 +124,40 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
         }
         Err(error) => Err(format!("cannot retarget tab: {}", error.detail)),
     }
+}
+
+fn browse_directory() -> Result<Option<Vec<u8>>, String> {
+    let config = env::var_os("EON_DIRECTORY_PICKER_CONFIG")
+        .ok_or("the installed Eon package has no folder browser configuration")?;
+    let output = Command::new(managed_environment::configured_program("EON_YAZI", "yazi"))
+        // Yazi draws through its terminal handle; stdout carries only the raw CWD.
+        .args(["--cwd-file", "/dev/stdout"])
+        // Yazi prefers PWD even when it disagrees with the Session's actual CWD.
+        .env_remove("PWD")
+        .env("YAZI_CONFIG_HOME", config)
+        .env(
+            "YAZI_ZOXIDE_OPTS",
+            "--no-preview --border=none --header='Enter Jump · Esc Back to folders'",
+        )
+        .env_remove("FZF_DEFAULT_OPTS")
+        .env_remove("FZF_DEFAULT_OPTS_FILE")
+        .stdin(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|error| format!("cannot launch packaged folder browser: {error}"))?;
+    if output.status.code() == Some(130) {
+        return Ok(None);
+    }
+    if !output.status.success() {
+        return Err(format!(
+            "packaged folder browser exited with status {}",
+            output.status
+        ));
+    }
+    if output.stdout.is_empty() {
+        return Err("folder browser returned no directory".into());
+    }
+    Ok(Some(output.stdout))
 }
 
 fn launch_managed(
