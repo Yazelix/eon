@@ -269,16 +269,22 @@ impl Workspace {
         self.reject_duplicate(request_id)?;
 
         if let Some(picker) = &self.directory_picker {
-            match &action {
-                Action::Inspect => {}
-                Action::Focus(Direction::Left | Direction::Right) => {}
-                Action::SetTabDirectory { tab, .. } if tab == &picker.tab => {}
-                _ => {
-                    return Err(action_error(
-                        "picker-active",
-                        format!("tab {} already has an active directory picker", picker.tab),
-                    ));
-                }
+            let blocked = match &action {
+                Action::CreateTab | Action::PickTabDirectory => true,
+                Action::CreatePane
+                | Action::Focus(Direction::Up | Direction::Down)
+                | Action::Move(_) => self.tabs[self.active].id == picker.tab,
+                Action::FocusId(id) => self
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id == picker.tab && tab.panes.iter().any(|pane| pane.id == *id)),
+                _ => false,
+            };
+            if blocked {
+                return Err(action_error(
+                    "picker-active",
+                    format!("tab {} already has an active directory picker", picker.tab),
+                ));
             }
         }
 
@@ -333,13 +339,13 @@ impl Workspace {
         }
         let sessions = match &self.directory_picker {
             Some(picker) if picker.tab == id && self.tabs[index].panes.is_empty() => None,
-            Some(picker) => {
+            Some(picker) if picker.tab == id => {
                 return Err(action_error(
                     "picker-active",
                     format!("tab {} already has an active directory picker", picker.tab),
                 ));
             }
-            None => Some(
+            _ => Some(
                 self.tabs[index]
                     .panes
                     .iter()
@@ -1459,7 +1465,7 @@ mod tests {
         for (request, action) in [
             ("picker-up", Action::Focus(Direction::Up)),
             ("picker-down", Action::Focus(Direction::Down)),
-            ("picker-id", Action::FocusId("t1".into())),
+            ("picker-id", Action::FocusId("p1".into())),
             ("picker-tab", Action::CreateTab),
             ("picker-pane", Action::CreatePane),
             ("picker-move-left", Action::Move(Direction::Left)),
@@ -1508,22 +1514,17 @@ mod tests {
         let pending = workspace.snapshot();
         assert!(pending.tabs[1].panes.is_empty());
         assert!(pending.tabs[1].selected_pane.is_none());
-        let before = workspace.clone();
-        assert_eq!(
-            workspace
-                .dispatch(
-                    "retarget-other-tab",
-                    Action::SetTabDirectory {
-                        tab: "t1".into(),
-                        directory: b"/".to_vec(),
-                    },
-                    |_, _, _| unreachable!(),
-                )
-                .unwrap_err()
-                .code,
-            "picker-active"
-        );
-        assert_eq!(workspace, before);
+        workspace
+            .dispatch(
+                "retarget-other-tab",
+                Action::SetTabDirectory {
+                    tab: "t1".into(),
+                    directory: b"/tmp".to_vec(),
+                },
+                |_, _, _| unreachable!(),
+            )
+            .unwrap();
+        assert_eq!(workspace.snapshot().tabs[0].directory, b"/tmp");
         workspace
             .dispatch(
                 "accept-pending",
@@ -1574,6 +1575,121 @@ mod tests {
                 .unwrap()
         );
         assert!(workspace.snapshot().directory_picker.is_none());
+    }
+
+    #[test]
+    fn directory_picker_leaves_other_tabs_operable() {
+        for durable in [false, true] {
+            let mut workspace = initial_workspace();
+            workspace
+                .dispatch("pending", Action::CreateTab, |_, _, _| Ok(()))
+                .unwrap();
+            if durable {
+                workspace
+                    .dispatch(
+                        "accept",
+                        Action::SetTabDirectory {
+                            tab: "t2".into(),
+                            directory: b"/".to_vec(),
+                        },
+                        |_, _, _| Ok(()),
+                    )
+                    .unwrap();
+                workspace
+                    .session_exited(DIRECTORY_PICKER_SESSION, |_, _, _| unreachable!())
+                    .unwrap();
+                workspace
+                    .dispatch("retarget", Action::PickTabDirectory, |_, _, _| Ok(()))
+                    .unwrap();
+            }
+            let picker_tab = workspace.snapshot().tabs[1].clone();
+            let picker = workspace.snapshot().directory_picker;
+            workspace
+                .dispatch(
+                    "other-pane",
+                    Action::FocusId("p1".into()),
+                    |_, _, _| unreachable!(),
+                )
+                .unwrap();
+            let mut added_session = None;
+            workspace
+                .dispatch("add-pane", Action::CreatePane, |session, directory, tab| {
+                    assert_eq!(directory, Path::new("/"));
+                    assert!(tab.is_none());
+                    added_session = Some(session.id.clone());
+                    Ok(())
+                })
+                .unwrap();
+            for (request, action) in [
+                ("pane-focus", Action::Focus(Direction::Up)),
+                ("pane-move", Action::Move(Direction::Down)),
+                ("tab-move", Action::Move(Direction::Right)),
+                ("picker-tab", Action::FocusId("t2".into())),
+                ("return", Action::FocusId("t1".into())),
+            ] {
+                workspace
+                    .dispatch(request, action, |_, _, _| unreachable!())
+                    .unwrap();
+            }
+            let snapshot = workspace.snapshot();
+            assert_eq!(snapshot.active_tab, "t1");
+            assert_eq!(snapshot.tabs[0], picker_tab);
+            assert_eq!(snapshot.tabs[1].panes[1].id, "p1");
+            assert_eq!(snapshot.tabs[1].selected_pane.as_deref(), Some("p1"));
+            assert_eq!(snapshot.directory_picker, picker);
+            for action in [Action::CreateTab, Action::PickTabDirectory] {
+                let before = workspace.clone();
+                assert_eq!(
+                    workspace
+                        .dispatch("second-picker", action, |_, _, _| unreachable!())
+                        .unwrap_err()
+                        .code,
+                    "picker-active"
+                );
+                assert_eq!(workspace, before);
+            }
+            let sessions = workspace
+                .prepare_close_tab("close-other", "t1")
+                .unwrap()
+                .unwrap();
+            assert_eq!(sessions, [added_session.unwrap(), "session-1".into()]);
+            for session in sessions {
+                assert!(
+                    !workspace
+                        .session_exited(&session, |_, _, _| unreachable!())
+                        .unwrap()
+                );
+            }
+            assert_eq!(workspace.snapshot().tabs, [picker_tab]);
+            assert_eq!(workspace.snapshot().directory_picker, picker);
+
+            let mut accepted = workspace.clone();
+            accepted
+                .dispatch(
+                    "late-accept",
+                    Action::SetTabDirectory {
+                        tab: "t2".into(),
+                        directory: b"/tmp".to_vec(),
+                    },
+                    |_, directory, tab| {
+                        assert_eq!(directory, Path::new("/tmp"));
+                        assert!(tab.is_none());
+                        Ok(())
+                    },
+                )
+                .unwrap();
+            accepted
+                .session_exited(DIRECTORY_PICKER_SESSION, |_, _, _| unreachable!())
+                .unwrap();
+            assert_eq!(accepted.snapshot().active_tab, "t2");
+            assert_eq!(accepted.snapshot().tabs[0].panes.len(), 1);
+            assert!(accepted.snapshot().directory_picker.is_none());
+            workspace
+                .session_exited(DIRECTORY_PICKER_SESSION, |_, _, _| unreachable!())
+                .unwrap();
+            assert_eq!(workspace.tabs.len(), usize::from(durable));
+            assert!(workspace.directory_picker.is_none());
+        }
     }
 
     #[test]

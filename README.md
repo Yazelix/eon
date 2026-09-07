@@ -231,8 +231,10 @@ Sessions and working directories remain untouched. Alt+H/L continues to
 traverse and wrap live tabs while the picker stays bound to its original tab;
 returning shows the same picker for normal acceptance or cancellation.
 Ctrl+Shift+W or the CLI can discard the active non-final pending tab after its
-picker stops; other close and movement requests remain blocked until the picker
-exits.
+picker stops. Other tabs allow pane creation, pane focus, pane/tab movement,
+directory updates, and closing, including tab and pane header clicks. The
+picker-bound tab stays modal, and opening another picker or new tab requires
+finishing the current picker.
 
 Workspace topology is live-only. After same-boot supervisor loss, full Eon
 projects surviving canonical `session-N` runs into one synthetic `t1` as `pN`
@@ -451,15 +453,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 483 |
-| README | 465 |
+| README | 467 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,011 |
+| Architecture and contracts | 1,015 |
 | Distribution and references | 648 |
-| Changelog | 219 |
-| Rust source and tests | 12,485 |
+| Changelog | 223 |
+| Rust source and tests | 12,601 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
 | Nix composition | 734 |
 | Product defaults | 0 |
-| **Total** | **16,632** |
+| **Total** | **16,758** |

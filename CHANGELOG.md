@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keep other tabs usable while a directory picker is open: create and focus
+  panes, reorder panes or tabs, update launch directories, and close unrelated
+  tabs without disturbing the picker. Tab selection by identity remains
+  available; starting another picker or new tab still requires finishing it.
 - Keep scrolling, cell/word/line selection, and tab/pane focus usable during
   compatible live output by composing accepted Orbit `91999d7` and Venus
   `e13970e`. Reading retained history leaves terminal parsing and query replies

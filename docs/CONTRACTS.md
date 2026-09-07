@@ -213,17 +213,17 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
     when the axis has at least two targets; singleton axes remain unavailable.
     Left/right remains available while a directory picker is open: the picker
     stays bound to its original live tab while another active tab presents its
-    selected pane. Users can create new panes or tabs through the accepted
-    semantic actions only when no picker is open.
+    selected pane. Tab navigation by identity also remains available. Users can
+    create panes in another tab; creating a tab requires no open picker.
   - Moving left/right swaps the active tab with exactly one adjacent tab;
     moving up/down swaps the selected pane with exactly one adjacent pane in
     the active tab. The moved stable identity remains selected. Movement stops
-    at ordered edges and remains unavailable while a picker is open.
+    at ordered edges and remains unavailable in the picker-bound active tab.
     Venus maps Ctrl+Alt+H/L and Ctrl+Alt+K/J directly to these actions without a
     mode.
   - Closing names the expected active `tN` and requires another live tab. A
     non-final pending tab first stops its exact picker, then disappears and
-    restores its prior tab. A durable tab closes only while no picker exists:
+    restores its prior tab. A durable tab closes unless it owns the picker:
     Eon stops its Orbit Sessions one at a time in pane order and prunes each
     confirmed end through the normal Session-exit owner. Complete success
     removes the tab with the same deterministic focus rule as natural exit.
@@ -242,7 +242,7 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
   - New current-generation full Eon surfaces omit the redundant native title
     bar while retaining the selected terminal title for compositor semantics.
 - **Important failures:** Unknown or stale identity, a close target other than
-  the active tab, final-tab close, durable close while any picker exists,
+  the active tab, final-tab close, durable close in the picker-bound tab,
   invalid transition, a directional axis without another target, movement at
   an ordered edge, unavailable endpoint, duplicate identity, or partial
   recovery leaves accepted topology unchanged. A repeated request ID never
@@ -686,14 +686,18 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
     previous terminal is not composited underneath. Attach and recovery never
     create an automatic picker; recovering only a stale initial picker stops it
     and applies the validated launch-directory fallback.
-  - Existing left/right focus actions continue to traverse and wrap live tabs
+  - Left/right focus actions continue to traverse and wrap live tabs
     while the picker stays bound to its original tab. Another active tab shows
     its selected pane; returning shows the same picker for normal acceptance or
-    cancellation. Ctrl+Shift+W closing is admitted only for the active non-final
-    pending tab owned by that picker; it stops the transient Session before
-    removing the tab and restoring its prior focus. Up/down, focus by identity,
-    creation, a second picker, durable-tab close, and unrelated topology changes
-    remain unavailable until the picker exits.
+    cancellation. Tab navigation by identity remains available. Other tabs
+    allow pane creation, pane focus by direction or identity, pane/tab movement,
+    explicit directory updates, and stable-target close. These actions preserve
+    the picker's binding and Session. Mutations of the picker-bound tab remain
+    blocked except directory acceptance and closing its non-final pending tab;
+    that close stops the transient Session before removing the tab. Cancellation
+    restores the previous tab if it survives, otherwise the nearest surviving
+    tab; with no tabs left, the workspace ends. Creating a second picker or a
+    picker-first tab remains unavailable until the current picker exits.
 - **Important failures:** Cancel, empty or invalid selection, picker launch or
   exit, target disappearance, duplicate invocation, origin-tab loss, or
   presentation detachment follows the first- or later-tab fallback without a
