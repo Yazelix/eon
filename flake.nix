@@ -569,6 +569,17 @@
         preloaders = []
         previewers = [{ url = "*/", run = "folder" }]
         EOF
+        cat > "$out/init.lua" <<'EOF'
+        -- Replace file metadata with actions for this directory-only picker.
+        for id = 1, 6 do
+          Status:children_remove(id, id <= 3 and Status.LEFT or Status.RIGHT)
+        end
+        Status:children_add(function()
+          return tostring(cx.layer) == "mgr"
+            and " Enter Use current folder · Shift+Z Jump · Ctrl+C Cancel · F1 Help"
+            or ""
+        end, 1000, Status.LEFT)
+        EOF
       '';
 
       eonSource =

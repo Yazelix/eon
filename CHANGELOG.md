@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Show shortcuts in the screen where they work: quick search, Yazi folder
+  browsing, and nested history search each have their own persistent footer.
+  Browser hints hide while a Yazi prompt or overlay handles input.
 - Keep rapid picker cancellation and reopening attached to the current picker,
   including repeated directory selection in the same tab.
 - Let Enter accept, Esc browse and Ctrl+C cancel quick search while the

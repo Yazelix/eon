@@ -686,6 +686,13 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
     Yazi owns directory enumeration and navigation; Eon performs no recursive
     filesystem scan. A vanished or inaccessible final folder fails EON-C17
     validation without mutation.
+  - Each selection screen shows its own persistent footer: quick search offers
+    Use directory, Browse folders, and Cancel; Yazi offers Use current folder,
+    Shift+Z Jump, Cancel, and Help; nested jump search offers Jump and Back to
+    folders. Browser shortcuts are absent from quick search. Eon's fixed Yazi
+    status configuration replaces file metadata with these picker actions.
+    Browser hints appear only while the folder list owns input; native Yazi
+    prompts and overlays hide them until the folder list regains focus.
   - Accepting a valid choice atomically commits the tab directory and starts
     exactly one first `pN` Session there. First-tab cancellation falls back to
     Eon's validated launch directory; later-tab cancellation abandons the
@@ -741,6 +748,23 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
+- **Contextual footer proof (dogfooded):** Working-tree candidate over
+  `9cf712e031924f874a681036d931c24aa906b29d`, with exact runtime file hashes in
+  `eon-picker-context-hints-j57`; regular Eon artifact
+  `/nix/store/qyxb0m5f19kplh6qbxknm3b63gzhyw31-eon-0.1.0`, generation
+  `g1-16cf396352bdc4d42084df844387477b`, unchanged Orbit `91999d7` and Venus
+  `e13970e`. `nix build path:.#default --no-link` passed 31 unit and 27
+  integration tests; the refreshed profile equals `nix path-info path:.#default`.
+  On x86_64 Linux with isolated Sway 1.12 native Wayland, quick search resized
+  from 1100×750 to 720×600 with a readable footer. At 720×600, Yazi and nested
+  jump search showed their respective hints without overlap; Esc restored the
+  browser footer and F1 opened help. Filter and change-directory prompts hid
+  the browser hints; submitting or dismissing input restored the hints without
+  committing the tab. Jump without commitment, untracked-child
+  acceptance, actual new-pane CWD, ranked acceptance, and Ctrl+C cancellation
+  passed. Both fzf footers use the terminal foreground after the initial visual
+  check exposed unreadable default footer text. Private proof processes were
+  stopped; existing user Sessions and the EonTerm profile were preserved.
 - **Quick-search exit proof (dogfooded):** Runtime source
   `9a49d214e708f97a4c14c42e11d89f7d7b8cb7c5`, installed regular Eon artifact
   `/nix/store/02bfniixmyzxbqgknx3njw0fm96iyzmw-eon-0.1.0`, generation

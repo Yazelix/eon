@@ -79,8 +79,9 @@ Rust owns durable Eon behavior and repository tooling so schema, validation,
 tests, and later runtime code share one compiler and maintenance path. Nix owns
 package resolution and composition, and shell is reserved for irreducible
 process glue. Python remains suitable for disposable investigation, not checked-
-in product policy. A durable second language needs a concrete subsystem benefit
-that outweighs its toolchain and ownership cost; this composition has none.
+in product policy. The directory picker uses a small Lua status hook inside
+Yazi's existing runtime for its shortcut footer; it adds no separate toolchain.
+Other durable language additions require an explicit subsystem decision.
 
 ## Install and run
 
@@ -235,6 +236,10 @@ hidden entries, and F1 lists the keys. q, Q, or Ctrl+C cancel; Esc clears a
 filter or returns from nested search. Files are visible for orientation; the
 picker does not open, edit, or manage them. Browsing does not add Zoxide entries.
 Yazi uses a packaged picker keymap independent of your regular Yazi configuration.
+Each screen keeps its own actions visible at the bottom: quick search shows
+Use directory, Browse folders, and Cancel; Yazi shows Use current folder,
+Shift+Z Jump, Cancel, and F1 Help. Nested jump search shows Jump and Back to folders.
+Browser hints hide while a Yazi prompt or overlay has focus.
 
 Accepting a valid path retargets that captured tab for future Sessions; cancel
 or failure changes nothing, and an actionable error stays visible briefly before cleanup.
@@ -466,15 +471,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 483 |
-| README | 480 |
+| README | 485 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,107 |
+| Architecture and contracts | 1,131 |
 | Distribution and references | 666 |
-| Changelog | 232 |
-| Rust source and tests | 12,960 |
+| Changelog | 235 |
+| Rust source and tests | 12,975 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
-| Nix composition | 772 |
+| Nix composition | 783 |
 | Product defaults | 0 |
-| **Total** | **17,287** |
+| **Total** | **17,345** |

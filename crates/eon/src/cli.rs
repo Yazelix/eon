@@ -66,15 +66,30 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
         .map_err(|error| format!("cannot launch packaged directory history: {error}"))?;
     let output = Command::new("fzf")
         .args([
-            "--exact", "--no-sort", "--bind=ctrl-z:ignore,btab:up,tab:down",
-            "--cycle", "--keep-right", "--info=inline", "--layout=reverse",
-            "--tabstop=1", "--border=none", "--expect=esc", "--print0",
+            "--exact",
+            "--no-sort",
+            "--bind=ctrl-z:ignore,btab:up,tab:down",
+            "--cycle",
+            "--keep-right",
+            "--info=inline",
+            "--layout=reverse",
+            "--tabstop=1",
+            "--border=none",
+            "--expect=esc",
+            "--print0",
             "--prompt=Quick search > ",
-            "--header=Enter Open · Esc Browse folders · Ctrl+C Cancel\nBrowser: arrows Navigate · Enter Use current folder · Shift+Z Search · F1 Help",
+            "--footer=Enter Use directory · Esc Browse folders · Ctrl+C Cancel",
+            "--footer-border=none",
+            "--color=footer:-1",
         ])
         .env_remove("FZF_DEFAULT_OPTS")
         .env_remove("FZF_DEFAULT_OPTS_FILE")
-        .stdin(history.stdout.take().expect("directory history stdout is piped"))
+        .stdin(
+            history
+                .stdout
+                .take()
+                .expect("directory history stdout is piped"),
+        )
         .stderr(Stdio::inherit())
         .output();
     // No quick-search exit needs more input, including early Enter and Esc.
@@ -140,7 +155,7 @@ fn browse_directory() -> Result<Option<Vec<u8>>, String> {
         .env("YAZI_CONFIG_HOME", config)
         .env(
             "YAZI_ZOXIDE_OPTS",
-            "--no-preview --border=none --header='Enter Jump · Esc Back to folders'",
+            "--no-preview --border=none --footer='Enter Jump · Esc Back to folders' --footer-border=none --color=footer:-1",
         )
         .env_remove("FZF_DEFAULT_OPTS")
         .env_remove("FZF_DEFAULT_OPTS_FILE")
