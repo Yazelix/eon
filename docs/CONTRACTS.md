@@ -17,9 +17,9 @@ and remaining limitations. Owning Beads and Git retain execution history;
 The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
 `e13970e90289d0d86f0adcbf350e4b9c1d5e5219`. Source
-`4298fbb8868752e3d6c8eb4fd79fae067ab3e2a1` reports generation
-`g1-dce7143d7806f6edcd9ccb535267e0bb`. The active Eon profile resolves to
-`/nix/store/008jbiqsprwvyn2w7bfnc7rqhd1vk36x-eon-0.1.0`; the active EonTerm
+`9a49d214e708f97a4c14c42e11d89f7d7b8cb7c5` reports generation
+`g1-f95b129cfb05da8addc0c1cd9481e51a`. The active Eon profile resolves to
+`/nix/store/02bfniixmyzxbqgknx3njw0fm96iyzmw-eon-0.1.0`; the active EonTerm
 profile resolves to `/nix/store/pd5c82936b6z24ss03dhdvrb0zmq8v90-eonterm-0.1.0`.
 Existing live supervisors and separate dogfood Sessions were not restarted.
 
@@ -741,6 +741,21 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
+- **Quick-search exit proof (dogfooded):** Runtime source
+  `9a49d214e708f97a4c14c42e11d89f7d7b8cb7c5`, installed regular Eon artifact
+  `/nix/store/02bfniixmyzxbqgknx3njw0fm96iyzmw-eon-0.1.0`, generation
+  `g1-f95b129cfb05da8addc0c1cd9481e51a`, unchanged accepted Orbit `91999d7`
+  and Venus `e13970e`, on x86_64 Linux with isolated Sway 1.12 native Wayland.
+  The focused Rust regression and final `nix flake check path:.` pass;
+  `nix profile upgrade eon` resolves to the exact working-tree artifact.
+  Blocked-history regression cases cover Ctrl+C, Esc, Enter and picker failure,
+  including reaping, browser launch, exact selection and original diagnostics.
+  Installed native Esc reaps real packaged Zoxide blocked opening a private
+  FIFO and opens packaged Yazi while retaining the pending workspace. Enter
+  commits the folder and launches its pane at the observed shell CWD; the
+  existing pane and private history remain unchanged. The proof generation and
+  compositor were stopped; user Sessions were preserved. The fixture uses the
+  build environment's tool PATH, so its blocked producer also runs inside Nix.
 - **Picker review proof (dogfooded):** Runtime source
   `4298fbb8868752e3d6c8eb4fd79fae067ab3e2a1`, regular Eon artifact
   `/nix/store/008jbiqsprwvyn2w7bfnc7rqhd1vk36x-eon-0.1.0`, generation
