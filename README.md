@@ -283,6 +283,12 @@ endpoint byte.
 
 ## Terminal presentation
 
+Scrolling, selection, and tab or pane focus remain usable while terminal output
+continues between repaints. Orbit keeps parsing output and answering terminal
+queries while the user reads anchored scrollback. Selection supports cell,
+word, and logical-line gestures; completed copied text stays frozen. Reading
+does not pause the program or preserve history beyond its existing budget.
+
 Eon and EonTerm use the same terminal presentation settings in
 `$EON_CONFIG_HOME/config.toml`, normally `~/.config/eon/config.toml`:
 
@@ -445,15 +451,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy | 483 |
-| README | 459 |
+| README | 465 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 999 |
-| Distribution and references | 609 |
-| Changelog | 215 |
+| Architecture and contracts | 1,003 |
+| Distribution and references | 648 |
+| Changelog | 219 |
 | Rust source and tests | 12,485 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
 | Nix composition | 734 |
 | Product defaults | 0 |
-| **Total** | **16,571** |
+| **Total** | **16,624** |

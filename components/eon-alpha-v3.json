@@ -48,7 +48,7 @@
       "id": "orbit",
       "project": "Eon Sessions",
       "version": "0.1.0",
-      "revision": "64b225eb249490c9075894814942652a8b9d6192",
+      "revision": "91999d79546422b49bdbc124166a65859d0bd872",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -67,7 +67,7 @@
         { "id": "ORB-C6", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
         { "id": "ORB-C7", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
         { "id": "ORB-C8", "proof": "64b225eb249490c9075894814942652a8b9d6192" },
-        { "id": "ORB-C9", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
+        { "id": "ORB-C9", "proof": "91999d79546422b49bdbc124166a65859d0bd872" },
         { "id": "ORB-C10", "proof": "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c" },
         { "id": "ORB-C11", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
         { "id": "ORB-C12", "proof": "7de9980ffbd6417758698d5c33356204eeb24de5" },
@@ -83,7 +83,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "7f325a31d0052d84a1a09ff065c0e9103563c0e8",
+      "revision": "e13970e90289d0d86f0adcbf350e4b9c1d5e5219",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -94,11 +94,11 @@
       ],
       "contracts": [
         { "id": "VEN-C1", "proof": "5d22b09e323212693a8e54c4c63089784b660cad" },
-        { "id": "VEN-C2", "proof": "c0766532c7669a2ae9dac6a26ae94d467110896b" },
+        { "id": "VEN-C2", "proof": "e13970e90289d0d86f0adcbf350e4b9c1d5e5219" },
         { "id": "VEN-C3", "proof": "a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8" },
         { "id": "VEN-C4", "proof": "588996739aaff32756ca24960135371a94636801" },
-        { "id": "VEN-C7", "proof": "d3e63ae6e9fa0b72df426dbfc9bd29a96148577a" },
-        { "id": "VEN-C8", "proof": "d2d798099934dcf8037bfad6ab856e40c9b989fe" },
+        { "id": "VEN-C7", "proof": "e13970e90289d0d86f0adcbf350e4b9c1d5e5219" },
+        { "id": "VEN-C8", "proof": "e13970e90289d0d86f0adcbf350e4b9c1d5e5219" },
         { "id": "VEN-C9", "proof": "90988f6ebcde68338e202a9c637c59398aafe93d" },
         { "id": "VEN-C10", "proof": "9c56eb17613e10ef7712a1852b049ed63cf22b18" },
         { "id": "VEN-C11", "proof": "74ab5a0b661210f0afec94086f5358fe50b01f05" },
@@ -112,7 +112,7 @@
       "requires": [
         {
           "component": "orbit",
-          "revision": "64b225eb249490c9075894814942652a8b9d6192",
+          "revision": "91999d79546422b49bdbc124166a65859d0bd872",
           "interfaces": [
             { "id": "ORBF", "version": 1, "proof": "9d6d2bb37f20ab4ad9e186c7bc715eabef43e757" },
             { "id": "ORBS", "version": 10, "proof": "a65e199e16e97330175e314cacf791fa00f53069" }

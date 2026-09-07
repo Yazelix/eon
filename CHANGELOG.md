@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keep scrolling, cell/word/line selection, and tab/pane focus usable during
+  compatible live output by composing accepted Orbit `91999d7` and Venus
+  `e13970e`. Reading retained history leaves terminal parsing and query replies
+  running, with existing geometry, history, and synchronized-output boundaries.
 - Preserve retained scrollback motion when DEC 2026 synchronized output overlaps
   a semantic preview or signed scroll. Eon composes Orbit
   `64b225eb249490c9075894814942652a8b9d6192` with unchanged ORBS v10 and Venus

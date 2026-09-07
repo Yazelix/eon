@@ -37,6 +37,10 @@ Existing live supervisors were not restarted.
     packaged executable. It may start or present the exact current generation,
     so it promises neither a new window nor a new Session; live surfaces retain
     terminal-authored titles.
+  - Compatible terminal output leaves scrolling, selection, and full-Eon tab
+    and pane focus usable between repaints. Orbit continues parsing output and
+    answering terminal queries while the user reads retained history; history
+    bounds, geometry validation, and synchronized presentation remain intact.
 - **Important failures:** Missing, malformed, incompatible, replaced, or
   non-ready components fail before publishing a usable workspace or terminal.
 - **Owner:** Eon launch validation, orchestration, icon selection, and desktop
