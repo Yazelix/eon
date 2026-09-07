@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Let Ctrl+C cancel quick search while the directory-history query is still
+  running; stop and reap the query without waiting for its results.
 - Browse tab directories outside Zoxide history: Esc switches quick search to
   Yazi; Shift+Z jumps to a known folder without committing; Enter uses the
   current folder. Ctrl+C cancels, preserving existing tab lifecycle behavior.

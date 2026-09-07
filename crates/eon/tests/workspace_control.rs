@@ -57,6 +57,13 @@ fn executable(path: &Path, source: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
 }
 
+fn quick_picker_executable(path: &Path) {
+    executable(
+        path,
+        "#!/bin/sh\n[ -z \"$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE\" ] || exit 99\nselection=$(cat)\n[ \"$selection\" != cancel ] || exit 130\nprintf '\\0%s\\0' \"$selection\"\n",
+    );
+}
+
 fn artifact_path(endpoint: &Path, suffix: &str) -> PathBuf {
     let mut path = endpoint.as_os_str().to_os_string();
     path.push(suffix);
@@ -362,7 +369,7 @@ fn managed_orbit_helper() {
                     &identity,
                     TerminationReason::NaturalExit,
                     ProcessOutcome::ExitCode(0),
-                    client.as_mut().map(|client| &mut client.0),
+                    None,
                 );
                 drop(presentation_listener);
                 return;
@@ -682,14 +689,79 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
             "#!/bin/sh\ncat >/dev/null\nprintf 'esc\\0'\nexit 1\n",
         );
     }
-    for (program, script) in [
-        ("yazi", "#!/bin/sh\nexit 2\n"),
-        ("fzf", "#!/bin/sh\ncat >/dev/null\nprintf 'unexpected\\0'\n"),
-        ("zoxide", "#!/bin/sh\nexit 2\n"),
+    let history_pid = root.join("history-pid");
+    command.env("EON_TEST_HISTORY_PID", &history_pid);
+    executable(
+        &root.join("zoxide"),
+        "#!/bin/sh\necho $$ > \"$EON_TEST_HISTORY_PID\"\nexec sleep 30\n",
+    );
+    executable(
+        &root.join("fzf"),
+        "#!/bin/sh\nwhile [ ! -s \"$EON_TEST_HISTORY_PID\" ]; do sleep 0.01; done\nexit 130\n",
+    );
+    let mut child = command.spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let cancelled = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status.success();
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    let pid: i32 = fs::read_to_string(&history_pid)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let history_reaped = unsafe { libc::kill(pid, 0) } == -1;
+    if !history_reaped {
+        unsafe { libc::kill(pid, libc::SIGKILL) };
+    }
+    wait_for_exit(&mut child);
+    assert!(
+        cancelled && history_reaped,
+        "cancellation waited for directory history"
+    );
+    assert!(listener.accept().is_err());
+    for (program, script, message) in [
+        (
+            "yazi",
+            "#!/bin/sh\nexit 2\n",
+            "packaged folder browser exited",
+        ),
+        (
+            "fzf",
+            "#!/bin/sh\ncat >/dev/null\nprintf 'unexpected\\0'\n",
+            "directory picker returned an invalid selection",
+        ),
+        (
+            "zoxide",
+            "#!/bin/sh\nexit 2\n",
+            "packaged directory history exited",
+        ),
     ] {
+        executable(&root.join("zoxide"), "#!/bin/sh\nprintf '/known\\n'\n");
+        executable(
+            &root.join("fzf"),
+            "#!/bin/sh\ncat >/dev/null\nprintf 'esc\\0'\nexit 1\n",
+        );
+        executable(
+            &root.join("yazi"),
+            "#!/bin/sh\nprintf '/untracked-\\377\n'\n",
+        );
         executable(&root.join(program), script);
-        let mut child = command.spawn().unwrap();
+        let mut child = command.stderr(Stdio::piped()).spawn().unwrap();
         assert!(!wait_for_exit(&mut child).success());
+        let mut error = String::new();
+        child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut error)
+            .unwrap();
+        assert!(error.contains(message), "{error}");
         assert!(
             listener.accept().is_err(),
             "failure sent a directory action"
@@ -734,10 +806,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     );
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
-    executable(
-        &session_bin.join("fzf"),
-        "#!/bin/sh\n[ -z \"$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE\" ] || exit 99\nselection=$(cat)\n[ \"$selection\" != cancel ] || exit 130\nprintf '\\0%s\\0' \"$selection\"\n",
-    );
+    quick_picker_executable(&session_bin.join("fzf"));
     fs::write(&selection, selected.as_os_str().as_bytes()).unwrap();
 
     let child = eon_command(&binary)
@@ -921,7 +990,8 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
             "close-t1-partial",
             Action::CloseTab { tab: "t1".into() },
         ),
-        Response::Failure(failure) if failure.code == "tab-close-failed"
+        Response::Failure(failure)
+            if failure.code == "tab-close-failed" && failure.detail.contains("injected stop failure")
     ));
     assert!(matches!(
         workspace_action(&control, "close-t1-partial", Action::CloseTab { tab: "t1".into() }),
@@ -998,10 +1068,7 @@ fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
     );
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
-    executable(
-        &session_bin.join("fzf"),
-        "#!/bin/sh\n[ -z \"$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE\" ] || exit 99\nselection=$(cat)\n[ \"$selection\" != cancel ] || exit 130\nprintf '\\0%s\\0' \"$selection\"\n",
-    );
+    quick_picker_executable(&session_bin.join("fzf"));
 
     let child = eon_command(&binary)
         .arg("run")
@@ -1770,10 +1837,7 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
-    executable(
-        &session_bin.join("fzf"),
-        "#!/bin/sh\n[ -z \"$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE\" ] || exit 99\nselection=$(cat)\n[ \"$selection\" != cancel ] || exit 130\nprintf '\\0%s\\0' \"$selection\"\n",
-    );
+    quick_picker_executable(&session_bin.join("fzf"));
     let child = eon_command(&binary)
         .arg("run")
         .current_dir(&first)
@@ -2269,10 +2333,7 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
     );
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
-    executable(
-        &session_bin.join("fzf"),
-        "#!/bin/sh\n[ -z \"$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE\" ] || exit 99\nselection=$(cat)\n[ \"$selection\" != cancel ] || exit 130\nprintf '\\0%s\\0' \"$selection\"\n",
-    );
+    quick_picker_executable(&session_bin.join("fzf"));
     let launch = || {
         eon_command(&binary)
             .arg("run")

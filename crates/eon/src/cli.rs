@@ -74,7 +74,10 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
         .stdin(history.stdout.take().expect("directory history stdout is piped"))
         .stderr(Stdio::inherit())
         .output();
-    if output.is_err() {
+    let cancelled = output
+        .as_ref()
+        .is_ok_and(|output| output.status.code() == Some(130));
+    if output.is_err() || cancelled {
         let _ = history.kill();
     }
     let history_status = history
@@ -82,30 +85,29 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
         .map_err(|error| format!("cannot reap directory history: {error}"))?;
     let output =
         output.map_err(|error| format!("cannot launch packaged directory picker: {error}"))?;
+    if cancelled {
+        return Ok(0);
+    }
     if !history_status.success() {
         return Err(format!(
             "packaged directory history exited with status {history_status}"
         ));
     }
-    if output.status.code() == Some(130) {
-        return Ok(0);
-    }
     let fields: Vec<_> = output.stdout.split(|byte| *byte == 0).collect();
-    let browse = matches!(fields.as_slice(), [b"esc", b""] | [b"esc", _, b""]);
-    // fzf reports status 1 for an expected key when the result list is empty.
-    if !output.status.success() && !(browse && output.status.code() == Some(1)) {
-        return Err(format!(
-            "packaged directory picker exited with status {}",
-            output.status
-        ));
-    }
-    let directory = match fields.as_slice() {
-        [b"esc", b""] | [b"esc", _, b""] => match browse_directory()? {
+    let directory = match (output.status.code(), fields.as_slice()) {
+        // fzf reports status 1 for an expected key when the result list is empty.
+        (Some(0 | 1), [b"esc", b""] | [b"esc", _, b""]) => match browse_directory()? {
             Some(directory) => directory,
             None => return Ok(0),
         },
-        [b"", directory, b""] if !directory.is_empty() => directory.to_vec(),
-        _ => return Err("directory picker returned an invalid selection".into()),
+        (Some(0), [b"", directory, b""]) if !directory.is_empty() => directory.to_vec(),
+        (Some(0), _) => return Err("directory picker returned an invalid selection".into()),
+        _ => {
+            return Err(format!(
+                "packaged directory picker exited with status {}",
+                output.status
+            ));
+        }
     };
     match send_action(
         Path::new(socket),
