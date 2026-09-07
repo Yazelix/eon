@@ -667,6 +667,9 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
     with no durable pane. Eon starts one transient Orbit Session running the
     exact packaged ranked-directory picker at the inherited launch directory.
     Ambient fzf default options cannot alter its command, layout, or bindings.
+    Each picker instance has a distinct endpoint within that workspace, including
+    repeated retargeting of the same tab. A polling client can distinguish the
+    replacement even if it misses the intervening no-picker snapshot.
   - Quick search ranks Zoxide history through fzf. Enter accepts one result;
     Esc opens packaged Yazi without cancelling the picker; Ctrl+C cancels.
     Cancellation stops and reaps a still-running history query before exiting.

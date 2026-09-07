@@ -4,7 +4,7 @@ use super::{
         EON_ANSI_PALETTE, LaunchMode, Programs, SESSION_START_TIMEOUT, effective_uid, request_id,
         status_code, stop, validate_private_directory,
     },
-    workspace::{DIRECTORY_PICKER_ENDPOINT, DIRECTORY_PICKER_SESSION},
+    workspace::{DIRECTORY_PICKER_SESSION, is_directory_picker_endpoint},
 };
 use eon_workspace_protocol::v4::MAX_PANES;
 use orbit_protocol::management::{
@@ -308,14 +308,6 @@ fn endpoint_matches(path: &Path, expected: &EndpointIdentity) -> Result<(), Stri
     Ok(())
 }
 
-fn expected_session_endpoint(runtime: &Path, number: Option<usize>) -> PathBuf {
-    match number {
-        None => runtime.join(DIRECTORY_PICKER_ENDPOINT),
-        Some(1) => runtime.join("orbit.sock"),
-        Some(number) => runtime.join(format!("session-{number}.sock")),
-    }
-}
-
 fn validate_management_identity(
     identity: &LiveIdentity,
     component_generation: &str,
@@ -348,8 +340,15 @@ fn validate_management_identity(
     let runtime = presentation
         .parent()
         .ok_or_else(|| "Sessions presentation endpoint has no parent".to_string())?;
-    let expected_presentation = expected_session_endpoint(runtime, number);
-    if presentation != expected_presentation {
+    let expected_presentation = match number {
+        None => presentation
+            .file_name()
+            .and_then(OsStr::to_str)
+            .is_some_and(is_directory_picker_endpoint),
+        Some(1) => presentation == runtime.join("orbit.sock"),
+        Some(number) => presentation == runtime.join(format!("session-{number}.sock")),
+    };
+    if !expected_presentation {
         return Err(format!(
             "Sessions identity {} uses unexpected presentation endpoint {}",
             identity.session_id,
@@ -1185,9 +1184,9 @@ pub(super) fn stop_managed_sessions(
 #[cfg(test)]
 mod tests {
     use super::{
-        EON_ANSI_PALETTE, Programs, managed_session_number, management, orbit_command,
-        read_management_response, session_number, unix_connect_with_timeout,
-        wait_for_orbit_parent_cgroup,
+        EON_ANSI_PALETTE, Programs, is_directory_picker_endpoint, managed_session_number,
+        management, orbit_command, read_management_response, session_number,
+        unix_connect_with_timeout, wait_for_orbit_parent_cgroup,
     };
     use crate::supervisor::temporary_directory;
     use orbit_protocol::management::ServerMessage as ManagementServerMessage;
@@ -1217,6 +1216,20 @@ mod tests {
             "session-184467440737095516160",
         ] {
             assert_eq!(session_number(invalid), None, "accepted {invalid}");
+        }
+        for valid in ["pick.sock", "k1.sock", "k256.sock"] {
+            assert!(is_directory_picker_endpoint(valid));
+        }
+        for invalid in [
+            "k0.sock",
+            "k01.sock",
+            "k.sock",
+            "k-1.sock",
+            "k1.sock.record",
+            "../k1.sock",
+            "k184467440737095516160.sock",
+        ] {
+            assert!(!is_directory_picker_endpoint(invalid), "accepted {invalid}");
         }
     }
 

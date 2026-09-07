@@ -12,7 +12,21 @@ use std::{
 
 const MAX_RECENT_REQUESTS: usize = 256;
 pub(crate) const DIRECTORY_PICKER_SESSION: &str = "directory-picker";
-pub(crate) const DIRECTORY_PICKER_ENDPOINT: &str = "pick.sock";
+
+pub(crate) fn is_directory_picker_endpoint(name: &str) -> bool {
+    // Existing records remain valid for cleanup; new instances use numbered names.
+    name == "pick.sock"
+        || name
+            .strip_prefix('k')
+            .and_then(|name| name.strip_suffix(".sock"))
+            .and_then(|number| {
+                number
+                    .parse::<usize>()
+                    .ok()
+                    .filter(|value| *value > 0 && value.to_string() == number)
+            })
+            .is_some()
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Session {
@@ -38,6 +52,7 @@ struct Tab {
 struct DirectoryPicker {
     tab: String,
     previous_tab: Option<String>,
+    endpoint: PathBuf,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -47,6 +62,7 @@ pub(crate) struct Workspace {
     active: usize,
     next_tab: usize,
     next_pane: usize,
+    next_picker: usize,
     directory_picker: Option<DirectoryPicker>,
     recent_requests: VecDeque<String>,
 }
@@ -77,12 +93,7 @@ impl Workspace {
             directory_picker: self.directory_picker.as_ref().map(|picker| {
                 SnapshotDirectoryPicker {
                     tab: picker.tab.clone(),
-                    endpoint: self
-                        .runtime
-                        .join(DIRECTORY_PICKER_ENDPOINT)
-                        .as_os_str()
-                        .as_bytes()
-                        .to_vec(),
+                    endpoint: picker.endpoint.as_os_str().as_bytes().to_vec(),
                 }
             }),
         }
@@ -214,6 +225,7 @@ impl Workspace {
             active: 0,
             next_tab: 2,
             next_pane: 1,
+            next_picker: 1,
             directory_picker: None,
             recent_requests: VecDeque::new(),
         };
@@ -255,6 +267,7 @@ impl Workspace {
             active: 0,
             next_tab: 2,
             next_pane,
+            next_picker: 1,
             directory_picker: None,
             recent_requests: VecDeque::new(),
         })
@@ -451,12 +464,10 @@ impl Workspace {
         self.check_pane_capacity()?;
         let tab_id = format!("t{}", self.next_tab);
         let directory = self.tabs[self.active].directory.clone();
-        let session = Session {
-            id: DIRECTORY_PICKER_SESSION.into(),
-            endpoint: self.runtime.join(DIRECTORY_PICKER_ENDPOINT),
-        };
+        let session = self.next_picker_session()?;
         start(&session, &directory, Some(&tab_id))
             .map_err(|detail| action_error("picker-start", detail))?;
+        self.next_picker += 1;
         let previous_tab = self.tabs[self.active].id.clone();
         self.next_tab += 1;
         self.tabs.push(Tab {
@@ -469,6 +480,7 @@ impl Workspace {
         self.directory_picker = Some(DirectoryPicker {
             tab: tab_id,
             previous_tab: Some(previous_tab),
+            endpoint: session.endpoint,
         });
         Ok(())
     }
@@ -494,17 +506,29 @@ impl Workspace {
         start: &mut impl FnMut(&Session, &Path, Option<&str>) -> Result<(), String>,
     ) -> Result<(), Failure> {
         let tab = &self.tabs[self.active];
-        let session = Session {
-            id: DIRECTORY_PICKER_SESSION.into(),
-            endpoint: self.runtime.join(DIRECTORY_PICKER_ENDPOINT),
-        };
+        let session = self.next_picker_session()?;
         start(&session, &tab.directory, Some(&tab.id))
             .map_err(|detail| action_error("picker-start", detail))?;
+        self.next_picker += 1;
         self.directory_picker = Some(DirectoryPicker {
             tab: tab.id.clone(),
             previous_tab: None,
+            endpoint: session.endpoint,
         });
         Ok(())
+    }
+
+    fn next_picker_session(&self) -> Result<Session, Failure> {
+        if self.next_picker == usize::MAX {
+            return Err(action_error(
+                "capacity",
+                "workspace has exhausted picker identities",
+            ));
+        }
+        Ok(Session {
+            id: DIRECTORY_PICKER_SESSION.into(),
+            endpoint: self.runtime.join(format!("k{}.sock", self.next_picker)),
+        })
     }
 
     fn set_tab_directory(
@@ -1161,6 +1185,25 @@ mod tests {
             .dispatch("new-tab-again", Action::CreateTab, |_, _, _| Ok(()))
             .unwrap();
         assert_eq!(workspace.snapshot().active_tab, "t3");
+        let last_endpoint = workspace.snapshot().directory_picker.unwrap().endpoint;
+        assert_ne!(last_endpoint, initial.directory_picker.unwrap().endpoint);
+        workspace
+            .session_exited(DIRECTORY_PICKER_SESSION, |_, _, _| unreachable!())
+            .unwrap();
+        workspace
+            .dispatch("retarget", Action::PickTabDirectory, |_, _, _| Ok(()))
+            .unwrap();
+        let first = workspace.snapshot().directory_picker.unwrap();
+        workspace
+            .session_exited(DIRECTORY_PICKER_SESSION, |_, _, _| unreachable!())
+            .unwrap();
+        workspace
+            .dispatch("retarget-again", Action::PickTabDirectory, |_, _, _| Ok(()))
+            .unwrap();
+        let second = workspace.snapshot().directory_picker.unwrap();
+        assert_eq!(first.tab, second.tab);
+        assert_ne!(first.endpoint, second.endpoint);
+        assert_ne!(first.endpoint, last_endpoint);
 
         let mut shifted = initial_workspace();
         shifted

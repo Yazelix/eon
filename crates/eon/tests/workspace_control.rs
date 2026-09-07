@@ -596,6 +596,20 @@ fn wait_for_picker_close(socket: &Path, directory: &Path) -> Snapshot {
     }
 }
 
+fn picker_endpoint(socket: &Path) -> PathBuf {
+    let id = format!(
+        "picker-endpoint-{}",
+        NEXT_TEST.fetch_add(1, Ordering::Relaxed)
+    );
+    let Response::Snapshot(snapshot) = workspace_action(socket, &id, Action::Inspect) else {
+        panic!("cannot inspect directory picker");
+    };
+    Path::new(OsStr::from_bytes(
+        &snapshot.directory_picker.unwrap().endpoint,
+    ))
+    .to_path_buf()
+}
+
 fn eon_command(binary: &Path) -> Command {
     let mut command = Command::new(binary);
     command.env("EON_TEST_MANAGED_ORBIT", "1");
@@ -852,10 +866,8 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     };
     let picker = opened.directory_picker.unwrap();
     assert_eq!(picker.tab, "t1");
-    assert_eq!(
-        Path::new(OsStr::from_bytes(&picker.endpoint)),
-        generation.join("pick.sock")
-    );
+    let initial_picker = Path::new(OsStr::from_bytes(&picker.endpoint)).to_path_buf();
+    assert_eq!(initial_picker.parent(), Some(generation.as_path()));
     assert!(opened.tabs[0].panes.is_empty());
     assert!(opened.tabs[0].selected_pane.is_none());
     assert!(!generation.join("orbit.sock").exists());
@@ -872,8 +884,8 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     let retargeted = wait_for_picker_close(&control, &selected);
     assert_eq!(retargeted.tabs[0].panes.len(), 1);
     assert_eq!(retargeted.tabs[0].selected_pane.as_deref(), Some("p1"));
-    assert!(!generation.join("pick.sock").exists());
-    assert!(!generation.join("pick.sock.record").exists());
+    assert!(!initial_picker.exists());
+    assert!(!artifact_path(&initial_picker, ".record").exists());
 
     let created = workspace_action(&control, "pane-after-picker", Action::CreatePane);
     assert!(matches!(
@@ -901,6 +913,8 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
                 && snapshot.tabs[1].panes.is_empty()
                 && snapshot.tabs[1].selected_pane.is_none()
     ));
+    let pending_picker = picker_endpoint(&control);
+    assert_ne!(pending_picker, initial_picker);
     assert!(matches!(
         workspace_action(
             &control,
@@ -910,7 +924,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         Response::Snapshot(snapshot)
             if snapshot.active_tab == "t1" && snapshot.tabs.len() == 1
     ));
-    assert!(!generation.join("pick.sock").exists());
+    assert!(!pending_picker.exists());
 
     fs::write(&selection, selected.as_os_str().as_bytes()).unwrap();
     let traversed_picker = match workspace_action(&control, "new-tab-accept", Action::CreateTab) {
@@ -974,6 +988,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         workspace_action(&control, "picker-client-loss", Action::PickTabDirectory),
         Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
     ));
+    let lost_client_picker = picker_endpoint(&control);
     let pid = fs::read_to_string(&venus_pid)
         .unwrap()
         .parse::<i32>()
@@ -981,7 +996,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     // SAFETY: the PID came from this test's live Venus child.
     assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
     wait_for_picker_close(&control, &selected);
-    assert!(!generation.join("pick.sock").exists());
+    assert!(!lost_client_picker.exists());
 
     fs::write(&fail_stop_once, "session-2").unwrap();
     assert!(matches!(
@@ -1098,7 +1113,7 @@ fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
         Response::Snapshot(snapshot)
             if snapshot.directory_picker.is_some() && snapshot.tabs[0].panes.is_empty()
     ));
-    let picker = live_identity(&generation.join("pick.sock"));
+    let picker = live_identity(&picker_endpoint(&control));
     fs::write(&fail_stop_once, "directory-picker").unwrap();
     let venus = fs::read_to_string(&venus_pid).unwrap().parse().unwrap();
     // SAFETY: the PID came from this test's live Venus child.
@@ -2361,7 +2376,7 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
         Response::Snapshot(snapshot)
             if snapshot.directory_picker.is_some() && snapshot.tabs[0].panes.is_empty()
     ));
-    let picker = live_identity(&generation.join("pick.sock"));
+    let picker = live_identity(&picker_endpoint(&control));
     first.kill().unwrap();
     assert!(!first.wait().unwrap().success());
     wait_for(&lease_released);
