@@ -7,8 +7,9 @@ installation, and proven contract changes.
 
 - Keep rapid picker cancellation and reopening attached to the current picker,
   including repeated directory selection in the same tab.
-- Let Ctrl+C cancel quick search while the directory-history query is still
-  running; stop and reap the query without waiting for its results.
+- Let Enter accept, Esc browse and Ctrl+C cancel quick search while the
+  directory-history query is still running; stop and reap the query without
+  waiting for its remaining results.
 - Browse tab directories outside Zoxide history: Esc switches quick search to
   Yazi; Shift+Z jumps to a known folder without committing; Enter uses the
   current folder. Ctrl+C cancels, preserving existing tab lifecycle behavior.

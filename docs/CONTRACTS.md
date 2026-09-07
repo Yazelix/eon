@@ -672,7 +672,8 @@ Existing live supervisors and separate dogfood Sessions were not restarted.
     replacement even if it misses the intervening no-picker snapshot.
   - Quick search ranks Zoxide history through fzf. Enter accepts one result;
     Esc opens packaged Yazi without cancelling the picker; Ctrl+C cancels.
-    Cancellation stops and reaps a still-running history query before exiting.
+    Every quick-search exit stops and reaps a still-running history query;
+    accepting, browsing and cancelling do not wait for the remaining results.
     Empty history still shows the Browse action. Arrows and Tab/Shift+Tab move
     through quick-search results.
   - Yazi begins at the inherited tab directory. Arrows/hjkl browse parent and

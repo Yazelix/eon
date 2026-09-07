@@ -17,7 +17,10 @@ use eon_workspace_protocol::v4::{Action, Direction, Response, VERSION};
 use std::{
     env,
     ffi::{OsStr, OsString},
-    os::unix::{ffi::OsStrExt, process::CommandExt},
+    os::unix::{
+        ffi::OsStrExt,
+        process::{CommandExt, ExitStatusExt},
+    },
     path::Path,
     process::{Command, Stdio},
 };
@@ -74,21 +77,19 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
         .stdin(history.stdout.take().expect("directory history stdout is piped"))
         .stderr(Stdio::inherit())
         .output();
-    let cancelled = output
-        .as_ref()
-        .is_ok_and(|output| output.status.code() == Some(130));
-    if output.is_err() || cancelled {
-        let _ = history.kill();
-    }
+    // No quick-search exit needs more input, including early Enter and Esc.
+    let history_stopped = history.kill().is_ok();
     let history_status = history
         .wait()
         .map_err(|error| format!("cannot reap directory history: {error}"))?;
     let output =
         output.map_err(|error| format!("cannot launch packaged directory picker: {error}"))?;
-    if cancelled {
+    if output.status.code() == Some(130) {
         return Ok(0);
     }
-    if !history_status.success() {
+    if !history_status.success()
+        && !(history_stopped && history_status.signal() == Some(libc::SIGKILL))
+    {
         return Err(format!(
             "packaged directory history exited with status {history_status}"
         ));

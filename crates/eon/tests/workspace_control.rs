@@ -633,6 +633,8 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
         &root.join("yazi"),
         "#!/bin/sh\nprintf '/untracked-\\377\\n'\n",
     );
+    let mut path = vec![root.clone()];
+    path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
     let mut command = Command::new(env!("CARGO_BIN_EXE_eon"));
     command
         .args([
@@ -640,7 +642,7 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
             socket.as_os_str(),
             OsStr::new("t1"),
         ])
-        .env("PATH", format!("{}:/bin", root.display()))
+        .env("PATH", std::env::join_paths(path).unwrap())
         .env("EON_YAZI", root.join("yazi"))
         .env("EON_DIRECTORY_PICKER_CONFIG", &root)
         .stdout(Stdio::null())
@@ -669,26 +671,23 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
             directory: b"/untracked-\xff\n".to_vec(),
         }
     );
-    stream
-        .write_all(
-            &encode_response(&Response::Snapshot(Snapshot {
-                active_tab: "t1".into(),
-                tabs: vec![Tab {
-                    id: "t1".into(),
-                    directory: b"/untracked-\xff\n".to_vec(),
-                    selected_pane: Some("p1".into()),
-                    panes: vec![Pane {
-                        id: "p1".into(),
-                        session: "session-1".into(),
-                        endpoint: b"/test.sock".to_vec(),
-                        live: true,
-                    }],
-                }],
-                directory_picker: None,
-            }))
-            .unwrap(),
-        )
-        .unwrap();
+    let response = encode_response(&Response::Snapshot(Snapshot {
+        active_tab: "t1".into(),
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/untracked-\xff\n".to_vec(),
+            selected_pane: Some("p1".into()),
+            panes: vec![Pane {
+                id: "p1".into(),
+                session: "session-1".into(),
+                endpoint: b"/test.sock".to_vec(),
+                live: true,
+            }],
+        }],
+        directory_picker: None,
+    }))
+    .unwrap();
+    stream.write_all(&response).unwrap();
     wait_for_successful_exit(&mut child);
     for program in ["fzf", "yazi"] {
         executable(&root.join(program), "#!/bin/sh\nexit 130\n");
@@ -704,41 +703,99 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
         );
     }
     let history_pid = root.join("history-pid");
-    command.env("EON_TEST_HISTORY_PID", &history_pid);
+    let browser_started = root.join("browser-started");
+    command
+        .env("EON_TEST_HISTORY_PID", &history_pid)
+        .env("EON_TEST_BROWSER_STARTED", &browser_started);
     executable(
         &root.join("zoxide"),
         "#!/bin/sh\necho $$ > \"$EON_TEST_HISTORY_PID\"\nexec sleep 30\n",
     );
     executable(
-        &root.join("fzf"),
-        "#!/bin/sh\nwhile [ ! -s \"$EON_TEST_HISTORY_PID\" ]; do sleep 0.01; done\nexit 130\n",
+        &root.join("yazi"),
+        "#!/bin/sh\ntouch \"$EON_TEST_BROWSER_STARTED\"\nexit 130\n",
     );
-    let mut child = command.spawn().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let cancelled = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break status.success();
+    for (mode, finish) in [
+        ("cancel", "exit 130"),
+        ("browse", "printf 'esc\\0'\nexit 1"),
+        ("accept", "printf '\\0/known\\0'"),
+        ("failure", "exit 2"),
+    ] {
+        let _ = fs::remove_file(&history_pid);
+        let _ = fs::remove_file(&browser_started);
+        executable(
+            &root.join("fzf"),
+            &format!(
+                "#!/bin/sh\nwhile [ ! -s \"$EON_TEST_HISTORY_PID\" ]; do sleep 0.01; done\n{finish}\n"
+            ),
+        );
+        let mut child = command.stderr(Stdio::piped()).spawn().unwrap();
+        // Picker errors remain visible for two seconds before the process exits.
+        let deadline = Instant::now() + Duration::from_secs(4);
+        let mut submitted = false;
+        let finished = loop {
+            if let Ok((mut stream, _)) = listener.accept() {
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(1)))
+                    .unwrap();
+                let mut request = vec![0; HEADER_BYTES];
+                stream.read_exact(&mut request).unwrap();
+                request.resize(declared_message_len(&request).unwrap(), 0);
+                stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
+                assert_eq!(
+                    decode_request(&request).unwrap().action,
+                    Action::SetTabDirectory {
+                        tab: "t1".into(),
+                        directory: b"/known".to_vec(),
+                    }
+                );
+                assert!(!submitted, "selection was submitted twice");
+                submitted = true;
+                stream.write_all(&response).unwrap();
+            }
+            if let Some(status) = child.try_wait().unwrap() {
+                break Some(status.success());
+            }
+            if Instant::now() >= deadline {
+                break None;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+        let pid: i32 = fs::read_to_string(&history_pid)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // SAFETY: the PID belongs to this test's history child.
+        let history_reaped = unsafe { libc::kill(pid, 0) } == -1;
+        if !history_reaped {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
         }
-        if Instant::now() >= deadline {
-            break false;
+        if finished.is_none() {
+            let _ = child.kill();
         }
-        thread::sleep(Duration::from_millis(10));
-    };
-    let pid: i32 = fs::read_to_string(&history_pid)
-        .unwrap()
-        .trim()
-        .parse()
-        .unwrap();
-    let history_reaped = unsafe { libc::kill(pid, 0) } == -1;
-    if !history_reaped {
-        unsafe { libc::kill(pid, libc::SIGKILL) };
+        wait_for_exit(&mut child);
+        let mut error = String::new();
+        child
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_string(&mut error)
+            .unwrap();
+        assert!(
+            finished == Some(mode != "failure") && history_reaped,
+            "{mode}: result {finished:?}, history reaped {history_reaped}: {error}"
+        );
+        assert_eq!(submitted, mode == "accept");
+        assert_eq!(browser_started.exists(), mode == "browse");
+        assert!(listener.accept().is_err());
+        if mode == "failure" {
+            assert!(
+                error.contains("packaged directory picker exited"),
+                "{error}"
+            );
+        }
     }
-    wait_for_exit(&mut child);
-    assert!(
-        cancelled && history_reaped,
-        "cancellation waited for directory history"
-    );
-    assert!(listener.accept().is_err());
     for (program, script, message) in [
         (
             "yazi",
