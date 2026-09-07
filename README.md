@@ -197,15 +197,15 @@ New current-generation full Eon windows omit the redundant native title bar;
 the selected terminal retains compositor title semantics, while EonTerm and
 legacy Eon attachment keep native decorations. Alt+H/L traverses tabs,
 Alt+K/J traverses panes, Ctrl+Alt+H/L moves the active tab, Ctrl+Alt+K/J moves
-the selected pane, Ctrl+Shift+W closes the active non-final tab, Alt+M creates a
-pane, Ctrl+T opens a new tab's directory picker, and Alt+Z opens the active
+the selected pane, Alt+Shift+W closes the active non-final tab, Alt+M creates a
+pane, Alt+Shift+T opens a new tab's directory picker, and Alt+Z opens the active
 tab's directory picker. External workspace changes appear
 within one second because Eon Desktop re-inspects EONW v4 every 250 ms; the
 protocol adds no event stream. When a shell exits, Eon removes its pane, selects
 the nearest surviving pane, removes an empty tab, and closes when the final pane
 exits.
 Movement stops at ordered edges without changing stable identities or Session
-mappings. `eon tab close tN` and Ctrl+Shift+W name the expected active tab; they
+mappings. `eon tab close tN` and Alt+Shift+W name the expected active tab; they
 never close the final tab or silently advance a stale request to another tab.
 
 Every live tab owns one absolute launch directory. A fresh workspace validates
@@ -248,7 +248,7 @@ closes with its tab, Eon Desktop surface, process, or supervisor. Existing
 Sessions and working directories remain untouched. Alt+H/L continues to
 traverse and wrap live tabs while the picker stays bound to its original tab;
 returning shows the same picker for normal acceptance or cancellation.
-Ctrl+Shift+W or the CLI can discard the active non-final pending tab after its
+Alt+Shift+W or the CLI can discard the active non-final pending tab after its
 picker stops. Other tabs allow pane creation, pane focus, pane/tab movement,
 directory updates, and closing, including tab and pane header clicks. The
 picker-bound tab stays modal, and opening another picker or new tab requires
@@ -474,12 +474,12 @@ Beads data, lock files, and generated artifacts.
 | README | 485 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,147 |
+| Architecture and contracts | 1,159 |
 | Distribution and references | 666 |
-| Changelog | 239 |
+| Changelog | 242 |
 | Rust source and tests | 12,893 |
 | Cargo manifests | 37 |
 | Component manifest | 346 |
 | Nix composition | 783 |
 | Product defaults | 0 |
-| **Total** | **17,057** |
+| **Total** | **17,072** |

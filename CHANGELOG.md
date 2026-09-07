@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Use Nova’s Alt+Shift+T for new tabs and Alt+Shift+W for closing the active
+  non-final tab. Ctrl+T and Ctrl+Shift+W remain available to terminal programs.
+
 - Keep long tab directory names visible on one header line, including
   underscores, through Venus `94b15af20d1798b648f4d9945fd6bb647f10add8`.
 - Launch Eon and EonTerm without a delegated cgroup, consuming Orbit's accepted

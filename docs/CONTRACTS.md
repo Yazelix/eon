@@ -16,7 +16,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
-`94b15af20d1798b648f4d9945fd6bb647f10add8`. Exact source, installed artifact,
+`0791f00926cd5cc4fedcc7737aeac7bb68569aff`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
 
@@ -227,7 +227,7 @@ Profile refreshes preserve existing live supervisors and their Sessions.
     failure, and every remaining live Session stays represented in the
     partially pruned tab. A Session that ended naturally during the request is
     reconciled and pruned as an exit rather than reported as a successful Stop.
-    Venus maps Ctrl+Shift+W directly to this stable-target action; lowercase
+    Venus maps Alt+Shift+W directly to this stable-target action; lowercase
     Ctrl+W remains terminal input.
   - Ended Sessions leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
@@ -288,11 +288,23 @@ Profile refreshes preserve existing live supervisors and their Sessions.
     `0f2b76d2153db8e5716d0cccd78b26802684b5be` consumes accepted Venus
     `94b15af20d1798b648f4d9945fd6bb647f10add8` and unchanged Orbit `91999d7`.
     Installed Eon `/nix/store/j4n3j5r9mfj7xpkj6sjnb9cns11ffsly-eon-0.1.0`
-    matches the current-tree output. `ven-2fq` in Eon Desktop records exact
+    matches that source output. `ven-2fq` in Eon Desktop records exact
     source hashes, package checks, and isolated Sway 1.12 scale-1 observation:
     two real Sessions retain their directory identities and the long second
     label stays visible with underscores. The private generation stops cleanly;
     existing user Sessions remain running. Fractional scale remains unproved.
+
+  - **Nova tab shortcuts (accepted):** Eon source
+    `fea679260dd81fcdbb907e804156b00244af2324` consumes Venus
+    `0791f00926cd5cc4fedcc7737aeac7bb68569aff` with unchanged Orbit `91999d7`.
+    Nix manifest/lock checks and both package builds pass. Installed Eon
+    `/nix/store/578xxkf17cin8sdn6pb5rr10hxz4yfqg-eon-0.1.0` and EonTerm
+    `/nix/store/1xg4yr3fpppgnblgqhizx831bfa9cibv-eonterm-0.1.0` match the
+    current-tree outputs. `ven-yp4` records isolated Sway 1.12 scale-1 native
+    Alt+Shift+T creation, inherited directory, Alt+Shift+W pending/durable
+    close, final-tab protection, and exact Ctrl+T/Ctrl+Shift+W terminal bytes.
+    The private generation stops cleanly; existing user processes and workspace
+    remain unchanged. Fractional scale and other partial proofs remain open.
 
 ## EON-C9 — Managed shell environment
 
