@@ -16,9 +16,37 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
-`9157f7fbed0318d94a0697c01a23de2bed86946a`. Exact source, installed artifact,
+`1b32e5ba7105d14f654136578a65c97a25b53fc1`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
+
+## Venus startup correction acceptance
+
+- **Accepted source:** `e10a01ee93d6d32d7312d1c82ff6f524aca31583` selects
+  Venus `1b32e5ba7105d14f654136578a65c97a25b53fc1`. VEN-C19 and the
+  VEN-C1/C2/C4 startup slices advance for font-only geometry rejection and
+  input-free native admission. Orbit, wire versions and other proof identities
+  remain unchanged.
+- **Mechanical proof:** Manifest/lock identity, manifest validation and all
+  four declared `nix flake check path:.` checks pass.
+- **Installed artifacts:** `nix profile upgrade eon eonterm` resolves both
+  elements to their exact working-tree builds:
+  Eon `/nix/store/zkf8s7d7bmyiigr6j6yh8rbvlhskr5ri-eon-0.1.0` and
+  EonTerm `/nix/store/8chmkj9mcpz56r90389lskai8w4lqv47-eonterm-0.1.0`.
+  Both launch `/nix/store/k1pdjvzha5skyrp2nsvn0ih6gz6lj2j6-yazelix-venus-0.1.0/bin/yazelix-venus`;
+  generation `g1-9808cd2409ce97f6bfcc4fe1fec3bbaa`.
+- **Installed observation:** x86_64 Linux, isolated Sway 1.12 / Mesa 26.1.1
+  lavapipe at 1.25 scale. EonTerm yields 90 by 31 cells in its real Orbit PTY.
+  Eon visibly renders its initial directory picker in a 960 by 600 logical
+  window; its workspace snapshot identifies the picker with no durable pane.
+  Private generations stop through their supervisors. All seven pre-existing
+  user runtime processes retain their original start identities.
+  Reproduction inputs, observations and capture are retained under
+  `~/.local/state/eon/proofs/ven-c19-1b32e5ba7105d14f654136578a65c97a25b53fc1/`.
+- **Scope:** This correction proves startup. Earlier post-picker input, text,
+  IME and accessibility evidence retains its exact revisions below and in
+  VEN-C19. Partial fractional-scale, broader compositor and non-systemd claims
+  remain qualified. Persistent typography configuration is a separate issue.
 
 ## Venus typography component acceptance
 
