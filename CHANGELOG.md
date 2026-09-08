@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Package accepted Venus startup typography and terminal geometry support
+  (`9157f7fbed0318d94a0697c01a23de2bed86946a`). Eon and EonTerm retain their
+  current presentation defaults; persistent typography configuration remains a
+  separate product slice.
+
 - Keep unidentified native keys inside hyperlink inspection; captured repeats
   and releases remain contained after Escape.
 
