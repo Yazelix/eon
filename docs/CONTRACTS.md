@@ -919,8 +919,8 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C18 — Picker-first tab directories
 
-- **Status:** Partially proved; Tab switching and cancellation are a working-tree
-  candidate over `2991b52c0fcbb636f56f5d53af1f8e030fcf6213`.
+- **Status:** Proven; Tab switching and cancellation are accepted at the exact
+  runtime revision and native Wayland scope recorded below.
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z in an existing tab while no directory picker is already open.
@@ -1012,9 +1012,9 @@ show the median and observed minimum–maximum, not a confidence interval.
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
-- **Tab switching proof (dogfooded candidate, 2026-09-08):**
+- **Tab switching proof (accepted, 2026-09-08):**
   `eon-picker-mode-switching-6bo` verifies the shared startup, new-tab and Alt+Z
-  behavior over `2991b52c0fcbb636f56f5d53af1f8e030fcf6213`. Focused red/green
+  behavior at `f75c910a6a8488bdad3c614544769080261e4560`. Focused red/green
   process checks cover raw-path roundtrips and cancellation; the Nix package
   passed 32 unit and 28 integration tests. The installed profile resolves to
   `/nix/store/024j1lxhwmxwgmkh4r4yxkz0hd2p1qyh-eon-0.1.0`, generation
@@ -1024,8 +1024,8 @@ show the median and observed minimum–maximum, not a confidence interval.
   Source hashes, physical-key proof, captures and cleanup are retained at
   `~/.local/state/eon/proofs/eon-picker-mode-switching-6bo-2026-09-08/`.
   All 13 pre-existing runtime process identities survived; their runtime was
-  not restarted. This candidate does not refresh fractional-scale, broader
-  compositor or accessibility proof; acceptance awaits a source commit.
+  not restarted. This acceptance does not refresh fractional-scale, broader
+  compositor or accessibility proof.
 - **Contextual footer proof (dogfooded):** Working-tree candidate over
   `9cf712e031924f874a681036d931c24aa906b29d`, with exact runtime file hashes in
   `eon-picker-context-hints-j57`; regular Eon artifact
