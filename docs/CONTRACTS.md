@@ -16,9 +16,35 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
-`cf3a9169f2cd95d42c689134a52d51d9147ff37c`. Exact source, installed artifact,
+`9157f7fbed0318d94a0697c01a23de2bed86946a`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
+
+## Venus typography component acceptance
+
+- **Accepted source:** `0461737272447fa976d13bd3376c8a894cebf324`, selecting
+  Venus `9157f7fbed0318d94a0697c01a23de2bed86946a` and its VEN-C19 proof.
+  VEN-C1/C2/C4 advance only for the child’s startup slice; other child proof
+  identities, Orbit, ORBS v10 and EONW v4 remain unchanged.
+- **Mechanical proof:** Manifest/lock identity and the manifest validator pass.
+  `nix flake check path:.` passes all four declared checks, including both
+  affected package builds and their Rust checks.
+- **Installed artifacts:** After `nix profile upgrade eon eonterm`, both profile
+  elements resolve to the exact working-tree builds:
+  Eon `/nix/store/p415mdfn9m962n6znywgb9pp02w0i7zi-eon-0.1.0` and
+  EonTerm `/nix/store/n4w4dqckvyqlldb5sfxy2apsilfk0ya3-eonterm-0.1.0`.
+  Both select `/nix/store/8bpsbn12ss9xbh1adacwq11vix674hxw-yazelix-venus-0.1.0/bin/yazelix-venus`;
+  generation `g1-d2013f41b2900ffafdce030f4f904bd1`.
+- **Installed observation:** x86_64 Linux, isolated Sway 1.12 / Mesa 26.1.1
+  lavapipe at 1.25 scale, real Orbit PTYs and native keyboard input. The
+  default 960 by 600 windows yield 90 by 31 terminal cells in EonTerm and
+  90 by 28 below Eon’s tab/pane headers; both deliver exact `ok` plus newline.
+  Task-owned generations stop through their supervisors. Existing user
+  processes retain their original identities and remain running.
+- **Scope:** This refresh consumes the accepted child capability; persistent
+  typography configuration is the separate Eon issue. Venus’s configured-grid,
+  fallback, IME and accessibility evidence stays in VEN-C19. Earlier partial
+  fractional-scale, broader compositor and non-systemd claims remain qualified.
 
 ## Hyperlink inspection input correction
 
