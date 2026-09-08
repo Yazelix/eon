@@ -489,6 +489,8 @@ The documents in [`docs/`](docs/) hold the current planning truth:
 - [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) defines naming, ownership, and sequencing.
 - [`CONTRACTS.md`](docs/CONTRACTS.md) indexes the product contracts and proofs.
 - [`DISTRIBUTION.md`](docs/DISTRIBUTION.md) defines composition and release policy.
+- [Terminal memory on COSMIC](docs/benchmarks/eon-zlf-2026-09-08.md) reports
+  the measured 219-run Eon/EonTerm, Foot, and Ghostty comparison and its limits.
 - [`REFERENCES.md`](docs/REFERENCES.md) routes design work to primary sources and
   comparable projects.
 - [`VISUAL-REFERENCES.md`](docs/VISUAL-REFERENCES.md) keeps discovery-only visual
@@ -509,16 +511,17 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy inputs | 257 |
-| README | 524 |
+| Agent policy inputs | 263 |
+| README | 527 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 1,347 |
 | Distribution and references | 666 |
+| Benchmark report | 317 |
 | Changelog | 265 |
 | Rust source and tests | 13,326 |
 | Cargo manifests | 37 |
 | Component manifest | 349 |
 | Nix composition | 783 |
 | Product defaults | 0 |
-| **Total** | **17,758** |
+| **Total** | **18,084** |
