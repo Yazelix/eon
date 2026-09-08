@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keep unidentified native keys inside hyperlink inspection; captured repeats
+  and releases remain contained after Escape.
+
 - Inspect explicit terminal hyperlinks with Ctrl+Shift+O, open HTTP/HTTPS
   targets with Enter or Ctrl+Shift+click, and copy targets with Ctrl+Shift+C.
   Preserve host XDG desktop preferences when launching Venus so native GIO
