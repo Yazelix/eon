@@ -16,14 +16,35 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
-`d1223463b2b513c04242df50a4bd948d0533cfde`. Exact source, installed artifact,
+`cf3a9169f2cd95d42c689134a52d51d9147ff37c`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
+
+## Hyperlink inspection input correction
+
+- **Accepted source:** `07867f99d176012a9d34a61aa37b5de9ce0888af`, selecting
+  Venus `cf3a9169f2cd95d42c689134a52d51d9147ff37c` for `VEN-C2`/`VEN-C5`.
+  Other child proof identities, Orbit and wire versions remain unchanged.
+- **Proof:** Exact manifest/lock validation and all four Nix checks passed.
+  Both profile elements matched their built artifacts after refresh:
+  Eon `/nix/store/cnjiijnybw8xdx675jni951g3xs1q647-eon-0.1.0` and
+  EonTerm `/nix/store/2ap1p5p42809c0i00ih9lncmrdq6kdi3-eonterm-0.1.0`.
+  Both launch `/nix/store/fxf4xyadmiwn7m8ndc0i0gxzcbrq5r2p-yazelix-venus-0.1.0/bin/yazelix-venus`;
+  generation `g1-e6c0ad9f6f66837f05c233ec7490e1d0`.
+- **Installed observation:** Isolated x86_64 Linux/Sway 1.12, Nix Mesa 26.1.2
+  lavapipe, native virtual-keyboard input and a real Orbit PTY. Keycode 240
+  carrying `a` typed outside inspection, was captured inside it, and typed again
+  after Escape. Exact link copy passed. Venus's Application regression separately
+  proves captured repeat/release pairing through dismissal. Existing live user
+  processes were preserved. Earlier distinct hyperlink and partial proofs below
+  retain their exact revisions and limits.
 
 ## Native hyperlink composition acceptance
 
 - **Accepted source:** `be9d0e37c7d0029d6832ff609082faa885280762`, consuming
-  the exact Orbit/Venus pair above and `VEN-C5`; ORBS v10, ORBF v1 and EONW v4
+  Orbit `91999d79546422b49bdbc124166a65859d0bd872` and Venus
+  `d1223463b2b513c04242df50a4bd948d0533cfde` with `VEN-C5`;
+  ORBS v10, ORBF v1 and EONW v4
   remain unchanged. This acceptance covers the changed launch, graph and native
   interaction surfaces of `EON-C1` through `EON-C4`; distinct earlier evidence
   below retains its recorded revisions.
@@ -130,7 +151,7 @@ Profile refreshes preserve existing live supervisors and their Sessions.
     `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`. The listed proof revision selected Orbit
     `91999d79546422b49bdbc124166a65859d0bd872` and Venus
     `e13970e90289d0d86f0adcbf350e4b9c1d5e5219` with ORBS v10 and ORBF v1.
-    The hyperlink composition acceptance above records the current graph.
+    The subsequent acceptance records above identify the current graph.
 
 ## EON-C3 — Distribution-neutral runtime inputs
 
