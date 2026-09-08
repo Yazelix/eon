@@ -387,7 +387,7 @@ fn venus_command(
         command.arg("--workspace");
     }
     command.arg(socket);
-    command.env("XDG_CONFIG_HOME", config);
+    command.env("EON_CONFIG_HOME", config);
     command
 }
 
@@ -1355,6 +1355,13 @@ mod tests {
             terminal_presentation(1.0, false),
             "eonterm",
         );
+        for command in [&workspace, &terminal] {
+            let environment = command.get_envs().collect::<Vec<_>>();
+            assert!(environment.iter().all(|(key, _)| *key != "XDG_CONFIG_HOME"));
+            assert!(environment.iter().any(|(key, value)| {
+                *key == "EON_CONFIG_HOME" && *value == Some(config.as_os_str())
+            }));
+        }
         assert_eq!(
             terminal.get_args().map(OsString::from).collect::<Vec<_>>(),
             [

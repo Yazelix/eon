@@ -127,6 +127,8 @@ Profile refreshes preserve existing live supervisors and their Sessions.
 - **Result:** Eon owns launch policy, topology, component selection, product
   configuration, updates, and distribution without duplicating terminal,
   rendering, editor, file-manager, or configuration state.
+  Native desktop launches preserve host XDG preferences and use
+  `EON_CONFIG_HOME` for the product configuration root.
 - **Important failures:** A missing child contract returns to that child instead
   of being reconstructed in Eon.
 - **Owner:** Eon orchestration and product policy; each child keeps its subsystem

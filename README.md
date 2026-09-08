@@ -423,6 +423,20 @@ runtime directories with mode `0700`, leaves existing configuration-directory
 permissions unchanged, and rejects unsafe directories or endpoints without
 changing them.
 
+## Hyperlinks
+
+Explicit OSC 8 hyperlinks are available in Eon and EonTerm. Hover previews the
+actual target; Ctrl+Shift+left click opens it. Ctrl+Shift+O enters inspection:
+Tab/Shift+Tab chooses a link, Left/Right pages its target, Enter opens,
+Ctrl+Shift+C copies, and Escape returns to typing. Ordinary URL-looking text
+and terminal mouse/selection behavior retain their existing meaning.
+
+Opening accepts ASCII HTTP/HTTPS targets up to 4096 bytes, without credentials,
+and requires the desktop host's `gio` command and registered handler. Copy also
+supports other schemes, within the same size limit and without control
+characters. Venus inherits host XDG configuration for desktop preferences;
+`EON_CONFIG_HOME` remains the product configuration root.
+
 ## Component manifest
 
 [`components/eon-alpha-v3.json`](components/eon-alpha-v3.json) is the one
@@ -471,15 +485,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 257 |
-| README | 485 |
+| README | 499 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,159 |
+| Architecture and contracts | 1,161 |
 | Distribution and references | 666 |
-| Changelog | 242 |
-| Rust source and tests | 12,893 |
+| Changelog | 247 |
+| Rust source and tests | 12,900 |
 | Cargo manifests | 37 |
-| Component manifest | 346 |
+| Component manifest | 348 |
 | Nix composition | 783 |
 | Product defaults | 0 |
-| **Total** | **17,072** |
+| **Total** | **17,102** |

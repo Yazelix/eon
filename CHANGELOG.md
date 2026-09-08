@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Inspect explicit terminal hyperlinks with Ctrl+Shift+O, open HTTP/HTTPS
+  targets with Enter or Ctrl+Shift+click, and copy targets with Ctrl+Shift+C.
+  Preserve host XDG desktop preferences when launching Venus so native GIO
+  uses the configured handler; keep product configuration in `EON_CONFIG_HOME`.
+
 - Use Nova’s Alt+Shift+T for new tabs and Alt+Shift+W for closing the active
   non-final tab. Ctrl+T and Ctrl+Shift+W remain available to terminal programs.
 
