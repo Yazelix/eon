@@ -447,9 +447,6 @@ impl PresentationProcess {
     ) -> Result<Self, String> {
         let (control, input) = UnixStream::pair()
             .map_err(|error| format!("cannot create Eon Desktop presentation control: {error}"))?;
-        control
-            .set_write_timeout(Some(Duration::from_millis(250)))
-            .map_err(|error| format!("cannot bound Eon Desktop presentation control: {error}"))?;
         if admission {
             command.stdout(Stdio::from(OwnedFd::from(input.try_clone().map_err(
                 |error| format!("cannot create Eon Desktop readiness channel: {error}"),
@@ -469,25 +466,40 @@ impl PresentationProcess {
         let mut process = Self { child, control };
         if admission {
             let result = (|| {
+                let timeout = || {
+                    deadline
+                        .checked_duration_since(Instant::now())
+                        .filter(|duration| !duration.is_zero())
+                        .ok_or("timed out waiting for native startup admission")
+                };
                 if let Some(snapshot) = snapshot {
                     let bytes =
                         eon_workspace_protocol::v4::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
-                    process
-                        .control
-                        .write_all(&bytes)
-                        .map_err(|error| error.to_string())?;
+                    let mut remaining = bytes.as_slice();
+                    while !remaining.is_empty() {
+                        process
+                            .control
+                            .set_write_timeout(Some(timeout()?))
+                            .map_err(|error| error.to_string())?;
+                        match process.control.write(remaining) {
+                            Ok(0) => {
+                                return Err("Venus closed while receiving startup workspace".into());
+                            }
+                            Ok(count) => remaining = &remaining[count..],
+                            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                                continue;
+                            }
+                            Err(error) => return Err(error.to_string()),
+                        }
+                    }
                 }
                 let mut ready = [0; 8];
                 let mut remaining = &mut ready[..];
                 while !remaining.is_empty() {
-                    let timeout = deadline
-                        .checked_duration_since(Instant::now())
-                        .filter(|duration| !duration.is_zero())
-                        .ok_or("timed out waiting for native startup admission")?;
                     process
                         .control
-                        .set_read_timeout(Some(timeout))
+                        .set_read_timeout(Some(timeout()?))
                         .map_err(|error| error.to_string())?;
                     match process.control.read(remaining) {
                         Ok(0) => return Err("Venus closed before native startup admission; see its diagnostic in the supervisor output".into()),
@@ -508,6 +520,10 @@ impl PresentationProcess {
                 ));
             }
         }
+        process
+            .control
+            .set_write_timeout(Some(Duration::from_millis(250)))
+            .map_err(|error| format!("cannot bound Eon Desktop presentation control: {error}"))?;
         Ok(process)
     }
 
@@ -1469,6 +1485,66 @@ mod tests {
         os::unix::fs::{MetadataExt, PermissionsExt},
         path::{Path, PathBuf},
     };
+
+    #[test]
+    fn startup_snapshot_transfer_uses_the_admission_deadline() {
+        use eon_workspace_protocol::v4::{Pane, Response, Snapshot, Tab, encode_response};
+        use std::{
+            process::Command,
+            time::{Duration, Instant},
+        };
+
+        let root = temporary_directory();
+        let snapshot = Snapshot {
+            active_tab: "t1".into(),
+            tabs: (1..=64)
+                .map(|number| Tab {
+                    id: format!("t{number}"),
+                    directory: vec![b'/'; 4096],
+                    selected_pane: Some(format!("p{number}")),
+                    panes: vec![Pane {
+                        id: format!("p{number}"),
+                        session: format!("session-{number}"),
+                        endpoint: format!("/runtime/orbit-{number}.sock").into_bytes(),
+                        live: true,
+                    }],
+                })
+                .collect(),
+            directory_picker: None,
+        };
+        let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
+        let received = root.join("snapshot");
+        let mut command = Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "sleep 0.6; dd bs=\"$1\" count=1 iflag=fullblock of=\"$2\" status=none || exit; printf ready-v1; exec cat >/dev/null",
+            "venus",
+        ]).arg(expected.len().to_string()).arg(&received);
+        let process = super::PresentationProcess::start(
+            command,
+            true,
+            Some(snapshot.clone()),
+            Instant::now() + Duration::from_secs(2),
+        )
+        .unwrap();
+        assert_eq!(fs::read(received).unwrap(), expected);
+        drop(process);
+
+        let mut command = Command::new("/bin/sh");
+        command.args(["-c", "exec sleep 10"]);
+        let started = Instant::now();
+        assert!(
+            super::PresentationProcess::start(
+                command,
+                true,
+                Some(snapshot),
+                started + Duration::from_millis(300),
+            )
+            .is_err()
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn terminal_presentation(
         background_opacity: f32,

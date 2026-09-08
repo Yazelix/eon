@@ -515,10 +515,10 @@ Beads data, lock files, and generated artifacts.
 | License | 201 |
 | Architecture and contracts | 1,328 |
 | Distribution and references | 666 |
-| Changelog | 263 |
-| Rust source and tests | 13,250 |
+| Changelog | 265 |
+| Rust source and tests | 13,326 |
 | Cargo manifests | 37 |
 | Component manifest | 349 |
 | Nix composition | 783 |
 | Product defaults | 0 |
-| **Total** | **17,661** |
+| **Total** | **17,739** |

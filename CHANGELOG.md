@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Give large workspace startup snapshots the full native-admission deadline.
+
 - Configure terminal font family, ordered fallbacks, size, line height, and
   initial columns/rows for Eon and EonTerm. Validate configured native startup
   before starting a new Session or command; reopen applies current settings
