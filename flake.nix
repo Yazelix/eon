@@ -543,7 +543,8 @@
           { on = "q", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
           { on = "Q", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
           { on = "<C-c>", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
-          { on = "<Esc>", run = "escape", desc = "Clear search or filter" },
+          { on = "<Esc>", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
+          { on = "<Tab>", run = "quit --code=10", desc = "Return to quick search" },
           { on = "<Up>", run = "arrow prev", desc = "Previous entry" },
           { on = "k", run = "arrow prev", desc = "Previous entry" },
           { on = "<Down>", run = "arrow next", desc = "Next entry" },
@@ -562,6 +563,12 @@
           { on = "f", run = "filter --smart", desc = "Filter entries in this folder" },
           { on = "<F1>", run = "help", desc = "Folder picker keys" },
         ]
+
+        [input]
+        prepend_keymap = [{ on = "<Esc>", run = "close", desc = "Back to folders" }]
+
+        [help]
+        prepend_keymap = [{ on = "<Esc>", run = "close", desc = "Back to folders" }]
         EOF
         cat > "$out/yazi.toml" <<'EOF'
         [plugin]
@@ -576,7 +583,7 @@
         end
         Status:children_add(function()
           return tostring(cx.layer) == "mgr"
-            and " Enter Use current folder · Shift+Z Jump · Ctrl+C Cancel · F1 Help"
+            and " Enter Use current folder · Tab Quick search · Shift+Z Jump · Esc/Ctrl+C Cancel · F1 Help"
             or ""
         end, 1000, Status.LEFT)
         EOF

@@ -21,8 +21,8 @@ use std::{
         ffi::OsStrExt,
         process::{CommandExt, ExitStatusExt},
     },
-    path::Path,
-    process::{Command, Stdio},
+    path::{Path, PathBuf},
+    process::{Command, Output, Stdio},
 };
 
 const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | tab close TAB [--json] | tab directory TAB [--json] -- DIRECTORY | tab move <left|right> [--json] | pane create [--json] | pane move <up|down> [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
@@ -59,70 +59,79 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
     let tab = tab
         .to_str()
         .ok_or_else(|| "directory picker tab identity must be UTF-8".to_string())?;
-    let mut history = Command::new("zoxide")
-        .args(["query", "--list"])
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("cannot launch packaged directory history: {error}"))?;
-    let output = Command::new("fzf")
-        .args([
-            "--exact",
-            "--no-sort",
-            "--bind=ctrl-z:ignore,btab:up,tab:down",
-            "--cycle",
-            "--keep-right",
-            "--info=inline",
-            "--layout=reverse",
-            "--tabstop=1",
-            "--border=none",
-            "--expect=esc",
-            "--print0",
-            "--prompt=Quick search > ",
-            "--footer=Enter Use directory · Esc Browse folders · Ctrl+C Cancel",
-            "--footer-border=none",
-            "--color=footer:-1",
-        ])
-        .env_remove("FZF_DEFAULT_OPTS")
-        .env_remove("FZF_DEFAULT_OPTS_FILE")
-        .stdin(
-            history
-                .stdout
-                .take()
-                .expect("directory history stdout is piped"),
-        )
-        .stderr(Stdio::inherit())
-        .output();
-    // No quick-search exit needs more input, including early Enter and Esc.
-    let history_stopped = history.kill().is_ok();
-    let history_status = history
-        .wait()
-        .map_err(|error| format!("cannot reap directory history: {error}"))?;
-    let output =
-        output.map_err(|error| format!("cannot launch packaged directory picker: {error}"))?;
-    if output.status.code() == Some(130) {
-        return Ok(0);
-    }
-    if !(history_status.success()
-        || history_stopped && history_status.signal() == Some(libc::SIGKILL))
-    {
-        return Err(format!(
-            "packaged directory history exited with status {history_status}"
-        ));
-    }
-    let fields: Vec<_> = output.stdout.split(|byte| *byte == 0).collect();
-    let directory = match (output.status.code(), fields.as_slice()) {
-        // fzf reports status 1 for an expected key when the result list is empty.
-        (Some(0 | 1), [b"esc", b""] | [b"esc", _, b""]) => match browse_directory()? {
-            Some(directory) => directory,
-            None => return Ok(0),
-        },
-        (Some(0), [b"", directory, b""]) if !directory.is_empty() => directory.to_vec(),
-        (Some(0), _) => return Err("directory picker returned an invalid selection".into()),
-        _ => {
+    let mut browse_from = PathBuf::from(".");
+    let directory = loop {
+        let mut history = Command::new("zoxide")
+            .args(["query", "--list"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("cannot launch packaged directory history: {error}"))?;
+        let output = Command::new("fzf")
+            .args([
+                "--exact",
+                "--no-sort",
+                "--bind=ctrl-z:ignore,btab:up",
+                "--cycle",
+                "--keep-right",
+                "--info=inline",
+                "--layout=reverse",
+                "--tabstop=1",
+                "--border=none",
+                "--expect=tab",
+                "--print0",
+                "--prompt=Quick search > ",
+                "--footer=Enter Use directory · Tab Browse folders · Esc/Ctrl+C Cancel",
+                "--footer-border=none",
+                "--color=footer:-1",
+            ])
+            .env_remove("FZF_DEFAULT_OPTS")
+            .env_remove("FZF_DEFAULT_OPTS_FILE")
+            .stdin(
+                history
+                    .stdout
+                    .take()
+                    .expect("directory history stdout is piped"),
+            )
+            .stderr(Stdio::inherit())
+            .output();
+        // No quick-search exit needs more input, including early Enter and Tab.
+        let history_stopped = history.kill().is_ok();
+        let history_status = history
+            .wait()
+            .map_err(|error| format!("cannot reap directory history: {error}"))?;
+        let output =
+            output.map_err(|error| format!("cannot launch packaged directory picker: {error}"))?;
+        if output.status.code() == Some(130) {
+            return Ok(0);
+        }
+        if !(history_status.success()
+            || history_stopped && history_status.signal() == Some(libc::SIGKILL))
+        {
             return Err(format!(
-                "packaged directory picker exited with status {}",
-                output.status
+                "packaged directory history exited with status {history_status}"
             ));
+        }
+        let fields: Vec<_> = output.stdout.split(|byte| *byte == 0).collect();
+        match (output.status.code(), fields.as_slice()) {
+            // fzf reports status 1 for an expected key when the result list is empty.
+            (Some(0 | 1), [b"tab", b""] | [b"tab", _, b""]) => {
+                let output = browse_directory(&browse_from)?;
+                if output.status.code() == Some(130) {
+                    return Ok(0);
+                }
+                if output.status.success() {
+                    break output.stdout;
+                }
+                browse_from = PathBuf::from(OsStr::from_bytes(&output.stdout));
+            }
+            (Some(0), [b"", directory, b""]) if !directory.is_empty() => break directory.to_vec(),
+            (Some(0), _) => return Err("directory picker returned an invalid selection".into()),
+            _ => {
+                return Err(format!(
+                    "packaged directory picker exited with status {}",
+                    output.status
+                ));
+            }
         }
     };
     match send_action(
@@ -144,12 +153,13 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
     }
 }
 
-fn browse_directory() -> Result<Option<Vec<u8>>, String> {
+fn browse_directory(directory: &Path) -> Result<Output, String> {
     let config = env::var_os("EON_DIRECTORY_PICKER_CONFIG")
         .ok_or("the installed Eon package has no folder browser configuration")?;
     let output = Command::new(managed_environment::configured_program("EON_YAZI", "yazi"))
         // Yazi draws through its terminal handle; stdout carries only the raw CWD.
-        .args(["--cwd-file", "/dev/stdout"])
+        .args(["--cwd-file", "/dev/stdout", "--"])
+        .arg(directory)
         // Yazi prefers PWD even when it disagrees with the Session's actual CWD.
         .env_remove("PWD")
         .env("YAZI_CONFIG_HOME", config)
@@ -164,9 +174,10 @@ fn browse_directory() -> Result<Option<Vec<u8>>, String> {
         .output()
         .map_err(|error| format!("cannot launch packaged folder browser: {error}"))?;
     if output.status.code() == Some(130) {
-        return Ok(None);
+        return Ok(output);
     }
-    if !output.status.success() {
+    // The packaged Yazi Tab binding returns its CWD without accepting it.
+    if !matches!(output.status.code(), Some(0 | 10)) {
         return Err(format!(
             "packaged folder browser exited with status {}",
             output.status
@@ -175,7 +186,7 @@ fn browse_directory() -> Result<Option<Vec<u8>>, String> {
     if output.stdout.is_empty() {
         return Err("folder browser returned no directory".into());
     }
-    Ok(Some(output.stdout))
+    Ok(output)
 }
 
 fn launch_managed(

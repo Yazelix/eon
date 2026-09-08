@@ -919,7 +919,8 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C18 — Picker-first tab directories
 
-- **Status:** Proven
+- **Status:** Partially proved; Tab switching and cancellation are a working-tree
+  candidate over `2991b52c0fcbb636f56f5d53af1f8e030fcf6213`.
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z in an existing tab while no directory picker is already open.
@@ -932,16 +933,18 @@ show the median and observed minimum–maximum, not a confidence interval.
     repeated retargeting of the same tab. A polling client can distinguish the
     replacement even if it misses the intervening no-picker snapshot.
   - Quick search ranks Zoxide history through fzf. Enter accepts one result;
-    Esc opens packaged Yazi without cancelling the picker; Ctrl+C cancels.
+    Tab opens packaged Yazi without cancelling the picker; Esc and Ctrl+C cancel.
     Every quick-search exit stops and reaps a still-running history query;
     accepting, browsing and cancelling do not wait for the remaining results.
-    Empty history still shows the Browse action. Arrows and Tab/Shift+Tab move
-    through quick-search results.
+    Empty history still shows the Browse action. Arrows move through results.
   - Yazi begins at the inherited tab directory. Arrows/hjkl browse parent and
     child directories; Shift+Z searches history and only moves the browser.
-    Enter uses the current folder; q, Q, and Ctrl+C cancel. Escape clears
-    Yazi's contextual search/filter state. `g h` reaches home, `g /` root,
-    `g Space` accepts a typed path, and `.` toggles hidden entries. The fixed
+    Enter uses the current folder; Tab returns to quick search and preserves
+    the browser directory for the next visit. Esc, q, Q, and Ctrl+C cancel
+    from the main folder list. Esc first dismisses a nested prompt, help screen,
+    or search. Startup, new-tab and Alt+Z pickers share these keys.
+    `g h` reaches home, `g /` root, `g Space` accepts a typed path, and `.` toggles
+    hidden entries. The fixed
     picker keymap excludes file opening and file-management operations.
     Files remain visible for orientation. Browsing does not add Zoxide history.
     Yazi owns directory enumeration and navigation; Eon performs no recursive
@@ -949,8 +952,8 @@ show the median and observed minimum–maximum, not a confidence interval.
     validation without mutation.
   - Each selection screen shows its own persistent footer: quick search offers
     Use directory, Browse folders, and Cancel; Yazi offers Use current folder,
-    Shift+Z Jump, Cancel, and Help; nested jump search offers Jump and Back to
-    folders. Browser shortcuts are absent from quick search. Eon's fixed Yazi
+    Quick search, Shift+Z Jump, Cancel, and Help; nested jump search offers Jump
+    and Back to folders. Browser shortcuts are absent from quick search. Eon's fixed Yazi
     status configuration replaces file metadata with these picker actions.
     Browser hints appear only while the folder list owns input; native Yazi
     prompts and overlays hide them until the folder list regains focus.
@@ -1009,6 +1012,20 @@ show the median and observed minimum–maximum, not a confidence interval.
   generic-popup API, simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
+- **Tab switching proof (dogfooded candidate, 2026-09-08):**
+  `eon-picker-mode-switching-6bo` verifies the shared startup, new-tab and Alt+Z
+  behavior over `2991b52c0fcbb636f56f5d53af1f8e030fcf6213`. Focused red/green
+  process checks cover raw-path roundtrips and cancellation; the Nix package
+  passed 32 unit and 28 integration tests. The installed profile resolves to
+  `/nix/store/024j1lxhwmxwgmkh4r4yxkz0hd2p1qyh-eon-0.1.0`, generation
+  `g1-d63f3ad400d96f42927e95ad88b4a7a8`. A private Sway 1.12 native Wayland
+  check exercised both modes, nested Esc, Enter and cancellation, preserved the
+  existing process CWD, and started a later pane in the retargeted directory.
+  Source hashes, physical-key proof, captures and cleanup are retained at
+  `~/.local/state/eon/proofs/eon-picker-mode-switching-6bo-2026-09-08/`.
+  All 13 pre-existing runtime process identities survived; their runtime was
+  not restarted. This candidate does not refresh fractional-scale, broader
+  compositor or accessibility proof; acceptance awaits a source commit.
 - **Contextual footer proof (dogfooded):** Working-tree candidate over
   `9cf712e031924f874a681036d931c24aa906b29d`, with exact runtime file hashes in
   `eon-picker-context-hints-j57`; regular Eon artifact

@@ -626,11 +626,7 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
     executable(&root.join("zoxide"), "#!/bin/sh\nprintf '/known\\n'\n");
     executable(
         &root.join("fzf"),
-        "#!/bin/sh\ncat >/dev/null\nprintf 'esc\\0'\nexit 1\n",
-    );
-    executable(
-        &root.join("yazi"),
-        "#!/bin/sh\nprintf '/untracked-\\377\\n'\n",
+        "#!/bin/sh\ncat >/dev/null\nprintf 'tab\\0'\nexit 1\n",
     );
     let mut path = vec![root.clone()];
     path.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
@@ -646,6 +642,12 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
         .env("EON_DIRECTORY_PICKER_CONFIG", &root)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    let returned = root.join("browser-returned");
+    command.env("EON_TEST_BROWSER_RETURNED", &returned);
+    executable(
+        &root.join("yazi"),
+        "#!/bin/sh\nif [ ! -e \"$EON_TEST_BROWSER_RETURNED\" ]; then\n  touch \"$EON_TEST_BROWSER_RETURNED\"\n  printf '/browsed-\\377\\n'\n  exit 10\nfi\n[ \"$4.\" = \"$(printf '/browsed-\\377\\n.')\" ] || exit 2\nprintf '/untracked-\\377\\n'\n",
+    );
     let mut child = command.spawn().unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut stream = loop {
@@ -698,7 +700,7 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
         );
         executable(
             &root.join("fzf"),
-            "#!/bin/sh\ncat >/dev/null\nprintf 'esc\\0'\nexit 1\n",
+            "#!/bin/sh\ncat >/dev/null\nprintf 'tab\\0'\nexit 1\n",
         );
     }
     let history_pid = root.join("history-pid");
@@ -716,7 +718,7 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
     );
     for (mode, finish) in [
         ("cancel", "exit 130"),
-        ("browse", "printf 'esc\\0'\nexit 1"),
+        ("browse", "printf 'tab\\0'\nexit 1"),
         ("accept", "printf '\\0/known\\0'"),
         ("failure", "exit 2"),
     ] {
@@ -815,7 +817,7 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
         executable(&root.join("zoxide"), "#!/bin/sh\nprintf '/known\\n'\n");
         executable(
             &root.join("fzf"),
-            "#!/bin/sh\ncat >/dev/null\nprintf 'esc\\0'\nexit 1\n",
+            "#!/bin/sh\ncat >/dev/null\nprintf 'tab\\0'\nexit 1\n",
         );
         executable(
             &root.join("yazi"),

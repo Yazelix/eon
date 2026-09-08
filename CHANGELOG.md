@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Use Tab to switch between quick search and folder browsing in startup,
+  new-tab, and Alt+Z directory pickers. Esc and Ctrl+C cancel from either main
+  screen; Esc dismisses nested browser prompts first. Switching back to the
+  browser preserves its current folder.
+
 - Package Venus's reduced per-cell text-buffer allocation in Eon and EonTerm,
   preserving glyph selection and cell geometry.
 
@@ -43,12 +48,11 @@ installation, and proven contract changes.
   Browser hints hide while a Yazi prompt or overlay handles input.
 - Keep rapid picker cancellation and reopening attached to the current picker,
   including repeated directory selection in the same tab.
-- Let Enter accept, Esc browse and Ctrl+C cancel quick search while the
+- Accept a directory, switch to browsing, or cancel quick search while the
   directory-history query is still running; stop and reap the query without
   waiting for its remaining results.
-- Browse tab directories outside Zoxide history: Esc switches quick search to
-  Yazi; Shift+Z jumps to a known folder without committing; Enter uses the
-  current folder. Ctrl+C cancels, preserving existing tab lifecycle behavior.
+- Browse tab directories outside Zoxide history with Yazi. Shift+Z jumps to a
+  known folder without committing; Enter uses the current folder.
 
 - Keep other tabs usable while a directory picker is open: create and focus
   panes, reorder panes or tabs, update launch directories, and close unrelated

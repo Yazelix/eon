@@ -224,21 +224,25 @@ accepted value.
 Alt+Z works from anywhere in a full-Eon tab. It keeps the tab bar visible and
 replaces the tab body with a one-cell-inset ranked-directory picker backed by
 the packaged Zoxide and fzf, independent of ambient fzf default options.
-Enter opens a history match; Esc switches to Yazi to browse folders, including
-those absent from history. Ctrl+C cancels. Empty history still offers Esc to
-browse. Arrows and Tab/Shift+Tab move through quick-search results.
+Enter opens a history match; Tab switches to Yazi to browse folders, including
+those absent from history. Esc or Ctrl+C cancels. Empty history still offers Tab
+to browse. Arrows move through quick-search results. Startup, new-tab, and
+Alt+Z directory pickers use the same keys.
 
 In the folder browser, arrows or hjkl navigate; Enter uses the **current folder**.
+Tab returns to quick search; switching back resumes at the same browser folder.
 Shift+Z searches Zoxide history and moves the browser without committing the
 tab, so you can jump to a known parent and walk the remaining directories.
 `g h` goes home, `g /` goes to root, `g Space` accepts a folder path, `.` toggles
-hidden entries, and F1 lists the keys. q, Q, or Ctrl+C cancel; Esc clears a
-filter or returns from nested search. Files are visible for orientation; the
-picker does not open, edit, or manage them. Browsing does not add Zoxide entries.
+hidden entries, and F1 lists the keys. Esc, q, Q, or Ctrl+C cancel from the main
+folder list. Inside a prompt, help screen, or nested search, Esc closes that
+layer first. Files are visible for orientation; the picker does not open, edit,
+or manage them. Browsing does not add Zoxide entries.
 Yazi uses a packaged picker keymap independent of your regular Yazi configuration.
 Each screen keeps its own actions visible at the bottom: quick search shows
 Use directory, Browse folders, and Cancel; Yazi shows Use current folder,
-Shift+Z Jump, Cancel, and F1 Help. Nested jump search shows Jump and Back to folders.
+Quick search, Shift+Z Jump, Cancel, and F1 Help. Nested jump search shows Jump and
+Back to folders.
 Browser hints hide while a Yazi prompt or overlay has focus.
 
 Accepting a valid path retargets that captured tab for future Sessions; cancel
@@ -512,16 +516,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 263 |
-| README | 527 |
+| README | 531 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,392 |
+| Architecture and contracts | 1,409 |
 | Distribution and references | 666 |
 | Benchmark report | 317 |
-| Changelog | 268 |
-| Rust source and tests | 13,326 |
+| Changelog | 272 |
+| Rust source and tests | 13,339 |
 | Cargo manifests | 37 |
 | Component manifest | 349 |
-| Nix composition | 783 |
+| Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **18,132** |
+| **Total** | **18,177** |
