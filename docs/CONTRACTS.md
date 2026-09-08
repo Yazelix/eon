@@ -22,7 +22,9 @@ Profile refreshes preserve existing live supervisors and their Sessions.
 
 ## EON-C19 — Terminal typography and initial geometry configuration
 
-- **Status:** Proven at `b693a877cd4d630fe15aabf852de4e978fc166dc`.
+- **Status:** Proven; initial composition at
+  `b693a877cd4d630fe15aabf852de4e978fc166dc`, startup-transfer correction at
+  `0b0b6312531229270c157df31ba49800a6daef03`.
 - **Consumer/trigger:** Eon and EonTerm create or reopen a Venus surface using
   one `$EON_CONFIG_HOME/config.toml` snapshot.
 - **Fields:** Optional `[terminal]` `font_family`, ordered `font_fallbacks`
@@ -77,6 +79,23 @@ Profile refreshes preserve existing live supervisors and their Sessions.
   Existing supervisors retain their old runtime until restarted. This proves
   the named configuration/startup slice; earlier fractional/HiDPI, compositor,
   non-systemd and stable-seat IME qualifications remain unchanged.
+- **Startup-transfer correction:** Workspace snapshot writes and readiness
+  reads share the absolute five-second startup deadline. Large snapshots do
+  not inherit the 250 ms timeout used for ordinary Present messages. At
+  `0b0b6312531229270c157df31ba49800a6daef03`, a delayed reader receives the
+  complete canonical snapshot; a stalled transfer remains bounded. Focused
+  red/green, all 71 Rust tests, locked check/clippy, manifest validation, and
+  all four Nix checks pass. Both refreshed working-tree outputs match their
+  installed profiles: Eon
+  `/nix/store/cig8r1rifpl2lzswi4ga6l744y3v0ck9-eon-0.1.0` and EonTerm
+  `/nix/store/95x87mc3gdc22fvk920dz6jg6mfr3qxs-eonterm-0.1.0`.
+  Isolated Sway 1.12 / lavapipe 26.1.1 at 1.25 scale admits a real 100 by 30
+  PTY in both products, including Eon's picker. EonTerm reopens at 90 by 28
+  with unchanged Orbit/command identities. All seven pre-existing user
+  supervisor/Orbit identities remain unchanged. Venus and Orbit pins and the
+  earlier typography/IME/accessibility proof and qualifications above remain
+  unchanged. Evidence:
+  `~/.local/state/eon/proofs/eon-c19-0b0b6312531229270c157df31ba49800a6daef03/`.
 
 ## Venus startup correction acceptance
 
