@@ -22,7 +22,7 @@ Profile refreshes preserve existing live supervisors and their Sessions.
 
 ## EON-C19 — Terminal typography and initial geometry configuration
 
-- **Status:** Candidate; user-approved 2026-09-08, installed proof pending.
+- **Status:** Proven at `b693a877cd4d630fe15aabf852de4e978fc166dc`.
 - **Consumer/trigger:** Eon and EonTerm create or reopen a Venus surface using
   one `$EON_CONFIG_HOME/config.toml` snapshot.
 - **Fields:** Optional `[terminal]` `font_family`, ordered `font_fallbacks`
@@ -48,6 +48,35 @@ Profile refreshes preserve existing live supervisors and their Sessions.
 - **Boundary:** Native Linux Wayland; no font installation, live reload,
   renderer inside Eon, second schema, dependency, or default appearance change.
   Consumes VEN-C19 startup admission only after exact child acceptance.
+- **Proof:** Accepted Venus `ec80e36625dec73544c0cb64becf4b135c932a63`;
+  Orbit `91999d79546422b49bdbc124166a65859d0bd872`, unchanged wire contracts.
+  Locked fmt/check/test/clippy and manifest validation pass (70 Eon tests).
+  All four declared Nix checks and both working-tree profile builds pass.
+  Initial EOF, malformed readiness and timeout create no Session in either
+  product; invalid config and failed reopen preserve the existing command.
+- **Installed artifacts:** Refreshed Eon
+  `/nix/store/p86cvamyyk5iri47xpdc77kdm8pa267v-eon-0.1.0` and EonTerm
+  `/nix/store/vh88p7zlvmfsag96zd6w5shnnkxi5ydw-eonterm-0.1.0` match their
+  exact working-tree outputs, using Venus
+  `/nix/store/37v7m8kb88fgs4lgwk7ajcbf9hjb8pn7-yazelix-venus-0.1.0`.
+- **Installed observations:** x86_64 Linux, isolated Sway 1.12 / lavapipe
+  26.1.1. Both products accept DejaVu Sans Mono with Symbols Nerd Font Mono,
+  20 px / 1.5 and a real 100 by 30 PTY grid, including Eon's initial picker.
+  Reopen applies 24 px / 1.25 and 90 by 28 while preserving Orbit and command
+  PID/start identities; live presentation keeps its prior settings. Missing
+  fonts fail initial launch before the command and reject replacement without
+  losing the existing Session. Fresh PTY resize observations cover initial
+  scales 1, 1.25, 1.5 and 2; later manual resize remains effective.
+  Native physical input, exact `Regular` selection/copy, `é界` preedit and
+  `ime-é界` commit, and AT-SPI terminal text/bounds pass in both products.
+  Eon also admits its recovered workspace after isolated supervisor loss,
+  retaining the same Orbit and command. Captures were inspected.
+- **Evidence and limits:** Retained under
+  `~/.local/state/eon/proofs/eon-c19-b693a877cd4d630fe15aabf852de4e978fc166dc/`.
+  All seven pre-existing supervisor/Orbit identities remain unchanged.
+  Existing supervisors retain their old runtime until restarted. This proves
+  the named configuration/startup slice; earlier fractional/HiDPI, compositor,
+  non-systemd and stable-seat IME qualifications remain unchanged.
 
 ## Venus startup correction acceptance
 
