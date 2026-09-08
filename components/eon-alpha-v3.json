@@ -84,7 +84,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "9157f7fbed0318d94a0697c01a23de2bed86946a",
+      "revision": "1b32e5ba7105d14f654136578a65c97a25b53fc1",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -94,10 +94,10 @@
         { "id": "executable", "kind": "file" }
       ],
       "contracts": [
-        { "id": "VEN-C1", "proof": "9157f7fbed0318d94a0697c01a23de2bed86946a" },
-        { "id": "VEN-C2", "proof": "9157f7fbed0318d94a0697c01a23de2bed86946a" },
+        { "id": "VEN-C1", "proof": "1b32e5ba7105d14f654136578a65c97a25b53fc1" },
+        { "id": "VEN-C2", "proof": "1b32e5ba7105d14f654136578a65c97a25b53fc1" },
         { "id": "VEN-C3", "proof": "a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8" },
-        { "id": "VEN-C4", "proof": "9157f7fbed0318d94a0697c01a23de2bed86946a" },
+        { "id": "VEN-C4", "proof": "1b32e5ba7105d14f654136578a65c97a25b53fc1" },
         { "id": "VEN-C5", "proof": "cf3a9169f2cd95d42c689134a52d51d9147ff37c" },
         { "id": "VEN-C7", "proof": "e13970e90289d0d86f0adcbf350e4b9c1d5e5219" },
         { "id": "VEN-C8", "proof": "0791f00926cd5cc4fedcc7737aeac7bb68569aff" },
@@ -109,7 +109,7 @@
         { "id": "VEN-C15", "proof": "7fc7e4ba97aaf48b586002934a580ef2d1c31694" },
         { "id": "VEN-C17", "proof": "ab24961bd6b2f9403736e52ebbac8cc266488a41" },
         { "id": "VEN-C18", "proof": "0791f00926cd5cc4fedcc7737aeac7bb68569aff" },
-        { "id": "VEN-C19", "proof": "9157f7fbed0318d94a0697c01a23de2bed86946a" }
+        { "id": "VEN-C19", "proof": "1b32e5ba7105d14f654136578a65c97a25b53fc1" }
       ],
       "interfaces": [],
       "requires": [
