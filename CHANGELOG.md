@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Package Venus's reduced per-cell text-buffer allocation in Eon and EonTerm,
+  preserving glyph selection and cell geometry.
+
 - Give large workspace startup snapshots the full native-admission deadline.
 
 - Configure terminal font family, ordered fallbacks, size, line height, and
