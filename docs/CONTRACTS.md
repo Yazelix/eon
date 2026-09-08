@@ -16,9 +16,54 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
-`ec80e36625dec73544c0cb64becf4b135c932a63`. Exact source, installed artifact,
+`541a9cb43c155b8b97069904593dc81c73682613`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
+
+## Venus cell-buffer allocation integration
+
+- **Accepted source:** `7b7382395dad6608fdda40814c2dbf33806dd0e3` selects
+  Venus `541a9cb43c155b8b97069904593dc81c73682613`. Only the child source pin
+  changes; all existing protocol and contract-proof identities remain exact.
+  Venus owns the allocation correction; Eon owns its composition.
+- **Mechanical proof:** Manifest/lock identity and manifest validation pass.
+  `nix build path:.#default path:.#eonterm --no-link --json` passes, including
+  120 ordinary Venus tests and 60 Eon tests in each product build.
+- **Installed artifacts:** `nix profile upgrade eon eonterm` matches both
+  working-tree outputs: Eon
+  `/nix/store/5bw42dbymran4nwv5p64izm7nnfp45ha-eon-0.1.0` and EonTerm
+  `/nix/store/nqdpbgmp0a1w102s22ldnf8r97vgm1pg-eonterm-0.1.0`, using Venus
+  `/nix/store/2gaa5ky5fxnal39hkj4yd3kr4lkznjc7-yazelix-venus-0.1.0`.
+  Installed wrappers and live generation reports confirm the selected child.
+- **Installed observation:** Three paired fresh-process runs per product on
+  x86_64 Pop!_OS 24.04, isolated Sway 1.12 headless/pixman and Mesa 26.1.2
+  lavapipe, scale 1. The fixed Unicode payload emits 10,030 rows; actual grids
+  are 120 by 30. A terminal-query barrier and three-second settle precede PSS
+  and USS sampling. All 12 full-display captures match their product baseline
+  byte for byte; both products' captures were inspected. Full Eon also crosses
+  picker cancellation before starting the workload.
+
+Venus process memory in MiB; before/after values are medians. Paired PSS savings
+show the median and observed minimum–maximum, not a confidence interval.
+
+| Product | PSS before → after | Paired PSS saved | USS before → after |
+|---|---:|---:|---:|
+| Eon | 122.45 → 118.10 | 4.48 (4.20–4.70) | 119.02 → 114.65 |
+| EonTerm | 121.65 → 117.01 | 4.66 (2.64–4.73) | 118.19 → 113.55 |
+
+- **Evidence:** Exact old/new package identities, raw rollups/maps, 48 process rows,
+  captures, build logs, cleanup, `measure.py` and `analyze.py` are retained at
+  `~/.local/state/eon/proofs/eon-venus-memory-7b7382395dad6608fdda40814c2dbf33806dd0e3/`.
+  The archive's `README.md` gives the reproduction commands using a fresh
+  short disposable root and the recorded packages on a private display.
+- **Limits:** Small samples on a warm host with unfrozen shared mappings;
+  software Vulkan only. These results do not replace the COSMIC/Intel benchmark
+  or prove GPU allocation, throughput, long-term growth or retained-history
+  efficiency. Earlier fractional-scale, broader compositor, input/IME,
+  accessibility and non-systemd qualifications remain unchanged. All 12
+  pre-existing runtime PID/start identities survive; owned test generations and
+  compositor are gone. Existing supervisors retain their old runtime until
+  restarted; the profile refresh preserves their live Sessions.
 
 ## EON-C19 — Terminal typography and initial geometry configuration
 
