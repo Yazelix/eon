@@ -16,9 +16,38 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
-`1b32e5ba7105d14f654136578a65c97a25b53fc1`. Exact source, installed artifact,
+`ec80e36625dec73544c0cb64becf4b135c932a63`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
+
+## EON-C19 — Terminal typography and initial geometry configuration
+
+- **Status:** Candidate; user-approved 2026-09-08, installed proof pending.
+- **Consumer/trigger:** Eon and EonTerm create or reopen a Venus surface using
+  one `$EON_CONFIG_HOME/config.toml` snapshot.
+- **Fields:** Optional `[terminal]` `font_family`, ordered `font_fallbacks`
+  (at most eight), `font_size` (finite 6–96 logical px), `line_height` (finite
+  1–3 multiplier), and integer `columns`/`rows` (1–65,535; a supplied pair
+  at most 100,000 cells). Names are nonempty trimmed UTF-8, at most 128 bytes
+  without controls. A primary family must be installed and monospace;
+  requested fallback families must be installed.
+- **Result:** Omitted settings emit no override, preserving Venus's font
+  selection, nominal 16 px / 1.125 line height and 960 by 600 logical window.
+  Each omitted dimension retains its initial window dimension. Explicit grid
+  requests include existing workspace chrome; later compositor/user resizing
+  remains authoritative. Reopen applies current settings without replacing
+  Orbit or its PTY child; a live Venus retains its snapshot.
+- **Failures:** Eon rejects malformed configuration with field diagnostics
+  before starting children. Venus must admit fonts and the real window's
+  initial native geometry before Eon starts a new Orbit Session or user
+  command. Rejected, lost or timed-out admission closes only the attempted
+  presentation and preserves existing durable Sessions.
+- **Owners:** Existing Eon terminal configuration and direct argv projection;
+  Venus owns font resolution, native readiness and geometry. Eon supplies an
+  authoritative startup workspace snapshot through its existing constructors.
+- **Boundary:** Native Linux Wayland; no font installation, live reload,
+  renderer inside Eon, second schema, dependency, or default appearance change.
+  Consumes VEN-C19 startup admission only after exact child acceptance.
 
 ## Venus startup correction acceptance
 

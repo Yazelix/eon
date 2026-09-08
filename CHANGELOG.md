@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Configure terminal font family, ordered fallbacks, size, line height, and
+  initial columns/rows for Eon and EonTerm. Validate configured native startup
+  before starting a new Session or command; reopen applies current settings
+  while preserving live Sessions. Consume Venus `ec80e36625dec73544c0cb64becf4b135c932a63`.
+
 - Package Venus fixes for font-only workspace sizing and native startup
   stalling until unrelated input arrives.
 

@@ -46,11 +46,17 @@ impl Default for ShellConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct TerminalConfig {
     pub(crate) background_opacity: f32,
     pub(crate) background_blur: bool,
+    pub(crate) font_family: Option<String>,
+    pub(crate) font_fallbacks: Vec<String>,
+    pub(crate) font_size: Option<f32>,
+    pub(crate) line_height: Option<f32>,
+    pub(crate) columns: Option<u16>,
+    pub(crate) rows: Option<u16>,
 }
 
 impl Default for TerminalConfig {
@@ -58,7 +64,24 @@ impl Default for TerminalConfig {
         Self {
             background_opacity: 0.8,
             background_blur: true,
+            font_family: None,
+            font_fallbacks: Vec::new(),
+            font_size: None,
+            line_height: None,
+            columns: None,
+            rows: None,
         }
+    }
+}
+
+impl TerminalConfig {
+    pub(crate) fn requires_startup_admission(&self) -> bool {
+        self.font_family.is_some()
+            || !self.font_fallbacks.is_empty()
+            || self.font_size.is_some()
+            || self.line_height.is_some()
+            || self.columns.is_some()
+            || self.rows.is_some()
     }
 }
 
@@ -125,6 +148,47 @@ pub(crate) fn terminal_presentation(root: &Path) -> Result<TerminalConfig, Strin
         return Err(
             "terminal.background_opacity must be a finite number from 0.0 through 1.0".into(),
         );
+    }
+    for (field, value, minimum, maximum) in [
+        ("font_size", terminal.font_size, 6.0, 96.0),
+        ("line_height", terminal.line_height, 1.0, 3.0),
+    ] {
+        if value.is_some_and(|value| !value.is_finite() || !(minimum..=maximum).contains(&value)) {
+            return Err(format!(
+                "terminal.{field} must be a finite number from {minimum} through {maximum}"
+            ));
+        }
+    }
+    if terminal.font_fallbacks.len() > 8 {
+        return Err("terminal.font_fallbacks accepts at most eight families".into());
+    }
+    for (field, family) in terminal
+        .font_family
+        .iter()
+        .map(|family| ("font_family", family))
+        .chain(
+            terminal
+                .font_fallbacks
+                .iter()
+                .map(|family| ("font_fallbacks", family)),
+        )
+    {
+        if family.is_empty()
+            || family.trim() != family
+            || family.len() > 128
+            || family.chars().any(char::is_control)
+        {
+            return Err(format!(
+                "terminal.{field} requires nonempty trimmed family names of at most 128 UTF-8 bytes without controls"
+            ));
+        }
+    }
+    if terminal.columns == Some(0)
+        || terminal.rows == Some(0)
+        || u32::from(terminal.columns.unwrap_or(1)) * u32::from(terminal.rows.unwrap_or(1))
+            > orbit_protocol::MAX_CELLS as u32
+    {
+        return Err("terminal.columns and terminal.rows must be positive and fit Orbit's 100,000-cell limit".into());
     }
     Ok(terminal)
 }

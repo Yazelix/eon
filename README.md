@@ -321,10 +321,35 @@ background_blur = true
 `background_opacity` accepts a finite number from `0.0` through `1.0` and
 defaults to `0.80`. `background_blur` accepts a boolean, defaults to `true`,
 and requests full-surface compositor blur; set it to `false` to omit that
-request. Eon applies both values from one snapshot when creating a Venus
+request. Eon applies terminal settings from one snapshot when creating a Venus
 surface. Editing the file does not change a live surface; after Venus exits,
 `eon attach` or `eonterm attach` reads the current values for its replacement
 without restarting the live Orbit Session or PTY child.
+
+Optional typography and initial geometry fields belong in the same section:
+
+| Field | Accepted value | When omitted |
+|---|---|---|
+| `font_family` | Installed monospace family name | Venus font selection |
+| `font_fallbacks` | Ordered array of at most eight installed family names | No named fallback override |
+| `font_size` | Finite number, 6–96 logical pixels | 16 |
+| `line_height` | Finite multiplier, 1–3 | 1.125 |
+| `columns` | Integer, 1–65,535 | Initial window width remains 960 logical pixels |
+| `rows` | Integer, 1–65,535 | Initial window height remains 600 logical pixels |
+
+Family names must be nonempty, trimmed, at most 128 UTF-8 bytes, and contain no
+control characters. A supplied columns/rows pair must fit 100,000 cells. For
+example, `font_size = 20`, `line_height = 1.5`, `columns = 100`, and `rows = 30`
+request a 100 by 30 terminal with workspace chrome included. The compositor
+may override initial sizing; later resizing remains unrestricted by these fields.
+
+With a typography or geometry override, Venus admits fonts and the actual
+window's initial native geometry before Eon starts a new Session or command.
+Missing families and impossible geometry fail startup; Venus reports the
+specific cause in the supervisor output. Invalid configuration or a failed
+replacement leaves existing Sessions and their commands alive. A live Venus
+keeps its settings until reopened. Eon installs no fonts and does not promise
+that a selected family covers every glyph.
 
 Cursor presentation remains Venus-owned. Eon passes no cursor-effect profile,
 so every new or replacement surface uses Venus's blue cursor tail with its
@@ -485,15 +510,15 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 257 |
-| README | 499 |
+| README | 524 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,270 |
+| Architecture and contracts | 1,299 |
 | Distribution and references | 666 |
-| Changelog | 258 |
-| Rust source and tests | 12,900 |
+| Changelog | 263 |
+| Rust source and tests | 13,250 |
 | Cargo manifests | 37 |
 | Component manifest | 349 |
 | Nix composition | 783 |
 | Product defaults | 0 |
-| **Total** | **17,223** |
+| **Total** | **17,632** |

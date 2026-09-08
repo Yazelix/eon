@@ -1285,6 +1285,51 @@ fn invalid_focus_is_rejected_before_supervisor_connection() {
 }
 
 #[test]
+fn rejected_native_startup_creates_no_session_in_either_product() {
+    let root = temporary_directory();
+    let config = root.join("config");
+    let orbit_log = root.join("orbit.log");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    fs::create_dir(&config).unwrap();
+    fs::write(config.join("config.toml"), "[terminal]\nfont_size = 20\n").unwrap();
+    managed_orbit_executable(&orbit);
+    let eon = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let eonterm = root.join("eonterm");
+    symlink(eon, &eonterm).unwrap();
+    for response in ["exit 1", "printf wrong-v1", "exec cat >/dev/null"] {
+        executable(&venus, &format!("#!/bin/sh\n{response}\n"));
+        for (binary, args) in [
+            (eon, vec!["run", "--", "/bin/false"]),
+            (eonterm.as_path(), vec!["--", "/bin/false"]),
+        ] {
+            let started = Instant::now();
+            let output = eon_command(binary)
+                .args(args)
+                .env("EON_RUNTIME_DIR", root.join("runtime"))
+                .env("EON_CONFIG_HOME", &config)
+                .env("EON_ORBIT", &orbit)
+                .env("EON_VENUS", &venus)
+                .env("EON_TEST_ORBIT_LOG", &orbit_log)
+                .output()
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(
+                started.elapsed()
+                    < Duration::from_secs(if response.starts_with("exec") { 7 } else { 4 }),
+                "startup rejection did not finish within its bound"
+            );
+            assert!(
+                !orbit_log.exists(),
+                "native rejection started an Orbit Session"
+            );
+            assert!(String::from_utf8_lossy(&output.stderr).contains("cannot admit Eon Desktop"));
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn invalid_terminal_configuration_precedes_supervisor_generation_and_children() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
@@ -1306,6 +1351,14 @@ fn invalid_terminal_configuration_precedes_supervisor_generation_and_children() 
             "background_opacity",
         ),
         ("[terminal]\nbackground_blur = \"yes\"\n", "background_blur"),
+        ("[terminal]\nfont_size = nan\n", "font_size"),
+        ("[terminal]\nfont_size = 96.1\n", "font_size"),
+        ("[terminal]\nline_height = 0.9\n", "line_height"),
+        ("[terminal]\nfont_family = ' Font'\n", "font_family"),
+        ("[terminal]\nfont_fallbacks = ['']\n", "font_fallbacks"),
+        ("[terminal]\ncolumns = 0\n", "columns"),
+        ("[terminal]\nrows = 65536\n", "rows"),
+        ("[terminal]\ncolumns = 1000\nrows = 1000\n", "columns"),
     ] {
         fs::write(config.join("config.toml"), source).unwrap();
         let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
@@ -1420,7 +1473,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     managed_orbit_executable(&orbit);
     executable(
         &venus,
-        "#!/bin/sh\nprintf '%s|%s|%s\\n' \"$$\" \"$EON_VENUS_PRESENTATION_CONTROL\" \"$*\" >> \"$EON_TEST_VENUS_LOG\"\ndd bs=8 count=1 status=none >> \"$EON_TEST_PRESENTATION_LOG\"\ncat >/dev/null\n",
+        "#!/bin/sh\ncase \"$*\" in *EonMissingProofFont*) exit 1;; esac\nif test ! -e \"$EON_TEST_VENUS_LOG\"; then test ! -e \"$EON_TEST_ORBIT_LOG\" || exit 97; fi\nprintf ready-v1\nprintf '%s|%s|%s\\n' \"$$\" \"$EON_VENUS_PRESENTATION_CONTROL\" \"$*\" >> \"$EON_TEST_VENUS_LOG\"\ndd bs=8 count=1 status=none >> \"$EON_TEST_PRESENTATION_LOG\"\ncat >/dev/null\n",
     );
     executable(
         &command,
@@ -1429,7 +1482,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     fs::create_dir(&config).unwrap();
     fs::write(
         config.join("config.toml"),
-        "[terminal]\nbackground_opacity = 0.88\nbackground_blur = false\n",
+        "[terminal]\nbackground_opacity = 0.88\nbackground_blur = false\nfont_size = 20\ncolumns = 100\nrows = 30\n",
     )
     .unwrap();
 
@@ -1496,7 +1549,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
 
     fs::write(
         config.join("config.toml"),
-        "[terminal]\nbackground_opacity = 0.0\n",
+        "[terminal]\nbackground_opacity = 0.0\nfont_size = 24\nline_height = 1.5\nrows = 24\n",
     )
     .unwrap();
     let mut repeated = eonterm(&command)
@@ -1540,6 +1593,17 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     assert!(rejected_error.contains("cannot present Eon Desktop"));
     assert!(rejected_error.contains("background_blur"));
     assert!(supervisor.child.try_wait().unwrap().is_none());
+    fs::write(
+        config.join("config.toml"),
+        "[terminal]\nfont_family = 'EonMissingProofFont'\n",
+    )
+    .unwrap();
+    let rejected = eonterm(&config)
+        .args(["attach", generation_id])
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("cannot admit Eon Desktop"));
     let orbit_pid: i32 = fs::read_to_string(&orbit_log)
         .unwrap()
         .trim()
@@ -1554,7 +1618,7 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
 
     fs::write(
         config.join("config.toml"),
-        "[terminal]\nbackground_opacity = 0.0\n",
+        "[terminal]\nbackground_opacity = 0.0\nfont_size = 24\nline_height = 1.5\nrows = 24\n",
     )
     .unwrap();
     let reopened = eonterm(&config)
@@ -1597,13 +1661,17 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
         .collect::<Vec<_>>();
     assert_eq!(
         venus_log
-            .matches("|stdin|--no-decorations --application-id eonova --background-opacity ")
+            .matches(
+                "|stdin-ready-v1|--no-decorations --application-id eonova --background-opacity "
+            )
             .count(),
         2
     );
     assert!(venus_log.contains("--background-opacity 0.88"));
     assert!(venus_log.contains("--background-opacity 0 --background-blur"));
     assert_eq!(venus_log.matches("--background-blur").count(), 1);
+    assert!(venus_log.contains("--font-size 20 --columns 100 --rows 30"));
+    assert!(venus_log.contains("--font-size 24 --line-height 1.5 --rows 24"));
     assert_eq!(
         venus_log
             .matches(&generation.join("orbit.sock").display().to_string())
