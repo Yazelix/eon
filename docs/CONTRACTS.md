@@ -16,9 +16,41 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
-`0791f00926cd5cc4fedcc7737aeac7bb68569aff`. Exact source, installed artifact,
+`d1223463b2b513c04242df50a4bd948d0533cfde`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
+
+## Native hyperlink composition acceptance
+
+- **Accepted source:** `be9d0e37c7d0029d6832ff609082faa885280762`, consuming
+  the exact Orbit/Venus pair above and `VEN-C5`; ORBS v10, ORBF v1 and EONW v4
+  remain unchanged. This acceptance covers the changed launch, graph and native
+  interaction surfaces of `EON-C1` through `EON-C4`; distinct earlier evidence
+  below retains its recorded revisions.
+- **Environment:** x86_64 Linux, isolated Sway 1.12 native Wayland, Nix Mesa
+  26.1.2 lavapipe, host GIO 2.80.0, Wayland clipboard and AT-SPI.
+- **Mechanical proof:** Launcher environment regression red/green, locked
+  fmt/check/test/clippy (68 tests), manifest validation, and all four
+  `nix flake check path:.` checks passed.
+- **Installed artifacts:** Both active profile elements matched
+  `nix path-info path:.#default` and `path:.#eonterm` after
+  `nix profile upgrade eon eonterm`:
+  - Eon: `/nix/store/8r53v42plymxhys76mv582za20l382qa-eon-0.1.0`
+  - EonTerm: `/nix/store/q441sjfvgvkq00yim4gd97f540pmnbg5-eonterm-0.1.0`
+  - Venus: `/nix/store/746dv1wk3pmmizz18d4v238p0s69qmf9-yazelix-venus-0.1.0`
+  - Generation: `g1-c08957b2a62711a8cc8e3366417366cb`
+- **Installed dogfood:** EonTerm passed keyboard inspection and target paging,
+  exact clipboard and real registered-handler dispatch, unsupported/malformed
+  target refusal, wide-tail hover, ordinary terminal mouse reports, captured
+  modifier-click, bottom-row notice placement, stale held-click rejection, and
+  accessible native handler failure. Full Eon passed startup-picker cancellation
+  into `t1/p1`, target inspection, exact copy and native dispatch. The handler
+  preference existed only in host `XDG_CONFIG_HOME/mimeapps.list`; Venus retained
+  that root and received the distinct product `EON_CONFIG_HOME`.
+- **Limits:** Dispatch proves delivery to the registered handler, not browser
+  content loading. Fractional scale, broader compositor quality and non-systemd
+  installed support remain unproved. Existing live supervisors were preserved;
+  they retain their old components until the user restarts them.
 
 ## EON-C1 — Exact compatible component launch
 
@@ -95,8 +127,10 @@ Profile refreshes preserve existing live supervisors and their Sessions.
   - **Evidence:** Manifest parser/compatibility checks, exact graph consumption
     by installed Eon and EonTerm, and prior Eonova proof; accepted manifest base
     `234ad77ced4924d95400b5c39822b3fb9b928c95` and ORBS v7 graph refresh
-    `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`; the current graph selects the
-    exact accepted Orbit/Venus pair above with unchanged ORBS v10 and ORBF v1.
+    `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`. The listed proof revision selected Orbit
+    `91999d79546422b49bdbc124166a65859d0bd872` and Venus
+    `e13970e90289d0d86f0adcbf350e4b9c1d5e5219` with ORBS v10 and ORBF v1.
+    The hyperlink composition acceptance above records the current graph.
 
 ## EON-C3 — Distribution-neutral runtime inputs
 
