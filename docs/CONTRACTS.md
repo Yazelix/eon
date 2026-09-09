@@ -14,7 +14,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The current component graph selects Orbit
+The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
 `8211e8f773140429398154ca3f2230bd09fed1df`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
@@ -22,8 +22,8 @@ Profile refreshes preserve existing live supervisors and their Sessions.
 
 ## Pill-shaped tab integration
 
-- **Candidate:** `ven-pill-workspace-tabs-rg4` in Eon Desktop owns this rollout
-  over Eon `80591527953a3082b2564061f86216e1e0619ce3`. Only Venus source and
+- **Accepted source:** Eon `57fb875cc02c7fe8c2cd1134315e777a17f15f73`, owned by
+  Eon Desktop's `ven-pill-workspace-tabs-rg4`. Only Venus source and
   its qualified `VEN-C8` proof advance to `8211e8f773140429398154ca3f2230bd09fed1df`.
 - **Build and installation:** Exact manifest/lock checks and both Nix builds
   pass, including 121 Venus tests and 60 Eon tests per product. Refreshed profiles
