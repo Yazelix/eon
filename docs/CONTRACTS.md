@@ -14,7 +14,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The current component graph selects Orbit
+The current accepted composition selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
 `f5c679443b2fbda1a7a8f91c98d312811bee2cdf`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
@@ -22,11 +22,11 @@ Profile refreshes preserve existing live supervisors and their Sessions.
 
 ## Rounded adaptive tab integration
 
-- **Candidate:** `eon-install-rounded-adaptive-tabs-5eu` over Eon
-  `fbe198fb2c48e3d2d9e2bb2d557aae05bd14291d` selects accepted Venus
+- **Accepted source:** `eon-install-rounded-adaptive-tabs-5eu` at Eon
+  `b25da77fb61ed1e82a237d22ffd0c7e8394ce7df` selects accepted Venus
   `f5c679443b2fbda1a7a8f91c98d312811bee2cdf` and its qualified `VEN-C8` proof.
-  Eon source acceptance remains pending; all other component/proof identities
-  are unchanged. Venus owns presentation, while Eon owns composition.
+  All other component/proof identities remain unchanged. Venus owns
+  presentation, while Eon owns composition.
 - **Mechanical proof:** Manifest/lock identity and manifest validation pass.
   Both Nix packages build, including 121 Venus tests and 60 Eon tests per product.
 - **Installed artifacts:** Both refreshed profiles match the working-tree builds:
@@ -41,7 +41,7 @@ Profile refreshes preserve existing live supervisors and their Sessions.
   strip pixels while preserving the workspace snapshot and pane-header pixels.
   Tab switches picker modes and Escape cancels; rendering limits remain below.
 - **Limits:** Intermittently blank or incomplete picker captures occur in both
-  the preceding installed package and this candidate; their client/compositor
+  the preceding installed package and this source; their client/compositor
   cause remains unresolved. This does not prove uninterrupted picker rendering.
   Existing fractional-scale, broader compositor, accessibility and non-systemd
   qualifications remain. No new EonTerm native interaction proof is claimed.
