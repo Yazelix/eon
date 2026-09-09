@@ -14,11 +14,41 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The current accepted composition selects Orbit
+The current component graph selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
-`541a9cb43c155b8b97069904593dc81c73682613`. Exact source, installed artifact,
+`f5c679443b2fbda1a7a8f91c98d312811bee2cdf`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
+
+## Rounded adaptive tab integration
+
+- **Candidate:** `eon-install-rounded-adaptive-tabs-5eu` over Eon
+  `fbe198fb2c48e3d2d9e2bb2d557aae05bd14291d` selects accepted Venus
+  `f5c679443b2fbda1a7a8f91c98d312811bee2cdf` and its qualified `VEN-C8` proof.
+  Eon source acceptance remains pending; all other component/proof identities
+  are unchanged. Venus owns presentation, while Eon owns composition.
+- **Mechanical proof:** Manifest/lock identity and manifest validation pass.
+  Both Nix packages build, including 121 Venus tests and 60 Eon tests per product.
+- **Installed artifacts:** Both refreshed profiles match the working-tree builds:
+  Eon `/nix/store/7b710jwv0rfikvviq9pfsj7axrcncc23-eon-0.1.0` and EonTerm
+  `/nix/store/jw92cbrz254fpxm33imj943lfh8klks5-eonterm-0.1.0`, sharing Venus
+  `/nix/store/kjgxd1l76xkasrsl9xm201rfxfciwagp-yazelix-venus-0.1.0`.
+  Eon's installed generation is `g1-7609c80491099c03586945f4320f9cbd`.
+- **Installed observation:** x86_64 Linux, private Sway 1.12 headless/pixman,
+  packaged Mesa 26.1.2 lavapipe, scale 1. Rounded natural/capped tabs, full-path
+  hover, pointer/keyboard selection, stable launch directories after shell `cd`,
+  overflow and whole-strip wheel routing pass. Gap scrolling changes 14,992
+  strip pixels while preserving the workspace snapshot and pane-header pixels.
+  Tab switches picker modes and Escape cancels; rendering limits remain below.
+- **Limits:** Intermittently blank or incomplete picker captures occur in both
+  the preceding installed package and this candidate; their client/compositor
+  cause remains unresolved. This does not prove uninterrupted picker rendering.
+  Existing fractional-scale, broader compositor, accessibility and non-systemd
+  qualifications remain. No new EonTerm native interaction proof is claimed.
+  All 15 pre-existing runtime PID/start identities survive; private tests exited.
+- **Evidence:** Source/artifact identities, logs, captures, baseline comparison,
+  reproduction scripts and cleanup are retained in
+  `~/.local/state/eon/proofs/eon-install-rounded-adaptive-tabs-5eu/REPORT.md`.
 
 ## Venus cell-buffer allocation integration
 
@@ -434,7 +464,11 @@ show the median and observed minimum–maximum, not a confidence interval.
     accordion panes with exactly one expanded pane.
   - Tabs use stable `tN` identities. Each tab header shows its number plus the
     leaf, `~`, or `/` derived from Eon's authoritative launch directory; actions
-    retain `tN`, and accessibility includes bounded full-path context.
+    retain `tN`, and accessibility includes full launch-path context. Venus
+    renders rounded, separated tabs sized to shaped labels, capped near 280
+    logical pixels at default typography. Long names use middle ellipsis;
+    narrow tabs retain their number whenever it fits. Hover previews the launch
+    path, and wheel scrolling works across the whole strip, including gaps.
   - Each pane is identified as `pN`, two ASCII spaces, and a compact working-
     directory label; home uses the packaged marker, descendants use `~/`, and
     external paths remain absolute.

@@ -188,7 +188,11 @@ Eon Desktop consumes the workspace result and shows every fitting pane header
 around one selected live Session. New generations identify tabs as `t1`, `t2`,
 and so on. A tab header shows the numeric part, two spaces, then the leaf of
 Eon's authoritative launch directory, `~` for the exact home directory, or `/`
-for root; hit testing and actions retain the complete `tN` identity. Panes remain
+for root; hit testing and actions retain the complete `tN` identity. Rounded tabs
+fit their shaped labels up to 280 logical pixels at default typography. Long
+names use middle ellipsis; narrow tabs keep their number whenever it fits.
+Hover shows the launch path. Scroll anywhere on the strip, including gaps, to
+reach overflowing tabs. Shell `cd` leaves tab names and widths unchanged. Panes remain
 `p1`, `p2`, and so on. Each visible live pane header shows that exact identity,
 two spaces, then a `~/`-anchored path below home, an absolute path elsewhere, or
 Nova's marker for the exact home directory. Unset or empty `HOME` leaves paths
@@ -516,16 +520,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 263 |
-| README | 531 |
+| README | 535 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,409 |
+| Architecture and contracts | 1,443 |
 | Distribution and references | 666 |
 | Benchmark report | 317 |
-| Changelog | 272 |
+| Changelog | 275 |
 | Rust source and tests | 13,339 |
 | Cargo manifests | 37 |
 | Component manifest | 349 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **18,177** |
+| **Total** | **18,218** |

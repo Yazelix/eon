@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Package rounded, adaptive workspace tabs with middle ellipsis for long names,
+  launch-path previews on hover, and scrolling across the whole tab strip.
+
 - Use Tab to switch between quick search and folder browsing in startup,
   new-tab, and Alt+Z directory pickers. Esc and Ctrl+C cancel from either main
   screen; Esc dismisses nested browser prompts first. Switching back to the
