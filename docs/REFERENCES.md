@@ -41,6 +41,22 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
   artifacts as stable dependencies, snapshot v1 as a durable compatibility promise, a second
   terminal-query owner, and implied Eon-web scope.
 
+### If a web experiment is activated, how should an HTTP adapter stream authoritative state to browser clients?
+
+- **Owner:** Eon web composition; Orbit retains terminal authority
+- **Read first:** [http-nu at
+  `a8dab1b85bd1`](https://github.com/cablehead/http-nu/blob/a8dab1b85bd1c65a31ade1981389296c3ef2af2b/README.md)
+- **Read additionally only if:** Inspect its [local event
+  bus](https://github.com/cablehead/http-nu/blob/a8dab1b85bd1c65a31ade1981389296c3ef2af2b/src/bus.rs)
+  for slow-subscriber handling and [server
+  lifecycle](https://github.com/cablehead/http-nu/blob/a8dab1b85bd1c65a31ade1981389296c3ef2af2b/src/main.rs)
+  for reload or shutdown behavior.
+- **Preserve / reject:** Study Nushell-scripted HTTP/SSE composition, terminating lagged
+  subscriptions, and cancelling old streams on handler reload. Reconnection still needs
+  an authoritative fresh-state contract. Keep this a conditional prototype reference;
+  it selects no dependency, embedded Nushell runtime, Datastar renderer, cross.stream
+  store or service owner, and activates no web, remote-control, or native-UI scope.
+
 ## Terminal product comparisons
 
 ### How should Eon compare terminal completeness, native Linux integration, performance evidence, and direct distribution without importing another terminal's ownership?
@@ -230,6 +246,24 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
 - **Preserve / reject:** Keep provider sessions adapter-owned and distinct from Eon work and
   Orbit Sessions. Reject universal-support assumptions, invented semantics, and ACP
   conversation state as Eon work.
+
+### How should a headless agent expose live activity separately from conversation context?
+
+- **Owner:** Eon provider adapters and attention semantics; Venus presents their state
+- **Read first:** [yoke at
+  `90b5fb91b4c5`](https://github.com/cablehead/yoke/blob/90b5fb91b4c513fb0851fc808e61c5c94ba940bf/README.md)
+- **Read additionally only if:** Inspect its [event projection and input
+  parser](https://github.com/cablehead/yoke/blob/90b5fb91b4c513fb0851fc808e61c5c94ba940bf/src/main.rs)
+  when defining an agent-event adapter; inspect its [render
+  consumer](https://github.com/cablehead/yoke/blob/90b5fb91b4c513fb0851fc808e61c5c94ba940bf/ux/render.nu)
+  when comparing progress, tool-result and usage presentation.
+- **Preserve / reject:** Study one agent turn as a process, JSONL context messages
+  distinct from live observations, and explicit turn/tool start, end, progress and error
+  events. These are useful sidebar inputs without parsing terminal output. Preserve
+  provider evidence and keep conversation context distinct from Beads work and Orbit
+  Sessions. A process or turn ending is not proof that the work succeeded. This reference
+  selects no yoke/yoagent harness, transcript schema, provider support, embedded Nushell
+  engine, web UI, or persistence mechanism.
 
 ### How should Eon retain source-aware provider activity and expose compact agent actions without creating another action owner?
 

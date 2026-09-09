@@ -498,10 +498,14 @@ show the median and observed minimum–maximum, not a confidence interval.
     external paths remain absolute.
   - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
     `config.toml` defaults to `true` and requests one rounded border around the
-    visible pane stack, with inset separators between panes. `false` removes
+    visible pane stack, with full-width separators and a small bottom gap (4
+    logical pixels at default typography) using terminal background color/opacity
+    under the existing surface-wide blur request. Selected and hovered headers
+    follow the stack corners, with square internal edges. `false` removes
     the border and separators while retaining headers, selection, hover and
     keyboard focus. Both modes preserve terminal-grid and picker geometry. EonTerm
-    receives no workspace-frame override. Live surfaces retain their settings;
+    receives no workspace-frame override. Requested initial grids account for
+    the small bottom margin. Live surfaces retain their settings;
     malformed or duplicate values reject a new launch or replacement without
     stopping existing Sessions. Eon owns the strict boolean and launch
     projection; Venus owns geometry, rendering, input and accessibility.
@@ -644,6 +648,47 @@ show the median and observed minimum–maximum, not a confidence interval.
     `~/.local/state/eon/proofs/ven-connected-pane-stack-0ub-2026-09-09/REPORT.md`.
     Older supervisors retain their previous runtime. Fractional native scale,
     other compositors and screen-reader qualifications remain unchanged.
+
+  - **Earlier pane-stack polish (dogfooded, 2026-09-09):** Its margin and
+    highlight design is superseded by the correction below. Working-tree candidate over
+    `b29f0d7d205c03a2d9b8d81ee600499dfe2f9af6` consumes accepted Venus
+    `ff426a9f3d6e1acbb7ae1ce2388df7c75f7bb271`, unchanged Orbit `91999d7`
+    and EONW v4. Eon Rust inputs remain unchanged. Manifest validation and both
+    Nix builds pass; profiles and executable symlinks match Eon
+    `/nix/store/540j6gnfbkh9k79ba27zg5jm1np83d1d-eon-0.1.0` and EonTerm
+    `/nix/store/lrvdp6d9vm91v641k5sginr0l6rzbfli-eonterm-0.1.0`, generation
+    `g1-23256a5c404a78d4a68164edae640415`. Private Sway 1.12 / Mesa lavapipe
+    26.1.2 scale-1 installed checks prove full-width separators, bottom spacing,
+    lighter selected headers, default/off, native focus/input, overflow and
+    picker. Real reopened workspace grids are 100x30 in both modes, preserving
+    the same supervisor, Orbit Sessions and PTY command; standalone remains
+    100x30 without workspace chrome. All 28 pre-existing runtime PID/start
+    identities survive; private generations stop normally and cleanup is empty.
+    Exact inputs, artifacts, captures and checks:
+    `~/.local/state/eon/proofs/ven-connected-pane-stack-0ub-polish-2026-09-09/REPORT.md`.
+    Existing supervisors retain their previous runtime. Fractional native scale,
+    other compositors, screen-reader usage and offline lifecycle remain qualified.
+
+  - **Pane-stack corrections (dogfooded, 2026-09-09):** Working-tree candidate
+    over `b29f0d7d205c03a2d9b8d81ee600499dfe2f9af6` consumes accepted Venus
+    `bc5a2bd3b2363abdea69c4cd89953b612bc970e8`; Orbit, EONW v4 and Eon Rust
+    inputs remain unchanged. Manifest validation and both Nix builds pass.
+    Profiles and executable symlinks match Eon
+    `/nix/store/52xxap7klyzcg1fdvgwnz7w30v24q2gx-eon-0.1.0` and EonTerm
+    `/nix/store/xbkp5n2m3hz9da7xcspk61aidp6x3brh-eonterm-0.1.0`, generation
+    `g1-5626ef23db3adb92c987e2c6179a793c`. Private Sway 1.12 / Mesa 26.1.2
+    scale-1 proof over a colored underlay confirms a 4px gap matching terminal
+    color/opacity, stack-shaped selected headers and full-width separators in
+    default/off modes. Native focus/input, overflow and picker pass. Real 100x30
+    reopened workspace PTYs preserve their supervisor, Orbit Sessions and command;
+    standalone remains 100x30 without workspace chrome. All 33 pre-existing
+    runtime identities survive; private generations stop and cleanup is empty.
+    Exact inputs, artifacts, pixel oracles, captures and limits:
+    `~/.local/state/eon/proofs/ven-connected-pane-stack-0ub-corrections-2026-09-09/REPORT.md`.
+    Sway proves alpha/color coverage, not compositor blur; the existing full-surface
+    blur request is unchanged. Fractional native scale, other compositors,
+    screen-reader usage and offline lifecycle remain qualified. Existing user
+    supervisors and Sessions were preserved; live surfaces need reopening.
 
 ## EON-C9 — Managed shell environment
 

@@ -5,8 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
-- Connect the pane stack within one rounded border, with thin separators,
-  quieter headers and distinct selection and keyboard focus. Set
+- Connect the pane stack within one rounded border, with full-width separators,
+  a small tinted bottom gap, stack-shaped selected/hovered header fills and
+  distinct keyboard focus. Set
   `[terminal] pane_frames = false` to hide the border and separators.
   Pane-list changes also resize the selected terminal when
   its endpoint remains unchanged.
