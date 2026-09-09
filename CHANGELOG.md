@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Use pill-shaped workspace tabs without a selection underline; keep the
+  selected fill, bright label and rounded keyboard-focus outline.
+
 - Package rounded, adaptive workspace tabs with middle ellipsis for long names,
   launch-path previews on hover, and scrolling across the whole tab strip.
 

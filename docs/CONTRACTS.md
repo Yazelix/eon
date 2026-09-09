@@ -14,11 +14,33 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
-The current accepted composition selects Orbit
+The current component graph selects Orbit
 `91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
-`f5c679443b2fbda1a7a8f91c98d312811bee2cdf`. Exact source, installed artifact,
+`8211e8f773140429398154ca3f2230bd09fed1df`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
+
+## Pill-shaped tab integration
+
+- **Candidate:** `ven-pill-workspace-tabs-rg4` in Eon Desktop owns this rollout
+  over Eon `80591527953a3082b2564061f86216e1e0619ce3`. Only Venus source and
+  its qualified `VEN-C8` proof advance to `8211e8f773140429398154ca3f2230bd09fed1df`.
+- **Build and installation:** Exact manifest/lock checks and both Nix builds
+  pass, including 121 Venus tests and 60 Eon tests per product. Refreshed profiles
+  match Eon `/nix/store/afyf5irjfla637z331dh7kai9y4kf8g8-eon-0.1.0` and EonTerm
+  `/nix/store/h3yjpcwxpfynibjjfl15k3kv5bhzhj77-eonterm-0.1.0`, sharing Venus
+  `/nix/store/3scn7dx9k8f4716n8dcwdlh4r92acwaf-yazelix-venus-0.1.0`.
+  Installed generation: `g1-403a8d6820e4e49db056f00774fb8c75`.
+- **Installed observation:** Private Sway 1.12 headless/pixman, packaged Mesa
+  26.1.2 lavapipe, x86_64 Linux at scale 1 shows pill ends without an underline,
+  selected/idle fills, readable labels, native selection, hover and rounded tab
+  focus. All 21 pre-existing runtime PID/start identities survive; tests exited.
+- **Limits:** Fractional-scale, wider compositor, accessibility and non-systemd
+  qualifications remain. This refinement does not re-prove picker rendering or
+  resolve the intermittent captures recorded below. EonTerm receives shared
+  child artifact/build proof, without a separate native interaction observation.
+- **Evidence:** Exact source/artifact hashes, logs, captures and cleanup are in
+  `~/.local/state/eon/proofs/ven-pill-workspace-tabs-rg4/installed/REPORT.md`.
 
 ## Rounded adaptive tab integration
 
@@ -465,10 +487,12 @@ show the median and observed minimum–maximum, not a confidence interval.
   - Tabs use stable `tN` identities. Each tab header shows its number plus the
     leaf, `~`, or `/` derived from Eon's authoritative launch directory; actions
     retain `tN`, and accessibility includes full launch-path context. Venus
-    renders rounded, separated tabs sized to shaped labels, capped near 280
+    renders pill-shaped, separated tabs sized to shaped labels, capped near 280
     logical pixels at default typography. Long names use middle ellipsis;
     narrow tabs retain their number whenever it fits. Hover previews the launch
     path, and wheel scrolling works across the whole strip, including gaps.
+    Selected fill and brighter text identify the active tab without an underline;
+    keyboard focus adds a separate rounded outline.
   - Each pane is identified as `pN`, two ASCII spaces, and a compact working-
     directory label; home uses the packaged marker, descendants use `~/`, and
     external paths remain absolute.
