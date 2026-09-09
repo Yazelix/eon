@@ -335,6 +335,12 @@ surface. Editing the file does not change a live surface; after Venus exits,
 `eon attach` or `eonterm attach` reads the current values for its replacement
 without restarting the live Orbit Session or PTY child.
 
+Full Eon connects its pane stack within one rounded border, with thin separators.
+Set `pane_frames = false` in `[terminal]` to hide them; it defaults to `true`.
+Pane headers, selection, hover and keyboard focus remain available in both modes,
+with the same terminal grid. This setting applies when a surface opens or reopens;
+EonTerm has no workspace frames.
+
 Optional typography and initial geometry fields belong in the same section:
 
 | Field | Accepted value | When omitted |
@@ -521,16 +527,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 263 |
-| README | 536 |
+| README | 542 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,467 |
+| Architecture and contracts | 1,515 |
 | Distribution and references | 666 |
 | Benchmark report | 317 |
-| Changelog | 278 |
-| Rust source and tests | 13,339 |
+| Changelog | 284 |
+| Rust source and tests | 13,393 |
 | Cargo manifests | 37 |
 | Component manifest | 349 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **18,246** |
+| **Total** | **18,360** |

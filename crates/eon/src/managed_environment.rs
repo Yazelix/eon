@@ -51,6 +51,7 @@ impl Default for ShellConfig {
 pub(crate) struct TerminalConfig {
     pub(crate) background_opacity: f32,
     pub(crate) background_blur: bool,
+    pub(crate) pane_frames: bool,
     pub(crate) font_family: Option<String>,
     pub(crate) font_fallbacks: Vec<String>,
     pub(crate) font_size: Option<f32>,
@@ -64,6 +65,7 @@ impl Default for TerminalConfig {
         Self {
             background_opacity: 0.8,
             background_blur: true,
+            pane_frames: true,
             font_family: None,
             font_fallbacks: Vec::new(),
             font_size: None,

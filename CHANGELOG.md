@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Connect the pane stack within one rounded border, with thin separators,
+  quieter headers and distinct selection and keyboard focus. Set
+  `[terminal] pane_frames = false` to hide the border and separators.
+  Pane-list changes also resize the selected terminal when
+  its endpoint remains unchanged.
+
 - Use pill-shaped workspace tabs without a selection underline; keep the
   selected fill, bright label and rounded keyboard-focus outline.
 

@@ -496,6 +496,15 @@ show the median and observed minimum–maximum, not a confidence interval.
   - Each pane is identified as `pN`, two ASCII spaces, and a compact working-
     directory label; home uses the packaged marker, descendants use `~/`, and
     external paths remain absolute.
+  - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
+    `config.toml` defaults to `true` and requests one rounded border around the
+    visible pane stack, with inset separators between panes. `false` removes
+    the border and separators while retaining headers, selection, hover and
+    keyboard focus. Both modes preserve terminal-grid and picker geometry. EonTerm
+    receives no workspace-frame override. Live surfaces retain their settings;
+    malformed or duplicate values reject a new launch or replacement without
+    stopping existing Sessions. Eon owns the strict boolean and launch
+    projection; Venus owns geometry, rendering, input and accessibility.
   - Left/right tab traversal and up/down pane traversal wrap at ordered edges
     when the axis has at least two targets; singleton axes remain unavailable.
     Left/right remains available while a directory picker is open: the picker
@@ -596,6 +605,45 @@ show the median and observed minimum–maximum, not a confidence interval.
     close, final-tab protection, and exact Ctrl+T/Ctrl+Shift+W terminal bytes.
     The private generation stops cleanly; existing user processes and workspace
     remain unchanged. Fractional scale and other partial proofs remain open.
+
+  - **Pane frames (dogfooded, 2026-09-09):** Working-tree candidate over
+    `4f0650764874f3c7d9ab211f057522f2ecc92de4` consumes accepted Venus
+    `5c23b0fe206fb2ed9e027603ae61ba366913cbe1`, unchanged Orbit `91999d7`
+    and EONW v4. Exact input hashes, installed artifacts, commands, captures
+    and cleanup are retained under
+    `~/.local/state/eon/proofs/eon-pane-stack-delivery-jfo-2026-09-09/`.
+    Locked Rust checks pass (72 tests), as do all four declared Nix checks.
+    Refreshed Eon and EonTerm profiles match their working-tree build outputs.
+    Private Sway 1.12 / Mesa lavapipe 26.1.2 at scale 1 proves omitted/true/false,
+    native keyboard and pointer focus, terminal input, long labels, overflow,
+    picker layout and initial grid accounting. Omitted and explicit true have
+    identical one/three-pane captures. Invalid configuration rejects a fresh
+    launch and a replacement; valid reopen applies frames without replacing
+    the supervisor, six Orbit Sessions or the test command. EonTerm emits no
+    frame override and has no workspace chrome. All 23 pre-existing runtime
+    PID/start identities survive; older supervisors retain their prior runtime.
+    Fractional native scale, other compositors and screen-reader qualifications
+    remain unchanged.
+
+  - **Connected pane stack (dogfooded, 2026-09-09):** Working-tree candidate
+    over `4f0650764874f3c7d9ab211f057522f2ecc92de4` consumes accepted Venus
+    `8389cc011adbbf9c390a912d6c93b0040e47e21d`, unchanged Orbit `91999d7`
+    and EONW v4. Eon Rust inputs are unchanged from the preceding pane-frame
+    delivery. Manifest validation and both Nix package builds pass. Profiles
+    resolve exactly to Eon
+    `/nix/store/8mh0zv0njykwvfk9cirmmc30lpjc1jbx-eon-0.1.0` and EonTerm
+    `/nix/store/y74fg1g2smzlaxqz530s0l7pxk5bwczy-eonterm-0.1.0`, generation
+    `g1-216b179a560fe9af5c70a15dce222bf1`. Private Sway 1.12 / Mesa lavapipe
+    26.1.2 at scale 1 proves default/off, top/middle/bottom selection, native
+    focus/input, overflow scrolling, picker and unchanged real PTY grids.
+    Pixel checks prove the continuous side border and inset separators;
+    frame-off hides both. EonTerm has no frame argument or workspace chrome.
+    All 25 existing runtime PID/start identities survive; private generations
+    stop normally and their process scan is empty. Exact inputs, artifacts,
+    commands, captures and cleanup are retained in
+    `~/.local/state/eon/proofs/ven-connected-pane-stack-0ub-2026-09-09/REPORT.md`.
+    Older supervisors retain their previous runtime. Fractional native scale,
+    other compositors and screen-reader qualifications remain unchanged.
 
 ## EON-C9 — Managed shell environment
 

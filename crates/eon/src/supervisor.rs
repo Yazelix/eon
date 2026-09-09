@@ -426,7 +426,10 @@ fn venus_command(
         }
     }
     if mode == LaunchMode::Workspace {
-        command.arg("--workspace");
+        command
+            .arg("--pane-frames")
+            .arg(terminal.pane_frames.to_string())
+            .arg("--workspace");
     }
     command.arg(socket);
     command.env("EON_CONFIG_HOME", config);
@@ -1609,6 +1612,53 @@ rows = 30
     }
 
     #[test]
+    fn configured_pane_frames_reach_only_workspace_launches() {
+        let root = temporary_directory();
+        for (source, expected) in [
+            ("", "true"),
+            ("[terminal]\npane_frames = true\n", "true"),
+            ("[terminal]\npane_frames = false\n", "false"),
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            let terminal = crate::managed_environment::terminal_presentation(&root).unwrap();
+            for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
+                let command = venus_command(
+                    &super::programs(true),
+                    &root,
+                    Path::new("/runtime.sock"),
+                    mode,
+                    &terminal,
+                    "eon",
+                );
+                let args = command.get_args().collect::<Vec<_>>();
+                let values = args
+                    .windows(2)
+                    .filter(|pair| pair[0] == "--pane-frames")
+                    .map(|pair| pair[1])
+                    .collect::<Vec<_>>();
+                if mode == LaunchMode::Workspace {
+                    assert_eq!(values, [expected], "{source}");
+                } else {
+                    assert!(values.is_empty());
+                }
+            }
+        }
+        for value in ["\"false\"", "0", "true\npane_frames = false"] {
+            fs::write(
+                root.join("config.toml"),
+                format!("[terminal]\npane_frames = {value}\n"),
+            )
+            .unwrap();
+            assert!(
+                crate::managed_environment::terminal_presentation(&root)
+                    .unwrap_err()
+                    .contains("pane_frames")
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn venus_receives_workspace_endpoint_only_in_workspace_mode() {
         let mut programs = Programs {
             orbit: "/managed/orbit".into(),
@@ -1635,6 +1685,8 @@ rows = 30
                 "--background-opacity",
                 "0.88",
                 "--background-blur",
+                "--pane-frames",
+                "true",
                 "--workspace",
                 "/runtime/eon.sock",
             ]
