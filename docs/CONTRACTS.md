@@ -678,8 +678,9 @@ show the median and observed minimum–maximum, not a confidence interval.
     `/nix/store/xbkp5n2m3hz9da7xcspk61aidp6x3brh-eonterm-0.1.0`, generation
     `g1-5626ef23db3adb92c987e2c6179a793c`. Private Sway 1.12 / Mesa 26.1.2
     scale-1 proof over a colored underlay confirms a 4px gap matching terminal
-    color/opacity, stack-shaped selected headers and full-width separators in
-    default/off modes. Native focus/input, overflow and picker pass. Real 100x30
+    color/opacity and stack-shaped selected headers in both modes. Full-width
+    separators appear with frames on and disappear with frames off. Native
+    focus/input, overflow and picker pass. Real 100x30
     reopened workspace PTYs preserve their supervisor, Orbit Sessions and command;
     standalone remains 100x30 without workspace chrome. All 33 pre-existing
     runtime identities survive; private generations stop and cleanup is empty.

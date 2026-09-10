@@ -534,7 +534,7 @@ Beads data, lock files, and generated artifacts.
 | README | 546 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,560 |
+| Architecture and contracts | 1,561 |
 | Distribution and references | 700 |
 | Benchmark report | 317 |
 | Changelog | 285 |
@@ -543,4 +543,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 349 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **18,444** |
+| **Total** | **18,445** |
