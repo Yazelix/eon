@@ -813,7 +813,8 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ### Shared popup protocol seed (EONW v5)
 
-- **Status:** Implemented candidate under `eon-tool-popups-e13.4`; Eon's
+- **Status:** Mechanically verified seed at
+  `0cc8f477298681ae3945903e8fdb5852d487c5ab` (`eon-tool-popups-e13.4`); Eon's
   active runtime and installed Venus consumer still use v4.
 - **Consumer:** The next exact Venus workspace consumer and Eon runtime.
 - **Trigger/result:** A v5 request carries either an existing workspace action
@@ -842,14 +843,16 @@ show the median and observed minimum–maximum, not a confidence interval.
   introduced. EON-C8/C17/C18 runtime changes and visual acceptance remain
   pending under `eon-tool-popups-e13.2` and delivery `.3`; existing proofs and
   EON-C11 generation qualifications remain unchanged.
-- **Candidate checks:** Four v5 tests cover exact request bytes, unchanged
+- **Checks:** Four v5 tests cover exact request bytes, unchanged
   common-action payloads, retired picker-opcode rejection, lifecycle results,
   stale/absent/wrong-tab targets, hidden and inactive popup state, pending and
   popup-only tabs, ownership/geometry failures and the legal frame-size bound.
   All 76 workspace Rust tests, locked check and strict Clippy pass on x86_64
   Linux / Rust 1.96.0. Nix flake checks and both product builds pass.
-  This is mechanical evidence, not installed popup or
-  visual acceptance; source publication and downstream proof remain pending.
+  Refreshed Eon/EonTerm profiles match their built artifacts; installed
+  `eon versions` reports EONW v4 with unchanged child pins. The bead records
+  commands, artifact paths and source hashes. This is mechanical protocol and
+  existing-consumer evidence; popup runtime and visual acceptance remain pending.
 
 ## EON-C11 — Runtime generations and presentation
 
