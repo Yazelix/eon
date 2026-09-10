@@ -810,6 +810,47 @@ show the median and observed minimum–maximum, not a confidence interval.
     `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`, response-loss correction
     `56fcae2d00baecf9b69e4650882a69e50419f56b`, and maximum-bound snapshot
     correction `10c29edf861fac28db48f41a4546165f79777ee6`
+
+### Shared popup protocol seed (EONW v5)
+
+- **Status:** Implemented candidate under `eon-tool-popups-e13.4`; Eon's
+  active runtime and installed Venus consumer still use v4.
+- **Consumer:** The next exact Venus workspace consumer and Eon runtime.
+- **Trigger/result:** A v5 request carries either an existing workspace action
+  or a popup invocation, dismissal, or directory commit. A snapshot describes
+  the enabled tool catalog, normalized physical shortcuts, logical-pixel
+  margins, per-tab popup Sessions, chosen popup, ordinary pane selection and
+  pending-tab state. Tabs may contain only popup work. Commands, provider
+  choice, launch cwd and dismissal lifetime remain Eon-owned runtime policy.
+- **Target safety:** Invocation names the tab, entry and expected instance
+  (absence means no instance exists). Focus-only and toggle intents are
+  distinct. Dismissal and chooser completion require the exact live instance;
+  a replaced instance cannot inherit an old request. Instance identities must
+  not be reused after supervisor recovery. The Eon owner calls
+  `Snapshot::check_popup_action` against current state before applying lifecycle
+  policy; decoding checks syntax, not staleness. Ordinary `SetTabDirectory`
+  remains explicit retargeting, not chooser completion.
+- **Bounds/failures:** Preserve the 2 MiB envelope, 64 tabs, raw Unix directory
+  and endpoint bytes. At most 32 enabled entries and 256 combined pane/popup
+  Sessions are represented. Reject malformed framing, invalid or aliased
+  identities/endpoints, broken selections, duplicate entry/chord assignments,
+  invalid geometry and stale popup targets. No terminal contents cross EONW.
+- **Transition:** Seed the shared crate without runtime activation; Venus
+  consumes its exact accepted source next; Eon then activates the new runtime
+  with that exact client. The picker-only v4 opcode is unavailable in v5;
+  Project uses the ordinary popup invocation. No negotiation or adapter is
+  introduced. EON-C8/C17/C18 runtime changes and visual acceptance remain
+  pending under `eon-tool-popups-e13.2` and delivery `.3`; existing proofs and
+  EON-C11 generation qualifications remain unchanged.
+- **Candidate checks:** Four v5 tests cover exact request bytes, unchanged
+  common-action payloads, retired picker-opcode rejection, lifecycle results,
+  stale/absent/wrong-tab targets, hidden and inactive popup state, pending and
+  popup-only tabs, ownership/geometry failures and the legal frame-size bound.
+  All 76 workspace Rust tests, locked check and strict Clippy pass on x86_64
+  Linux / Rust 1.96.0. Nix flake checks and both product builds pass.
+  This is mechanical evidence, not installed popup or
+  visual acceptance; source publication and downstream proof remain pending.
+
 ## EON-C11 — Runtime generations and presentation
 
 - **Status:** Candidate

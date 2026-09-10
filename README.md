@@ -24,6 +24,11 @@ non-systemd use remains unproved. Launch requires no cgroup delegation. Orbit
 owns bounded PTY process-group shutdown and direct-child reaping; deliberately
 detached processes may survive an explicit Session stop.
 
+The shared workspace crate also contains an inactive EONW v5 popup protocol
+seed. Eon and its installed Venus consumer still use v4. Configurable tool
+popups and their shared project-chooser surface await the sequenced Venus and
+Eon runtime work in `eon-tool-popups-e13`.
+
 ## Naming model
 
 **Eon** is the full public product and `eon` is its command. **EonTerm** is the
@@ -536,16 +541,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 263 |
-| README | 551 |
+| README | 556 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,596 |
-| Distribution and references | 700 |
+| Architecture and contracts | 1,637 |
+| Distribution and references | 717 |
 | Benchmark report | 317 |
 | Changelog | 290 |
-| Rust source and tests | 13,364 |
+| Rust source and tests | 14,407 |
 | Cargo manifests | 37 |
 | Component manifest | 349 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **18,461** |
+| **Total** | **19,567** |

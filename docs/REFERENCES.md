@@ -185,6 +185,23 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
   client-supplied commands, native directory ranking, simultaneous terminal composition, and
   a generic popup protocol.
 
+### How should shared popups extend the workspace wire contract without breaking the installed client?
+
+- **Owner:** Eon's shared workspace protocol; Venus consumes its exact crate.
+- **Read first:** `eon-tool-popups-e13.1`, EON-C10's v5 seed contract and
+  `crates/eon-workspace-protocol/src/{v2,v3,v4,v5}.rs`. Inspect existing Eon
+  control/workspace consumers and Venus model/transport/scene/input consumers.
+- **Comparable implementations:** Eon's additive v3 seed
+  `96119f29ca2e3ec4ad19bbe272708b07d588429a` and v4 seed
+  `aaafc9127c054e683abfceb3c8fcaae201a7a763`. The decision records exact
+  Nova, Zellij Popup and Kitty evidence for the unchanged interaction choices.
+- **Preserve / reject:** Reuse bounded framing, common actions and lifecycle
+  codecs; represent exact popup identities and per-tab selection. Seed the new
+  version before Venus consumption and Eon activation. Reject duplicated
+  commands/lifetime policy in Venus, runtime negotiation, a second schema and
+  claims that codec tests prove installed popup behavior. The earlier
+  picker-only route describes the still-active v4 contract.
+
 ### How should a tab picker reach folders absent from Zoxide history?
 
 - **Owner:** Eon selection policy; Yazi filesystem navigation
