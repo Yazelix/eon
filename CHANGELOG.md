@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keep routine workspace navigation quiet: singleton traversal, selecting the
+  current target and reordering at an edge succeed unchanged. Hide routine pane
+  attachment progress while retaining genuine errors. The accepted paired
+  Orbit ORBF v2 / ORBS v11 and Venus update also delivers the scrollback row count.
+
 - Connect the pane stack within one rounded border, with full-width separators,
   a small tinted bottom gap, stack-shaped selected/hovered header fills and
   distinct keyboard focus. Set

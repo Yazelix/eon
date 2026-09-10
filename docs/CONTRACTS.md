@@ -15,10 +15,43 @@ and remaining limitations. Owning Beads and Git retain execution history;
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
 The current accepted composition selects Orbit
-`91999d79546422b49bdbc124166a65859d0bd872` with canonical ORBS v10 and Venus
-`8211e8f773140429398154ca3f2230bd09fed1df`. Exact source, installed artifact,
+`ea9fd28ce0908f218cf65d4e6df368f0a4e565f5` with ORBF v2 / ORBS v11 and Venus
+`b7404dae6c59a8e6de6ca9efbf2c907eedf1262b`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
+
+## Quiet workspace navigation integration
+
+- **Accepted source:** Eon `07dc210a49cd30f3b58fa65fd9e9a45b421e9b36`,
+  owned by `eon-quiet-workspace-navigation-y7a`. EON-C8/C10 accept unchanged
+  snapshots for singleton traversal, current-target selection and edge moves.
+  Venus `b7404dae6c59a8e6de6ca9efbf2c907eedf1262b` hides routine workspace
+  attachment progress under VEN-C4. Genuine failures remain visible.
+- **Build and installation:** Locked fmt/check/test/clippy and manifest checks
+  pass (72 Rust tests), as do both Nix builds and all flake checks. Nix runs
+  124 Venus tests and 61 Eon tests per product. Both refreshed profile links
+  match Eon `/nix/store/8mykzkf3fp5d8f3xpyk8ax3ysirnr2xz-eon-0.1.0` and
+  EonTerm `/nix/store/r0685nz46jsn71zrqldpmh56c2icy2bg-eonterm-0.1.0`, sharing
+  Orbit `/nix/store/1kx2h2lm6mxrsgkr0hr33906my0xic0k-yazelix-orbit-0.1.0` and
+  Venus `/nix/store/lf4dfjb0hdk51zwamywpij4q0ib99pkb-yazelix-venus-0.1.0`.
+  Installed generation is `g1-2965a638d3892bc8fb46e53a6c5f550f`; EONW v4 is
+  unchanged. Other component pins and profile elements remain unchanged.
+- **Observation:** x86_64 Linux, private Sway 1.12 headless/pixman with packaged
+  Mesa 26.1.2 lavapipe at scale 1. Installed navigation no-ops return identical
+  snapshots; native pane/tab switches, stale-target rejection, Session identity
+  preservation and EonTerm launch pass. The actual native Venus Application
+  regression proves quiet connection/first-frame phases and visible offline
+  failure. The paired update also shows the accepted `↑ 7 rows` indicator and
+  hides it at live bottom. All 14 pre-existing runtime process identities survive;
+  private Sessions and compositor exit without leftovers or ambient focus changes.
+- **Limits:** Headless captures remain intermittent: one live-bottom capture
+  omitted chrome and a later settled capture was blank. Retain these negatives;
+  they do not widen native visual, fractional-scale, compositor, screen-reader,
+  blur or non-systemd proof. Existing supervisors retain their original runtime;
+  new workspaces use this generation. No live Sessions were restarted.
+- **Evidence:** Source identities, red/green checks, build logs, installed
+  observations, captures and cleanup are retained under
+  `~/.local/state/eon/proofs/eon-quiet-workspace-navigation-y7a/`.
 
 ## Pill-shaped tab integration
 

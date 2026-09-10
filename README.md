@@ -319,6 +319,9 @@ continues between repaints. Orbit keeps parsing output and answering terminal
 queries while the user reads anchored scrollback. Selection supports cell,
 word, and logical-line gestures; completed copied text stays frozen. Reading
 does not pause the program or preserve history beyond its existing budget.
+Away from live output, the selected pane header shows `↑ N rows`; EonTerm and
+the directory picker use a small overlay. The count comes from Orbit's current
+frame and disappears at live bottom and during terminal-owned scrolling.
 
 Eon and EonTerm use the same terminal presentation settings in
 `$EON_CONFIG_HOME/config.toml`, normally `~/.config/eon/config.toml`:
@@ -533,16 +536,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 263 |
-| README | 548 |
+| README | 551 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,563 |
+| Architecture and contracts | 1,596 |
 | Distribution and references | 700 |
 | Benchmark report | 317 |
-| Changelog | 285 |
+| Changelog | 290 |
 | Rust source and tests | 13,364 |
 | Cargo manifests | 37 |
 | Component manifest | 349 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **18,420** |
+| **Total** | **18,461** |
