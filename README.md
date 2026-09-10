@@ -209,8 +209,10 @@ within one second because Eon Desktop re-inspects EONW v4 every 250 ms; the
 protocol adds no event stream. When a shell exits, Eon removes its pane, selects
 the nearest surviving pane, removes an empty tab, and closes when the final pane
 exits.
-Movement stops at ordered edges without changing stable identities or Session
-mappings. `eon tab close tN` and Alt+Shift+W name the expected active tab; they
+Movement stops quietly at ordered edges without changing stable identities or
+Session mappings. Singleton traversal, selecting the current target, and routine
+pane attachment progress are silent; actual failures remain visible.
+`eon tab close tN` and Alt+Shift+W name the expected active tab; they
 never close the final tab or silently advance a stale request to another tab.
 
 Every live tab owns one absolute launch directory. A fresh workspace validates
@@ -531,16 +533,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 263 |
-| README | 546 |
+| README | 548 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,561 |
+| Architecture and contracts | 1,563 |
 | Distribution and references | 700 |
 | Benchmark report | 317 |
 | Changelog | 285 |
-| Rust source and tests | 13,393 |
+| Rust source and tests | 13,364 |
 | Cargo manifests | 37 |
 | Component manifest | 349 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **18,445** |
+| **Total** | **18,420** |

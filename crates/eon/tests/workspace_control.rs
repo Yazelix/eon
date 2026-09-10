@@ -922,7 +922,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     let Response::Snapshot(opened) = opened else {
         panic!("picker open did not return a snapshot");
     };
-    let picker = opened.directory_picker.unwrap();
+    let picker = opened.directory_picker.as_ref().unwrap();
     assert_eq!(picker.tab, "t1");
     let initial_picker = Path::new(OsStr::from_bytes(&picker.endpoint)).to_path_buf();
     assert_eq!(initial_picker.parent(), Some(generation.as_path()));
@@ -933,10 +933,10 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         workspace_action(&control, "picker-duplicate", Action::PickTabDirectory),
         Response::Failure(failure) if failure.code == "picker-active"
     ));
-    assert!(matches!(
+    assert_eq!(
         workspace_action(&control, "picker-singleton", Action::Focus(Direction::Left)),
-        Response::Failure(failure) if failure.code == "unavailable"
-    ));
+        Response::Snapshot(opened)
+    );
 
     fs::write(&release, "").unwrap();
     let retargeted = wait_for_picker_close(&control, &selected);
@@ -1839,9 +1839,9 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
 
     let before = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert!(before.status.success());
-    let rejected = invoke(&binary, &runtime, &config, &["focus", "left", "--json"]);
-    assert_eq!(rejected.status.code(), Some(2));
-    assert!(stdout(&rejected).contains("\"code\":\"unavailable\""));
+    let unchanged = invoke(&binary, &runtime, &config, &["focus", "left", "--json"]);
+    assert!(unchanged.status.success());
+    assert_eq!(stdout(&before), stdout(&unchanged));
     let after = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert_eq!(stdout(&before), stdout(&after));
     let human = invoke(&binary, &runtime, &config, &["workspace"]);

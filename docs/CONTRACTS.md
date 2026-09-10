@@ -510,7 +510,8 @@ show the median and observed minimum–maximum, not a confidence interval.
     stopping existing Sessions. Eon owns the strict boolean and launch
     projection; Venus owns geometry, rendering, input and accessibility.
   - Left/right tab traversal and up/down pane traversal wrap at ordered edges
-    when the axis has at least two targets; singleton axes remain unavailable.
+    when the axis has at least two targets. Singleton traversal and selecting
+    the already-selected live identity succeed with an unchanged snapshot.
     Left/right remains available while a directory picker is open: the picker
     stays bound to its original live tab while another active tab presents its
     selected pane. Tab navigation by identity also remains available. Users can
@@ -518,7 +519,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   - Moving left/right swaps the active tab with exactly one adjacent tab;
     moving up/down swaps the selected pane with exactly one adjacent pane in
     the active tab. The moved stable identity remains selected. Movement stops
-    at ordered edges and remains unavailable in the picker-bound active tab.
+    quietly at ordered edges and remains unavailable in the picker-bound active tab.
     Venus maps Ctrl+Alt+H/L and Ctrl+Alt+K/J directly to these actions without a
     mode.
   - Closing names the expected active `tN` and requires another live tab. A
@@ -543,8 +544,7 @@ show the median and observed minimum–maximum, not a confidence interval.
     bar while retaining the selected terminal title for compositor semantics.
 - **Important failures:** Unknown or stale identity, a close target other than
   the active tab, final-tab close, durable close in the picker-bound tab,
-  invalid transition, a directional axis without another target, movement at
-  an ordered edge, unavailable endpoint, duplicate identity, or partial
+  invalid transition, unavailable endpoint, duplicate identity, or partial
   recovery leaves accepted topology unchanged. A repeated request ID never
   repeats a stop, and a replay naming a removed tab cannot close its successor.
   Picker-stop failure changes no topology; durable partial-stop behavior is the
@@ -750,6 +750,8 @@ show the median and observed minimum–maximum, not a confidence interval.
     and response and does not use EOF as framing.
   - The shared 2 MiB frame ceiling admits every snapshot valid at EONW's field
     and workspace-count bounds.
+  - Harmless navigation no-ops return the unchanged Snapshot as success;
+    request deduplication and picker/lifecycle restrictions still apply.
 - **Important failures:** Malformed, oversized, incompatible, unavailable,
   rejected, timed-out, partially read, or response-lost operations fail within
   the shared bound without reconstructing hidden state or reviving completed
@@ -1147,8 +1149,8 @@ show the median and observed minimum–maximum, not a confidence interval.
   presentation detachment follows the first- or later-tab fallback without a
   partial tab, consumed pane or durable Session identity, changed existing
   process, or transient process, endpoint, record, pane, or modal residue.
-  Left/right or close with only one live tab remains unavailable without
-  mutation. A duplicate close cannot stop the picker twice or remove another
+  Left/right with only one live tab succeeds unchanged; final-tab close remains
+  unavailable. A duplicate close cannot stop the picker twice or remove another
   tab.
 - **Owner:** Eon owns picker policy, tab binding, command selection, lifecycle,
   validation, mutation, and cleanup. Venus owns full-Eon shortcut precedence,
