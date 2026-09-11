@@ -816,7 +816,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 - **Status:** Mechanically verified seed at
   `0cc8f477298681ae3945903e8fdb5852d487c5ab` (`eon-tool-popups-e13.4`), activated
-  by the `eon-tool-popups-e13.2` candidate with exact Venus source
+  at `2214a4f592f78437c2f74aff0a1df8d1cc7ee5a4` with exact Venus source
   `d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`.
 - **Consumer:** Eon's workspace runtime and the exact accepted Venus consumer.
 - **Trigger/result:** A v5 request carries either an existing workspace action
@@ -1263,6 +1263,18 @@ show the median and observed minimum–maximum, not a confidence interval.
   simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
+- **Popup activation proof (accepted, 2026-09-11):** Source
+  `2214a4f592f78437c2f74aff0a1df8d1cc7ee5a4` passes all 72 locked Rust tests,
+  strict Clippy, manifest validation and the full Nix flake check against exact
+  published Venus `d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`. The active profile
+  resolves to Eon `/nix/store/4bni992l878fsl8jqgqh61zkfvvdisph-eon-0.1.0`
+  and EonTerm `/nix/store/yqncjlvf525h9ylajxggqhya0c1lviyk-eonterm-0.1.0`.
+  Private Sway 1.12 scale-1 dogfood exercised all nine accepted popup states
+  through the installed Venus, preserved all 21 ambient product processes and
+  took no desktop focus. Evidence is retained at
+  `~/.local/state/eon/proofs/eon-popup-title-spacing-d212ff9-2026-09-11/`.
+  Fractional scale, other compositors, actual blur, AT-SPI and broad user
+  acceptance remain qualified.
 - **Tab switching proof (accepted, 2026-09-08):**
   `eon-picker-mode-switching-6bo` verifies the shared startup, new-tab and Alt+Z
   behavior at `f75c910a6a8488bdad3c614544769080261e4560`. Focused red/green
