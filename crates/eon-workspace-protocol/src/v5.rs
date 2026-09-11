@@ -1,4 +1,4 @@
-//! Shared tab-scoped popup protocol; not yet activated by the Eon runtime.
+//! Shared tab-scoped popup protocol used by Eon and Venus.
 
 use super::{v2, v3};
 use std::collections::HashSet;

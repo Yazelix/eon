@@ -5,6 +5,16 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Activate EONW v5 and tab-scoped popup Sessions with the accepted Venus
+  consumer. Alt+Z uses the shared host for Project, Alt+Shift+J opens Git, and
+  Alt+Shift+L selects an installed Agent. Same-directory reopen preserves tool
+  state; the first invocation after tab retarget replaces the popup at the new
+  directory. `config.toml` controls popup margins, direct argv entries,
+  physical shortcuts, labels, enablement, and keep-alive lifetime. Legacy EONW
+  v4 workspaces remain inspectable but are no longer attachable by current Venus.
+  Popup outlines keep the pane stack's exact outer edges across toggles, and a
+  small top gutter separates the compact border label from terminal content.
+
 - Keep routine workspace navigation quiet: singleton traversal, selecting the
   current target and reordering at an edge succeed unchanged. Hide routine pane
   attachment progress while retaining genuine errors. The accepted paired

@@ -15,7 +15,7 @@ Wayland. One Rust supervisor launches the accepted Eon Sessions and Eon Desktop
 revisions. The `eon` package owns a live workspace and supplies one pinned
 interactive environment. The slimmer `eonterm` package owns one exact-command
 Session and contains no managed shell or tool bundle. Both expose lifecycle
-control through EONW v4, isolate live runtime generations, and consume the same
+control through EONW v5, isolate live runtime generations, and consume the same
 component identities. Direct bundles, Home Manager, background updates, and
 release automation remain outside this slice. X11, Xwayland, and macOS are
 unsupported. The accepted runtime proof uses COSMIC with systemd. Eon targets
@@ -24,10 +24,9 @@ non-systemd use remains unproved. Launch requires no cgroup delegation. Orbit
 owns bounded PTY process-group shutdown and direct-child reaping; deliberately
 detached processes may survive an explicit Session stop.
 
-The shared workspace crate also contains an inactive EONW v5 popup protocol
-seed. Eon and its installed Venus consumer still use v4. Configurable tool
-popups and their shared project-chooser surface await the sequenced Venus and
-Eon runtime work in `eon-tool-popups-e13`.
+EONW v5 carries Eon's tab-scoped tool catalog and popup Sessions to the exact
+accepted Venus consumer. Eon owns commands, launch directories, process
+lifetime, and configuration; Venus owns projection and input.
 
 ## Naming model
 
@@ -184,7 +183,7 @@ While the foreground supervisor is running, Eon owns horizontal tab order and
 one vertical pane selection per durable tab; the active picker-bound pending tab
 has no pane selection. Each pane starts and maps to a distinct Orbit session;
 changing focus never stops a session. The CLI reaches that owner
-through the private local Eon socket using EONW v4. Each accepted action returns
+through the private local Eon socket using EONW v5. Each accepted action returns
 one complete ordered workspace snapshot; incompatible or malformed requests
 receive a bounded structured failure. Additive EONW lifecycle actions report a
 supervisor's generation, component graph, live Sessions, idempotent presentation,
@@ -204,13 +203,14 @@ two spaces, then a `~/`-anchored path below home, an absolute path elsewhere, or
 Nova's marker for the exact home directory. Unset or empty `HOME` leaves paths
 absolute. Overlong labels preserve their rightmost components.
 New current-generation full Eon windows omit the redundant native title bar;
-the selected terminal retains compositor title semantics, while EonTerm and
-legacy Eon attachment keep native decorations. Alt+H/L traverses tabs,
+the selected terminal retains compositor title semantics, while EonTerm keeps
+native decorations. Alt+H/L traverses tabs,
 Alt+K/J traverses panes, Ctrl+Alt+H/L moves the active tab, Ctrl+Alt+K/J moves
 the selected pane, Alt+Shift+W closes the active non-final tab, Alt+M creates a
-pane, Alt+Shift+T opens a new tab's directory picker, and Alt+Z opens the active
-tab's directory picker. External workspace changes appear
-within one second because Eon Desktop re-inspects EONW v4 every 250 ms; the
+pane, Alt+Shift+T opens a new tab's directory picker, Alt+Z opens the active
+tab's Project popup, Alt+Shift+J opens Git, and Alt+Shift+L opens Agent.
+External workspace changes appear
+within one second because Eon Desktop re-inspects EONW v5 every 250 ms; the
 protocol adds no event stream. When a shell exits, Eon removes its pane, selects
 the nearest surviving pane, removes an empty tab, and closes when the final pane
 exits.
@@ -233,9 +233,11 @@ Invalid targets or directories change no state; if an accepted path later
 disappears, Session creation fails without adding a pane and the tab retains its
 accepted value.
 
-Alt+Z works from anywhere in a full-Eon tab. It keeps the tab bar visible and
-replaces the tab body with a one-cell-inset ranked-directory picker backed by
-the packaged Zoxide and fzf, independent of ambient fzf default options.
+Alt+Z works from anywhere in a full-Eon tab. Project uses the same popup host as
+the tools and replaces the pane stack with a ranked-directory picker backed by
+the packaged Zoxide and fzf, independent of ambient fzf default options. Popup
+outlines keep the pane stack's exact outer edges across toggles, with a small
+gap between the compact border label and terminal content.
 Enter opens a history match; Tab switches to Yazi to browse folders, including
 those absent from history. Esc or Ctrl+C cancels. Empty history still offers Tab
 to browse. Arrows move through quick-search results. Startup, new-tab, and
@@ -259,7 +261,7 @@ Browser hints hide while a Yazi prompt or overlay has focus.
 
 Accepting a valid path retargets that captured tab for future Sessions; cancel
 or failure changes nothing, and an actionable error stays visible briefly before cleanup.
-The picker is one transient Orbit Session rather than a normal pane, and it
+Project is one transient Orbit Session rather than a normal pane, and it
 closes with its tab, Eon Desktop surface, process, or supervisor. Existing
 Sessions and working directories remain untouched. Alt+H/L continues to
 traverse and wrap live tabs while the picker stays bound to its original tab;
@@ -267,8 +269,43 @@ returning shows the same picker for normal acceptance or cancellation.
 Alt+Shift+W or the CLI can discard the active non-final pending tab after its
 picker stops. Other tabs allow pane creation, pane focus, pane/tab movement,
 directory updates, and closing, including tab and pane header clicks. The
-picker-bound tab stays modal, and opening another picker or new tab requires
-finishing the current picker.
+picker-bound tab stays modal. Its picker remains open across tab switches;
+other tabs remain usable and can open their own popups.
+
+Git and Agent are tab-scoped Orbit Sessions. Hiding and reopening one in the
+same tab directory preserves its process and terminal state. Explicitly
+retargeting the tab does not change it; the next invocation stops that exact
+popup and starts a fresh one in the new directory. Agent selects the first
+available command from `codex resume`, `grok`, `opencode`, `pi`, and
+`claude --resume`. It performs no installation or setup.
+
+Configure popup geometry and entries in `config.toml`:
+
+```toml
+[popup]
+side_margin = 8
+vertical_margin = 4
+
+[popups.agent]
+command = "auto"
+keybinding = "Alt+Shift+L"
+
+[popups.files]
+command = ["eon-yazi"]
+keybinding = "Alt+Shift+F"
+label = "Files"
+keep_alive = true
+```
+
+Commands are direct argv arrays; only Agent accepts `"auto"`. Git defaults to
+`["eon-lazygit"]` on Alt+Shift+J. Project remains required on Alt+Z and keeps
+its Eon-owned chooser command and transient lifetime. `enabled = false`
+disables Git, Agent, or a custom entry. Keybindings use modified physical keys
+and must not collide with another popup or Eon's fixed workspace shortcuts.
+Bare executables resolve through the Session PATH; relative executable paths
+resolve from that popup's tab directory.
+Margins are finite logical pixels from 0 through 128 and default to 8 on each
+side and 4 vertically.
 
 Workspace topology is live-only. After same-boot supervisor loss, full Eon
 projects surviving canonical `session-N` runs into one synthetic `t1` as `pN`
@@ -290,7 +327,7 @@ The command surface is small:
 | `eonterm generations [--json]` | List validated current and older EonTerm generations |
 | `eonterm stop GENERATION [--json]` | Stop one EonTerm generation through its supervisor; human mode confirms first |
 | `eon attach` | Present Eon Desktop against the exact current-generation launch mode |
-| `eon attach GENERATION` | Present one explicitly selected compatible generation, including `legacy` |
+| `eon attach GENERATION` | Present one explicitly selected compatible generation; fixed-namespace EONW v4 workspaces remain inspectable but are not attachable by the v5 client |
 | `eon generations [--json]` | List validated current, previous, legacy, dead, incompatible, unreachable, and corrupt generations |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor; human mode confirms first |
 | `eon workspace [--json]` | Inspect the live Eon-owned tab, pane, and Session mapping |
@@ -307,14 +344,15 @@ The command surface is small:
 
 Workspace commands target the exact current-generation Eon supervisor. An
 EonTerm supervisor returns `workspace-unavailable` to topology actions at the
-EONW boundary. EONW v4 frames are bounded to 2 MiB. The workspace topology is
-bounded to 64 tabs and 256 panes, is not persisted, and has no per-pane or
+EONW boundary. EONW v5 frames are bounded to 2 MiB. The workspace topology is
+bounded to 64 tabs, 32 enabled popup entries, and 256 combined pane and popup
+Sessions. It is not persisted and has no per-pane or
 per-Session removal action. Whole-generation stop sends canonical management
 Stop to every validated Session lease and succeeds only after every exact
 terminal record is complete. `--json` reports the same
 accepted EONW result as the human view; neither output format is the protocol
-schema. Its tab `directory`, pane `endpoint`, and optional picker `endpoint`
-fields are ordered integer arrays that preserve every opaque Unix path or
+schema. Its tab `directory` and pane or popup `endpoint` fields are ordered
+integer arrays that preserve every opaque Unix path or
 endpoint byte.
 
 ## Terminal presentation
@@ -541,16 +579,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 263 |
-| README | 556 |
+| README | 594 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,640 |
+| Architecture and contracts | 1,660 |
 | Distribution and references | 717 |
 | Benchmark report | 317 |
-| Changelog | 290 |
-| Rust source and tests | 14,407 |
+| Changelog | 300 |
+| Rust source and tests | 14,671 |
 | Cargo manifests | 37 |
 | Component manifest | 349 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **19,570** |
+| **Total** | **19,902** |

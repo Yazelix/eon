@@ -1,6 +1,11 @@
-use eon_workspace_protocol::v4::{
-    Action, Direction, HEADER_BYTES, MAX_PANES, Pane, Request, Response, Snapshot, Tab, VERSION,
-    declared_message_len, decode_request, decode_response, encode_request, encode_response,
+use eon_workspace_protocol::{
+    v4 as legacy,
+    v5::{
+        Action as ProtocolAction, Direction, HEADER_BYTES, InvokeIntent, MAX_SESSIONS, Pane, Popup,
+        PopupGeometry, PopupTarget, Request, Response, Snapshot, Tab, VERSION,
+        WorkspaceAction as Action, declared_message_len, decode_request, decode_response,
+        encode_request, encode_response,
+    },
 };
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, Failure,
@@ -554,6 +559,10 @@ fn invoke(binary: &Path, runtime: &Path, config: &Path, arguments: &[&str]) -> O
 }
 
 fn workspace_action(socket: &Path, id: &str, action: Action) -> Response {
+    protocol_action(socket, id, ProtocolAction::Workspace(action))
+}
+
+fn protocol_action(socket: &Path, id: &str, action: ProtocolAction) -> Response {
     let request = encode_request(&Request {
         id: id.into(),
         action,
@@ -571,6 +580,40 @@ fn workspace_action(socket: &Path, id: &str, action: Action) -> Response {
     decode_response(&response).unwrap()
 }
 
+fn project_popup(snapshot: &Snapshot) -> Option<(&Tab, &Popup)> {
+    snapshot.tabs.iter().find_map(|tab| {
+        tab.popups
+            .iter()
+            .find(|popup| popup.entry == "project")
+            .map(|popup| (tab, popup))
+    })
+}
+
+fn invoke_project(socket: &Path, id: &str) -> Response {
+    let Response::Snapshot(snapshot) =
+        workspace_action(socket, &format!("{id}-preflight"), Action::Inspect)
+    else {
+        panic!("cannot inspect Project popup precondition");
+    };
+    let tab = snapshot.active_tab.clone();
+    let expected_instance = snapshot
+        .tabs
+        .iter()
+        .find(|candidate| candidate.id == tab)
+        .and_then(|tab| tab.popups.iter().find(|popup| popup.entry == "project"))
+        .map(|popup| popup.id.clone());
+    protocol_action(
+        socket,
+        id,
+        ProtocolAction::InvokePopup {
+            tab,
+            entry: "project".into(),
+            expected_instance,
+            intent: InvokeIntent::Toggle,
+        },
+    )
+}
+
 fn wait_for_picker_close(socket: &Path, directory: &Path) -> Snapshot {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut sequence = 0;
@@ -581,7 +624,7 @@ fn wait_for_picker_close(socket: &Path, directory: &Path) -> Snapshot {
             Action::Inspect,
         );
         if let Response::Snapshot(snapshot) = response
-            && snapshot.directory_picker.is_none()
+            && project_popup(&snapshot).is_none()
             && snapshot
                 .tabs
                 .iter()
@@ -605,7 +648,7 @@ fn picker_endpoint(socket: &Path) -> PathBuf {
         panic!("cannot inspect directory picker");
     };
     Path::new(OsStr::from_bytes(
-        &snapshot.directory_picker.unwrap().endpoint,
+        &project_popup(&snapshot).unwrap().1.endpoint,
     ))
     .to_path_buf()
 }
@@ -636,6 +679,7 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
             OsStr::new("__directory-picker"),
             socket.as_os_str(),
             OsStr::new("t1"),
+            OsStr::new("u1"),
         ])
         .env("PATH", std::env::join_paths(path).unwrap())
         .env("EON_YAZI", root.join("yazi"))
@@ -667,25 +711,35 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
     let request = decode_request(&request).unwrap();
     assert_eq!(
         request.action,
-        Action::SetTabDirectory {
-            tab: "t1".into(),
+        ProtocolAction::CommitDirectory {
+            target: PopupTarget {
+                tab: "t1".into(),
+                instance: "u1".into(),
+            },
             directory: b"/untracked-\xff\n".to_vec(),
         }
     );
     let response = encode_response(&Response::Snapshot(Snapshot {
         active_tab: "t1".into(),
+        geometry: PopupGeometry {
+            side_margin: 0.0,
+            vertical_margin: 0.0,
+        },
+        entries: Vec::new(),
         tabs: vec![Tab {
             id: "t1".into(),
             directory: b"/untracked-\xff\n".to_vec(),
+            pending: false,
             selected_pane: Some("p1".into()),
+            selected_popup: None,
             panes: vec![Pane {
                 id: "p1".into(),
                 session: "session-1".into(),
                 endpoint: b"/test.sock".to_vec(),
                 live: true,
             }],
+            popups: Vec::new(),
         }],
-        directory_picker: None,
     }))
     .unwrap();
     stream.write_all(&response).unwrap();
@@ -745,8 +799,11 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
                 stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
                 assert_eq!(
                     decode_request(&request).unwrap().action,
-                    Action::SetTabDirectory {
-                        tab: "t1".into(),
+                    ProtocolAction::CommitDirectory {
+                        target: PopupTarget {
+                            tab: "t1".into(),
+                            instance: "u1".into(),
+                        },
                         directory: b"/known".to_vec(),
                     }
                 );
@@ -922,17 +979,26 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     let Response::Snapshot(opened) = opened else {
         panic!("picker open did not return a snapshot");
     };
-    let picker = opened.directory_picker.as_ref().unwrap();
-    assert_eq!(picker.tab, "t1");
+    let (picker_tab, picker) = project_popup(&opened).unwrap();
+    assert_eq!(picker_tab.id, "t1");
     let initial_picker = Path::new(OsStr::from_bytes(&picker.endpoint)).to_path_buf();
     assert_eq!(initial_picker.parent(), Some(generation.as_path()));
     assert!(opened.tabs[0].panes.is_empty());
     assert!(opened.tabs[0].selected_pane.is_none());
     assert!(!generation.join("orbit.sock").exists());
-    assert!(matches!(
-        workspace_action(&control, "picker-duplicate", Action::PickTabDirectory),
-        Response::Failure(failure) if failure.code == "picker-active"
-    ));
+    assert_eq!(
+        protocol_action(
+            &control,
+            "picker-focus",
+            ProtocolAction::InvokePopup {
+                tab: "t1".into(),
+                entry: "project".into(),
+                expected_instance: Some(picker.id.clone()),
+                intent: InvokeIntent::Focus,
+            },
+        ),
+        Response::Snapshot(opened.clone())
+    );
     assert_eq!(
         workspace_action(&control, "picker-singleton", Action::Focus(Direction::Left)),
         Response::Snapshot(opened)
@@ -957,8 +1023,8 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     fs::remove_file(&release).unwrap();
     fs::write(&selection, "cancel").unwrap();
     assert!(matches!(
-        workspace_action(&control, "picker-cancel", Action::PickTabDirectory),
-        Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
+        invoke_project(&control, "picker-cancel"),
+        Response::Snapshot(snapshot) if project_popup(&snapshot).is_some()
     ));
     fs::write(&release, "").unwrap();
     wait_for_picker_close(&control, &selected);
@@ -989,7 +1055,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         Response::Snapshot(snapshot)
             if snapshot.active_tab == "t3" && snapshot.tabs[1].panes.is_empty() =>
         {
-            snapshot.directory_picker.unwrap()
+            project_popup(&snapshot).unwrap().1.clone()
         }
         _ => panic!("new tab did not open its picker"),
     };
@@ -997,14 +1063,14 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         workspace_action(&control, "picker-traverse-left", Action::Focus(Direction::Left)),
         Response::Snapshot(snapshot)
             if snapshot.active_tab == "t1"
-                && snapshot.directory_picker.as_ref() == Some(&traversed_picker)
+                && project_popup(&snapshot).is_some_and(|(_, popup)| popup == &traversed_picker)
                 && snapshot.tabs[0].selected_pane.as_deref() == Some("p2")
     ));
     assert!(matches!(
         workspace_action(&control, "picker-traverse-right", Action::Focus(Direction::Right)),
         Response::Snapshot(snapshot)
             if snapshot.active_tab == "t3"
-                && snapshot.directory_picker.as_ref() == Some(&traversed_picker)
+                && project_popup(&snapshot).is_some_and(|(_, popup)| popup == &traversed_picker)
                 && snapshot.tabs[1].panes.is_empty()
                 && snapshot.tabs[1].selected_pane.is_none()
     ));
@@ -1019,7 +1085,8 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
         output
     };
     let moved_tab = invoke_ok(&["tab", "move", "left", "--json"]);
-    assert!(stdout(&moved_tab).contains("\"active_tab\":\"t3\",\"tabs\":[{\"id\":\"t3\""));
+    assert!(stdout(&moved_tab).contains("\"active_tab\":\"t3\""));
+    assert!(stdout(&moved_tab).contains("\"tabs\":[{\"id\":\"t3\""));
     invoke_ok(&["tab", "move", "right", "--json"]);
     invoke_ok(&["focus", "t1", "--json"]);
     let moved_pane = invoke_ok(&["pane", "move", "up", "--json"]);
@@ -1028,14 +1095,14 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
 
     fs::write(&selection, root.join("missing").as_os_str().as_bytes()).unwrap();
     assert!(matches!(
-        workspace_action(&control, "picker-invalid", Action::PickTabDirectory),
-        Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
+        invoke_project(&control, "picker-invalid"),
+        Response::Snapshot(snapshot) if project_popup(&snapshot).is_some()
     ));
     thread::sleep(Duration::from_millis(100));
     assert!(matches!(
         workspace_action(&control, "picker-invalid-visible", Action::Inspect),
         Response::Snapshot(snapshot)
-            if snapshot.directory_picker.is_some()
+            if project_popup(&snapshot).is_some()
                 && snapshot.tabs[1].directory == selected.as_os_str().as_bytes()
     ));
     wait_for_picker_close(&control, &selected);
@@ -1043,8 +1110,8 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     fs::remove_file(&release).unwrap();
     fs::write(&selection, initial.as_os_str().as_bytes()).unwrap();
     assert!(matches!(
-        workspace_action(&control, "picker-client-loss", Action::PickTabDirectory),
-        Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
+        invoke_project(&control, "picker-client-loss"),
+        Response::Snapshot(snapshot) if project_popup(&snapshot).is_some()
     ));
     let lost_client_picker = picker_endpoint(&control);
     let pid = fs::read_to_string(&venus_pid)
@@ -1096,8 +1163,8 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     ));
 
     assert!(matches!(
-        workspace_action(&control, "picker-before-stop", Action::PickTabDirectory),
-        Response::Snapshot(snapshot) if snapshot.directory_picker.is_some()
+        invoke_project(&control, "picker-before-stop"),
+        Response::Snapshot(snapshot) if project_popup(&snapshot).is_some()
     ));
     fs::write(&stop_delay, "3500").unwrap();
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
@@ -1169,10 +1236,10 @@ fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
     assert!(matches!(
         workspace_action(&control, "picker", Action::Inspect),
         Response::Snapshot(snapshot)
-            if snapshot.directory_picker.is_some() && snapshot.tabs[0].panes.is_empty()
+            if project_popup(&snapshot).is_some() && snapshot.tabs[0].panes.is_empty()
     ));
     let picker = live_identity(&picker_endpoint(&control));
-    fs::write(&fail_stop_once, "directory-picker").unwrap();
+    fs::write(&fail_stop_once, "directory-picker-1").unwrap();
     let venus = fs::read_to_string(&venus_pid).unwrap().parse().unwrap();
     // SAFETY: the PID came from this test's live Venus child.
     assert_eq!(unsafe { libc::kill(venus, libc::SIGTERM) }, 0);
@@ -1851,7 +1918,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
 
     let mut incompatible = encode_request(&Request {
         id: "incompatible-1".into(),
-        action: Action::Inspect,
+        action: ProtocolAction::Workspace(Action::Inspect),
     })
     .unwrap();
     incompatible[4..6].copy_from_slice(&(VERSION + 1).to_le_bytes());
@@ -2500,7 +2567,7 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
     assert!(matches!(
         pending,
         Response::Snapshot(snapshot)
-            if snapshot.directory_picker.is_some() && snapshot.tabs[0].panes.is_empty()
+            if project_popup(&snapshot).is_some() && snapshot.tabs[0].panes.is_empty()
     ));
     let picker = live_identity(&picker_endpoint(&control));
     first.kill().unwrap();
@@ -2517,7 +2584,7 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
     assert!(matches!(
         recovered,
         Response::Snapshot(snapshot)
-            if snapshot.directory_picker.is_none()
+            if project_popup(&snapshot).is_none()
                 && snapshot.tabs[0].selected_pane.as_deref() == Some("p1")
                 && snapshot.tabs[0].panes.len() == 1
     ));
@@ -2611,7 +2678,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
         assert!(stderr.contains(expected), "{stderr}");
         assert!(UnixStream::connect(&control).is_err());
     };
-    let decoys = (0..MAX_PANES)
+    let decoys = (0..MAX_SESSIONS)
         .map(|number| generation.join(format!("limit-{number}.record")))
         .collect::<Vec<_>>();
     for decoy in &decoys {
@@ -2661,7 +2728,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert_eq!(recovered.matches("\"session\":").count(), 2);
     assert!(recovered.contains("\"id\":\"p1\""));
     assert!(recovered.contains("\"id\":\"p2\""));
-    assert!(recovered.contains("\"directory_picker\":null"));
+    assert!(recovered.contains("\"popups\":[]"));
     assert_eq!(
         [
             live_identity(&generation.join("orbit.sock")),
@@ -2874,9 +2941,9 @@ fn lost_stop_response_still_finishes_the_supervisor() {
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let request = encode_request(&Request {
         id: "lost-stop-response".into(),
-        action: Action::Stop {
+        action: ProtocolAction::Workspace(Action::Stop {
             generation: generation_id.into(),
-        },
+        }),
     })
     .unwrap();
     let mut stream = UnixStream::connect(control).unwrap();
@@ -3089,7 +3156,7 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
 }
 
 #[test]
-fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
+fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
@@ -3109,20 +3176,20 @@ fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
             let (mut stream, _) = listener.accept().unwrap();
             let mut request = vec![0; HEADER_BYTES];
             stream.read_exact(&mut request).unwrap();
-            let length = declared_message_len(&request).unwrap();
+            let length = legacy::declared_message_len(&request).unwrap();
             request.resize(length, 0);
             stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
             assert!(matches!(
-                decode_request(&request).unwrap().action,
-                Action::Inspect
+                legacy::decode_request(&request).unwrap().action,
+                legacy::Action::Inspect
             ));
-            let response = encode_response(&Response::Snapshot(Snapshot {
+            let response = legacy::encode_response(&legacy::Response::Snapshot(legacy::Snapshot {
                 active_tab: "t1".into(),
-                tabs: vec![Tab {
+                tabs: vec![legacy::Tab {
                     id: "t1".into(),
                     directory: b"/legacy".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    panes: vec![Pane {
+                    panes: vec![legacy::Pane {
                         id: "pane-1".into(),
                         session: "session-1".into(),
                         endpoint: b"/legacy/orbit.sock".to_vec(),
@@ -3140,6 +3207,7 @@ fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
     let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
     assert!(listed.status.success());
     assert!(stdout(&listed).contains("\"id\":\"legacy\",\"kind\":\"legacy\",\"state\":\"live\""));
+    assert!(stdout(&listed).contains("current Venus client requires EONW v5"));
     assert!(stdout(&listed).contains("legacy supervisor has no authoritative stop action"));
 
     let attached = eon_command(&binary)
@@ -3150,14 +3218,11 @@ fn legacy_workspace_is_visible_and_attachable_but_not_stoppable() {
         .env("EON_TEST_LOG", &venus_log)
         .output()
         .unwrap();
-    assert!(attached.status.success());
-    assert_eq!(
-        fs::read_to_string(&venus_log).unwrap(),
-        format!(
-            "--application-id\neon\n--background-opacity\n0.8\n--background-blur\n--pane-frames\ntrue\n--workspace\n{}\n",
-            runtime.join("eon.sock").display()
-        )
+    assert_eq!(attached.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&attached.stderr).contains("current Venus client requires EONW v5")
     );
+    assert!(!venus_log.exists());
 
     let stopped = invoke(&binary, &runtime, &config, &["stop", "legacy", "--json"]);
     assert_eq!(stopped.status.code(), Some(2));

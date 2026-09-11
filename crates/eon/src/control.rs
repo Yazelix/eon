@@ -2,10 +2,12 @@ use super::{
     supervisor::{LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id},
     workspace,
 };
-use eon_workspace_protocol::v4::{
+use eon_workspace_protocol::v4;
+use eon_workspace_protocol::v5::{
     Action, Availability, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse,
-    MAX_DETAIL_BYTES, Request, Response, Runtime, declared_message_len, decode_lifecycle_response,
-    decode_request, decode_response, encode_lifecycle_response, encode_request, encode_response,
+    MAX_DETAIL_BYTES, Request, Response, Runtime, WorkspaceAction, declared_message_len,
+    decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
+    encode_request, encode_response,
 };
 use std::{
     fs,
@@ -123,13 +125,56 @@ pub(super) fn send_action_on(
     send_prepared_action(stream, prepare_action(action)?)
 }
 
+pub(super) fn send_legacy_inspect(socket: &Path) -> Result<v4::Response, EndpointFailure> {
+    let mut stream = connect_control(socket)?;
+    let request = v4::encode_request(&v4::Request {
+        id: request_id(),
+        action: v4::Action::Inspect,
+    })
+    .map_err(|error| {
+        EndpointFailure::new(
+            EndpointFailureKind::InvalidAction,
+            format!("cannot encode legacy Eon inspection: {error}"),
+        )
+    })?;
+    stream
+        .write_all(&request)
+        .map_err(|error| io_endpoint_failure(error, "cannot send legacy Eon inspection"))?;
+    let mut response = vec![0; v4::HEADER_BYTES];
+    stream
+        .read_exact(&mut response)
+        .map_err(|error| io_endpoint_failure(error, "cannot read legacy Eon inspection"))?;
+    let length = v4::declared_message_len(&response).map_err(|error| {
+        EndpointFailure::new(
+            EndpointFailureKind::Corrupt,
+            format!("invalid legacy EONW response: {error}"),
+        )
+    })?;
+    response.resize(length, 0);
+    stream
+        .read_exact(&mut response[v4::HEADER_BYTES..])
+        .map_err(|error| io_endpoint_failure(error, "cannot read complete legacy Eon result"))?;
+    v4::decode_response(&response).map_err(|error| {
+        EndpointFailure::new(
+            if matches!(error, v4::Error::UnsupportedVersion { .. }) {
+                EndpointFailureKind::Incompatible
+            } else {
+                EndpointFailureKind::Corrupt
+            },
+            format!("invalid legacy EONW response: {error}"),
+        )
+    })
+}
+
 fn prepare_action(action: Action) -> Result<(bool, Vec<u8>), EndpointFailure> {
     let lifecycle = matches!(
         action,
-        Action::InspectRuntime
-            | Action::InspectPresentation
-            | Action::Present { .. }
-            | Action::Stop { .. }
+        Action::Workspace(
+            WorkspaceAction::InspectRuntime
+                | WorkspaceAction::InspectPresentation
+                | WorkspaceAction::Present { .. }
+                | WorkspaceAction::Stop { .. }
+        )
     );
     let request = encode_request(&Request {
         id: request_id(),
@@ -229,10 +274,14 @@ fn probe_runtime_action(socket: &Path, action: Action) -> Result<Runtime, Endpoi
 }
 
 pub(super) fn probe_presentable_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
-    match probe_runtime_action(socket, Action::InspectPresentation) {
+    match probe_runtime_action(
+        socket,
+        Action::Workspace(WorkspaceAction::InspectPresentation),
+    ) {
         Ok(runtime) => Ok(runtime),
         Err(error) if error.kind == EndpointFailureKind::Incompatible => {
-            let mut runtime = probe_runtime_action(socket, Action::InspectRuntime)?;
+            let mut runtime =
+                probe_runtime_action(socket, Action::Workspace(WorkspaceAction::InspectRuntime))?;
             runtime.attach = Availability {
                 available: false,
                 reason: "supervisor does not support presentation requests".into(),
@@ -244,7 +293,7 @@ pub(super) fn probe_presentable_runtime(socket: &Path) -> Result<Runtime, Endpoi
 }
 
 pub(super) fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFailure> {
-    match send_action(socket, Action::Inspect)? {
+    match send_action(socket, Action::Workspace(WorkspaceAction::Inspect))? {
         ControlResponse::Workspace(Response::Snapshot(_)) => Ok(LaunchMode::Workspace),
         ControlResponse::Workspace(Response::Failure(failure))
             if failure.code == "workspace-unavailable" =>
@@ -484,9 +533,9 @@ mod tests {
         socket_identity,
     };
     use crate::supervisor::temporary_directory;
-    use eon_workspace_protocol::v4::{
+    use eon_workspace_protocol::v5::{
         Action, Availability, Failure, LifecycleResponse, Response, Runtime, VERSION,
-        encode_lifecycle_response, encode_response,
+        WorkspaceAction, encode_lifecycle_response, encode_response,
     };
     use std::{
         fs,
@@ -507,7 +556,7 @@ mod tests {
         let server = thread::spawn(move || {
             let responses = [
                 (
-                    Action::InspectPresentation,
+                    Action::Workspace(WorkspaceAction::InspectPresentation),
                     encode_response(&Response::Failure(Failure {
                         code: "malformed-action".into(),
                         detail: "unknown EONW action tag 11".into(),
@@ -515,7 +564,7 @@ mod tests {
                     .unwrap(),
                 ),
                 (
-                    Action::InspectRuntime,
+                    Action::Workspace(WorkspaceAction::InspectRuntime),
                     encode_lifecycle_response(&LifecycleResponse::Runtime(Runtime {
                         generation: "g1-0123456789abcdef0123456789abcdef".into(),
                         eon_version: "0.1.0".into(),

@@ -13,7 +13,9 @@ use super::{
     },
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::v4::{Action, Direction, Response, VERSION};
+use eon_workspace_protocol::v5::{
+    Action, Direction, PopupTarget, Response, VERSION, WorkspaceAction,
+};
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -53,12 +55,15 @@ pub(super) fn run() -> (&'static str, Result<i32, String>) {
 }
 
 fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
-    let [socket, tab] = arguments.as_slice() else {
-        return Err("usage: eon-directory-picker EON_SOCKET TAB".into());
+    let [socket, tab, instance] = arguments.as_slice() else {
+        return Err("usage: eon-directory-picker EON_SOCKET TAB POPUP".into());
     };
     let tab = tab
         .to_str()
         .ok_or_else(|| "directory picker tab identity must be UTF-8".to_string())?;
+    let instance = instance
+        .to_str()
+        .ok_or_else(|| "directory picker popup identity must be UTF-8".to_string())?;
     let mut browse_from = PathBuf::from(".");
     let directory = loop {
         let mut history = Command::new("zoxide")
@@ -136,8 +141,11 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
     };
     match send_action(
         Path::new(socket),
-        Action::SetTabDirectory {
-            tab: tab.into(),
+        Action::CommitDirectory {
+            target: PopupTarget {
+                tab: tab.into(),
+                instance: instance.into(),
+            },
             directory,
         },
     ) {
@@ -392,19 +400,21 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Str
         }
     }
     let action = match values.as_slice() {
-        ["workspace"] => Action::Inspect,
-        ["tab", "create"] => Action::CreateTab,
-        ["tab", "close", tab] => Action::CloseTab { tab: (*tab).into() },
-        ["tab", "move", "left"] => Action::Move(Direction::Left),
-        ["tab", "move", "right"] => Action::Move(Direction::Right),
-        ["pane", "create"] => Action::CreatePane,
-        ["pane", "move", "up"] => Action::Move(Direction::Up),
-        ["pane", "move", "down"] => Action::Move(Direction::Down),
-        ["focus", "left"] => Action::Focus(Direction::Left),
-        ["focus", "right"] => Action::Focus(Direction::Right),
-        ["focus", "up"] => Action::Focus(Direction::Up),
-        ["focus", "down"] => Action::Focus(Direction::Down),
-        ["focus", id] => Action::FocusId((*id).into()),
+        ["workspace"] => Action::Workspace(WorkspaceAction::Inspect),
+        ["tab", "create"] => Action::Workspace(WorkspaceAction::CreateTab),
+        ["tab", "close", tab] => {
+            Action::Workspace(WorkspaceAction::CloseTab { tab: (*tab).into() })
+        }
+        ["tab", "move", "left"] => Action::Workspace(WorkspaceAction::Move(Direction::Left)),
+        ["tab", "move", "right"] => Action::Workspace(WorkspaceAction::Move(Direction::Right)),
+        ["pane", "create"] => Action::Workspace(WorkspaceAction::CreatePane),
+        ["pane", "move", "up"] => Action::Workspace(WorkspaceAction::Move(Direction::Up)),
+        ["pane", "move", "down"] => Action::Workspace(WorkspaceAction::Move(Direction::Down)),
+        ["focus", "left"] => Action::Workspace(WorkspaceAction::Focus(Direction::Left)),
+        ["focus", "right"] => Action::Workspace(WorkspaceAction::Focus(Direction::Right)),
+        ["focus", "up"] => Action::Workspace(WorkspaceAction::Focus(Direction::Up)),
+        ["focus", "down"] => Action::Workspace(WorkspaceAction::Focus(Direction::Down)),
+        ["focus", id] => Action::Workspace(WorkspaceAction::FocusId((*id).into())),
         _ => return Err(EON_USAGE.into()),
     };
     Ok((action, json))
@@ -434,10 +444,10 @@ fn parse_tab_directory_arguments(arguments: &[OsString]) -> Result<Option<(Actio
         .to_str()
         .ok_or_else(|| "Eon tab identities must be UTF-8".to_string())?;
     Ok(Some((
-        Action::SetTabDirectory {
+        Action::Workspace(WorkspaceAction::SetTabDirectory {
             tab: tab.into(),
             directory: directory.as_os_str().as_bytes().to_vec(),
-        },
+        }),
         json,
     )))
 }
@@ -461,10 +471,10 @@ mod tests {
             ])
             .unwrap(),
             (
-                Action::SetTabDirectory {
+                Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t2".into(),
                     directory: b"/tmp/eon-\xff".to_vec(),
-                },
+                }),
                 true,
             )
         );
@@ -489,7 +499,7 @@ mod tests {
         ] {
             assert_eq!(
                 parse_control_arguments(&[scope, "move", name, "--json"].map(Into::into)).unwrap(),
-                (Action::Move(direction), true)
+                (Action::Workspace(WorkspaceAction::Move(direction)), true)
             );
         }
         for (scope, name) in [
@@ -506,7 +516,10 @@ mod tests {
     fn tab_close_parser_requires_one_stable_identity() {
         assert_eq!(
             parse_control_arguments(&["tab", "close", "t2", "--json"].map(Into::into)).unwrap(),
-            (Action::CloseTab { tab: "t2".into() }, true)
+            (
+                Action::Workspace(WorkspaceAction::CloseTab { tab: "t2".into() }),
+                true,
+            )
         );
         assert!(parse_control_arguments(&["tab", "close"].map(Into::into)).is_err());
     }

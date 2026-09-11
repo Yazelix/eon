@@ -9,11 +9,11 @@ use super::{
     sessions::{
         RunningSession, recover_sessions, session_finished, start_orbit, stop_managed_sessions,
     },
-    workspace::{self, Workspace},
+    workspace::{self, LaunchCommand, SessionOperation, Workspace},
 };
-use eon_workspace_protocol::v4::{
+use eon_workspace_protocol::v5::{
     Action, Availability, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
-    Stopped, VERSION,
+    Stopped, VERSION, WorkspaceAction,
 };
 use std::{
     env,
@@ -233,6 +233,9 @@ pub(super) fn launch_current(
     };
     let config = configuration_directory()?;
     let terminal = managed_environment::terminal_presentation(&config)?;
+    let popups = (mode == LaunchMode::Workspace)
+        .then(|| managed_environment::popup_catalog(&config))
+        .transpose()?;
     prepare_generation_runtime(&root, &generation)?;
     prepare_configuration(&config)?;
     let programs = programs(decorations);
@@ -240,6 +243,7 @@ pub(super) fn launch_current(
         &programs,
         &config,
         terminal,
+        popups,
         lifecycle_lock,
         &runtime,
         child,
@@ -314,45 +318,6 @@ fn validate_runtime(info: &Runtime, generation: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub(super) fn attach_legacy(runtime: &Path) -> Result<i32, String> {
-    let config = configuration_directory()?;
-    let terminal = managed_environment::terminal_presentation(&config)?;
-    prepare_configuration(&config)?;
-    let programs = programs(true);
-    let mut command = venus_command(
-        &programs,
-        &config,
-        &runtime.join("eon.sock"),
-        LaunchMode::Workspace,
-        &terminal,
-        "eon",
-    );
-    if terminal.requires_startup_admission() {
-        let stream = connect_control(&runtime.join("eon.sock")).map_err(|error| error.detail)?;
-        let snapshot =
-            match send_action_on(stream, Action::Inspect).map_err(|error| error.detail)? {
-                ControlResponse::Workspace(Response::Snapshot(snapshot)) => snapshot,
-                _ => return Err("cannot read legacy workspace for native startup admission".into()),
-            };
-        return PresentationProcess::start(
-            command,
-            true,
-            Some(snapshot),
-            Instant::now() + SESSION_START_TIMEOUT,
-        )?
-        .child
-        .wait()
-        .map(status_code)
-        .map_err(|error| format!("cannot observe Eon Desktop: {error}"));
-    }
-    command
-        .spawn()
-        .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?
-        .wait()
-        .map(status_code)
-        .map_err(|error| format!("cannot observe Eon Desktop: {error}"))
-}
-
 pub(super) fn present_at(
     runtime: &Path,
     generation: &str,
@@ -366,9 +331,9 @@ pub(super) fn present_at(
     }
     match send_action_on(
         stream,
-        Action::Present {
+        Action::Workspace(WorkspaceAction::Present {
             workspace: mode == LaunchMode::Workspace,
-        },
+        }),
     )
     .map_err(|error| error.detail)?
     {
@@ -477,7 +442,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v4::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v5::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -644,6 +609,7 @@ fn supervise(
     programs: &Programs,
     config: &Path,
     terminal: managed_environment::TerminalConfig,
+    popups: Option<managed_environment::PopupCatalog>,
     lifecycle_lock: fs::File,
     runtime: &Path,
     child: &[OsString],
@@ -660,6 +626,13 @@ fn supervise(
     let component_generation =
         eon_manifest::component_revision(MANIFEST, "orbit").map_err(|error| error.to_string())?;
     let deadline = Instant::now() + SESSION_START_TIMEOUT;
+    let popup_catalog = popups.unwrap_or_else(|| managed_environment::PopupCatalog {
+        geometry: eon_workspace_protocol::v5::PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: Vec::new(),
+    });
     let (mut sessions, recovered_picker) =
         recover_sessions(runtime, mode, &component_generation, deadline)?;
     let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
@@ -680,7 +653,9 @@ fn supervise(
                     Workspace::pending(
                         runtime.to_path_buf(),
                         launch_directory.clone(),
-                        |_, _, _| Ok(()),
+                        popup_catalog.clone(),
+                        |_, _| Ok(Vec::new()),
+                        |_| Ok(()),
                     )?
                 } else {
                     let recovered = if sessions.is_empty() {
@@ -698,6 +673,7 @@ fn supervise(
                         runtime.to_path_buf(),
                         launch_directory.clone(),
                         recovered,
+                        popup_catalog.clone(),
                     )?
                 }
                 .snapshot(),
@@ -737,23 +713,27 @@ fn supervise(
         )?);
         initial_child.clear();
     }
-    let mut directory_picker = None;
     let workspace = if mode == LaunchMode::Workspace {
         Some(if sessions.is_empty() {
             Workspace::pending(
                 runtime.to_path_buf(),
                 launch_directory.clone(),
-                |session, directory, picker_tab| {
-                    start_workspace_session(
+                popup_catalog.clone(),
+                |command, directory| {
+                    managed_environment::prepare_popup_command(
+                        command,
+                        programs.session_bin.as_deref(),
+                        directory,
+                    )
+                },
+                |operation| {
+                    apply_session_operation(
                         programs,
                         config,
                         &component_generation,
                         &mut sessions,
-                        &mut directory_picker,
                         &mut initial_child,
-                        session,
-                        directory,
-                        picker_tab,
+                        operation,
                     )
                 },
             )?
@@ -762,6 +742,7 @@ fn supervise(
                 runtime.to_path_buf(),
                 launch_directory,
                 recovered_workspace_sessions(&sessions)?,
+                popup_catalog,
             )?
         })
     } else {
@@ -772,7 +753,6 @@ fn supervise(
         application_id: application_id.into(),
         workspace,
         sessions,
-        directory_picker,
         venus: None,
         initial_child,
         initial_status: None,
@@ -796,16 +776,12 @@ fn supervise(
     state.venus = match presentation {
         Ok(venus) => Some(venus),
         Err(error) => {
-            let picker_cleanup = stop_directory_picker(&mut state);
             let session_cleanup = stop_managed_sessions(&mut state.sessions, SESSION_START_TIMEOUT);
             drop(control_listener);
-            if picker_cleanup.is_ok() && session_cleanup.is_ok() {
+            if session_cleanup.is_ok() {
                 let _ = fs::remove_dir(runtime);
             }
             let mut errors = vec![error];
-            if let Err(cleanup) = picker_cleanup {
-                errors.push(format!("cannot roll back directory picker: {cleanup}"));
-            }
             if let Err(cleanup) = session_cleanup {
                 errors.push(format!("cannot roll back Sessions: {cleanup}"));
             }
@@ -817,7 +793,7 @@ fn supervise(
         loop {
             reap_finished_sessions(&mut state, programs, config)?;
 
-            if state.sessions.is_empty() && state.directory_picker.is_none() {
+            if state.sessions.is_empty() {
                 return Ok(state.initial_status.unwrap_or(0));
             }
 
@@ -844,13 +820,13 @@ fn supervise(
     if let Some(process) = state.venus.take() {
         drop(process);
     }
-    let picker_cleanup = stop_directory_picker(&mut state);
+    let popup_cleanup = stop_transient_popups(&mut state);
     let _ = fs::remove_dir(runtime);
-    match (status, picker_cleanup) {
+    match (status, popup_cleanup) {
         (Ok(code), Ok(())) => Ok(code),
         (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
         (Err(error), Err(cleanup)) => Err(format!(
-            "{error}; cannot clean up directory picker: {cleanup}"
+            "{error}; cannot clean up transient popups: {cleanup}"
         )),
     }
 }
@@ -860,7 +836,6 @@ struct SupervisorState {
     application_id: String,
     workspace: Option<Workspace>,
     sessions: Vec<RunningSession>,
-    directory_picker: Option<RunningSession>,
     venus: Option<PresentationProcess>,
     initial_child: Vec<OsString>,
     initial_status: Option<i32>,
@@ -871,55 +846,26 @@ fn reap_finished_sessions(
     programs: &Programs,
     config: &Path,
 ) -> Result<(), String> {
-    let picker_finished = match state.directory_picker.as_mut() {
-        Some(picker) => session_finished(picker)?,
-        None => None,
-    };
-    if picker_finished.is_some() {
-        let picker = state
-            .directory_picker
-            .take()
-            .ok_or("directory picker disappeared while it was reaped")?;
-        let SupervisorState {
-            component_generation,
-            workspace,
-            sessions,
-            directory_picker,
-            initial_child,
-            ..
-        } = state;
-        workspace
-            .as_mut()
-            .ok_or("directory picker has no workspace owner")?
-            .session_exited(&picker.id, |session, directory, picker_tab| {
-                start_workspace_session(
-                    programs,
-                    config,
-                    component_generation,
-                    sessions,
-                    directory_picker,
-                    initial_child,
-                    session,
-                    directory,
-                    picker_tab,
-                )
-            })
-            .map_err(|error| error.detail)?;
-    }
-
     let mut index = 0;
     while index < state.sessions.len() {
         if let Some(code) = session_finished(&mut state.sessions[index])? {
             let session = state.sessions.remove(index);
             if let Some(workspace) = &mut state.workspace {
-                let stop_picker = workspace
-                    .session_exited(&session.id, |_, _, _| {
-                        unreachable!("durable Session exit cannot start a Session")
+                let component_generation = &state.component_generation;
+                let sessions = &mut state.sessions;
+                let initial_child = &mut state.initial_child;
+                workspace
+                    .session_exited(&session.id, |operation| {
+                        apply_session_operation(
+                            programs,
+                            config,
+                            component_generation,
+                            sessions,
+                            initial_child,
+                            operation,
+                        )
                     })
                     .map_err(|error| error.detail)?;
-                if stop_picker {
-                    stop_directory_picker_session(&mut state.directory_picker)?;
-                }
             }
             if session.id == "session-1" {
                 state.initial_status = Some(code);
@@ -928,29 +874,6 @@ fn reap_finished_sessions(
             index += 1;
         }
     }
-    Ok(())
-}
-
-fn take_directory_picker(state: &mut SupervisorState) -> Option<RunningSession> {
-    if let Some(workspace) = state.workspace.as_mut() {
-        workspace.clear_directory_picker();
-    }
-    state.directory_picker.take()
-}
-
-fn stop_directory_picker(state: &mut SupervisorState) -> Result<(), String> {
-    if let Some(workspace) = state.workspace.as_mut() {
-        workspace.clear_directory_picker();
-    }
-    stop_directory_picker_session(&mut state.directory_picker)
-}
-
-fn stop_directory_picker_session(running: &mut Option<RunningSession>) -> Result<(), String> {
-    let Some(session) = running.as_mut() else {
-        return Ok(());
-    };
-    stop_workspace_session(session)?;
-    running.take();
     Ok(())
 }
 
@@ -985,42 +908,19 @@ fn close_workspace_tab(
         .ok_or_else(|| failure("workspace-unavailable", "EonTerm has no Eon workspace"))?
         .prepare_close_tab(request_id, tab)?;
 
-    if let Some(sessions) = sessions {
-        for id in sessions {
-            let index = state
-                .sessions
-                .iter()
-                .position(|session| session.id == id)
-                .ok_or_else(|| {
-                    failure(
-                        "tab-close-failed",
-                        format!("Session {id} is missing from the supervisor"),
-                    )
-                })?;
-            let natural_status = stop_workspace_session(&mut state.sessions[index])
-                .map_err(|detail| failure("tab-close-failed", format!("{id}: {detail}")))?;
-            let session = state.sessions.remove(index);
-            state
-                .workspace
-                .as_mut()
-                .expect("workspace close retains its owner")
-                .session_exited(&session.id, |_, _, _| {
-                    unreachable!("closing a durable tab cannot start a Session")
-                })?;
-            if session.id == "session-1" && natural_status.is_some() {
-                state.initial_status = natural_status;
-            }
-        }
-    } else {
-        stop_directory_picker_session(&mut state.directory_picker)
-            .map_err(|detail| failure("tab-close-failed", detail))?;
+    for id in sessions {
+        let natural_status = stop_owned_session(&mut state.sessions, &id)
+            .map_err(|detail| failure("tab-close-failed", format!("{id}: {detail}")))?;
         state
             .workspace
             .as_mut()
-            .expect("pending-tab close retains its workspace")
-            .session_exited(workspace::DIRECTORY_PICKER_SESSION, |_, _, _| {
-                unreachable!("closing a non-final pending tab cannot start a Session")
+            .expect("workspace close retains its owner")
+            .session_exited(&id, |_| {
+                Err("closing a tab cannot start a replacement Session".into())
             })?;
+        if id == "session-1" && natural_status.is_some() {
+            state.initial_status = natural_status;
+        }
     }
 
     Ok(state
@@ -1034,6 +934,7 @@ fn directory_picker_command(
     programs: &Programs,
     runtime: &Path,
     tab: &str,
+    instance: &str,
 ) -> Result<Vec<OsString>, String> {
     let session_bin = programs
         .session_bin
@@ -1044,42 +945,40 @@ fn directory_picker_command(
         "__directory-picker".into(),
         runtime.join("eon.sock").into_os_string(),
         tab.into(),
+        instance.into(),
     ])
 }
 
 #[allow(clippy::too_many_arguments)]
-fn start_workspace_session(
+fn apply_session_operation(
     programs: &Programs,
     config: &Path,
     component_generation: &str,
     sessions: &mut Vec<RunningSession>,
-    directory_picker: &mut Option<RunningSession>,
     initial_child: &mut Vec<OsString>,
-    session: &workspace::Session,
-    directory: &Path,
-    picker_tab: Option<&str>,
+    operation: SessionOperation,
 ) -> Result<(), String> {
-    if picker_tab.is_some() && directory_picker.is_some() {
-        return Err("a directory picker is already running".into());
-    }
-    let picker_child = picker_tab
-        .map(|tab| {
-            directory_picker_command(
-                programs,
-                session
-                    .endpoint
-                    .parent()
-                    .ok_or("directory picker endpoint has no runtime directory")?,
-                tab,
-            )
-        })
-        .transpose()?;
-    let child = if let Some(picker_child) = picker_child.as_deref() {
-        picker_child
-    } else if session.id == "session-1" {
-        initial_child.as_slice()
-    } else {
-        &[]
+    let (session, directory, command) = match operation {
+        SessionOperation::Start {
+            session,
+            directory,
+            command,
+        } => (session, directory, command),
+        SessionOperation::Stop(id) => return stop_owned_session(sessions, &id).map(|_| ()),
+    };
+    let child = match command {
+        LaunchCommand::Project { tab, instance } => directory_picker_command(
+            programs,
+            session
+                .endpoint
+                .parent()
+                .ok_or("directory picker endpoint has no runtime directory")?,
+            &tab,
+            &instance,
+        )?,
+        LaunchCommand::Tool(argv) => argv,
+        LaunchCommand::Pane if session.id == "session-1" => initial_child.clone(),
+        LaunchCommand::Pane => Vec::new(),
     };
     let running = start_orbit(
         programs,
@@ -1087,59 +986,76 @@ fn start_workspace_session(
         &session.endpoint,
         &session.id,
         component_generation,
-        directory,
-        child,
+        &directory,
+        &child,
         Instant::now() + SESSION_START_TIMEOUT,
     )?;
-    if picker_tab.is_some() {
-        *directory_picker = Some(running);
-    } else {
-        sessions.push(running);
-        if session.id == "session-1" {
-            initial_child.clear();
-        }
+    sessions.push(running);
+    if session.id == "session-1" {
+        initial_child.clear();
     }
     Ok(())
 }
 
-fn cancel_directory_picker(
+fn stop_owned_session(sessions: &mut Vec<RunningSession>, id: &str) -> Result<Option<i32>, String> {
+    let index = sessions
+        .iter()
+        .position(|session| session.id == id)
+        .ok_or_else(|| format!("Session {id} is missing from the supervisor"))?;
+    let status = stop_workspace_session(&mut sessions[index])?;
+    sessions.remove(index);
+    Ok(status)
+}
+
+fn cancel_transient_popups(
     state: &mut SupervisorState,
     programs: &Programs,
     config: &Path,
 ) -> Result<(), String> {
-    if state.directory_picker.is_none() {
-        return Ok(());
-    }
-    stop_directory_picker_session(&mut state.directory_picker)?;
-    let SupervisorState {
-        component_generation,
-        workspace,
-        sessions,
-        directory_picker,
-        initial_child,
-        ..
-    } = state;
-    workspace
-        .as_mut()
-        .ok_or("directory picker has no workspace owner")?
-        .session_exited(
-            workspace::DIRECTORY_PICKER_SESSION,
-            |session, directory, picker_tab| {
-                start_workspace_session(
+    let ids = state
+        .workspace
+        .as_ref()
+        .map(Workspace::transient_sessions)
+        .unwrap_or_default();
+    for id in ids {
+        stop_owned_session(&mut state.sessions, &id)?;
+        let SupervisorState {
+            component_generation,
+            workspace,
+            sessions,
+            initial_child,
+            ..
+        } = state;
+        workspace
+            .as_mut()
+            .ok_or("transient popup has no workspace owner")?
+            .session_exited(&id, |operation| {
+                apply_session_operation(
                     programs,
                     config,
                     component_generation,
                     sessions,
-                    directory_picker,
                     initial_child,
-                    session,
-                    directory,
-                    picker_tab,
+                    operation,
                 )
-            },
-        )
-        .map(|_| ())
-        .map_err(|error| error.detail)
+            })
+            .map_err(|error| error.detail)?;
+    }
+    Ok(())
+}
+
+fn stop_transient_popups(state: &mut SupervisorState) -> Result<(), String> {
+    let ids = state
+        .workspace
+        .as_ref()
+        .map(Workspace::transient_sessions)
+        .unwrap_or_default();
+    for id in ids {
+        if state.sessions.iter().any(|session| session.id == id) {
+            stop_owned_session(&mut state.sessions, &id)?;
+        }
+    }
+    Ok(())
 }
 
 fn reap_presentation(
@@ -1157,7 +1073,7 @@ fn reap_presentation(
     };
     if exited {
         state.venus = None;
-        cancel_directory_picker(state, programs, config)?;
+        cancel_transient_popups(state, programs, config)?;
     }
     Ok(exited)
 }
@@ -1257,7 +1173,10 @@ fn dispatch_control_request(
     };
     match request {
         Request {
-            action: Action::InspectRuntime | Action::InspectPresentation,
+            action:
+                Action::Workspace(
+                    WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation,
+                ),
             ..
         } => match runtime_status(generation, &state.sessions, mode) {
             Ok(runtime) => (
@@ -1273,9 +1192,10 @@ fn dispatch_control_request(
             ),
         },
         Request {
-            action: Action::Present {
-                workspace: expected,
-            },
+            action:
+                Action::Workspace(WorkspaceAction::Present {
+                    workspace: expected,
+                }),
             ..
         } => {
             if expected != (mode == LaunchMode::Workspace) {
@@ -1296,7 +1216,7 @@ fn dispatch_control_request(
                     false,
                 );
             }
-            if state.sessions.is_empty() && state.directory_picker.is_none() {
+            if state.sessions.is_empty() {
                 return (
                     ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
                         "generation-ending",
@@ -1351,7 +1271,7 @@ fn dispatch_control_request(
             }
         }
         Request {
-            action: Action::Stop { generation: target },
+            action: Action::Workspace(WorkspaceAction::Stop { generation: target }),
             ..
         } => {
             if target != generation {
@@ -1363,12 +1283,10 @@ fn dispatch_control_request(
                     false,
                 );
             }
-            if let Some(picker) = take_directory_picker(state) {
-                state.sessions.push(picker);
-            }
             let response = match stop_managed_sessions(&mut state.sessions, SESSION_START_TIMEOUT) {
                 Ok(mut sessions) => {
-                    sessions.retain(|session| session != workspace::DIRECTORY_PICKER_SESSION);
+                    sessions.retain(|session| !workspace::is_directory_picker_session(session));
+                    state.sessions.clear();
                     LifecycleResponse::Stopped(Stopped {
                         generation: generation.into(),
                         sessions,
@@ -1380,7 +1298,7 @@ fn dispatch_control_request(
         }
         Request {
             id,
-            action: Action::CloseTab { tab },
+            action: Action::Workspace(WorkspaceAction::CloseTab { tab }),
         } => match close_workspace_tab(&id, &tab, state, programs, config) {
             Ok(snapshot) => (
                 ControlResponse::Workspace(Response::Snapshot(snapshot)),
@@ -1392,22 +1310,25 @@ fn dispatch_control_request(
             Some(workspace) => {
                 let component_generation = &state.component_generation;
                 let sessions = &mut state.sessions;
-                let directory_picker = &mut state.directory_picker;
                 let initial_child = &mut state.initial_child;
                 match workspace.dispatch(
                     &request.id,
                     request.action,
-                    |session, directory, picker_tab| {
-                        start_workspace_session(
+                    |command, directory| {
+                        managed_environment::prepare_popup_command(
+                            command,
+                            programs.session_bin.as_deref(),
+                            directory,
+                        )
+                    },
+                    |operation| {
+                        apply_session_operation(
                             programs,
                             config,
                             component_generation,
                             sessions,
-                            directory_picker,
                             initial_child,
-                            session,
-                            directory,
-                            picker_tab,
+                            operation,
                         )
                     },
                 ) {
@@ -1449,11 +1370,15 @@ fn runtime_status(
         workspace_protocol: VERSION,
         component_report: eon_manifest::version_report(MANIFEST)
             .map_err(|error| error.to_string())?,
-        sessions: sessions.iter().map(|session| session.id.clone()).collect(),
+        sessions: sessions
+            .iter()
+            .filter(|session| !workspace::is_directory_picker_session(&session.id))
+            .map(|session| session.id.clone())
+            .collect(),
         attach: Availability {
             available: true,
             reason: match mode {
-                LaunchMode::Workspace => "supervisor accepts EONW v4 presentation requests",
+                LaunchMode::Workspace => "supervisor accepts EONW v5 presentation requests",
                 LaunchMode::Terminal => "supervisor owns one EonTerm Session",
             }
             .into(),
@@ -1491,7 +1416,9 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v4::{Pane, Response, Snapshot, Tab, encode_response};
+        use eon_workspace_protocol::v5::{
+            Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
+        };
         use std::{
             process::Command,
             time::{Duration, Instant},
@@ -1500,20 +1427,27 @@ mod tests {
         let root = temporary_directory();
         let snapshot = Snapshot {
             active_tab: "t1".into(),
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
             tabs: (1..=64)
                 .map(|number| Tab {
                     id: format!("t{number}"),
                     directory: vec![b'/'; 4096],
+                    pending: false,
                     selected_pane: Some(format!("p{number}")),
+                    selected_popup: None,
                     panes: vec![Pane {
                         id: format!("p{number}"),
                         session: format!("session-{number}"),
                         endpoint: format!("/runtime/orbit-{number}.sock").into_bytes(),
                         live: true,
                     }],
+                    popups: Vec::new(),
                 })
                 .collect(),
-            directory_picker: None,
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
         let received = root.join("snapshot");

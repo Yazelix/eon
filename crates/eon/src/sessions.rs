@@ -4,9 +4,9 @@ use super::{
         EON_ANSI_PALETTE, LaunchMode, Programs, SESSION_START_TIMEOUT, effective_uid, request_id,
         status_code, stop, validate_private_directory,
     },
-    workspace::{DIRECTORY_PICKER_SESSION, is_directory_picker_endpoint},
+    workspace::{is_directory_picker_endpoint, is_directory_picker_session},
 };
-use eon_workspace_protocol::v4::MAX_PANES;
+use eon_workspace_protocol::v5::MAX_SESSIONS;
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LiveIdentity,
     ObjectIdentity, ProcessOutcome, Record as ManagementRecord,
@@ -38,7 +38,7 @@ fn session_number(value: &str) -> Option<usize> {
 }
 
 fn managed_session_number(value: &str) -> Result<Option<usize>, String> {
-    if value == DIRECTORY_PICKER_SESSION {
+    if value == "directory-picker" || is_directory_picker_session(value) {
         Ok(None)
     } else {
         session_number(value)
@@ -626,11 +626,11 @@ pub(super) fn recover_sessions(
             ))),
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if paths.len() > MAX_PANES + 1 {
+    if paths.len() > MAX_SESSIONS + 1 {
         return Err(format!(
             "Sessions runtime {} exceeds the {}-record recovery limit",
             runtime.display(),
-            MAX_PANES + 1
+            MAX_SESSIONS + 1
         ));
     }
     paths.sort_by(|left, right| {
@@ -640,7 +640,7 @@ pub(super) fn recover_sessions(
     });
 
     let mut candidates = Vec::new();
-    let mut picker = None;
+    let mut pickers = Vec::new();
     let mut numbers = HashSet::new();
     for record_path in paths {
         operation_timeout(deadline, "Sessions recovery")?;
@@ -706,8 +706,8 @@ pub(super) fn recover_sessions(
                 return Err(format!("duplicate live Sessions identity session-{number}"));
             }
             candidates.push(candidate);
-        } else if picker.replace(candidate).is_some() {
-            return Err("duplicate live directory-picker Session".into());
+        } else {
+            pickers.push(candidate);
         }
     }
     candidates.sort_by_key(|candidate| candidate.number);
@@ -715,8 +715,8 @@ pub(super) fn recover_sessions(
         return Err("EonTerm cannot recover more than one live Session".into());
     }
 
-    let recovered_picker = picker.is_some();
-    if let Some(candidate) = picker {
+    let recovered_picker = !pickers.is_empty();
+    for candidate in pickers {
         let mut picker = acquire_management(candidate, deadline)?;
         stop_managed_sessions(
             std::slice::from_mut(&mut picker),

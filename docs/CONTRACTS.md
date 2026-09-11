@@ -557,8 +557,8 @@ show the median and observed minimum–maximum, not a confidence interval.
     mode.
   - Closing names the expected active `tN` and requires another live tab. A
     non-final pending tab first stops its exact picker, then disappears and
-    restores its prior tab. A durable tab closes unless it owns the picker:
-    Eon stops its Orbit Sessions one at a time in pane order and prunes each
+    restores its prior tab. Eon stops the tab's pane and popup Sessions one at
+    a time and prunes each
     confirmed end through the normal Session-exit owner. Complete success
     removes the tab with the same deterministic focus rule as natural exit.
     If a later stop fails, no later Session is stopped, the action reports
@@ -586,7 +586,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   silently stops or substitutes a Session.
 - **Owner:** Eon workspace topology, identity, focus, pruning, and action policy;
   Orbit owns Sessions and Venus owns native materialization.
-- **Consumes:** EONW v4, Orbit Session identities/endpoints, and Venus `VEN-C8`.
+- **Consumes:** EONW v5, Orbit Session identities/endpoints, and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, simultaneous expanded panes, arbitrary
   reorder target or cross-tab pane movement, picker relocation, durable layout
   restoration, a user-facing per-pane Session stop/restart action, terminal
@@ -764,7 +764,8 @@ show the median and observed minimum–maximum, not a confidence interval.
     `c0d044c69318a921f9f9139bcaf2de9afce683d3`
 ## EON-C10 — Typed workspace control
 
-- **Status:** Proven
+- **Status:** Candidate; the pre-v5 control proof below remains historical until
+  the popup-bearing activation is accepted.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -793,7 +794,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   exact terminal record is complete.
 - **Owner:** Eon supervisor workspace/action state, EONW result ordering, and CLI
   projection.
-- **Consumes:** EONW v4 and accepted Orbit management operations.
+- **Consumes:** EONW v5 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
@@ -814,15 +815,32 @@ show the median and observed minimum–maximum, not a confidence interval.
 ### Shared popup protocol seed (EONW v5)
 
 - **Status:** Mechanically verified seed at
-  `0cc8f477298681ae3945903e8fdb5852d487c5ab` (`eon-tool-popups-e13.4`); Eon's
-  active runtime and installed Venus consumer still use v4.
-- **Consumer:** The next exact Venus workspace consumer and Eon runtime.
+  `0cc8f477298681ae3945903e8fdb5852d487c5ab` (`eon-tool-popups-e13.4`), activated
+  by the `eon-tool-popups-e13.2` candidate with exact Venus source
+  `d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`.
+- **Consumer:** Eon's workspace runtime and the exact accepted Venus consumer.
 - **Trigger/result:** A v5 request carries either an existing workspace action
   or a popup invocation, dismissal, or directory commit. A snapshot describes
   the enabled tool catalog, normalized physical shortcuts, logical-pixel
   margins, per-tab popup Sessions, chosen popup, ordinary pane selection and
   pending-tab state. Tabs may contain only popup work. Commands, provider
   choice, launch cwd and dismissal lifetime remain Eon-owned runtime policy.
+- **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
+  transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
+  Agent defaults to the first available provider in the accepted Nova order on
+  Alt+Shift+L. Git and Agent remain live when hidden. Reopening at the same tab
+  directory preserves identity; explicit retargeting changes no process until
+  the next invocation, which stops the exact old Session before starting a
+  fresh one at the new directory. A stop failure preserves the old instance; a
+  start failure records no replacement.
+- **Configuration:** `[popup]` owns finite side and vertical margins, defaulting
+  to 8 and 4 logical pixels. `[popups.<id>]` owns direct argv, physical shortcut,
+  label, enabled state and keep-alive lifetime. Only Agent accepts `"auto"`.
+  Eon rejects unknown fields, malformed or colliding shortcuts, unbounded
+  values and unavailable executables before mutating workspace state. It does
+  not install providers, cache selection, interpret shell strings, or expose
+  commands over EONW. Bare executables resolve through the Session PATH;
+  relative executable paths resolve against the owning tab's launch directory.
 - **Target safety:** Invocation names the tab, entry and expected instance
   (absence means no instance exists). Focus-only and toggle intents are
   distinct. Dismissal and chooser completion require the exact live instance;
@@ -836,13 +854,12 @@ show the median and observed minimum–maximum, not a confidence interval.
   Sessions are represented. Reject malformed framing, invalid or aliased
   identities/endpoints, broken selections, duplicate entry/chord assignments,
   invalid geometry and stale popup targets. No terminal contents cross EONW.
-- **Transition:** Seed the shared crate without runtime activation; Venus
-  consumes its exact accepted source next; Eon then activates the new runtime
-  with that exact client. The picker-only v4 opcode is unavailable in v5;
+- **Transition:** The picker-only v4 opcode is unavailable in v5;
   Project uses the ordinary popup invocation. No negotiation or adapter is
-  introduced. EON-C8/C17/C18 runtime changes and visual acceptance remain
-  pending under `eon-tool-popups-e13.2` and delivery `.3`; existing proofs and
-  EON-C11 generation qualifications remain unchanged.
+  introduced. Fixed-namespace v4 workspaces remain inspectable but are not
+  attachable by the v5 Venus client. Comprehensive composed tool and visual
+  acceptance remains `eon-tool-popups-e13.3`; existing proof qualifications
+  and EON-C11 generation limits remain unchanged.
 - **Checks:** Four v5 tests cover exact request bytes, unchanged
   common-action payloads, retired picker-opcode rejection, lifecycle results,
   stale/absent/wrong-tab targets, hidden and inactive popup state, pending and
@@ -852,7 +869,8 @@ show the median and observed minimum–maximum, not a confidence interval.
   Refreshed Eon/EonTerm profiles match their built artifacts; installed
   `eon versions` reports EONW v4 with unchanged child pins. The bead records
   commands, artifact paths and source hashes. This is mechanical protocol and
-  existing-consumer evidence; popup runtime and visual acceptance remain pending.
+  existing-consumer evidence; the activation candidate adds owner and process
+  checks, while comprehensive popup visual acceptance remains pending.
 
 ## EON-C11 — Runtime generations and presentation
 
@@ -1115,7 +1133,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   - `SetTabDirectory` changes exactly one addressed tab. Later panes in that tab
     start with the accepted directory; existing Sessions and terminal CWDs do
     not change.
-  - EONW v4 returns the exact accepted raw path bytes. Venus derives a bounded
+  - EONW v5 returns the exact accepted raw path bytes. Venus derives a bounded
     `N  leaf`, `N  ~`, or `N  /` label while retaining `tN` for actions and
     exposing identity plus bounded path context to accessibility.
   - Same-boot recovery assigns synthetic `t1` the replacement supervisor's
@@ -1128,7 +1146,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Owner:** Eon owns tab identity, launch-directory state, validation, mutation,
   inheritance, and recovery fallback; Orbit owns each Session's terminal CWD;
   Venus owns only native projection of Eon's state.
-- **Consumes:** EONW v4, Orbit Session startup, and Venus `VEN-C8`.
+- **Consumes:** EONW v5, Orbit Session startup, and Venus `VEN-C8`.
 - **Boundary:** No manual names, path canonicalization, retained directory
   handles, filesystem watching, shell-`cd` tracking, pane-CWD inference,
   retargeting of existing processes, persistence, picker UI, or compatibility
@@ -1150,11 +1168,13 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C18 — Picker-first tab directories
 
-- **Status:** Proven; Tab switching and cancellation are accepted at the exact
-  runtime revision and native Wayland scope recorded below.
+- **Status:** Candidate for the v5 shared popup host. The prior picker input,
+  tab-switching and cancellation proof remains accepted at its historical v4
+  runtime revision below; composed v5 visual acceptance belongs to
+  `eon-tool-popups-e13.3`.
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
-  Alt+Z in an existing tab while no directory picker is already open.
+  Alt+Z in an existing tab.
 - **Result:**
   - A fresh workspace and every later new tab begin as one active pending tab
     with no durable pane. Eon starts one transient Orbit Session running the
@@ -1194,18 +1214,17 @@ show the median and observed minimum–maximum, not a confidence interval.
     pending tab and restores the prior tab and focus.
   - Alt+Z keeps the existing explicit retarget behavior after a tab has panes;
     it never changes or restarts a running pane.
-  - EONW exposes that picker as one explicit modal endpoint bound to one live
+  - EONW v5 exposes Project as a popup endpoint bound to one live
     tab, never as a normal `pN` pane. The picker tab may remain live while
-    another durable tab is active. EONW v4 represents a picker-owned pending tab
-    as the sole pane-free tab, with an absent selected pane instead of a sentinel
-    or placeholder process.
+    another durable tab is active. A picker-owned pending tab remains pane-free,
+    with an absent selected pane instead of a sentinel or placeholder process.
     Lifecycle inspection and Stop may report zero durable Sessions during the
     initial picker; the transient picker remains excluded from that list.
   - Venus can start a full-Eon presentation from the workspace endpoint alone
     while the initial tab is pending; the picker endpoint in its first snapshot
     is the sole terminal attachment.
-  - Venus keeps the tab bar visible and replaces the tab body with the picker,
-    inset by one terminal cell on every side when the grid permits it. The
+  - Venus keeps the tab bar visible and replaces the pane stack with the picker,
+    using Eon's shared configured popup margins. The
     previous terminal is not composited underneath. Attach and recovery never
     create an automatic picker; recovering only a stale initial picker stops it
     and applies the validated launch-directory fallback.
@@ -1219,8 +1238,9 @@ show the median and observed minimum–maximum, not a confidence interval.
     blocked except directory acceptance and closing its non-final pending tab;
     that close stops the transient Session before removing the tab. Cancellation
     restores the previous tab if it survives, otherwise the nearest surviving
-    tab; with no tabs left, the workspace ends. Creating a second picker or a
-    picker-first tab remains unavailable until the current picker exits.
+    tab; with no tabs left, the workspace ends. Pickers remain attached across
+    tab switches; established tabs may open their own popup while one remains
+    live elsewhere. At most one pending picker-first tab exists.
 - **Important failures:** Cancel, empty or invalid selection, picker launch or
   exit, target disappearance, duplicate invocation, origin-tab loss, or
   presentation detachment follows the first- or later-tab fallback without a
@@ -1235,12 +1255,12 @@ show the median and observed minimum–maximum, not a confidence interval.
   owns the transient PTY and child. Zoxide owns ranking, fzf owns quick
   selection, and Yazi owns filesystem browsing. Eon consumes one directory
   result without interpreting Yazi's navigation state.
-- **Consumes:** EON-C17; accepted EONW v4 pending-tab boundary, Orbit's accepted
-  Session startup, attachment, exit, and stop contracts, and exact Venus v4
-  consumer `d2d798099934dcf8037bfad6ab856e40c9b989fe`.
+- **Consumes:** EON-C17; accepted EONW v5 popup boundary, Orbit's accepted
+  Session startup, attachment, exit, and stop contracts, and exact Venus v5
+  consumer `d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`.
 - **Boundary:** No custom filesystem walker, editor/file-opening integration,
-  copied Nova plugin, normal-pane identity, arbitrary-command or
-  generic-popup API, simultaneous terminal composition, native Venus picker,
+  copied Nova plugin, normal-pane identity, client-supplied command,
+  simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
 - **Tab switching proof (accepted, 2026-09-08):**

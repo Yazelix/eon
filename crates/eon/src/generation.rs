@@ -1,16 +1,15 @@
 use super::control::{
     ControlResponse, EndpointFailure, EndpointFailureKind, connect_control, failure,
-    probe_presentable_runtime, remove_socket_if_identity, report_failure, send_action,
-    send_action_on, socket_identity, socket_identity_from, write_stdout,
+    probe_presentable_runtime, remove_socket_if_identity, report_failure, send_action_on,
+    send_legacy_inspect, socket_identity, socket_identity_from, write_stdout,
 };
 use super::supervisor::{
-    MANIFEST, attach_legacy, effective_uid, path_exists, present_at, probe_supervisor,
-    runtime_directory, supervisor_lock_path, try_lock_supervisor_lifecycle,
-    validate_private_directory,
+    MANIFEST, effective_uid, path_exists, present_at, probe_supervisor, runtime_directory,
+    supervisor_lock_path, try_lock_supervisor_lifecycle, validate_private_directory,
 };
 use super::workspace::json_escape;
-use eon_workspace_protocol::v4::{
-    Action, Availability, LifecycleResponse, Response, Stopped, VERSION,
+use eon_workspace_protocol::v5::{
+    Action, Availability, LifecycleResponse, Stopped, VERSION, WorkspaceAction,
 };
 use std::{
     fs,
@@ -37,6 +36,7 @@ pub(super) fn current_generation() -> Result<String, String> {
         include_bytes!("../../eon-workspace-protocol/src/v2.rs"),
         include_bytes!("../../eon-workspace-protocol/src/v3.rs"),
         include_bytes!("../../eon-workspace-protocol/src/v4.rs"),
+        include_bytes!("../../eon-workspace-protocol/src/v5.rs"),
         include_bytes!("../../eon-workspace-protocol/Cargo.toml"),
         include_bytes!("../../eon-manifest/src/lib.rs"),
         include_bytes!("../../eon-manifest/Cargo.toml"),
@@ -293,14 +293,14 @@ fn inspect_generation(
 fn inspect_legacy(root: &Path) -> GenerationRecord {
     let runtime = root.to_path_buf();
     let socket = root.join("eon.sock");
-    match send_action(&socket, Action::Inspect) {
-        Ok(ControlResponse::Workspace(Response::Snapshot(snapshot))) => GenerationRecord {
+    match send_legacy_inspect(&socket) {
+        Ok(eon_workspace_protocol::v4::Response::Snapshot(snapshot)) => GenerationRecord {
             id: "legacy".into(),
             kind: "legacy",
             state: "live",
             runtime,
             eon_version: None,
-            workspace_protocol: Some(VERSION),
+            workspace_protocol: Some(eon_workspace_protocol::v4::VERSION),
             component_report: None,
             sessions: snapshot
                 .tabs
@@ -308,8 +308,9 @@ fn inspect_legacy(root: &Path) -> GenerationRecord {
                 .flat_map(|tab| tab.panes.iter().map(|pane| pane.session.clone()))
                 .collect(),
             attach: Availability {
-                available: true,
-                reason: "legacy supervisor returned a valid EONW v4 workspace".into(),
+                available: false,
+                reason: "legacy supervisor uses EONW v4; the current Venus client requires EONW v5"
+                    .into(),
             },
             stop: Availability {
                 available: false,
@@ -317,7 +318,7 @@ fn inspect_legacy(root: &Path) -> GenerationRecord {
             },
             detail: "live fixed-namespace supervisor; component identity unavailable".into(),
         },
-        Ok(ControlResponse::Workspace(Response::Failure(failure))) => failed_generation(
+        Ok(eon_workspace_protocol::v4::Response::Failure(failure)) => failed_generation(
             "legacy",
             "legacy",
             runtime,
@@ -331,15 +332,6 @@ fn inspect_legacy(root: &Path) -> GenerationRecord {
                     "legacy supervisor rejected EONW inspection: {}",
                     failure.detail
                 ),
-            ),
-        ),
-        Ok(_) => failed_generation(
-            "legacy",
-            "legacy",
-            runtime,
-            EndpointFailure::new(
-                EndpointFailureKind::Corrupt,
-                "legacy supervisor returned the wrong EONW result",
             ),
         ),
         Err(error) => failed_generation("legacy", "legacy", runtime, error),
@@ -532,9 +524,6 @@ pub(super) fn attach_generation(target: Option<&str>, product: &str) -> Result<i
             record.attach.reason
         ));
     }
-    if target == "legacy" {
-        return attach_legacy(&record.runtime);
-    }
     let (mode, supervisor) =
         probe_supervisor(&record.runtime.join("eon.sock"), target).map_err(|error| error.detail)?;
     present_at(&record.runtime, target, mode, supervisor)
@@ -611,9 +600,9 @@ pub(super) fn stop_generation(target: &str, json: bool, product: &str) -> Result
     }
     let response = match send_action_on(
         stream,
-        Action::Stop {
+        Action::Workspace(WorkspaceAction::Stop {
             generation: target.into(),
-        },
+        }),
     ) {
         Ok(response) => response,
         Err(error) => {
