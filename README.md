@@ -17,8 +17,10 @@ interactive environment. The slimmer `eonterm` package owns one exact-command
 Session and contains no managed shell or tool bundle. Both expose lifecycle
 control through EONW v5, isolate live runtime generations, and consume the same
 component identities. Direct bundles, Home Manager, background updates, and
-release automation remain outside this slice. X11, Xwayland, and macOS are
-unsupported. The accepted runtime proof uses COSMIC with systemd. Eon targets
+release automation remain outside this slice. The accepted runtime proof uses
+COSMIC with systemd. Apple Silicon macOS is the active Nix-only expansion but
+remains unsupported until its child and full-composition proofs pass. X11,
+Xwayland, and Intel macOS remain unsupported. Eon targets
 native Wayland without requiring a specific init or service manager, but
 non-systemd use remains unproved. Launch requires no cgroup delegation. Orbit
 owns bounded PTY process-group shutdown and direct-child reaping; deliberately
@@ -74,8 +76,8 @@ on its own architecture and keeps value independent of Eon's progress.
 - Nix provides the sole alpha and early-dogfood installation path.
 - Eon runtime code remains independent of Nix concepts and evaluation.
 - Direct bundles wait for sustained dogfood and an explicit graduation decision.
-- Linux on native Wayland is the sole platform target, without a required init
-  or service manager.
+- x86_64 Linux on native Wayland is the only proved target; Apple Silicon macOS
+  is the active Nix-only expansion, without creating another component graph.
 - Eon owns product policy and avoids copying child behavior.
 
 ## Implementation language
@@ -243,7 +245,7 @@ those absent from history. Esc or Ctrl+C cancels. Empty history still offers Tab
 to browse. Arrows move through quick-search results. Startup, new-tab, and
 Alt+Z directory pickers use the same keys.
 
-In the folder browser, arrows or hjkl navigate; Enter uses the **current folder**.
+In the folder browser, arrows or hjkl navigate; Enter uses the **highlighted folder**.
 Tab returns to quick search; switching back resumes at the same browser folder.
 Shift+Z searches Zoxide history and moves the browser without committing the
 tab, so you can jump to a known parent and walk the remaining directories.
@@ -254,7 +256,7 @@ layer first. Files are visible for orientation; the picker does not open, edit,
 or manage them. Browsing does not add Zoxide entries.
 Yazi uses a packaged picker keymap independent of your regular Yazi configuration.
 Each screen keeps its own actions visible at the bottom: quick search shows
-Use directory, Browse folders, and Cancel; Yazi shows Use current folder,
+Use directory, Browse folders, and Cancel; Yazi shows Use highlighted folder,
 Quick search, Shift+Z Jump, Cancel, and F1 Help. Nested jump search shows Jump and
 Back to folders.
 Browser hints hide while a Yazi prompt or overlay has focus.
@@ -578,17 +580,17 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy inputs | 263 |
-| README | 594 |
+| Agent policy inputs | 269 |
+| README | 596 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,672 |
-| Distribution and references | 717 |
+| Architecture and contracts | 1,699 |
+| Distribution and references | 720 |
 | Benchmark report | 317 |
 | Changelog | 300 |
-| Rust source and tests | 14,671 |
+| Rust source and tests | 14,705 |
 | Cargo manifests | 37 |
 | Component manifest | 349 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **19,914** |
+| **Total** | **19,986** |

@@ -62,6 +62,11 @@ channel. Direct distribution starts after sustained dogfood and a separate user
 decision. This sequence keeps installer, archive, signing, and package-matrix
 work outside the product-discovery loop.
 
+The Apple Silicon macOS expansion reuses the same frontier: Orbit proves
+`ORB-C14`, Venus extends `VEN-C16` against that exact revision, and Eon then
+proves `EON-C7` through the canonical component graph. Later frontiers remain
+planning-only while the preceding native proof is open.
+
 ## Ownership rules
 
 Eon may adapt paths, environment, configuration, and process launch at its
@@ -76,10 +81,10 @@ shims require an explicit user decision, a removal condition, and a bead.
 EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
 snapshots, supervisor lifecycle results, structured failures, and bounded
-framing. EONW v4 carries Eon-owned raw tab launch directories, the explicit
-retarget action, one live-tab-bound transient picker endpoint, and its optional
-pending tab's absent pane selection without interpreting Orbit terminal metadata
-or creating a generic popup surface. Workspace and
+framing. EONW v5 carries Eon-owned raw tab launch directories, the popup catalog,
+tab-scoped popup Sessions, explicit retarget and chooser-completion actions, and
+an optional pending tab's absent pane selection without interpreting Orbit
+terminal metadata. Workspace and
 lifecycle results are separate types, so the pinned
 Venus consumer remains source- and wire-compatible with additive lifecycle
 tags it never requests. The running Eon supervisor remains the only live
@@ -232,10 +237,10 @@ artifact requirements activate with direct-distribution work.
 
 Planning can refine contracts, references, and Beads. Runtime work begins after
 the user activates an implementation bead and its upstream proof revisions exist.
-The first Eon slice launches one accepted Eon Desktop and Eon Sessions pair,
+The active Eon slice launches one accepted Eon Desktop and Eon Sessions pair,
 supplies the accepted managed environment, preserves Eon component and native
 shell configuration boundaries, reports component identity through one
-Nix-managed path, and exposes its live workspace through EONW v4. Venus
+Nix-managed path, and exposes its live workspace through EONW v5. Venus
 consumption follows an exact Eon producer proof; the canonical composition graph
 changes only after an exact consumer proof exists. Later slices earn their scope
 through dogfooding. Direct distribution has its own activation gate.

@@ -16,7 +16,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5` with ORBF v2 / ORBS v11 and Venus
-`b7404dae6c59a8e6de6ca9efbf2c907eedf1262b`. Exact source, installed artifact,
+`d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
 
@@ -489,23 +489,32 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Proof:** None.
 - **Open proof:** Requires an approved second distribution channel.
 
-## EON-C7 — Native Wayland without init-system lock-in
+## EON-C7 — Native Linux Wayland and Apple Silicon macOS
 
 - **Status:** Planned
-- **Consumer:** A user launching a supported Eon distribution on Linux.
+- **Consumer:** A user launching a supported Eon distribution on an approved
+  native platform.
 - **Trigger:** Build, install, or launch an approved Eon channel.
-- **Result:** Eon targets native Wayland without requiring a particular init or
-  service manager, and each channel names its proved architectures and launch
+- **Result:** Eon uses native Wayland on x86_64 Linux and the native macOS host
+  on `aarch64-darwin`, without requiring a particular init or service manager.
+  Both consume the same component graph, orchestration path, workspace
+  contracts, and Nix-only alpha channel while platform mechanics remain with
+  their existing owners. Each channel names its proved architectures and launch
   environments.
-- **Important failures:** Systemd-only lifecycle assumptions, X11 fallback, or
-  unproved architecture claims are rejected.
+- **Important failures:** Systemd-only lifecycle assumptions, X11 fallback, a
+  second component graph, hidden child substitution, or an unproved
+  architecture or compile-only runtime claim is rejected.
 - **Owner:** Eon platform and distribution policy; child-owned kernel
   capabilities remain explicit child contracts.
-- **Boundary:** Current alpha is x86_64 Linux native Wayland; X11, Xwayland, and
-  macOS are unsupported.
+- **Boundary:** Current accepted support remains x86_64 Linux native Wayland.
+  Apple Silicon macOS is approved but unsupported until exact Orbit `ORB-C14`,
+  Venus `VEN-C16`, and full-Eon native proofs pass. X11, Xwayland, Intel macOS,
+  signing, notarization, direct bundles, and public macOS distribution remain
+  outside this contract.
 - **Proof:** None.
 - **Open proof:** Installed non-systemd Wayland dogfood is required before a
-  non-systemd support claim.
+  non-systemd support claim. `eon-prove-full-eon-apple-silicon-macos-t8o` owns
+  the native `aarch64-darwin` composition proof after its child proofs.
 
 ## EON-C8 — Durable tab and pane workspace
 
@@ -764,8 +773,8 @@ show the median and observed minimum–maximum, not a confidence interval.
     `c0d044c69318a921f9f9139bcaf2de9afce683d3`
 ## EON-C10 — Typed workspace control
 
-- **Status:** Candidate; the pre-v5 control proof below remains historical until
-  the popup-bearing activation is accepted.
+- **Status:** Proven at Eon `2214a4f592f78437c2f74aff0a1df8d1cc7ee5a4`
+  with exact Venus `d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -857,20 +866,19 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Transition:** The picker-only v4 opcode is unavailable in v5;
   Project uses the ordinary popup invocation. No negotiation or adapter is
   introduced. Fixed-namespace v4 workspaces remain inspectable but are not
-  attachable by the v5 Venus client. Comprehensive composed tool and visual
-  acceptance remains `eon-tool-popups-e13.3`; existing proof qualifications
-  and EON-C11 generation limits remain unchanged.
+  attachable by the v5 Venus client. The EON-C18 popup activation proof records
+  composed tool and visual acceptance; its qualifications and EON-C11 generation
+  limits remain unchanged.
 - **Checks:** Four v5 tests cover exact request bytes, unchanged
   common-action payloads, retired picker-opcode rejection, lifecycle results,
   stale/absent/wrong-tab targets, hidden and inactive popup state, pending and
   popup-only tabs, ownership/geometry failures and the legal frame-size bound.
   All 76 workspace Rust tests, locked check and strict Clippy pass on x86_64
   Linux / Rust 1.96.0. Nix flake checks and both product builds pass.
-  Refreshed Eon/EonTerm profiles match their built artifacts; installed
-  `eon versions` reports EONW v4 with unchanged child pins. The bead records
-  commands, artifact paths and source hashes. This is mechanical protocol and
-  existing-consumer evidence; the activation candidate adds owner and process
-  checks, while comprehensive popup visual acceptance remains pending.
+  At seed publication, refreshed Eon/EonTerm profiles matched their built
+  artifacts and installed `eon versions` reported EONW v4 with unchanged child
+  pins. The EON-C18 activation proof advances the installed composition to v5
+  and supplies the downstream owner, process, tool and visual checks.
 
 ## EON-C11 — Runtime generations and presentation
 
@@ -1168,10 +1176,9 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C18 — Picker-first tab directories
 
-- **Status:** Candidate for the v5 shared popup host. The prior picker input,
-  tab-switching and cancellation proof remains accepted at its historical v4
-  runtime revision below; composed v5 visual acceptance belongs to
-  `eon-tool-popups-e13.3`.
+- **Status:** Proven for the v5 shared popup host at Eon
+  `2214a4f592f78437c2f74aff0a1df8d1cc7ee5a4` with exact Venus
+  `d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`.
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z in an existing tab.
@@ -1190,19 +1197,20 @@ show the median and observed minimum–maximum, not a confidence interval.
     Empty history still shows the Browse action. Arrows move through results.
   - Yazi begins at the inherited tab directory. Arrows/hjkl browse parent and
     child directories; Shift+Z searches history and only moves the browser.
-    Enter uses the current folder; Tab returns to quick search and preserves
+    Enter uses the highlighted folder; Tab returns to quick search and preserves
     the browser directory for the next visit. Esc, q, Q, and Ctrl+C cancel
     from the main folder list. Esc first dismisses a nested prompt, help screen,
     or search. Startup, new-tab and Alt+Z pickers share these keys.
     `g h` reaches home, `g /` root, `g Space` accepts a typed path, and `.` toggles
     hidden entries. The fixed
-    picker keymap excludes file opening and file-management operations.
+    chooser-mode open returns the highlighted path without invoking a file
+    opener; the picker keymap excludes file-management operations.
     Files remain visible for orientation. Browsing does not add Zoxide history.
     Yazi owns directory enumeration and navigation; Eon performs no recursive
     filesystem scan. A vanished or inaccessible final folder fails EON-C17
     validation without mutation.
   - Each selection screen shows its own persistent footer: quick search offers
-    Use directory, Browse folders, and Cancel; Yazi offers Use current folder,
+    Use directory, Browse folders, and Cancel; Yazi offers Use highlighted folder,
     Quick search, Shift+Z Jump, Cancel, and Help; nested jump search offers Jump
     and Back to folders. Browser shortcuts are absent from quick search. Eon's fixed Yazi
     status configuration replaces file metadata with these picker actions.
@@ -1263,6 +1271,17 @@ show the median and observed minimum–maximum, not a confidence interval.
   simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
+- **Highlighted-directory correction (mechanically verified, 2026-09-11):**
+  Working-tree source `/nix/store/zdwl036r2r9gd9knrwfm835mj0ra16lz-eon-source`
+  separates Yazi's chooser result from its browsed CWD. The focused regression
+  failed before implementation and passes with distinct raw non-UTF-8 parent
+  and highlighted paths; all 72 Rust tests, strict Clippy, and the full Nix
+  flake check pass. The refreshed profile resolves to
+  `/nix/store/hij0is9qld30dgwag1hfa03cbzj4jahn-eon-0.1.0`, whose packaged
+  keymap uses `open --hovered`. A background PTY run with its exact pinned Yazi
+  returned `money-ops` through the chooser file while the CWD file retained its
+  parent. Full-Eon dogfood waits for a normal restart; the older live supervisor
+  and its Sessions were preserved.
 - **Popup activation proof (accepted, 2026-09-11):** Source
   `2214a4f592f78437c2f74aff0a1df8d1cc7ee5a4` passes all 72 locked Rust tests,
   strict Clippy, manifest validation and the full Nix flake check against exact
@@ -1273,8 +1292,11 @@ show the median and observed minimum–maximum, not a confidence interval.
   through the installed Venus, preserved all 21 ambient product processes and
   took no desktop focus. Evidence is retained at
   `~/.local/state/eon/proofs/eon-popup-title-spacing-d212ff9-2026-09-11/`.
+  The user accepted the current installed popups in live use on 2026-09-11;
+  `eon versions` reconfirmed EONW v5 and the exact Orbit and Venus revisions
+  above from Eon `/nix/store/4bni992l878fsl8jqgqh61zkfvvdisph-eon-0.1.0`.
   Fractional scale, other compositors, actual blur, AT-SPI and broad user
-  acceptance remain qualified.
+  environments remain qualified.
 - **Tab switching proof (accepted, 2026-09-08):**
   `eon-picker-mode-switching-6bo` verifies the shared startup, new-tab and Alt+Z
   behavior at `f75c910a6a8488bdad3c614544769080261e4560`. Focused red/green

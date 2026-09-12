@@ -19,6 +19,7 @@ use eon_workspace_protocol::v5::{
 use std::{
     env,
     ffi::{OsStr, OsString},
+    fs,
     os::unix::{
         ffi::OsStrExt,
         process::{CommandExt, ExitStatusExt},
@@ -64,6 +65,13 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
     let instance = instance
         .to_str()
         .ok_or_else(|| "directory picker popup identity must be UTF-8".to_string())?;
+    let chooser_file = Path::new(socket)
+        .parent()
+        .ok_or("directory picker socket has no runtime directory")?
+        .join(format!(
+            ".directory-picker-selection-{}",
+            std::process::id()
+        ));
     let mut browse_from = PathBuf::from(".");
     let directory = loop {
         let mut history = Command::new("zoxide")
@@ -120,7 +128,7 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
         match (output.status.code(), fields.as_slice()) {
             // fzf reports status 1 for an expected key when the result list is empty.
             (Some(0 | 1), [b"tab", b""] | [b"tab", _, b""]) => {
-                let output = browse_directory(&browse_from)?;
+                let output = browse_directory(&browse_from, &chooser_file)?;
                 if output.status.code() == Some(130) {
                     return Ok(0);
                 }
@@ -161,12 +169,23 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
     }
 }
 
-fn browse_directory(directory: &Path) -> Result<Output, String> {
+fn browse_directory(directory: &Path, chooser_file: &Path) -> Result<Output, String> {
     let config = env::var_os("EON_DIRECTORY_PICKER_CONFIG")
         .ok_or("the installed Eon package has no folder browser configuration")?;
-    let output = Command::new(managed_environment::configured_program("EON_YAZI", "yazi"))
-        // Yazi draws through its terminal handle; stdout carries only the raw CWD.
-        .args(["--cwd-file", "/dev/stdout", "--"])
+    match fs::remove_file(chooser_file) {
+        Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+            return Err(format!(
+                "cannot reset folder browser selection {}: {error}",
+                chooser_file.display()
+            ));
+        }
+        _ => {}
+    }
+    let mut output = Command::new(managed_environment::configured_program("EON_YAZI", "yazi"))
+        // Yazi draws through its terminal handle; stdout carries its raw CWD.
+        .args(["--cwd-file", "/dev/stdout", "--chooser-file"])
+        .arg(chooser_file)
+        .arg("--")
         .arg(directory)
         // Yazi prefers PWD even when it disagrees with the Session's actual CWD.
         .env_remove("PWD")
@@ -190,6 +209,21 @@ fn browse_directory(directory: &Path) -> Result<Output, String> {
             "packaged folder browser exited with status {}",
             output.status
         ));
+    }
+    if output.status.success() {
+        // In chooser mode, native Yazi `open` writes the hovered path separately.
+        output.stdout = fs::read(chooser_file).map_err(|error| {
+            format!(
+                "cannot read folder browser selection {}: {error}",
+                chooser_file.display()
+            )
+        })?;
+        fs::remove_file(chooser_file).map_err(|error| {
+            format!(
+                "cannot clear folder browser selection {}: {error}",
+                chooser_file.display()
+            )
+        })?;
     }
     if output.stdout.is_empty() {
         return Err("folder browser returned no directory".into());

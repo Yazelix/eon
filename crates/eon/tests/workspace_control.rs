@@ -690,7 +690,7 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
     command.env("EON_TEST_BROWSER_RETURNED", &returned);
     executable(
         &root.join("yazi"),
-        "#!/bin/sh\nif [ ! -e \"$EON_TEST_BROWSER_RETURNED\" ]; then\n  touch \"$EON_TEST_BROWSER_RETURNED\"\n  printf '/browsed-\\377\\n'\n  exit 10\nfi\n[ \"$4.\" = \"$(printf '/browsed-\\377\\n.')\" ] || exit 2\nprintf '/untracked-\\377\\n'\n",
+        "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --cwd-file) shift 2 ;;\n    --chooser-file) chooser_file=$2; shift 2 ;;\n    --) shift; break ;;\n  esac\ndone\nif [ ! -e \"$EON_TEST_BROWSER_RETURNED\" ]; then\n  touch \"$EON_TEST_BROWSER_RETURNED\"\n  printf '/browsed-\\377\\n'\n  exit 10\nfi\n[ \"$1.\" = \"$(printf '/browsed-\\377\\n.')\" ] || exit 2\nprintf '/parent-\\377\\n'\nprintf '/selected-\\377\\n' > \"$chooser_file\"\n",
     );
     let mut child = command.spawn().unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -716,7 +716,7 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
                 tab: "t1".into(),
                 instance: "u1".into(),
             },
-            directory: b"/untracked-\xff\n".to_vec(),
+            directory: b"/selected-\xff\n".to_vec(),
         }
     );
     let response = encode_response(&Response::Snapshot(Snapshot {

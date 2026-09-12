@@ -6,10 +6,11 @@ Eon alpha and early dogfood use Nix as the sole installation and composition
 channel. This phase spends project time on Eon Sessions, Eon Desktop, and Eon
 contracts instead of portable archives and installer maintenance.
 
-Every Eon channel targets Linux on native Wayland. The current alpha is
-x86_64-only; another Linux architecture needs its own scope and proof. X11,
-Xwayland, and macOS are unsupported and create no release or compatibility
-work.
+The current accepted channel targets x86_64 Linux on native Wayland. Apple
+Silicon macOS is the only approved expansion and remains within the same
+Nix-only alpha channel until native proof succeeds. Another Linux architecture,
+X11, Xwayland, Intel macOS, signing, notarization, direct bundles, and public
+macOS distribution need separate scope and proof.
 
 No channel requires systemd or another specific init or service manager. The
 accepted runtime proof uses COSMIC with systemd, so non-systemd native Wayland
@@ -90,15 +91,17 @@ revisions, constraints, and rejections in the owning Bead.
 - **Boundary:** Comparison evidence only. A local run does not prove hosted parity, signing
   isolation, or provenance.
 
-### Product or desktop work could widen the native platform boundary.
+### Linux product or desktop work could widen the Wayland ownership boundary.
 
 - **Read first:** [foot at
   `85655c74a4de`](https://codeberg.org/dnkl/foot/src/commit/85655c74a4ded119392ea8b632626c3920042807)
 - **Read additionally only if:** Follow Eon's [central Monstar
   route](REFERENCES.md#terminal-product-comparisons) only when direct Wayland ownership is
   in question.
-- **Boundary:** Preserve a maintained Wayland-only product and headless Wayland proof. Keep
-  presentation in Venus; reject X11, Xwayland, macOS, and an Eon-owned raw-Wayland rewrite.
+- **Boundary:** Preserve the accepted Linux Wayland proof and keep presentation
+  in Venus; reject X11, Xwayland, and an Eon-owned raw-Wayland rewrite. The
+  separately approved Apple Silicon proof uses Venus's native-host boundary and
+  does not derive its shape from this Linux reference.
 
 ### Distribution graduation needs a compact Linux archive and package-publishing comparison.
 

@@ -539,7 +539,7 @@
         cat > "$out/keymap.toml" <<'EOF'
         [mgr]
         keymap = [
-          { on = "<Enter>", run = "quit", desc = "Use this folder for the Eon tab" },
+          { on = "<Enter>", run = "open --hovered", desc = "Use the highlighted folder for the Eon tab" },
           { on = "q", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
           { on = "Q", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
           { on = "<C-c>", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
@@ -583,7 +583,7 @@
         end
         Status:children_add(function()
           return tostring(cx.layer) == "mgr"
-            and " Enter Use current folder · Tab Quick search · Shift+Z Jump · Esc/Ctrl+C Cancel · F1 Help"
+            and " Enter Use highlighted folder · Tab Quick search · Shift+Z Jump · Esc/Ctrl+C Cancel · F1 Help"
             or ""
         end, 1000, Status.LEFT)
         EOF

@@ -80,7 +80,7 @@ installation, and proven contract changes.
   directory-history query is still running; stop and reap the query without
   waiting for its remaining results.
 - Browse tab directories outside Zoxide history with Yazi. Shift+Z jumps to a
-  known folder without committing; Enter uses the current folder.
+  known folder without committing; Enter uses the highlighted folder.
 
 - Keep other tabs usable while a directory picker is open: create and focus
   panes, reorder panes or tabs, update launch directories, and close unrelated
