@@ -690,7 +690,22 @@ fn directory_picker_browse_preserves_raw_directory_and_cancellation() {
     command.env("EON_TEST_BROWSER_RETURNED", &returned);
     executable(
         &root.join("yazi"),
-        "#!/bin/sh\nwhile [ \"$#\" -gt 0 ]; do\n  case \"$1\" in\n    --cwd-file) shift 2 ;;\n    --chooser-file) chooser_file=$2; shift 2 ;;\n    --) shift; break ;;\n  esac\ndone\nif [ ! -e \"$EON_TEST_BROWSER_RETURNED\" ]; then\n  touch \"$EON_TEST_BROWSER_RETURNED\"\n  printf '/browsed-\\377\\n'\n  exit 10\nfi\n[ \"$1.\" = \"$(printf '/browsed-\\377\\n.')\" ] || exit 2\nprintf '/parent-\\377\\n'\nprintf '/selected-\\377\\n' > \"$chooser_file\"\n",
+        r#"#!/bin/sh
+[ "$1" = --cwd-file ] || exit 2
+[ "$2" = /dev/stdout ] || exit 2
+[ "$3" = --chooser-file ] || exit 2
+[ "$5" = -- ] || exit 2
+
+if [ ! -e "$EON_TEST_BROWSER_RETURNED" ]; then
+  touch "$EON_TEST_BROWSER_RETURNED"
+  printf '/browsed-\377\n'
+  exit 10
+fi
+
+[ "$6." = "$(printf '/browsed-\377\n.')" ] || exit 2
+printf '/parent-\377\n'
+printf '/selected-\377\n' > "$4"
+"#,
     );
     let mut child = command.spawn().unwrap();
     let deadline = Instant::now() + Duration::from_secs(5);
