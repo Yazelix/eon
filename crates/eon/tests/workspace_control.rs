@@ -65,7 +65,12 @@ fn executable(path: &Path, source: &str) {
 fn quick_picker_executable(path: &Path) {
     executable(
         path,
-        "#!/bin/sh\n[ -z \"$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE\" ] || exit 99\nselection=$(cat)\n[ \"$selection\" != cancel ] || exit 130\nprintf '\\0%s\\0' \"$selection\"\n",
+        r#"#!/bin/sh
+[ -z "$FZF_DEFAULT_OPTS$FZF_DEFAULT_OPTS_FILE" ] || exit 99
+selection=$(cat)
+[ "$selection" != cancel ] || exit 130
+printf '\0%s\0' "$selection"
+"#,
     );
 }
 
@@ -938,7 +943,11 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     managed_orbit_executable(&orbit);
     executable(
         &venus,
-        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\nprintf '%s' \"$*\" > \"$EON_TEST_VENUS_ARGS\"\ncat >/dev/null\n",
+        r#"#!/bin/sh
+printf '%s' "$$" > "$EON_TEST_VENUS_PID"
+printf '%s' "$*" > "$EON_TEST_VENUS_ARGS"
+cat >/dev/null
+"#,
     );
     executable(
         &session_bin.join("zoxide"),
@@ -1557,7 +1566,18 @@ fn eonterm_reopens_without_workspace_or_a_second_session() {
     managed_orbit_executable(&orbit);
     executable(
         &venus,
-        "#!/bin/sh\ncase \"$*\" in *EonMissingProofFont*) exit 1;; esac\nif test ! -e \"$EON_TEST_VENUS_LOG\"; then test ! -e \"$EON_TEST_ORBIT_LOG\" || exit 97; fi\nprintf ready-v1\nprintf '%s|%s|%s\\n' \"$$\" \"$EON_VENUS_PRESENTATION_CONTROL\" \"$*\" >> \"$EON_TEST_VENUS_LOG\"\ndd bs=8 count=1 status=none >> \"$EON_TEST_PRESENTATION_LOG\"\ncat >/dev/null\n",
+        r#"#!/bin/sh
+case "$*" in
+  *EonMissingProofFont*) exit 1 ;;
+esac
+if test ! -e "$EON_TEST_VENUS_LOG"; then
+  test ! -e "$EON_TEST_ORBIT_LOG" || exit 97
+fi
+printf ready-v1
+printf '%s|%s|%s\n' "$$" "$EON_VENUS_PRESENTATION_CONTROL" "$*" >> "$EON_TEST_VENUS_LOG"
+dd bs=8 count=1 status=none >> "$EON_TEST_PRESENTATION_LOG"
+cat >/dev/null
+"#,
     );
     executable(
         &command,

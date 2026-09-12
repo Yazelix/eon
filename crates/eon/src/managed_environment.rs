@@ -889,7 +889,23 @@ mod tests {
 
         fs::write(
             root.join("config.toml"),
-            "[popup]\nside_margin = 12\nvertical_margin = 0\n\n[popups.git]\nenabled = false\n\n[popups.agent]\ncommand = [\"opencode\", \"--continue\"]\nkeybinding = \"Super+A\"\n\n[popups.files]\ncommand = [\"eon-yazi\"]\nkeybinding = \"Alt+Shift+F\"\nlabel = \"Files\"\nkeep_alive = false\n",
+            r#"[popup]
+side_margin = 12
+vertical_margin = 0
+
+[popups.git]
+enabled = false
+
+[popups.agent]
+command = ["opencode", "--continue"]
+keybinding = "Super+A"
+
+[popups.files]
+command = ["eon-yazi"]
+keybinding = "Alt+Shift+F"
+label = "Files"
+keep_alive = false
+"#,
         )
         .unwrap();
         let configured = popup_catalog(&root).unwrap();
