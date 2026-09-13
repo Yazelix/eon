@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Add the native Shortcuts dialog on Alt+/. It shows Venus's fixed Eon bindings
+  and the current enabled popup catalog, scrolls without changing workspace or
+  Session state, and closes with Escape or Alt+/. Alt+1 through Alt+9 select tab
+  positions 1 through 9 and Alt+0 selects position 10. Popup configuration
+  reserves these bindings. Hyperlinks retain only Ctrl+click to open and
+  Ctrl+Shift+C to copy their hovered target.
+
 - Activate EONW v5 and tab-scoped popup Sessions with the accepted Venus
   consumer. Alt+Z uses the shared host for Project, Alt+Shift+J opens Git, and
   Alt+Shift+L selects an installed Agent. Same-directory reopen preserves tool
@@ -55,14 +62,6 @@ installation, and proven contract changes.
   (`9157f7fbed0318d94a0697c01a23de2bed86946a`). Eon and EonTerm retain their
   current presentation defaults; persistent typography configuration remains a
   separate product slice.
-
-- Keep unidentified native keys inside hyperlink inspection; captured repeats
-  and releases remain contained after Escape.
-
-- Inspect explicit terminal hyperlinks with Ctrl+Shift+O, open HTTP/HTTPS
-  targets with Enter or Ctrl+Shift+click, and copy targets with Ctrl+Shift+C.
-  Preserve host XDG desktop preferences when launching Venus so native GIO
-  uses the configured handler; keep product configuration in `EON_CONFIG_HOME`.
 
 - Use Nova’s Alt+Shift+T for new tabs and Alt+Shift+W for closing the active
   non-final tab. Ctrl+T and Ctrl+Shift+W remain available to terminal programs.

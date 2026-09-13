@@ -16,7 +16,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5` with ORBF v2 / ORBS v11 and Venus
-`d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`. Exact source, installed artifact,
+`2f05a408e499117c1ddb57f99255dcdb4a236bdf`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
 
@@ -281,7 +281,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   fallback, IME and accessibility evidence stays in VEN-C19. Earlier partial
   fractional-scale, broader compositor and non-systemd claims remain qualified.
 
-## Hyperlink inspection input correction
+## Historical hyperlink inspection input correction
 
 - **Accepted source:** `07867f99d176012a9d34a61aa37b5de9ce0888af`, selecting
   Venus `cf3a9169f2cd95d42c689134a52d51d9147ff37c` for `VEN-C2`/`VEN-C5`.
@@ -300,7 +300,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   processes were preserved. Earlier distinct hyperlink and partial proofs below
   retain their exact revisions and limits.
 
-## Native hyperlink composition acceptance
+## Historical native hyperlink composition acceptance
 
 - **Accepted source:** `be9d0e37c7d0029d6832ff609082faa885280762`, consuming
   Orbit `91999d79546422b49bdbc124166a65859d0bd872` and Venus
@@ -1432,6 +1432,56 @@ show the median and observed minimum–maximum, not a confidence interval.
     stopped both through the durable-only generation result. The user accepted
     exact-current native Alt+H/L traversal with the picker retained at source
     `9af359e964e6cb1fc53548d6779456c11343c7e1` and the profile above.
+
+## EON-C20 — Discoverable native shortcuts
+
+- **Status:** Proven
+- **Consumer:** One installed full-Eon user on native Linux Wayland.
+- **Trigger:** The user presses physical Alt+Slash from the Eon workspace.
+- **Result:** The exact accepted Venus client toggles one native, read-only
+  shortcut viewer containing its fixed Eon-surface bindings and the current
+  enabled popup catalog supplied through EONW v5. Opening, refreshing,
+  scrolling, resizing, and closing the viewer change no workspace or Orbit
+  Session state.
+- **Important failures:** Eon rejects configured popup shortcuts that collide
+  with Alt+Slash or positional Alt+0 through Alt+9 before workspace mutation.
+  Invalid or stale component identity fails before profile activation. Profile
+  refresh preserves running supervisors and Sessions; they retain their older
+  client until a normal restart.
+- **Owner:** Eon owns exact component selection, popup collision policy,
+  configuration, profile delivery, and installed acceptance. Venus owns viewer
+  state, input, rendering, focus, and accessibility. Orbit remains unchanged.
+- **Consumes:** Venus VEN-C20 at accepted source
+  `2f05a408e499117c1ddb57f99255dcdb4a236bdf`, its current two-action VEN-C5
+  proof `3730201d6dd27e15fdcd1a8b0662aa476a587eb6`, EONW v5 at source
+  `0cc8f477298681ae3945903e8fdb5852d487c5ab`, and Orbit
+  `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`.
+- **Boundary:** No Eon-rendered viewer, second shortcut catalog, EONW change,
+  Orbit update, child-application bindings, rebinding UI, command palette,
+  tutorial, telemetry, momentary mode, dependency, or platform expansion.
+- **Proof:** Installed working-tree proof with the corrected VEN-C5 graph
+  identity, owned by
+  `eon-deliver-native-shortcut-viewer-rif` over Eon baseline
+  `7b69fb250723fab813446315396f2bf5b04466de`.
+  - **Environment:** x86_64 Linux, private Sway 1.12 headless/pixman and Mesa
+    26.1.2 lavapipe at scale 1; Eon package/profile
+    `/nix/store/c4cgyhpza8417gpll3qqx2pyg767gr72-eon-0.1.0`, Venus
+    `/nix/store/zjmfc4azyw6vlpky11x0sw7a3f3d10h6-yazelix-venus-0.1.0`,
+    unchanged Orbit `/nix/store/1kx2h2lm6mxrsgkr0hr33906my0xic0k-yazelix-orbit-0.1.0`,
+    EONW v5, generation `g1-584db38a02d9c93b630a6efe99a0802f`.
+  - **Evidence:** Focused red/green collision proof, all 72 locked Rust tests,
+    strict Clippy, manifest validation, all four flake checks, and both package
+    builds pass. Installed native Alt+/ opens from pending Project, terminal,
+    chrome, custom popup, rebound Agent, and pending-tab focus; exact enabled,
+    disabled, rebound, and custom rows, scroll/resize, both dismissal paths,
+    focus restoration, input/workspace non-leakage, and AT-SPI projection pass.
+    All eight pre-existing Eon/Orbit/Venus PID/start identities survive the
+    profile refresh and private run. Evidence is retained under
+    `~/.local/state/eon/proofs/eon-deliver-native-shortcut-viewer-rif-2026-09-13/`.
+  - **Limits:** Existing live supervisors retain their original client until a
+    normal restart. Child proof owns maximum-catalog and live-refresh coverage.
+    No EonTerm interaction, fractional-scale, broader compositor, screen-reader
+    workflow, non-systemd, macOS, or direct-distribution proof is added.
 
 ## Rules
 

@@ -206,11 +206,16 @@ Nova's marker for the exact home directory. Unset or empty `HOME` leaves paths
 absolute. Overlong labels preserve their rightmost components.
 New current-generation full Eon windows omit the redundant native title bar;
 the selected terminal retains compositor title semantics, while EonTerm keeps
-native decorations. Alt+H/L traverses tabs,
+native decorations. Alt+1 through Alt+9 select tab positions 1 through 9, and
+Alt+0 selects position 10; missing positions do nothing. Alt+H/L traverses tabs,
 Alt+K/J traverses panes, Ctrl+Alt+H/L moves the active tab, Ctrl+Alt+K/J moves
 the selected pane, Alt+Shift+W closes the active non-final tab, Alt+M creates a
 pane, Alt+Shift+T opens a new tab's directory picker, Alt+Z opens the active
 tab's Project popup, Alt+Shift+J opens Git, and Alt+Shift+L opens Agent.
+Alt+/ toggles a native Shortcuts dialog containing these Eon bindings and the
+current enabled popup entries. Wheel, Up/Down, Page Up/Down, Home, and End
+scroll it; Escape or Alt+/ closes it. Child-application bindings remain in
+their applications.
 External workspace changes appear
 within one second because Eon Desktop re-inspects EONW v5 every 250 ms; the
 protocol adds no event stream. When a shell exits, Eon removes its pane, selects
@@ -303,7 +308,8 @@ Commands are direct argv arrays; only Agent accepts `"auto"`. Git defaults to
 `["eon-lazygit"]` on Alt+Shift+J. Project remains required on Alt+Z and keeps
 its Eon-owned chooser command and transient lifetime. `enabled = false`
 disables Git, Agent, or a custom entry. Keybindings use modified physical keys
-and must not collide with another popup or Eon's fixed workspace shortcuts.
+and must not collide with another popup or Eon's fixed workspace shortcuts,
+including `Alt+Slash` (shown as Alt+/), Alt+1 through Alt+9, and Alt+0.
 Bare executables resolve through the Session PATH; relative executable paths
 resolve from that popup's tab directory.
 Margins are finite logical pixels from 0 through 128 and default to 8 on each
@@ -520,10 +526,10 @@ changing them.
 ## Hyperlinks
 
 Explicit OSC 8 hyperlinks are available in Eon and EonTerm. Hover previews the
-actual target; Ctrl+Shift+left click opens it. Ctrl+Shift+O enters inspection:
-Tab/Shift+Tab chooses a link, Left/Right pages its target, Enter opens,
-Ctrl+Shift+C copies, and Escape returns to typing. Ordinary URL-looking text
-and terminal mouse/selection behavior retain their existing meaning.
+actual target; Ctrl+left click opens it. Ctrl+Shift+C copies the hovered target
+unless the terminal has selected text, in which case it copies that selection.
+Ordinary URL-looking text and terminal mouse/selection behavior retain their
+existing meaning.
 
 Opening accepts ASCII HTTP/HTTPS targets up to 4096 bytes, without credentials,
 and requires the desktop host's `gio` command and registered handler. Copy also
@@ -581,16 +587,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 596 |
+| README | 602 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,699 |
+| Architecture and contracts | 1,749 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 300 |
-| Rust source and tests | 14,756 |
+| Changelog | 299 |
+| Rust source and tests | 14,814 |
 | Cargo manifests | 37 |
-| Component manifest | 349 |
+| Component manifest | 351 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **20,037** |
+| **Total** | **20,152** |

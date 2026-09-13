@@ -481,10 +481,29 @@ fn validate_popup_entries(entries: &[PopupDefinition]) -> Result<(), String> {
 
 fn workspace_shortcut(shortcut: &Shortcut) -> bool {
     let key = shortcut.key.as_str();
-    (shortcut.modifiers == ALT && matches!(key, "KeyH" | "KeyJ" | "KeyK" | "KeyL" | "KeyM"))
+    (shortcut.modifiers == ALT
+        && matches!(
+            key,
+            "KeyH"
+                | "KeyJ"
+                | "KeyK"
+                | "KeyL"
+                | "KeyM"
+                | "Digit0"
+                | "Digit1"
+                | "Digit2"
+                | "Digit3"
+                | "Digit4"
+                | "Digit5"
+                | "Digit6"
+                | "Digit7"
+                | "Digit8"
+                | "Digit9"
+                | "Slash"
+        ))
         || (shortcut.modifiers == (ALT | SHIFT) && matches!(key, "KeyT" | "KeyW"))
         || (shortcut.modifiers == (CTRL | ALT) && matches!(key, "KeyH" | "KeyJ" | "KeyK" | "KeyL"))
-        || (shortcut.modifiers == (CTRL | SHIFT) && matches!(key, "KeyC" | "KeyO" | "KeyV"))
+        || (shortcut.modifiers == (CTRL | SHIFT) && matches!(key, "KeyC" | "KeyV"))
 }
 
 pub(crate) fn prepare_popup_command(
@@ -931,6 +950,45 @@ keep_alive = false
         )
         .unwrap();
         assert_eq!(popup_catalog(&root).unwrap().entries.len(), 3);
+
+        for keybinding in [
+            "Alt+Slash",
+            "Alt+0",
+            "Alt+1",
+            "Alt+2",
+            "Alt+3",
+            "Alt+4",
+            "Alt+5",
+            "Alt+6",
+            "Alt+7",
+            "Alt+8",
+            "Alt+9",
+        ] {
+            fs::write(
+                root.join("config.toml"),
+                format!("[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"{keybinding}\"\n"),
+            )
+            .unwrap();
+            assert!(
+                popup_catalog(&root)
+                    .unwrap_err()
+                    .contains("conflicts with an Eon workspace shortcut"),
+                "{keybinding} was not reserved"
+            );
+        }
+
+        fs::write(
+            root.join("config.toml"),
+            "[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"Ctrl+Shift+O\"\n",
+        )
+        .unwrap();
+        assert!(
+            popup_catalog(&root)
+                .unwrap()
+                .entries
+                .iter()
+                .any(|entry| entry.id == "extra")
+        );
 
         for (source, expected) in [
             (

@@ -37,7 +37,8 @@
       { "component": "venus", "contract": "VEN-C13" },
       { "component": "venus", "contract": "VEN-C14" },
       { "component": "venus", "contract": "VEN-C15" },
-      { "component": "venus", "contract": "VEN-C18" }
+      { "component": "venus", "contract": "VEN-C18" },
+      { "component": "venus", "contract": "VEN-C20" }
     ],
     "required_interfaces": [
       { "component": "orbit", "interface": "ORBF", "version": 2 },
@@ -84,7 +85,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86",
+      "revision": "2f05a408e499117c1ddb57f99255dcdb4a236bdf",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -98,7 +99,7 @@
         { "id": "VEN-C2", "proof": "ec80e36625dec73544c0cb64becf4b135c932a63" },
         { "id": "VEN-C3", "proof": "a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8" },
         { "id": "VEN-C4", "proof": "b7404dae6c59a8e6de6ca9efbf2c907eedf1262b" },
-        { "id": "VEN-C5", "proof": "cf3a9169f2cd95d42c689134a52d51d9147ff37c" },
+        { "id": "VEN-C5", "proof": "3730201d6dd27e15fdcd1a8b0662aa476a587eb6" },
         { "id": "VEN-C7", "proof": "74d22276e9039dc3ee6151d69b9283114ab02ea1" },
         { "id": "VEN-C8", "proof": "74d22276e9039dc3ee6151d69b9283114ab02ea1" },
         { "id": "VEN-C9", "proof": "90988f6ebcde68338e202a9c637c59398aafe93d" },
@@ -109,7 +110,8 @@
         { "id": "VEN-C15", "proof": "7fc7e4ba97aaf48b586002934a580ef2d1c31694" },
         { "id": "VEN-C17", "proof": "ab24961bd6b2f9403736e52ebbac8cc266488a41" },
         { "id": "VEN-C18", "proof": "d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86" },
-        { "id": "VEN-C19", "proof": "bc5a2bd3b2363abdea69c4cd89953b612bc970e8" }
+        { "id": "VEN-C19", "proof": "bc5a2bd3b2363abdea69c4cd89953b612bc970e8" },
+        { "id": "VEN-C20", "proof": "2f05a408e499117c1ddb57f99255dcdb4a236bdf" }
       ],
       "interfaces": [],
       "requires": [
