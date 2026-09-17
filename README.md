@@ -4,97 +4,40 @@
 
 ![Glowing violet three-fold Eon loop](assets/eon.png)
 
-This repository ships **Eon**, the full managed product, and **EonTerm**, its
-reusable terminal product. Both use Eon Sessions and Eon Desktop through one
-canonical component graph without reimplementing either child project.
+Eon is a durable terminal workspace for the native Linux desktop. Tabs and
+panes run in persistent Sessions: closing the window detaches the desktop while
+the commands keep running, and opening Eon again reconnects to them.
+
+The package also includes a pinned interactive environment with Nushell, Bash,
+Zsh, Fish, Helix, Yazi, LazyGit, Starship, Zoxide, fzf, Atuin, and Carapace.
+`eonterm` provides the same terminal and Session lifecycle for one exact command
+without Eon's workspace or managed environment.
 
 ## Project status
 
-This repository ships the first Nix-only Eon alpha for x86_64 Linux on native
-Wayland. One Rust supervisor launches the accepted Eon Sessions and Eon Desktop
-revisions. The `eon` package owns a live workspace and supplies one pinned
-interactive environment. The slimmer `eonterm` package owns one exact-command
-Session and contains no managed shell or tool bundle. Both expose lifecycle
-control through EONW v5, isolate live runtime generations, and consume the same
-component identities. Direct bundles, Home Manager, background updates, and
-release automation remain outside this slice. The accepted runtime proof uses
-COSMIC with systemd. Apple Silicon macOS is the active Nix-only expansion but
-remains unsupported until its child and full-composition proofs pass. X11,
-Xwayland, and Intel macOS remain unsupported. Eon targets
-native Wayland without requiring a specific init or service manager, but
-non-systemd use remains unproved. Launch requires no cgroup delegation. Orbit
-owns bounded PTY process-group shutdown and direct-child reaping; deliberately
-detached processes may survive an explicit Session stop.
+Eon is a Nix-only alpha. The supported product target is **x86_64 Linux on
+native Wayland**.
 
-EONW v5 carries Eon's tab-scoped tool catalog and popup Sessions to the exact
-accepted Venus consumer. Eon owns commands, launch directories, process
-lifetime, and configuration; Venus owns projection and input.
+Before installing, you need:
 
-## Naming model
+- Nix with flakes enabled;
+- a native Wayland session; and
+- GitHub credentials that can read this repository's private Eon Sessions and
+  Eon Desktop inputs.
 
-**Eon** is the full public product and `eon` is its command. **EonTerm** is the
-reusable terminal product and `eonterm` is its command. **Sessions** is the
-user-facing name for durable terminal work. Venus and Orbit identify the
-underlying engineering subsystems, not additional products.
+The accepted runtime proof uses COSMIC with systemd, and installed checks also
+exercise isolated Sway. Eon does not require systemd or cgroup delegation, but
+non-systemd use remains unproved. The current graphics proof uses Mesa on Intel
+hardware; proprietary NVIDIA remains unproved.
 
-| Repository | Product-facing role | Underlying owner |
-|---|---|---|
-| [`Yazelix/eon`](https://github.com/Yazelix/eon) | Eon orchestration, composition, updates, and distribution | Eon orchestrator |
-| [`Yazelix/eon-desktop`](https://github.com/Yazelix/eon-desktop) | Eon for desktop | Venus client subsystem |
-| [`Yazelix/eon-sessions`](https://github.com/Yazelix/eon-sessions) | Sessions | Orbit session subsystem |
+Apple Silicon macOS is the active expansion but remains unsupported until its
+native proofs pass. X11, Xwayland, ARM Linux, Intel macOS, direct bundles, Home
+Manager installation, background updates, and release automation are also
+unsupported. Restarting the machine ends live Session process state.
 
-If more clients are implemented, their repositories are `eon-mobile` and
-`eon-web`, while public documentation calls them **Eon for mobile** and **Eon
-for the web**. Those names create no implementation scope by themselves.
+## Install and start
 
-## Target composition
-
-```text
-Eon / product orchestrator
-        +---- Eon Desktop / Venus client subsystem
-        +---- Eon Sessions / Orbit session subsystem
-        +---- Nushell + Bash + Zsh + Fish
-        |       +---- Starship + Zoxide + fzf + Atuin + Carapace
-        +---- Helix
-        +---- Yazi
-        +---- LazyGit
-        +---- Ratconfig
-```
-
-Each child repository keeps one clear responsibility. Eon selects compatible
-versions, supplies product configuration, launches the composition, and ships
-the Eon and EonTerm packages.
-
-Yazelix Nova remains a separate product. Nova provides a compact Yazelix runtime
-on its own architecture and keeps value independent of Eon's progress.
-
-## Design commitments
-
-- Eon Sessions, Eon Desktop, and Eon advance through one active implementation frontier.
-- Indexed contracts define cross-repository behavior.
-- Exact child revisions and explicit component inputs form the composition boundary.
-- Nix provides the sole alpha and early-dogfood installation path.
-- Eon runtime code remains independent of Nix concepts and evaluation.
-- Direct bundles wait for sustained dogfood and an explicit graduation decision.
-- x86_64 Linux on native Wayland is the only proved target; Apple Silicon macOS
-  is the active Nix-only expansion, without creating another component graph.
-- Eon owns product policy and avoids copying child behavior.
-
-## Implementation language
-
-Rust owns durable Eon behavior and repository tooling so schema, validation,
-tests, and later runtime code share one compiler and maintenance path. Nix owns
-package resolution and composition, and shell is reserved for irreducible
-process glue. Python remains suitable for disposable investigation, not checked-
-in product policy. The directory picker uses a small Lua status hook inside
-Yazi's existing runtime for its shortcut footer; it adds no separate toolchain.
-Other durable language additions require an explicit subsystem decision.
-
-## Install and run
-
-The alpha builds from the locked flake and its exact private Eon child inputs.
-Clone the repository with GitHub credentials that can read those inputs, then
-install the package into your Nix profile:
+From a clone whose credentials can fetch the private child inputs:
 
 ```sh
 nix profile add .#default
@@ -102,356 +45,101 @@ eon versions
 eon
 ```
 
-Install only the reusable terminal product when an exact command needs one
-native terminal surface without Eon's managed environment:
+The first launch opens a directory picker. Press Enter to use a Zoxide history
+match, or Tab to browse folders with Yazi. In the browser, Enter chooses the
+highlighted folder and F1 shows its keys. Cancelling the first picker starts in
+the directory where Eon was launched.
 
-```sh
-nix profile add .#eonterm
-eonterm -- COMMAND...
-```
-
-EonTerm keeps its own runtime generations. List them with
-`eonterm generations`, reopen one with `eonterm attach [GENERATION]`, and stop
-one through its supervisor with `eonterm stop GENERATION`.
-
-The full Eon package installs one `Open Eon` desktop action, bound to its exact
-packaged executable, and a transparent violet three-fold loop icon at native
-launcher sizes. Running surfaces keep their terminal-authored titles,
-distinguishing the launcher action from live Eon state.
-Opening Eon reconnects only to the exact installed runtime generation or starts
-that generation in its own private namespace. If that generation's supervisor
-was lost on the same boot, Eon validates and adopts its exact surviving Orbit
-runs before publishing a replacement workspace or Venus surface. Older live
-generations and their Sessions remain running. An exact retained record claim
-separates pre-Ready local-child rollback from post-Ready Orbit management;
-rejected Ready identities are stopped only through that management owner.
-Concurrent starts converge on one supervisor and one complete Session set;
-every attach-capable peer presents that owner. If a launch overlaps clean exit
-of the last Session, it waits for the retiring owner and starts one fresh
-Session. Eon validates Orbit's Ready identity and acquires its management lease
-within the existing startup deadline. Orbit owns PTY startup and bounded
-shutdown without a cgroup or service-manager requirement. Its Nix closure
-supplies Mesa's open-source Vulkan drivers; the current graphics proof uses
-Intel hardware, while proprietary NVIDIA remains unproved. Run Eon from a
-terminal when you need foreground lifecycle control.
-Closing the Eon Desktop window detaches the client while Sessions and its PTY
-keep running. Ask the same supervisor to present them again with:
+A Session starts after the directory is chosen. Closing the Eon window detaches
+the desktop without stopping its Sessions or PTY commands. Reconnect with:
 
 ```sh
 eon attach
 ```
 
-`eon generations` lists the current, previous, and fixed-namespace legacy
-workspaces after validating their live supervisors. `eon attach GENERATION`
-selects one compatible generation without fallback. `eon stop GENERATION`
-shows its live Session identities and asks for confirmation; `--json` is the
-explicit non-interactive form. Restarting the machine preserves no process
-state beyond the accepted child contracts.
+Press **Alt+/** inside Eon to open the native Shortcuts dialog. It includes the
+fixed workspace bindings and every enabled popup binding. Escape or Alt+/ closes
+it.
 
-EonTerm gives one command the terminal key stream without Eon's tab and pane
-shortcuts:
+To inspect or stop work explicitly:
 
 ```sh
-eonterm -- COMMAND...
-eonterm --no-decorations -- COMMAND...
-eonterm --application-id eonova -- COMMAND...
+eon generations
+eon stop GENERATION
 ```
 
-This mode hosts exactly one Orbit Session, gives Venus only the Orbit endpoint,
-and keeps Eon's generation, presentation, stop, child-exit, and cleanup lifecycle.
-After same-boot supervisor loss, a replacement EonTerm adopts that exact live
-Session rather than launching another one. If both the supervisor and recorded
-Orbit process die unexpectedly, the next launch removes only their exact owned
-runtime residue and starts a fresh Session.
-EonTerm uses native window decorations unless `--no-decorations` is selected.
-It supplies the distinct native application identity `eonterm`; an approved
-composition may select one bounded desktop identity with `--application-id`.
-Full Eon remains `eon`, and terminal-authored titles remain independent.
-The supervisor preserves its original choice when it replaces a detached
-surface. A repeated invocation preserves the active surface and asks Venus to
-request native presentation. After that surface closes, another invocation asks
-the supervisor to open one replacement against the same Session. Workspace
-actions are unavailable. Eon and EonTerm use separate default runtime namespaces.
-Terminal programs can request bounded plain-text clipboard writes through Orbit;
-Venus delivers them to the requested ordinary or primary Linux clipboard.
-`Ctrl+Shift+V` and the native Paste key read the ordinary clipboard and send one
-semantic paste to Orbit, which alone applies terminal paste encoding.
-New Eon and EonTerm Sessions use Eon's vivid 16-color ANSI palette. Programs
-retain normal OSC override and reset behavior; direct RGB and palette indices
-16 through 255 remain unchanged. Existing live Sessions keep their current
-palette until they are started in the refreshed runtime generation.
+`eon stop` shows the generation's live Session identities and asks for
+confirmation. Closing a window is therefore detach; stopping a generation ends
+its Sessions.
 
-While the foreground supervisor is running, Eon owns horizontal tab order and
-one vertical pane selection per durable tab; the active picker-bound pending tab
-has no pane selection. Each pane starts and maps to a distinct Orbit session;
-changing focus never stops a session. The CLI reaches that owner
-through the private local Eon socket using EONW v5. Each accepted action returns
-one complete ordered workspace snapshot; incompatible or malformed requests
-receive a bounded structured failure. Additive EONW lifecycle actions report a
-supervisor's generation, component graph, live Sessions, idempotent presentation,
-and stop result through a separate result type that Eon Desktop never receives.
-Eon Desktop consumes the workspace result and shows every fitting pane header
-around one selected live Session. New generations identify tabs as `t1`, `t2`,
-and so on. A tab header shows the numeric part, two spaces, then the leaf of
-Eon's authoritative launch directory, `~` for the exact home directory, or `/`
-for root; hit testing and actions retain the complete `tN` identity. Pill-shaped tabs
-fit their shaped labels up to 280 logical pixels at default typography. Long
-names use middle ellipsis; narrow tabs keep their number whenever it fits.
-Selection uses brighter fill and text; keyboard focus adds a rounded outline.
-Hover shows the launch path. Scroll anywhere on the strip, including gaps, to
-reach overflowing tabs. Shell `cd` leaves tab names and widths unchanged. Panes remain
-`p1`, `p2`, and so on. Each visible live pane header shows that exact identity,
-two spaces, then a `~/`-anchored path below home, an absolute path elsewhere, or
-Nova's marker for the exact home directory. Unset or empty `HOME` leaves paths
-absolute. Overlong labels preserve their rightmost components.
-New current-generation full Eon windows omit the redundant native title bar;
-the selected terminal retains compositor title semantics, while EonTerm keeps
-native decorations. Alt+1 through Alt+9 select tab positions 1 through 9, and
-Alt+0 selects position 10; missing positions do nothing. Alt+H/L traverses tabs,
-Alt+K/J traverses panes, Ctrl+Alt+H/L moves the active tab, Ctrl+Alt+K/J moves
-the selected pane, Alt+Shift+W closes the active non-final tab, Alt+M creates a
-pane, Alt+Shift+T opens a new tab's directory picker, Alt+Z opens the active
-tab's Project popup, Alt+Shift+J opens Git, and Alt+Shift+L opens Agent.
-Alt+/ toggles a native Shortcuts dialog containing these Eon bindings and the
-current enabled popup entries. Wheel, Up/Down, Page Up/Down, Home, and End
-scroll it; Escape or Alt+/ closes it. Child-application bindings remain in
-their applications.
-External workspace changes appear
-within one second because Eon Desktop re-inspects EONW v5 every 250 ms; the
-protocol adds no event stream. When a shell exits, Eon removes its pane, selects
-the nearest surviving pane, removes an empty tab, and closes when the final pane
-exits.
-Movement stops quietly at ordered edges without changing stable identities or
-Session mappings. Singleton traversal, selecting the current target, and routine
-pane attachment progress are silent; actual failures remain visible.
-`eon tab close tN` and Alt+Shift+W name the expected active tab; they
-never close the final tab or silently advance a stale request to another tab.
+## Everyday use
 
-Every live tab owns one absolute launch directory. A fresh workspace validates
-Eon's launch directory, then opens `t1` with the ranked directory picker before
-starting a durable Session. A new tab inherits the active tab's directory as its
-picker starting point. Accepting starts that tab's first `pN` Session in the
-chosen directory. Cancelling fresh `t1` starts `p1` in the validated launch
-directory; cancelling a later pending tab removes it and restores the previous
-focus. Existing-generation recovery creates no automatic picker.
-`eon tab directory tN -- DIRECTORY` explicitly retargets only future Sessions
-in that tab. Existing Sessions and shell working directories do not change.
-Invalid targets or directories change no state; if an accepted path later
-disappears, Session creation fails without adding a pane and the tab retains its
-accepted value.
+| Shortcut | Action |
+|---|---|
+| Alt+/ | Open or close shortcut help |
+| Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
+| Alt+H / Alt+L | Select the previous or next tab |
+| Alt+K / Alt+J | Select the previous or next pane |
+| Ctrl+Alt+H / Ctrl+Alt+L | Move the active tab |
+| Ctrl+Alt+K / Ctrl+Alt+J | Move the selected pane |
+| Alt+Shift+T | Create a tab through the directory picker |
+| Alt+M | Create a pane in the active tab |
+| Alt+Shift+W | Close the active non-final tab |
+| Alt+Z | Open the tab's Project directory picker |
+| Alt+Shift+J | Open or hide the tab's Git popup |
+| Alt+Shift+L | Open or hide the tab's Agent popup |
 
-Alt+Z works from anywhere in a full-Eon tab. Project uses the same popup host as
-the tools and replaces the pane stack with a ranked-directory picker backed by
-the packaged Zoxide and fzf, independent of ambient fzf default options. Popup
-outlines keep the pane stack's exact outer edges across toggles, with a small
-gap between the compact border label and terminal content.
-Enter opens a history match; Tab switches to Yazi to browse folders, including
-those absent from history. Esc or Ctrl+C cancels. Empty history still offers Tab
-to browse. Arrows move through quick-search results. Startup, new-tab, and
-Alt+Z directory pickers use the same keys.
+Tabs own launch directories; changing a shell's directory does not rename or
+retarget its tab. Project changes the directory used by future Sessions in the
+captured tab without moving existing Sessions. Git and Agent are tab-scoped
+Sessions whose terminal state survives hiding and reopening.
 
-In the folder browser, arrows or hjkl navigate; Enter uses the **highlighted folder**.
-Tab returns to quick search; switching back resumes at the same browser folder.
-Shift+Z searches Zoxide history and moves the browser without committing the
-tab, so you can jump to a known parent and walk the remaining directories.
-`g h` goes home, `g /` goes to root, `g Space` accepts a folder path, `.` toggles
-hidden entries, and F1 lists the keys. Esc, q, Q, or Ctrl+C cancel from the main
-folder list. Inside a prompt, help screen, or nested search, Esc closes that
-layer first. Files are visible for orientation; the picker does not open, edit,
-or manage them. Browsing does not add Zoxide entries.
-Yazi uses a packaged picker keymap independent of your regular Yazi configuration.
-Each screen keeps its own actions visible at the bottom: quick search shows
-Use directory, Browse folders, and Cancel; Yazi shows Use highlighted folder,
-Quick search, Shift+Z Jump, Cancel, and F1 Help. Nested jump search shows Jump and
-Back to folders.
-Browser hints hide while a Yazi prompt or overlay has focus.
+The directory picker starts with Zoxide and fzf. Tab switches to Yazi, Shift+Z
+jumps through Zoxide history from the browser, `g h` goes home, `g /` goes to
+root, `g Space` accepts a folder path, and F1 opens browser help. Files are shown
+for orientation but are never opened or managed by the picker.
 
-Accepting a valid path retargets that captured tab for future Sessions; cancel
-or failure changes nothing, and an actionable error stays visible briefly before cleanup.
-Project is one transient Orbit Session rather than a normal pane, and it
-closes with its tab, Eon Desktop surface, process, or supervisor. Existing
-Sessions and working directories remain untouched. Alt+H/L continues to
-traverse and wrap live tabs while the picker stays bound to its original tab;
-returning shows the same picker for normal acceptance or cancellation.
-Alt+Shift+W or the CLI can discard the active non-final pending tab after its
-picker stops. Other tabs allow pane creation, pane focus, pane/tab movement,
-directory updates, and closing, including tab and pane header clicks. The
-picker-bound tab stays modal. Its picker remains open across tab switches;
-other tabs remain usable and can open their own popups.
-
-Git and Agent are tab-scoped Orbit Sessions. Hiding and reopening one in the
-same tab directory preserves its process and terminal state. Explicitly
-retargeting the tab does not change it; the next invocation stops that exact
-popup and starts a fresh one in the new directory. Agent selects the first
-available command from `codex resume`, `grok`, `opencode`, `pi`, and
-`claude --resume`. It performs no installation or setup.
-
-Configure popup geometry and entries in `config.toml`:
-
-```toml
-[popup]
-side_margin = 8
-vertical_margin = 4
-
-[popups.agent]
-command = "auto"
-keybinding = "Alt+Shift+L"
-
-[popups.files]
-command = ["eon-yazi"]
-keybinding = "Alt+Shift+F"
-label = "Files"
-keep_alive = true
-```
-
-Commands are direct argv arrays; only Agent accepts `"auto"`. Git defaults to
-`["eon-lazygit"]` on Alt+Shift+J. Project remains required on Alt+Z and keeps
-its Eon-owned chooser command and transient lifetime. `enabled = false`
-disables Git, Agent, or a custom entry. Keybindings use modified physical keys
-and must not collide with another popup or Eon's fixed workspace shortcuts,
-including `Alt+Slash` (shown as Alt+/), Alt+1 through Alt+9, and Alt+0.
-Bare executables resolve through the Session PATH; relative executable paths
-resolve from that popup's tab directory.
-Margins are finite logical pixels from 0 through 128 and default to 8 on each
-side and 4 vertically.
-
-Workspace topology is live-only. After same-boot supervisor loss, full Eon
-projects surviving canonical `session-N` runs into one synthetic `t1` as `pN`
-in numeric order and selects the lowest number. That tab receives the replacement
-supervisor's launch directory as fresh future-launch policy; Eon does not
-reconstruct prior tabs, focus, launch directories, commands, or history. The
-exact Orbit processes, PTY children, and terminal state remain Orbit-owned and
-unchanged.
-
-The command surface is small:
+## Commands
 
 | Command | Result |
 |---|---|
-| `eon` | Present the exact current-generation workspace, or open its first directory picker |
-| `eon run` | Explicitly open a fresh workspace picker; acceptance starts the default shell |
-| `eon run -- COMMAND...` | Open a fresh workspace picker; acceptance starts the command as the first Orbit-owned PTY child |
-| `eonterm [--no-decorations] [--application-id ID] -- COMMAND...` | Start or present one exact command in a native terminal surface without Eon workspace or managed-environment policy |
-| `eonterm attach [GENERATION]` | Present the current or one selected compatible EonTerm generation |
-| `eonterm generations [--json]` | List validated current and older EonTerm generations |
-| `eonterm stop GENERATION [--json]` | Stop one EonTerm generation through its supervisor; human mode confirms first |
-| `eon attach` | Present Eon Desktop against the exact current-generation launch mode |
-| `eon attach GENERATION` | Present one explicitly selected compatible generation; fixed-namespace EONW v4 workspaces remain inspectable but are not attachable by the v5 client |
-| `eon generations [--json]` | List validated current, previous, legacy, dead, incompatible, unreachable, and corrupt generations |
-| `eon stop GENERATION [--json]` | Stop one generation through its supervisor; human mode confirms first |
-| `eon workspace [--json]` | Inspect the live Eon-owned tab, pane, and Session mapping |
-| `eon tab create [--json]` | Create and focus a pending tab with its directory picker |
-| `eon tab close TAB [--json]` | Close the expected active non-final `tN` and its Sessions |
-| `eon tab directory TAB [--json] -- DIRECTORY` | Set one live `tN` tab's absolute launch directory for future Sessions |
-| `eon tab move left\|right [--json]` | Move the active tab by one position without wrapping |
-| `eon pane create [--json]` | Create and select a default-shell Session in the active tab |
-| `eon pane move up\|down [--json]` | Move the selected pane by one position without wrapping |
-| `eon focus ID [--json]` | Focus a stable tab or pane identity |
-| `eon focus left\|right\|up\|down [--json]` | Traverse tabs or panes directly, wrapping at multi-target edges |
-| `eon versions` | Print the runtime generation, EONW version, and stable component identities |
-| `eon config-path` | Create and print the Eon configuration root |
+| `eon` | Present the current workspace or start its first directory picker |
+| `eon run [-- COMMAND...]` | Start a fresh workspace picker, optionally for an exact first command |
+| `eon attach [GENERATION]` | Present the current or one selected compatible generation |
+| `eon generations [--json]` | List validated current and older generations |
+| `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
+| `eon workspace [--json]` | Inspect the live tab, pane, popup, and Session mapping |
+| `eon tab create [--json]` | Create a pending tab with its directory picker |
+| `eon tab close TAB [--json]` | Close the expected active non-final tab |
+| `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future Sessions |
+| `eon tab move left\|right [--json]` | Move the active tab one position |
+| `eon pane create [--json]` | Create a pane in the active tab |
+| `eon pane move up\|down [--json]` | Move the selected pane one position |
+| `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
+| `eon versions` | Print Eon, protocol, and component identities |
+| `eon config-path` | Create and print the configuration root |
 
-Workspace commands target the exact current-generation Eon supervisor. An
-EonTerm supervisor returns `workspace-unavailable` to topology actions at the
-EONW boundary. EONW v5 frames are bounded to 2 MiB. The workspace topology is
-bounded to 64 tabs, 32 enabled popup entries, and 256 combined pane and popup
-Sessions. It is not persisted and has no per-pane or
-per-Session removal action. Whole-generation stop sends canonical management
-Stop to every validated Session lease and succeeds only after every exact
-terminal record is complete. `--json` reports the same
-accepted EONW result as the human view; neither output format is the protocol
-schema. Its tab `directory` and pane or popup `endpoint` fields are ordered
-integer arrays that preserve every opaque Unix path or
-endpoint byte.
+Workspace commands target the current-generation supervisor. Human and `--json`
+output describe the same result. A missing supervisor is not started implicitly;
+run `eon` first.
 
-## Terminal presentation
+## Configuration
 
-Scrolling, selection, and tab or pane focus remain usable while terminal output
-continues between repaints. Orbit keeps parsing output and answering terminal
-queries while the user reads anchored scrollback. Selection supports cell,
-word, and logical-line gestures; completed copied text stays frozen. Reading
-does not pause the program or preserve history beyond its existing budget.
-Away from live output, the selected pane header shows `↑ N rows`; EonTerm and
-the directory picker use a small overlay. The count comes from Orbit's current
-frame and disappears at live bottom and during terminal-owned scrolling.
-
-Eon and EonTerm use the same terminal presentation settings in
-`$EON_CONFIG_HOME/config.toml`, normally `~/.config/eon/config.toml`:
+`eon config-path` prints the configuration root, normally
+`~/.config/eon`. Settings live in `config.toml`:
 
 ```toml
 [terminal]
 background_opacity = 0.80
 background_blur = true
+pane_frames = true
 cursor_trail_color = "preset:ice"
-```
+font_family = "Iosevka"
+font_size = 16
+line_height = 1.125
+columns = 100
+rows = 30
 
-`background_opacity` accepts a finite number from `0.0` through `1.0` and
-defaults to `0.80`. `background_blur` accepts a boolean, defaults to `true`,
-and requests full-surface compositor blur; set it to `false` to omit that
-request. Eon applies terminal settings from one snapshot when creating a Venus
-surface. Editing the file does not change a live surface; after Venus exits,
-`eon attach` or `eonterm attach` reads the current values for its replacement
-without restarting the live Orbit Session or PTY child.
-
-Omit `cursor_trail_color` to let Venus choose a random color for each surface.
-Set it to `random`, `preset:<name>`, or `custom:#RRGGBB`. Venus provides the
-presets `magma`, `solar`, `lime`, `forest`, `ice`, `ocean`, `nebula`, and
-`bubblegum`, and adds a contrasting outline automatically.
-
-Full Eon connects its pane stack within one rounded border, with full-width
-separators and a small bottom gap sharing the terminal background and opacity.
-The lighter current-pane and hover fills follow the stack corners, with square
-internal edges.
-Set `pane_frames = false` in `[terminal]` to hide the border and separators;
-it defaults to `true`.
-Pane headers, selection, hover and keyboard focus remain available in both modes,
-with the same terminal grid. This setting applies when a surface opens or reopens;
-EonTerm has no workspace frames.
-
-Optional typography and initial geometry fields belong in the same section:
-
-| Field | Accepted value | When omitted |
-|---|---|---|
-| `font_family` | Installed monospace family name | Venus font selection |
-| `font_fallbacks` | Ordered array of at most eight installed family names | No named fallback override |
-| `font_size` | Finite number, 6–96 logical pixels | 16 |
-| `line_height` | Finite multiplier, 1–3 | 1.125 |
-| `columns` | Integer, 1–65,535 | Initial window width remains 960 logical pixels |
-| `rows` | Integer, 1–65,535 | Initial window height remains 600 logical pixels |
-
-Family names must be nonempty, trimmed, at most 128 UTF-8 bytes, and contain no
-control characters. A supplied columns/rows pair must fit 100,000 cells. For
-example, `font_size = 20`, `line_height = 1.5`, `columns = 100`, and `rows = 30`
-request a 100 by 30 terminal with workspace chrome included. The compositor
-may override initial sizing; later resizing remains unrestricted by these fields.
-
-With a cursor, typography, or geometry override, Venus admits the selection,
-fonts, and the actual window's initial native geometry before Eon starts a new
-Session or command. Unknown cursor presets, malformed custom colors, missing
-families, and impossible geometry fail startup; Venus reports the rejection in
-the supervisor output. Invalid configuration or a failed replacement
-leaves existing Sessions and their commands alive. A live Venus keeps its
-settings until reopened. Eon installs no fonts and does not promise that a
-selected family covers every glyph. Cursor timing, random selection, outlines,
-and rendering remain Venus-owned.
-
-Eonova provides no opacity override, so an Eonova release that pins this
-EON-C13 revision consumes the same `0.80` default from EonTerm.
-
-Opacity applies only to the terminal default background and padding. Explicit
-cell backgrounds, text, cursor, selection, Eon workspace chrome, native
-decorations, input, hit testing, and accessibility keep their existing
-semantics. Opacity and blur are independent: Eon never changes one because of
-the other, and an opaque background can visually hide compositor blur.
-Unsupported or policy-disabled Wayland compositors may ignore the best-effort
-request. Transparency does not enable click-through.
-
-## Managed environment
-
-A Session without an explicit command starts Eon's pinned Nushell. Configure
-the command and Eon-provided shell integrations in
-`$EON_CONFIG_HOME/config.toml`, normally `~/.config/eon/config.toml`:
-
-```toml
 [shell]
 command = ["eon-nu"]
 starship = true
@@ -460,120 +148,123 @@ atuin = true
 carapace = true
 ```
 
-Eon reads these settings for each new Session. `command` is a direct argv array;
-`["eon-nu"]`, `["eon-bash"]`, `["eon-zsh"]`, and `["eon-fish"]` select the
-managed shells. Their unprefixed aliases do the same from Eon's private PATH;
-any other command remains unmanaged. Each boolean defaults to `true`; `false`
-disables Eon's activation without disabling a user-owned setup.
+Omitting `cursor_trail_color` chooses a random color for each surface. Explicit
+values are `random`, `preset:<name>`, or `custom:#RRGGBB`. The presets are
+`magma`, `solar`, `lime`, `forest`, `ice`, `ocean`, `nebula`, and `bubblegum`;
+the terminal adds a contrasting cursor outline automatically.
 
-Managed shells load native user configuration before Eon's integrations:
+Opacity accepts `0.0` through `1.0`. Blur and pane frames are booleans. Font size
+accepts 6–96 logical pixels, line height accepts 1–3, and a supplied columns and
+rows pair must fit 100,000 cells. `font_fallbacks` accepts an ordered array of at
+most eight installed family names. Eon installs no fonts and compositors may
+ignore blur or initial window sizing.
 
-| Shell | Native configuration |
-|---|---|
-| Nushell | `$XDG_CONFIG_HOME/nushell/env.nu`, `config.nu`, then Eon's vendor file, then native `autoload/*.nu` |
-| Bash | `~/.bashrc` |
-| Zsh | `${ZDOTDIR:-$HOME}/.zshenv` and `.zshrc` |
-| Fish | `$XDG_CONFIG_HOME/fish/config.fish` |
+The terminal settings apply when a surface opens or reopens. Shell settings are
+read for each Session. Invalid startup configuration creates no fresh Session;
+a failed replacement leaves existing Sessions and commands alive.
 
-Eon preserves an existing prompt, external completer, or same-tool hook. It
-supplies Starship, Zoxide, Atuin, and Carapace only where the native config has
-left room for them. Managed Nushell suppresses its stock startup banner while
-keeping native first-run config creation. `ATUIN_NOBIND` disables Atuin's key
-bindings without disabling history integration. Starship reads normal
-`~/.config/starship.toml`; Eon leaves `STARSHIP_CONFIG` unset. The other tools
-keep their native configuration, data, and cache paths.
+Popup geometry and entries use the same file:
 
-The package exposes managed tools outside Eon through these names:
+```toml
+[popup]
+side_margin = 8
+vertical_margin = 4
 
-| Command | Managed tool |
-|---|---|
-| `eon-nu` | Nushell |
-| `eon-bash` | Bash |
-| `eon-zsh` | Zsh |
-| `eon-fish` | Fish |
-| `eon-hx` | Helix |
-| `eon-yazi` | Yazi |
-| `eon-ya` | Yazi companion CLI |
-| `eon-lazygit`, `eon-lg` | LazyGit |
+[popups.files]
+command = ["eon-yazi"]
+keybinding = "Alt+Shift+F"
+label = "Files"
+keep_alive = true
+```
 
-Outside a Session, prefixed non-shell commands inherit the ambient PATH.
-Managed shell launchers and Sessions prepend one process-local private PATH
-that resolves the four shells, four integrations, `fzf`, `hx`, `yazi`, `ya`, and
-`lazygit` to pinned artifacts. Eon does not alter the parent process's PATH,
-aliases, or shell startup files. At launch, Eon ignores
-ambient Helix runtime and Steel configuration paths and Yazi or LazyGit
-configuration paths that would bypass its private root; explicit Helix and
-LazyGit configuration arguments remain available. LazyGit uses the Git
-executable available from the user's environment. The package supplies Symbols
-Nerd Font Mono for Yazi's supported private-use icons without relying on an
-ambient font installation. Other unsupported symbols may render as fallback
-boxes.
+Git defaults to `eon-lazygit` on Alt+Shift+J. Agent defaults to the first
+available command among Codex, Grok, OpenCode, Pi, and Claude on Alt+Shift+L.
+Set `enabled = false` on Git, Agent, or a custom popup to disable it. Project is
+required on Alt+Z. Popup shortcuts cannot collide with workspace shortcuts.
 
-`EON_CONFIG_HOME` selects the configuration root; Eon resolves a relative value
-once against the launch directory. Without it, Eon uses `$XDG_CONFIG_HOME/eon`
-or `$HOME/.config/eon`. `EON_RUNTIME_DIR` selects the socket directory. Eon
-otherwise uses `$XDG_RUNTIME_DIR/eon`, while EonTerm uses
-`$XDG_RUNTIME_DIR/eonterm`; each falls back to a separate private per-user
-temporary directory.
-Eon passes the absolute root as `XDG_CONFIG_HOME` to Venus and managed tools
-other than shells. Sessions and managed shells inherit ambient XDG
-configuration; Eon preserves `EON_CONFIG_HOME` through Sessions and managed
-dispatch. Eon ignores relative XDG base paths. Each opaque `g1-…` identity is a
-deterministic digest of Eon's runtime source, dependency lock, EONW source, and
-canonical component manifest. Runtime endpoints live below
-`$EON_RUNTIME_DIR/generations/<GENERATION>/`; a pre-generation supervisor remains
-discoverable as `legacy` at the root. Eon creates missing configuration and
-runtime directories with mode `0700`, leaves existing configuration-directory
-permissions unchanged, and rejects unsafe directories or endpoints without
-changing them.
+Set `EON_CONFIG_HOME` to select another configuration root and `EON_RUNTIME_DIR`
+to select another runtime root. Relative `EON_CONFIG_HOME` values resolve once
+against the launch directory. Eon otherwise uses the standard XDG locations and
+private per-user fallbacks.
 
-## Hyperlinks
+## Managed tools
 
-Explicit OSC 8 hyperlinks are available in Eon and EonTerm. Hover previews the
-actual target; Ctrl+left click opens it. Ctrl+Shift+C copies the hovered target
-unless the terminal has selected text, in which case it copies that selection.
-Ordinary URL-looking text and terminal mouse/selection behavior retain their
-existing meaning.
+A Session without an explicit command starts pinned Nushell. Select a different
+managed shell with `eon-bash`, `eon-zsh`, or `eon-fish` in `[shell].command`.
+Native user shell configuration loads before Eon's guarded Starship, Zoxide,
+Atuin, and Carapace integrations.
 
-Opening accepts ASCII HTTP/HTTPS targets up to 4096 bytes, without credentials,
-and requires the desktop host's `gio` command and registered handler. Copy also
-supports other schemes, within the same size limit and without control
-characters. Venus inherits host XDG configuration for desktop preferences;
-`EON_CONFIG_HOME` remains the product configuration root.
+The profile also exposes `eon-hx`, `eon-yazi`, `eon-ya`, `eon-lazygit`, and
+`eon-lg`. Inside Sessions their unprefixed names resolve to the pinned tools.
+Eon does not rewrite the parent PATH, aliases, shell startup files, or native
+tool data paths.
 
-## Component manifest
+## EonTerm
 
-[`components/eon-alpha-v3.json`](components/eon-alpha-v3.json) is the one
-distribution-neutral source of component identity, compatibility, and abstract
-artifacts. Its activation list distinguishes required alpha contracts from
-additional recorded proof such as `ORB-C10`. Nix owns physical package paths,
-Rust owns launch policy, and the graph contains neither resolved store paths nor
-duplicated launch policy.
+Install EonTerm when one exact command needs a native terminal surface without
+Eon's workspace or managed environment:
 
-Validate it with the pinned Rust dependency graph:
+```sh
+nix profile add .#eonterm
+eonterm -- COMMAND...
+eonterm --no-decorations -- COMMAND...
+```
+
+Its lifecycle commands mirror Eon's:
+
+```sh
+eonterm generations
+eonterm attach [GENERATION]
+eonterm stop GENERATION
+```
+
+Eon and EonTerm use separate runtime namespaces. EonTerm keeps native window
+decorations by default and accepts `--application-id ID` for an approved
+composition.
+
+## Troubleshooting and reporting
+
+- **Nix cannot fetch a child input:** the alpha still requires GitHub access to
+  the private Eon Sessions and Eon Desktop repositories. Credential-free
+  installation is separate work.
+- **A workspace command reports a missing supervisor:** run `eon`, then retry.
+- **The window closed but commands remain:** this is detach behavior. Use
+  `eon attach` to return or `eon stop GENERATION` to end them.
+- **A replacement window rejects configuration:** fix `config.toml` and run
+  `eon attach`; the existing Sessions remain alive.
+- **Graphics fail outside native Wayland or on unproved hardware:** that
+  environment is outside the supported alpha boundary.
+
+Report reproducible failures in [GitHub Issues](https://github.com/Yazelix/eon/issues).
+Include `eon versions`, the relevant generation from `eon generations`, your
+distribution, compositor, GPU, and the exact command and error. Remove paths,
+environment values, terminal content, and credentials that should remain
+private.
+
+## Maintainers
+
+Eon owns orchestration, product configuration, component selection, updates,
+and distribution. Eon Sessions owns persistent terminal state and attachment;
+Eon Desktop owns native presentation and input. Yazelix Nova remains a separate
+product line.
+
+The maintainer sources of truth are:
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — naming, ownership, and sequencing;
+- [`docs/CONTRACTS.md`](docs/CONTRACTS.md) — indexed product contracts and proofs;
+- [`docs/DISTRIBUTION.md`](docs/DISTRIBUTION.md) — composition and release policy;
+- [`docs/REFERENCES.md`](docs/REFERENCES.md) — routed primary and comparable sources;
+- [`docs/VISUAL-REFERENCES.md`](docs/VISUAL-REFERENCES.md) — discovery-only visual references;
+- [terminal memory benchmark](docs/benchmarks/eon-zlf-2026-09-08.md) — the measured
+  Eon, EonTerm, Foot, and Ghostty comparison; and
+- [`CHANGELOG.md`](CHANGELOG.md) — accepted user-visible chronology.
+
+[`components/eon-alpha-v3.json`](components/eon-alpha-v3.json) is the canonical
+distribution-neutral component graph. Validate it with:
 
 ```sh
 cargo run --locked -p eon-manifest -- components/eon-alpha-v3.json
 ```
-
-The validator rejects malformed, incomplete, or incompatible graphs. Before
-building Eon or EonTerm, the flake checks the selected Orbit, Venus, and Helix
-revisions and Cargo-owned versions against the manifest. Eon consumes the
-complete composition; EonTerm selects the manifest's service and client roles
-without another graph. Installed wrappers inject resolved paths as opaque
-runtime inputs; `eon versions` prints stable identities and no Nix store path.
-
-The documents in [`docs/`](docs/) hold the current planning truth:
-
-- [`ARCHITECTURE.md`](docs/ARCHITECTURE.md) defines naming, ownership, and sequencing.
-- [`CONTRACTS.md`](docs/CONTRACTS.md) indexes the product contracts and proofs.
-- [`DISTRIBUTION.md`](docs/DISTRIBUTION.md) defines composition and release policy.
-- [Terminal memory on COSMIC](docs/benchmarks/eon-zlf-2026-09-08.md) reports
-  the measured 219-run Eon/EonTerm, Foot, and Ghostty comparison and its limits.
-- [`REFERENCES.md`](docs/REFERENCES.md) routes design work to primary sources and
-  comparable projects.
-- [`VISUAL-REFERENCES.md`](docs/VISUAL-REFERENCES.md) keeps discovery-only visual
-  inspiration outside implementation reference gates.
 
 Use Beads for implementation plans and deferred decisions:
 
@@ -591,7 +282,7 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 606 |
+| README | 297 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 1,788 |
@@ -603,4 +294,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 351 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **20,256** |
+| **Total** | **19,947** |
