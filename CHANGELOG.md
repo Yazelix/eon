@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Configure each new or reopened Eon and EonTerm cursor tail as random, one of
+  Venus's eight named color presets, or a custom RGB color. Omission keeps the
+  random default; Venus validates explicit choices before Eon starts a new
+  Session or command.
+
 - Add the native Shortcuts dialog on Alt+/. It shows Venus's fixed Eon bindings
   and the current enabled popup catalog, scrolls without changing workspace or
   Session state, and closes with Escape or Alt+/. Alt+1 through Alt+9 select tab

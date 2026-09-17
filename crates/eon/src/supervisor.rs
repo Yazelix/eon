@@ -368,6 +368,9 @@ fn venus_command(
     if terminal.background_blur {
         command.arg("--background-blur");
     }
+    if let Some(color) = &terminal.cursor_trail_color {
+        command.arg("--cursor-trail-color").arg(color);
+    }
     if let Some(family) = &terminal.font_family {
         command.arg("--font-family").arg(family);
     }
@@ -483,9 +486,7 @@ impl PresentationProcess {
             })();
             if let Err(error) = result {
                 stop(&mut process.child);
-                return Err(format!(
-                    "cannot admit Eon Desktop typography/geometry: {error}"
-                ));
+                return Err(format!("cannot admit Eon Desktop presentation: {error}"));
             }
         }
         process
@@ -1542,6 +1543,53 @@ rows = 30
                     "30"
                 ]));
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_cursor_color_reaches_both_product_launches() {
+        let root = temporary_directory();
+        for value in ["random", "preset:ice", "custom:#12ABCF"] {
+            fs::write(
+                root.join("config.toml"),
+                format!("[terminal]\ncursor_trail_color = '{value}'\n"),
+            )
+            .unwrap();
+            let terminal = crate::managed_environment::terminal_presentation(&root).unwrap();
+            assert!(terminal.requires_startup_admission());
+            for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
+                let command = venus_command(
+                    &super::programs(true),
+                    &root,
+                    Path::new("/runtime.sock"),
+                    mode,
+                    &terminal,
+                    "eon",
+                );
+                let args = command.get_args().collect::<Vec<_>>();
+                assert!(
+                    args.windows(2)
+                        .any(|pair| pair == ["--cursor-trail-color", value]),
+                    "cursor color did not reach Venus"
+                );
+            }
+        }
+
+        fs::write(root.join("config.toml"), "").unwrap();
+        let terminal = crate::managed_environment::terminal_presentation(&root).unwrap();
+        assert!(!terminal.requires_startup_admission());
+        assert!(
+            venus_command(
+                &super::programs(true),
+                &root,
+                Path::new("/runtime.sock"),
+                LaunchMode::Workspace,
+                &terminal,
+                "eon",
+            )
+            .get_args()
+            .all(|argument| argument != "--cursor-trail-color")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

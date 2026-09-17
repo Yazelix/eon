@@ -1385,7 +1385,11 @@ fn rejected_native_startup_creates_no_session_in_either_product() {
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     fs::create_dir(&config).unwrap();
-    fs::write(config.join("config.toml"), "[terminal]\nfont_size = 20\n").unwrap();
+    fs::write(
+        config.join("config.toml"),
+        "[terminal]\ncursor_trail_color = 'preset:volt'\n",
+    )
+    .unwrap();
     managed_orbit_executable(&orbit);
     let eon = Path::new(env!("CARGO_BIN_EXE_eon"));
     let eonterm = root.join("eonterm");
@@ -1416,7 +1420,8 @@ fn rejected_native_startup_creates_no_session_in_either_product() {
                 !orbit_log.exists(),
                 "native rejection started an Orbit Session"
             );
-            assert!(String::from_utf8_lossy(&output.stderr).contains("cannot admit Eon Desktop"));
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains("cannot admit Eon Desktop presentation"));
         }
     }
     fs::remove_dir_all(root).unwrap();

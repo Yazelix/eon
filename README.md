@@ -381,6 +381,7 @@ Eon and EonTerm use the same terminal presentation settings in
 [terminal]
 background_opacity = 0.80
 background_blur = true
+cursor_trail_color = "preset:ice"
 ```
 
 `background_opacity` accepts a finite number from `0.0` through `1.0` and
@@ -390,6 +391,11 @@ request. Eon applies terminal settings from one snapshot when creating a Venus
 surface. Editing the file does not change a live surface; after Venus exits,
 `eon attach` or `eonterm attach` reads the current values for its replacement
 without restarting the live Orbit Session or PTY child.
+
+Omit `cursor_trail_color` to let Venus choose a random color for each surface.
+Set it to `random`, `preset:<name>`, or `custom:#RRGGBB`. Venus provides the
+presets `magma`, `solar`, `lime`, `forest`, `ice`, `ocean`, `nebula`, and
+`bubblegum`, and adds a contrasting outline automatically.
 
 Full Eon connects its pane stack within one rounded border, with full-width
 separators and a small bottom gap sharing the terminal background and opacity.
@@ -418,17 +424,15 @@ example, `font_size = 20`, `line_height = 1.5`, `columns = 100`, and `rows = 30`
 request a 100 by 30 terminal with workspace chrome included. The compositor
 may override initial sizing; later resizing remains unrestricted by these fields.
 
-With a typography or geometry override, Venus admits fonts and the actual
-window's initial native geometry before Eon starts a new Session or command.
-Missing families and impossible geometry fail startup; Venus reports the
-specific cause in the supervisor output. Invalid configuration or a failed
-replacement leaves existing Sessions and their commands alive. A live Venus
-keeps its settings until reopened. Eon installs no fonts and does not promise
-that a selected family covers every glyph.
-
-Cursor presentation remains Venus-owned. Eon passes no cursor-effect profile,
-so every new or replacement surface uses Venus's blue cursor tail with its
-default timing.
+With a cursor, typography, or geometry override, Venus admits the selection,
+fonts, and the actual window's initial native geometry before Eon starts a new
+Session or command. Unknown cursor presets, malformed custom colors, missing
+families, and impossible geometry fail startup; Venus reports the rejection in
+the supervisor output. Invalid configuration or a failed replacement
+leaves existing Sessions and their commands alive. A live Venus keeps its
+settings until reopened. Eon installs no fonts and does not promise that a
+selected family covers every glyph. Cursor timing, random selection, outlines,
+and rendering remain Venus-owned.
 
 Eonova provides no opacity override, so an Eonova release that pins this
 EON-C13 revision consumes the same `0.80` default from EonTerm.
@@ -587,16 +591,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 602 |
+| README | 606 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 1,749 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 299 |
-| Rust source and tests | 14,814 |
+| Changelog | 304 |
+| Rust source and tests | 14,885 |
 | Cargo manifests | 37 |
 | Component manifest | 351 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **20,152** |
+| **Total** | **20,232** |

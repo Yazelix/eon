@@ -116,6 +116,7 @@ pub(crate) struct TerminalConfig {
     pub(crate) background_opacity: f32,
     pub(crate) background_blur: bool,
     pub(crate) pane_frames: bool,
+    pub(crate) cursor_trail_color: Option<String>,
     pub(crate) font_family: Option<String>,
     pub(crate) font_fallbacks: Vec<String>,
     pub(crate) font_size: Option<f32>,
@@ -130,6 +131,7 @@ impl Default for TerminalConfig {
             background_opacity: 0.8,
             background_blur: true,
             pane_frames: true,
+            cursor_trail_color: None,
             font_family: None,
             font_fallbacks: Vec::new(),
             font_size: None,
@@ -142,7 +144,8 @@ impl Default for TerminalConfig {
 
 impl TerminalConfig {
     pub(crate) fn requires_startup_admission(&self) -> bool {
-        self.font_family.is_some()
+        self.cursor_trail_color.is_some()
+            || self.font_family.is_some()
             || !self.font_fallbacks.is_empty()
             || self.font_size.is_some()
             || self.line_height.is_some()
