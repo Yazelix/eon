@@ -16,7 +16,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5` with ORBF v2 / ORBS v11 and Venus
-`73195f5812cdc8f32841eab644c1bf4b3af9f756`. Exact source, installed artifact,
+`2ce3594b9ca0f62a2723d5ce5a005ed3560aea64`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
 
@@ -1524,7 +1524,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C21 — Native workspace header
 
-- **Status:** Candidate
+- **Status:** Proven
 - **Consumer:** One installed full-Eon user on native x86_64 Linux Wayland.
 - **Trigger:** The user points at, focuses, scrolls, or activates the top
   workspace row, its tabs, New tab, Shortcuts, active-tab Close, or blank drag
@@ -1552,9 +1552,9 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Boundary:** No Eon-rendered chrome, second row, widget framework, quota or
   agent status, polling, configuration, protocol change, inactive-tab close,
   native window controls, macOS claim, or distribution expansion.
-- **Proof:** Uncommitted candidate composition diff
-  `7e81a810eaa7bbd4cfd008639fefe99c5dc0eeb9fd8ef6cd4bbdfa87092bcd97`
-  over `607a4a0826db428918fdbfd57a1cb71293ed625d` pins Venus
+- **Proof:** Eon source `1edb1ed47f2e42a265cc48ced59d8d97e83d9414`
+  contains composition diff `7e81a810eaa7bbd4cfd008639fefe99c5dc0eeb9fd8ef6cd4bbdfa87092bcd97`
+  over baseline `607a4a0826db428918fdbfd57a1cb71293ed625d`; it pins Venus
   `2ce3594b9ca0f62a2723d5ce5a005ed3560aea64` while retaining exact Orbit and
   EONW identities.
   - **Mechanical:** Locked formatting, check, 73 Rust tests, strict Clippy,
@@ -1573,9 +1573,8 @@ show the median and observed minimum–maximum, not a confidence interval.
     accessibility, cleaned every private process, and preserved all 13 tracked
     ambient product identities. Evidence is retained under
     `~/.local/state/eon/proofs/eon-deliver-native-eon-bar-w4d-2026-09-17/`.
-  - **Promotion:** This remains Candidate until a user-authorized proof-bearing
-    Eon source commit. Existing live supervisors retain their prior Venus until
-    normal restart; macOS and broader platform coverage remain separate.
+  - **Limits:** Existing live supervisors retain their prior Venus until a
+    normal restart. macOS and broader platform coverage remain separate.
 
 ## Rules
 
