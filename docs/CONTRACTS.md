@@ -16,9 +16,48 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5` with ORBF v2 / ORBS v11 and Venus
-`2f05a408e499117c1ddb57f99255dcdb4a236bdf`. Exact source, installed artifact,
+`73195f5812cdc8f32841eab644c1bf4b3af9f756`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
+
+## Selectable cursor-color integration
+
+- **Accepted source:** Eon `06402130ddccc3a02298eb3131fbe9f53d9b99a0`,
+  owned by `eon-compose-yazelix-cursors-bcc`, selects accepted Venus
+  `73195f5812cdc8f32841eab644c1bf4b3af9f756` and its updated VEN-C1 proof.
+  Orbit and EONW v5 are unchanged.
+- **Behavior and ownership:** Optional `[terminal] cursor_trail_color` is absent
+  by default, so Eon emits no override and Venus chooses one random preset per
+  surface. An explicit `random`, `preset:<name>`, or `custom:#RRGGBB` string is
+  forwarded unchanged to each new or reopened Venus in Eon and EonTerm. Eon
+  owns only configuration and argv serialization. Venus owns the grammar,
+  preset values, validation, random choice, outline, animation, and rendering;
+  Orbit retains authoritative cursor-body state.
+- **Failure boundary:** Explicit choices use the existing native readiness
+  admission. A Venus-rejected value starts no new Orbit Session or command;
+  rejected reopen preserves the existing Session and command. Malformed TOML
+  remains an Eon configuration failure before children start.
+- **Mechanical proof:** Focused red/green launch and outer rejection checks,
+  locked fmt/check/test/clippy (73 Rust tests), manifest validation, all four
+  flake checks, and both Nix builds pass. The Venus-pin change also updates the
+  fixed-output hash for its exact Yazelix `winit` fork.
+- **Installed artifacts:** Refreshed Eon
+  `/nix/store/2hwrjd93r0qy84r42xkmq82il50i9w3x-eon-0.1.0` and EonTerm
+  `/nix/store/2fk1w9rvkc469ahgi5grr6p89k2l68gm-eonterm-0.1.0` match their
+  working-tree builds, using Venus
+  `/nix/store/73gjhw99rq3n837nzg7mk27h7yaly8l1-yazelix-venus-0.1.0` and unchanged
+  Orbit `/nix/store/1kx2h2lm6mxrsgkr0hr33906my0xic0k-yazelix-orbit-0.1.0`.
+- **Installed observation:** x86_64 Linux, private Sway 1.12 headless/pixman and
+  Mesa 26.1.2 lavapipe. Eon forwards `preset:forest`; EonTerm forwards
+  `custom:#12ABCF`; omission emits no selector. Both products reject
+  `preset:volt` before Orbit starts. All 10 pre-existing runtime PID/start
+  identities survive, and private processes exit without leftovers.
+- **Evidence and limits:** Retained under
+  `~/.local/state/eon/proofs/eon-compose-yazelix-cursors-bcc-0640213/`. This
+  advances EON-C1 through EON-C4 only for exact configuration and composition.
+  VEN-C1 retains the rendering proof and its existing qualifications. No live
+  reload, duration control, per-pane policy, new platform, or distribution
+  claim is added. Existing supervisors retain their old runtime until restarted.
 
 ## Quiet workspace navigation integration
 
