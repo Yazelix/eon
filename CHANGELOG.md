@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Deliver the native one-row Eon Bar with scrollable tabs, fixed New tab,
+  Shortcuts, and active-tab Close controls, keyboard and accessibility
+  activation, shortcut-bearing tooltips, responsive narrow layouts, and an
+  empty native Wayland window-drag region.
+
 - Configure each new or reopened Eon and EonTerm cursor tail as random, one of
   Venus's eight named color presets, or a custom RGB color. Omission keeps the
   random default; Venus validates explicit choices before Eon starts a new

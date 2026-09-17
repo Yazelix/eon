@@ -1522,6 +1522,61 @@ show the median and observed minimum–maximum, not a confidence interval.
     No EonTerm interaction, fractional-scale, broader compositor, screen-reader
     workflow, non-systemd, macOS, or direct-distribution proof is added.
 
+## EON-C21 — Native workspace header
+
+- **Status:** Candidate
+- **Consumer:** One installed full-Eon user on native x86_64 Linux Wayland.
+- **Trigger:** The user points at, focuses, scrolls, or activates the top
+  workspace row, its tabs, New tab, Shortcuts, active-tab Close, or blank drag
+  region.
+- **Result:** Full Eon presents one native Eon Bar at the existing tab-strip
+  height. Eon-authored tab identity and action policy feed Venus's tab-first
+  responsive layout, fixed New tab and Shortcuts controls, active-tab Close,
+  shortcut tooltips, visible keyboard focus, AccessKit buttons, and bounded
+  compositor-owned window dragging. The existing CreateTab and exact active
+  CloseTab actions and local VEN-C20 viewer remain their sole behavior owners.
+- **Important failures:** Stale component identity fails before activation.
+  Rejected Eon actions never mutate another tab. Narrow surfaces retain the
+  active tab and required controls without overlap. A failed native drag causes
+  no workspace action, terminal input, crash, or state mutation. Controls, tab
+  gaps, pane chrome, terminal content, popups, tooltips, and the viewer never
+  become drag targets or leak a terminal pointer sequence.
+- **Owner:** Eon owns the exact component graph, workspace identity and action
+  policy, profile delivery, and installed acceptance. Venus owns header
+  geometry, rendering, input, native drag, tooltips, and accessibility. Orbit
+  remains unchanged.
+- **Consumes:** Venus VEN-C21 at exact source
+  `2ce3594b9ca0f62a2723d5ce5a005ed3560aea64`, EONW v5 at source
+  `0cc8f477298681ae3945903e8fdb5852d487c5ab`, and Orbit ORBF v2 / ORBS v11 at
+  `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`.
+- **Boundary:** No Eon-rendered chrome, second row, widget framework, quota or
+  agent status, polling, configuration, protocol change, inactive-tab close,
+  native window controls, macOS claim, or distribution expansion.
+- **Proof:** Uncommitted candidate composition diff
+  `7e81a810eaa7bbd4cfd008639fefe99c5dc0eeb9fd8ef6cd4bbdfa87092bcd97`
+  over `607a4a0826db428918fdbfd57a1cb71293ed625d` pins Venus
+  `2ce3594b9ca0f62a2723d5ce5a005ed3560aea64` while retaining exact Orbit and
+  EONW identities.
+  - **Mechanical:** Locked formatting, check, 73 Rust tests, strict Clippy,
+    manifest validation, both Nix packages, and all four flake checks pass.
+  - **Installed:** The named `eon` profile resolves to
+    `/nix/store/fp80c2r8mqh2l9p7fsnn41qpizhbsja9-eon-0.1.0`, generation
+    `g1-ced1dd70156ebfa69b371d22980a793e`, with Venus
+    `/nix/store/z8fc270gwywgv11gd0pgyj785rn6ndqp-yazelix-venus-0.1.0` and
+    unchanged Orbit
+    `/nix/store/1kx2h2lm6mxrsgkr0hr33906my0xic0k-yazelix-orbit-0.1.0`.
+  - **Environment and evidence:** Private Sway 1.12 headless/pixman and Mesa
+    26.1.2 lavapipe at scale 1 passed pointer, keyboard, AT-SPI, exact actions,
+    local Shortcuts, drag exclusions, real compositor movement, post-drag
+    retirement, eight-tab overflow, and 960/320/100-pixel layouts. The
+    100-pixel capture retains tab 7 and all three controls. Both runs restored
+    accessibility, cleaned every private process, and preserved all 13 tracked
+    ambient product identities. Evidence is retained under
+    `~/.local/state/eon/proofs/eon-deliver-native-eon-bar-w4d-2026-09-17/`.
+  - **Promotion:** This remains Candidate until a user-authorized proof-bearing
+    Eon source commit. Existing live supervisors retain their prior Venus until
+    normal restart; macOS and broader platform coverage remain separate.
+
 ## Rules
 
 - Each contract uses one `## EON-CN — Name` heading and the required fields

@@ -89,6 +89,11 @@ its Sessions.
 | Alt+Shift+J | Open or hide the tab's Git popup |
 | Alt+Shift+L | Open or hide the tab's Agent popup |
 
+The top row is the native Eon Bar. Its fixed `+`, `?`, and `×` controls create
+a tab, open Shortcuts, and close the active non-final tab. The empty space
+between the scrollable tabs and those controls moves the undecorated window;
+tabs, controls, pane headers, and terminal content remain ordinary targets.
+
 Tabs own launch directories; changing a shell's directory does not rename or
 retarget its tab. Project changes the directory used by future Sessions in the
 captured tab without moving existing Sessions. Git and Agent are tab-scoped
@@ -282,16 +287,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 297 |
+| README | 302 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,788 |
+| Architecture and contracts | 1,843 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 304 |
+| Changelog | 309 |
 | Rust source and tests | 14,870 |
 | Cargo manifests | 37 |
-| Component manifest | 351 |
+| Component manifest | 353 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **19,947** |
+| **Total** | **20,014** |
