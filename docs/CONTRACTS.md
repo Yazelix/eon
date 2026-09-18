@@ -1578,7 +1578,8 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
-- **Status:** Candidate under `eon-codex-logo-eon-bar-p9e`.
+- **Status:** Proven at Eon source
+  `de9741f5614806ea0f430c1f59d406411012f168`.
 - **Consumer:** One full-Eon user with a compatible authenticated `codex`
   executable on the inherited user `PATH`.
 - **Trigger:** A full-Eon supervisor starts and a quota refresh becomes due.
@@ -1615,25 +1616,27 @@ show the median and observed minimum–maximum, not a confidence interval.
   This contract adds no bundled Codex, direct HTTP, tokenusage, daemon,
   persistent cache, provider framework, configuration surface, other provider,
   or v5 adapter.
-- **Proof:** Clean source `8bb95a8352a6093dbb74900fee44c8910142b6fe`
-  passed manifest validation and the complete flake check, including 139 Venus
-  tests, both 60-test Eon package routes, both closures, exact Venus
+- **Proof:** Clean source `de9741f5614806ea0f430c1f59d406411012f168`
+  passed manifest validation and the complete flake check, including both
+  60-test Eon package routes, both closures, exact unchanged Venus
   `/nix/store/71jkkvkkzlbfwwiqr5n8jw9qkfcm36fi-yazelix-venus-0.1.0`, and
   unchanged Orbit. The exact Eon artifact is
-  `/nix/store/jq35x7005ly6w21rmj4nshdp4cnp3yjh-eon-0.1.0`. The named `eon`
+  `/nix/store/yczw0fl8f8sdwx5fh0xir8sm4ycgrbd6-eon-0.1.0`. The named `eon`
   profile resolves to
-  `/nix/store/gk2ln8y2chxyk9xafvhz5q546271w854-eon-0.1.0`, generation
-  `g1-d0d6edb00d39471eeb3d385eb6f3e4c6`, and selects exact Venus source
-  `247dcb2dc853e604d51ac727471e1e65e1535f1d`. One isolated installed Sway
-  1.12 / Mesa 26.1.2 scale-1 run rendered the exact monochrome Blossom followed
-  by real `6d12h/7d 28%`, plus bounded blocked, unknown, and
+  `/nix/store/h1d86xgn75mp5qny96iz5ysbkhp4gxx3-eon-0.1.0`, generation
+  `g1-fc757a36ee11dd8833dd293bef4e13c4`; its embedded manifest selects Venus
+  source `247dcb2dc853e604d51ac727471e1e65e1535f1d` and proof
+  `002784bedeceb71f767193a33fa66fa85ba59b30`. The proof-only manifest change
+  changes no Eon, Venus, or Orbit runtime code, so installed presentation reuses
+  the accepted isolated Sway 1.12 / Mesa 26.1.2 scale-1 observation. It rendered
+  the exact monochrome Blossom followed real `6d12h/7d 28%`, plus bounded
+  blocked, unknown, and
   `0m/5h 75% old` states, without a visible provider word. Compact, hidden,
   absence, AccessKit, focus, fixed controls, and cleanup passed. The profile
   refresh did not restart live product processes, and the installed proof
   preserved all 27 ambient product identities. Evidence is retained under
   `~/.local/state/eon/proofs/eon-openai-blossom-eon-bar-installed-2026-09-18/`.
   Existing live supervisors retain their prior Venus until a normal restart.
-  The proof-only VEN-C22 identity advance remains pending under this issue.
 
 ## Rules
 
