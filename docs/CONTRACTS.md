@@ -1578,8 +1578,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
-- **Status:** Proven at Eon source
-  `8bb95a8352a6093dbb74900fee44c8910142b6fe`.
+- **Status:** Candidate under `eon-codex-logo-eon-bar-p9e`.
 - **Consumer:** One full-Eon user with a compatible authenticated `codex`
   executable on the inherited user `PATH`.
 - **Trigger:** A full-Eon supervisor starts and a quota refresh becomes due.
@@ -1607,7 +1606,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   exact Eon source `3103a00a904c347472899549ce611da765a71650`; the proven
   EON-C21 bar; and Venus VEN-C22 at
   source `247dcb2dc853e604d51ac727471e1e65e1535f1d` with proof
-  `2fbab5c1af4c54f894985e04b4dd9fcc63e82404`.
+  `002784bedeceb71f767193a33fa66fa85ba59b30`.
 - **Boundary:** Eon requests no reset-credit details, declines Luna Reserve
   support, and sends no provider mutation. Credentials, plan, credits, upsell,
   transcripts, token history, raw JSON, and other provider-private fields are
@@ -1634,6 +1633,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   preserved all 27 ambient product identities. Evidence is retained under
   `~/.local/state/eon/proofs/eon-openai-blossom-eon-bar-installed-2026-09-18/`.
   Existing live supervisors retain their prior Venus until a normal restart.
+  The proof-only VEN-C22 identity advance remains pending under this issue.
 
 ## Rules
 
