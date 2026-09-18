@@ -94,10 +94,11 @@ a tab, open Shortcuts, and close the active non-final tab. The empty space
 between the scrollable tabs and those controls moves the undecorated window;
 tabs, controls, pane headers, and terminal content remain ordinary targets.
 When a compatible authenticated `codex` executable is available on `PATH`, the
-bar also shows the Codex mark and its read-only quota: elapsed/total positions and
-remaining percentages, visibly old last-good data, or an explicit blocked or
-unknown permission state. The chip disappears before tabs or controls under
-width pressure, and provider absence leaves the bar unchanged.
+bar also shows the monochrome OpenAI Blossom and its read-only Codex quota:
+elapsed/total positions and remaining percentages, visibly old last-good data,
+or an explicit blocked or unknown permission state. The chip disappears before
+tabs or controls under width pressure, and provider absence leaves the bar
+unchanged.
 
 Tabs own launch directories; changing a shell's directory does not rename or
 retarget its tab. Project changes the directory used by future Sessions in the
@@ -292,10 +293,10 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 307 |
+| README | 308 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,907 |
+| Architecture and contracts | 1,896 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
 | Changelog | 318 |
@@ -304,4 +305,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 355 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **21,221** |
+| **Total** | **21,211** |

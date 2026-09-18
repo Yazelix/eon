@@ -16,7 +16,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5` with ORBF v2 / ORBS v11 and Venus
-`b8b8835b8890dfb4359c3f9db31012ede6135ef8`. Exact source, installed artifact,
+`247dcb2dc853e604d51ac727471e1e65e1535f1d`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
 
@@ -1578,8 +1578,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
-- **Status:** Proven at Eon source
-  `e46d22e0f24f21d00819f2baff6df15f43d13ed5`.
+- **Status:** Candidate under `eon-codex-logo-eon-bar-p9e`.
 - **Consumer:** One full-Eon user with a compatible authenticated `codex`
   executable on the inherited user `PATH`.
 - **Trigger:** A full-Eon supervisor starts and a quota refresh becomes due.
@@ -1588,7 +1587,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   carries an optional observation with fresh, stale, blocked, or unknown state
   and at most the Codex bucket's primary and secondary windows. Each window
   contains duration minutes, remaining percentage, and a provider reset time
-  when Codex supplies one. Venus presents the exact Codex application mark
+  when Codex supplies one. Venus presents the exact monochrome OpenAI Blossom
   before the human quota label while hover and accessibility name Codex.
 - **Important failures:** A missing executable, auth failure, incompatible or
   oversized response, invalid value, timeout, EOF, provider exit, or network
@@ -1606,8 +1605,8 @@ show the median and observed minimum–maximum, not a confidence interval.
   `rust-v0.154.0` at `6b9826e3aa83b1a5947db50f4332cb9c65f1b340`; EONW v6 at
   exact Eon source `3103a00a904c347472899549ce611da765a71650`; the proven
   EON-C21 bar; and Venus VEN-C22 at
-  source `b8b8835b8890dfb4359c3f9db31012ede6135ef8` with proof
-  `76f0f4cd53b275114323f5458cd5e73f379b9202`.
+  source `247dcb2dc853e604d51ac727471e1e65e1535f1d` with proof
+  `2fbab5c1af4c54f894985e04b4dd9fcc63e82404`.
 - **Boundary:** Eon requests no reset-credit details, declines Luna Reserve
   support, and sends no provider mutation. Credentials, plan, credits, upsell,
   transcripts, token history, raw JSON, and other provider-private fields are
@@ -1616,22 +1615,12 @@ show the median and observed minimum–maximum, not a confidence interval.
   This contract adds no bundled Codex, direct HTTP, tokenusage, daemon,
   persistent cache, provider framework, configuration surface, other provider,
   or v5 adapter.
-- **Proof:** Clean source `e46d22e0f24f21d00819f2baff6df15f43d13ed5`
-  passed manifest validation and the complete flake check, including 139 Venus
-  tests, both 60-test Eon package routes, both closures, exact Venus
-  `/nix/store/20db55lhnygmribxg3bi1n9dv8ds92np-yazelix-venus-0.1.0`, and
-  unchanged Orbit. The exact Eon artifact is
-  `/nix/store/xszhsg8p74ywbr641kmgfq4mss8hzfd1-eon-0.1.0`. The named `eon`
-  profile was refreshed from the current worktree to
-  `/nix/store/j2dn8c5byy6ymr3s0626cr4c7yqkyg5g-eon-0.1.0`; its version report
-  and closure select that exact Venus and Orbit. One isolated installed Sway
-  1.12 / Mesa 26.1.2 scale-1 run rendered the exact mark followed by real
-  `6d11h/7d 31%`, plus bounded blocked, unknown, and `0m/5h 75% old` states,
-  without a visible provider word. Compact, hidden, absence, AccessKit, focus,
-  fixed controls, and cleanup passed. The profile refresh and proof preserved
-  all 27 ambient product identities. Evidence is retained under
-  `~/.local/state/eon/proofs/eon-codex-logo-eon-bar-p9e-installed-2026-09-18/`.
-  Existing live supervisors retain their prior Venus until a normal restart.
+- **Proof:** The prior colorful-mark composition remains proven at Eon source
+  `e46d22e0f24f21d00819f2baff6df15f43d13ed5`. Exact Venus source
+  `247dcb2dc853e604d51ac727471e1e65e1535f1d` and proof
+  `2fbab5c1af4c54f894985e04b4dd9fcc63e82404` establish the monochrome
+  Blossom at the child boundary. Full Eon build, profile refresh, and installed
+  observation are pending under `eon-codex-logo-eon-bar-p9e`.
 
 ## Rules
 

@@ -9,10 +9,10 @@ installation, and proven contract changes.
   compatible authenticated Codex CLI supplies rate-limit facts. Fresh quota,
   reset-bounded old data, and blocked or unknown access stay distinct; provider
   absence leaves the core bar unchanged. The chip yields before tabs and fixed
-  controls in narrow windows. The exact Codex application mark replaces the
+  controls in narrow windows. The exact monochrome OpenAI Blossom replaces the
   visible provider word while hover and accessibility keep the explicit name.
   Eon owns bounded provider lifecycle and normalized EONW v6 facts; accepted
-  Venus `b8b8835b8890dfb4359c3f9db31012ede6135ef8` owns native presentation.
+  Venus `247dcb2dc853e604d51ac727471e1e65e1535f1d` owns native presentation.
 
 - Deliver the native one-row Eon Bar with scrollable tabs, fixed New tab,
   Shortcuts, and active-tab Close controls, keyboard and accessibility
