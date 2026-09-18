@@ -1578,7 +1578,8 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
-- **Status:** Candidate under `eon-codex-logo-eon-bar-p9e`.
+- **Status:** Proven at Eon source
+  `e46d22e0f24f21d00819f2baff6df15f43d13ed5`.
 - **Consumer:** One full-Eon user with a compatible authenticated `codex`
   executable on the inherited user `PATH`.
 - **Trigger:** A full-Eon supervisor starts and a quota refresh becomes due.
@@ -1615,11 +1616,22 @@ show the median and observed minimum–maximum, not a confidence interval.
   This contract adds no bundled Codex, direct HTTP, tokenusage, daemon,
   persistent cache, provider framework, configuration surface, other provider,
   or v5 adapter.
-- **Proof:** The provider and EONW v6 behavior remains proven at Eon source
-  `273ce452f3f3fc940b54e0d70f5f764f1a3f0cf1`. The changed Venus presentation
-  has its exact native proof, but the new composed graph, profile artifact, and
-  installed full-Eon observation remain open under
-  `eon-codex-logo-eon-bar-p9e`.
+- **Proof:** Clean source `e46d22e0f24f21d00819f2baff6df15f43d13ed5`
+  passed manifest validation and the complete flake check, including 139 Venus
+  tests, both 60-test Eon package routes, both closures, exact Venus
+  `/nix/store/20db55lhnygmribxg3bi1n9dv8ds92np-yazelix-venus-0.1.0`, and
+  unchanged Orbit. The exact Eon artifact is
+  `/nix/store/xszhsg8p74ywbr641kmgfq4mss8hzfd1-eon-0.1.0`. The named `eon`
+  profile was refreshed from the current worktree to
+  `/nix/store/j2dn8c5byy6ymr3s0626cr4c7yqkyg5g-eon-0.1.0`; its version report
+  and closure select that exact Venus and Orbit. One isolated installed Sway
+  1.12 / Mesa 26.1.2 scale-1 run rendered the exact mark followed by real
+  `6d11h/7d 31%`, plus bounded blocked, unknown, and `0m/5h 75% old` states,
+  without a visible provider word. Compact, hidden, absence, AccessKit, focus,
+  fixed controls, and cleanup passed. The profile refresh and proof preserved
+  all 27 ambient product identities. Evidence is retained under
+  `~/.local/state/eon/proofs/eon-codex-logo-eon-bar-p9e-installed-2026-09-18/`.
+  Existing live supervisors retain their prior Venus until a normal restart.
 
 ## Rules
 
