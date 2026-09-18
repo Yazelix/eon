@@ -11,6 +11,7 @@ dependencies = [
  "libc",
  "orbit-protocol",
  "serde",
+ "serde_json",
  "socket2",
  "toml",
 ]

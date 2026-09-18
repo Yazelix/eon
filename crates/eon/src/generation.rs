@@ -8,7 +8,7 @@ use super::supervisor::{
     supervisor_lock_path, try_lock_supervisor_lifecycle, validate_private_directory,
 };
 use super::workspace::json_escape;
-use eon_workspace_protocol::v5::{
+use eon_workspace_protocol::v6::{
     Action, Availability, LifecycleResponse, Stopped, VERSION, WorkspaceAction,
 };
 use std::{
@@ -26,6 +26,7 @@ pub(super) fn current_generation() -> Result<String, String> {
     Ok(generation_id(&[
         include_bytes!("main.rs"),
         include_bytes!("cli.rs"),
+        include_bytes!("codex_quota.rs"),
         include_bytes!("control.rs"),
         include_bytes!("generation.rs"),
         include_bytes!("managed_environment.rs"),
@@ -37,6 +38,7 @@ pub(super) fn current_generation() -> Result<String, String> {
         include_bytes!("../../eon-workspace-protocol/src/v3.rs"),
         include_bytes!("../../eon-workspace-protocol/src/v4.rs"),
         include_bytes!("../../eon-workspace-protocol/src/v5.rs"),
+        include_bytes!("../../eon-workspace-protocol/src/v6.rs"),
         include_bytes!("../../eon-workspace-protocol/Cargo.toml"),
         include_bytes!("../../eon-manifest/src/lib.rs"),
         include_bytes!("../../eon-manifest/Cargo.toml"),
@@ -309,8 +311,9 @@ fn inspect_legacy(root: &Path) -> GenerationRecord {
                 .collect(),
             attach: Availability {
                 available: false,
-                reason: "legacy supervisor uses EONW v4; the current Venus client requires EONW v5"
-                    .into(),
+                reason: format!(
+                    "legacy supervisor uses EONW v4; current Eon requires EONW v{VERSION}"
+                ),
             },
             stop: Availability {
                 available: false,

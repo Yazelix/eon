@@ -174,48 +174,51 @@ impl Snapshot {
     /// immediately before mutation. This does not execute lifecycle policy or
     /// validate ordinary workspace actions. Decoding alone cannot detect staleness.
     pub fn check_popup_action(&self, action: &Action) -> Result<()> {
-        validate_popup_action(action)?;
-        let matches = match action {
-            Action::Workspace(_) => return Ok(()),
-            Action::InvokePopup {
-                tab,
-                entry,
-                expected_instance,
-                ..
-            } => {
-                self.entries.iter().any(|item| item.id == *entry)
-                    && self
-                        .tabs
+        check_popup_action(&self.entries, &self.tabs, action)
+    }
+}
+
+pub(super) fn check_popup_action(
+    entries: &[PopupEntry],
+    tabs: &[Tab],
+    action: &Action,
+) -> Result<()> {
+    validate_popup_action(action)?;
+    let matches = match action {
+        Action::Workspace(_) => return Ok(()),
+        Action::InvokePopup {
+            tab,
+            entry,
+            expected_instance,
+            ..
+        } => {
+            entries.iter().any(|item| item.id == *entry)
+                && tabs.iter().find(|item| item.id == *tab).is_some_and(|tab| {
+                    tab.popups
                         .iter()
-                        .find(|item| item.id == *tab)
-                        .is_some_and(|tab| {
-                            tab.popups
-                                .iter()
-                                .find(|popup| popup.entry == *entry)
-                                .map(|popup| &popup.id)
-                                == expected_instance.as_ref()
-                        })
-            }
-            Action::DismissPopup(target) | Action::CommitDirectory { target, .. } => self
-                .tabs
-                .iter()
-                .find(|tab| tab.id == target.tab)
-                .is_some_and(|tab| {
-                    tab.popups.iter().any(|popup| {
-                        popup.id == target.instance
-                            && (!matches!(action, Action::CommitDirectory { .. })
-                                || (popup.entry == PROJECT_ENTRY
-                                    && tab.selected_popup.as_ref() == Some(&popup.id)))
-                    })
-                }),
-        };
-        if matches {
-            Ok(())
-        } else {
-            Err(Error::InvalidValue {
-                field: "popup target",
-            })
+                        .find(|popup| popup.entry == *entry)
+                        .map(|popup| &popup.id)
+                        == expected_instance.as_ref()
+                })
         }
+        Action::DismissPopup(target) | Action::CommitDirectory { target, .. } => tabs
+            .iter()
+            .find(|tab| tab.id == target.tab)
+            .is_some_and(|tab| {
+                tab.popups.iter().any(|popup| {
+                    popup.id == target.instance
+                        && (!matches!(action, Action::CommitDirectory { .. })
+                            || (popup.entry == PROJECT_ENTRY
+                                && tab.selected_popup.as_ref() == Some(&popup.id)))
+                })
+            }),
+    };
+    if matches {
+        Ok(())
+    } else {
+        Err(Error::InvalidValue {
+            field: "popup target",
+        })
     }
 }
 
@@ -410,7 +413,7 @@ fn decode_optional(decoder: &mut v2::Decoder<'_>, field: &'static str) -> Result
     }
 }
 
-fn encode_workspace(encoder: &mut v2::Encoder, snapshot: &Snapshot) {
+pub(super) fn encode_workspace(encoder: &mut v2::Encoder, snapshot: &Snapshot) {
     encoder.string(&snapshot.active_tab);
     for margin in [
         snapshot.geometry.side_margin,
@@ -449,7 +452,7 @@ fn encode_workspace(encoder: &mut v2::Encoder, snapshot: &Snapshot) {
     }
 }
 
-fn decode_workspace(decoder: &mut v2::Decoder<'_>) -> Result<Snapshot> {
+pub(super) fn decode_workspace(decoder: &mut v2::Decoder<'_>) -> Result<Snapshot> {
     let active_tab = decoder.string("active tab", v2::MAX_ID_BYTES)?;
     let mut margin = || {
         Ok::<_, Error>(f32::from_bits(
@@ -526,7 +529,7 @@ fn entry_id(id: &str) -> Result<()> {
     v2::identity("entry id", id)
 }
 
-fn validate_snapshot(snapshot: &Snapshot) -> Result<()> {
+pub(super) fn validate_snapshot(snapshot: &Snapshot) -> Result<()> {
     if snapshot.tabs.is_empty() || snapshot.tabs.len() > MAX_TABS {
         return Err(Error::InvalidSnapshot { field: "tabs" });
     }

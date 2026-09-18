@@ -1576,6 +1576,52 @@ show the median and observed minimum–maximum, not a confidence interval.
   - **Limits:** Existing live supervisors retain their prior Venus until a
     normal restart. macOS and broader platform coverage remain separate.
 
+## EON-C22 — Trustworthy Codex quota in the Eon Bar
+
+- **Status:** Candidate source under `eon-source-codex-quota-eon-bar-mny`.
+  Venus presentation and installed full-Eon proof remain open.
+- **Consumer:** One full-Eon user with a compatible authenticated `codex`
+  executable on the inherited user `PATH`.
+- **Trigger:** A full-Eon supervisor starts and a quota refresh becomes due.
+- **Result:** Eon starts one dedicated `codex app-server --stdio` child and
+  reads `account/rateLimits/read` no faster than once per minute. EONW v6
+  carries an optional observation with fresh, stale, blocked, or unknown state
+  and at most the Codex bucket's primary and secondary windows. Each window
+  contains duration minutes, remaining percentage, and a provider reset time
+  when Codex supplies one.
+- **Important failures:** A missing executable, auth failure, incompatible or
+  oversized response, invalid value, timeout, EOF, provider exit, or network
+  failure leaves quota absent or marks reset-bounded last-good windows stale.
+  Eon clears stale windows at their reset. An account update clears prior facts
+  before Eon publishes another account's observation. Provider I/O stays off
+  startup, workspace actions, and terminal attachment; shutdown cleanup is
+  bounded.
+- **Owner:** Eon owns provider process lifecycle, refresh and retry policy,
+  private account-change detection, normalization, freshness, and the EONW v6
+  field. Codex owns authentication and rate-limit semantics. Venus will own the
+  native chip's layout, text, tooltip, and accessibility under `VEN-C22`.
+- **Consumes:** Codex CLI 0.154.0 stable schema and Apache-2.0 source tag
+  `rust-v0.154.0` at
+  `6b9826e3aa83b1a5947db50f4332cb9c65f1b340`; EONW v5 workspace semantics;
+  and the proven EON-C21 bar.
+- **Boundary:** Eon requests no reset-credit details, declines Luna Reserve
+  support, and sends no provider mutation. Credentials, plan, credits, upsell,
+  transcripts, token history, raw JSON, and other provider-private fields are
+  never logged, persisted, or carried over EONW. The worker retains an account
+  identifier only in memory to invalidate observations across account changes.
+  This contract adds no bundled Codex, direct HTTP, tokenusage, daemon,
+  persistent cache, provider framework, configuration surface, other provider,
+  or v5 adapter.
+- **Proof:** Focused EONW and provider-substitute checks cover bounded v6
+  encoding, explicit v5 rejection, fresh, stale, blocked, unknown, account
+  invalidation, malformed and oversized input, restart backoff, and child
+  cleanup. All 76 locked Rust tests, strict Clippy, manifest validation, every
+  flake check, and both package builds pass on x86_64 Linux. This proves the
+  source mechanics only.
+- **Open proof:** EON-C22 stays Candidate until Venus consumes this exact v6
+  source and the installed Eon delivery proves native fresh, stale, blocked,
+  unknown, and absent presentation without restarting live supervisors.
+
 ## Rules
 
 - Each contract uses one `## EON-CN — Name` heading and the required fields

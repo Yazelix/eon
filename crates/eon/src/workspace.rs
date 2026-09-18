@@ -1,5 +1,5 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v5::{
+use eon_workspace_protocol::v6::{
     Action, Direction, Failure, InvokeIntent, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS,
     Pane as SnapshotPane, Popup as SnapshotPopup, PopupEntry as SnapshotEntry, PopupTarget,
     Snapshot, Tab as SnapshotTab, WorkspaceAction,
@@ -217,6 +217,7 @@ impl Workspace {
                         .collect(),
                 })
                 .collect(),
+            codex_quota: None,
         }
     }
 
@@ -281,7 +282,7 @@ impl Workspace {
             WorkspaceAction::PickTabDirectory => {
                 return Err(action_error(
                     "unavailable",
-                    "the EONW v5 Project entry replaces the retired picker action",
+                    "the EONW v6 Project entry replaces the retired picker action",
                 ));
             }
         }
@@ -1145,13 +1146,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v5::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v6::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v5::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v5::ALT, "Alt"),
-        (eon_workspace_protocol::v5::SHIFT, "Shift"),
-        (eon_workspace_protocol::v5::SUPER, "Super"),
+        (eon_workspace_protocol::v6::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v6::ALT, "Alt"),
+        (eon_workspace_protocol::v6::SHIFT, "Shift"),
+        (eon_workspace_protocol::v6::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1204,7 +1205,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v5::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v6::{ALT, PopupGeometry, Shortcut};
 
     fn catalog() -> PopupCatalog {
         PopupCatalog {

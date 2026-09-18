@@ -1,6 +1,6 @@
 use eon_workspace_protocol::{
     v4 as legacy,
-    v5::{
+    v6::{
         Action as ProtocolAction, Direction, HEADER_BYTES, InvokeIntent, MAX_SESSIONS, Pane, Popup,
         PopupGeometry, PopupTarget, Request, Response, Snapshot, Tab, VERSION,
         WorkspaceAction as Action, declared_message_len, decode_request, decode_response,
@@ -25,12 +25,16 @@ use std::{
     },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Output, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     thread,
     time::{Duration, Instant},
 };
 
 static NEXT_TEST: AtomicU64 = AtomicU64::new(0);
+static CODEX_STUB: OnceLock<PathBuf> = OnceLock::new();
 
 struct TestProcess {
     child: Child,
@@ -659,8 +663,25 @@ fn picker_endpoint(socket: &Path) -> PathBuf {
 }
 
 fn eon_command(binary: &Path) -> Command {
+    let codex_stub = CODEX_STUB.get_or_init(|| {
+        let directory = std::env::temp_dir().join(format!("eon-codex-stub-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        executable(&directory.join("codex"), "#!/bin/sh\nexit 1\n");
+        directory
+    });
+    let path = std::iter::once(codex_stub.clone())
+        .chain(
+            std::env::var_os("PATH")
+                .as_deref()
+                .map(std::env::split_paths)
+                .into_iter()
+                .flatten(),
+        )
+        .collect::<Vec<_>>();
     let mut command = Command::new(binary);
-    command.env_remove("EON_SESSION_BIN");
+    command
+        .env_remove("EON_SESSION_BIN")
+        .env("PATH", std::env::join_paths(path).unwrap());
     command
 }
 
@@ -760,6 +781,7 @@ printf '/selected-\377\n' > "$4"
             }],
             popups: Vec::new(),
         }],
+        codex_quota: None,
     }))
     .unwrap();
     stream.write_all(&response).unwrap();
@@ -3247,7 +3269,7 @@ fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
     let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
     assert!(listed.status.success());
     assert!(stdout(&listed).contains("\"id\":\"legacy\",\"kind\":\"legacy\",\"state\":\"live\""));
-    assert!(stdout(&listed).contains("current Venus client requires EONW v5"));
+    assert!(stdout(&listed).contains("current Eon requires EONW v6"));
     assert!(stdout(&listed).contains("legacy supervisor has no authoritative stop action"));
 
     let attached = eon_command(&binary)
@@ -3259,9 +3281,7 @@ fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
         .output()
         .unwrap();
     assert_eq!(attached.status.code(), Some(1));
-    assert!(
-        String::from_utf8_lossy(&attached.stderr).contains("current Venus client requires EONW v5")
-    );
+    assert!(String::from_utf8_lossy(&attached.stderr).contains("current Eon requires EONW v6"));
     assert!(!venus_log.exists());
 
     let stopped = invoke(&binary, &runtime, &config, &["stop", "legacy", "--json"]);

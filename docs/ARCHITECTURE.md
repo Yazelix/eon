@@ -101,6 +101,14 @@ private EONW endpoint retains lifecycle authority but returns
 `workspace-unavailable` to topology actions, while Venus receives only Orbit's
 endpoint. EONW carries opaque Orbit endpoint bytes but no terminal content.
 
+EONW v6 is a source candidate for the Codex quota chip. It adds one optional,
+bounded snapshot field with fresh, stale, blocked, or unknown state and up to
+two normalized windows. Eon's supervisor reads those facts from a dedicated
+user-installed Codex app-server child. It keeps credentials, account identity,
+provider payloads, and provider lifecycle out of EONW and Venus. The installed
+product stays on v5 until an exact Venus v6 consumer and the final Eon delivery
+pass their own proofs; Eon provides no v5/v6 negotiation layer.
+
 Within one exact runtime generation, Eon consumes Orbit's canonical private
 management records and lease stream without copying their schema. Eon validates
 the complete live identity and acquires every lease before publishing EONW or

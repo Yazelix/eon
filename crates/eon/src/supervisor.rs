@@ -1,4 +1,5 @@
 use super::{
+    codex_quota,
     control::{
         ControlListener, ControlResponse, EndpointFailure, EndpointFailureKind, SocketIdentity,
         connect_control, failure, probe_launch_mode, probe_presentable_runtime, send_action_on,
@@ -11,7 +12,7 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionOperation, Workspace},
 };
-use eon_workspace_protocol::v5::{
+use eon_workspace_protocol::v6::{
     Action, Availability, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
     Stopped, VERSION, WorkspaceAction,
 };
@@ -445,7 +446,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v5::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v6::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -628,7 +629,7 @@ fn supervise(
         eon_manifest::component_revision(MANIFEST, "orbit").map_err(|error| error.to_string())?;
     let deadline = Instant::now() + SESSION_START_TIMEOUT;
     let popup_catalog = popups.unwrap_or_else(|| managed_environment::PopupCatalog {
-        geometry: eon_workspace_protocol::v5::PopupGeometry {
+        geometry: eon_workspace_protocol::v6::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -757,6 +758,7 @@ fn supervise(
         venus: None,
         initial_child,
         initial_status: None,
+        codex_quota: (mode == LaunchMode::Workspace).then(codex_quota::Provider::start),
     };
     let presentation = match admitted {
         Some(venus) => Ok(venus),
@@ -840,6 +842,20 @@ struct SupervisorState {
     venus: Option<PresentationProcess>,
     initial_child: Vec<OsString>,
     initial_status: Option<i32>,
+    codex_quota: Option<codex_quota::Provider>,
+}
+
+impl SupervisorState {
+    fn workspace_snapshot(&self) -> Option<Snapshot> {
+        self.workspace.as_ref().map(|workspace| {
+            let mut snapshot = workspace.snapshot();
+            snapshot.codex_quota = self
+                .codex_quota
+                .as_ref()
+                .and_then(codex_quota::Provider::snapshot);
+            snapshot
+        })
+    }
 }
 
 fn reap_finished_sessions(
@@ -925,10 +941,8 @@ fn close_workspace_tab(
     }
 
     Ok(state
-        .workspace
-        .as_ref()
-        .expect("tab close retains a non-final workspace")
-        .snapshot())
+        .workspace_snapshot()
+        .expect("tab close retains a non-final workspace"))
 }
 
 fn directory_picker_command(
@@ -1252,7 +1266,7 @@ fn dispatch_control_request(
                 state.venus = Some(PresentationProcess::start(
                     command,
                     terminal.requires_startup_admission(),
-                    state.workspace.as_ref().map(Workspace::snapshot),
+                    state.workspace_snapshot(),
                     Instant::now() + SESSION_START_TIMEOUT,
                 )?);
                 Ok(())
@@ -1307,53 +1321,57 @@ fn dispatch_control_request(
             ),
             Err(error) => (ControlResponse::Workspace(Response::Failure(error)), false),
         },
-        request => match &mut state.workspace {
-            Some(workspace) => {
-                let component_generation = &state.component_generation;
-                let sessions = &mut state.sessions;
-                let initial_child = &mut state.initial_child;
-                match workspace.dispatch(
-                    &request.id,
-                    request.action,
-                    |command, directory| {
-                        managed_environment::prepare_popup_command(
-                            command,
-                            programs.session_bin.as_deref(),
-                            directory,
-                        )
-                    },
-                    |operation| {
-                        apply_session_operation(
-                            programs,
-                            config,
-                            component_generation,
-                            sessions,
-                            initial_child,
-                            operation,
-                        )
-                    },
-                ) {
-                    Ok(()) => (
-                        ControlResponse::Workspace(Response::Snapshot(workspace.snapshot())),
-                        false,
-                    ),
-                    Err(error) => (
-                        ControlResponse::Workspace(Response::Failure(failure(
-                            error.code,
-                            error.detail,
-                        ))),
-                        false,
-                    ),
-                }
+        request => {
+            let Some(workspace) = &mut state.workspace else {
+                return (
+                    ControlResponse::Workspace(Response::Failure(failure(
+                        "workspace-unavailable",
+                        "EonTerm has no Eon workspace",
+                    ))),
+                    false,
+                );
+            };
+            let component_generation = &state.component_generation;
+            let sessions = &mut state.sessions;
+            let initial_child = &mut state.initial_child;
+            match workspace.dispatch(
+                &request.id,
+                request.action,
+                |command, directory| {
+                    managed_environment::prepare_popup_command(
+                        command,
+                        programs.session_bin.as_deref(),
+                        directory,
+                    )
+                },
+                |operation| {
+                    apply_session_operation(
+                        programs,
+                        config,
+                        component_generation,
+                        sessions,
+                        initial_child,
+                        operation,
+                    )
+                },
+            ) {
+                Ok(()) => (
+                    ControlResponse::Workspace(Response::Snapshot(
+                        state
+                            .workspace_snapshot()
+                            .expect("workspace dispatch retains its owner"),
+                    )),
+                    false,
+                ),
+                Err(error) => (
+                    ControlResponse::Workspace(Response::Failure(failure(
+                        error.code,
+                        error.detail,
+                    ))),
+                    false,
+                ),
             }
-            None => (
-                ControlResponse::Workspace(Response::Failure(failure(
-                    "workspace-unavailable",
-                    "EonTerm has no Eon workspace",
-                ))),
-                false,
-            ),
-        },
+        }
     }
 }
 
@@ -1379,7 +1397,7 @@ fn runtime_status(
         attach: Availability {
             available: true,
             reason: match mode {
-                LaunchMode::Workspace => "supervisor accepts EONW v5 presentation requests",
+                LaunchMode::Workspace => "supervisor accepts EONW v6 presentation requests",
                 LaunchMode::Terminal => "supervisor owns one EonTerm Session",
             }
             .into(),
@@ -1417,7 +1435,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v5::{
+        use eon_workspace_protocol::v6::{
             Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::{
@@ -1449,6 +1467,7 @@ mod tests {
                     popups: Vec::new(),
                 })
                 .collect(),
+            codex_quota: None,
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
         let received = root.join("snapshot");
