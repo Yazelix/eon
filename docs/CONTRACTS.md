@@ -1578,9 +1578,8 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
-- **Status:** Candidate installed delivery under
-  `eon-deliver-codex-quota-eon-bar-yg0`; the immutable Eon proof revision
-  remains open.
+- **Status:** Proven at Eon source
+  `273ce452f3f3fc940b54e0d70f5f764f1a3f0cf1`.
 - **Consumer:** One full-Eon user with a compatible authenticated `codex`
   executable on the inherited user `PATH`.
 - **Trigger:** A full-Eon supervisor starts and a quota refresh becomes due.
@@ -1614,7 +1613,9 @@ show the median and observed minimum–maximum, not a confidence interval.
   This contract adds no bundled Codex, direct HTTP, tokenusage, daemon,
   persistent cache, provider framework, configuration surface, other provider,
   or v5 adapter.
-- **Proof:** Focused EONW and provider-substitute checks cover bounded v6
+- **Proof:** Eon source `273ce452f3f3fc940b54e0d70f5f764f1a3f0cf1`
+  captures this exact graph, documentation, and installed evidence.
+  Focused EONW and provider-substitute checks cover bounded v6
   encoding, explicit v5 rejection, fresh, stale, blocked, unknown, account
   invalidation, malformed and oversized input, restart backoff, and child
   cleanup. All 76 locked Rust tests, strict Clippy, manifest validation, every
@@ -1628,8 +1629,6 @@ show the median and observed minimum–maximum, not a confidence interval.
   product process identities.
   Evidence is retained under
   `~/.local/state/eon/proofs/eon-deliver-codex-quota-eon-bar-yg0-2026-09-18/`.
-- **Open proof:** EON-C22 stays Candidate until one immutable Eon source
-  revision records this exact graph, documentation, and installed proof.
 
 ## Rules
 
