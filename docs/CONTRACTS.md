@@ -16,7 +16,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5` with ORBF v2 / ORBS v11 and Venus
-`2ce3594b9ca0f62a2723d5ce5a005ed3560aea64`. Exact source, installed artifact,
+`2e7174c1d359b792947218c5a11158574f2e48e0`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
 
@@ -1578,8 +1578,9 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
-- **Status:** Candidate source under `eon-source-codex-quota-eon-bar-mny`.
-  Venus presentation and installed full-Eon proof remain open.
+- **Status:** Candidate installed delivery under
+  `eon-deliver-codex-quota-eon-bar-yg0`; the immutable Eon proof revision
+  remains open.
 - **Consumer:** One full-Eon user with a compatible authenticated `codex`
   executable on the inherited user `PATH`.
 - **Trigger:** A full-Eon supervisor starts and a quota refresh becomes due.
@@ -1598,12 +1599,13 @@ show the median and observed minimum–maximum, not a confidence interval.
   bounded.
 - **Owner:** Eon owns provider process lifecycle, refresh and retry policy,
   private account-change detection, normalization, freshness, and the EONW v6
-  field. Codex owns authentication and rate-limit semantics. Venus will own the
+  field. Codex owns authentication and rate-limit semantics. Venus owns the
   native chip's layout, text, tooltip, and accessibility under `VEN-C22`.
 - **Consumes:** Codex CLI 0.154.0 stable schema and Apache-2.0 source tag
-  `rust-v0.154.0` at
-  `6b9826e3aa83b1a5947db50f4332cb9c65f1b340`; EONW v5 workspace semantics;
-  and the proven EON-C21 bar.
+  `rust-v0.154.0` at `6b9826e3aa83b1a5947db50f4332cb9c65f1b340`; EONW v6 at
+  exact Eon source `3103a00a904c347472899549ce611da765a71650`; the proven
+  EON-C21 bar; and Venus VEN-C22 at
+  `2e7174c1d359b792947218c5a11158574f2e48e0`.
 - **Boundary:** Eon requests no reset-credit details, declines Luna Reserve
   support, and sends no provider mutation. Credentials, plan, credits, upsell,
   transcripts, token history, raw JSON, and other provider-private fields are
@@ -1616,11 +1618,18 @@ show the median and observed minimum–maximum, not a confidence interval.
   encoding, explicit v5 rejection, fresh, stale, blocked, unknown, account
   invalidation, malformed and oversized input, restart backoff, and child
   cleanup. All 76 locked Rust tests, strict Clippy, manifest validation, every
-  flake check, and both package builds pass on x86_64 Linux. This proves the
-  source mechanics only.
-- **Open proof:** EON-C22 stays Candidate until Venus consumes this exact v6
-  source and the installed Eon delivery proves native fresh, stale, blocked,
-  unknown, and absent presentation without restarting live supervisors.
+  flake check, and both package builds pass on x86_64 Linux. The named `eon`
+  profile resolves to
+  `/nix/store/95b4a5k6bgdbx3jxzy5xyp6ahkh99vsf-eon-0.1.0`, which composes
+  exact Venus VEN-C22 and unchanged Orbit. An isolated installed Sway 1.12 run
+  rendered real Codex `6d9h/7d 35%`, bounded blocked, unknown, and
+  `0m/5h 75% old` substitutes, compact and hidden layouts, and provider absence
+  through AT-SPI while retaining focus, fixed controls, and all 23 ambient
+  product process identities.
+  Evidence is retained under
+  `~/.local/state/eon/proofs/eon-deliver-codex-quota-eon-bar-yg0-2026-09-18/`.
+- **Open proof:** EON-C22 stays Candidate until one immutable Eon source
+  revision records this exact graph, documentation, and installed proof.
 
 ## Rules
 

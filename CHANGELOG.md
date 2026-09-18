@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Show a conditional read-only Codex quota chip in the Eon Bar when the user's
+  compatible authenticated Codex CLI supplies rate-limit facts. Fresh quota,
+  reset-bounded old data, and blocked or unknown access stay distinct; provider
+  absence leaves the core bar unchanged. The chip yields before tabs and fixed
+  controls in narrow windows. Eon owns bounded provider lifecycle and normalized
+  EONW v6 facts; accepted Venus `2e7174c1d359b792947218c5a11158574f2e48e0`
+  owns native presentation.
+
 - Deliver the native one-row Eon Bar with scrollable tabs, fixed New tab,
   Shortcuts, and active-tab Close controls, keyboard and accessibility
   activation, shortcut-bearing tooltips, responsive narrow layouts, and an

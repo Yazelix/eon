@@ -93,6 +93,11 @@ The top row is the native Eon Bar. Its fixed `+`, `?`, and `×` controls create
 a tab, open Shortcuts, and close the active non-final tab. The empty space
 between the scrollable tabs and those controls moves the undecorated window;
 tabs, controls, pane headers, and terminal content remain ordinary targets.
+When a compatible authenticated `codex` executable is available on `PATH`, the
+bar also shows its read-only quota: fresh elapsed/total window positions and
+remaining percentages, visibly old last-good data, or an explicit blocked or
+unknown permission state. The chip disappears before tabs or controls under
+width pressure, and provider absence leaves the bar unchanged.
 
 Tabs own launch directories; changing a shell's directory does not rename or
 retarget its tab. Project changes the directory used by future Sessions in the
@@ -287,16 +292,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 302 |
+| README | 307 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,896 |
+| Architecture and contracts | 1,905 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 309 |
+| Changelog | 317 |
 | Rust source and tests | 15,996 |
 | Cargo manifests | 38 |
-| Component manifest | 353 |
+| Component manifest | 355 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **21,194** |
+| **Total** | **21,218** |
