@@ -1544,6 +1544,16 @@ show the median and observed minimum–maximum, not a confidence interval.
   previously installed single-picker artifact; accepted frames and Venus scenes
   were nonblank. This proof does not claim every headless capture is visually
   stable.
+- **EONW v7 background-focus correction (dogfooded, 2026-09-19):** Eon source
+  `d0cf639a0edfb9fffd8142a709c5a858d34ec7e2` keeps the selected tab
+  when a background pending picker exits; the v7 wire and exact Venus/Orbit
+  pins remain unchanged. The owner regression failed red and passed green;
+  locked Eon tests (34 unit, 28 integration) and strict Clippy passed.
+  `nix build path:.#default --no-link --print-out-paths` produced installed
+  profile artifact `/nix/store/svdyvf9s861vdgb85gpli0pdwvww30ny-eon-0.1.0`.
+  A private native Sway run opened pending `t1`, `t2`, and `t3`, exited `t2`'s
+  picker child, and observed `t1`/`t3` surviving with `t3` still selected.
+  The user's live supervisor, Orbit, and Codex process start times were unchanged.
 
 ## EON-C20 — Discoverable native shortcuts
 
