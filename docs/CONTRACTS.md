@@ -1626,15 +1626,15 @@ show the median and observed minimum–maximum, not a confidence interval.
   `/nix/store/h1d86xgn75mp5qny96iz5ysbkhp4gxx3-eon-0.1.0`, generation
   `g1-fc757a36ee11dd8833dd293bef4e13c4`; its embedded manifest selects Venus
   source `247dcb2dc853e604d51ac727471e1e65e1535f1d` and proof
-  `002784bedeceb71f767193a33fa66fa85ba59b30`. The proof-only manifest change
-  changes no Eon, Venus, or Orbit runtime code, so installed presentation reuses
+  `002784bedeceb71f767193a33fa66fa85ba59b30`. The proof-only manifest update
+  changes no Eon, Venus, or Orbit runtime code, so presentation evidence reuses
   the accepted isolated Sway 1.12 / Mesa 26.1.2 scale-1 observation. It rendered
-  the exact monochrome Blossom followed real `6d12h/7d 28%`, plus bounded
-  blocked, unknown, and
-  `0m/5h 75% old` states, without a visible provider word. Compact, hidden,
-  absence, AccessKit, focus, fixed controls, and cleanup passed. The profile
-  refresh did not restart live product processes, and the installed proof
-  preserved all 27 ambient product identities. Evidence is retained under
+  the exact monochrome Blossom with the real `6d12h/7d 28%` label and bounded
+  `blocked`, `unknown`, and `0m/5h 75% old` states, without a visible provider
+  word. Compact, hidden,
+  absence, AccessKit, focus, fixed controls, and cleanup passed. The current
+  profile refresh did not restart live product processes; the reused installed
+  proof preserved all 27 ambient product identities. Evidence is retained under
   `~/.local/state/eon/proofs/eon-openai-blossom-eon-bar-installed-2026-09-18/`.
   Existing live supervisors retain their prior Venus until a normal restart.
 
