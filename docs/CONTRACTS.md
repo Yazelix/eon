@@ -1266,9 +1266,9 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C18 — Picker-first tab directories
 
-- **Status:** Proven for the v5 shared popup host at Eon
-  `2214a4f592f78437c2f74aff0a1df8d1cc7ee5a4` with exact Venus
-  `d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`.
+- **Status:** Proven for v5 shared popup and v7 multi-pending tabs on x86_64
+  Linux Wayland. Original v5 Eon `2214a4f592f78437c2f74aff0a1df8d1cc7ee5a4`
+  used Venus `d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`; v7 proof is below.
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z in an existing tab.
@@ -1339,11 +1339,10 @@ show the median and observed minimum–maximum, not a confidence interval.
     tab; with no tabs left, the workspace ends. Pickers remain attached across
     tab switches; established tabs may open their own popup while one remains
     live elsewhere. The accepted v5/v6 boundary permits at most one pending
-    picker-first tab. The proposed EONW v7 expansion permits multiple pending
+    picker-first tab. EONW v7 permits multiple pending
     tabs, each retaining its own exact Project picker across tab switches;
     CreateTab always creates a distinct tab. Alt+Shift+W closes the selected
-    non-final pending tab and stops only its picker. This expansion remains
-    unproved until the exact Venus consumer and composed runtime pass.
+    non-final pending tab and stops only its picker.
 - **Important failures:** Cancel, empty or invalid selection, picker launch or
   exit, target disappearance, duplicate invocation, origin-tab loss, or
   presentation detachment follows the first- or later-tab fallback without a
@@ -1527,6 +1526,22 @@ show the median and observed minimum–maximum, not a confidence interval.
     stopped both through the durable-only generation result. The user accepted
     exact-current native Alt+H/L traversal with the picker retained at source
     `9af359e964e6cb1fc53548d6779456c11343c7e1` and the profile above.
+
+- **EONW v7 proof (dogfooded, 2026-09-19):** Eon producer
+  `f41a41c9aecc4c436edfa2f394b832aa6d8711ad`, Venus consumer
+  `479d7cef29aaa40d2d93d610567517357479877c`, and Orbit
+  `f8ad14e5195109ba8cb421f30e5ae4a9619a1419` passed locked Rust checks,
+  strict Clippy, and the full affected Nix flake check. The installed artifact
+  `/nix/store/0m637rzcg5ksm27c5q0p6pd8gk2mw9yc-eon-0.1.0` ran in isolated
+  native x86_64 Linux Sway: physical Alt+Shift+T created a second pending tab
+  with a distinct picker endpoint; Alt+H/L selected each tab, Tab exercised
+  independent picker browsing, and Alt+Shift+W removed only the selected tab.
+  The surviving picker remained interactive; the user's running supervisor,
+  Orbit Session, and Codex process kept their identities. In this headless Mesa
+  setup, a picker body can intermittently miss a screenshot even on the
+  previously installed single-picker artifact; accepted frames and Venus scenes
+  were nonblank. This proof does not claim every headless capture is visually
+  stable.
 
 ## EON-C20 — Discoverable native shortcuts
 

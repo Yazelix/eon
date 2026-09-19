@@ -87,7 +87,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "6aa79f6405229cd64bd1d55e01c5b11b96657c71",
+      "revision": "479d7cef29aaa40d2d93d610567517357479877c",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
