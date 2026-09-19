@@ -1645,6 +1645,18 @@ show the median and observed minimum–maximum, not a confidence interval.
   Shortcuts, Close tab, pane panel. The named `eon` profile resolves to that
   artifact while the live supervisor remains on its prior client. This proves
   tree order, not a screen-reader workflow or macOS.
+- **Quota-gap correction:** VEN-C21 source
+  `6aa79f6405229cd64bd1d55e01c5b11b96657c71` moves the optional quota
+  chip into New tab's vacated far-right slot, restoring a continuous blank
+  drag region and adjacency to Shortcuts. The focused geometry regression
+  failed on the prior source and passed after correction; the locked Venus
+  suite, manifest validation, and exact Eon Nix build passed. The composed
+  candidate `/nix/store/0j919y26rigssy25w2mz96n9kpxiq7hv-eon-0.1.0`
+  ran under private Sway 1.12 headless/pixman at scale 1. A 960-pixel capture
+  shows the corrected bar, and a real drag from the restored blank area moved
+  the window from (100, 100) to (200, 170). The private generation stopped;
+  the named profile was refreshed without restarting live Sessions. Evidence:
+  `~/.local/state/eon/proofs/ven-place-new-tab-beside-tabs-pct-review-2026-09-19/`.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
