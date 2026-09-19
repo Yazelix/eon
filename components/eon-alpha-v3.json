@@ -87,7 +87,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "562cacf74e101ee9ea18460c21e47d86eec2376d",
+      "revision": "6036430ffed1b84fd2995525e0a19f071809c588",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -114,7 +114,7 @@
         { "id": "VEN-C18", "proof": "d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86" },
         { "id": "VEN-C19", "proof": "bc5a2bd3b2363abdea69c4cd89953b612bc970e8" },
         { "id": "VEN-C20", "proof": "2f05a408e499117c1ddb57f99255dcdb4a236bdf" },
-        { "id": "VEN-C21", "proof": "562cacf74e101ee9ea18460c21e47d86eec2376d" },
+        { "id": "VEN-C21", "proof": "6036430ffed1b84fd2995525e0a19f071809c588" },
         { "id": "VEN-C22", "proof": "002784bedeceb71f767193a33fa66fa85ba59b30" }
       ],
       "interfaces": [],

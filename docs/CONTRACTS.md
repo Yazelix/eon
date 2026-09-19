@@ -1587,6 +1587,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   shortcut tooltips, visible keyboard focus, AccessKit buttons, and bounded
   compositor-owned window dragging. The existing CreateTab and exact active
   CloseTab actions and local VEN-C20 viewer remain their sole behavior owners.
+  The accessibility tree places New tab before the optional quota chip.
 - **Important failures:** Stale component identity fails before activation.
   Rejected Eon actions never mutate another tab. Narrow surfaces retain the
   active tab and required controls without overlap. A failed native drag causes
@@ -1636,6 +1637,14 @@ show the median and observed minimum–maximum, not a confidence interval.
   native Wayland pointer CreateTab action and 960/320/100-pixel layout checks
   under private Sway 1.12. Captures are retained under
   `~/.local/state/eon/proofs/ven-place-new-tab-beside-tabs-pct/`.
+- **Accessibility correction:** VEN-C21 source
+  `6036430ffed1b84fd2995525e0a19f071809c588` preserves Scene geometry and
+  EONW actions. The exact composed candidate
+  `/nix/store/mzdr9g0qb4z6k5kvrqmshas6i5dzf079-eon-0.1.0` passed an
+  isolated native Sway 1.12 AT-SPI observation: tabs, New tab, quota,
+  Shortcuts, Close tab, pane panel. The named `eon` profile resolves to that
+  artifact while the live supervisor remains on its prior client. This proves
+  tree order, not a screen-reader workflow or macOS.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 

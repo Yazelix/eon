@@ -6,7 +6,8 @@ installation, and proven contract changes.
 ## Unreleased
 
 - Place the Eon Bar's New tab button directly after fitting tabs and keep it
-  visible at the tab-region edge when tabs overflow.
+  visible at the tab-region edge when tabs overflow. The accessibility tree
+  places it before the optional Codex quota chip.
 
 - Deliver the accepted Orbit ORBS v12 and Venus pair to Eon and EonTerm.
   The scrollback pill shows `↓ N rows`; clicking anywhere on it returns to
