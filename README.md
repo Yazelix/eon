@@ -47,8 +47,9 @@ eon
 
 The first launch opens a directory picker. Press Enter to use a Zoxide history
 match, or Tab to browse folders with Yazi. In the browser, Enter chooses the
-highlighted folder and F1 shows its keys. Cancelling the first picker starts in
-the directory where Eon was launched.
+highlighted folder and F1 shows its keys. Cancelling a pending picker starts a
+Session in that tab's directory if it is the only tab; otherwise it removes
+just that pending tab.
 
 A Session starts after the directory is chosen. Closing the Eon window detaches
 the desktop without stopping its Sessions or PTY commands. Reconnect with:
@@ -298,7 +299,7 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 313 |
+| README | 314 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 2,028 |
@@ -310,4 +311,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 355 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **21,658** |
+| **Total** | **21,659** |

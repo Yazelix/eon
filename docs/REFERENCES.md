@@ -179,8 +179,8 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
   `f8d241c`](https://github.com/wez/wezterm/tree/f8d241c0eee5786ba286316ba07061e910e6a719)
   only if a native Venus list becomes a measured candidate; inspect exact fzf only at its
   dependency gate.
-- **Preserve / reject:** Preserve one Eon-owned transient picker, an explicit active pending
-  tab with no durable pane, exact tab binding, and one Venus-rendered modal endpoint. Reject
+- **Preserve / reject:** Preserve one Eon-owned transient picker per pane-free pending tab,
+  exact tab binding, and one Venus-rendered active modal endpoint. Reject
   a placeholder shell, pane restart, `cd` injection, empty-string sentinel, copied Lua,
   client-supplied commands, native directory ranking, simultaneous terminal composition, and
   a generic popup protocol.
