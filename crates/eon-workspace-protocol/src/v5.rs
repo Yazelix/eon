@@ -530,6 +530,13 @@ fn entry_id(id: &str) -> Result<()> {
 }
 
 pub(super) fn validate_snapshot(snapshot: &Snapshot) -> Result<()> {
+    validate_snapshot_with_pending(snapshot, false)
+}
+
+pub(super) fn validate_snapshot_with_pending(
+    snapshot: &Snapshot,
+    multiple_pending: bool,
+) -> Result<()> {
     if snapshot.tabs.is_empty() || snapshot.tabs.len() > MAX_TABS {
         return Err(Error::InvalidSnapshot { field: "tabs" });
     }
@@ -595,7 +602,7 @@ pub(super) fn validate_snapshot(snapshot: &Snapshot) -> Result<()> {
         }
         if tab.pending {
             pending += 1;
-            if pending > 1
+            if (!multiple_pending && pending > 1)
                 || !tab.panes.is_empty()
                 || tab.popups.len() != 1
                 || tab.popups[0].entry != PROJECT_ENTRY

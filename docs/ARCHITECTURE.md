@@ -81,7 +81,7 @@ shims require an explicit user decision, a removal condition, and a bead.
 EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
 snapshots, supervisor lifecycle results, structured failures, and bounded
-framing. EONW v6 carries Eon-owned raw tab launch directories, the popup catalog,
+framing. EONW v7 carries Eon-owned raw tab launch directories, the popup catalog,
 tab-scoped popup Sessions, explicit retarget and chooser-completion actions, and
 an optional pending tab's absent pane selection without interpreting Orbit
 terminal metadata. Workspace and
@@ -101,13 +101,15 @@ private EONW endpoint retains lifecycle authority but returns
 `workspace-unavailable` to topology actions, while Venus receives only Orbit's
 endpoint. EONW carries opaque Orbit endpoint bytes but no terminal content.
 
-EONW v6 is the current workspace boundary. It adds one optional, bounded Codex
+EONW v7 is the current Eon source boundary. It retains v6's optional, bounded Codex
 quota field with fresh, stale, blocked, or unknown state and up to two
 normalized windows. Eon's supervisor reads those facts from a dedicated
 user-installed Codex app-server child; Venus alone presents the optional chip.
 Credentials, account identity, provider payloads, and provider lifecycle stay
-out of EONW and Venus. Eon provides no v5/v6 negotiation layer. Existing live
-v5 supervisors retain their generation until a normal restart.
+out of EONW and Venus. v7 also permits distinct pending Project pickers in
+separate tabs while preserving the v6 single-pending validator. Eon provides no
+version negotiation layer. Existing live supervisors retain their generation
+until a normal restart. Composed activation requires an exact v7 Venus consumer.
 
 Within one exact runtime generation, Eon consumes Orbit's canonical private
 management records and lease stream without copying their schema. Eon validates
@@ -248,7 +250,7 @@ the user activates an implementation bead and its upstream proof revisions exist
 The active Eon slice launches one accepted Eon Desktop and Eon Sessions pair,
 supplies the accepted managed environment, preserves Eon component and native
 shell configuration boundaries, reports component identity through one
-Nix-managed path, and exposes its live workspace through EONW v6. Venus
+Nix-managed path, and exposes its live workspace through EONW v7. Venus
 consumption follows an exact Eon producer proof; the canonical composition graph
 changes only after an exact consumer proof exists. Later slices earn their scope
 through dogfooding. Direct distribution has its own activation gate.

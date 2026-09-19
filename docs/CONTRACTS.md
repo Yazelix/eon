@@ -1338,7 +1338,12 @@ show the median and observed minimum–maximum, not a confidence interval.
     restores the previous tab if it survives, otherwise the nearest surviving
     tab; with no tabs left, the workspace ends. Pickers remain attached across
     tab switches; established tabs may open their own popup while one remains
-    live elsewhere. At most one pending picker-first tab exists.
+    live elsewhere. The accepted v5/v6 boundary permits at most one pending
+    picker-first tab. The proposed EONW v7 expansion permits multiple pending
+    tabs, each retaining its own exact Project picker across tab switches;
+    CreateTab always creates a distinct tab. Alt+Shift+W closes the selected
+    non-final pending tab and stops only its picker. This expansion remains
+    unproved until the exact Venus consumer and composed runtime pass.
 - **Important failures:** Cancel, empty or invalid selection, picker launch or
   exit, target disappearance, duplicate invocation, origin-tab loss, or
   presentation detachment follows the first- or later-tab fallback without a

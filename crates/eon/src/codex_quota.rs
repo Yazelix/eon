@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v6::{CodexQuota, CodexQuotaState, CodexQuotaWindow};
+use eon_workspace_protocol::v7::{CodexQuota, CodexQuotaState, CodexQuotaWindow};
 use serde_json::Value;
 use std::{
     ffi::OsString,

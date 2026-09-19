@@ -1,5 +1,5 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v6::{
+use eon_workspace_protocol::v7::{
     Action, Direction, Failure, InvokeIntent, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS,
     Pane as SnapshotPane, Popup as SnapshotPopup, PopupEntry as SnapshotEntry, PopupTarget,
     Snapshot, Tab as SnapshotTab, WorkspaceAction,
@@ -282,7 +282,7 @@ impl Workspace {
             WorkspaceAction::PickTabDirectory => {
                 return Err(action_error(
                     "unavailable",
-                    "the EONW v6 Project entry replaces the retired picker action",
+                    "the EONW v7 Project entry replaces the retired picker action",
                 ));
             }
         }
@@ -294,15 +294,6 @@ impl Workspace {
         prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
-        if let Some(index) = self.tabs.iter().position(|tab| tab.pending) {
-            self.active = index;
-            self.tabs[index].selected_popup = self.tabs[index]
-                .popups
-                .iter()
-                .find(|popup| popup.entry == "project")
-                .map(|popup| popup.id.clone());
-            return Ok(());
-        }
         if self.tabs.len() >= MAX_TABS || self.next_tab == usize::MAX {
             return Err(action_error(
                 "capacity",
@@ -732,12 +723,11 @@ impl Workspace {
         tab_index: usize,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
-        if let Some(previous) = self.tabs[tab_index].previous_tab.clone() {
+        if self.tabs.len() > 1 {
+            let previous = self.tabs[tab_index].previous_tab.clone();
             self.tabs.remove(tab_index);
-            self.active = self
-                .tabs
-                .iter()
-                .position(|tab| tab.id == previous)
+            self.active = previous
+                .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
                 .unwrap_or_else(|| tab_index.min(self.tabs.len() - 1));
         } else {
             self.tabs[tab_index].pending = false;
@@ -1146,13 +1136,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v6::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v7::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v6::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v6::ALT, "Alt"),
-        (eon_workspace_protocol::v6::SHIFT, "Shift"),
-        (eon_workspace_protocol::v6::SUPER, "Super"),
+        (eon_workspace_protocol::v7::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v7::ALT, "Alt"),
+        (eon_workspace_protocol::v7::SHIFT, "Shift"),
+        (eon_workspace_protocol::v7::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1205,7 +1195,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v6::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v7::{ALT, PopupGeometry, Shortcut};
 
     fn catalog() -> PopupCatalog {
         PopupCatalog {
@@ -1561,5 +1551,117 @@ mod tests {
                 .is_err()
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pending_tabs_keep_independent_pickers_and_close_only_the_selected_tab() {
+        let mut workspace =
+            Workspace::pending("/runtime".into(), "/".into(), catalog(), prepared, |_| {
+                Ok(())
+            })
+            .unwrap();
+        workspace
+            .dispatch(
+                "new-t2",
+                Action::Workspace(WorkspaceAction::CreateTab),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        let state = workspace.snapshot();
+        assert_eq!(state.active_tab, "t2");
+        assert_eq!(state.tabs.len(), 2);
+        assert!(state.tabs.iter().all(|tab| tab.pending));
+        assert_ne!(state.tabs[0].popups[0].id, state.tabs[1].popups[0].id);
+        assert_ne!(
+            state.tabs[0].popups[0].endpoint,
+            state.tabs[1].popups[0].endpoint
+        );
+        let first = state.tabs[0].popups[0].clone();
+        let second = state.tabs[1].popups[0].clone();
+
+        workspace
+            .dispatch(
+                "focus-t1",
+                Action::Workspace(WorkspaceAction::FocusId("t1".into())),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        assert_eq!(
+            workspace.prepare_close_tab("close-t1", "t1").unwrap(),
+            std::slice::from_ref(&first.session)
+        );
+        workspace
+            .session_exited(&first.session, |_| Ok(()))
+            .unwrap();
+        assert_eq!(workspace.snapshot().active_tab, "t2");
+        assert_eq!(workspace.snapshot().tabs[0].popups[0], second);
+        assert!(
+            workspace
+                .dispatch(
+                    "stale-t1",
+                    Action::CommitDirectory {
+                        target: PopupTarget {
+                            tab: "t1".into(),
+                            instance: first.id,
+                        },
+                        directory: b"/".to_vec(),
+                    },
+                    prepared,
+                    |_| Ok(()),
+                )
+                .is_err()
+        );
+
+        let before_failed_launch = workspace.snapshot();
+        assert_eq!(
+            workspace
+                .dispatch(
+                    "new-fails",
+                    Action::Workspace(WorkspaceAction::CreateTab),
+                    prepared,
+                    |_| Err("launch failed".into()),
+                )
+                .unwrap_err()
+                .code,
+            "popup-start"
+        );
+        assert_eq!(workspace.snapshot(), before_failed_launch);
+
+        workspace
+            .dispatch(
+                "new-t3",
+                Action::Workspace(WorkspaceAction::CreateTab),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        let third = workspace.snapshot().tabs[1].popups[0].clone();
+        assert_eq!(
+            workspace.prepare_close_tab("close-t3", "t3").unwrap(),
+            std::slice::from_ref(&third.session)
+        );
+        workspace
+            .session_exited(&third.session, |_| Ok(()))
+            .unwrap();
+        assert_eq!(workspace.snapshot(), before_failed_launch);
+
+        workspace
+            .dispatch(
+                "accept-t2",
+                Action::CommitDirectory {
+                    target: PopupTarget {
+                        tab: "t2".into(),
+                        instance: second.id,
+                    },
+                    directory: b"/".to_vec(),
+                },
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        assert!(!workspace.snapshot().tabs[0].pending);
+        assert_eq!(workspace.snapshot().tabs[0].panes.len(), 1);
     }
 }

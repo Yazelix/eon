@@ -13,7 +13,7 @@ use super::{
     },
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::v6::{
+use eon_workspace_protocol::v7::{
     Action, Direction, PopupTarget, Response, VERSION, WorkspaceAction,
 };
 use std::{

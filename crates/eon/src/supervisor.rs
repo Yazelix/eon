@@ -12,7 +12,7 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionOperation, Workspace},
 };
-use eon_workspace_protocol::v6::{
+use eon_workspace_protocol::v7::{
     Action, Availability, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
     Stopped, VERSION, WorkspaceAction,
 };
@@ -446,7 +446,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v6::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v7::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -629,7 +629,7 @@ fn supervise(
         eon_manifest::component_revision(MANIFEST, "orbit").map_err(|error| error.to_string())?;
     let deadline = Instant::now() + SESSION_START_TIMEOUT;
     let popup_catalog = popups.unwrap_or_else(|| managed_environment::PopupCatalog {
-        geometry: eon_workspace_protocol::v6::PopupGeometry {
+        geometry: eon_workspace_protocol::v7::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -1397,7 +1397,7 @@ fn runtime_status(
         attach: Availability {
             available: true,
             reason: match mode {
-                LaunchMode::Workspace => "supervisor accepts EONW v6 presentation requests",
+                LaunchMode::Workspace => "supervisor accepts EONW v7 presentation requests",
                 LaunchMode::Terminal => "supervisor owns one EonTerm Session",
             }
             .into(),
@@ -1435,7 +1435,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v6::{
+        use eon_workspace_protocol::v7::{
             Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::{

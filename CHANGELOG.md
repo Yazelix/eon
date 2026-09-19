@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Let New tab create a separate pending tab and Project picker while another
+  picker is open. Switching tabs preserves each picker; Alt+Shift+W closes the
+  selected pending tab and stops only its picker. EONW v7 keeps older wire
+  revisions strict; composed activation awaits an exact Venus consumer.
+
 - Place the Eon Bar's New tab button directly after fitting tabs and keep it
   visible at the tab-region edge when tabs overflow. The accessibility tree
   places it before the optional Codex quota chip. Keep the chip adjacent to

@@ -72,11 +72,19 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
 }
 
 pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
+    encode_response_version(response, VERSION, false)
+}
+
+pub(super) fn encode_response_version(
+    response: &Response,
+    version: u16,
+    multiple_pending: bool,
+) -> Result<Vec<u8>> {
     let mut payload = v2::Encoder::default();
     let kind = match response {
         Response::Snapshot(snapshot) => {
             let workspace = as_v5(snapshot);
-            v5::validate_snapshot(&workspace)?;
+            v5::validate_snapshot_with_pending(&workspace, multiple_pending)?;
             validate_quota(snapshot.codex_quota.as_ref())?;
             v5::encode_workspace(&mut payload, &workspace);
             encode_quota(&mut payload, snapshot.codex_quota.as_ref());
@@ -87,17 +95,25 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             v2::FAILURE
         }
     };
-    v2::frame_version(VERSION, kind, payload.bytes)
+    v2::frame_version(version, kind, payload.bytes)
 }
 
 pub fn decode_response(bytes: &[u8]) -> Result<Response> {
-    let (kind, payload) = v2::unframe_version(bytes, VERSION)?;
+    decode_response_version(bytes, VERSION, false)
+}
+
+pub(super) fn decode_response_version(
+    bytes: &[u8],
+    version: u16,
+    multiple_pending: bool,
+) -> Result<Response> {
+    let (kind, payload) = v2::unframe_version(bytes, version)?;
     let mut decoder = v2::Decoder::new(payload);
     let response = match kind {
         v2::SNAPSHOT => {
             let workspace = v5::decode_workspace(&mut decoder)?;
             let codex_quota = decode_quota(&mut decoder)?;
-            v5::validate_snapshot(&workspace)?;
+            v5::validate_snapshot_with_pending(&workspace, multiple_pending)?;
             validate_quota(codex_quota.as_ref())?;
             let snapshot = Snapshot {
                 active_tab: workspace.active_tab,
@@ -247,12 +263,12 @@ fn decode_u64(decoder: &mut v2::Decoder<'_>) -> Result<u64> {
     Ok(value)
 }
 
-fn reframe(bytes: &[u8], version: u16) -> Result<Vec<u8>> {
+pub(super) fn reframe(bytes: &[u8], version: u16) -> Result<Vec<u8>> {
     v2::unframe_version(bytes, version)?;
     Ok(bytes.to_vec())
 }
 
-fn set_version(bytes: &mut [u8], version: u16) {
+pub(super) fn set_version(bytes: &mut [u8], version: u16) {
     bytes[4..6].copy_from_slice(&version.to_le_bytes());
 }
 

@@ -125,7 +125,7 @@ for orientation but are never opened or managed by the picker.
 | `eon generations [--json]` | List validated current and older generations |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
 | `eon workspace [--json]` | Inspect the live tab, pane, popup, and Session mapping |
-| `eon tab create [--json]` | Create a pending tab with its directory picker |
+| `eon tab create [--json]` | Create a distinct pending tab with its directory picker, even while another picker is open |
 | `eon tab close TAB [--json]` | Close the expected active non-final tab |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future Sessions |
 | `eon tab move left\|right [--json]` | Move the active tab one position |
@@ -301,13 +301,13 @@ Beads data, lock files, and generated artifacts.
 | README | 313 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,994 |
+| Architecture and contracts | 2,001 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 328 |
-| Rust source and tests | 15,996 |
+| Changelog | 333 |
+| Rust source and tests | 16,251 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **21,324** |
+| **Total** | **21,591** |

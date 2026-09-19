@@ -1,6 +1,6 @@
 use eon_workspace_protocol::{
     v4 as legacy,
-    v6::{
+    v7::{
         Action as ProtocolAction, Direction, HEADER_BYTES, InvokeIntent, MAX_SESSIONS, Pane, Popup,
         PopupGeometry, PopupTarget, Request, Response, Snapshot, Tab, VERSION,
         WorkspaceAction as Action, declared_message_len, decode_request, decode_response,
@@ -1050,6 +1050,30 @@ cat >/dev/null
         Response::Snapshot(opened)
     );
 
+    let two_pending = match workspace_action(&control, "second-pending", Action::CreateTab) {
+        Response::Snapshot(snapshot) => snapshot,
+        response => panic!("second pending tab failed: {response:?}"),
+    };
+    assert_eq!(two_pending.active_tab, "t2");
+    assert_eq!(two_pending.tabs.len(), 2);
+    assert!(two_pending.tabs.iter().all(|tab| tab.pending));
+    let second_picker = two_pending.tabs[1].popups[0].endpoint.clone();
+    assert_ne!(two_pending.tabs[0].popups[0].endpoint, second_picker);
+    assert!(matches!(
+        workspace_action(&control, "return-to-first-pending", Action::FocusId("t1".into())),
+        Response::Snapshot(snapshot)
+            if snapshot.active_tab == "t1" && snapshot.tabs[0].popups[0] == two_pending.tabs[0].popups[0]
+    ));
+    assert!(matches!(
+        workspace_action(&control, "return-to-second-pending", Action::FocusId("t2".into())),
+        Response::Snapshot(snapshot) if snapshot.active_tab == "t2"
+    ));
+    assert!(matches!(
+        workspace_action(&control, "close-second-pending", Action::CloseTab { tab: "t2".into() }),
+        Response::Snapshot(snapshot) if snapshot.active_tab == "t1" && snapshot.tabs.len() == 1
+    ));
+    assert!(!Path::new(OsStr::from_bytes(&second_picker)).exists());
+
     fs::write(&release, "").unwrap();
     let retargeted = wait_for_picker_close(&control, &selected);
     assert_eq!(retargeted.tabs[0].panes.len(), 1);
@@ -1079,7 +1103,7 @@ cat >/dev/null
     assert!(matches!(
         workspace_action(&control, "new-tab-cancel", Action::CreateTab),
         Response::Snapshot(snapshot)
-            if snapshot.active_tab == "t2"
+            if snapshot.active_tab == "t3"
                 && snapshot.tabs[1].panes.is_empty()
                 && snapshot.tabs[1].selected_pane.is_none()
     ));
@@ -1089,7 +1113,7 @@ cat >/dev/null
         workspace_action(
             &control,
             "close-pending-tab",
-            Action::CloseTab { tab: "t2".into() },
+            Action::CloseTab { tab: "t3".into() },
         ),
         Response::Snapshot(snapshot)
             if snapshot.active_tab == "t1" && snapshot.tabs.len() == 1
@@ -1099,7 +1123,7 @@ cat >/dev/null
     fs::write(&selection, selected.as_os_str().as_bytes()).unwrap();
     let traversed_picker = match workspace_action(&control, "new-tab-accept", Action::CreateTab) {
         Response::Snapshot(snapshot)
-            if snapshot.active_tab == "t3" && snapshot.tabs[1].panes.is_empty() =>
+            if snapshot.active_tab == "t4" && snapshot.tabs[1].panes.is_empty() =>
         {
             project_popup(&snapshot).unwrap().1.clone()
         }
@@ -1115,14 +1139,14 @@ cat >/dev/null
     assert!(matches!(
         workspace_action(&control, "picker-traverse-right", Action::Focus(Direction::Right)),
         Response::Snapshot(snapshot)
-            if snapshot.active_tab == "t3"
+            if snapshot.active_tab == "t4"
                 && project_popup(&snapshot).is_some_and(|(_, popup)| popup == &traversed_picker)
                 && snapshot.tabs[1].panes.is_empty()
                 && snapshot.tabs[1].selected_pane.is_none()
     ));
     fs::write(&release, "").unwrap();
     let accepted = wait_for_picker_close(&control, &selected);
-    assert_eq!(accepted.active_tab, "t3");
+    assert_eq!(accepted.active_tab, "t4");
     assert_eq!(accepted.tabs[1].selected_pane.as_deref(), Some("p3"));
 
     let invoke_ok = |arguments: &[&str]| {
@@ -1131,8 +1155,8 @@ cat >/dev/null
         output
     };
     let moved_tab = invoke_ok(&["tab", "move", "left", "--json"]);
-    assert!(stdout(&moved_tab).contains("\"active_tab\":\"t3\""));
-    assert!(stdout(&moved_tab).contains("\"tabs\":[{\"id\":\"t3\""));
+    assert!(stdout(&moved_tab).contains("\"active_tab\":\"t4\""));
+    assert!(stdout(&moved_tab).contains("\"tabs\":[{\"id\":\"t4\""));
     invoke_ok(&["tab", "move", "right", "--json"]);
     invoke_ok(&["focus", "t1", "--json"]);
     let moved_pane = invoke_ok(&["pane", "move", "up", "--json"]);
@@ -1198,12 +1222,12 @@ cat >/dev/null
         &["tab", "close", "t1", "--json"],
     );
     assert!(closed.status.success(), "{}", stdout(&closed));
-    assert!(stdout(&closed).contains("\"active_tab\":\"t3\""));
+    assert!(stdout(&closed).contains("\"active_tab\":\"t4\""));
     assert!(matches!(
         workspace_action(
             &control,
             "close-final-tab",
-            Action::CloseTab { tab: "t3".into() },
+            Action::CloseTab { tab: "t4".into() },
         ),
         Response::Failure(failure) if failure.code == "unavailable"
     ));
@@ -3269,7 +3293,7 @@ fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
     let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
     assert!(listed.status.success());
     assert!(stdout(&listed).contains("\"id\":\"legacy\",\"kind\":\"legacy\",\"state\":\"live\""));
-    assert!(stdout(&listed).contains("current Eon requires EONW v6"));
+    assert!(stdout(&listed).contains("current Eon requires EONW v7"));
     assert!(stdout(&listed).contains("legacy supervisor has no authoritative stop action"));
 
     let attached = eon_command(&binary)
@@ -3281,7 +3305,7 @@ fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
         .output()
         .unwrap();
     assert_eq!(attached.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&attached.stderr).contains("current Eon requires EONW v6"));
+    assert!(String::from_utf8_lossy(&attached.stderr).contains("current Eon requires EONW v7"));
     assert!(!venus_log.exists());
 
     let stopped = invoke(&binary, &runtime, &config, &["stop", "legacy", "--json"]);

@@ -3,7 +3,7 @@ use super::{
     workspace,
 };
 use eon_workspace_protocol::v4;
-use eon_workspace_protocol::v6::{
+use eon_workspace_protocol::v7::{
     Action, Availability, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse,
     MAX_DETAIL_BYTES, Request, Response, Runtime, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
@@ -533,7 +533,7 @@ mod tests {
         socket_identity,
     };
     use crate::supervisor::temporary_directory;
-    use eon_workspace_protocol::v6::{
+    use eon_workspace_protocol::v7::{
         Action, Availability, Failure, LifecycleResponse, Response, Runtime, VERSION,
         WorkspaceAction, encode_lifecycle_response, encode_response,
     };
