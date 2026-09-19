@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Place the Eon Bar's New tab button directly after fitting tabs and keep it
+  visible at the tab-region edge when tabs overflow.
+
 - Deliver the accepted Orbit ORBS v12 and Venus pair to Eon and EonTerm.
   The scrollback pill shows `↓ N rows`; clicking anywhere on it returns to
   live output without sending terminal input.
@@ -18,7 +21,7 @@ installation, and proven contract changes.
   Eon owns bounded provider lifecycle and normalized EONW v6 facts; accepted
   Venus `247dcb2dc853e604d51ac727471e1e65e1535f1d` owns native presentation.
 
-- Deliver the native one-row Eon Bar with scrollable tabs, fixed New tab,
+- Deliver the native one-row Eon Bar with scrollable tabs, adjacent New tab,
   Shortcuts, and active-tab Close controls, keyboard and accessibility
   activation, shortcut-bearing tooltips, responsive narrow layouts, and an
   empty native Wayland window-drag region.

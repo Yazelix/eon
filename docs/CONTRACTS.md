@@ -1582,7 +1582,8 @@ show the median and observed minimum–maximum, not a confidence interval.
   region.
 - **Result:** Full Eon presents one native Eon Bar at the existing tab-strip
   height. Eon-authored tab identity and action policy feed Venus's tab-first
-  responsive layout, fixed New tab and Shortcuts controls, active-tab Close,
+  responsive layout, New tab beside the rightmost tab or pinned at the
+  tab-region edge during overflow, fixed Shortcuts and active-tab Close,
   shortcut tooltips, visible keyboard focus, AccessKit buttons, and bounded
   compositor-owned window dragging. The existing CreateTab and exact active
   CloseTab actions and local VEN-C20 viewer remain their sole behavior owners.
@@ -1596,7 +1597,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   policy, profile delivery, and installed acceptance. Venus owns header
   geometry, rendering, input, native drag, tooltips, and accessibility. Orbit
   remains unchanged.
-- **Consumes:** Venus VEN-C21 at exact source
+- **Initial consumes:** Venus VEN-C21 at exact source
   `2ce3594b9ca0f62a2723d5ce5a005ed3560aea64`, EONW v5 at source
   `0cc8f477298681ae3945903e8fdb5852d487c5ab`, and Orbit ORBF v2 / ORBS v11 at
   `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`.
@@ -1626,6 +1627,15 @@ show the median and observed minimum–maximum, not a confidence interval.
     `~/.local/state/eon/proofs/eon-deliver-native-eon-bar-w4d-2026-09-17/`.
   - **Limits:** Existing live supervisors retain their prior Venus until a
     normal restart. macOS and broader platform coverage remain separate.
+- **Placement follow-up:** VEN-C21 source `562cacf74e101ee9ea18460c21e47d86eec2376d`
+  consumes EONW v6 `3103a00a904c347472899549ce611da765a71650` and Orbit
+  ORBS v12 `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`, retaining the
+  EONW action and tab owners while moving the New tab target
+  beside fitting tabs. The exact composed Eon candidate
+  `/nix/store/31mwvisf7s1aiyp42agslc2wjbz47lms-eon-0.1.0` passed an isolated
+  native Wayland pointer CreateTab action and 960/320/100-pixel layout checks
+  under private Sway 1.12. Captures are retained under
+  `~/.local/state/eon/proofs/ven-place-new-tab-beside-tabs-pct/`.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
