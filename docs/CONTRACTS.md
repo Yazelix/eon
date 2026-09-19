@@ -61,6 +61,30 @@ Profile refreshes preserve existing live supervisors and their Sessions.
   reload, duration control, per-pane policy, new platform, or distribution
   claim is added. Existing supervisors retain their old runtime until restarted.
 
+### Cursor-body color refinement
+
+- **Accepted source:** Eon `a8540ff575e1ca6f3ab3825af7fd92d810e20ba6`
+  pins Venus `f0885517cbd63f6fac966e913e48aecccfc212eb` and advances its
+  VEN-C1 proof; Orbit and EONW v7 remain unchanged.
+- **Mechanical proof:** Focused Venus red/green draw-byte and canonical-frame
+  checks, the complete locked Venus Rust route, Eon manifest validation, and
+  both committed-tree Nix builds pass. The manifest, flake input, and lock all
+  name the same Venus revision.
+- **Installed proof:** The refreshed named profiles resolve to Eon
+  `/nix/store/n5x9p8zl772nbvxfgsvngvvkpdrli1ra-eon-0.1.0` and EonTerm
+  `/nix/store/whf6bm2hz3b9gnvmixxlncmysy7pcj11-eonterm-0.1.0`, both
+  composing Venus `/nix/store/6qyly8dky1x6bipwp4ayksn65igj09wj-yazelix-venus-0.1.0`.
+  A private Sway 1.12 Wayland/pixman and Mesa 26.1.2 lavapipe EonTerm run
+  rendered the Ice cursor body from the installed wrapper, then stopped its
+  one private Session cleanly. Capture:
+  `~/.local/state/eon/proofs/ven-phm-2026-09-19/installed/ice.png` (SHA-256
+  `6560203ffee6b3b2867168a014ac8414d8391900b5ecc81913084f164851e6f7`).
+- **Boundary:** The block cursor retains its existing 0.55 alpha, so its
+  composited pixel is darker than the opaque trail despite matching draw RGB.
+  Explicit Orbit cursor colors still win. All ten pre-existing Eon, Venus, and
+  Orbit process identities survived; no live supervisor was restarted, so its
+  open windows use their prior binary until reopened.
+
 ## Quiet workspace navigation integration
 
 - **Accepted source:** Eon `07dc210a49cd30f3b58fa65fd9e9a45b421e9b36`,
