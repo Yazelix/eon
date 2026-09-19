@@ -15,8 +15,8 @@ and remaining limitations. Owning Beads and Git retain execution history;
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
 The current accepted composition selects Orbit
-`ea9fd28ce0908f218cf65d4e6df368f0a4e565f5` with ORBF v2 / ORBS v11 and Venus
-`247dcb2dc853e604d51ac727471e1e65e1535f1d`. Exact source, installed artifact,
+`f8ad14e5195109ba8cb421f30e5ae4a9619a1419` with ORBF v2 / ORBS v12 and Venus
+`ead00dfcb3510eb595173c02f4627d2cd8b36b0a`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
 
