@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Match the cursor body to the selected trail RGB when Orbit has no explicit
+  cursor color; preserve explicit colors, shape, and blink behavior.
+
 - Let New tab create a separate pending tab and Project picker while another
   picker is open. Switching tabs preserves each picker; Alt+Shift+W closes the
   selected pending tab and stops only its picker. EONW v7 keeps older wire

@@ -16,7 +16,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `f8ad14e5195109ba8cb421f30e5ae4a9619a1419` with ORBF v2 / ORBS v12 and Venus
-`ead00dfcb3510eb595173c02f4627d2cd8b36b0a`. Exact source, installed artifact,
+`f0885517cbd63f6fac966e913e48aecccfc212eb`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
 
@@ -32,7 +32,9 @@ Profile refreshes preserve existing live supervisors and their Sessions.
   forwarded unchanged to each new or reopened Venus in Eon and EonTerm. Eon
   owns only configuration and argv serialization. Venus owns the grammar,
   preset values, validation, random choice, outline, animation, and rendering;
-  Orbit retains authoritative cursor-body state.
+  Orbit retains explicit cursor color, shape, visibility, blink, and placement.
+  With the trail enabled and no explicit Orbit cursor color, Venus uses its
+  selected trail RGB for the cursor body.
 - **Failure boundary:** Explicit choices use the existing native readiness
   admission. A Venus-rejected value starts no new Orbit Session or command;
   rejected reopen preserves the existing Session and command. Malformed TOML
