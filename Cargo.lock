@@ -71,7 +71,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 [[package]]
 name = "orbit-protocol"
 version = "0.1.0"
-source = "git+https://github.com/Yazelix/eon-sessions.git?rev=ea9fd28ce0908f218cf65d4e6df368f0a4e565f5#ea9fd28ce0908f218cf65d4e6df368f0a4e565f5"
+source = "git+https://github.com/Yazelix/eon-sessions.git?rev=f8ad14e5195109ba8cb421f30e5ae4a9619a1419#f8ad14e5195109ba8cb421f30e5ae4a9619a1419"
 
 [[package]]
 name = "proc-macro2"
