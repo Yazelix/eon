@@ -92,6 +92,57 @@ Profile refreshes preserve existing live supervisors and their Sessions.
   observations, captures and cleanup are retained under
   `~/.local/state/eon/proofs/eon-quiet-workspace-navigation-y7a/`.
 
+## Scrollback-position installed integration
+
+- **Composition:** `eon-accept-scrollback-position-j7f` accepts the unchanged
+  EON-C1/C2/C3 graph at Eon `a9841c740d048e52f199cfc7ad965404dacf0cb1`:
+  Orbit `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5` (ORB-C8, ORBF v2 /
+  ORBS v11) and Venus `247dcb2dc853e604d51ac727471e1e65e1535f1d`
+  (VEN-C7, accepted after its `74d22276e9039dc3ee6151d69b9283114ab02ea1`
+  position proof). Eon adds no position arithmetic or rendering policy.
+- **Build and installation:** Manifest validation and both Nix builds pass.
+  The installed Eon profile resolves to
+  `/nix/store/h1d86xgn75mp5qny96iz5ysbkhp4gxx3-eon-0.1.0`; the refreshed
+  EonTerm profile resolves to
+  `/nix/store/bk39s868z0jj1grm1psaq2c4k1mjw3dd-eonterm-0.1.0`. Both use
+  Orbit `/nix/store/1kx2h2lm6mxrsgkr0hr33906my0xic0k-yazelix-orbit-0.1.0`
+  and Venus `/nix/store/71jkkvkkzlbfwwiqr5n8jw9qkfcm36fi-yazelix-venus-0.1.0`.
+- **Installed observation:** In private native Sway 1.12 headless/pixman with
+  Mesa 26.1.2 lavapipe at scale 1 on x86_64 Linux, both products show `↑ 10 rows`
+  when scrolled back, then `↑ 16 rows` after output continues, then no indicator
+  at live bottom. The eight captures and cleanup record are retained at
+  `~/.local/state/eon/proofs/eon-accept-scrollback-position-j7f-2026-09-18/`.
+  All 32 pre-existing product process identities survived; no private process
+  remained. Existing live Sessions were not restarted.
+- **Limits:** This accepts the exact installed Linux pair, not fractional-scale,
+  other-compositor, screen-reader, macOS, or later Orbit revisions.
+
+## Return-to-live installed integration
+
+- **Composition:** `eon-deliver-return-to-live-eon-14g` at Eon
+  `f4dc4824d422d2ec0d926e45036c35e2f95522ed` selects accepted Orbit
+  `f8ad14e5195109ba8cb421f30e5ae4a9619a1419` (ORB-C8, ORBF v2 /
+  ORBS v12) and Venus `ead00dfcb3510eb595173c02f4627d2cd8b36b0a`
+  (VEN-C7). Eon owns exact composition, not viewport movement or pill input.
+- **Build and installation:** The manifest validator and all 76 Eon workspace
+  tests pass. Both Nix packages build. Active Eon and EonTerm profiles resolve
+  to `/nix/store/ils9na81wh4gd22dk8cla7095wy0y3gn-eon-0.1.0` and
+  `/nix/store/3ldfxmkyjvq1xymzpi74l5dziysfmgic-eonterm-0.1.0`, sharing
+  Orbit `/nix/store/gqllkpfp07kbmc3c3m90lgl44c30gqgl-yazelix-orbit-0.1.0`
+  and Venus `/nix/store/bnw3fc9d961x4y3izw55s8wvvhqlxl2s-yazelix-venus-0.1.0`.
+- **Installed observation:** Private native Sway 1.12 headless/pixman with
+  Mesa 26.1.2 lavapipe at scale 1 on x86_64 Linux shows `↓ 10 rows` in Eon's
+  selected pane header and EonTerm's top-right overlay. Continued output
+  changes each to `↓ 16 rows` without moving the viewport. A native click on
+  each pill returns to the live rows and hides the indicator. All 31 ambient
+  product process identities survived; no private process remained.
+- **Evidence and limits:** Eight captures, profile identities, harness and
+  cleanup are retained at
+  `~/.local/state/eon/proofs/eon-deliver-return-to-live-eon-14g-2026-09-19/`.
+  Venus's source proof owns hidden/stale hit testing; this installed check
+  exercises visible clicks only. No live Session restart, fractional-scale,
+  other-compositor, screen-reader or macOS claim.
+
 ## Pill-shaped tab integration
 
 - **Accepted source:** Eon `57fb875cc02c7fe8c2cd1134315e777a17f15f73`, owned by

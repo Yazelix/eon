@@ -105,6 +105,11 @@ retarget its tab. Project changes the directory used by future Sessions in the
 captured tab without moving existing Sessions. Git and Agent are tab-scoped
 Sessions whose terminal state survives hiding and reopening.
 
+When you scroll above live output, `↓ N rows` shows how many display rows back
+you are. It appears in Eon's pane header or at the top right of EonTerm, updates
+as output continues, and disappears at live output. Click the whole pill to
+return there.
+
 The directory picker starts with Zoxide and fzf. Tab switches to Yazi, Shift+Z
 jumps through Zoxide history from the browser, `g h` goes home, `g /` goes to
 root, `g Space` accepts a folder path, and F1 opens browser help. Files are shown
@@ -293,16 +298,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 308 |
+| README | 313 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 1,912 |
+| Architecture and contracts | 1,963 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 318 |
+| Changelog | 323 |
 | Rust source and tests | 15,996 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **21,227** |
+| **Total** | **21,288** |

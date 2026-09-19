@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Deliver the accepted Orbit ORBS v12 and Venus pair to Eon and EonTerm.
+  The scrollback pill shows `↓ N rows`; clicking anywhere on it returns to
+  live output without sending terminal input.
+
 - Show a conditional read-only Codex quota chip in the Eon Bar when the user's
   compatible authenticated Codex CLI supplies rate-limit facts. Fresh quota,
   reset-bounded old data, and blocked or unknown access stay distinct; provider
@@ -44,7 +48,8 @@ installation, and proven contract changes.
 - Keep routine workspace navigation quiet: singleton traversal, selecting the
   current target and reordering at an edge succeed unchanged. Hide routine pane
   attachment progress while retaining genuine errors. The accepted paired
-  Orbit ORBF v2 / ORBS v11 and Venus update also delivers the scrollback row count.
+  Orbit ORBF v2 / ORBS v11 and Venus update shows `↑ N rows` in Eon and EonTerm
+  while scrolled back, updates it as output continues, and hides it at live output.
 
 - Connect the pane stack within one rounded border, with full-width separators,
   a small tinted bottom gap, stack-shaped selected/hovered header fills and
