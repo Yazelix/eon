@@ -1309,7 +1309,8 @@ show the median and observed minimum–maximum, not a confidence interval.
   - Accepting a valid choice atomically commits the tab directory and starts
     exactly one first `pN` Session there. First-tab cancellation falls back to
     Eon's validated launch directory; later-tab cancellation abandons the
-    pending tab and restores the prior tab and focus.
+    pending tab. If it was selected, focus returns to its prior tab; a
+    background picker exit leaves the selected tab unchanged.
   - Alt+Z keeps the existing explicit retarget behavior after a tab has panes;
     it never changes or restarts a running pane.
   - EONW v5 exposes Project as a popup endpoint bound to one live
@@ -1335,9 +1336,10 @@ show the median and observed minimum–maximum, not a confidence interval.
     the picker's binding and Session. Mutations of the picker-bound tab remain
     blocked except directory acceptance and closing its non-final pending tab;
     that close stops the transient Session before removing the tab. Cancellation
-    restores the previous tab if it survives, otherwise the nearest surviving
-    tab; with no tabs left, the workspace ends. Pickers remain attached across
-    tab switches; established tabs may open their own popup while one remains
+    of the selected pending tab restores its previous tab if that tab survives,
+    otherwise the nearest surviving tab. Background picker cancellation leaves
+    the selected tab in focus; with no tabs left, the workspace ends. Pickers
+    remain attached across tab switches; established tabs may open their own
     live elsewhere. The accepted v5/v6 boundary permits at most one pending
     picker-first tab. EONW v7 permits multiple pending
     tabs, each retaining its own exact Project picker across tab switches;

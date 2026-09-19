@@ -724,11 +724,17 @@ impl Workspace {
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         if self.tabs.len() > 1 {
+            let was_active = self.active == tab_index;
             let previous = self.tabs[tab_index].previous_tab.clone();
             self.tabs.remove(tab_index);
-            self.active = previous
-                .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
-                .unwrap_or_else(|| tab_index.min(self.tabs.len() - 1));
+            let selected = index_after_removal(self.active, tab_index, self.tabs.len());
+            self.active = if was_active {
+                previous
+                    .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
+                    .unwrap_or(selected)
+            } else {
+                selected
+            };
         } else {
             self.tabs[tab_index].pending = false;
             self.start_pane(tab_index, operate)
@@ -1663,5 +1669,38 @@ mod tests {
             .unwrap();
         assert!(!workspace.snapshot().tabs[0].pending);
         assert_eq!(workspace.snapshot().tabs[0].panes.len(), 1);
+    }
+
+    #[test]
+    fn background_pending_picker_exit_keeps_the_selected_tab() {
+        let mut workspace =
+            Workspace::pending("/runtime".into(), "/".into(), catalog(), prepared, |_| {
+                Ok(())
+            })
+            .unwrap();
+        for number in 2..=3 {
+            workspace
+                .dispatch(
+                    &format!("new-t{number}"),
+                    Action::Workspace(WorkspaceAction::CreateTab),
+                    prepared,
+                    |_| Ok(()),
+                )
+                .unwrap();
+        }
+        let second_picker = workspace.snapshot().tabs[1].popups[0].session.clone();
+        workspace
+            .session_exited(&second_picker, |_| Ok(()))
+            .unwrap();
+        let snapshot = workspace.snapshot();
+        assert_eq!(snapshot.active_tab, "t3");
+        assert_eq!(
+            snapshot
+                .tabs
+                .iter()
+                .map(|tab| tab.id.as_str())
+                .collect::<Vec<_>>(),
+            ["t1", "t3"]
+        );
     }
 }

@@ -301,13 +301,13 @@ Beads data, lock files, and generated artifacts.
 | README | 313 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 2,016 |
+| Architecture and contracts | 2,018 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 333 |
-| Rust source and tests | 16,251 |
+| Changelog | 334 |
+| Rust source and tests | 16,289 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **21,606** |
+| **Total** | **21,647** |
