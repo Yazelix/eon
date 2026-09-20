@@ -85,6 +85,30 @@ Profile refreshes preserve existing live supervisors and their Sessions.
   Orbit process identities survived; no live supervisor was restarted, so its
   open windows use their prior binary until reopened.
 
+### Fallback cursor visibility refinement
+
+- **Accepted source:** Eon `b8cb7feceb6df71868d9de46a0bd843d68a14a14`
+  pins exact Venus `f6c1ebdb16df2960077dbd88ab6728a921b789d8` and its
+  updated VEN-C1 proof; Orbit and EONW v7 remain unchanged.
+- **Mechanical proof:** Manifest validation passes. The manifest, flake input,
+  and lock agree on Venus; committed-tree Eon and EonTerm Nix builds pass.
+  Venus's focused red/green shape and explicit-color checks, full locked Rust
+  route, and private native black-on-black before/after proof remain at VEN-C1.
+- **Installed proof:** Named path-flake profiles resolve to Eon
+  `/nix/store/c95lam2hbgk52hi1xr7mjriq5w97w5fj-eon-0.1.0` and EonTerm
+  `/nix/store/92cfax22s9f3v5n3sqjmkspkpzgakhj9-eonterm-0.1.0`, matching
+  exact path-flake builds and both composing Venus
+  `/nix/store/x447s5k1i1m9m6cx5x9912baab15lhrj-yazelix-venus-0.1.0`.
+  An isolated installed EonTerm run on Sway 1.12 headless/pixman and host
+  lavapipe used `custom:#000000` and visibly outlined the stationary cursor
+  against black. Capture:
+  `~/.local/state/eon/proofs/ven-phm-2026-09-19/installed/black-outline.png`
+  (SHA-256 `525c7ab0d6f860630bed031ef832b3c09619ee132a95a298dce57ff8fa8f7c5b`).
+  Its one private Session stopped normally. The private runtime root must keep
+  generated Unix socket paths below the platform limit.
+- **Boundary:** No live supervisor or Session was restarted. Existing windows
+  keep their prior binary until reopened; this does not widen platform proof.
+
 ## Quiet workspace navigation integration
 
 - **Accepted source:** Eon `07dc210a49cd30f3b58fa65fd9e9a45b421e9b36`,
