@@ -169,7 +169,8 @@ Omitting `cursor_trail_color` chooses a random color for each surface. Explicit
 values are `random`, `preset:<name>`, or `custom:#RRGGBB`. The presets are
 `magma`, `solar`, `lime`, `forest`, `ice`, `ocean`, `nebula`, and `bubblegum`;
 the terminal adds a contrasting cursor outline automatically. The cursor body
-uses the chosen color unless Orbit supplies an explicit cursor color.
+uses the chosen color with a shape-aware contrasting edge unless Orbit supplies
+an explicit cursor color.
 
 Opacity accepts `0.0` through `1.0`. Blur and pane frames are booleans. Font size
 accepts 6–96 logical pixels, line height accepts 1–3, and a supplied columns and
@@ -300,16 +301,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 315 |
+| README | 316 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Architecture and contracts | 2,054 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 337 |
+| Changelog | 338 |
 | Rust source and tests | 16,290 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **21,689** |
+| **Total** | **21,691** |

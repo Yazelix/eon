@@ -34,7 +34,7 @@ Profile refreshes preserve existing live supervisors and their Sessions.
   preset values, validation, random choice, outline, animation, and rendering;
   Orbit retains explicit cursor color, shape, visibility, blink, and placement.
   With the trail enabled and no explicit Orbit cursor color, Venus uses its
-  selected trail RGB for the cursor body.
+  selected trail RGB and a shape-aware contrasting edge for the cursor body.
 - **Failure boundary:** Explicit choices use the existing native readiness
   admission. A Venus-rejected value starts no new Orbit Session or command;
   rejected reopen preserves the existing Session and command. Malformed TOML
