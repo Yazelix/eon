@@ -1176,12 +1176,12 @@ show the median and observed minimum–maximum, not a confidence interval.
   current-live guard and passed after; all 82 locked Rust tests, strict Clippy,
   and `nix flake check path:.` pass on x86_64 Linux. The active profile matches
   `/nix/store/s28ypi05i5jw7n49sdskzzc65kmr6m72-eon-0.1.0`. Its installed
-  executable, in a private runtime with current unstarted and one corrupt
-  previous target, returned a per-target `stop-unavailable` array instead of a
-  preflight refusal. Read-only real-runtime inventory still showed 11 live
-  Sessions in the older supervisor. This proves selection without a live
-  current generation; successful older-generation Stop remains fixture proof,
-  and EON-C11 remains Candidate.
+  executable completed `stop previous --json` against a private v6 supervisor
+  while current was unstarted, returning `Stopped` for fixture `session-1`.
+  A corrupt target separately returned a per-target `stop-unavailable` array
+  instead of a preflight refusal. Real-runtime inventory still showed 11 live
+  Sessions in the older supervisor. These are fixture proofs, not a new native
+  Stop acceptance; EON-C11 remains Candidate.
 
 ## EON-C12 — Standalone exact-command terminal
 
