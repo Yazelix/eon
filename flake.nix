@@ -133,6 +133,8 @@
             mkdir -p "$out/share/terminfo"
             ${pkgs.ncurses}/bin/tic -x -o "$out/share/terminfo" ${orbit}/terminfo/eon.terminfo
             install -Dm444 ${./LICENSE} "$out/share/licenses/eon-sessions/LICENSE"
+            install -Dm444 ${ghostty}/LICENSE "$out/share/licenses/eon-sessions/ghostty/LICENSE"
+            install -Dm444 ${./licenses/libghostty-rs-MIT} "$out/share/licenses/eon-sessions/libghostty-rs/LICENSE"
           '';
         };
 

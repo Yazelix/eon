@@ -318,10 +318,11 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 334 |
+| README | 335 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
+| Binding license notice | 21 |
 | Architecture and contracts | 2,168 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
@@ -329,6 +330,6 @@ Beads data, lock files, and generated artifacts.
 | Rust source and tests | 16,721 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |
-| Nix composition | 795 |
+| Nix composition | 797 |
 | Product defaults | 0 |
-| **Total** | **22,309** |
+| **Total** | **22,333** |
