@@ -76,15 +76,13 @@ confirmation. Closing a window is therefore detach; stopping a generation ends
 its Sessions. Previous generations using EONW v2 through v7 can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
 `previous` attempts every non-dead generation except the installed build's exact
-current generation. It requires current to be live before stopping a versioned
-previous generation, so an upgrade cannot silently select the generation still
-holding your Sessions.
+current generation, including when current has not started.
 `all` includes current and stops it last. Each generation gets its own
 confirmation. Declining one skips that generation; earlier Stops remain and
 later prompts continue. A failed Stop does not prevent later attempts.
 When the command completes, it exits nonzero if any attempt fails. `--json`
 skips confirmation and returns an array of attempted results, or `[]` if there
-is nothing to stop. A preflight failure returns an error object.
+is nothing to stop.
 Run a batch command outside the generations it will stop when you need every
 attempt or a complete result: stopping the caller's own Session can terminate
 the CLI mid-batch. Fixed-namespace legacy work has no authoritative Stop action
@@ -142,7 +140,7 @@ for orientation but are never opened or managed by the picker.
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
 | `eon generations [--json]` | List validated current and older generations |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
-| `eon stop previous [--json]` | With current live, attempt every other non-dead generation |
+| `eon stop previous [--json]` | Attempt every other non-dead generation |
 | `eon stop all [--json]` | Attempt every non-dead generation, including current |
 | `eon workspace [--json]` | Inspect the live tab, pane, popup, and Session mapping |
 | `eon tab create [--json]` | Create a distinct pending tab with its directory picker, even while another picker is open |
@@ -320,16 +318,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 335 |
+| README | 333 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 2,154 |
+| Architecture and contracts | 2,168 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
 | Changelog | 351 |
-| Rust source and tests | 16,742 |
+| Rust source and tests | 16,721 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **22,275** |
+| **Total** | **22,266** |

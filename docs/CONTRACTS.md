@@ -1038,15 +1038,14 @@ show the median and observed minimum–maximum, not a confidence interval.
     inspection and Stop use the supervisor's known EONW v2 through v7 lifecycle
     codec; presentation still requires the exact current EONW and component graph.
   - `eon stop previous` attempts every non-dead generation except the exact
-    current one. If current is not live and a non-dead versioned previous
-    generation exists, it fails before sending Stop. Fixed-namespace legacy
-    work instead reports its own unavailable reason. `eon stop all` remains
-    available. Each selected generation uses the existing validated
+    current one, whether current is live or not. Fixed-namespace legacy work
+    reports its own unavailable reason. `eon stop all` includes current.
+    Each selected generation uses the existing validated
     Stop; human mode confirms each target, while `--json` returns a result array
     without confirmation. Declining one target reports that no Stop was sent for
     that generation; earlier outcomes remain and later targets continue.
-    A preflight failure returns an error object. Failed or unavailable targets
-    do not suppress later targets while the CLI remains running.
+    Failed or unavailable targets do not suppress later targets while the CLI
+    remains running.
     A Stop of the caller's own Session can terminate the CLI before it receives
     that result or attempts later targets; run from outside selected generations
     when a complete result is required. When the CLI completes, it exits
@@ -1168,6 +1167,21 @@ show the median and observed minimum–maximum, not a confidence interval.
   no Stop, and kept it live until a later explicit Stop. Read-only real-runtime
   inventory showed 11 live Sessions in the older supervisor; none were stopped
   by this check. The fixture is not a new native Stop acceptance proof.
+- **Current-unstarted previous correction (installed isolated check):** Working
+  tree based on `4d7a8f620eb1037ac5c388ccbfa402509e23c9cd`, with SHA-256
+  `5686333155ae0b6f000408c64c9b39047a6aebb9cbafabe513a7a5343f05d54c`
+  for `generation.rs` and
+  `399fd701eb7d449bba1bfb365a94652270af5a52ceaa6374a56ee952f865b92b`
+  for `workspace_control.rs`. The private v6 fixture failed before removing the
+  current-live guard and passed after; all 82 locked Rust tests, strict Clippy,
+  and `nix flake check path:.` pass on x86_64 Linux. The active profile matches
+  `/nix/store/s28ypi05i5jw7n49sdskzzc65kmr6m72-eon-0.1.0`. Its installed
+  executable, in a private runtime with current unstarted and one corrupt
+  previous target, returned a per-target `stop-unavailable` array instead of a
+  preflight refusal. Read-only real-runtime inventory still showed 11 live
+  Sessions in the older supervisor. This proves selection without a live
+  current generation; successful older-generation Stop remains fixture proof,
+  and EON-C11 remains Candidate.
 
 ## EON-C12 — Standalone exact-command terminal
 

@@ -651,22 +651,6 @@ pub(super) fn stop_generations(
     product: &str,
 ) -> Result<i32, String> {
     let mut records = discover_generations(&runtime_directory(product), &current_generation()?)?;
-    if !include_current
-        && !records
-            .iter()
-            .any(|record| record.kind == "current" && record.state == "live")
-        && records
-            .iter()
-            .any(|record| record.kind == "previous" && record.state != "dead")
-    {
-        return report_failure(
-            &failure(
-                "stop-unavailable",
-                "current generation is not live; run `eon` first or use `eon stop all`",
-            ),
-            json,
-        );
-    }
     // The CLI may itself be running inside current; stop that generation last.
     records.sort_by_key(|record| record.kind == "current");
     if json {

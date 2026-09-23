@@ -3386,7 +3386,7 @@ fn current_cli_stops_known_previous_eonw_generations_through_their_supervisors()
 }
 
 #[test]
-fn previous_requires_a_live_current_generation_but_all_does_not() {
+fn previous_and_all_stop_older_generations_when_current_is_unstarted() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
@@ -3398,18 +3398,13 @@ fn previous_requires_a_live_current_generation_but_all_does_not() {
         serde_json::json!([])
     );
     let first_id = format!("g1-{:032x}", 2);
-    let first = previous_supervisor(&runtime, &first_id, 6, 2);
+    let first = previous_supervisor(&runtime, &first_id, 6, 5);
 
     let previous = invoke(&binary, &runtime, &config, &["stop", "previous", "--json"]);
-    assert_eq!(previous.status.code(), Some(2), "{}", stdout(&previous));
+    assert!(previous.status.success(), "{}", stdout(&previous));
     let result: serde_json::Value = serde_json::from_str(stdout(&previous)).unwrap();
-    assert_eq!(result["error"]["code"], "stop-unavailable");
-    assert!(
-        result["error"]["detail"]
-            .as_str()
-            .unwrap()
-            .contains("current generation is not live")
-    );
+    assert_eq!(result.as_array().unwrap().len(), 1);
+    assert_eq!(result[0]["stopped"]["generation"], first_id);
     first.join().unwrap();
 
     let second_id = format!("g1-{:032x}", 3);

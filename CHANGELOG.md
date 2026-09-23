@@ -6,8 +6,8 @@ installation, and proven contract changes.
 ## Unreleased
 
 - Add `eon stop previous` and `eon stop all` to attempt Stop across the
-  discovered generations. The first preserves current and requires it live
-  before attempting versioned older generations; the second includes current.
+  discovered generations. The first preserves current even when unstarted;
+  the second includes current.
   Each target keeps its own confirmation and supervisor
   validation, and failures do not skip later targets while the CLI is running.
   Fixed-namespace legacy work reports its own unavailable reason.
