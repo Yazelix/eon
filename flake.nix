@@ -27,6 +27,10 @@
       url = "github:ghostty-org/ghostty/a887df42c56f6de86c0fe6da9c4eeca37931e083";
       flake = false;
     };
+    kinestra = {
+      url = "github:Yazelix/kinestra/00b233e6e421aab5e166101476a6eb48e007ca8b";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
   outputs =
@@ -39,6 +43,7 @@
       yazi,
       ratconfig,
       ghostty,
+      kinestra,
     }:
     let
       system = "x86_64-linux";
@@ -771,6 +776,15 @@
         done
         ${pkgs.coreutils}/bin/touch "$out"
       '';
+      recordDemo = kinestra.lib.${system}.mkRecorder {
+        name = "record-eon-demo";
+        recipe = ./demo/record.rs;
+        environment = {
+          EON_BIN = "${eonPackage}/bin/eon";
+          ZOXIDE_BIN = "${zoxidePackage}/bin/zoxide";
+          EON_DEMO_PATH = lib.makeBinPath [ pkgs.coreutils pkgs.bash ];
+        };
+      };
     in
     {
       packages.${system} = {
@@ -785,6 +799,10 @@
         eonterm = {
           type = "app";
           program = "${eontermPackage}/bin/eonterm";
+        };
+        record-demo = {
+          type = "app";
+          program = "${recordDemo}/bin/record-eon-demo";
         };
       };
       checks.${system} = {

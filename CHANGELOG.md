@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Provide a scripted native Wayland demo with a linked poster and MP4. Run
+  `nix run .#record-demo` from the Eon checkout to regenerate the media on an
+  isolated display.
+
 - Make the Nix-only Linux alpha installable from a public Eon clone without
   repository credentials. The locked Orbit and Venus sources remain exact;
   the package carries their Apache licenses and MIT notices for Ghostty, its

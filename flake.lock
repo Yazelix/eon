@@ -39,6 +39,27 @@
         "type": "github"
       }
     },
+    "kinestra": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1790201710,
+        "narHash": "sha256-0j1xQOC6QP48k7PbRfeC0T/6sImEO3YE4bX2aRuHsLg=",
+        "owner": "Yazelix",
+        "repo": "kinestra",
+        "rev": "00b233e6e421aab5e166101476a6eb48e007ca8b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Yazelix",
+        "repo": "kinestra",
+        "rev": "00b233e6e421aab5e166101476a6eb48e007ca8b",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1781577229,
@@ -93,6 +114,7 @@
       "inputs": {
         "ghostty": "ghostty",
         "helix": "helix",
+        "kinestra": "kinestra",
         "nixpkgs": "nixpkgs",
         "orbit": "orbit",
         "ratconfig": "ratconfig",

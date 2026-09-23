@@ -13,6 +13,14 @@ Zsh, Fish, Helix, Yazi, LazyGit, Starship, Zoxide, fzf, Atuin, and Carapace.
 `eonterm` provides the same terminal and Session lifecycle for one exact command
 without Eon's workspace or managed environment.
 
+## Demo
+
+[![Eon on native Wayland with two persistent panes and Yazi](assets/demo/eon-demo.png)](assets/demo/eon-demo.mp4)
+
+[Watch the scripted recording](assets/demo/eon-demo.mp4). It captures the real
+Nix alpha on a private Wayland display. From this repository, run
+`nix run .#record-demo` to regenerate both files in `assets/demo/`.
+
 ## Project status
 
 Eon is a Nix-only alpha. The supported product target is **x86_64 Linux on
@@ -317,7 +325,7 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 334 |
+| README | 342 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
@@ -325,10 +333,10 @@ Beads data, lock files, and generated artifacts.
 | Architecture and contracts | 2,168 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 356 |
-| Rust source and tests | 16,721 |
+| Changelog | 360 |
+| Rust source and tests | 16,868 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |
-| Nix composition | 797 |
+| Nix composition | 815 |
 | Product defaults | 0 |
-| **Total** | **22,337** |
+| **Total** | **22,514** |
