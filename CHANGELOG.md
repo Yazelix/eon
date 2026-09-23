@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Make the Nix-only Linux alpha installable from a public Eon clone without
+  repository credentials. The locked Orbit and Venus sources remain exact;
+  the package carries their Apache licenses and MIT notices for Ghostty, its
+  Rust bindings, and the OpenAI mark.
+
 - Add `eon stop previous` and `eon stop all` to attempt Stop across the
   discovered generations. The first preserves current even when unstarted;
   the second includes current.

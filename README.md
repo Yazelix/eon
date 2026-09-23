@@ -20,10 +20,8 @@ native Wayland**.
 
 Before installing, you need:
 
-- Nix with flakes enabled;
-- a native Wayland session; and
-- GitHub credentials that can read this repository's private Eon Sessions and
-  Eon Desktop inputs.
+- Git and Nix with flakes enabled; and
+- a native Wayland session.
 
 The accepted runtime proof uses COSMIC with systemd, and installed checks also
 exercise isolated Sway. Eon does not require systemd or cgroup delegation, but
@@ -37,9 +35,11 @@ unsupported. Restarting the machine ends live Session process state.
 
 ## Install and start
 
-From a clone whose credentials can fetch the private child inputs:
+Clone the public repository and install the locked alpha:
 
 ```sh
+git clone https://github.com/Yazelix/eon.git
+cd eon
 nix profile add .#default
 eon versions
 eon
@@ -260,9 +260,8 @@ composition.
 
 ## Troubleshooting and reporting
 
-- **Nix cannot fetch a child input:** the alpha still requires GitHub access to
-  the private Eon Sessions and Eon Desktop repositories. Credential-free
-  installation is separate work.
+- **Nix cannot fetch a child input:** check access to GitHub and retry. The
+  locked Eon Sessions and Eon Desktop source revisions are public.
 - **A workspace command reports a missing supervisor:** run `eon`, then retry.
 - **The window closed but commands remain:** this is detach behavior. Use
   `eon attach` to return or `eon stop GENERATION` to end them.
@@ -318,7 +317,7 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 335 |
+| README | 334 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
@@ -326,10 +325,10 @@ Beads data, lock files, and generated artifacts.
 | Architecture and contracts | 2,168 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 351 |
+| Changelog | 356 |
 | Rust source and tests | 16,721 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |
 | Nix composition | 797 |
 | Product defaults | 0 |
-| **Total** | **22,333** |
+| **Total** | **22,337** |
