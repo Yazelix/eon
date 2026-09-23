@@ -1025,7 +1025,8 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Status:** Candidate
 - **Consumer:** Eon and EonTerm users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
-  present a compatible existing surface, or explicitly stop a generation.
+  present a compatible existing surface, stop one generation, or stop a selected
+  set of generations.
 - **Result:**
   - Eon and EonTerm use separate runtime namespaces and default to their exact
     current generation.
@@ -1036,6 +1037,16 @@ show the median and observed minimum–maximum, not a confidence interval.
     compatible, and explicitly stoppable through their own supervisor. Generation
     inspection and Stop use the supervisor's known EONW v2 through v7 lifecycle
     codec; presentation still requires the exact current EONW and component graph.
+  - `eon stop previous` attempts every non-dead generation except the exact
+    current one, but only while current is live. If current is not live and
+    another non-dead generation exists, it fails before sending Stop. `eon stop all`
+    remains available. Each selected generation uses the existing validated
+    Stop; human mode confirms each target, while `--json` returns a result array
+    without confirmation. A failed or unavailable target does not suppress later
+    targets. The command exits nonzero if any Stop attempt fails. `all` stops
+    current last so earlier targets can finish when invoked inside a current
+    Session. Neither command forcibly kills a process or treats fixed-namespace
+    legacy work as stoppable.
   - Implicit attach selects only a live supervisor reporting the exact current
     identity; otherwise Eon starts current without stopping older work. Explicit
     attach never substitutes another generation, and discovery distinguishes
@@ -1107,6 +1118,24 @@ show the median and observed minimum–maximum, not a confidence interval.
   An isolated installed v6 supervisor Stop also passed with zero Sessions.
   EONW v2 through v5 are fixture-verified only; fixed-namespace legacy has no
   authoritative Stop. EON-C11 remains Candidate for its broader native proof.
+- **Batch Stop (installed isolated check):** Working tree based on
+  `ed4d09b82e6105fbf3e0c64b34f18b6281aefe63`, with SHA-256
+  `fd78e07457e870b329ba0229fd7ef64685e3fdcc4416f1c0e837e4f214f62c9f`
+  for `cli.rs`, `fef65b5ee3e408d831a2f5b26b71c3aced56388ac761745dae0d3ae326871618`
+  for `generation.rs`, and
+  `dde8f5333dcf1a42a1edb57510b6b36490a71e94ddcb2ab2d0e97369e4c561f6`
+  for `workspace_control.rs`. On x86_64 Linux, all 82 locked Rust tests,
+  strict Clippy, and `nix flake check path:.` pass. The active `eon` profile
+  resolves to the exact working-tree artifact
+  `/nix/store/q6y681z8r5dmq0vz1n0giz9hcfk4y725-eon-0.1.0`. Its installed
+  executable passed the private-runtime batch test: `stop previous --json`
+  returned a result array with one unavailable entry and two stopped v6
+  fixtures, while preserving current; `stop all --json` returned a result array
+  for another v6 fixture and then current. The same installed executable
+  refused `stop previous` in a private runtime without a live current. Read-only
+  installed inventory of the real runtime showed current unstarted and the live
+  previous generation's 13 Sessions unchanged. The owners in the batch test
+  were substitutes; this is not a new native EON-C11 acceptance proof.
 
 ## EON-C12 — Standalone exact-command terminal
 

@@ -3241,6 +3241,123 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
     fs::remove_dir_all(root).unwrap();
 }
 
+fn previous_supervisor(
+    runtime: &Path,
+    id: &str,
+    version: u16,
+    requests: usize,
+) -> thread::JoinHandle<()> {
+    let parent = runtime.join("generations");
+    let generation = parent.join(id);
+    fs::create_dir_all(&generation).unwrap();
+    for directory in [runtime, parent.as_path(), generation.as_path()] {
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let socket = generation.join("eon.sock");
+    let listener = UnixListener::bind(&socket).unwrap();
+    fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+    let server_id = id.to_string();
+    thread::spawn(move || {
+        for step in 0..requests {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = vec![0; HEADER_BYTES];
+            stream.read_exact(&mut request).unwrap();
+            let length = declared_message_len(&request).unwrap();
+            request.resize(length, 0);
+            stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
+            let response = if step == 0 || step == 2 {
+                assert_eq!(
+                    decode_request(&request).unwrap().action,
+                    ProtocolAction::Workspace(Action::InspectPresentation)
+                );
+                let failure = v2::Failure {
+                    code: "unsupported-version".into(),
+                    detail: "unsupported EONW version 7".into(),
+                };
+                match version {
+                    2 => v2::encode_response(&v2::Response::Failure(failure)),
+                    3 => v3::encode_response(&v3::Response::Failure(failure)),
+                    4 => legacy::encode_response(&legacy::Response::Failure(failure)),
+                    5 => v5::encode_response(&v5::Response::Failure(failure)),
+                    6 => v6::encode_response(&v6::Response::Failure(failure)),
+                    _ => unreachable!(),
+                }
+                .unwrap()
+            } else {
+                let action = match version {
+                    2 => match v2::decode_request(&request).unwrap().action {
+                        v2::Action::InspectRuntime => "inspect",
+                        v2::Action::Stop { generation } if generation == server_id => "stop",
+                        _ => "wrong",
+                    },
+                    3 => match v3::decode_request(&request).unwrap().action {
+                        v3::Action::InspectRuntime => "inspect",
+                        v3::Action::Stop { generation } if generation == server_id => "stop",
+                        _ => "wrong",
+                    },
+                    4 => match legacy::decode_request(&request).unwrap().action {
+                        legacy::Action::InspectRuntime => "inspect",
+                        legacy::Action::Stop { generation } if generation == server_id => "stop",
+                        _ => "wrong",
+                    },
+                    5 => match v5::decode_request(&request).unwrap().action {
+                        v5::Action::Workspace(v5::WorkspaceAction::InspectRuntime) => "inspect",
+                        v5::Action::Workspace(v5::WorkspaceAction::Stop { generation })
+                            if generation == server_id =>
+                        {
+                            "stop"
+                        }
+                        _ => "wrong",
+                    },
+                    6 => match v6::decode_request(&request).unwrap().action {
+                        v6::Action::Workspace(v6::WorkspaceAction::InspectRuntime) => "inspect",
+                        v6::Action::Workspace(v6::WorkspaceAction::Stop { generation })
+                            if generation == server_id =>
+                        {
+                            "stop"
+                        }
+                        _ => "wrong",
+                    },
+                    _ => unreachable!(),
+                };
+                assert_eq!(action, if step == 4 { "stop" } else { "inspect" });
+                let lifecycle = if step == 4 {
+                    v2::LifecycleResponse::Stopped(v2::Stopped {
+                        generation: server_id.clone(),
+                        sessions: vec!["session-1".into()],
+                    })
+                } else {
+                    v2::LifecycleResponse::Runtime(v2::Runtime {
+                        generation: server_id.clone(),
+                        eon_version: "0.1.0".into(),
+                        workspace_protocol: version,
+                        component_report: "previous components".into(),
+                        sessions: vec!["session-1".into()],
+                        attach: v2::Availability {
+                            available: true,
+                            reason: "previous presentation".into(),
+                        },
+                        stop: v2::Availability {
+                            available: true,
+                            reason: "supervisor owns these Sessions".into(),
+                        },
+                    })
+                };
+                match version {
+                    2 => v2::encode_lifecycle_response(&lifecycle),
+                    3 => v3::encode_lifecycle_response(&lifecycle),
+                    4 => legacy::encode_lifecycle_response(&lifecycle),
+                    5 => v5::encode_lifecycle_response(&lifecycle),
+                    6 => v6::encode_lifecycle_response(&lifecycle),
+                    _ => unreachable!(),
+                }
+                .unwrap()
+            };
+            stream.write_all(&response).unwrap();
+        }
+    })
+}
+
 #[test]
 fn current_cli_stops_known_previous_eonw_generations_through_their_supervisors() {
     for version in 2..=6 {
@@ -3248,116 +3365,7 @@ fn current_cli_stops_known_previous_eonw_generations_through_their_supervisors()
         let runtime = root.join("runtime");
         let config = root.join("config");
         let id = format!("g1-{version:032x}");
-        let generation = runtime.join("generations").join(&id);
-        fs::create_dir_all(&generation).unwrap();
-        for directory in [&runtime, &runtime.join("generations"), &generation] {
-            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
-        }
-        let socket = generation.join("eon.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
-        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
-        let server_id = id.clone();
-        let server = thread::spawn(move || {
-            for step in 0..5 {
-                let (mut stream, _) = listener.accept().unwrap();
-                let mut request = vec![0; HEADER_BYTES];
-                stream.read_exact(&mut request).unwrap();
-                let length = declared_message_len(&request).unwrap();
-                request.resize(length, 0);
-                stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
-                let response = if step == 0 || step == 2 {
-                    assert_eq!(
-                        decode_request(&request).unwrap().action,
-                        ProtocolAction::Workspace(Action::InspectPresentation)
-                    );
-                    let failure = v2::Failure {
-                        code: "unsupported-version".into(),
-                        detail: "unsupported EONW version 7".into(),
-                    };
-                    match version {
-                        2 => v2::encode_response(&v2::Response::Failure(failure)),
-                        3 => v3::encode_response(&v3::Response::Failure(failure)),
-                        4 => legacy::encode_response(&legacy::Response::Failure(failure)),
-                        5 => v5::encode_response(&v5::Response::Failure(failure)),
-                        6 => v6::encode_response(&v6::Response::Failure(failure)),
-                        _ => unreachable!(),
-                    }
-                    .unwrap()
-                } else {
-                    let action = match version {
-                        2 => match v2::decode_request(&request).unwrap().action {
-                            v2::Action::InspectRuntime => "inspect",
-                            v2::Action::Stop { generation } if generation == server_id => "stop",
-                            _ => "wrong",
-                        },
-                        3 => match v3::decode_request(&request).unwrap().action {
-                            v3::Action::InspectRuntime => "inspect",
-                            v3::Action::Stop { generation } if generation == server_id => "stop",
-                            _ => "wrong",
-                        },
-                        4 => match legacy::decode_request(&request).unwrap().action {
-                            legacy::Action::InspectRuntime => "inspect",
-                            legacy::Action::Stop { generation } if generation == server_id => {
-                                "stop"
-                            }
-                            _ => "wrong",
-                        },
-                        5 => match v5::decode_request(&request).unwrap().action {
-                            v5::Action::Workspace(v5::WorkspaceAction::InspectRuntime) => "inspect",
-                            v5::Action::Workspace(v5::WorkspaceAction::Stop { generation })
-                                if generation == server_id =>
-                            {
-                                "stop"
-                            }
-                            _ => "wrong",
-                        },
-                        6 => match v6::decode_request(&request).unwrap().action {
-                            v6::Action::Workspace(v6::WorkspaceAction::InspectRuntime) => "inspect",
-                            v6::Action::Workspace(v6::WorkspaceAction::Stop { generation })
-                                if generation == server_id =>
-                            {
-                                "stop"
-                            }
-                            _ => "wrong",
-                        },
-                        _ => unreachable!(),
-                    };
-                    assert_eq!(action, if step == 4 { "stop" } else { "inspect" });
-                    let lifecycle = if step == 4 {
-                        v2::LifecycleResponse::Stopped(v2::Stopped {
-                            generation: server_id.clone(),
-                            sessions: vec!["session-1".into()],
-                        })
-                    } else {
-                        v2::LifecycleResponse::Runtime(v2::Runtime {
-                            generation: server_id.clone(),
-                            eon_version: "0.1.0".into(),
-                            workspace_protocol: version,
-                            component_report: "previous components".into(),
-                            sessions: vec!["session-1".into()],
-                            attach: v2::Availability {
-                                available: true,
-                                reason: "previous presentation".into(),
-                            },
-                            stop: v2::Availability {
-                                available: true,
-                                reason: "supervisor owns these Sessions".into(),
-                            },
-                        })
-                    };
-                    match version {
-                        2 => v2::encode_lifecycle_response(&lifecycle),
-                        3 => v3::encode_lifecycle_response(&lifecycle),
-                        4 => legacy::encode_lifecycle_response(&lifecycle),
-                        5 => v5::encode_lifecycle_response(&lifecycle),
-                        6 => v6::encode_lifecycle_response(&lifecycle),
-                        _ => unreachable!(),
-                    }
-                    .unwrap()
-                };
-                stream.write_all(&response).unwrap();
-            }
-        });
+        let server = previous_supervisor(&runtime, &id, version, 5);
 
         let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
         let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
@@ -3375,6 +3383,113 @@ fn current_cli_stops_known_previous_eonw_generations_through_their_supervisors()
         server.join().unwrap();
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[test]
+fn previous_requires_a_live_current_generation_but_all_does_not() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let empty = invoke(&binary, &runtime, &config, &["stop", "all", "--json"]);
+    assert!(empty.status.success(), "{}", stdout(&empty));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(stdout(&empty)).unwrap(),
+        serde_json::json!([])
+    );
+    let first_id = format!("g1-{:032x}", 2);
+    let first = previous_supervisor(&runtime, &first_id, 6, 2);
+
+    let previous = invoke(&binary, &runtime, &config, &["stop", "previous", "--json"]);
+    assert_eq!(previous.status.code(), Some(2), "{}", stdout(&previous));
+    let result: serde_json::Value = serde_json::from_str(stdout(&previous)).unwrap();
+    assert_eq!(result["error"]["code"], "stop-unavailable");
+    assert!(
+        result["error"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("current generation is not live")
+    );
+    first.join().unwrap();
+
+    let second_id = format!("g1-{:032x}", 3);
+    let second = previous_supervisor(&runtime, &second_id, 6, 5);
+    let all = invoke(&binary, &runtime, &config, &["stop", "all", "--json"]);
+    assert!(all.status.success(), "{}", stdout(&all));
+    let result: serde_json::Value = serde_json::from_str(stdout(&all)).unwrap();
+    assert_eq!(result[0]["stopped"]["generation"], second_id);
+    second.join().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = eon_command(&binary)
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut current = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    let current_runtime = generation_runtime(&runtime);
+    wait_for_connection(&current_runtime.join("eon.sock"));
+    let current_id = current_runtime.file_name().unwrap().to_str().unwrap();
+
+    let first_id = format!("g1-{:032x}", 2);
+    let second_id = format!("g1-{:032x}", 3);
+    let first = previous_supervisor(&runtime, &first_id, 6, 5);
+    let second = previous_supervisor(&runtime, &second_id, 6, 5);
+    let unavailable = runtime.join("generations").join(format!("g1-{:032x}", 1));
+    fs::create_dir(&unavailable).unwrap();
+    fs::set_permissions(&unavailable, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let previous = invoke(&binary, &runtime, &config, &["stop", "previous", "--json"]);
+    assert_eq!(previous.status.code(), Some(2), "{}", stdout(&previous));
+    let results: serde_json::Value = serde_json::from_str(stdout(&previous)).unwrap();
+    assert_eq!(results.as_array().unwrap().len(), 3);
+    assert_eq!(results[0]["error"]["code"], "stop-unavailable");
+    assert_eq!(results[1]["stopped"]["generation"], first_id);
+    assert_eq!(results[2]["stopped"]["generation"], second_id);
+    assert!(current.child.try_wait().unwrap().is_none());
+    assert!(
+        invoke(&binary, &runtime, &config, &["workspace", "--json"])
+            .status
+            .success()
+    );
+    first.join().unwrap();
+    second.join().unwrap();
+    fs::remove_dir_all(unavailable).unwrap();
+
+    let third_id = format!("g1-{:032x}", 4);
+    let third = previous_supervisor(&runtime, &third_id, 6, 5);
+    let all = invoke(&binary, &runtime, &config, &["stop", "all", "--json"]);
+    assert!(all.status.success(), "{}", stdout(&all));
+    let results: serde_json::Value = serde_json::from_str(stdout(&all)).unwrap();
+    assert_eq!(results.as_array().unwrap().len(), 2);
+    assert_eq!(results[0]["stopped"]["generation"], third_id);
+    assert_eq!(results[1]["stopped"]["generation"], current_id);
+    third.join().unwrap();
+    wait_for_successful_exit(&mut current.child);
+    assert!(!current_runtime.exists());
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

@@ -645,6 +645,58 @@ pub(super) fn stop_generation(target: &str, json: bool, product: &str) -> Result
     }
 }
 
+pub(super) fn stop_generations(
+    include_current: bool,
+    json: bool,
+    product: &str,
+) -> Result<i32, String> {
+    let mut records = discover_generations(&runtime_directory(product), &current_generation()?)?;
+    if !include_current
+        && !records
+            .iter()
+            .any(|record| record.kind == "current" && record.state == "live")
+        && records
+            .iter()
+            .any(|record| record.kind != "current" && record.state != "dead")
+    {
+        return report_failure(
+            &failure(
+                "stop-unavailable",
+                "current generation is not live; run `eon` first or use `eon stop all`",
+            ),
+            json,
+        );
+    }
+    // The CLI may itself be running inside current; stop that generation last.
+    records.sort_by_key(|record| record.kind == "current");
+    if json {
+        write_stdout("[")?;
+    }
+    let mut separator = "";
+    let mut status = 0;
+    for record in records {
+        if record.state == "dead" || (!include_current && record.kind == "current") {
+            continue;
+        }
+        if json {
+            write_stdout(separator)?;
+            separator = ",";
+        }
+        let result = match stop_generation(&record.id, json, product) {
+            Ok(code) => code,
+            Err(error) => report_failure(
+                &failure("stop-failed", format!("generation {}: {error}", record.id)),
+                json,
+            )?,
+        };
+        status = status.max(result);
+    }
+    if json {
+        write_stdout("]\n")?;
+    }
+    Ok(status)
+}
+
 fn stopped_json(stopped: &Stopped) -> String {
     let mut output = format!(
         "{{\"stopped\":{{\"generation\":\"{}\",\"sessions\":[",

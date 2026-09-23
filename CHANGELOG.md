@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Add `eon stop previous` and `eon stop all` to attempt Stop across the
+  discovered generations. The first requires and preserves a live current generation;
+  the second includes it. Each target keeps its own confirmation and supervisor
+  validation, and failures are reported without skipping later targets.
+
 - Let `eon generations` inspect previous EONW v2–v6 supervisors and let
   `eon stop GENERATION` stop their Sessions through their own lifecycle codec.
   Cross-version presentation remains unavailable; legacy fixed-namespace work

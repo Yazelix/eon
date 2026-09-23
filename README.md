@@ -67,13 +67,23 @@ To inspect or stop work explicitly:
 ```sh
 eon generations
 eon stop GENERATION
+eon stop previous
+eon stop all
 ```
 
 `eon stop` shows the generation's live Session identities and asks for
 confirmation. Closing a window is therefore detach; stopping a generation ends
 its Sessions. Previous generations using EONW v2 through v7 can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
-Fixed-namespace legacy work has no authoritative Stop action.
+`previous` attempts every non-dead generation except the installed build's exact
+current generation. It requires that current generation to be live, so an
+upgrade cannot silently select the generation still holding your Sessions.
+`all` includes current and stops it last. Each generation gets its own
+confirmation. A failed Stop does not prevent later attempts.
+The command exits nonzero if any attempt fails. `--json` skips confirmation
+and returns an array with one result per attempted generation, or `[]` when
+there is nothing to stop. Fixed-namespace legacy work has no authoritative
+Stop action and is reported as unavailable.
 
 ## Everyday use
 
@@ -127,6 +137,8 @@ for orientation but are never opened or managed by the picker.
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
 | `eon generations [--json]` | List validated current and older generations |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
+| `eon stop previous [--json]` | With current live, attempt every other non-dead generation |
+| `eon stop all [--json]` | Attempt every non-dead generation, including current |
 | `eon workspace [--json]` | Inspect the live tab, pane, popup, and Session mapping |
 | `eon tab create [--json]` | Create a distinct pending tab with its directory picker, even while another picker is open |
 | `eon tab close TAB [--json]` | Close the expected active non-final tab |
@@ -303,16 +315,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 318 |
+| README | 330 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 2,093 |
+| Architecture and contracts | 2,122 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 343 |
-| Rust source and tests | 16,537 |
+| Changelog | 348 |
+| Rust source and tests | 16,710 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **21,984** |
+| **Total** | **22,203** |

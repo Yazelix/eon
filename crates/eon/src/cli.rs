@@ -4,7 +4,7 @@ use super::{
     },
     generation::{
         attach_generation, current_generation, generations_command, stop_generation,
-        valid_generation,
+        stop_generations, valid_generation,
     },
     managed_environment,
     supervisor::{
@@ -28,7 +28,7 @@ use std::{
     process::{Command, Output, Stdio},
 };
 
-const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop GENERATION [--json] | workspace [--json] | tab create [--json] | tab close TAB [--json] | tab directory TAB [--json] -- DIRECTORY | tab move <left|right> [--json] | pane create [--json] | pane move <up|down> [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
+const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop <GENERATION|previous|all> [--json] | workspace [--json] | tab create [--json] | tab close TAB [--json] | tab directory TAB [--json] -- DIRECTORY | tab move <left|right> [--json] | pane create [--json] | pane move <up|down> [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
 pub(super) fn run() -> (&'static str, Result<i32, String>) {
@@ -352,17 +352,23 @@ fn lifecycle_command(arguments: &[OsString], product: &str) -> Result<Option<i32
         [command, flag] if command == "generations" && flag == "--json" => {
             generations_command(true, product)
         }
-        [command, generation] if command == "stop" => {
-            stop_generation(generation_argument(generation)?, false, product)
-        }
+        [command, generation] if command == "stop" => stop_argument(generation, false, product),
         [command, generation, flag] | [command, flag, generation]
             if command == "stop" && flag == "--json" =>
         {
-            stop_generation(generation_argument(generation)?, true, product)
+            stop_argument(generation, true, product)
         }
         _ => return Ok(None),
     }
     .map(Some)
+}
+
+fn stop_argument(argument: &OsStr, json: bool, product: &str) -> Result<i32, String> {
+    match argument.to_str() {
+        Some("previous") if product == "eon" => stop_generations(false, json, product),
+        Some("all") if product == "eon" => stop_generations(true, json, product),
+        _ => stop_generation(generation_argument(argument)?, json, product),
+    }
 }
 
 fn generation_argument(argument: &OsStr) -> Result<&str, String> {
