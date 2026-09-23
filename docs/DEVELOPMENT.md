@@ -32,3 +32,15 @@ bv --robot-triage
 br ready
 br show <id>
 ```
+
+## Demo media
+
+From the repository root, `nix run .#record-demo` records a scripted Eon
+session on an isolated Wayland display. It writes the MP4 and PNG poster to
+`assets/demo/`. Use ffmpeg to rebuild the animated README preview from that MP4:
+
+```sh
+ffmpeg -hide_banner -loglevel error -y -i assets/demo/eon-demo.mp4 \
+  -filter_complex '[0:v]fps=12,scale=1280:-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff:max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle' \
+  -loop 0 assets/demo/eon-demo.gif
+```

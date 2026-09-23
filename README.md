@@ -11,11 +11,10 @@ managed environment with Nushell, Helix, Yazi, and other pinned tools.
 
 ## Demo
 
-[![Eon on native Wayland with two persistent panes and Yazi](assets/demo/eon-demo.png)](assets/demo/eon-demo.mp4)
+[![Animated Eon demo: choose a directory, open two panes, and browse with Yazi](assets/demo/eon-demo.gif)](assets/demo/eon-demo.mp4)
 
-[Watch the scripted recording](assets/demo/eon-demo.mp4), captured from the real
-Nix alpha on a private Wayland display. Run `nix run .#record-demo` here to
-regenerate it.
+[Watch the MP4](assets/demo/eon-demo.mp4) of the real Nix alpha on a private
+Wayland display. [Regenerate the demo](docs/DEVELOPMENT.md#demo-media).
 
 ## Get started
 
@@ -53,7 +52,7 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 72 |
+| README | 71 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
@@ -61,7 +60,7 @@ Beads data, lock files, and generated artifacts.
 | Architecture and contracts | 2,168 |
 | Distribution and references | 720 |
 | User guides | 272 |
-| Development guide | 34 |
+| Development guide | 46 |
 | Benchmark report | 317 |
 | Changelog | 360 |
 | Rust source and tests | 16,868 |
@@ -69,4 +68,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 355 |
 | Nix composition | 815 |
 | Product defaults | 0 |
-| **Total** | **22,550** |
+| **Total** | **22,561** |
