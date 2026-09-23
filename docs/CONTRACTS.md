@@ -1095,6 +1095,18 @@ show the median and observed minimum–maximum, not a confidence interval.
   Existing user Sessions remain running. This does not promote non-systemd
   support, fractional scale, whole-descendant cleanup, or other candidate
   contracts; Orbit's bounded shutdown remains authoritative.
+- **Older EONW lifecycle Stop (dogfooded):** Source
+  `446d8a7e4f537d2ee439c5441a6b20203d4ea71d`; x86_64 Linux Nix artifact
+  `/nix/store/0rir9q0a42d77jhh9z615acz3qch8z83-eon-0.1.0`, installed as the
+  active `eon` profile element. The locked Rust workspace tests exercise
+  owner-routed inspection and Stop with EONW v2 through v6 fixtures; Clippy,
+  exact Nix build, and flake check pass. Installed `eon stop --json` stopped two
+  live v6 generations (`g1-14579c3c9419a12061045462c031e130` and
+  `g1-a4d82b588f9aa735f4aa390bd81513b6`) with two and one Sessions. Their
+  supervisors exited; the live v7 generation and its 13 Sessions remained.
+  An isolated installed v6 supervisor Stop also passed with zero Sessions.
+  EONW v2 through v5 are fixture-verified only; fixed-namespace legacy has no
+  authoritative Stop. EON-C11 remains Candidate for its broader native proof.
 
 ## EON-C12 — Standalone exact-command terminal
 
