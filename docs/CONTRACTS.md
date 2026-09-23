@@ -1100,7 +1100,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   `/nix/store/0rir9q0a42d77jhh9z615acz3qch8z83-eon-0.1.0`, installed as the
   active `eon` profile element. The locked Rust workspace tests exercise
   owner-routed inspection and Stop with EONW v2 through v6 fixtures; Clippy,
-  exact Nix build, and flake check pass. Installed `eon stop --json` stopped two
+  exact Nix build, and flake check pass. Installed `eon stop GENERATION --json` stopped two
   live v6 generations (`g1-14579c3c9419a12061045462c031e130` and
   `g1-a4d82b588f9aa735f4aa390bd81513b6`) with two and one Sessions. Their
   supervisors exited; the live v7 generation and its 13 Sessions remained.
