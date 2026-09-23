@@ -82,10 +82,13 @@ holding your Sessions.
 `all` includes current and stops it last. Each generation gets its own
 confirmation. Declining one skips that generation; earlier Stops remain and
 later prompts continue. A failed Stop does not prevent later attempts.
-The command exits nonzero if any attempt fails. `--json` skips confirmation
-and returns an array of attempted results, or `[]` if there is nothing to stop.
-A preflight failure returns an error object. Fixed-namespace legacy work has
-no authoritative Stop action and is reported as unavailable.
+When the command completes, it exits nonzero if any attempt fails. `--json`
+skips confirmation and returns an array of attempted results, or `[]` if there
+is nothing to stop. A preflight failure returns an error object.
+Run a batch command outside the generations it will stop when you need every
+attempt or a complete result: stopping the caller's own Session can terminate
+the CLI mid-batch. Fixed-namespace legacy work has no authoritative Stop action
+and is reported as unavailable.
 
 ## Everyday use
 
@@ -317,10 +320,10 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 332 |
+| README | 335 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 2,151 |
+| Architecture and contracts | 2,154 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
 | Changelog | 351 |
@@ -329,4 +332,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 355 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **22,269** |
+| **Total** | **22,275** |

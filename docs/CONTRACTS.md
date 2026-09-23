@@ -1046,9 +1046,12 @@ show the median and observed minimum–maximum, not a confidence interval.
     without confirmation. Declining one target reports that no Stop was sent for
     that generation; earlier outcomes remain and later targets continue.
     A preflight failure returns an error object. Failed or unavailable targets
-    do not suppress later targets.
-    The command exits nonzero if any Stop attempt fails. `all` stops current
-    last so earlier targets can finish when invoked inside a current Session.
+    do not suppress later targets while the CLI remains running.
+    A Stop of the caller's own Session can terminate the CLI before it receives
+    that result or attempts later targets; run from outside selected generations
+    when a complete result is required. When the CLI completes, it exits
+    nonzero if any Stop attempt fails. `all` stops current last so earlier
+    targets can finish when invoked inside a current Session.
     Neither command forcibly kills a process or treats fixed-namespace legacy
     work as stoppable.
   - Implicit attach selects only a live supervisor reporting the exact current

@@ -9,7 +9,7 @@ installation, and proven contract changes.
   discovered generations. The first preserves current and requires it live
   before attempting versioned older generations; the second includes current.
   Each target keeps its own confirmation and supervisor
-  validation, and failures are reported without skipping later targets.
+  validation, and failures do not skip later targets while the CLI is running.
   Fixed-namespace legacy work reports its own unavailable reason.
   Declining a confirmation names only the skipped generation.
 
