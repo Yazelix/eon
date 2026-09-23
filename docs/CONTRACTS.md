@@ -1043,11 +1043,14 @@ show the median and observed minimum–maximum, not a confidence interval.
     work instead reports its own unavailable reason. `eon stop all` remains
     available. Each selected generation uses the existing validated
     Stop; human mode confirms each target, while `--json` returns a result array
-    without confirmation. A preflight failure returns an error object. A failed
-    or unavailable target does not suppress later targets. The command exits
-    nonzero if any Stop attempt fails. `all` stops current last so earlier
-    targets can finish when invoked inside a current Session. Neither command
-    forcibly kills a process or treats fixed-namespace legacy work as stoppable.
+    without confirmation. Declining one target reports that no Stop was sent for
+    that generation; earlier outcomes remain and later targets continue.
+    A preflight failure returns an error object. Failed or unavailable targets
+    do not suppress later targets.
+    The command exits nonzero if any Stop attempt fails. `all` stops current
+    last so earlier targets can finish when invoked inside a current Session.
+    Neither command forcibly kills a process or treats fixed-namespace legacy
+    work as stoppable.
   - Implicit attach selects only a live supervisor reporting the exact current
     identity; otherwise Eon starts current without stopping older work. Explicit
     attach never substitutes another generation, and discovery distinguishes
@@ -1143,12 +1146,25 @@ show the median and observed minimum–maximum, not a confidence interval.
   for `generation.rs` and
   `4934bcbae231bbf20050ca1baf2243bd24f8e0f1ac72c32c8a8e14db56e16408`
   for `workspace_control.rs`. All 82 locked Rust tests, strict Clippy, and
-  `nix flake check path:.` pass on x86_64 Linux. The active profile resolves to
+  `nix flake check path:.` pass on x86_64 Linux. The profile then resolved to
   `/nix/store/ylgbvl2iqyri743dq1kkk4si5cmxhrjw-eon-0.1.0`. Its installed
   executable, run by the isolated integration test, reports legacy's own
   `stop-unavailable` reason from `stop previous --json` when current is unstarted.
-  Read-only real-runtime inventory still shows the previous supervisor's 13
-  Sessions live. The fixture is not a native Stop acceptance proof.
+  Read-only real-runtime inventory showed the previous supervisor's 13 Sessions
+  live. The fixture is not a native Stop acceptance proof.
+- **Human batch cancellation (installed isolated check):** Working tree based
+  on `d044b158f9e398b15fc7586b2b669ce3c06ffa3d`, with SHA-256
+  `635f958f0a026c6005d85bdc53dcfd81f1541aca2b72913ba57f04010b2e5fb7`
+  for `generation.rs` and
+  `fbe09db3c6e1d6d9cca54c37c76bc636633f051f997ff312c2056ff807b13fc5`
+  for `workspace_control.rs`. Focused red/green, all 82 locked Rust tests,
+  strict Clippy, and `nix flake check path:.` pass on x86_64 Linux. The active
+  profile resolves to `/nix/store/qycchbybksarn2fygs1zr5fjzvwrq4id-eon-0.1.0`.
+  Its installed executable, run by the isolated integration test, confirmed
+  Stop for an older generation, declined current, named current as receiving
+  no Stop, and kept it live until a later explicit Stop. Read-only real-runtime
+  inventory showed 11 live Sessions in the older supervisor; none were stopped
+  by this check. The fixture is not a new native Stop acceptance proof.
 
 ## EON-C12 — Standalone exact-command terminal
 

@@ -3480,13 +3480,34 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
 
     let third_id = format!("g1-{:032x}", 4);
     let third = previous_supervisor(&runtime, &third_id, 6, 5);
+    let mut human = eon_command(&binary)
+        .args(["stop", "all"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    human.stdin.as_mut().unwrap().write_all(b"y\nn\n").unwrap();
+    let human = human.wait_with_output().unwrap();
+    assert!(human.status.success(), "{}", stdout(&human));
+    assert!(stdout(&human).contains(&format!("stopped generation {third_id}:")));
+    assert!(stdout(&human).contains(&format!(
+        "cancelled; no Stop sent for generation {current_id}"
+    )));
+    assert!(current.child.try_wait().unwrap().is_none());
+    third.join().unwrap();
+
+    let fourth_id = format!("g1-{:032x}", 5);
+    let fourth = previous_supervisor(&runtime, &fourth_id, 6, 5);
     let all = invoke(&binary, &runtime, &config, &["stop", "all", "--json"]);
     assert!(all.status.success(), "{}", stdout(&all));
     let results: serde_json::Value = serde_json::from_str(stdout(&all)).unwrap();
     assert_eq!(results.as_array().unwrap().len(), 2);
-    assert_eq!(results[0]["stopped"]["generation"], third_id);
+    assert_eq!(results[0]["stopped"]["generation"], fourth_id);
     assert_eq!(results[1]["stopped"]["generation"], current_id);
-    third.join().unwrap();
+    fourth.join().unwrap();
     wait_for_successful_exit(&mut current.child);
     assert!(!current_runtime.exists());
     fs::remove_dir_all(root).unwrap();

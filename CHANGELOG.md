@@ -11,6 +11,7 @@ installation, and proven contract changes.
   Each target keeps its own confirmation and supervisor
   validation, and failures are reported without skipping later targets.
   Fixed-namespace legacy work reports its own unavailable reason.
+  Declining a confirmation names only the skipped generation.
 
 - Let `eon generations` inspect previous EONW v2–v6 supervisors and let
   `eon stop GENERATION` stop their Sessions through their own lifecycle codec.

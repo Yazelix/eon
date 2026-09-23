@@ -581,7 +581,7 @@ pub(super) fn stop_generation(target: &str, json: bool, product: &str) -> Result
             .read_line(&mut answer)
             .map_err(|error| format!("cannot read stop confirmation: {error}"))?;
         if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
-            write_stdout("cancelled; no Sessions stopped\n")?;
+            write_stdout(format!("cancelled; no Stop sent for generation {target}\n"))?;
             return Ok(0);
         }
     }
