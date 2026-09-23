@@ -71,7 +71,9 @@ eon stop GENERATION
 
 `eon stop` shows the generation's live Session identities and asks for
 confirmation. Closing a window is therefore detach; stopping a generation ends
-its Sessions.
+its Sessions. Previous generations using EONW v2 through v7 can be stopped
+through their own supervisor even when the current desktop cannot attach to them.
+Fixed-namespace legacy work has no authoritative Stop action.
 
 ## Everyday use
 
@@ -301,16 +303,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 316 |
+| README | 318 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 2,078 |
+| Architecture and contracts | 2,081 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 338 |
-| Rust source and tests | 16,290 |
+| Changelog | 343 |
+| Rust source and tests | 16,537 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **21,715** |
+| **Total** | **21,972** |

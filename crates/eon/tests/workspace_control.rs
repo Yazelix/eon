@@ -1,5 +1,5 @@
 use eon_workspace_protocol::{
-    v4 as legacy,
+    v2, v3, v4 as legacy, v5, v6,
     v7::{
         Action as ProtocolAction, Direction, HEADER_BYTES, InvokeIntent, MAX_SESSIONS, Pane, Popup,
         PopupGeometry, PopupTarget, Request, Response, Snapshot, Tab, VERSION,
@@ -3239,6 +3239,142 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
         wait_for_successful_exit(&mut second.child);
     }
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn current_cli_stops_known_previous_eonw_generations_through_their_supervisors() {
+    for version in 2..=6 {
+        let root = temporary_directory();
+        let runtime = root.join("runtime");
+        let config = root.join("config");
+        let id = format!("g1-{version:032x}");
+        let generation = runtime.join("generations").join(&id);
+        fs::create_dir_all(&generation).unwrap();
+        for directory in [&runtime, &runtime.join("generations"), &generation] {
+            fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let socket = generation.join("eon.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        let server_id = id.clone();
+        let server = thread::spawn(move || {
+            for step in 0..5 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = vec![0; HEADER_BYTES];
+                stream.read_exact(&mut request).unwrap();
+                let length = declared_message_len(&request).unwrap();
+                request.resize(length, 0);
+                stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
+                let response = if step == 0 || step == 2 {
+                    assert_eq!(
+                        decode_request(&request).unwrap().action,
+                        ProtocolAction::Workspace(Action::InspectPresentation)
+                    );
+                    let failure = v2::Failure {
+                        code: "unsupported-version".into(),
+                        detail: "unsupported EONW version 7".into(),
+                    };
+                    match version {
+                        2 => v2::encode_response(&v2::Response::Failure(failure)),
+                        3 => v3::encode_response(&v3::Response::Failure(failure)),
+                        4 => legacy::encode_response(&legacy::Response::Failure(failure)),
+                        5 => v5::encode_response(&v5::Response::Failure(failure)),
+                        6 => v6::encode_response(&v6::Response::Failure(failure)),
+                        _ => unreachable!(),
+                    }
+                    .unwrap()
+                } else {
+                    let action = match version {
+                        2 => match v2::decode_request(&request).unwrap().action {
+                            v2::Action::InspectRuntime => "inspect",
+                            v2::Action::Stop { generation } if generation == server_id => "stop",
+                            _ => "wrong",
+                        },
+                        3 => match v3::decode_request(&request).unwrap().action {
+                            v3::Action::InspectRuntime => "inspect",
+                            v3::Action::Stop { generation } if generation == server_id => "stop",
+                            _ => "wrong",
+                        },
+                        4 => match legacy::decode_request(&request).unwrap().action {
+                            legacy::Action::InspectRuntime => "inspect",
+                            legacy::Action::Stop { generation } if generation == server_id => {
+                                "stop"
+                            }
+                            _ => "wrong",
+                        },
+                        5 => match v5::decode_request(&request).unwrap().action {
+                            v5::Action::Workspace(v5::WorkspaceAction::InspectRuntime) => "inspect",
+                            v5::Action::Workspace(v5::WorkspaceAction::Stop { generation })
+                                if generation == server_id =>
+                            {
+                                "stop"
+                            }
+                            _ => "wrong",
+                        },
+                        6 => match v6::decode_request(&request).unwrap().action {
+                            v6::Action::Workspace(v6::WorkspaceAction::InspectRuntime) => "inspect",
+                            v6::Action::Workspace(v6::WorkspaceAction::Stop { generation })
+                                if generation == server_id =>
+                            {
+                                "stop"
+                            }
+                            _ => "wrong",
+                        },
+                        _ => unreachable!(),
+                    };
+                    assert_eq!(action, if step == 4 { "stop" } else { "inspect" });
+                    let lifecycle = if step == 4 {
+                        v2::LifecycleResponse::Stopped(v2::Stopped {
+                            generation: server_id.clone(),
+                            sessions: vec!["session-1".into()],
+                        })
+                    } else {
+                        v2::LifecycleResponse::Runtime(v2::Runtime {
+                            generation: server_id.clone(),
+                            eon_version: "0.1.0".into(),
+                            workspace_protocol: version,
+                            component_report: "previous components".into(),
+                            sessions: vec!["session-1".into()],
+                            attach: v2::Availability {
+                                available: true,
+                                reason: "previous presentation".into(),
+                            },
+                            stop: v2::Availability {
+                                available: true,
+                                reason: "supervisor owns these Sessions".into(),
+                            },
+                        })
+                    };
+                    match version {
+                        2 => v2::encode_lifecycle_response(&lifecycle),
+                        3 => v3::encode_lifecycle_response(&lifecycle),
+                        4 => legacy::encode_lifecycle_response(&lifecycle),
+                        5 => v5::encode_lifecycle_response(&lifecycle),
+                        6 => v6::encode_lifecycle_response(&lifecycle),
+                        _ => unreachable!(),
+                    }
+                    .unwrap()
+                };
+                stream.write_all(&response).unwrap();
+            }
+        });
+
+        let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+        let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
+        assert!(listed.status.success(), "{}", stdout(&listed));
+        assert!(stdout(&listed).contains("\"kind\":\"previous\",\"state\":\"live\""));
+        assert!(stdout(&listed).contains(&format!("\"workspace_protocol\":{version}")));
+        assert!(stdout(&listed).contains("\"attach\":{\"available\":false"));
+        assert!(stdout(&listed).contains("\"stop\":{\"available\":true"));
+
+        let stopped = invoke(&binary, &runtime, &config, &["stop", &id, "--json"]);
+        assert!(stopped.status.success(), "{}", stdout(&stopped));
+        assert!(stdout(&stopped).contains(&format!(
+            "\"generation\":\"{id}\",\"sessions\":[\"session-1\"]"
+        )));
+        server.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[test]

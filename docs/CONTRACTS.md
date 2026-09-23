@@ -1033,7 +1033,9 @@ show the median and observed minimum–maximum, not a confidence interval.
     component manifest, and EONW source; each generation owns one private
     directory.
   - Older live generations remain discoverable, explicitly presentable when
-    compatible, and explicitly stoppable through their own supervisor.
+    compatible, and explicitly stoppable through their own supervisor. Generation
+    inspection and Stop use the supervisor's known EONW v2 through v7 lifecycle
+    codec; presentation still requires the exact current EONW and component graph.
   - Implicit attach selects only a live supervisor reporting the exact current
     identity; otherwise Eon starts current without stopping older work. Explicit
     attach never substitutes another generation, and discovery distinguishes
@@ -1048,8 +1050,9 @@ show the median and observed minimum–maximum, not a confidence interval.
   - A current launch overlapping clean exit of the final Session waits for the
     retiring supervisor, then starts one fresh Session instead of reporting
     presentation success against ended state.
-- **Important failures:** Incompatible generation, stale or mismatched process
-  identity, lost control, partial Stop, or live foreign residue fails closed
+- **Important failures:** Unknown EONW version, incompatible presentation,
+  stale or mismatched process identity, lost control, partial Stop, or live
+  foreign residue fails closed
   without PID/process-name fallback or duplicate Orbit launch. Orbit startup
   and Ready negotiation remain bounded by the shared five-second deadline.
   Eon requires no cgroup membership or delegation; Orbit owns bounded PTY
@@ -1059,7 +1062,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Consumes:** Orbit management v1 and Venus `VEN-C14`.
 - **Boundary:** No manager daemon, persisted topology, machine-restart recovery,
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
-  identity, compatibility window, remote runtime, plugin API, service-manager
+  identity, presentation compatibility window, remote runtime, plugin API, service-manager
   requirement, or automatic eviction.
 - **Proof:** `10c29edf861fac28db48f41a4546165f79777ee6`
   - **Environment:** x86_64 Linux Nix package and installed profile

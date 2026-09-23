@@ -2,13 +2,13 @@ use super::{
     supervisor::{LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id},
     workspace,
 };
-use eon_workspace_protocol::v4;
 use eon_workspace_protocol::v7::{
     Action, Availability, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse,
-    MAX_DETAIL_BYTES, Request, Response, Runtime, WorkspaceAction, declared_message_len,
+    MAX_DETAIL_BYTES, Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
     encode_request, encode_response,
 };
+use eon_workspace_protocol::{v2, v3, v4, v5, v6};
 use std::{
     fs,
     io::{Read, Write},
@@ -26,6 +26,7 @@ const CONTROL_TIMEOUT: Duration = SESSION_START_TIMEOUT.saturating_add(Duration:
 pub(super) enum EndpointFailureKind {
     Dead,
     Incompatible,
+    UnsupportedVersion(u16),
     InvalidAction,
     Unreachable,
     Corrupt,
@@ -190,11 +191,24 @@ fn prepare_action(action: Action) -> Result<(bool, Vec<u8>), EndpointFailure> {
 }
 
 fn send_prepared_action(
-    mut stream: UnixStream,
+    stream: UnixStream,
     (lifecycle, request): (bool, Vec<u8>),
 ) -> Result<ControlResponse, EndpointFailure> {
+    let response = exchange(stream, &request)?;
+    if lifecycle {
+        decode_lifecycle_response(&response)
+            .map(ControlResponse::Lifecycle)
+            .map_err(protocol_endpoint_failure)
+    } else {
+        decode_response(&response)
+            .map(ControlResponse::Workspace)
+            .map_err(protocol_endpoint_failure)
+    }
+}
+
+fn exchange(mut stream: UnixStream, request: &[u8]) -> Result<Vec<u8>, EndpointFailure> {
     stream
-        .write_all(&request)
+        .write_all(request)
         .map_err(|error| io_endpoint_failure(error, "cannot send Eon action"))?;
 
     let mut response = vec![0; HEADER_BYTES];
@@ -206,15 +220,7 @@ fn send_prepared_action(
     stream
         .read_exact(&mut response[HEADER_BYTES..])
         .map_err(|error| io_endpoint_failure(error, "cannot read complete Eon result"))?;
-    if lifecycle {
-        decode_lifecycle_response(&response)
-            .map(ControlResponse::Lifecycle)
-            .map_err(protocol_endpoint_failure)
-    } else {
-        decode_response(&response)
-            .map(ControlResponse::Workspace)
-            .map_err(protocol_endpoint_failure)
-    }
+    Ok(response)
 }
 
 fn io_endpoint_failure(error: std::io::Error, context: &str) -> EndpointFailure {
@@ -231,17 +237,22 @@ fn io_endpoint_failure(error: std::io::Error, context: &str) -> EndpointFailure 
 
 fn protocol_endpoint_failure(error: ProtocolError) -> EndpointFailure {
     EndpointFailure::new(
-        if matches!(error, ProtocolError::UnsupportedVersion { .. }) {
-            EndpointFailureKind::Incompatible
-        } else {
-            EndpointFailureKind::Corrupt
+        match error {
+            ProtocolError::UnsupportedVersion { version } => {
+                EndpointFailureKind::UnsupportedVersion(version)
+            }
+            _ => EndpointFailureKind::Corrupt,
         },
         format!("invalid EONW response: {error}"),
     )
 }
 
 fn probe_runtime_action(socket: &Path, action: Action) -> Result<Runtime, EndpointFailure> {
-    match send_action(socket, action)? {
+    runtime_response(send_action(socket, action)?)
+}
+
+fn runtime_response(response: ControlResponse) -> Result<Runtime, EndpointFailure> {
+    match response {
         ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)) => Ok(runtime),
         ControlResponse::Lifecycle(LifecycleResponse::Failure(failure))
             if matches!(
@@ -271,6 +282,102 @@ fn probe_runtime_action(socket: &Path, action: Action) -> Result<Runtime, Endpoi
             "supervisor returned the wrong EONW result for generation inspection",
         )),
     }
+}
+
+pub(super) fn probe_generation_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
+    match probe_presentable_runtime(socket) {
+        Ok(runtime) if runtime.workspace_protocol == VERSION => Ok(runtime),
+        Ok(runtime) => Err(EndpointFailure::new(
+            EndpointFailureKind::Incompatible,
+            format!(
+                "supervisor reports EONW {}, current Eon requires EONW {}",
+                runtime.workspace_protocol, VERSION
+            ),
+        )),
+        Err(error) => {
+            let EndpointFailureKind::UnsupportedVersion(version) = error.kind else {
+                return Err(error);
+            };
+            if !(2..=6).contains(&version) {
+                return Err(error);
+            }
+            let runtime = runtime_response(send_generation_action_on(
+                connect_control(socket)?,
+                version,
+                WorkspaceAction::InspectRuntime,
+            )?)?;
+            if runtime.workspace_protocol != version {
+                return Err(EndpointFailure::new(
+                    EndpointFailureKind::Corrupt,
+                    format!(
+                        "supervisor reports EONW {} over EONW {version}",
+                        runtime.workspace_protocol
+                    ),
+                ));
+            }
+            Ok(runtime)
+        }
+    }
+}
+
+pub(super) fn send_generation_action_on(
+    stream: UnixStream,
+    version: u16,
+    action: WorkspaceAction,
+) -> Result<ControlResponse, EndpointFailure> {
+    if version == VERSION {
+        return send_action_on(stream, Action::Workspace(action));
+    }
+    let id = request_id();
+    let request = match version {
+        2 => v2::encode_request(&v2::Request {
+            id,
+            action: match action {
+                WorkspaceAction::InspectRuntime => v2::Action::InspectRuntime,
+                WorkspaceAction::Stop { generation } => v2::Action::Stop { generation },
+                _ => {
+                    return Err(EndpointFailure::new(
+                        EndpointFailureKind::InvalidAction,
+                        "older EONW lifecycle only supports inspection and Stop",
+                    ));
+                }
+            },
+        }),
+        3 => v3::encode_request(&v3::Request { id, action }),
+        4 => v4::encode_request(&v4::Request { id, action }),
+        5 => v5::encode_request(&v5::Request {
+            id,
+            action: v5::Action::Workspace(action),
+        }),
+        6 => v6::encode_request(&v6::Request {
+            id,
+            action: v6::Action::Workspace(action),
+        }),
+        _ => {
+            return Err(EndpointFailure::new(
+                EndpointFailureKind::Incompatible,
+                format!("EONW v{version} has no supported generation lifecycle codec"),
+            ));
+        }
+    }
+    .map_err(|error| {
+        EndpointFailure::new(
+            EndpointFailureKind::InvalidAction,
+            format!("cannot encode Eon generation action: {error}"),
+        )
+    })?;
+    let response = exchange(stream, &request)?;
+    let decoded = match version {
+        2 => v2::decode_lifecycle_response(&response),
+        3 => v3::decode_lifecycle_response(&response),
+        4 => v4::decode_lifecycle_response(&response),
+        5 => v5::decode_lifecycle_response(&response),
+        6 => v6::decode_lifecycle_response(&response),
+        _ => unreachable!(),
+    };
+    decoded
+        .map(ControlResponse::Lifecycle)
+        .map_err(protocol_endpoint_failure)
 }
 
 pub(super) fn probe_presentable_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {

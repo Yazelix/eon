@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Let `eon generations` inspect previous EONW v2–v6 supervisors and let
+  `eon stop GENERATION` stop their Sessions through their own lifecycle codec.
+  Cross-version presentation remains unavailable; legacy fixed-namespace work
+  still has no authoritative Stop action.
+
 - Match the cursor body to the selected trail RGB with a contrasting edge when
   Orbit has no explicit cursor color; preserve explicit colors, shape, and blink
   behavior.

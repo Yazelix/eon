@@ -1,6 +1,6 @@
 use super::control::{
     ControlResponse, EndpointFailure, EndpointFailureKind, connect_control, failure,
-    probe_presentable_runtime, remove_socket_if_identity, report_failure, send_action_on,
+    probe_generation_runtime, remove_socket_if_identity, report_failure, send_generation_action_on,
     send_legacy_inspect, socket_identity, socket_identity_from, write_stdout,
 };
 use super::supervisor::{
@@ -9,7 +9,7 @@ use super::supervisor::{
 };
 use super::workspace::json_escape;
 use eon_workspace_protocol::v7::{
-    Action, Availability, LifecycleResponse, Stopped, VERSION, WorkspaceAction,
+    Availability, LifecycleResponse, Stopped, VERSION, WorkspaceAction,
 };
 use std::{
     fs,
@@ -232,7 +232,7 @@ fn inspect_generation(
     }
 
     let socket = runtime.join("eon.sock");
-    match probe_presentable_runtime(&socket) {
+    match probe_generation_runtime(&socket) {
         Ok(info) if info.generation != id => failed_generation(
             id,
             kind,
@@ -246,24 +246,19 @@ fn inspect_generation(
             ),
         ),
         Ok(mut info) => {
-            if info.workspace_protocol != VERSION {
-                return failed_generation(
-                    id,
-                    kind,
-                    runtime,
-                    EndpointFailure::new(
-                        EndpointFailureKind::Incompatible,
-                        format!(
-                            "supervisor reports EONW {}, current Eon requires EONW {VERSION}",
-                            info.workspace_protocol
-                        ),
-                    ),
-                );
-            }
             if info.component_report != current_components {
                 info.attach = Availability {
                     available: false,
                     reason: "component graph differs from the current Eon build".into(),
+                };
+            }
+            if info.workspace_protocol != VERSION {
+                info.attach = Availability {
+                    available: false,
+                    reason: format!(
+                        "supervisor uses EONW {}, current Eon requires EONW {VERSION}",
+                        info.workspace_protocol
+                    ),
                 };
             }
             GenerationRecord {
@@ -373,7 +368,9 @@ fn failed_generation(
 ) -> GenerationRecord {
     let state = match error.kind {
         EndpointFailureKind::Dead => "dead",
-        EndpointFailureKind::Incompatible => "incompatible",
+        EndpointFailureKind::Incompatible | EndpointFailureKind::UnsupportedVersion(_) => {
+            "incompatible"
+        }
         EndpointFailureKind::InvalidAction | EndpointFailureKind::Corrupt => "corrupt",
         EndpointFailureKind::Unreachable => "unreachable",
     };
@@ -602,11 +599,18 @@ pub(super) fn stop_generation(target: &str, json: bool, product: &str) -> Result
             json,
         );
     }
-    let response = match send_action_on(
+    let Some(version) = record.workspace_protocol else {
+        return report_failure(
+            &failure("stop-failed", "supervisor did not report its EONW version"),
+            json,
+        );
+    };
+    let response = match send_generation_action_on(
         stream,
-        Action::Workspace(WorkspaceAction::Stop {
+        version,
+        WorkspaceAction::Stop {
             generation: target.into(),
-        }),
+        },
     ) {
         Ok(response) => response,
         Err(error) => {
