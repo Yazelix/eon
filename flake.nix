@@ -132,6 +132,7 @@
           postInstall = ''
             mkdir -p "$out/share/terminfo"
             ${pkgs.ncurses}/bin/tic -x -o "$out/share/terminfo" ${orbit}/terminfo/eon.terminfo
+            install -Dm444 ${./LICENSE} "$out/share/licenses/eon-sessions/LICENSE"
           '';
         };
 
@@ -190,6 +191,10 @@
             pkgs.wayland
           ];
           FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts pkgs.nerd-fonts.symbols-only ]; };
+          postInstall = ''
+            install -Dm444 ${./LICENSE} "$out/share/licenses/eon-desktop/LICENSE"
+            install -Dm444 ${./THIRD_PARTY_NOTICES.md} "$out/share/licenses/eon-desktop/THIRD_PARTY_NOTICES.md"
+          '';
           postFixup = ''
             wrapProgram "$out/bin/yazelix-venus" \
               --set FONTCONFIG_FILE "$FONTCONFIG_FILE" \
