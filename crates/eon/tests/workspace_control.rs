@@ -3509,7 +3509,7 @@ fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
         "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$EON_TEST_LOG\"\n",
     );
     let server = thread::spawn(move || {
-        for _ in 0..3 {
+        for _ in 0..5 {
             let (mut stream, _) = listener.accept().unwrap();
             let mut request = vec![0; HEADER_BYTES];
             stream.read_exact(&mut request).unwrap();
@@ -3562,6 +3562,17 @@ fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
     let stopped = invoke(&binary, &runtime, &config, &["stop", "legacy", "--json"]);
     assert_eq!(stopped.status.code(), Some(2));
     assert!(stdout(&stopped).contains("\"code\":\"stop-unavailable\""));
+
+    let previous = invoke(&binary, &runtime, &config, &["stop", "previous", "--json"]);
+    assert_eq!(previous.status.code(), Some(2));
+    let result: serde_json::Value = serde_json::from_str(stdout(&previous)).unwrap();
+    assert_eq!(result[0]["error"]["code"], "stop-unavailable");
+    assert!(
+        result[0]["error"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("legacy supervisor has no authoritative stop action")
+    );
     server.join().unwrap();
     fs::remove_dir_all(root).unwrap();
 }

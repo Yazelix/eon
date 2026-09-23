@@ -16,7 +16,7 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `f8ad14e5195109ba8cb421f30e5ae4a9619a1419` with ORBF v2 / ORBS v12 and Venus
-`f0885517cbd63f6fac966e913e48aecccfc212eb`. Exact source, installed artifact,
+`f6c1ebdb16df2960077dbd88ab6728a921b789d8`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
 
@@ -1038,15 +1038,16 @@ show the median and observed minimum–maximum, not a confidence interval.
     inspection and Stop use the supervisor's known EONW v2 through v7 lifecycle
     codec; presentation still requires the exact current EONW and component graph.
   - `eon stop previous` attempts every non-dead generation except the exact
-    current one, but only while current is live. If current is not live and
-    another non-dead generation exists, it fails before sending Stop. `eon stop all`
-    remains available. Each selected generation uses the existing validated
+    current one. If current is not live and a non-dead versioned previous
+    generation exists, it fails before sending Stop. Fixed-namespace legacy
+    work instead reports its own unavailable reason. `eon stop all` remains
+    available. Each selected generation uses the existing validated
     Stop; human mode confirms each target, while `--json` returns a result array
-    without confirmation. A failed or unavailable target does not suppress later
-    targets. The command exits nonzero if any Stop attempt fails. `all` stops
-    current last so earlier targets can finish when invoked inside a current
-    Session. Neither command forcibly kills a process or treats fixed-namespace
-    legacy work as stoppable.
+    without confirmation. A preflight failure returns an error object. A failed
+    or unavailable target does not suppress later targets. The command exits
+    nonzero if any Stop attempt fails. `all` stops current last so earlier
+    targets can finish when invoked inside a current Session. Neither command
+    forcibly kills a process or treats fixed-namespace legacy work as stoppable.
   - Implicit attach selects only a live supervisor reporting the exact current
     identity; otherwise Eon starts current without stopping older work. Explicit
     attach never substitutes another generation, and discovery distinguishes
@@ -1125,8 +1126,8 @@ show the median and observed minimum–maximum, not a confidence interval.
   for `generation.rs`, and
   `dde8f5333dcf1a42a1edb57510b6b36490a71e94ddcb2ab2d0e97369e4c561f6`
   for `workspace_control.rs`. On x86_64 Linux, all 82 locked Rust tests,
-  strict Clippy, and `nix flake check path:.` pass. The active `eon` profile
-  resolves to the exact working-tree artifact
+  strict Clippy, and `nix flake check path:.` pass. At that check, the active
+  `eon` profile resolved to the exact working-tree artifact
   `/nix/store/q6y681z8r5dmq0vz1n0giz9hcfk4y725-eon-0.1.0`. Its installed
   executable passed the private-runtime batch test: `stop previous --json`
   returned a result array with one unavailable entry and two stopped v6
@@ -1136,6 +1137,18 @@ show the median and observed minimum–maximum, not a confidence interval.
   installed inventory of the real runtime showed current unstarted and the live
   previous generation's 13 Sessions unchanged. The owners in the batch test
   were substitutes; this is not a new native EON-C11 acceptance proof.
+- **Batch Stop legacy correction (installed isolated check):** Working tree based
+  on `5448ddf070da4b0e0958bfab11f57410cfd9709b`, with SHA-256
+  `c4b8e18c963646fe2d13e5eb13b76d13ae098de6a0c95721f03419199824baf6`
+  for `generation.rs` and
+  `4934bcbae231bbf20050ca1baf2243bd24f8e0f1ac72c32c8a8e14db56e16408`
+  for `workspace_control.rs`. All 82 locked Rust tests, strict Clippy, and
+  `nix flake check path:.` pass on x86_64 Linux. The active profile resolves to
+  `/nix/store/ylgbvl2iqyri743dq1kkk4si5cmxhrjw-eon-0.1.0`. Its installed
+  executable, run by the isolated integration test, reports legacy's own
+  `stop-unavailable` reason from `stop previous --json` when current is unstarted.
+  Read-only real-runtime inventory still shows the previous supervisor's 13
+  Sessions live. The fixture is not a native Stop acceptance proof.
 
 ## EON-C12 — Standalone exact-command terminal
 

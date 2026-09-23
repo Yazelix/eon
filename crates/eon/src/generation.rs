@@ -657,7 +657,7 @@ pub(super) fn stop_generations(
             .any(|record| record.kind == "current" && record.state == "live")
         && records
             .iter()
-            .any(|record| record.kind != "current" && record.state != "dead")
+            .any(|record| record.kind == "previous" && record.state != "dead")
     {
         return report_failure(
             &failure(

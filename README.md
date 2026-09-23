@@ -76,14 +76,15 @@ confirmation. Closing a window is therefore detach; stopping a generation ends
 its Sessions. Previous generations using EONW v2 through v7 can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
 `previous` attempts every non-dead generation except the installed build's exact
-current generation. It requires that current generation to be live, so an
-upgrade cannot silently select the generation still holding your Sessions.
+current generation. It requires current to be live before stopping a versioned
+previous generation, so an upgrade cannot silently select the generation still
+holding your Sessions.
 `all` includes current and stops it last. Each generation gets its own
 confirmation. A failed Stop does not prevent later attempts.
 The command exits nonzero if any attempt fails. `--json` skips confirmation
-and returns an array with one result per attempted generation, or `[]` when
-there is nothing to stop. Fixed-namespace legacy work has no authoritative
-Stop action and is reported as unavailable.
+and returns an array of attempted results, or `[]` if there is nothing to stop.
+A preflight failure returns an error object. Fixed-namespace legacy work has
+no authoritative Stop action and is reported as unavailable.
 
 ## Everyday use
 
@@ -315,16 +316,16 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 330 |
+| README | 331 |
 | Repository ignore rules | 3 |
 | License | 201 |
-| Architecture and contracts | 2,122 |
+| Architecture and contracts | 2,135 |
 | Distribution and references | 720 |
 | Benchmark report | 317 |
-| Changelog | 348 |
-| Rust source and tests | 16,710 |
+| Changelog | 350 |
+| Rust source and tests | 16,721 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |
 | Nix composition | 790 |
 | Product defaults | 0 |
-| **Total** | **22,203** |
+| **Total** | **22,230** |
