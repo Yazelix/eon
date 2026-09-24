@@ -5,9 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
-- Provide a scripted native Wayland demo with an animated README preview and
-  linked MP4. Run `nix run .#record-demo` from the Eon checkout to record the
-  source media on an isolated display; `docs/DEVELOPMENT.md` gives the GIF step.
+- Make the packaged Git popup available on Eon's Session PATH.
+
+- Provide a scripted native Wayland demo of tabs, panes, LazyGit, and an offline
+  Agent popup, with an animated README preview and linked MP4. Run
+  `nix run .#record-demo` from the Eon checkout to regenerate all demo media
+  on an isolated display.
 
 - Make the Nix-only Linux alpha installable from a public Eon clone without
   repository credentials. The locked Orbit and Venus sources remain exact;

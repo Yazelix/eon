@@ -43,20 +43,21 @@
       "inputs": {
         "nixpkgs": [
           "nixpkgs"
-        ]
+        ],
+        "wdotool": "wdotool"
       },
       "locked": {
-        "lastModified": 1790201710,
-        "narHash": "sha256-0j1xQOC6QP48k7PbRfeC0T/6sImEO3YE4bX2aRuHsLg=",
+        "lastModified": 1790213094,
+        "narHash": "sha256-DAFdpAp4761ewTDWtdLBBkOUS7+CUPpQCQxSWuv+OyU=",
         "owner": "Yazelix",
         "repo": "kinestra",
-        "rev": "00b233e6e421aab5e166101476a6eb48e007ca8b",
+        "rev": "d1589705677dc001304584150557e67cef67f580",
         "type": "github"
       },
       "original": {
         "owner": "Yazelix",
         "repo": "kinestra",
-        "rev": "00b233e6e421aab5e166101476a6eb48e007ca8b",
+        "rev": "d1589705677dc001304584150557e67cef67f580",
         "type": "github"
       }
     },
@@ -158,6 +159,23 @@
         "rev": "f6c1ebdb16df2960077dbd88ab6728a921b789d8",
         "type": "git",
         "url": "https://github.com/Yazelix/eon-desktop.git"
+      }
+    },
+    "wdotool": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1779523593,
+        "narHash": "sha256-V0DOznaptdFrNxtTpJZtJIVikZTXa9zacNFWceGAu+o=",
+        "owner": "cushycush",
+        "repo": "wdotool",
+        "rev": "662d7079b669de164797f46fd437c0cf7854bf82",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cushycush",
+        "repo": "wdotool",
+        "rev": "662d7079b669de164797f46fd437c0cf7854bf82",
+        "type": "github"
       }
     },
     "yazi": {

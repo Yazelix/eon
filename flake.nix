@@ -28,7 +28,7 @@
       flake = false;
     };
     kinestra = {
-      url = "github:Yazelix/kinestra/00b233e6e421aab5e166101476a6eb48e007ca8b";
+      url = "github:Yazelix/kinestra/d1589705677dc001304584150557e67cef67f580";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -675,7 +675,7 @@
             for command in nu bash zsh fish hx yazi ya lazygit; do
               ln -s "../../../bin/eon-$command" "$out/libexec/eon/bin/$command"
             done
-            for command in nu bash zsh fish; do
+            for command in nu bash zsh fish lazygit; do
               ln -s "../../../bin/eon-$command" "$out/libexec/eon/bin/eon-$command"
             done
             ln -s ${starshipPackage}/bin/starship "$out/libexec/eon/bin/starship"
@@ -779,10 +779,11 @@
       recordDemo = kinestra.lib.${system}.mkRecorder {
         name = "record-eon-demo";
         recipe = ./demo/record.rs;
+        runtimeInputs = [ pkgs.swaybg ];
         environment = {
           EON_BIN = "${eonPackage}/bin/eon";
           ZOXIDE_BIN = "${zoxidePackage}/bin/zoxide";
-          EON_DEMO_PATH = lib.makeBinPath [ pkgs.coreutils pkgs.bash ];
+          EON_DEMO_PATH = lib.makeBinPath [ pkgs.coreutils pkgs.bash pkgs.git ];
         };
       };
     in

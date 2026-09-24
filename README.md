@@ -11,7 +11,7 @@ managed environment with Nushell, Helix, Yazi, and other pinned tools.
 
 ## Demo
 
-[![Animated Eon demo: choose a directory, open two panes, and browse with Yazi](assets/demo/eon-demo.gif)](assets/demo/eon-demo.mp4)
+[![Animated Eon demo: create and move tabs, create, move, and close panes, then open Git and Agent popups](assets/demo/eon-demo.gif)](assets/demo/eon-demo.mp4)
 
 [Watch the MP4](assets/demo/eon-demo.mp4) of the real Nix alpha on a private
 Wayland display. [Regenerate the demo](docs/DEVELOPMENT.md#demo-media).
@@ -60,12 +60,12 @@ Beads data, lock files, and generated artifacts.
 | Architecture and contracts | 2,168 |
 | Distribution and references | 720 |
 | User guides | 272 |
-| Development guide | 46 |
+| Development guide | 40 |
 | Benchmark report | 317 |
-| Changelog | 360 |
-| Rust source and tests | 16,868 |
+| Changelog | 363 |
+| Rust source and tests | 17,014 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |
-| Nix composition | 815 |
+| Nix composition | 816 |
 | Product defaults | 0 |
-| **Total** | **22,561** |
+| **Total** | **22,705** |
