@@ -4,14 +4,31 @@
 
 ![Glowing violet three-fold Eon loop](assets/eon.png)
 
-Eon is a terminal workspace for the native Linux desktop. Close its window and
-your Sessions keep running; open Eon again to reconnect. Tabs and panes share a
-managed environment with Nushell, Helix, Yazi, and other pinned tools.
-`eonterm` runs one command with the same Session lifecycle.
+Eon is a native Wayland terminal workspace with Sessions that outlive its
+window. Each tab has a launch directory and a stack of panes; `eonterm` gives
+one command the same Session lifecycle.
 
 ## Demo
 
 ![Animated Eon demo: switch between Yazi and Quick Search, arrange tabs and panes, then open LazyGit and Codex](assets/demo/eon-demo.gif)
+
+## Why Eon
+
+- **Sessions outlive the window.** [Eon Sessions](https://github.com/Yazelix/eon-sessions)
+  keeps each Session's PTY and terminal state apart from the window. Close Eon
+  to detach, then `eon attach` to return to the same work.
+  `eon stop GENERATION` ends Sessions.
+- **Tabs remember directories.** Find a directory with Zoxide quick search or
+  browse in Yazi. New panes start in that tab's directory; move tabs and stacked
+  panes with the keyboard.
+- **A pinned tool set.** Nix pins Nushell, Helix, Yazi, and LazyGit together.
+  Git and Agent popups stay with their tab; the Agent popup uses your installed
+  client.
+- **Native Vulkan graphics.** [Eon Desktop](https://github.com/Yazelix/eon-desktop)
+  draws terminal text and workspace chrome with `wgpu` on Vulkan. A hardware
+  adapter uses the GPU; Mesa lavapipe can render in software. Eon requests blur
+  for its translucent Wayland window; compositor support determines whether the
+  frosted backdrop appears.
 
 ## Get started
 
@@ -57,7 +74,7 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 76 |
+| README | 93 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
@@ -73,4 +90,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 355 |
 | Nix composition | 821 |
 | Product defaults | 0 |
-| **Total** | **22,850** |
+| **Total** | **22,867** |
