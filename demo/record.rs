@@ -5,7 +5,7 @@ use std::{
     ffi::OsStr,
     fs,
     path::{Path, PathBuf},
-    process::{Command, ExitCode},
+    process::{Command, ExitCode, Stdio},
     time::{Duration, Instant},
 };
 
@@ -66,6 +66,29 @@ fn record(r: &mut Recorder) -> Result<()> {
     }
     let eon = PathBuf::from(env::var_os("EON_BIN").expect("Nix supplies EON_BIN"));
     let zoxide = env::var_os("ZOXIDE_BIN").expect("Nix supplies ZOXIDE_BIN");
+    let codex = env::split_paths(
+        &env::var_os("PATH").ok_or_else(|| Error::Invalid("PATH is missing".into()))?,
+    )
+    .map(|directory| directory.join("codex"))
+    .find(|path| path.is_file())
+    .ok_or_else(|| Error::Invalid("install Codex CLI to record the Agent popup".into()))?;
+    if !Command::new(&codex)
+        .args(["login", "status"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?
+        .success()
+    {
+        return Err(Error::Invalid(
+            "sign in with `codex login` before recording the demo".into(),
+        ));
+    }
+    let codex_home = env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env::var_os("HOME").expect("the host has a home directory"))
+                .join(".codex")
+        });
     let work = r.work().to_path_buf();
     let home = work.join("home");
     let demo = home.join("demo");
@@ -90,12 +113,26 @@ if $count == 1 {
 }
 "#,
     )?;
-    let agent = r"printf 'Agent demo (offline)\n\nThis is a real Eon popup Session.\nNo account or model is connected.\n'; read -r";
+    let agent = [
+        codex
+            .to_str()
+            .ok_or_else(|| Error::Invalid("Codex CLI path must be UTF-8".into()))?,
+        "--disable",
+        "hooks",
+        "--disable",
+        "plugins",
+        "--no-daemon",
+        "--sandbox",
+        "read-only",
+        "--ask-for-approval",
+        "never",
+        "The Rust file contains fn main() { println!(\"hello from Eon\"); }. What does it print? Answer in one sentence. Do not use tools.",
+    ];
     fs::write(
         home.join(".config/eon/config.toml"),
         format!(
-            "[terminal]\nbackground_opacity = 0.72\nbackground_blur = true\n\n[popups.agent]\ncommand = [\"bash\", \"-c\", {}]\nlabel = \"Agent demo (offline)\"\n",
-            serde_json::to_string(agent).expect("static demo command is JSON-compatible TOML")
+            "[terminal]\nbackground_opacity = 0.72\nbackground_blur = true\n\n[popups.agent]\ncommand = {}\nlabel = \"Codex\"\n",
+            serde_json::to_string(&agent).expect("Codex command is JSON-compatible TOML")
         ),
     )?;
     fs::write(
@@ -145,14 +182,14 @@ if $count == 1 {
     let mut wallpaper = r.command("swaymsg");
     wallpaper
         .args(["output", "*", "bg"])
-        .arg(root.join("assets/demo/wallpaper.png"))
+        .arg(root.join("assets/demo/wallpaper-frosted.png"))
         .arg("fill");
     r.exec(&mut wallpaper)?;
     let mut stop = isolated(&eon, &home);
     stop.args(["stop", "all", "--json"]);
     r.on_exit(stop);
     let mut launch = isolated(&eon, &home);
-    launch.current_dir(&demo);
+    launch.current_dir(&demo).env("CODEX_HOME", &codex_home);
     r.launch("eon", &mut launch)?;
 
     let video = work.join("eon-demo.mp4");
@@ -160,6 +197,8 @@ if $count == 1 {
     let gif = work.join("eon-demo.gif");
     r.record(&video, |r| {
         r.sleep(Duration::from_secs(1))?;
+        r.key("Tab", Duration::from_secs(2))?;
+        r.key("Tab", Duration::from_secs(2))?;
         r.type_text("demo", Duration::from_millis(70))?;
         r.key("Return", Duration::from_millis(300))?;
         wait_for(r, &eon, &home, "first terminal", |state| {
@@ -270,7 +309,9 @@ if $count == 1 {
                     .any(|popup| popup["entry"] == "agent" && popup["chosen"] == true)
             })
         })?;
-        r.sleep(Duration::from_secs(3))
+        r.sleep(Duration::from_secs(1))?;
+        r.key("Return", Duration::from_millis(500))?;
+        r.sleep(Duration::from_secs(12))
     })?;
     r.gif(&video, &gif, 800, 10)?;
 

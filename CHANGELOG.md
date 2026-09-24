@@ -7,10 +7,10 @@ installation, and proven contract changes.
 
 - Make the packaged Git popup available on Eon's Session PATH.
 
-- Provide a scripted native Wayland demo of tabs, panes, LazyGit, and an offline
-  Agent popup, with an animated README preview and linked MP4. Run
-  `nix run .#record-demo` from the Eon checkout to regenerate all demo media
-  on an isolated display.
+- Provide a scripted native Wayland demo of the Yazi and Quick Search picker,
+  tabs, panes, LazyGit, and a real Codex popup. The README shows its GIF over
+  a soft focus wallpaper. Run `nix run .#record-demo` from the Eon checkout
+  with an authenticated Codex CLI to regenerate the media.
 
 - Make the Nix-only Linux alpha installable from a public Eon clone without
   repository credentials. The locked Orbit and Venus sources remain exact;
