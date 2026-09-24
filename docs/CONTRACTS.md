@@ -20,7 +20,7 @@ The current accepted composition selects Orbit
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
 
-## Linux release-candidate qualification
+## Linux public-alpha qualification
 
 - **Source and graph:** Eon `3b4f388e63f5f9fc5e234727e4f8b52ea4c9ca74`
   with the Orbit and Venus revisions above, EONW v7, and generation
@@ -32,6 +32,13 @@ Profile refreshes preserve existing live supervisors and their Sessions.
   were `/nix/store/y4bi72b9rb9yyxcb247gi87w7zkdwclk-eon-0.1.0` and
   `/nix/store/lwii3cff1i8z3v7lqjg6zzf38wcbcpjn-eonterm-0.1.0`; their
   generation reports matched the manifest.
+- **Public release:** Tag `linux-alpha-2026-09-24` points to Eon
+  `3550368ac2a7ecd689df75a75aff7007523b7dbf`. A fresh Nix profile installed
+  the tag as `/nix/store/kkilnkvxcjymxswy3bz5ryrjd3qwmf1v-eon-0.1.0` and
+  reported the same component graph. Its runtime binary SHA-256
+  `1a2bb60fb17ead6ecdbc8658dce5af8b21b002e9f06c33076fe0ea49e6ad2f61`
+  matches the final native-tested candidate; intervening source changes were
+  documentation and Beads state only.
 - **Native observation:** In that account on private Sway 1.12 native Wayland
   with pixman and Mesa lavapipe, first launch, Quick Search/Yazi directory
   selection, F1 and native shortcut help, tab/pane creation and movement,
@@ -48,8 +55,7 @@ Profile refreshes preserve existing live supervisors and their Sessions.
   this clean account did not expose an application tree, so current-candidate
   accessibility labels and screen-reader interaction remain unproved. Wider
   compositors, fractional scale, non-systemd hosts, machine-restart recovery,
-  and Apple Silicon macOS are not established by this observation. The public
-  source tag and release remain subject to explicit approval.
+  and Apple Silicon macOS are not established by this observation.
 
 ## Upward selection integration
 

@@ -3,7 +3,7 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
-## Unreleased
+## linux-alpha-2026-09-24
 
 - Enable Nushell's native `clip copy` and `clip paste` in managed Eon shells,
   with `clc` and `clp` aliases during interactive startup.
@@ -20,7 +20,7 @@ installation, and proven contract changes.
   with an authenticated Codex CLI to regenerate the media.
 
 - Make the Nix-only Linux alpha installable from the public Eon flake without
-  repository credentials. `nix profile add --refresh github:Yazelix/eon/edge`
+  repository credentials. `nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-09-24`
   installs it in one command. The locked Orbit and Venus sources remain exact;
   the package carries their Apache licenses and MIT notices for Ghostty, its
   Rust bindings, and the OpenAI mark.

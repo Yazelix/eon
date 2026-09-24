@@ -25,7 +25,7 @@ unsupported. Restarting the machine ends live Session process state.
 Install the public alpha:
 
 ```sh
-nix profile add --refresh github:Yazelix/eon/edge
+nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-09-24
 ```
 
 Run `eon` to start. `eon versions` shows the installed component revisions.

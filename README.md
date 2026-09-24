@@ -36,14 +36,13 @@ The Nix-only alpha supports **x86_64 Linux on native Wayland**. You need Git,
 Nix with flakes enabled, and a Wayland session. [Platform details](docs/USAGE.md#supported-environment)
 cover the proved setup and current limits.
 
-Install the public alpha with one command:
+Install the tagged alpha with one command:
 
 ```sh
-nix profile add --refresh github:Yazelix/eon/edge
+nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-09-24
 ```
 
-`edge` moves as the project changes. Pin a published tag or Git commit in its
-place for a repeatable install; `eon versions` reports the component graph.
+The tag pins the release; `eon versions` reports the component graph.
 
 Run `eon` to start.
 
@@ -74,12 +73,12 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 93 |
+| README | 92 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 2,247 |
+| Architecture and contracts | 2,253 |
 | Distribution and references | 721 |
 | User guides | 275 |
 | Development guide | 42 |
@@ -90,4 +89,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 355 |
 | Nix composition | 821 |
 | Product defaults | 0 |
-| **Total** | **22,867** |
+| **Total** | **22,872** |
