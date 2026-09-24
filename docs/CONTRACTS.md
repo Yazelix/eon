@@ -929,13 +929,19 @@ show the median and observed minimum–maximum, not a confidence interval.
   editor replacement, or remote/headless clipboard bridge. Arbitrary argv
   remains unmanaged and `eon run -- COMMAND...` remains the explicit escape
   hatch.
-- **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`
-  - **Environment:** x86_64 Linux Nix alpha
+- **Proof:** Base `9f6599d103162061ee666126c2eddce03383afb6`;
+  native clipboard `99c8e44385424775648238459bdb66f3607d9bfe`.
+  - **Environment:** x86_64 Linux Nix alpha; private native Wayland for clipboard.
   - **Evidence:** Four-shell environment checks, private Session PATH, fzf option
     isolation, tool glyphs, Fish preservation, and packaged command dogfood; accepted base
     `6dfcb473beccadd6e145235009240c81dd570fe5`, glyph proof
     `fb95671d855fa944c3717103cb13bd0135f8aec8`, and private PATH
     `c0d044c69318a921f9f9139bcaf2de9afce683d3`
+  - **Clipboard evidence:** Focused managed-command test, Nix shell and command
+    checks, and installed `/nix/store/60814358az00zr420rmbai7lz5qy1a1x-eon-0.1.0`.
+    Full commands and aliases round-tripped Unicode in a private Eon Session;
+    `wl-paste` agreed. An isolated interactive shell preserved user-autoload
+    override, and a no-display run returned Nushell's native clipboard error.
 ## EON-C10 — Typed workspace control
 
 - **Status:** Proven at Eon `2214a4f592f78437c2f74aff0a1df8d1cc7ee5a4`
