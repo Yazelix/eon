@@ -29,8 +29,27 @@ pub(super) fn nonempty_environment_path(name: &str) -> Option<PathBuf> {
 struct EonConfig {
     shell: ShellConfig,
     terminal: TerminalConfig,
+    anima: StartupAnimation,
     popup: PopupSettings,
     popups: BTreeMap<String, PopupEntrySettings>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct StartupAnimation {
+    enabled: bool,
+    pub(crate) style: String,
+    pub(crate) duration_seconds: u64,
+}
+
+impl Default for StartupAnimation {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            style: "random".into(),
+            duration_seconds: 3,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -209,6 +228,21 @@ pub(crate) fn shell_command(root: &Path) -> Result<Vec<String>, String> {
     Ok(read_shell_config(root)?.command)
 }
 
+pub(crate) fn startup_animation(root: &Path) -> Result<Option<StartupAnimation>, String> {
+    let anima = read_config(root)?.anima;
+    if anima.style.is_empty()
+        || anima.style.trim() != anima.style
+        || anima.style.len() > 128
+        || anima.style.chars().any(char::is_control)
+    {
+        return Err("anima.style must be a nonempty trimmed name of at most 128 UTF-8 bytes without controls".into());
+    }
+    if !(1..=30).contains(&anima.duration_seconds) {
+        return Err("anima.duration_seconds must be from 1 through 30".into());
+    }
+    Ok(anima.enabled.then_some(anima))
+}
+
 pub(crate) fn terminal_presentation(root: &Path) -> Result<TerminalConfig, String> {
     let terminal = read_config(root)?.terminal;
     if !terminal.background_opacity.is_finite()
@@ -296,6 +330,13 @@ pub(crate) fn popup_catalog(root: &Path) -> Result<PopupCatalog, String> {
             PopupCommand::AgentAuto,
             true,
         ),
+        (
+            "anima",
+            "Anima",
+            "Alt+Shift+A",
+            PopupCommand::Argv(vec!["anima".into()]),
+            false,
+        ),
     ];
     for (id, label, keybinding, command, keep_alive) in builtins {
         let settings = config.popups.remove(id).unwrap_or_default();
@@ -309,6 +350,12 @@ pub(crate) fn popup_catalog(root: &Path) -> Result<PopupCatalog, String> {
             if settings.keep_alive.is_some_and(|value| value) {
                 return Err("popups.project.keep_alive must remain false".into());
             }
+        }
+        if id == "anima" && settings.command.is_some() {
+            return Err("popups.anima.command is Eon-owned".into());
+        }
+        if id == "anima" && settings.keep_alive == Some(true) {
+            return Err("popups.anima.keep_alive must remain false".into());
         }
         if settings.enabled == Some(false) {
             continue;
@@ -753,7 +800,8 @@ fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsSt
 mod tests {
     use super::{
         ManagedPrograms, PopupCommand, Tool, integration_mask, managed_command, popup_catalog,
-        prepare_popup_command, prepend_path, read_shell_config, terminal_presentation, tool,
+        prepare_popup_command, prepend_path, read_shell_config, startup_animation,
+        terminal_presentation, tool,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -805,6 +853,39 @@ mod tests {
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert!(read_shell_config(&root).unwrap_err().contains(expected));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn startup_animation_settings_are_validated_and_can_be_disabled() {
+        let root = std::env::temp_dir().join(format!(
+            "eon-managed-environment-test-{}-anima",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("config.toml"), "[anima]\nenabled = false\n").unwrap();
+        assert!(startup_animation(&root).unwrap().is_none());
+        fs::write(
+            root.join("config.toml"),
+            "[anima]\nstyle = 'aquarium'\nduration_seconds = 5\n",
+        )
+        .unwrap();
+        let configured = startup_animation(&root).unwrap().unwrap();
+        assert_eq!(
+            (configured.style.as_str(), configured.duration_seconds),
+            ("aquarium", 5)
+        );
+
+        for (source, field) in [
+            ("[anima]\nduration_seconds = 0\n", "anima.duration_seconds"),
+            ("[anima]\nduration_seconds = 31\n", "anima.duration_seconds"),
+            ("[anima]\nstyle = ' '\n", "anima.style"),
+            ("[anima]\nstyle = \"bad\\nstyle\"\n", "anima.style"),
+            ("[anima]\nenabled = 'yes'\n", "enabled"),
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            assert!(startup_animation(&root).unwrap_err().contains(field));
         }
         fs::remove_dir_all(root).unwrap();
     }
@@ -900,7 +981,7 @@ mod tests {
                 .iter()
                 .map(|entry| entry.id.as_str())
                 .collect::<Vec<_>>(),
-            ["project", "git", "agent"]
+            ["project", "git", "agent", "anima"]
         );
         assert_eq!(
             (
@@ -945,7 +1026,7 @@ keep_alive = false
                 .iter()
                 .map(|entry| entry.id.as_str())
                 .collect::<Vec<_>>(),
-            ["project", "agent", "files"]
+            ["project", "agent", "anima", "files"]
         );
 
         fs::write(
@@ -953,7 +1034,21 @@ keep_alive = false
             "[popups.files]\nenabled = false\n",
         )
         .unwrap();
-        assert_eq!(popup_catalog(&root).unwrap().entries.len(), 3);
+        assert_eq!(popup_catalog(&root).unwrap().entries.len(), 4);
+
+        for (source, expected) in [
+            (
+                "[popups.anima]\nkeep_alive = true\n",
+                "popups.anima.keep_alive",
+            ),
+            (
+                "[popups.anima]\ncommand = ['other']\n",
+                "popups.anima.command",
+            ),
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            assert!(popup_catalog(&root).unwrap_err().contains(expected));
+        }
 
         for keybinding in [
             "Alt+Slash",

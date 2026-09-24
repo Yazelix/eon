@@ -21,7 +21,7 @@ one command the same Session lifecycle.
 - **Tabs remember directories.** Find a directory with Zoxide quick search or
   browse in Yazi. New panes start in that tab's directory; move tabs and stacked
   panes with the keyboard.
-- **A pinned tool set.** Nix pins Nushell, Helix, Yazi, and LazyGit together.
+- **A pinned tool set.** Nix pins Anima, Nushell, Helix, Yazi, and LazyGit together.
   Git and Agent popups stay with their tab; the Agent popup uses your installed
   client.
 - **Native Vulkan graphics.** [Eon Desktop](https://github.com/Yazelix/eon-desktop)
@@ -54,7 +54,8 @@ The tag pins the release; `eon versions` reports the component graph.
 
 Run `eon` to start.
 
-The first launch asks for a directory. Press Enter for a Zoxide match, or Tab to
+Fresh launches show a short, dismissible Anima animation, then ask for a
+directory. Press Enter for a Zoxide match, or Tab to
 browse with Yazi. Closing the window leaves Sessions alive; `eon attach` returns
 to them. **Alt+/** opens the shortcut guide in the window.
 
@@ -81,20 +82,20 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 100 |
+| README | 101 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 2,254 |
-| Distribution and references | 721 |
-| User guides | 277 |
+| Architecture and contracts | 2,304 |
+| Distribution and references | 735 |
+| User guides | 299 |
 | Development guide | 42 |
 | Benchmark report | 317 |
-| Changelog | 371 |
-| Rust source and tests | 17,056 |
+| Changelog | 375 |
+| Rust source and tests | 17,522 |
 | Cargo manifests | 38 |
-| Component manifest | 355 |
-| Nix composition | 821 |
+| Component manifest | 372 |
+| Nix composition | 836 |
 | Product defaults | 0 |
-| **Total** | **22,883** |
+| **Total** | **23,472** |

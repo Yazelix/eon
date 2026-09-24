@@ -237,6 +237,10 @@ pub(super) fn launch_current(
     let popups = (mode == LaunchMode::Workspace)
         .then(|| managed_environment::popup_catalog(&config))
         .transpose()?;
+    let startup_animation = (mode == LaunchMode::Workspace)
+        .then(|| managed_environment::startup_animation(&config))
+        .transpose()?
+        .flatten();
     prepare_generation_runtime(&root, &generation)?;
     prepare_configuration(&config)?;
     let programs = programs(decorations);
@@ -245,6 +249,7 @@ pub(super) fn launch_current(
         &config,
         terminal,
         popups,
+        startup_animation,
         lifecycle_lock,
         &runtime,
         child,
@@ -612,6 +617,7 @@ fn supervise(
     config: &Path,
     terminal: managed_environment::TerminalConfig,
     popups: Option<managed_environment::PopupCatalog>,
+    startup_animation: Option<managed_environment::StartupAnimation>,
     lifecycle_lock: fs::File,
     runtime: &Path,
     child: &[OsString],
@@ -648,7 +654,8 @@ fn supervise(
             |session| session.endpoint.clone(),
         )
     };
-    let admitted = if terminal.requires_startup_admission() {
+    let fresh_animation = startup_animation.is_some() && sessions.is_empty() && !recovered_picker;
+    let admitted = if terminal.requires_startup_admission() || fresh_animation {
         let snapshot = if mode == LaunchMode::Workspace {
             Some(
                 if sessions.is_empty() && !recovered_picker {
@@ -736,6 +743,7 @@ fn supervise(
                         &mut sessions,
                         &mut initial_child,
                         operation,
+                        startup_animation.as_ref(),
                     )
                 },
             )?
@@ -880,6 +888,7 @@ fn reap_finished_sessions(
                             sessions,
                             initial_child,
                             operation,
+                            None,
                         )
                     })
                     .map_err(|error| error.detail)?;
@@ -950,18 +959,28 @@ fn directory_picker_command(
     runtime: &Path,
     tab: &str,
     instance: &str,
+    startup_animation: Option<&managed_environment::StartupAnimation>,
 ) -> Result<Vec<OsString>, String> {
     let session_bin = programs
         .session_bin
         .as_ref()
         .ok_or("the installed Eon package has no directory picker")?;
-    Ok(vec![
-        session_bin.join("eon-directory-picker").into_os_string(),
-        "__directory-picker".into(),
+    let mut command = vec![session_bin.join("eon-directory-picker").into_os_string()];
+    if let Some(animation) = startup_animation {
+        command.extend([
+            OsString::from("__startup-anima"),
+            animation.style.clone().into(),
+            animation.duration_seconds.to_string().into(),
+        ]);
+    } else {
+        command.push("__directory-picker".into());
+    }
+    command.extend([
         runtime.join("eon.sock").into_os_string(),
         tab.into(),
         instance.into(),
-    ])
+    ]);
+    Ok(command)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -972,6 +991,7 @@ fn apply_session_operation(
     sessions: &mut Vec<RunningSession>,
     initial_child: &mut Vec<OsString>,
     operation: SessionOperation,
+    startup_animation: Option<&managed_environment::StartupAnimation>,
 ) -> Result<(), String> {
     let (session, directory, command) = match operation {
         SessionOperation::Start {
@@ -990,6 +1010,7 @@ fn apply_session_operation(
                 .ok_or("directory picker endpoint has no runtime directory")?,
             &tab,
             &instance,
+            startup_animation,
         )?,
         LaunchCommand::Tool(argv) => argv,
         LaunchCommand::Pane if session.id == "session-1" => initial_child.clone(),
@@ -1052,6 +1073,7 @@ fn cancel_transient_popups(
                     sessions,
                     initial_child,
                     operation,
+                    None,
                 )
             })
             .map_err(|error| error.detail)?;
@@ -1352,6 +1374,7 @@ fn dispatch_control_request(
                         sessions,
                         initial_child,
                         operation,
+                        None,
                     )
                 },
             ) {

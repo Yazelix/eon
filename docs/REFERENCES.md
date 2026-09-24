@@ -219,6 +219,20 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
   and file-opening scope. Prove actual packaged terminal and directory-output
   behavior before claiming installed integration.
 
+### How should Eon show Anima before a fresh picker and in an on-demand popup?
+
+- **Owner:** Eon launch and popup policy; Anima playback; Orbit terminal Session;
+  Venus presentation.
+- **Read first:** [Anima 0.2.0 at `b3133f0`](https://github.com/Yazelix/anima/tree/b3133f057fa0029b3e06c85301161168c48bb799),
+  especially its README, CLI entrypoint and screen runner; EON-C18 and Eon's
+  current readiness, picker and popup owners.
+- **Comparable implementation:** [Nova at `e476ca8`](https://github.com/Yazelix/nova/tree/e476ca8065cc8b2c02ea611ae7edeeb0989c0c23)
+  delegates `yzx anima` and presents a transient random animation on Alt+Shift+A.
+- **Preserve / reject:** Use one exact Anima executable through the component
+  graph. Wait for Venus readiness before startup playback and reuse the
+  transient popup Session for on-demand playback. Do not copy style lists,
+  rendering, terminal-mode handling, or Nova's Zellij mechanism.
+
 
 ## Managed shell environment
 

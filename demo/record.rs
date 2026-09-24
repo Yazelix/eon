@@ -131,7 +131,7 @@ if $count == 1 {
     fs::write(
         home.join(".config/eon/config.toml"),
         format!(
-            "[terminal]\nbackground_opacity = 0.72\nbackground_blur = true\n\n[popups.agent]\ncommand = {}\nlabel = \"Codex\"\n",
+            "[terminal]\nbackground_opacity = 0.72\nbackground_blur = true\n\n[anima]\nenabled = false\n\n[popups.agent]\ncommand = {}\nlabel = \"Codex\"\n",
             serde_json::to_string(&agent).expect("Codex command is JSON-compatible TOML")
         ),
     )?;

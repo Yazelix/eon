@@ -11,6 +11,11 @@
       url = "git+https://github.com/Yazelix/eon-desktop.git?rev=773c6bab7d3e21e0b0d7d942c9bba72260a08b42";
       flake = false;
     };
+    anima = {
+      url = "github:Yazelix/anima/b3133f057fa0029b3e06c85301161168c48bb799";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.kinestra.follows = "kinestra";
+    };
     helix = {
       url = "github:luccahuguet/yazelix-helix/7e6cd307d00783c16ad4cff99ed71936d34f6572";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -39,6 +44,7 @@
       nixpkgs,
       orbit,
       venus,
+      anima,
       helix,
       yazi,
       ratconfig,
@@ -65,6 +71,7 @@
           throw "Eon manifest must contain exactly one ${id} component";
       orbitIdentity = component "orbit";
       venusIdentity = component "venus";
+      animaIdentity = component "anima";
       nushellIdentity = component "nushell";
       bashIdentity = component "bash";
       zshIdentity = component "zsh";
@@ -78,6 +85,7 @@
       yaziIdentity = component "yazi";
       lazygitIdentity = component "lazygit";
       ratconfigIdentity = component "ratconfig";
+      animaPackage = anima.packages.${system}.anima;
 
       githubSource =
         identity: hash:
@@ -641,6 +649,9 @@
         assert venus.rev == venusIdentity.revision;
         assert lib.assertMsg (venusCargo.package.version == venusIdentity.version)
           "Venus manifest version does not match the selected Cargo package";
+        assert anima.rev == animaIdentity.revision;
+        assert lib.assertMsg ((builtins.fromTOML (builtins.readFile "${anima}/Cargo.toml")).package.version == animaIdentity.version)
+          "Anima manifest version does not match the selected Cargo package";
         assert helix.rev == helixIdentity.revision;
         assert lib.assertMsg (helixCargo.workspace.package.version == helixIdentity.version)
           "Helix manifest version does not match the selected Cargo workspace package";
@@ -683,10 +694,12 @@
             ln -s ${starshipPackage}/bin/starship "$out/libexec/eon/bin/starship"
             ln -s ${zoxidePackage}/bin/zoxide "$out/libexec/eon/bin/zoxide"
             ln -s ${fzfPackage}/bin/fzf "$out/libexec/eon/bin/fzf"
+            ln -s ${animaPackage}/bin/anima "$out/libexec/eon/bin/anima"
             ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-directory-picker"
             ln -s ${atuinPackage}/bin/atuin "$out/libexec/eon/bin/atuin"
             ln -s ${carapacePackage}/bin/carapace "$out/libexec/eon/bin/carapace"
             install -Dm444 ${./LICENSE} "$out/share/licenses/eon/LICENSE"
+            install -Dm444 ${anima}/LICENSE "$out/share/licenses/eon/anima/LICENSE"
             install -Dm444 ${nushellPackage.src}/LICENSE "$out/share/licenses/eon/nushell/LICENSE"
             install -Dm444 ${bashLicense} "$out/share/licenses/eon/bash/COPYING"
             install -Dm444 ${zshLicense} "$out/share/licenses/eon/zsh/LICENCE"
@@ -706,6 +719,7 @@
             wrapProgram "$out/bin/eon" \
               --set EON_ORBIT "${orbitPackage}/bin/yazelix-orbit" \
               --set EON_VENUS "${venusPackage}/bin/yazelix-venus" \
+              --set EON_ANIMA "${animaPackage}/bin/anima" \
               --set EON_NU "${nushellPackage}/bin/nu" \
               --set EON_BASH "${bashPackage}/bin/bash" \
               --set EON_ZSH "${zshPackage}/bin/zsh" \
@@ -760,6 +774,7 @@
         done
         for forbidden in \
           ${eonPackage} \
+          ${animaPackage} \
           ${nushellPackage} ${bashPackage} ${zshPackage} ${fishPackage} \
           ${starshipPackage} ${zoxidePackage} ${atuinPackage} ${carapacePackage} \
           ${fzfPackage} ${helixPackage} ${yaziPackage} ${lazygitPackage}; do

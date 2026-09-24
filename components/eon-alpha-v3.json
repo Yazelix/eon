@@ -7,7 +7,7 @@
   "composition": {
     "services": ["orbit"],
     "clients": ["venus"],
-    "tools": ["nushell", "bash", "zsh", "fish", "starship", "zoxide", "fzf", "atuin", "carapace", "helix", "yazi", "lazygit"],
+    "tools": ["anima", "nushell", "bash", "zsh", "fish", "starship", "zoxide", "fzf", "atuin", "carapace", "helix", "yazi", "lazygit"],
     "libraries": ["ratconfig"]
   },
   "activation": {
@@ -48,6 +48,23 @@
     ]
   },
   "components": [
+    {
+      "id": "anima",
+      "project": "Yazelix Anima",
+      "version": "0.2.0",
+      "revision": "b3133f057fa0029b3e06c85301161168c48bb799",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/Yazelix/anima.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
     {
       "id": "orbit",
       "project": "Eon Sessions",

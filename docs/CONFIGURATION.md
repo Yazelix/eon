@@ -21,6 +21,11 @@ starship = true
 zoxide = true
 atuin = true
 carapace = true
+
+[anima]
+enabled = true
+style = "random"
+duration_seconds = 3
 ```
 
 Omitting `cursor_trail_color` chooses a random color for each surface. Explicit
@@ -40,6 +45,14 @@ The terminal settings apply when a surface opens or reopens. Shell settings are
 read for each Session. Invalid startup configuration creates no fresh Session;
 a failed replacement leaves existing Sessions and commands alive.
 
+On a fresh full-Eon workspace, Anima plays after the desktop is ready and before
+the initial directory picker. Press any key other than its previous/next style
+keys to dismiss it immediately. `enabled = false` skips startup playback;
+`style` is passed to the pinned Anima executable, and `duration_seconds` accepts
+1–30. Anima owns its style names; run `eon anima --help` to see them. A failed
+animation continues to the picker. Attachment, recovery, later tabs, and
+EonTerm do not play the startup animation.
+
 ## Popups
 
 Popup geometry and entries use the same file:
@@ -58,6 +71,9 @@ keep_alive = true
 
 Git defaults to `eon-lazygit` on Alt+Shift+J. Agent defaults to the first
 available command among Codex, Grok, OpenCode, Pi, and Claude on Alt+Shift+L.
+Anima defaults to Alt+Shift+A, opens a random animation, and stops when dismissed
+or replaced. Set `[popups.anima].enabled = false` to hide that shortcut; its
+command and transient lifetime are fixed.
 Set `enabled = false` on Git, Agent, or a custom popup to disable it. Project is
 required on Alt+Z. Popup shortcuts cannot collide with workspace shortcuts.
 

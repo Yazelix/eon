@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## linux-alpha-2026-09-24
 
+- Pin Yazelix Anima for a dismissible three-second random animation before a
+  fresh full-Eon picker, `eon anima` in the caller's terminal, and a transient
+  Alt+Shift+A popup. `[anima]` controls startup playback; Anima owns its styles.
+
 - Enable Nushell's native `clip copy` and `clip paste` in managed Eon shells,
   with `clc` and `clp` aliases during interactive startup.
 

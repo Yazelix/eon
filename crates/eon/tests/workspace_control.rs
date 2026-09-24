@@ -66,6 +66,11 @@ fn executable(path: &Path, source: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
 }
 
+fn disable_startup_animation(config: &Path) {
+    fs::create_dir_all(config).unwrap();
+    fs::write(config.join("config.toml"), "[anima]\nenabled = false\n").unwrap();
+}
+
 fn quick_picker_executable(path: &Path) {
     executable(
         path,
@@ -76,6 +81,238 @@ selection=$(cat)
 printf '\0%s\0' "$selection"
 "#,
     );
+}
+
+#[test]
+fn anima_command_preserves_child_arguments_status_and_avoids_workspace() {
+    let root = temporary_directory();
+    let anima = root.join("anima");
+    let log = root.join("args");
+    let runtime = root.join("runtime");
+    executable(
+        &anima,
+        "#!/bin/sh\nprintf '%s\\0' \"$YAZELIX_SCREEN_COMMAND_NAME\" \"$@\" > \"$EON_TEST_ANIMA_ARGS\"\nexit 23\n",
+    );
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    for arguments in [
+        vec![],
+        vec!["aquarium"],
+        vec!["random", "--duration-seconds", "5"],
+        vec!["--help"],
+    ] {
+        let output = eon_command(binary)
+            .arg("anima")
+            .args(&arguments)
+            .env("EON_ANIMA", &anima)
+            .env("EON_TEST_ANIMA_ARGS", &log)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(23));
+        let expected = std::iter::once("eon anima")
+            .chain(arguments.iter().copied())
+            .flat_map(|argument| {
+                argument
+                    .as_bytes()
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(0))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(fs::read(&log).unwrap(), expected);
+        assert!(!runtime.exists());
+    }
+    let unavailable = eon_command(binary)
+        .arg("anima")
+        .env("EON_ANIMA", root.join("missing"))
+        .env("EON_RUNTIME_DIR", &runtime)
+        .output()
+        .unwrap();
+    assert_eq!(unavailable.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unavailable.stderr).contains("cannot launch Anima"));
+    assert!(!runtime.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dismissal() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let session_bin = root.join("session-bin");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    let anima = root.join("anima");
+    let venus_started = root.join("venus-started");
+    let venus_ready = root.join("venus-ready");
+    let startup_started = root.join("startup-started");
+    let startup_release = root.join("startup-release");
+    let picker_started = root.join("picker-started");
+    let picker_release = root.join("picker-release");
+    let popup_pid = root.join("popup-pid");
+    let popup_release = root.join("popup-release");
+    let stop = root.join("stop");
+    fs::create_dir(&session_bin).unwrap();
+    managed_orbit_executable(&orbit);
+    executable(
+        &venus,
+        "#!/bin/sh\nprintf started > \"$EON_TEST_VENUS_STARTED\"\nwhile [ ! -e \"$EON_TEST_VENUS_READY\" ]; do sleep 0.01; done\nprintf ready-v1\ncat >/dev/null\n",
+    );
+    executable(
+        &anima,
+        "#!/bin/sh\nif [ \"$2\" = --duration-seconds ]; then\n  printf '%s|%s' \"$1\" \"$3\" > \"$EON_TEST_STARTUP_STARTED\"\n  while [ ! -e \"$EON_TEST_STARTUP_RELEASE\" ]; do sleep 0.01; done\nelse\n  printf '%s' \"$$\" > \"$EON_TEST_POPUP_PID\"\n  while [ ! -e \"$EON_TEST_POPUP_RELEASE\" ]; do sleep 0.01; done\nfi\n",
+    );
+    symlink(&anima, session_bin.join("anima")).unwrap();
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
+    executable(
+        &session_bin.join("zoxide"),
+        "#!/bin/sh\nprintf started > \"$EON_TEST_PICKER_STARTED\"\nprintf '/known\\n'\n",
+    );
+    executable(
+        &session_bin.join("fzf"),
+        "#!/bin/sh\ncat >/dev/null\nwhile [ ! -e \"$EON_TEST_PICKER_RELEASE\" ]; do sleep 0.01; done\nexit 130\n",
+    );
+    executable(
+        &session_bin.join("eon-nu"),
+        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+    );
+    let child = eon_command(&binary)
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_ANIMA", &anima)
+        .env("EON_SESSION_BIN", &session_bin)
+        .env("EON_TEST_RUN_CHILD", "1")
+        .env("EON_TEST_VENUS_STARTED", &venus_started)
+        .env("EON_TEST_VENUS_READY", &venus_ready)
+        .env("EON_TEST_STARTUP_STARTED", &startup_started)
+        .env("EON_TEST_STARTUP_RELEASE", &startup_release)
+        .env("EON_TEST_PICKER_STARTED", &picker_started)
+        .env("EON_TEST_PICKER_RELEASE", &picker_release)
+        .env("EON_TEST_POPUP_PID", &popup_pid)
+        .env("EON_TEST_POPUP_RELEASE", &popup_release)
+        .env("EON_TEST_STOP", &stop)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    wait_for(&venus_started);
+    thread::sleep(Duration::from_millis(100));
+    assert!(!startup_started.exists() && !picker_started.exists());
+    fs::write(&venus_ready, "ready").unwrap();
+    wait_for(&startup_started);
+    assert_eq!(fs::read_to_string(&startup_started).unwrap(), "random|3");
+    assert!(!picker_started.exists());
+    fs::write(&startup_release, "done").unwrap();
+    wait_for(&picker_started);
+    let control = generation_runtime(&runtime).join("eon.sock");
+    let Response::Snapshot(pending) = workspace_action(&control, "anima-pending", Action::Inspect)
+    else {
+        panic!("initial picker snapshot missing");
+    };
+    assert!(project_popup(&pending).is_some());
+    assert!(pending.tabs[0].panes.is_empty());
+
+    fs::write(&picker_release, "cancel").unwrap();
+    wait_for(&generation_runtime(&runtime).join("orbit.sock"));
+    let Response::Snapshot(opened) = protocol_action(
+        &control,
+        "anima-popup-open",
+        ProtocolAction::InvokePopup {
+            tab: "t1".into(),
+            entry: "anima".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        },
+    ) else {
+        panic!("Anima popup did not open");
+    };
+    wait_for(&popup_pid);
+    let popup = opened.tabs[0]
+        .popups
+        .iter()
+        .find(|popup| popup.entry == "anima")
+        .unwrap();
+    let selected_pane = opened.tabs[0].selected_pane.clone();
+    let Response::Snapshot(dismissed) = protocol_action(
+        &control,
+        "anima-popup-dismiss",
+        ProtocolAction::DismissPopup(PopupTarget {
+            tab: "t1".into(),
+            instance: popup.id.clone(),
+        }),
+    ) else {
+        panic!("Anima popup did not dismiss");
+    };
+    assert!(dismissed.tabs[0].popups.is_empty());
+    assert_eq!(dismissed.tabs[0].selected_pane, selected_pane);
+    wait_for_process_removal(
+        fs::read_to_string(&popup_pid).unwrap().parse().unwrap(),
+        "dismissed Anima kept running",
+    );
+    fs::write(&stop, "stop").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn failed_or_stuck_startup_anima_reports_and_continues_to_picker() {
+    let root = temporary_directory();
+    let anima = root.join("anima");
+    let pid = root.join("anima-pid");
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    executable(&bin.join("zoxide"), "#!/bin/sh\nprintf '/known\\n'\n");
+    executable(&bin.join("fzf"), "#!/bin/sh\ncat >/dev/null\nexit 130\n");
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    for (program, expected) in [
+        (root.join("missing"), "cannot launch pinned executable"),
+        (anima.clone(), "timed out"),
+    ] {
+        if program == anima {
+            executable(
+                &anima,
+                "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_ANIMA_PID\"\nexec sleep 30\n",
+            );
+        }
+        let started = Instant::now();
+        let output = eon_command(binary)
+            .args([
+                "__startup-anima",
+                "random",
+                "1",
+                "/tmp/eon-test.sock",
+                "t1",
+                "u1",
+            ])
+            .env("EON_ANIMA", &program)
+            .env("EON_TEST_ANIMA_PID", &pid)
+            .env(
+                "PATH",
+                std::env::join_paths(
+                    std::iter::once(bin.clone())
+                        .chain(std::env::split_paths(&std::env::var_os("PATH").unwrap())),
+                )
+                .unwrap(),
+            )
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(0));
+        assert!(String::from_utf8_lossy(&output.stderr).contains(expected));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+    wait_for_process_removal(
+        fs::read_to_string(&pid).unwrap().parse().unwrap(),
+        "timed-out Anima kept running",
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn artifact_path(endpoint: &Path, suffix: &str) -> PathBuf {
@@ -946,6 +1183,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     let root = temporary_directory();
     let runtime = root.join("runtime-padding");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let initial = root.join("initial");
     let selected = root.join("selected");
     let stop = root.join("stop");
@@ -1256,6 +1494,7 @@ fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let stop = root.join("stop");
     let fail_stop_once = root.join("fail-stop-once");
     let venus_pid = root.join("venus.pid");
@@ -1529,6 +1768,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let stop = root.join("stop");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
@@ -1930,6 +2170,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let stop = root.join("stop");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
@@ -2047,6 +2288,7 @@ fn launch_directory_can_disappear_after_the_initial_session_starts() {
     let launch = root.join("launch");
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let stop = root.join("stop");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
@@ -2125,7 +2367,10 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     );
     fs::write(
         config.join("config.toml"),
-        format!("[shell]\ncommand = [\"{}\"]\n", reporter.to_string_lossy()),
+        format!(
+            "[shell]\ncommand = [\"{}\"]\n\n[anima]\nenabled = false\n",
+            reporter.to_string_lossy()
+        ),
     )
     .unwrap();
 
@@ -2280,6 +2525,7 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let stop = root.join("stop");
     let exit_initial = root.join("exit-initial");
     let venus_pid = root.join("venus.pid");
@@ -2350,6 +2596,7 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let child_exit = root.join("child-exit");
     let orbit_log = root.join("orbit.log");
     let orbit = root.join("orbit");
@@ -2480,6 +2727,7 @@ fn replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacement
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let stop = root.join("stop");
     let orbit_log = root.join("orbit.log");
     let orbit = root.join("orbit");
@@ -2609,6 +2857,7 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let stop = root.join("stop");
     let lease_released = root.join("lease-released");
     let orbit = root.join("orbit");
@@ -2697,6 +2946,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let fallback_stop = root.join("fallback-stop");
     let orbit_log = root.join("orbit.log");
     let venus_log = root.join("venus.log");
@@ -2849,6 +3099,7 @@ fn desktop_launch_failure_stops_the_ready_session_through_management() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let orbit_log = root.join("orbit.log");
     let orbit = root.join("orbit");
     managed_orbit_executable(&orbit);
@@ -2895,6 +3146,7 @@ fn rejected_ready_identity_stops_the_spawned_session_through_management() {
         let root = temporary_directory();
         let runtime = root.join("runtime");
         let config = root.join("config");
+        disable_startup_animation(&config);
         let orbit_log = root.join("orbit.log");
         let orbit = root.join("orbit");
         managed_orbit_executable(&orbit);
@@ -2957,6 +3209,7 @@ fn marked_ready_claim_never_falls_back_to_child_stop() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let orbit_log = root.join("orbit.log");
     let fallback_stop = root.join("fallback-stop");
     let orbit = root.join("orbit");
@@ -2999,6 +3252,7 @@ fn lost_stop_response_still_finishes_the_supervisor() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let fallback_stop = root.join("fallback-stop");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
@@ -3048,6 +3302,7 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let first_stop = root.join("first-stop");
     let second_stop = root.join("second-stop");
     let prompt = root.join("prompt");
@@ -3154,6 +3409,7 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let fallback_stop = root.join("fallback-stop");
     let orbit_log = root.join("orbit.log");
     let orbit = root.join("orbit");
@@ -3422,6 +3678,7 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
+    disable_startup_animation(&config);
     let stop = root.join("stop");
     let orbit = root.join("orbit");
     let venus = root.join("venus");

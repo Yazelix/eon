@@ -20,15 +20,18 @@ use std::{
     env,
     ffi::{OsStr, OsString},
     fs,
+    io::Write,
     os::unix::{
         ffi::OsStrExt,
         process::{CommandExt, ExitStatusExt},
     },
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
+    thread,
+    time::{Duration, Instant},
 };
 
-const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | attach [GENERATION] | generations [--json] | stop <GENERATION|previous|all> [--json] | workspace [--json] | tab create [--json] | tab close TAB [--json] | tab directory TAB [--json] -- DIRECTORY | tab move <left|right> [--json] | pane create [--json] | pane move <up|down> [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
+const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | anima [STYLE] [CHILD OPTIONS...] | attach [GENERATION] | generations [--json] | stop <GENERATION|previous|all> [--json] | workspace [--json] | tab create [--json] | tab close TAB [--json] | tab directory TAB [--json] -- DIRECTORY | tab move <left|right> [--json] | pane create [--json] | pane move <up|down> [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
 pub(super) fn run() -> (&'static str, Result<i32, String>) {
@@ -42,6 +45,13 @@ pub(super) fn run() -> (&'static str, Result<i32, String>) {
         arguments.remove(0);
         return ("eon-directory-picker", directory_picker(arguments));
     }
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == OsStr::new("__startup-anima"))
+    {
+        arguments.remove(0);
+        return ("eon-directory-picker", startup_anima(arguments));
+    }
     let eonterm = Path::new(&invocation).file_name() == Some(OsStr::new("eonterm"));
     let product = if eonterm { "eonterm" } else { "eon" };
     let result = if eonterm {
@@ -53,6 +63,77 @@ pub(super) fn run() -> (&'static str, Result<i32, String>) {
         }
     };
     (product, result)
+}
+
+fn startup_anima(arguments: Vec<OsString>) -> Result<i32, String> {
+    let [style, seconds, socket, tab, instance] = arguments.as_slice() else {
+        return Err(
+            "usage: eon-directory-picker __startup-anima STYLE SECONDS EON_SOCKET TAB POPUP".into(),
+        );
+    };
+    let duration: u64 = seconds
+        .to_str()
+        .and_then(|value| value.parse().ok())
+        .filter(|value| (1..=30).contains(value))
+        .ok_or("invalid internal Anima duration")?;
+    if let Err(error) = play_startup_anima(style, duration) {
+        eprintln!("eon: startup Anima: {error}; continuing to the directory picker");
+    }
+    directory_picker(vec![socket.clone(), tab.clone(), instance.clone()])
+}
+
+fn play_startup_anima(style: &OsStr, seconds: u64) -> Result<(), String> {
+    let mut terminal = std::mem::MaybeUninit::<libc::termios>::uninit();
+    let terminal = (unsafe { libc::tcgetattr(libc::STDIN_FILENO, terminal.as_mut_ptr()) } == 0)
+        .then(|| unsafe { terminal.assume_init() });
+    let result = (|| {
+        let mut child = Command::new(managed_environment::configured_program(
+            "EON_ANIMA",
+            "anima",
+        ))
+        .arg(style)
+        .arg("--duration-seconds")
+        .arg(seconds.to_string())
+        .spawn()
+        .map_err(|error| format!("cannot launch pinned executable: {error}"))?;
+        let deadline = Instant::now() + Duration::from_secs(seconds + 2);
+        loop {
+            if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!("exited with status {status}"))
+                };
+            }
+            if Instant::now() >= deadline {
+                unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+                let grace = Instant::now() + Duration::from_millis(250);
+                while Instant::now() < grace {
+                    if child
+                        .try_wait()
+                        .map_err(|error| error.to_string())?
+                        .is_some()
+                    {
+                        return Err("timed out".into());
+                    }
+                    thread::sleep(Duration::from_millis(25));
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("timed out".into());
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+    })();
+    if result.is_err() {
+        if let Some(terminal) = terminal {
+            unsafe { libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &terminal) };
+        }
+        let mut stdout = std::io::stdout();
+        let _ = stdout.write_all(b"\x1b[?1049l");
+        let _ = stdout.flush();
+    }
+    result
 }
 
 fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
@@ -249,6 +330,16 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
     }
     match arguments.as_slice() {
         [] => launch_current(LaunchMode::Workspace, &[], true, false, "eon"),
+        [command, child @ ..] if command == "anima" => {
+            let error = Command::new(managed_environment::configured_program(
+                "EON_ANIMA",
+                "anima",
+            ))
+            .args(child)
+            .env("YAZELIX_SCREEN_COMMAND_NAME", "eon anima")
+            .exec();
+            Err(format!("cannot launch Anima: {error}"))
+        }
         [command] if command == "run" => {
             launch_current(LaunchMode::Workspace, &[], false, false, "eon")
         }

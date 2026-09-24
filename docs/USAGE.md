@@ -32,7 +32,10 @@ nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-09-24
 
 Run `eon` to start. `eon versions` shows the installed component revisions.
 
-The first launch opens a directory picker. Press Enter to use a Zoxide history
+Fresh workspaces first show a three-second random Anima animation after the
+window is ready. Press any key other than the style-browsing keys to dismiss it;
+set `[anima].enabled = false` in `config.toml` to skip it. The directory picker
+then opens. Press Enter to use a Zoxide history
 match, or Tab to browse folders with Yazi. In the browser, Enter chooses the
 highlighted folder and F1 shows its keys. Cancelling a pending picker starts a
 Session in that tab's directory if it is the only tab; otherwise it removes
@@ -94,6 +97,7 @@ and is reported as unavailable.
 | Alt+Z | Open the tab's Project directory picker |
 | Alt+Shift+J | Open or hide the tab's Git popup |
 | Alt+Shift+L | Open or hide the tab's Agent popup |
+| Alt+Shift+A | Open or dismiss the tab's Anima popup |
 
 ### Eon Bar and tabs
 
@@ -111,7 +115,8 @@ unchanged.
 Tabs own launch directories; changing a shell's directory does not rename or
 retarget its tab. Project changes the directory used by future Sessions in the
 captured tab without moving existing Sessions. Git and Agent are tab-scoped
-Sessions whose terminal state survives hiding and reopening.
+Sessions whose terminal state survives hiding and reopening. Anima is transient:
+closing its popup stops playback and returns to the tab.
 
 ### Scrolling and directory picker
 
@@ -130,6 +135,7 @@ for orientation but are never opened or managed by the picker.
 | Command | Result |
 |---|---|
 | `eon` | Present the current workspace or start its first directory picker |
+| `eon anima [STYLE] [CHILD OPTIONS...]` | Run pinned Anima in the caller's terminal without starting a workspace; `--help` lists styles and options |
 | `eon run [-- COMMAND...]` | Start a fresh workspace picker, optionally for an exact first command |
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
 | `eon generations [--json]` | List validated current and older generations |

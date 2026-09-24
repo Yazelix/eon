@@ -552,6 +552,10 @@ show the median and observed minimum–maximum, not a confidence interval.
     and pane focus usable between repaints. Orbit continues parsing output and
     answering terminal queries while the user reads retained history; history
     bounds, geometry validation, and synchronized presentation remain intact.
+  - Full Eon can invoke the manifest-pinned Anima executable for the optional
+    fresh-workspace welcome step and `eon anima [style] [child options]`.
+    The direct command uses the caller's terminal and returns the child's
+    exit result without starting or attaching a workspace.
 - **Important failures:** Missing, malformed, incompatible, replaced, or
   non-ready components fail before publishing a usable workspace or terminal.
 - **Owner:** Eon launch validation, orchestration, icon selection, and desktop
@@ -596,6 +600,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Trigger:** A product generation resolves or validates its component set.
 - **Result:** One versioned manifest defines component identity, compatibility,
   and abstract artifacts for every channel without encoding launch policy.
+  Anima is a pinned tool in that graph, with one executable artifact.
 - **Important failures:** Unknown components, duplicate identities, incompatible
   protocol versions, malformed revisions, or channel-specific graph drift fail
   validation.
@@ -618,7 +623,8 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Consumer:** Eon launch and every distribution channel.
 - **Trigger:** A channel supplies exact component artifacts to Eon.
 - **Result:** Eon receives explicit component paths, treats Nix store paths as
-  opaque inputs, and invokes no Nix evaluator during normal runtime.
+  opaque inputs, and invokes no Nix evaluator during normal runtime. The Nix
+  full-Eon launcher supplies the pinned Anima executable as an opaque input.
 - **Important failures:** Missing, non-executable, incompatible, or substituted
   artifacts fail before accepted launch.
 - **Owner:** Eon launch validation; the distribution supplies artifacts.
@@ -643,6 +649,8 @@ show the median and observed minimum–maximum, not a confidence interval.
   rendering, editor, file-manager, or configuration state.
   Native desktop launches preserve host XDG preferences and use
   `EON_CONFIG_HOME` for the product configuration root.
+  Eon selects Anima startup eligibility and forwards CLI arguments; Anima owns
+  its styles, random choice, browsing, rendering, and terminal-mode cleanup.
 - **Important failures:** A missing child contract returns to that child instead
   of being reconstructed in Eon.
 - **Owner:** Eon orchestration and product policy; each child keeps its subsystem
@@ -1057,6 +1065,9 @@ show the median and observed minimum–maximum, not a confidence interval.
   the next invocation, which stops the exact old Session before starting a
   fresh one at the new directory. A stop failure preserves the old instance; a
   start failure records no replacement.
+  Anima defaults to Alt+Shift+A and launches the pinned random native animation
+  as a transient popup. A dismissal, replacement, or tab close stops its Orbit
+  Session, restores the prior tab focus, and leaves no hidden animation running.
 - **Configuration:** `[popup]` owns finite side and vertical margins, defaulting
   to 8 and 4 logical pixels. `[popups.<id>]` owns direct argv, physical shortcut,
   label, enabled state and keep-alive lifetime. Only Agent accepts `"auto"`.
@@ -1499,6 +1510,13 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z in an existing tab.
 - **Result:**
+  - On a fresh full-Eon workspace, after Venus accepts the initial presentation,
+    Eon may play one short Anima animation in the initial transient Project
+    Session before starting the normal directory picker. The default is enabled,
+    a random native style, and three seconds; `[anima].enabled = false` skips it.
+    Any key other than Anima's style-browsing keys dismisses playback without
+    becoming picker input. This step does not run for later tabs, attachment,
+    reconnection, same-boot recovery, or EonTerm.
   - A fresh workspace and every later new tab begin as one active pending tab
     with no durable pane. Eon starts one transient Orbit Session running the
     exact packaged ranked-directory picker at the inherited launch directory.
@@ -1579,12 +1597,15 @@ show the median and observed minimum–maximum, not a confidence interval.
   Left/right with only one live tab succeeds unchanged; final-tab close remains
   unavailable. A duplicate close cannot stop the picker twice or remove another
   tab.
+  Invalid Anima settings fail before a fresh workspace starts. Missing, failed,
+  or timed-out playback reports a short diagnostic and continues to the picker.
 - **Owner:** Eon owns picker policy, tab binding, command selection, lifecycle,
   validation, mutation, and cleanup. Venus owns full-Eon shortcut precedence,
   modal geometry, focus, input, notices, rendering, and accessibility. Orbit
   owns the transient PTY and child. Zoxide owns ranking, fzf owns quick
-  selection, and Yazi owns filesystem browsing. Eon consumes one directory
-  result without interpreting Yazi's navigation state.
+  selection, Yazi owns filesystem browsing, and Anima owns style selection,
+  rendering, input dismissal, playback timing, and terminal restoration. Eon
+  consumes one directory result without interpreting Yazi's navigation state.
 - **Consumes:** EON-C17; accepted EONW v5 popup boundary, Orbit's accepted
   Session startup, attachment, exit, and stop contracts, and exact Venus v5
   consumer `d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`.
@@ -1593,6 +1614,34 @@ show the median and observed minimum–maximum, not a confidence interval.
   simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
+- **Anima extension proof (dogfooded, 2026-09-24):** Working-tree Eon with
+  Anima `b3133f057fa0029b3e06c85301161168c48bb799`, Orbit
+  `b6cecf8f2ee35570b41cfdc578b095889d917fe2`, and Venus
+  `773c6bab7d3e21e0b0d7d942c9bba72260a08b42` passed locked Rust tests,
+  strict Clippy, manifest validation, `nix build` for Eon and EonTerm, and the
+  full Nix flake check on x86_64 Linux. At that proof, the Eon profile resolved to
+  `/nix/store/2axg20ry5dl48dflcc8bq57yg07cp1bd-eon-0.1.0`. Its native
+  Wayland presentation in private Sway showed Anima before the picker, key
+  dismissal before a configured 30-second timeout with no key in the picker,
+  a disabled startup beginning at the picker, an Anima popup rendering from the
+  installed catalog, popup Session removal on dismissal, and reattachment to
+  the same pane without replay. The installed `eon anima` runs the pinned child
+  with native help and bounded playback in a caller PTY. Captures are retained
+  at `~/.local/state/eon/proofs/eon-anima-startup-5el-2026-09-24/`. The
+  installed catalog advertises Alt+Shift+A and Venus's accepted EONW v7
+  physical-shortcut path routes that entry; the private compositor did not
+  provide a physical keyboard observation.
+- **Anima simplification proof (dogfooded, 2026-09-24):** Working-tree source
+  `/nix/store/5xjs4w72z0drwm1s99vzgp259lky3030-eon-source` uses one
+  validated startup configuration type and removes duplicate literal tests.
+  All locked Eon tests, strict Clippy, both Nix packages, and the full Nix
+  flake check pass with the same exact Anima, Orbit, and Venus revisions. The
+  refreshed Eon profile resolves to
+  `/nix/store/9zwwy9jxnig5cy90s0j6xcrkqznq888d-eon-0.1.0`; a private
+  native Sway run of that installed binary showed configured static playback
+  before the normal picker. `simplified-startup.png` and
+  `simplified-picker.png` are retained with the captures above. The host's
+  pre-existing supervisor and Sessions were not restarted.
 - **Highlighted-directory correction (mechanically verified, 2026-09-11):**
   Working-tree source `/nix/store/zdwl036r2r9gd9knrwfm835mj0ra16lz-eon-source`
   separates Yazi's chooser result from its browsed CWD. The focused regression
