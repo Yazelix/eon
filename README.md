@@ -41,6 +41,9 @@ input on M1, including our physical Scaleway Mac. Venus still has open Mac
 checks, and Eon's Nix package targets Linux only. This release has no Mac
 install path or ETA; Intel Macs are outside scope.
 
+We're looking for Apple Silicon Mac testers. If you'd like to help,
+[open an issue](https://github.com/Yazelix/eon/issues/new).
+
 Install the tagged alpha with one command:
 
 ```sh
@@ -78,7 +81,7 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 97 |
+| README | 100 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
@@ -94,4 +97,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 355 |
 | Nix composition | 821 |
 | Product defaults | 0 |
-| **Total** | **22,880** |
+| **Total** | **22,883** |
