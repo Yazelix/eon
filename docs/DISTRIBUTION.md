@@ -210,9 +210,10 @@ An alpha candidate should prove:
 - product state uses stable component identity instead of persisted store paths;
 - Eon runs in a clean Nix-enabled native Wayland environment.
 
-EON-C7 remains planned until an installed candidate also runs in a clean
-non-systemd native Wayland environment that provides its documented kernel
-capabilities.
+EON-C7 has an installed x86_64 Linux Wayland slice on private Sway. It remains
+partially proved because Apple Silicon macOS is still unproved. A non-systemd
+support claim separately requires installed dogfood on a non-systemd native
+Wayland host with the documented kernel capabilities.
 
 A direct release candidate should also prove:
 

@@ -20,6 +20,37 @@ The current accepted composition selects Orbit
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
 
+## Linux release-candidate qualification
+
+- **Source and graph:** Eon `3b4f388e63f5f9fc5e234727e4f8b52ea4c9ca74`
+  with the Orbit and Venus revisions above, EONW v7, and generation
+  `g1-c432a14b396ca1060a2d65be3d7f28ba`.
+- **Build and install:** Manifest validation, the complete locked Rust workspace
+  test route, and all declared Nix flake checks passed. A clean `nobody` account
+  installed the exact public GitHub source with Git and Nix, without a checkout,
+  user credentials, or a readable netrc. The installed Eon and EonTerm artifacts
+  were `/nix/store/y4bi72b9rb9yyxcb247gi87w7zkdwclk-eon-0.1.0` and
+  `/nix/store/lwii3cff1i8z3v7lqjg6zzf38wcbcpjn-eonterm-0.1.0`; their
+  generation reports matched the manifest.
+- **Native observation:** In that account on private Sway 1.12 native Wayland
+  with pixman and Mesa lavapipe, first launch, Quick Search/Yazi directory
+  selection, F1 and native shortcut help, tab/pane creation and movement,
+  per-tab directory inheritance and retargeting, invalid-directory rejection,
+  stable-target close, detach/attach, version and generation diagnostics, and
+  explicit Stop passed. Closing Venus kept Orbit Sessions alive. Killing only
+  the isolated supervisor left three Orbit Sessions alive; fresh Eon adopted
+  their identities into synthetic `t1` with the new launch directory. The
+  installed CLI stopped a live previous EONW v6 generation while current was
+  unstarted, and `stop all` stopped a fresh current generation. EonTerm likewise
+  detached, reattached, recovered its one Session after supervisor loss, and
+  stopped it explicitly.
+- **Limits:** This qualifies the core x86_64 Linux Wayland workflow. AT-SPI on
+  this clean account did not expose an application tree, so current-candidate
+  accessibility labels and screen-reader interaction remain unproved. Wider
+  compositors, fractional scale, non-systemd hosts, machine-restart recovery,
+  and Apple Silicon macOS are not established by this observation. The public
+  source tag and release remain subject to explicit approval.
+
 ## Upward selection integration
 
 - **Composition:** Eon `00a180c5940f0af84fc84cd0e4134a01824a61a7`
@@ -652,7 +683,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C7 — Native Linux Wayland and Apple Silicon macOS
 
-- **Status:** Planned
+- **Status:** Partially proved
 - **Consumer:** A user launching a supported Eon distribution on an approved
   native platform.
 - **Trigger:** Build, install, or launch an approved Eon channel.
@@ -672,14 +703,16 @@ show the median and observed minimum–maximum, not a confidence interval.
   Venus `VEN-C16`, and full-Eon native proofs pass. X11, Xwayland, Intel macOS,
   signing, notarization, direct bundles, and public macOS distribution remain
   outside this contract.
-- **Proof:** None.
+- **Proof:** The Linux release-candidate qualification above proves the native
+  x86_64 Linux Wayland slice on private Sway; it does not prove the combined
+  contract.
 - **Open proof:** Installed non-systemd Wayland dogfood is required before a
   non-systemd support claim. `eon-prove-full-eon-apple-silicon-macos-t8o` owns
   the native `aarch64-darwin` composition proof after its child proofs.
 
 ## EON-C8 — Durable tab and pane workspace
 
-- **Status:** Candidate
+- **Status:** Partially proved
 - **Consumer:** One local Eon workspace user.
 - **Trigger:** Launch, create or close a tab, create a pane, traverse focus,
   reorder the active tab or selected pane, receive Session exit, or recover
@@ -764,6 +797,10 @@ show the median and observed minimum–maximum, not a confidence interval.
   reconstructed Session state.
 - **Picker scope evidence:** EON-C18 records the installed other-tab action and
   close proof while a picker remains bound to its own tab.
+- **Release-candidate proof:** The Linux qualification above exercises the
+  installed native tab/pane workflow and preserves Session identities through
+  detach and recovery. Current-candidate AT-SPI labels and screen-reader use
+  remain open; prior component and focused proofs below retain their own scope.
 - **Proof:** `5f23a7bac127785d913a718e5fb1afc53d9d91ae`
   - **Environment:** x86_64 Linux Nix candidate and installed profile
   - **Evidence:** Deterministic and process-level wrapped traversal, workspace
@@ -1053,7 +1090,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C11 — Runtime generations and presentation
 
-- **Status:** Candidate
+- **Status:** Proven on x86_64 Linux native Wayland
 - **Consumer:** Eon and EonTerm users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
   present a compatible existing surface, stop one generation, or stop a selected
@@ -1129,7 +1166,11 @@ show the median and observed minimum–maximum, not a confidence interval.
     correction `3c1d6e08d223df753eb88ca031d108ed1abe8ee3`, and bounded-frame correction
     `10c29edf861fac28db48f41a4546165f79777ee6`; installed artifact
     `/nix/store/dbiv438iwn9mljrwfg6d29ypg96hp00c-eon-0.1.0`
-- **Open proof:** Current-generation native acceptance remains candidate evidence.
+- **Current acceptance:** The Linux release-candidate qualification above
+  exercised installed Eon and EonTerm detach/attach, same-boot supervisor
+  replacement, generation inspection, explicit Stop, a live previous EONW v6
+  Stop, and `stop all` on the exact current graph. EONW v2 through v5 remain
+  fixture-verified; fixed-namespace legacy work is not stoppable.
 - **Cgroup-free launch (accepted):** Source
   `76b9f5635d9ae545dadb0326976f309afae8fd25`, with exact runtime/test hashes
   recorded in `eon-uj7`; generation `g1-0052f7c409b6505fc4180b69142cc5fe`.
@@ -1154,7 +1195,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   supervisors exited; the live v7 generation and its 13 Sessions remained.
   An isolated installed v6 supervisor Stop also passed with zero Sessions.
   EONW v2 through v5 are fixture-verified only; fixed-namespace legacy has no
-  authoritative Stop. EON-C11 remains Candidate for its broader native proof.
+  authoritative Stop. At this revision, broader native proof remained open.
 - **Batch Stop (installed isolated check):** Working tree based on
   `ed4d09b82e6105fbf3e0c64b34f18b6281aefe63`, with SHA-256
   `fd78e07457e870b329ba0229fd7ef64685e3fdcc4416f1c0e837e4f214f62c9f`
@@ -1212,7 +1253,7 @@ show the median and observed minimum–maximum, not a confidence interval.
   A corrupt target separately returned a per-target `stop-unavailable` array
   instead of a preflight refusal. Real-runtime inventory still showed 11 live
   Sessions in the older supervisor. These are fixture proofs, not a new native
-  Stop acceptance; EON-C11 remains Candidate.
+  Stop acceptance; broader native proof remained open at this revision.
 
 ## EON-C12 — Standalone exact-command terminal
 
@@ -1306,7 +1347,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C15 — Same-boot Orbit recovery
 
-- **Status:** Candidate
+- **Status:** Proven on x86_64 Linux native Wayland
 - **Consumer:** One local Eon or EonTerm user on the same boot and login.
 - **Trigger:** An Eon-launched Orbit crosses Ready, its supervisor disappears, a
   replacement targets the same exact generation, or the user requests Stop.
@@ -1360,7 +1401,11 @@ show the median and observed minimum–maximum, not a confidence interval.
     `871c9f639e519c7e3201fa5d9755d0a77a4cb0df`, and compact recovery
     correction `cfcb38e6e711e971ed6004528987761ddd7c87e4`, and synthetic-tab
     launch-directory fallback `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`
-- **Open proof:** Final current-source user acceptance remains candidate evidence.
+- **Current acceptance:** The Linux release-candidate qualification above
+  recovered the same three Eon Orbit Sessions and one EonTerm Session after
+  isolated supervisor loss, without adding a duplicate Session. Prior
+  adversarial lifecycle checks retain their scope; recovery after logout or
+  machine restart remains outside this contract.
 
 ## EON-C16 — Caller-owned application identity
 
@@ -1389,7 +1434,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C17 — Tab launch directory
 
-- **Status:** Candidate
+- **Status:** Partially proved
 - **Consumer:** One local Eon workspace user creating tabs and panes.
 - **Trigger:** Eon creates or recovers a workspace, creates a tab or pane, or an
   approved same-user client explicitly retargets one live tab.
@@ -1432,8 +1477,11 @@ show the median and observed minimum–maximum, not a confidence interval.
     startup-disappearance proof; profile artifact
     `/nix/store/j4h0bmyvkndzvhi3l9r96b7f57jxlmm8-eon-0.1.0` reports generation
     `g1-a9a0102de0a2c56d1d5bdda6c25bb3dc`
-- **Open proof:** Native visual and AT-SPI dogfood begin after the next normal Eon
-  restart; the profile refresh intentionally preserved the older live supervisor.
+- **Current acceptance:** The Linux release-candidate qualification above
+  exercised native directory selection, inheritance, retargeting, existing
+  Session CWD preservation, later-pane CWD, invalid-path rejection, and the
+  synthetic recovery fallback. Current-candidate AT-SPI path context remains
+  unproved; prior focused checks retain their scope.
 
 ## EON-C18 — Picker-first tab directories
 

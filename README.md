@@ -25,6 +25,9 @@ Install the public alpha with one command:
 nix profile add --refresh github:Yazelix/eon/edge
 ```
 
+`edge` moves as the project changes. Pin a published tag or Git commit in its
+place for a repeatable install; `eon versions` reports the component graph.
+
 Run `eon` to start.
 
 The first launch asks for a directory. Press Enter for a Zoxide match, or Tab to
@@ -33,6 +36,10 @@ to them. **Alt+/** opens the shortcut guide in the window.
 
 To end Sessions explicitly, inspect `eon generations`, then run
 `eon stop GENERATION`, `eon stop previous`, or `eon stop all`.
+
+Linux Wayland is proved on COSMIC and private Sway. Other compositors,
+non-systemd hosts, screen-reader use, and recovery after a machine restart
+remain unproved. [Report a problem](https://github.com/Yazelix/eon/issues).
 
 ## Guides
 
@@ -50,13 +57,13 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 69 |
+| README | 76 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 2,199 |
-| Distribution and references | 720 |
+| Architecture and contracts | 2,247 |
+| Distribution and references | 721 |
 | User guides | 275 |
 | Development guide | 42 |
 | Benchmark report | 317 |
@@ -66,4 +73,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 355 |
 | Nix composition | 821 |
 | Product defaults | 0 |
-| **Total** | **22,794** |
+| **Total** | **22,850** |
