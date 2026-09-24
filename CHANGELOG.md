@@ -12,8 +12,9 @@ installation, and proven contract changes.
   a soft focus wallpaper. Run `nix run .#record-demo` from the Eon checkout
   with an authenticated Codex CLI to regenerate the media.
 
-- Make the Nix-only Linux alpha installable from a public Eon clone without
-  repository credentials. The locked Orbit and Venus sources remain exact;
+- Make the Nix-only Linux alpha installable from the public Eon flake without
+  repository credentials. `nix profile add --refresh github:Yazelix/eon/edge`
+  installs it in one command. The locked Orbit and Venus sources remain exact;
   the package carries their Apache licenses and MIT notices for Ghostty, its
   Rust bindings, and the OpenAI mark.
 

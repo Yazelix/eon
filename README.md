@@ -19,12 +19,13 @@ The Nix-only alpha supports **x86_64 Linux on native Wayland**. You need Git,
 Nix with flakes enabled, and a Wayland session. [Platform details](docs/USAGE.md#supported-environment)
 cover the proved setup and current limits.
 
+Install the public alpha with one command:
+
 ```sh
-git clone https://github.com/Yazelix/eon.git
-cd eon
-nix profile add .#default
-eon
+nix profile add --refresh github:Yazelix/eon/edge
 ```
+
+Run `eon` to start.
 
 The first launch asks for a directory. Press Enter for a Zoxide match, or Tab to
 browse with Yazi. Closing the window leaves Sessions alive; `eon attach` returns
@@ -49,17 +50,17 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 68 |
+| README | 69 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
 | Architecture and contracts | 2,168 |
 | Distribution and references | 720 |
-| User guides | 272 |
+| User guides | 270 |
 | Development guide | 42 |
 | Benchmark report | 317 |
-| Changelog | 363 |
+| Changelog | 364 |
 | Rust source and tests | 17,055 |
 | Cargo manifests | 38 |
 | Component manifest | 355 |

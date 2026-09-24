@@ -22,15 +22,13 @@ unsupported. Restarting the machine ends live Session process state.
 
 ## Install and start
 
-Clone the public repository and install the locked alpha:
+Install the public alpha:
 
 ```sh
-git clone https://github.com/Yazelix/eon.git
-cd eon
-nix profile add .#default
-eon versions
-eon
+nix profile add --refresh github:Yazelix/eon/edge
 ```
+
+Run `eon` to start. `eon versions` shows the installed component revisions.
 
 The first launch opens a directory picker. Press Enter to use a Zoxide history
 match, or Tab to browse folders with Yazi. In the browser, Enter chooses the
