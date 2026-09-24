@@ -605,6 +605,7 @@ fn managed_command(
     let mut command = Command::new(program);
     match tool {
         Tool::Nu => {
+            command.arg("--experimental-options=native-clip");
             if let Some(path) = &programs.nu_vendor_autoload {
                 command.env(
                     "NU_VENDOR_AUTOLOAD_DIR",
@@ -1152,7 +1153,7 @@ keep_alive = false
         assert_eq!(command.get_program(), "/managed/nu");
         assert_eq!(
             command.get_args().map(OsString::from).collect::<Vec<_>>(),
-            ["--version"].map(OsString::from)
+            ["--experimental-options=native-clip", "--version"].map(OsString::from)
         );
         assert_eq!(
             command_environment(&command, "EON_CONFIG_HOME"),

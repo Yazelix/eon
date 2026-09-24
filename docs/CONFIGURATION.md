@@ -73,6 +73,11 @@ managed shell with `eon-bash`, `eon-zsh`, or `eon-fish` in `[shell].command`.
 Native user shell configuration loads before Eon's guarded Starship, Zoxide,
 Atuin, and Carapace integrations.
 
+Managed Nushell supports `clip copy` and `clip paste` through the native
+clipboard. Interactive `eon-nu` and default Eon Sessions also provide `clc`
+and `clp` aliases. User autoload files run afterward and can override them.
+If no desktop clipboard is available, Nushell reports the error.
+
 The profile also exposes `eon-hx`, `eon-yazi`, `eon-ya`, `eon-lazygit`, and
 `eon-lg`. Inside Sessions their unprefixed names resolve to the pinned tools.
 Eon does not rewrite the parent PATH, aliases, shell startup files, or native

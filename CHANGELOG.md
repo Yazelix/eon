@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Enable Nushell's native `clip copy` and `clip paste` in managed Eon shells,
+  with `clc` and `clp` aliases during interactive startup.
+
 - Deliver the accepted ORBS v13 Orbit and Venus pair to Eon and EonTerm.
   Dragging a terminal selection upward at the first visible row scrolls through
   earlier output while extending the selection; release copies the selected text.

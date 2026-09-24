@@ -302,6 +302,8 @@
       '';
       nuBase = pkgs.writeText "eon-nu-base" ''
         $env.config.show_banner = false
+        alias clc = clip copy
+        alias clp = clip paste
       '';
       nuStarship = pkgs.writeText "eon-nu-starship" ''
         let eon_prompt_is_default = {|prompt|
@@ -774,6 +776,9 @@
           version_output=$("$command" --version)
           test -n "$version_output" && test "$("eon-$command" --version)" = "$version_output"
         done
+        eon-nu -c 'help clip copy | ignore; help clip paste | ignore'
+        test "$(eon-nu --config ${nuVendorAutoload}/0/eon.nu -c 'scope aliases | where name == "clc" | get expansion.0')" = 'clip copy'
+        test "$(eon-nu --config ${nuVendorAutoload}/0/eon.nu -c 'scope aliases | where name == "clp" | get expansion.0')" = 'clip paste'
         ${pkgs.coreutils}/bin/touch "$out"
       '';
       recordDemo = kinestra.lib.${system}.mkRecorder {

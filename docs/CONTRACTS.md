@@ -914,17 +914,21 @@ show the median and observed minimum–maximum, not a confidence interval.
   - Nushell native user autoload remains last and its stock startup banner is
     suppressed. Eon does not set `STARSHIP_CONFIG`, and Atuin continues to honor
     `ATUIN_NOBIND`.
+  - Managed Nushell enables native `clip copy` and `clip paste`. Its interactive
+    startup supplies `clc` and `clp` aliases for those commands; native user
+    autoload may override the aliases afterward.
 - **Important failures:** Invalid or unreadable configuration, empty command,
   missing artifact, manifest mismatch, or shell launch fails explicitly without
   a replacement Session. Optional integration failure warns without preventing
-  shell launch. Eon never mutates global configuration, startup files, aliases,
-  or PATH.
+  shell launch. Unavailable native clipboard access reports Nushell's own error.
+  Eon never mutates global configuration, startup files, aliases, or PATH.
 - **Owner:** Eon launch-environment policy; shells and tools retain their native
   configuration.
 - **Boundary:** No global aliases, user-file mutation, prompt/completion schema,
   shell framework, automatic Direnv/Mise, history/sync policy, plugin surface,
-  or editor replacement. Arbitrary argv remains unmanaged and
-  `eon run -- COMMAND...` remains the explicit escape hatch.
+  editor replacement, or remote/headless clipboard bridge. Arbitrary argv
+  remains unmanaged and `eon run -- COMMAND...` remains the explicit escape
+  hatch.
 - **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`
   - **Environment:** x86_64 Linux Nix alpha
   - **Evidence:** Four-shell environment checks, private Session PATH, fzf option
