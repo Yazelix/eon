@@ -15,10 +15,12 @@ exercise isolated Sway. Eon does not require systemd or cgroup delegation, but
 non-systemd use remains unproved. The current graphics proof uses Mesa on Intel
 hardware; proprietary NVIDIA remains unproved.
 
-Apple Silicon macOS is the active expansion but remains unsupported until its
-native proofs pass. X11, Xwayland, ARM Linux, Intel macOS, direct bundles, Home
-Manager installation, background updates, and release automation are also
-unsupported. Restarting the machine ends live Session process state.
+Apple Silicon macOS is the active expansion. Orbit has native proof, and Venus
+has partial M1 proof, including physical Scaleway tests. Venus acceptance and
+full Eon Nix composition remain open, so this release has no Mac install path.
+X11, Xwayland, ARM Linux, Intel macOS, direct bundles, Home Manager installation,
+background updates, and release automation are unsupported. Restarting the
+machine ends live Session process state.
 
 ## Install and start
 

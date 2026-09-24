@@ -36,9 +36,10 @@ The Nix-only alpha supports **x86_64 Linux on native Wayland**. You need Git,
 Nix with flakes enabled, and a Wayland session. [Platform details](docs/USAGE.md#supported-environment)
 cover the proved setup and current limits.
 
-**Mac:** Apple Silicon is the planned Nix-only target. Full Eon still needs
-native macOS proof, so there is no Mac release or ETA. Intel Macs are outside
-the current scope.
+**Mac:** Orbit passed native Apple Silicon tests. Venus rendered and handled
+input on M1, including our physical Scaleway Mac. Venus still has open Mac
+checks, and Eon's Nix package targets Linux only. This release has no Mac
+install path or ETA; Intel Macs are outside scope.
 
 Install the tagged alpha with one command:
 
@@ -77,14 +78,14 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 96 |
+| README | 97 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 2,253 |
+| Architecture and contracts | 2,254 |
 | Distribution and references | 721 |
-| User guides | 275 |
+| User guides | 277 |
 | Development guide | 42 |
 | Benchmark report | 317 |
 | Changelog | 371 |
@@ -93,4 +94,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 355 |
 | Nix composition | 821 |
 | Product defaults | 0 |
-| **Total** | **22,876** |
+| **Total** | **22,880** |

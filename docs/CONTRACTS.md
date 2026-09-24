@@ -705,10 +705,11 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Owner:** Eon platform and distribution policy; child-owned kernel
   capabilities remain explicit child contracts.
 - **Boundary:** Current accepted support remains x86_64 Linux native Wayland.
-  Apple Silicon macOS is approved but unsupported until exact Orbit `ORB-C14`,
-  Venus `VEN-C16`, and full-Eon native proofs pass. X11, Xwayland, Intel macOS,
-  signing, notarization, direct bundles, and public macOS distribution remain
-  outside this contract.
+  Orbit `ORB-C14` has native Apple Silicon proof; Venus `VEN-C16` has partial
+  M1 proof, including physical Scaleway runs. Apple Silicon macOS remains
+  unsupported until Venus and full-Eon native proofs pass. X11, Xwayland,
+  Intel macOS, signing, notarization, direct bundles, and public macOS
+  distribution remain outside this contract.
 - **Proof:** The Linux release-candidate qualification above proves the native
   x86_64 Linux Wayland slice on private Sway; it does not prove the combined
   contract.
