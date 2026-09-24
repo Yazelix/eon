@@ -15,10 +15,31 @@ and remaining limitations. Owning Beads and Git retain execution history;
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
 The current accepted composition selects Orbit
-`f8ad14e5195109ba8cb421f30e5ae4a9619a1419` with ORBF v2 / ORBS v12 and Venus
-`f6c1ebdb16df2960077dbd88ab6728a921b789d8`. Exact source, installed artifact,
+`b6cecf8f2ee35570b41cfdc578b095889d917fe2` with ORBF v2 / ORBS v13 and Venus
+`773c6bab7d3e21e0b0d7d942c9bba72260a08b42`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
+
+## Upward selection integration
+
+- **Composition:** Eon `00a180c5940f0af84fc84cd0e4134a01824a61a7`
+  selects accepted Orbit `b6cecf8f2ee35570b41cfdc578b095889d917fe2`
+  (ORBS v13) and Venus `773c6bab7d3e21e0b0d7d942c9bba72260a08b42`
+  (VEN-C7). This advances EON-C1 through EON-C4 without adding Eon-side
+  scrolling or selection logic.
+- **Proof:** Manifest, flake, and Cargo identities agree; locked Rust checks,
+  all ten flake checks, and both Nix builds pass. In private native Wayland,
+  an upward drag in installed full Eon scrolled across several screenfuls and
+  copied 78 contiguous Unicode lines, `LINE-076-界` through `LINE-153-界`.
+- **Installed artifacts:** Refreshed Eon
+  `/nix/store/p3wslkacd971fpw3vyghn6cx32kicizn-eon-0.1.0` and EonTerm
+  `/nix/store/sbaabk1ymsvv6y0sr139mp92pqpmmx4r-eonterm-0.1.0` share Orbit
+  `/nix/store/0yznp02vvxs9cfzgac7vq2nm312i9cfj-yazelix-orbit-0.1.0` and
+  Venus `/nix/store/f2i0zvyq3v5s3zs3wpc9nkn0a8x1sm54-yazelix-venus-0.1.0`.
+- **Limits:** The installed drag proof covers x86_64 Linux on private Sway at
+  scale 1. All 24 pre-existing product process identities survived; existing
+  windows keep their prior binaries until the user restarts them. Evidence is
+  retained in `~/.local/state/eon/proofs/eon-adopt-upward-selection-2026-09-24-00a180c/`.
 
 ## Selectable cursor-color integration
 

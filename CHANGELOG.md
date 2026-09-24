@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Deliver the accepted ORBS v13 Orbit and Venus pair to Eon and EonTerm.
+  Dragging a terminal selection upward at the first visible row scrolls through
+  earlier output while extending the selection; release copies the selected text.
+
 - Make the packaged Git popup available on Eon's Session PATH.
 
 - Provide a scripted native Wayland demo of the Yazi and Quick Search picker,
