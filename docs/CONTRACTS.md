@@ -2030,7 +2030,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C23 — Independent Eon windows
 
-- **Status:** Candidate correction to proved source
+- **Status:** Proven
 - **Consumer:** A full-Eon user on native x86_64 Linux Wayland.
 - **Trigger:** `eon window new`, the desktop launcher's New Eon Window action,
   or Venus's Alt+Shift+N shortcut.
@@ -2056,20 +2056,21 @@ show the median and observed minimum–maximum, not a confidence interval.
   have independent workspaces; no Session, tab, pane, or focus state is shared.
   The eight-hex-digit ID is unique by atomic directory reservation, not a
   secret. This does not establish macOS or another distribution channel.
-- **Proof:** Batch Stop ordering and confirmation await installed proof. The
-  earlier Eon source `fdefc640eae66c7e2781930b609e87159bde82e0` consumed Orbit
-  `b6cecf8f2ee35570b41cfdc578b095889d917fe2`, Venus
-  `a23f9eed95120ca4acea8789bf7d32d2472d84ce`, and EONW v7. Locked
-  Clippy, `nix build .#default`, and all declared `nix flake check` checks
-  pass on x86_64 Linux. The installed `eon` profile resolves to
-  `/nix/store/lxbxkf2jwkji0jij3s9plfgqhqx4navb-eon-0.1.0`; its launcher
-  action invokes that exact binary. In isolated native Sway 1.12 with Mesa
-  software Vulkan, the installed artifact showed one, then two, then one
-  native windows across `window new`, listing, and exact Stop while the default
-  workspace remained available. The same Eon code and accepted Venus source
-  also passed physical Alt+Shift+N, distinct live Orbit Session endpoints,
-  detach, reattach, and Stop in the earlier packaged native observation.
-  Evidence: `~/.local/state/eon/proofs/eon-c23-native-2026-09-25/`.
+- **Proof:** Eon source `bdbe9b5436e4ff8a734210cd25c581983f6f2ed0`
+  consumes Orbit `b6cecf8f2ee35570b41cfdc578b095889d917fe2`, Venus
+  `a23f9eed95120ca4acea8789bf7d32d2472d84ce`, and EONW v7. The focused
+  batch lifecycle test failed before each correction and passed afterward;
+  locked Clippy and all declared `nix flake check` checks, including Eon and
+  EonTerm release tests, pass on x86_64 Linux. The active `eon` profile resolves
+  to `/nix/store/c3fs2ssgkzzf94x2g8a76hs7y91ckwj1-eon-0.1.0`, whose launcher
+  action invokes that exact binary. On isolated native Sway 1.12 with Mesa
+  software Vulkan, two independent windows opened; two pre-supplied approvals
+  stopped the other window before the caller's, with native counts 1 → 2 → 0.
+  Earlier packaged native proof with the same Venus source exercised physical
+  Alt+Shift+N, distinct live Orbit Session endpoints, detach, reattach, and
+  exact Stop; those launch and attachment paths are unchanged by this fix.
+  Evidence: `~/.local/state/eon/proofs/eon-c23-batch-order-2026-09-25/` and
+  `~/.local/state/eon/proofs/eon-c23-native-2026-09-25/`.
 
 ## Rules
 
