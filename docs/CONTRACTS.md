@@ -16,14 +16,15 @@ and remaining limitations. Owning Beads and Git retain execution history;
 
 The current accepted composition selects Orbit
 `b6cecf8f2ee35570b41cfdc578b095889d917fe2` with ORBF v2 / ORBS v13 and Venus
-`773c6bab7d3e21e0b0d7d942c9bba72260a08b42`. Exact source, installed artifact,
+`a23f9eed95120ca4acea8789bf7d32d2472d84ce`. Exact source, installed artifact,
 environment, and remaining gaps belong to each contract's proof below.
 Profile refreshes preserve existing live supervisors and their Sessions.
 
 ## Linux public-alpha qualification
 
 - **Source and graph:** Eon `3b4f388e63f5f9fc5e234727e4f8b52ea4c9ca74`
-  with the Orbit and Venus revisions above, EONW v7, and generation
+  with Orbit `b6cecf8f2ee35570b41cfdc578b095889d917fe2`, Venus
+  `773c6bab7d3e21e0b0d7d942c9bba72260a08b42`, EONW v7, and generation
   `g1-c432a14b396ca1060a2d65be3d7f28ba`.
 - **Build and install:** Manifest validation, the complete locked Rust workspace
   test route, and all declared Nix flake checks passed. A clean `nobody` account
@@ -2029,7 +2030,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C23 — Independent Eon windows
 
-- **Status:** Candidate
+- **Status:** Proven
 - **Consumer:** A full-Eon user on native x86_64 Linux Wayland.
 - **Trigger:** `eon window new`, the desktop launcher's New Eon Window action,
   or Venus's Alt+Shift+N shortcut.
@@ -2053,11 +2054,19 @@ show the median and observed minimum–maximum, not a confidence interval.
   have independent workspaces; no Session, tab, pane, or focus state is shared.
   The eight-hex-digit ID is unique by atomic directory reservation, not a
   secret. This does not establish macOS or another distribution channel.
-- **Proof:** Candidate source only. The focused two-window lifecycle test
-  passes with separate control sockets and exact Stop; packaged native proof
-  remains open.
-- **Open proof:** Two simultaneous installed native-Wayland windows must retain
-  distinct Session endpoints through independent detach, reattach, and Stop.
+- **Proof:** Eon source `fdefc640eae66c7e2781930b609e87159bde82e0`
+  consumes Orbit `b6cecf8f2ee35570b41cfdc578b095889d917fe2`, Venus
+  `a23f9eed95120ca4acea8789bf7d32d2472d84ce`, and EONW v7. Locked
+  Clippy, `nix build .#default`, and all declared `nix flake check` checks
+  pass on x86_64 Linux. The installed `eon` profile resolves to
+  `/nix/store/lxbxkf2jwkji0jij3s9plfgqhqx4navb-eon-0.1.0`; its launcher
+  action invokes that exact binary. In isolated native Sway 1.12 with Mesa
+  software Vulkan, the installed artifact showed one, then two, then one
+  native windows across `window new`, listing, and exact Stop while the default
+  workspace remained available. The same Eon code and accepted Venus source
+  also passed physical Alt+Shift+N, distinct live Orbit Session endpoints,
+  detach, reattach, and Stop in the earlier packaged native observation.
+  Evidence: `~/.local/state/eon/proofs/eon-c23-native-2026-09-25/`.
 
 ## Rules
 
