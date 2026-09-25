@@ -21,7 +21,8 @@ one command the same Session lifecycle.
 - **Tabs remember directories.** Find a directory with Zoxide quick search or
   browse in Yazi. New panes start in that tab's directory; move tabs and stacked
   panes with the keyboard.
-- **A pinned tool set.** Nix pins Anima, Nushell, Helix, Yazi, and LazyGit together.
+- **A pinned tool set.** The current `edge` build pins Anima, Nushell, Helix,
+  Yazi, and LazyGit together.
   Git and Agent popups stay with their tab; the Agent popup uses your installed
   client.
 - **Native Vulkan graphics.** [Eon Desktop](https://github.com/Yazelix/eon-desktop)
@@ -54,10 +55,9 @@ The tag pins the release; `eon versions` reports the component graph.
 
 Run `eon` to start.
 
-Fresh launches show a short, dismissible Anima animation, then ask for a
-directory. Press Enter for a Zoxide match, or Tab to
-browse with Yazi. Closing the window leaves Sessions alive; `eon attach` returns
-to them. **Alt+/** opens the shortcut guide in the window.
+A fresh tagged-alpha workspace asks for a directory. Press Enter for a Zoxide
+match, or Tab to browse with Yazi. Closing the window leaves Sessions alive;
+`eon attach` returns to them. **Alt+/** opens the shortcut guide in the window.
 
 To end Sessions explicitly, inspect `eon generations`, then run
 `eon stop GENERATION`, `eon stop previous`, or `eon stop all`.
@@ -66,9 +66,10 @@ Linux Wayland is proved on COSMIC and private Sway. Other compositors,
 non-systemd hosts, screen-reader use, and recovery after a machine restart
 remain unproved. [Report a problem](https://github.com/Yazelix/eon/issues).
 
-The current `edge` build also opens independent workspaces with **Alt+Shift+N**
-or the launcher's **New Eon Window** action. `eon window new` prints an ID;
-`eon windows` lists windows for reattachment or exact Stop.
+The current `edge` build adds a short, dismissible Anima animation before the
+directory picker and opens independent workspaces with **Alt+Shift+N** or the
+launcher's **New Eon Window** action. `eon window new` prints an ID; `eon windows`
+lists windows for reattachment or exact Stop.
 
 ## Guides
 
@@ -86,14 +87,14 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 105 |
+| README | 106 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
 | Architecture and contracts | 2,349 |
 | Distribution and references | 735 |
-| User guides | 313 |
+| User guides | 316 |
 | Development guide | 42 |
 | Benchmark report | 317 |
 | Changelog | 382 |
@@ -102,4 +103,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 374 |
 | Nix composition | 840 |
 | Product defaults | 0 |
-| **Total** | **23,953** |
+| **Total** | **23,957** |

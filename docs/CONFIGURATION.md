@@ -1,7 +1,9 @@
 # Configuration
 
 `eon config-path` prints the configuration root, normally
-`~/.config/eon`. Settings live in `config.toml`:
+`~/.config/eon`. Settings live in `config.toml`. The Anima startup and popup
+settings below require the current `edge` build. Omit `[anima]` from this example
+with the tagged alpha, which does not recognize it:
 
 ```toml
 [terminal]

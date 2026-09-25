@@ -32,8 +32,9 @@ nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-09-24
 
 Run `eon` to start. `eon versions` shows the installed component revisions.
 
-The independent-window shortcut, launcher action, and `eon window` commands
-below require the current `edge` build; the tagged alpha does not include them.
+Anima startup, its popup and CLI command, and the independent-window shortcut,
+launcher action, and `eon window` commands below require the current `edge`
+build; the tagged alpha does not include them.
 
 Fresh workspaces first show a three-second random Anima animation after the
 window is ready. Press any key other than the style-browsing keys to dismiss it;
