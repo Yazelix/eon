@@ -8,7 +8,7 @@
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=773c6bab7d3e21e0b0d7d942c9bba72260a08b42";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=a23f9eed95120ca4acea8789bf7d32d2472d84ce";
       flake = false;
     };
     anima = {
@@ -542,6 +542,10 @@
         desktopName = "Open Eon";
         comment = "Launch Eon for desktop and Sessions";
         exec = "eon";
+        actions.NewWindow = {
+          name = "New Eon Window";
+          exec = "eon window new";
+        };
         icon = "eon";
         startupWMClass = "yazelix-venus";
         terminal = false;

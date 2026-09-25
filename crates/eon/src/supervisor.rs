@@ -400,6 +400,9 @@ fn venus_command(
         }
     }
     if mode == LaunchMode::Workspace {
+        if let Ok(executable) = env::current_exe() {
+            command.env("EON_NEW_WINDOW_EXECUTABLE", executable);
+        }
         command
             .arg("--pane-frames")
             .arg(terminal.pane_frames.to_string())
@@ -549,6 +552,15 @@ pub(super) fn prepare_configuration(path: &Path) -> Result<(), String> {
 }
 
 pub(super) fn runtime_directory(product: &str) -> PathBuf {
+    if product == "eon"
+        && let Some(root) = nonempty_environment_path("EON_WINDOW_RUNTIME_DIR")
+    {
+        return root;
+    }
+    base_runtime_directory(product)
+}
+
+pub(super) fn base_runtime_directory(product: &str) -> PathBuf {
     nonempty_environment_path("EON_RUNTIME_DIR")
         .or_else(|| {
             xdg_path(nonempty_environment_path("XDG_RUNTIME_DIR")).map(|path| path.join(product))
@@ -573,7 +585,7 @@ fn xdg_path(path: Option<PathBuf>) -> Option<PathBuf> {
     path.filter(|path| path.is_absolute())
 }
 
-fn prepare_runtime(path: &Path) -> Result<(), String> {
+pub(super) fn prepare_runtime(path: &Path) -> Result<(), String> {
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)

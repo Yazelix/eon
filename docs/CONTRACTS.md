@@ -2027,6 +2027,38 @@ show the median and observed minimum–maximum, not a confidence interval.
   `~/.local/state/eon/proofs/eon-openai-blossom-eon-bar-installed-2026-09-18/`.
   Existing live supervisors retain their prior Venus until a normal restart.
 
+## EON-C23 — Independent Eon windows
+
+- **Status:** Candidate
+- **Consumer:** A full-Eon user on native x86_64 Linux Wayland.
+- **Trigger:** `eon window new`, the desktop launcher's New Eon Window action,
+  or Venus's Alt+Shift+N shortcut.
+- **Result:** A fresh directory picker opens in a second native window with its
+  own Eon supervisor, tabs, focus, and durable Orbit Sessions. The original
+  window and its Sessions remain unchanged. `window new` reports a stable ID;
+  `eon windows` discovers it, `eon window attach ID` presents its current
+  generation after detach, and `eon window stop ID` stops only its Sessions.
+  `eon window stop all` covers independent windows; existing `eon stop all`
+  remains scoped to the caller's current runtime namespace.
+- **Important failures:** Identity collision, unsafe runtime path, failed
+  startup, or stale target neither replaces an existing window nor stops or
+  retargets its Sessions. An uncertain startup retains its ID, process, and
+  private log for inspection instead of killing possible live Sessions.
+- **Owner:** Eon owns window identity, runtime namespace, launch and lifecycle
+  policy; Venus invokes the exact Eon executable supplied by its supervisor
+  and presents one window per process; Orbit owns each Session and its single
+  presentation attachment.
+- **Consumes:** EON-C1, EON-C8, EON-C11, EON-C15, EONW v7, and VEN-C23.
+- **Boundary:** Bare `eon` retains its current presentation behavior. Windows
+  have independent workspaces; no Session, tab, pane, or focus state is shared.
+  The eight-hex-digit ID is unique by atomic directory reservation, not a
+  secret. This does not establish macOS or another distribution channel.
+- **Proof:** Candidate source only. The focused two-window lifecycle test
+  passes with separate control sockets and exact Stop; packaged native proof
+  remains open.
+- **Open proof:** Two simultaneous installed native-Wayland windows must retain
+  distinct Session endpoints through independent detach, reattach, and Stop.
+
 ## Rules
 
 - Each contract uses one `## EON-CN — Name` heading and the required fields

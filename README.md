@@ -66,6 +66,10 @@ Linux Wayland is proved on COSMIC and private Sway. Other compositors,
 non-systemd hosts, screen-reader use, and recovery after a machine restart
 remain unproved. [Report a problem](https://github.com/Yazelix/eon/issues).
 
+The current `edge` build also opens independent workspaces with **Alt+Shift+N**
+or the launcher's **New Eon Window** action. `eon window new` prints an ID;
+`eon windows` lists windows for reattachment or exact Stop.
+
 ## Guides
 
 - [Using Eon](docs/USAGE.md): workspace controls, commands, EonTerm, and troubleshooting.
@@ -82,20 +86,20 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 269 |
-| README | 101 |
+| README | 105 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 2,304 |
+| Architecture and contracts | 2,336 |
 | Distribution and references | 735 |
-| User guides | 299 |
+| User guides | 311 |
 | Development guide | 42 |
 | Benchmark report | 317 |
-| Changelog | 375 |
-| Rust source and tests | 17,522 |
+| Changelog | 381 |
+| Rust source and tests | 17,888 |
 | Cargo manifests | 38 |
-| Component manifest | 372 |
-| Nix composition | 836 |
+| Component manifest | 374 |
+| Nix composition | 840 |
 | Product defaults | 0 |
-| **Total** | **23,472** |
+| **Total** | **23,898** |

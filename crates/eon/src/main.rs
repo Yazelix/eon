@@ -5,6 +5,7 @@ mod generation;
 mod managed_environment;
 mod sessions;
 mod supervisor;
+mod windows;
 mod workspace;
 
 use std::{process::ExitCode, thread, time::Duration};

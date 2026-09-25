@@ -32,6 +32,9 @@ nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-09-24
 
 Run `eon` to start. `eon versions` shows the installed component revisions.
 
+The independent-window shortcut, launcher action, and `eon window` commands
+below require the current `edge` build; the tagged alpha does not include them.
+
 Fresh workspaces first show a three-second random Anima animation after the
 window is ready. Press any key other than the style-browsing keys to dismiss it;
 set `[anima].enabled = false` in `config.toml` to skip it. The directory picker
@@ -94,6 +97,7 @@ and is reported as unavailable.
 | Alt+Shift+T | Create a tab through the directory picker |
 | Alt+M | Create a pane in the active tab |
 | Alt+Shift+W | Close the active non-final tab |
+| Alt+Shift+N | Open an independent Eon window |
 | Alt+Z | Open the tab's Project directory picker |
 | Alt+Shift+J | Open or hide the tab's Git popup |
 | Alt+Shift+L | Open or hide the tab's Agent popup |
@@ -137,6 +141,11 @@ for orientation but are never opened or managed by the picker.
 | `eon` | Present the current workspace or start its first directory picker |
 | `eon anima [STYLE] [CHILD OPTIONS...]` | Run pinned Anima in the caller's terminal without starting a workspace; `--help` lists styles and options |
 | `eon run [-- COMMAND...]` | Start a fresh workspace picker, optionally for an exact first command |
+| `eon window new` | Open an independent Eon window and print its window ID |
+| `eon windows [--json]` | List independent windows and their generations |
+| `eon window attach ID` | Present one window's current generation after detach |
+| `eon window stop ID [--json]` | Stop only the selected window's Sessions |
+| `eon window stop all` | Attempt Stop in every independent window |
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
 | `eon generations [--json]` | List validated current and older generations |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
@@ -156,6 +165,9 @@ for orientation but are never opened or managed by the picker.
 Workspace commands target the current-generation supervisor. Human and `--json`
 output describe the same result. A missing supervisor is not started implicitly;
 run `eon` first.
+Commands run inside an independent window target that window; commands outside
+one target the default workspace. `eon stop all` covers generations in that
+current namespace. `eon window stop all` covers independent windows.
 
 ## EonTerm
 

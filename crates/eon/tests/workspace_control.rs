@@ -3497,6 +3497,105 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
+    let root = std::env::temp_dir().join(format!(
+        "ew{:x}{:x}",
+        std::process::id(),
+        NEXT_TEST.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir(&root).unwrap();
+    let runtime = root.join("r");
+    let config = root.join("config");
+    disable_startup_animation(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let command = || {
+        let mut command = eon_command(&binary);
+        command
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop);
+        command
+    };
+    let mut default = TestProcess {
+        child: command()
+            .arg("run")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    let default_control = generation_runtime(&runtime).join("eon.sock");
+    wait_for_connection(&default_control);
+    let open = || {
+        let output = command().args(["window", "new"]).output().unwrap();
+        assert!(
+            output.status.success(),
+            "stdout={} stderr={}",
+            stdout(&output),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        stdout(&output).trim().to_owned()
+    };
+    let first = open();
+    let second = open();
+    assert_ne!(first, second);
+    let first_control = generation_runtime(&runtime.join("w").join(&first)).join("eon.sock");
+    let second_control = generation_runtime(&runtime.join("w").join(&second)).join("eon.sock");
+    assert_ne!(first_control, second_control);
+    wait_for_connection(&first_control);
+    wait_for_connection(&second_control);
+    let listed = invoke(&binary, &runtime, &config, &["windows", "--json"]);
+    assert!(listed.status.success());
+    assert!(stdout(&listed).contains(&format!("\"id\":\"{first}\"")));
+    assert!(stdout(&listed).contains(&format!("\"id\":\"{second}\"")));
+
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "stop", &first, "--json"],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    assert!(stdout(&stopped).contains("\"stopped\""));
+    assert!(
+        invoke(&binary, &runtime, &config, &["workspace", "--json"])
+            .status
+            .success()
+    );
+    assert!(matches!(
+        workspace_action(&second_control, "still-live", Action::Inspect),
+        Response::Snapshot(_)
+    ));
+    symlink(&config, runtime.join("w").join("aaaaaaaa")).unwrap();
+    let unsafe_listing = invoke(&binary, &runtime, &config, &["windows", "--json"]);
+    assert!(!unsafe_listing.status.success());
+    assert!(String::from_utf8_lossy(&unsafe_listing.stderr).contains("owned private directory"));
+    fs::remove_file(runtime.join("w").join("aaaaaaaa")).unwrap();
+
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "stop", &second, "--json"],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    let current = generation_runtime(&runtime);
+    let current_id = current.file_name().unwrap().to_str().unwrap();
+    let stopped = invoke(&binary, &runtime, &config, &["stop", current_id, "--json"]);
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    wait_for_successful_exit(&mut default.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn previous_supervisor(
     runtime: &Path,
     id: &str,

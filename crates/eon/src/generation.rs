@@ -33,6 +33,7 @@ pub(super) fn current_generation() -> Result<String, String> {
         include_bytes!("sessions.rs"),
         include_bytes!("supervisor.rs"),
         include_bytes!("workspace.rs"),
+        include_bytes!("windows.rs"),
         include_bytes!("../../eon-workspace-protocol/src/lib.rs"),
         include_bytes!("../../eon-workspace-protocol/src/v2.rs"),
         include_bytes!("../../eon-workspace-protocol/src/v3.rs"),
@@ -395,7 +396,7 @@ fn failed_generation(
     }
 }
 
-fn private_directory_exists(path: &Path, description: &str) -> Result<bool, String> {
+pub(super) fn private_directory_exists(path: &Path, description: &str) -> Result<bool, String> {
     match fs::symlink_metadata(path) {
         Ok(_) => validate_private_directory(path).map(|()| true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),

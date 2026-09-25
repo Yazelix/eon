@@ -11,6 +11,7 @@ use super::{
         LaunchMode, MANIFEST, configuration_directory, launch_current, prepare_configuration,
         prepare_generation_runtime, runtime_directory,
     },
+    windows,
     workspace::{human as human_output, json as json_output},
 };
 use eon_workspace_protocol::v7::{
@@ -31,7 +32,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | anima [STYLE] [CHILD OPTIONS...] | attach [GENERATION] | generations [--json] | stop <GENERATION|previous|all> [--json] | workspace [--json] | tab create [--json] | tab close TAB [--json] | tab directory TAB [--json] -- DIRECTORY | tab move <left|right> [--json] | pane create [--json] | pane move <up|down> [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
+const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | window <new|attach ID|stop ID [--json]|stop all> | windows [--json] | anima [STYLE] [CHILD OPTIONS...] | attach [GENERATION] | generations [--json] | stop <GENERATION|previous|all> [--json] | workspace [--json] | tab create [--json] | tab close TAB [--json] | tab directory TAB [--json] -- DIRECTORY | tab move <left|right> [--json] | pane create [--json] | pane move <up|down> [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
 pub(super) fn run() -> (&'static str, Result<i32, String>) {
@@ -330,6 +331,23 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
     }
     match arguments.as_slice() {
         [] => launch_current(LaunchMode::Workspace, &[], true, false, "eon"),
+        [command, action] if command == "window" && action == "new" => windows::new_window(),
+        [command, action, id] if command == "window" && action == "attach" => {
+            windows::window_action(id, false, false)
+        }
+        [command, action, all] if command == "window" && action == "stop" && all == "all" => {
+            windows::stop_all_windows()
+        }
+        [command, action, id] if command == "window" && action == "stop" => {
+            windows::window_action(id, true, false)
+        }
+        [command, action, id, flag]
+            if command == "window" && action == "stop" && flag == "--json" =>
+        {
+            windows::window_action(id, true, true)
+        }
+        [command] if command == "windows" => windows::list_windows(false),
+        [command, flag] if command == "windows" && flag == "--json" => windows::list_windows(true),
         [command, child @ ..] if command == "anima" => {
             let error = Command::new(managed_environment::configured_program(
                 "EON_ANIMA",

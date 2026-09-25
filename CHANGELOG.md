@@ -3,6 +3,12 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
+## Unreleased
+
+- Open an independent workspace with Alt+Shift+N, the desktop launcher's New
+  Eon Window action, or `eon window new`. Window IDs support listing, reattach,
+  and exact or batch Stop without interrupting other windows.
+
 ## linux-alpha-2026-09-24
 
 - Pin Yazelix Anima for a dismissible three-second random animation before a
