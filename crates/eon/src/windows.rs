@@ -3,7 +3,7 @@ use super::{
     generation::{current_generation, generation_directory, private_directory_exists},
     supervisor::{
         LaunchMode, SESSION_START_TIMEOUT, base_runtime_directory, prepare_runtime,
-        probe_supervisor, request_id, validate_private_directory,
+        probe_supervisor, request_id, runtime_directory, validate_private_directory,
     },
     workspace::json_escape,
 };
@@ -185,8 +185,11 @@ pub(super) fn window_action(id: &OsStr, stop: bool, json: bool) -> Result<i32, S
 }
 
 pub(super) fn stop_all_windows() -> Result<i32, String> {
+    let current = runtime_directory("eon");
+    let mut windows = existing_windows()?;
+    windows.sort_by_key(|(_, root)| root == &current);
     let mut status = 0;
-    for (id, _) in existing_windows()? {
+    for (id, _) in windows {
         eprintln!("Stop Eon window {id}:");
         status = status.max(window_action(OsStr::new(&id), true, false)?);
     }

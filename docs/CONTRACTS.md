@@ -2030,7 +2030,7 @@ show the median and observed minimum–maximum, not a confidence interval.
 
 ## EON-C23 — Independent Eon windows
 
-- **Status:** Proven
+- **Status:** Candidate correction to proved source
 - **Consumer:** A full-Eon user on native x86_64 Linux Wayland.
 - **Trigger:** `eon window new`, the desktop launcher's New Eon Window action,
   or Venus's Alt+Shift+N shortcut.
@@ -2039,8 +2039,9 @@ show the median and observed minimum–maximum, not a confidence interval.
   window and its Sessions remain unchanged. `window new` reports a stable ID;
   `eon windows` discovers it, `eon window attach ID` presents its current
   generation after detach, and `eon window stop ID` stops only its Sessions.
-  `eon window stop all` covers independent windows; existing `eon stop all`
-  remains scoped to the caller's current runtime namespace.
+  `eon window stop all` covers independent windows and attempts the caller's
+  own window last; existing `eon stop all` remains scoped to the caller's
+  current runtime namespace.
 - **Important failures:** Identity collision, unsafe runtime path, failed
   startup, or stale target neither replaces an existing window nor stops or
   retargets its Sessions. An uncertain startup retains its ID, process, and
@@ -2054,8 +2055,9 @@ show the median and observed minimum–maximum, not a confidence interval.
   have independent workspaces; no Session, tab, pane, or focus state is shared.
   The eight-hex-digit ID is unique by atomic directory reservation, not a
   secret. This does not establish macOS or another distribution channel.
-- **Proof:** Eon source `fdefc640eae66c7e2781930b609e87159bde82e0`
-  consumes Orbit `b6cecf8f2ee35570b41cfdc578b095889d917fe2`, Venus
+- **Proof:** The batch Stop ordering correction awaits installed proof. Earlier
+  Eon source `fdefc640eae66c7e2781930b609e87159bde82e0` consumed Orbit
+  `b6cecf8f2ee35570b41cfdc578b095889d917fe2`, Venus
   `a23f9eed95120ca4acea8789bf7d32d2472d84ce`, and EONW v7. Locked
   Clippy, `nix build .#default`, and all declared `nix flake check` checks
   pass on x86_64 Linux. The installed `eon` profile resolves to

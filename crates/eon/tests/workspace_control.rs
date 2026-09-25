@@ -3558,6 +3558,24 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     assert!(stdout(&listed).contains(&format!("\"id\":\"{first}\"")));
     assert!(stdout(&listed).contains(&format!("\"id\":\"{second}\"")));
 
+    let (caller, other) = if first < second {
+        (&first, &second)
+    } else {
+        (&second, &first)
+    };
+    let batch = command()
+        .env("EON_WINDOW_RUNTIME_DIR", runtime.join("w").join(caller))
+        .args(["window", "stop", "all"])
+        .output()
+        .unwrap();
+    assert!(batch.status.success());
+    let prompts = String::from_utf8_lossy(&batch.stderr);
+    assert!(
+        prompts.find(&format!("Stop Eon window {other}:")).unwrap()
+            < prompts.find(&format!("Stop Eon window {caller}:")).unwrap(),
+        "{prompts}"
+    );
+
     let stopped = invoke(
         &binary,
         &runtime,

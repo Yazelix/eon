@@ -167,7 +167,9 @@ output describe the same result. A missing supervisor is not started implicitly;
 run `eon` first.
 Commands run inside an independent window target that window; commands outside
 one target the default workspace. `eon stop all` covers generations in that
-current namespace. `eon window stop all` covers independent windows.
+current namespace. `eon window stop all` covers independent windows and visits
+the caller's window last. Run it outside those Sessions when you need its final
+status; stopping its own Session can terminate the CLI.
 
 ## EonTerm
 
