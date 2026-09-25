@@ -2041,7 +2041,8 @@ show the median and observed minimum–maximum, not a confidence interval.
   generation after detach, and `eon window stop ID` stops only its Sessions.
   `eon window stop all` covers independent windows and attempts the caller's
   own window last; existing `eon stop all` remains scoped to the caller's
-  current runtime namespace.
+  current runtime namespace. Piped confirmations remain available to later
+  windows, one answer per prompt.
 - **Important failures:** Identity collision, unsafe runtime path, failed
   startup, or stale target neither replaces an existing window nor stops or
   retargets its Sessions. An uncertain startup retains its ID, process, and
@@ -2055,8 +2056,8 @@ show the median and observed minimum–maximum, not a confidence interval.
   have independent workspaces; no Session, tab, pane, or focus state is shared.
   The eight-hex-digit ID is unique by atomic directory reservation, not a
   secret. This does not establish macOS or another distribution channel.
-- **Proof:** The batch Stop ordering correction awaits installed proof. Earlier
-  Eon source `fdefc640eae66c7e2781930b609e87159bde82e0` consumed Orbit
+- **Proof:** Batch Stop ordering and confirmation await installed proof. The
+  earlier Eon source `fdefc640eae66c7e2781930b609e87159bde82e0` consumed Orbit
   `b6cecf8f2ee35570b41cfdc578b095889d917fe2`, Venus
   `a23f9eed95120ca4acea8789bf7d32d2472d84ce`, and EONW v7. Locked
   Clippy, `nix build .#default`, and all declared `nix flake check` checks

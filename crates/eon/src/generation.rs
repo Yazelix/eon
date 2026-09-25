@@ -577,10 +577,7 @@ pub(super) fn stop_generation(target: &str, json: bool, product: &str) -> Result
             if record.sessions.len() == 1 { "" } else { "s" },
             record.sessions.join(", ")
         );
-        let mut answer = String::new();
-        std::io::stdin()
-            .read_line(&mut answer)
-            .map_err(|error| format!("cannot read stop confirmation: {error}"))?;
+        let answer = read_stop_confirmation()?;
         if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
             write_stdout(format!("cancelled; no Stop sent for generation {target}\n"))?;
             return Ok(0);
@@ -644,6 +641,28 @@ pub(super) fn stop_generation(target: &str, json: bool, product: &str) -> Result
             json,
         ),
     }
+}
+
+fn read_stop_confirmation() -> Result<String, String> {
+    let mut answer = Vec::new();
+    loop {
+        let mut byte = 0u8;
+        // SAFETY: read writes at most one byte into the valid local buffer.
+        let result = unsafe { libc::read(libc::STDIN_FILENO, (&mut byte as *mut u8).cast(), 1) };
+        match result {
+            0 => break,
+            1 if byte == b'\n' => break,
+            1 => answer.push(byte),
+            _ => {
+                let error = std::io::Error::last_os_error();
+                if error.kind() != std::io::ErrorKind::Interrupted {
+                    return Err(format!("cannot read stop confirmation: {error}"));
+                }
+            }
+        }
+    }
+    String::from_utf8(answer)
+        .map_err(|_| "cannot read stop confirmation: stream did not contain valid UTF-8".into())
 }
 
 pub(super) fn stop_generations(

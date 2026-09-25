@@ -8,7 +8,7 @@ installation, and proven contract changes.
 - Open an independent workspace with Alt+Shift+N, the desktop launcher's New
   Eon Window action, or `eon window new`. Window IDs support listing, reattach,
   and exact or batch Stop without interrupting other windows. Batch Stop visits
-  the caller's window last.
+  the caller's window last and consumes one confirmation per prompt.
 
 ## linux-alpha-2026-09-24
 

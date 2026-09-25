@@ -3558,24 +3558,6 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     assert!(stdout(&listed).contains(&format!("\"id\":\"{first}\"")));
     assert!(stdout(&listed).contains(&format!("\"id\":\"{second}\"")));
 
-    let (caller, other) = if first < second {
-        (&first, &second)
-    } else {
-        (&second, &first)
-    };
-    let batch = command()
-        .env("EON_WINDOW_RUNTIME_DIR", runtime.join("w").join(caller))
-        .args(["window", "stop", "all"])
-        .output()
-        .unwrap();
-    assert!(batch.status.success());
-    let prompts = String::from_utf8_lossy(&batch.stderr);
-    assert!(
-        prompts.find(&format!("Stop Eon window {other}:")).unwrap()
-            < prompts.find(&format!("Stop Eon window {caller}:")).unwrap(),
-        "{prompts}"
-    );
-
     let stopped = invoke(
         &binary,
         &runtime,
@@ -3599,13 +3581,30 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     assert!(String::from_utf8_lossy(&unsafe_listing.stderr).contains("owned private directory"));
     fs::remove_file(runtime.join("w").join("aaaaaaaa")).unwrap();
 
-    let stopped = invoke(
-        &binary,
-        &runtime,
-        &config,
-        &["window", "stop", &second, "--json"],
+    let third = open();
+    let (caller, other) = if second < third {
+        (&second, &third)
+    } else {
+        (&third, &second)
+    };
+    let mut batch = command()
+        .env("EON_WINDOW_RUNTIME_DIR", runtime.join("w").join(caller))
+        .args(["window", "stop", "all"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    batch.stdin.as_mut().unwrap().write_all(b"y\ny\n").unwrap();
+    let batch = batch.wait_with_output().unwrap();
+    assert!(batch.status.success(), "{}", stdout(&batch));
+    assert_eq!(stdout(&batch).matches("stopped generation").count(), 2);
+    let prompts = String::from_utf8_lossy(&batch.stderr);
+    assert!(
+        prompts.find(&format!("Stop Eon window {other}:")).unwrap()
+            < prompts.find(&format!("Stop Eon window {caller}:")).unwrap(),
+        "{prompts}"
     );
-    assert!(stopped.status.success(), "{}", stdout(&stopped));
     let current = generation_runtime(&runtime);
     let current_id = current.file_name().unwrap().to_str().unwrap();
     let stopped = invoke(&binary, &runtime, &config, &["stop", current_id, "--json"]);
