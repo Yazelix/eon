@@ -810,6 +810,20 @@
           EON_DEMO_PATH = lib.makeBinPath [ pkgs.coreutils pkgs.bash pkgs.git ];
         };
       };
+      br = pkgs.runCommand "br-0.7.2" { } ''
+        mkdir -p "$out/bin"
+        ${pkgs.gnutar}/bin/tar -xzf ${pkgs.fetchurl {
+          url = "https://github.com/Dicklesworthstone/beads_rust/releases/download/v0.7.2/br-0.7.2-linux_musl_amd64.tar.gz";
+          hash = "sha256-v6GvOaScpcGuj8ehPqOg05Y6qkuJEtcebDKVhHwJ12w=";
+        }} -C "$out/bin" br
+      '';
+      bv = pkgs.runCommand "bv-0.25.2" { } ''
+        mkdir -p "$out/bin"
+        ${pkgs.gnutar}/bin/tar -xzf ${pkgs.fetchurl {
+          url = "https://github.com/Dicklesworthstone/beads_viewer/releases/download/v0.25.2/bv_0.25.2_linux_amd64.tar.gz";
+          hash = "sha256-TCaQh696Dd72glYJy0zffbAWNiTSbXsCAww4wmCx4Zk=";
+        }} -C "$out/bin" bv
+      '';
     in
     {
       packages.${system} = {
@@ -835,6 +849,17 @@
         eonterm-closure = eontermClosureCheck;
         managed-command-path = managedCommandPathCheck;
         shell-environment = shellEnvironmentCheck;
+      };
+      devShells.${system}.default = pkgs.mkShell {
+        packages = [
+          pkgs.cargo
+          pkgs.rustc
+          pkgs.clippy
+          pkgs.rustfmt
+          pkgs.git
+          br
+          bv
+        ];
       };
     };
 }

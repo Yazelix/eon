@@ -5,6 +5,11 @@ and distribution. Eon Sessions owns persistent terminal state and attachment;
 Eon Desktop owns native presentation and input. Yazelix Nova remains a separate
 product line.
 
+Enter the pinned x86_64-linux development environment with `nix develop`.
+It provides Rust and Cargo, formatting and lint tools, Git, `br`, and `bv`.
+The Beads binaries come from hash-verified release archives, so entering the
+shell does not compile them locally.
+
 ## Sources of truth
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — naming, ownership, and sequencing;
