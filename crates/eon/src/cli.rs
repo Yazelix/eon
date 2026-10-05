@@ -8,7 +8,7 @@ use super::{
     },
     managed_environment,
     supervisor::{
-        LaunchMode, MANIFEST, configuration_directory, launch_current, prepare_configuration,
+        LaunchMode, configuration_directory, launch_current, prepare_configuration,
         prepare_generation_runtime, runtime_directory,
     },
     windows,
@@ -35,7 +35,29 @@ use std::{
 const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | window <new|attach ID|stop ID [--json]|stop all> | windows [--json] | anima [STYLE] [CHILD OPTIONS...] | attach [GENERATION] | generations [--json] | stop <GENERATION|previous|all> [--json] | workspace [--json] | tab create [--json] | tab close TAB [--json] | tab directory TAB [--json] -- DIRECTORY | tab move <left|right> [--json] | pane create [--json] | pane move <up|down> [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
-pub(super) fn run() -> (&'static str, Result<i32, String>) {
+pub(crate) struct ComponentFacts {
+    pub(crate) report: String,
+    pub(crate) orbit_revision: String,
+}
+
+pub(crate) struct Inputs {
+    pub(crate) version: &'static str,
+    pub(crate) components: Result<ComponentFacts, String>,
+    pub(crate) assembly: &'static [&'static [u8]],
+    pub(crate) defaults: managed_environment::Defaults,
+    pub(crate) orbit: PathBuf,
+    pub(crate) venus: PathBuf,
+    pub(crate) anima: PathBuf,
+    pub(crate) managed: managed_environment::ManagedPrograms,
+}
+
+impl Inputs {
+    pub(crate) fn components(&self) -> Result<&ComponentFacts, String> {
+        self.components.as_ref().map_err(Clone::clone)
+    }
+}
+
+pub(super) fn run(inputs: Inputs) -> (&'static str, Result<i32, String>) {
     let mut arguments = env::args_os();
     let invocation = arguments.next().unwrap_or_default();
     let mut arguments: Vec<OsString> = arguments.collect();
@@ -44,29 +66,29 @@ pub(super) fn run() -> (&'static str, Result<i32, String>) {
         .is_some_and(|argument| argument == OsStr::new("__directory-picker"))
     {
         arguments.remove(0);
-        return ("eon-directory-picker", directory_picker(arguments));
+        return ("eon-directory-picker", directory_picker(&inputs, arguments));
     }
     if arguments
         .first()
         .is_some_and(|argument| argument == OsStr::new("__startup-anima"))
     {
         arguments.remove(0);
-        return ("eon-directory-picker", startup_anima(arguments));
+        return ("eon-directory-picker", startup_anima(&inputs, arguments));
     }
     let eonterm = Path::new(&invocation).file_name() == Some(OsStr::new("eonterm"));
     let product = if eonterm { "eonterm" } else { "eon" };
     let result = if eonterm {
-        execute_eonterm(arguments)
+        execute_eonterm(&inputs, arguments)
     } else {
         match managed_environment::tool(&invocation) {
-            Some(tool) => launch_managed(tool, arguments),
-            None => execute(arguments),
+            Some(tool) => launch_managed(&inputs, tool, arguments),
+            None => execute(&inputs, arguments),
         }
     };
     (product, result)
 }
 
-fn startup_anima(arguments: Vec<OsString>) -> Result<i32, String> {
+fn startup_anima(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
     let [style, seconds, socket, tab, instance] = arguments.as_slice() else {
         return Err(
             "usage: eon-directory-picker __startup-anima STYLE SECONDS EON_SOCKET TAB POPUP".into(),
@@ -77,26 +99,23 @@ fn startup_anima(arguments: Vec<OsString>) -> Result<i32, String> {
         .and_then(|value| value.parse().ok())
         .filter(|value| (1..=30).contains(value))
         .ok_or("invalid internal Anima duration")?;
-    if let Err(error) = play_startup_anima(style, duration) {
+    if let Err(error) = play_startup_anima(inputs, style, duration) {
         eprintln!("eon: startup Anima: {error}; continuing to the directory picker");
     }
-    directory_picker(vec![socket.clone(), tab.clone(), instance.clone()])
+    directory_picker(inputs, vec![socket.clone(), tab.clone(), instance.clone()])
 }
 
-fn play_startup_anima(style: &OsStr, seconds: u64) -> Result<(), String> {
+fn play_startup_anima(inputs: &Inputs, style: &OsStr, seconds: u64) -> Result<(), String> {
     let mut terminal = std::mem::MaybeUninit::<libc::termios>::uninit();
     let terminal = (unsafe { libc::tcgetattr(libc::STDIN_FILENO, terminal.as_mut_ptr()) } == 0)
         .then(|| unsafe { terminal.assume_init() });
     let result = (|| {
-        let mut child = Command::new(managed_environment::configured_program(
-            "EON_ANIMA",
-            "anima",
-        ))
-        .arg(style)
-        .arg("--duration-seconds")
-        .arg(seconds.to_string())
-        .spawn()
-        .map_err(|error| format!("cannot launch pinned executable: {error}"))?;
+        let mut child = Command::new(&inputs.anima)
+            .arg(style)
+            .arg("--duration-seconds")
+            .arg(seconds.to_string())
+            .spawn()
+            .map_err(|error| format!("cannot launch pinned executable: {error}"))?;
         let deadline = Instant::now() + Duration::from_secs(seconds + 2);
         loop {
             if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
@@ -137,7 +156,7 @@ fn play_startup_anima(style: &OsStr, seconds: u64) -> Result<(), String> {
     result
 }
 
-fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
+fn directory_picker(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
     let [socket, tab, instance] = arguments.as_slice() else {
         return Err("usage: eon-directory-picker EON_SOCKET TAB POPUP".into());
     };
@@ -210,7 +229,7 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
         match (output.status.code(), fields.as_slice()) {
             // fzf reports status 1 for an expected key when the result list is empty.
             (Some(0 | 1), [b"tab", b""] | [b"tab", _, b""]) => {
-                let output = browse_directory(&browse_from, &chooser_file)?;
+                let output = browse_directory(inputs, &browse_from, &chooser_file)?;
                 if output.status.code() == Some(130) {
                     return Ok(0);
                 }
@@ -251,7 +270,11 @@ fn directory_picker(arguments: Vec<OsString>) -> Result<i32, String> {
     }
 }
 
-fn browse_directory(directory: &Path, chooser_file: &Path) -> Result<Output, String> {
+fn browse_directory(
+    inputs: &Inputs,
+    directory: &Path,
+    chooser_file: &Path,
+) -> Result<Output, String> {
     let config = env::var_os("EON_DIRECTORY_PICKER_CONFIG")
         .ok_or("the installed Eon package has no folder browser configuration")?;
     match fs::remove_file(chooser_file) {
@@ -263,7 +286,7 @@ fn browse_directory(directory: &Path, chooser_file: &Path) -> Result<Output, Str
         }
         _ => {}
     }
-    let mut output = Command::new(managed_environment::configured_program("EON_YAZI", "yazi"))
+    let mut output = Command::new(&inputs.managed.yazi)
         // Yazi draws through its terminal handle; stdout carries its raw CWD.
         .args(["--cwd-file", "/dev/stdout", "--chooser-file"])
         .arg(chooser_file)
@@ -314,24 +337,26 @@ fn browse_directory(directory: &Path, chooser_file: &Path) -> Result<Output, Str
 }
 
 fn launch_managed(
+    inputs: &Inputs,
     tool: managed_environment::Tool,
     arguments: Vec<OsString>,
 ) -> Result<i32, String> {
     let config = configuration_directory()?;
     prepare_configuration(&config)?;
-    let mut command = managed_environment::command(tool, &config, &arguments)?;
+    let mut command =
+        managed_environment::command(tool, &inputs.managed, &config, &arguments, &inputs.defaults)?;
     let program = command.get_program().to_string_lossy().into_owned();
     let error = command.exec();
     Err(format!("cannot launch {program}: {error}"))
 }
 
-fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
-    if let Some(code) = lifecycle_command(&arguments, "eon")? {
+fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
+    if let Some(code) = lifecycle_command(inputs, &arguments, "eon")? {
         return Ok(code);
     }
     match arguments.as_slice() {
-        [] => launch_current(LaunchMode::Workspace, &[], true, false, "eon"),
-        [command, action] if command == "window" && action == "new" => windows::new_window(),
+        [] => launch_current(inputs, LaunchMode::Workspace, &[], true, false, "eon"),
+        [command, action] if command == "window" && action == "new" => windows::new_window(inputs),
         [command, action, id] if command == "window" && action == "attach" => {
             windows::window_action(id, false, false)
         }
@@ -349,22 +374,19 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
         [command] if command == "windows" => windows::list_windows(false),
         [command, flag] if command == "windows" && flag == "--json" => windows::list_windows(true),
         [command, child @ ..] if command == "anima" => {
-            let error = Command::new(managed_environment::configured_program(
-                "EON_ANIMA",
-                "anima",
-            ))
-            .args(child)
-            .env("YAZELIX_SCREEN_COMMAND_NAME", "eon anima")
-            .exec();
+            let error = Command::new(&inputs.anima)
+                .args(child)
+                .env("YAZELIX_SCREEN_COMMAND_NAME", "eon anima")
+                .exec();
             Err(format!("cannot launch Anima: {error}"))
         }
         [command] if command == "run" => {
-            launch_current(LaunchMode::Workspace, &[], false, false, "eon")
+            launch_current(inputs, LaunchMode::Workspace, &[], false, false, "eon")
         }
         [command, separator, child @ ..]
             if command == "run" && separator == "--" && !child.is_empty() =>
         {
-            launch_current(LaunchMode::Workspace, child, false, false, "eon")
+            launch_current(inputs, LaunchMode::Workspace, child, false, false, "eon")
         }
         [command, ..]
             if command == "workspace"
@@ -372,15 +394,15 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
                 || command == "pane"
                 || command == "focus" =>
         {
-            control(&arguments)
+            control(inputs, &arguments)
         }
         [command] if command == "versions" => {
             write_stdout(format!(
                 "eon {} {}\neonw {}\n{}\n",
-                env!("CARGO_PKG_VERSION"),
-                current_generation()?,
+                inputs.version,
+                current_generation(inputs)?,
                 VERSION,
-                eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?
+                inputs.components()?.report
             ))?;
             Ok(0)
         }
@@ -394,23 +416,24 @@ fn execute(arguments: Vec<OsString>) -> Result<i32, String> {
     }
 }
 
-fn execute_eonterm(arguments: Vec<OsString>) -> Result<i32, String> {
-    if let Some(code) = lifecycle_command(&arguments, "eonterm")? {
+fn execute_eonterm(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
+    if let Some(code) = lifecycle_command(inputs, &arguments, "eonterm")? {
         return Ok(code);
     }
     match arguments.as_slice() {
         [separator, child @ ..] if separator == "--" && !child.is_empty() => {
-            launch_current(LaunchMode::Terminal, child, true, true, "eonterm")
+            launch_current(inputs, LaunchMode::Terminal, child, true, true, "eonterm")
         }
         [flag, separator, child @ ..]
             if flag == "--no-decorations" && separator == "--" && !child.is_empty() =>
         {
-            launch_current(LaunchMode::Terminal, child, true, false, "eonterm")
+            launch_current(inputs, LaunchMode::Terminal, child, true, false, "eonterm")
         }
         [flag, application_id, separator, child @ ..]
             if flag == "--application-id" && separator == "--" && !child.is_empty() =>
         {
             launch_current(
+                inputs,
                 LaunchMode::Terminal,
                 child,
                 true,
@@ -425,6 +448,7 @@ fn execute_eonterm(arguments: Vec<OsString>) -> Result<i32, String> {
                 && !child.is_empty() =>
         {
             launch_current(
+                inputs,
                 LaunchMode::Terminal,
                 child,
                 true,
@@ -451,32 +475,43 @@ fn application_id_argument(argument: &OsStr) -> Result<&str, String> {
     Ok(value)
 }
 
-fn lifecycle_command(arguments: &[OsString], product: &str) -> Result<Option<i32>, String> {
+fn lifecycle_command(
+    inputs: &Inputs,
+    arguments: &[OsString],
+    product: &str,
+) -> Result<Option<i32>, String> {
     match arguments {
-        [command] if command == "attach" => attach_generation(None, product),
+        [command] if command == "attach" => attach_generation(inputs, None, product),
         [command, generation] if command == "attach" => {
-            attach_generation(Some(generation_argument(generation)?), product)
+            attach_generation(inputs, Some(generation_argument(generation)?), product)
         }
-        [command] if command == "generations" => generations_command(false, product),
+        [command] if command == "generations" => generations_command(inputs, false, product),
         [command, flag] if command == "generations" && flag == "--json" => {
-            generations_command(true, product)
+            generations_command(inputs, true, product)
         }
-        [command, generation] if command == "stop" => stop_argument(generation, false, product),
+        [command, generation] if command == "stop" => {
+            stop_argument(inputs, generation, false, product)
+        }
         [command, generation, flag] | [command, flag, generation]
             if command == "stop" && flag == "--json" =>
         {
-            stop_argument(generation, true, product)
+            stop_argument(inputs, generation, true, product)
         }
         _ => return Ok(None),
     }
     .map(Some)
 }
 
-fn stop_argument(argument: &OsStr, json: bool, product: &str) -> Result<i32, String> {
+fn stop_argument(
+    inputs: &Inputs,
+    argument: &OsStr,
+    json: bool,
+    product: &str,
+) -> Result<i32, String> {
     match argument.to_str() {
-        Some("previous") if product == "eon" => stop_generations(false, json, product),
-        Some("all") if product == "eon" => stop_generations(true, json, product),
-        _ => stop_generation(generation_argument(argument)?, json, product),
+        Some("previous") if product == "eon" => stop_generations(inputs, false, json, product),
+        Some("all") if product == "eon" => stop_generations(inputs, true, json, product),
+        _ => stop_generation(inputs, generation_argument(argument)?, json, product),
     }
 }
 
@@ -490,9 +525,9 @@ fn generation_argument(argument: &OsStr) -> Result<&str, String> {
     Ok(generation)
 }
 
-fn control(arguments: &[OsString]) -> Result<i32, String> {
+fn control(inputs: &Inputs, arguments: &[OsString]) -> Result<i32, String> {
     let (action, json) = parse_control_arguments(arguments)?;
-    let generation = current_generation()?;
+    let generation = current_generation(inputs)?;
     let root = runtime_directory("eon");
     let runtime = prepare_generation_runtime(&root, &generation)?;
     let socket = runtime.join("eon.sock");

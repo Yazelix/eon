@@ -1,4 +1,5 @@
 use super::{
+    cli::Inputs,
     control::write_stdout,
     generation::{current_generation, generation_directory, private_directory_exists},
     supervisor::{
@@ -87,12 +88,12 @@ fn window_command(root: &Path) -> Result<Command, String> {
     Ok(command)
 }
 
-pub(super) fn new_window() -> Result<i32, String> {
+pub(super) fn new_window(inputs: &Inputs) -> Result<i32, String> {
+    let generation = current_generation(inputs)?;
     let base = base_runtime_directory("eon");
     prepare_runtime(&base)?;
     let parent = windows_root();
     prepare_runtime(&parent)?;
-    let generation = current_generation()?;
     let (id, root) = loop {
         let id = format!("{:08x}", RandomState::new().hash_one(request_id()) as u32);
         let root = parent.join(&id);
@@ -143,7 +144,7 @@ pub(super) fn new_window() -> Result<i32, String> {
     let socket = generation_directory(&root, &generation).join("eon.sock");
     let deadline = Instant::now() + SESSION_START_TIMEOUT.saturating_mul(4);
     loop {
-        if let Ok((LaunchMode::Workspace, _)) = probe_supervisor(&socket, &generation) {
+        if let Ok((LaunchMode::Workspace, _)) = probe_supervisor(inputs, &socket, &generation) {
             write_stdout(format!("{id}\n"))?;
             return Ok(0);
         }

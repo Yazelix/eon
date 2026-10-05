@@ -1181,7 +1181,7 @@ printf '/selected-\377\n' > "$4"
 #[test]
 fn directory_picker_retargets_cancels_and_stops_with_venus() {
     let root = temporary_directory();
-    let runtime = root.join("runtime-padding");
+    let runtime = root.join("runtime");
     let config = root.join("config");
     disable_startup_animation(&config);
     let initial = root.join("initial");
@@ -1320,10 +1320,10 @@ cat >/dev/null
     assert!(!artifact_path(&initial_picker, ".record").exists());
 
     let created = workspace_action(&control, "pane-after-picker", Action::CreatePane);
-    assert!(matches!(
-        created,
-        Response::Snapshot(snapshot) if snapshot.tabs[0].panes.len() == 2
-    ));
+    assert!(
+        matches!(&created, Response::Snapshot(snapshot) if snapshot.tabs[0].panes.len() == 2),
+        "pane creation after picker failed: {created:?}"
+    );
     wait_for(&orbit_log);
     let launches = fs::read_to_string(&orbit_log).unwrap();
     assert!(launches.contains(&format!("session-2 {}", selected.display())));

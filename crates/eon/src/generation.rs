@@ -1,10 +1,11 @@
+use super::cli::Inputs;
 use super::control::{
     ControlResponse, EndpointFailure, EndpointFailureKind, connect_control, failure,
     probe_generation_runtime, remove_socket_if_identity, report_failure, send_generation_action_on,
     send_legacy_inspect, socket_identity, socket_identity_from, write_stdout,
 };
 use super::supervisor::{
-    MANIFEST, effective_uid, path_exists, present_at, probe_supervisor, runtime_directory,
+    effective_uid, path_exists, present_at, probe_supervisor, runtime_directory,
     supervisor_lock_path, try_lock_supervisor_lifecycle, validate_private_directory,
 };
 use super::workspace::json_escape;
@@ -21,10 +22,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub(super) fn current_generation() -> Result<String, String> {
-    eon_manifest::parse_and_validate(MANIFEST).map_err(|error| error.to_string())?;
-    Ok(generation_id(&[
-        include_bytes!("main.rs"),
+pub(super) fn current_generation(inputs: &Inputs) -> Result<String, String> {
+    inputs.components()?;
+    let mut sources: Vec<&[u8]> = vec![
         include_bytes!("cli.rs"),
         include_bytes!("codex_quota.rs"),
         include_bytes!("control.rs"),
@@ -42,15 +42,9 @@ pub(super) fn current_generation() -> Result<String, String> {
         include_bytes!("../../eon-workspace-protocol/src/v6.rs"),
         include_bytes!("../../eon-workspace-protocol/src/v7.rs"),
         include_bytes!("../../eon-workspace-protocol/Cargo.toml"),
-        include_bytes!("../../eon-manifest/src/lib.rs"),
-        include_bytes!("../../eon-manifest/Cargo.toml"),
-        include_bytes!("../Cargo.toml"),
-        include_bytes!("../../../Cargo.toml"),
-        include_bytes!("../../../Cargo.lock"),
-        include_bytes!("../../../flake.nix"),
-        include_bytes!("../../../flake.lock"),
-        MANIFEST.as_bytes(),
-    ]))
+    ];
+    sources.extend_from_slice(inputs.assembly);
+    Ok(generation_id(&sources))
 }
 
 fn generation_id(inputs: &[&[u8]]) -> String {
@@ -94,9 +88,12 @@ struct GenerationRecord {
     detail: String,
 }
 
-fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationRecord>, String> {
-    let component_report =
-        eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?;
+fn discover_generations(
+    inputs: &Inputs,
+    root: &Path,
+    current: &str,
+) -> Result<Vec<GenerationRecord>, String> {
+    let component_report = &inputs.components()?.report;
     if !private_directory_exists(root, "runtime directory")? {
         return Ok(vec![unstarted_current_generation(root, current)]);
     }
@@ -133,7 +130,7 @@ fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationReco
         "current",
         current_path,
         &supervisor_lock_path(root, current),
-        &component_report,
+        component_report,
     )];
     for (id, path) in candidates {
         let id = id.to_string_lossy();
@@ -143,7 +140,7 @@ fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationReco
                 "previous",
                 path,
                 &supervisor_lock_path(root, &id),
-                &component_report,
+                component_report,
             ));
         }
     }
@@ -154,6 +151,7 @@ fn discover_generations(root: &Path, current: &str) -> Result<Vec<GenerationReco
 }
 
 fn inspect_selected_generation(
+    inputs: &Inputs,
     root: &Path,
     current: &str,
     target: &str,
@@ -183,8 +181,7 @@ fn inspect_selected_generation(
     {
         return Ok(None);
     }
-    let component_report =
-        eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?;
+    let component_report = &inputs.components()?.report;
     Ok(Some(inspect_generation(
         target,
         if target == current {
@@ -194,7 +191,7 @@ fn inspect_selected_generation(
         },
         runtime,
         &supervisor_lock_path(root, target),
-        &component_report,
+        component_report,
     )))
 }
 
@@ -427,8 +424,16 @@ fn remove_dead_socket(path: &Path) {
     }
 }
 
-pub(super) fn generations_command(json: bool, product: &str) -> Result<i32, String> {
-    let records = discover_generations(&runtime_directory(product), &current_generation()?)?;
+pub(super) fn generations_command(
+    inputs: &Inputs,
+    json: bool,
+    product: &str,
+) -> Result<i32, String> {
+    let records = discover_generations(
+        inputs,
+        &runtime_directory(product),
+        &current_generation(inputs)?,
+    )?;
     write_stdout(if json {
         generations_json(&records)
     } else {
@@ -514,11 +519,15 @@ fn json_option(value: Option<&str>) -> String {
     )
 }
 
-pub(super) fn attach_generation(target: Option<&str>, product: &str) -> Result<i32, String> {
+pub(super) fn attach_generation(
+    inputs: &Inputs,
+    target: Option<&str>,
+    product: &str,
+) -> Result<i32, String> {
     let root = runtime_directory(product);
-    let current = current_generation()?;
+    let current = current_generation(inputs)?;
     let target = target.unwrap_or(&current);
-    let record = inspect_selected_generation(&root, &current, target)?
+    let record = inspect_selected_generation(inputs, &root, &current, target)?
         .ok_or_else(|| format!("generation {target} was not found"))?;
     if !record.attach.available {
         return Err(format!(
@@ -526,17 +535,22 @@ pub(super) fn attach_generation(target: Option<&str>, product: &str) -> Result<i
             record.attach.reason
         ));
     }
-    let (mode, supervisor) =
-        probe_supervisor(&record.runtime.join("eon.sock"), target).map_err(|error| error.detail)?;
-    present_at(&record.runtime, target, mode, supervisor)
+    let (mode, supervisor) = probe_supervisor(inputs, &record.runtime.join("eon.sock"), target)
+        .map_err(|error| error.detail)?;
+    present_at(inputs, &record.runtime, target, mode, supervisor)
 }
 
-pub(super) fn stop_generation(target: &str, json: bool, product: &str) -> Result<i32, String> {
+pub(super) fn stop_generation(
+    inputs: &Inputs,
+    target: &str,
+    json: bool,
+    product: &str,
+) -> Result<i32, String> {
     let root = runtime_directory(product);
-    let current = current_generation()?;
+    let current = current_generation(inputs)?;
     let control = generation_directory(&root, target).join("eon.sock");
     let observed_supervisor = socket_identity(&control);
-    let Some(record) = inspect_selected_generation(&root, &current, target)? else {
+    let Some(record) = inspect_selected_generation(inputs, &root, &current, target)? else {
         return report_failure(
             &failure(
                 "unknown-generation",
@@ -666,11 +680,16 @@ fn read_stop_confirmation() -> Result<String, String> {
 }
 
 pub(super) fn stop_generations(
+    inputs: &Inputs,
     include_current: bool,
     json: bool,
     product: &str,
 ) -> Result<i32, String> {
-    let mut records = discover_generations(&runtime_directory(product), &current_generation()?)?;
+    let mut records = discover_generations(
+        inputs,
+        &runtime_directory(product),
+        &current_generation(inputs)?,
+    )?;
     // The CLI may itself be running inside current; stop that generation last.
     records.sort_by_key(|record| record.kind == "current");
     if json {
@@ -686,7 +705,7 @@ pub(super) fn stop_generations(
             write_stdout(separator)?;
             separator = ",";
         }
-        let result = match stop_generation(&record.id, json, product) {
+        let result = match stop_generation(inputs, &record.id, json, product) {
             Ok(code) => code,
             Err(error) => report_failure(
                 &failure("stop-failed", format!("generation {}: {error}", record.id)),
@@ -774,8 +793,9 @@ mod tests {
         let inspection = thread::spawn(move || {
             sender
                 .send(discover_generations(
+                    &crate::product::inputs(),
                     &inspection_root,
-                    &current_generation().unwrap(),
+                    &current_generation(&crate::product::inputs()).unwrap(),
                 ))
                 .unwrap();
         });
@@ -798,7 +818,12 @@ mod tests {
             "contended inspection removed dead control metadata"
         );
 
-        discover_generations(&root, &current_generation().unwrap()).unwrap();
+        discover_generations(
+            &crate::product::inputs(),
+            &root,
+            &current_generation(&crate::product::inputs()).unwrap(),
+        )
+        .unwrap();
         assert!(!dead.exists());
         assert!(outside.is_dir());
 

@@ -566,6 +566,11 @@ show the median and observed minimum–maximum, not a confidence interval.
   Venus native launch contracts.
 - **Boundary:** Eon does not infer compatibility from executables, store paths,
   process names, or moving branches.
+- **Assembly boundary:** `product.rs` supplies fallible validated component
+  facts to the current runtime; graph failures precede runtime ownership effects,
+  including `window new` parent-directory creation. Library extraction remains
+  planned. See the
+  [runtime input contract](ARCHITECTURE.md#ownership-and-invocation).
 - **Proof:** `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`
   - **Environment:** Nix-built x86_64 Linux Wayland alpha
   - **Evidence:** Exact graph validation, Ready-boundary failure/recovery,
@@ -608,6 +613,11 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Owner:** Eon's component manifest and validator.
 - **Boundary:** The manifest does not own process lifecycle, platform launch
   mechanics, package-manager policy, or child state.
+- **Planned extraction:** Separate runtime and EONW package records use the
+  existing schema-3 graph and exact per-component checks; unchanged codec
+  identity permits distinct source commits. The
+  [package selection contract](ARCHITECTURE.md#independent-package-selection)
+  remains unimplemented.
 - **Proof:** `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`
   - **Environment:** x86_64 Linux Nix alpha
   - **Evidence:** Manifest parser/compatibility checks, exact graph consumption
@@ -659,6 +669,16 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Consumes:** Accepted child contracts through EON-C2's exact graph.
 - **Boundary:** No copied child schema, hidden fork, compatibility adapter, or
   second terminal/rendering owner.
+- **Assembly boundary:** `product.rs` owns concrete product inputs in the current
+  crate; runtime owners retain parsing, validation and mutable state.
+  Eon retains assembly, defaults, graph and distribution during extraction;
+  `eon-runtime` is planned to own the existing runtime mechanisms and EONW.
+  The [fourth-repository boundary](ARCHITECTURE.md#planned-runtime-library-boundary)
+  has no runtime acceptance yet; the proofs below cover current ownership.
+- **Assembly-input candidate (2026-10-05):** Mechanically verified and dogfooded
+  on dirty `edge` based on `cda9662c2cfac092d98a998b3a54c9b0fb4f2b7a`.
+  `eon-runtime-product-inputs-1dbd` records exact source hashes, both Nix artifacts,
+  installed-profile equality and private native Wayland observations.
 - **Proof:** `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`
   - **Environment:** x86_64 Linux composed alpha
   - **Evidence:** Component-boundary checks, management consumer proof, package
@@ -1032,6 +1052,10 @@ show the median and observed minimum–maximum, not a confidence interval.
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content, or direct child-protocol escape hatch.
+- **Planned extraction:** The canonical EONW crate moves to `eon-runtime`
+  without changing its package/API or v2–v7 bytes. Venus rebinds once; later
+  runtime-only changes with unchanged codec identity retain its exact pin.
+  See [package selection](ARCHITECTURE.md#independent-package-selection).
 - **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`
   - **Environment:** x86_64 Linux Nix package and installed profile
   - **Evidence:** EONW v2/v3 codec/version rejection, raw directory snapshot and
@@ -1168,6 +1192,13 @@ show the median and observed minimum–maximum, not a confidence interval.
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
   identity, presentation compatibility window, remote runtime, plugin API, service-manager
   requirement, or automatic eviction.
+- **Assembly boundary:** One current runtime generation owner consumes immutable
+  runtime/EONW bytes and the supplied Eon assembly contribution, including
+  generated-command inputs. Exact presentation checks remain;
+  retain the prior executable to reattach incompatible old work. See
+  [generation inputs](ARCHITECTURE.md#defaults-overrides-and-generation) and
+  [cutover acceptance](ARCHITECTURE.md#acceptance-boundaries). Existing proof
+  phases do not prove the extracted implementation.
 - **Proof:** `10c29edf861fac28db48f41a4546165f79777ee6`
   - **Environment:** x86_64 Linux Nix package and installed profile
   - **Evidence:** Separate namespaces, repeated launch, native Present,

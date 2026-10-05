@@ -1,8 +1,9 @@
 use super::{
+    cli::Inputs,
     managed_environment,
     supervisor::{
-        EON_ANSI_PALETTE, LaunchMode, Programs, SESSION_START_TIMEOUT, effective_uid, request_id,
-        status_code, stop, validate_private_directory,
+        LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id, status_code, stop,
+        validate_private_directory,
     },
     workspace::{is_directory_picker_endpoint, is_directory_picker_session},
 };
@@ -743,7 +744,7 @@ pub(super) struct RunningSession {
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn start_orbit(
-    programs: &Programs,
+    inputs: &Inputs,
     config: &Path,
     socket: &Path,
     session_id: &str,
@@ -755,7 +756,7 @@ pub(super) fn start_orbit(
     let run_id = request_id();
     let record_path = artifact_path(socket, ".record");
     let mut orbit_command = orbit_command(
-        programs,
+        inputs,
         config,
         socket,
         session_id,
@@ -908,7 +909,7 @@ fn rollback_unleased_orbit(
 
 #[allow(clippy::too_many_arguments)]
 fn orbit_command(
-    programs: &Programs,
+    inputs: &Inputs,
     config: &Path,
     socket: &Path,
     session_id: &str,
@@ -917,7 +918,7 @@ fn orbit_command(
     directory: &Path,
     child: &[OsString],
 ) -> Result<Command, String> {
-    let mut orbit_command = Command::new(&programs.orbit);
+    let mut orbit_command = Command::new(&inputs.orbit);
     orbit_command
         .arg("serve")
         .arg(socket)
@@ -926,18 +927,21 @@ fn orbit_command(
         .arg(run_id)
         .arg(component_generation)
         .arg("--ansi-palette-v1")
-        .arg(EON_ANSI_PALETTE)
+        .arg(inputs.defaults.ansi_palette)
         .arg("--")
         .env("EON_CONFIG_HOME", config)
         .current_dir(directory)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if let Some(session_bin) = &programs.session_bin {
+    if let Some(session_bin) = &inputs.managed.shell_bin {
         orbit_command.env("PATH", managed_environment::session_path(session_bin)?);
     }
     if child.is_empty() {
-        orbit_command.args(managed_environment::shell_command(config)?);
+        orbit_command.args(managed_environment::shell_command(
+            config,
+            &inputs.defaults,
+        )?);
     } else {
         orbit_command.args(child);
     }
@@ -1124,9 +1128,8 @@ pub(super) fn stop_managed_sessions(
 #[cfg(test)]
 mod tests {
     use super::{
-        EON_ANSI_PALETTE, Programs, is_directory_picker_endpoint, managed_session_number,
-        management, orbit_command, read_management_response, session_number,
-        unix_connect_with_timeout,
+        is_directory_picker_endpoint, managed_session_number, management, orbit_command,
+        read_management_response, session_number, unix_connect_with_timeout,
     };
     use crate::supervisor::temporary_directory;
     use orbit_protocol::management::ServerMessage as ManagementServerMessage;
@@ -1242,12 +1245,11 @@ mod tests {
     #[test]
     fn orbit_uses_configured_argv_only_for_default_sessions() {
         let root = temporary_directory();
-        let programs = Programs {
-            orbit: "/managed/orbit".into(),
-            venus: "/managed/venus".into(),
-            session_bin: Some("/managed/bin".into()),
-            venus_decorations: true,
-        };
+        let mut inputs = crate::product::inputs();
+        inputs.orbit = "/managed/orbit".into();
+        inputs.venus = "/managed/venus".into();
+        inputs.managed.shell_bin = Some("/managed/bin".into());
+        inputs.defaults.ansi_palette = "101010,101010,101010,101010,101010,101010,101010,101010,101010,101010,101010,101010,101010,101010,101010,101010";
         let config = root.as_path();
         let socket = Path::new("/runtime/orbit.sock");
         fs::write(
@@ -1257,7 +1259,7 @@ mod tests {
         .unwrap();
 
         let default = orbit_command(
-            &programs,
+            &inputs,
             config,
             socket,
             "session-1",
@@ -1277,7 +1279,7 @@ mod tests {
                 "run-1",
                 "component-1",
                 "--ansi-palette-v1",
-                EON_ANSI_PALETTE,
+                inputs.defaults.ansi_palette,
                 "--",
                 "eon-fish",
                 "--no-config",
@@ -1304,7 +1306,7 @@ mod tests {
         );
 
         let explicit = orbit_command(
-            &programs,
+            &inputs,
             config,
             socket,
             "session-2",
@@ -1324,7 +1326,7 @@ mod tests {
                 "run-2",
                 "component-2",
                 "--ansi-palette-v1",
-                EON_ANSI_PALETTE,
+                inputs.defaults.ansi_palette,
                 "--",
                 "codex",
                 "--model",

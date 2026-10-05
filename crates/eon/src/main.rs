@@ -3,6 +3,7 @@ mod codex_quota;
 mod control;
 mod generation;
 mod managed_environment;
+mod product;
 mod sessions;
 mod supervisor;
 mod windows;
@@ -11,7 +12,7 @@ mod workspace;
 use std::{process::ExitCode, thread, time::Duration};
 
 fn main() -> ExitCode {
-    let (product, result) = cli::run();
+    let (product, result) = cli::run(product::inputs());
     match result {
         Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
         Err(error) => {

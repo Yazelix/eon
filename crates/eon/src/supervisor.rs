@@ -1,4 +1,5 @@
 use super::{
+    cli::Inputs,
     codex_quota,
     control::{
         ControlListener, ControlResponse, EndpointFailure, EndpointFailureKind, SocketIdentity,
@@ -6,7 +7,7 @@ use super::{
         socket_identity,
     },
     generation::{current_generation, generation_directory},
-    managed_environment::{self, configured_program, nonempty_environment_path},
+    managed_environment::{self, nonempty_environment_path},
     sessions::{
         RunningSession, recover_sessions, session_finished, start_orbit, stop_managed_sessions,
     },
@@ -34,8 +35,6 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-pub(super) const MANIFEST: &str = include_str!("../../../components/eon-alpha-v3.json");
-pub(super) const EON_ANSI_PALETTE: &str = "000000,cd0000,00cd00,cdcd00,1093f5,cd00cd,00cdcd,faebd7,404040,ff0000,00ff00,ffff00,11b5f6,ff00ff,00ffff,ffffff";
 pub(super) const SESSION_START_TIMEOUT: Duration = Duration::from_secs(5);
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 
@@ -63,6 +62,7 @@ pub(super) fn temporary_directory() -> PathBuf {
 }
 
 pub(super) fn probe_supervisor(
+    inputs: &Inputs,
     socket: &Path,
     generation: &str,
 ) -> Result<(LaunchMode, SocketIdentity), EndpointFailure> {
@@ -82,7 +82,7 @@ pub(super) fn probe_supervisor(
                 info.attach.reason,
             ));
         }
-        validate_runtime(&info, generation)
+        validate_runtime(inputs, &info, generation)
             .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?;
         probe_launch_mode(socket)
     })();
@@ -121,13 +121,6 @@ pub(super) fn path_exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 
-pub(super) struct Programs {
-    pub(super) orbit: PathBuf,
-    pub(super) venus: PathBuf,
-    pub(super) session_bin: Option<PathBuf>,
-    pub(super) venus_decorations: bool,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum LaunchMode {
     Workspace,
@@ -144,13 +137,14 @@ impl LaunchMode {
 }
 
 pub(super) fn launch_current(
+    inputs: &Inputs,
     mode: LaunchMode,
     child: &[OsString],
     attach_existing: bool,
     decorations: bool,
     application_id: &str,
 ) -> Result<i32, String> {
-    let generation = current_generation()?;
+    let generation = current_generation(inputs)?;
     let root = runtime_directory(if mode == LaunchMode::Terminal {
         "eonterm"
     } else {
@@ -162,7 +156,7 @@ pub(super) fn launch_current(
     let socket = runtime.join("eon.sock");
     let mut missing_deadline = None;
     let lifecycle_lock = loop {
-        let endpoint_failure = match probe_supervisor(&socket, &generation) {
+        let endpoint_failure = match probe_supervisor(inputs, &socket, &generation) {
             Ok((active_mode, supervisor)) => {
                 missing_deadline = None;
                 if active_mode != mode {
@@ -177,11 +171,12 @@ pub(super) fn launch_current(
                         "generation {generation} already has a live Eon supervisor"
                     ));
                 }
-                let presentation_error = match present_at(&runtime, &generation, mode, supervisor) {
-                    Ok(code) => return Ok(code),
-                    Err(error) => error,
-                };
-                match probe_supervisor(&socket, &generation) {
+                let presentation_error =
+                    match present_at(inputs, &runtime, &generation, mode, supervisor) {
+                        Ok(code) => return Ok(code),
+                        Err(error) => error,
+                    };
+                match probe_supervisor(inputs, &socket, &generation) {
                     Ok((_, current)) if current == supervisor => return Err(presentation_error),
                     Ok(_) => continue,
                     Err(error)
@@ -223,7 +218,7 @@ pub(super) fn launch_current(
         } else {
             lock_supervisor_lifecycle(&lifecycle_lock_path)?
         };
-        match probe_supervisor(&socket, &generation) {
+        match probe_supervisor(inputs, &socket, &generation) {
             Err(error) if error.kind == EndpointFailureKind::Dead => break lifecycle_lock,
             Ok(_) => {
                 drop(lifecycle_lock);
@@ -233,19 +228,18 @@ pub(super) fn launch_current(
         }
     };
     let config = configuration_directory()?;
-    let terminal = managed_environment::terminal_presentation(&config)?;
+    let terminal = managed_environment::terminal_presentation(&config, &inputs.defaults)?;
     let popups = (mode == LaunchMode::Workspace)
-        .then(|| managed_environment::popup_catalog(&config))
+        .then(|| managed_environment::popup_catalog(&config, &inputs.defaults))
         .transpose()?;
     let startup_animation = (mode == LaunchMode::Workspace)
-        .then(|| managed_environment::startup_animation(&config))
+        .then(|| managed_environment::startup_animation(&config, &inputs.defaults))
         .transpose()?
         .flatten();
     prepare_generation_runtime(&root, &generation)?;
     prepare_configuration(&config)?;
-    let programs = programs(decorations);
     supervise(
-        &programs,
+        inputs,
         &config,
         terminal,
         popups,
@@ -256,10 +250,11 @@ pub(super) fn launch_current(
         &generation,
         mode,
         application_id,
+        decorations,
     )
     .or_else(|error| {
         if attach_existing && path_exists(&socket) {
-            attach_competing_supervisor(&socket, &runtime, &generation, mode, &error)
+            attach_competing_supervisor(inputs, &socket, &runtime, &generation, mode, &error)
         } else {
             Err(error)
         }
@@ -267,6 +262,7 @@ pub(super) fn launch_current(
 }
 
 fn attach_competing_supervisor(
+    inputs: &Inputs,
     socket: &Path,
     runtime: &Path,
     generation: &str,
@@ -275,7 +271,7 @@ fn attach_competing_supervisor(
 ) -> Result<i32, String> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        match probe_supervisor(socket, generation) {
+        match probe_supervisor(inputs, socket, generation) {
             Ok((active_mode, supervisor)) => {
                 if active_mode != mode {
                     return Err(format!(
@@ -284,7 +280,7 @@ fn attach_competing_supervisor(
                         mode.name()
                     ));
                 }
-                return present_at(runtime, generation, mode, supervisor);
+                return present_at(inputs, runtime, generation, mode, supervisor);
             }
             Err(error)
                 if matches!(
@@ -304,7 +300,7 @@ fn attach_competing_supervisor(
     }
 }
 
-fn validate_runtime(info: &Runtime, generation: &str) -> Result<(), String> {
+fn validate_runtime(inputs: &Inputs, info: &Runtime, generation: &str) -> Result<(), String> {
     if info.generation != generation {
         return Err(format!(
             "runtime directory contains generation {}, expected {generation}",
@@ -317,14 +313,15 @@ fn validate_runtime(info: &Runtime, generation: &str) -> Result<(), String> {
             info.workspace_protocol
         ));
     }
-    let components = eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string())?;
-    if info.component_report != components {
+    let components = &inputs.components()?.report;
+    if &info.component_report != components {
         return Err("supervisor reports a different component graph".into());
     }
     Ok(())
 }
 
 pub(super) fn present_at(
+    inputs: &Inputs,
     runtime: &Path,
     generation: &str,
     mode: LaunchMode,
@@ -344,7 +341,7 @@ pub(super) fn present_at(
     .map_err(|error| error.detail)?
     {
         ControlResponse::Lifecycle(LifecycleResponse::Runtime(info)) => {
-            validate_runtime(&info, generation)?;
+            validate_runtime(inputs, &info, generation)?;
             Ok(0)
         }
         ControlResponse::Lifecycle(LifecycleResponse::Failure(failure)) => {
@@ -355,15 +352,16 @@ pub(super) fn present_at(
 }
 
 fn venus_command(
-    programs: &Programs,
+    inputs: &Inputs,
     config: &Path,
     socket: &Path,
     mode: LaunchMode,
     terminal: &managed_environment::TerminalConfig,
     application_id: &str,
+    decorations: bool,
 ) -> Command {
-    let mut command = Command::new(&programs.venus);
-    if !programs.venus_decorations {
+    let mut command = Command::new(&inputs.venus);
+    if !decorations {
         command.arg("--no-decorations");
     }
     command
@@ -523,15 +521,6 @@ impl Drop for PresentationProcess {
     }
 }
 
-fn programs(venus_decorations: bool) -> Programs {
-    Programs {
-        orbit: configured_program("EON_ORBIT", "yazelix-orbit"),
-        venus: configured_program("EON_VENUS", "yazelix-venus"),
-        session_bin: nonempty_environment_path("EON_SESSION_BIN"),
-        venus_decorations,
-    }
-}
-
 pub(super) fn configuration_directory() -> Result<PathBuf, String> {
     let path = nonempty_environment_path("EON_CONFIG_HOME")
         .or_else(|| {
@@ -625,7 +614,7 @@ fn recovered_workspace_sessions(
 
 #[allow(clippy::too_many_arguments)]
 fn supervise(
-    programs: &Programs,
+    inputs: &Inputs,
     config: &Path,
     terminal: managed_environment::TerminalConfig,
     popups: Option<managed_environment::PopupCatalog>,
@@ -636,6 +625,7 @@ fn supervise(
     generation: &str,
     mode: LaunchMode,
     application_id: &str,
+    decorations: bool,
 ) -> Result<i32, String> {
     let _lifecycle_lock = lifecycle_lock;
     let launch_directory = env::current_dir()
@@ -643,14 +633,10 @@ fn supervise(
     if mode == LaunchMode::Workspace {
         workspace::validate_initial_directory(&launch_directory)?;
     }
-    let component_generation =
-        eon_manifest::component_revision(MANIFEST, "orbit").map_err(|error| error.to_string())?;
+    let component_generation = inputs.components()?.orbit_revision.clone();
     let deadline = Instant::now() + SESSION_START_TIMEOUT;
     let popup_catalog = popups.unwrap_or_else(|| managed_environment::PopupCatalog {
-        geometry: eon_workspace_protocol::v7::PopupGeometry {
-            side_margin: 8.0,
-            vertical_margin: 4.0,
-        },
+        geometry: inputs.defaults.popups.geometry,
         entries: Vec::new(),
     });
     let (mut sessions, recovered_picker) =
@@ -703,12 +689,13 @@ fn supervise(
             None
         };
         let command = venus_command(
-            programs,
+            inputs,
             config,
             &presentation_socket,
             mode,
             &terminal,
             application_id,
+            decorations,
         );
         Some(PresentationProcess::start(
             command, true, snapshot, deadline,
@@ -723,7 +710,7 @@ fn supervise(
     };
     if sessions.is_empty() && (mode == LaunchMode::Terminal || recovered_picker) {
         sessions.push(start_orbit(
-            programs,
+            inputs,
             config,
             &initial_endpoint,
             initial_session_id,
@@ -743,13 +730,14 @@ fn supervise(
                 |command, directory| {
                     managed_environment::prepare_popup_command(
                         command,
-                        programs.session_bin.as_deref(),
+                        inputs.managed.shell_bin.as_deref(),
                         directory,
+                        &inputs.defaults,
                     )
                 },
                 |operation| {
                     apply_session_operation(
-                        programs,
+                        inputs,
                         config,
                         &component_generation,
                         &mut sessions,
@@ -773,6 +761,7 @@ fn supervise(
     let mut state = SupervisorState {
         component_generation,
         application_id: application_id.into(),
+        decorations,
         workspace,
         sessions,
         venus: None,
@@ -784,12 +773,13 @@ fn supervise(
         Some(venus) => Ok(venus),
         None => PresentationProcess::start(
             venus_command(
-                programs,
+                inputs,
                 config,
                 &presentation_socket,
                 mode,
                 &terminal,
                 application_id,
+                decorations,
             ),
             false,
             None,
@@ -814,13 +804,13 @@ fn supervise(
 
     let status = (|| {
         loop {
-            reap_finished_sessions(&mut state, programs, config)?;
+            reap_finished_sessions(&mut state, inputs, config)?;
 
             if state.sessions.is_empty() {
                 return Ok(state.initial_status.unwrap_or(0));
             }
 
-            if reap_presentation(&mut state, programs, config)? {
+            if reap_presentation(&mut state, inputs, config)? {
                 match mode {
                     LaunchMode::Workspace => eprintln!(
                         "Eon Desktop exited; Sessions remains active. Run `eon attach {generation}` to reconnect."
@@ -832,7 +822,7 @@ fn supervise(
             }
 
             if control_listener.accept(|request| {
-                dispatch_control_request(request, &mut state, programs, config, runtime, generation)
+                dispatch_control_request(request, &mut state, inputs, config, runtime, generation)
             })? {
                 return Ok(state.initial_status.unwrap_or(0));
             }
@@ -857,6 +847,7 @@ fn supervise(
 struct SupervisorState {
     component_generation: String,
     application_id: String,
+    decorations: bool,
     workspace: Option<Workspace>,
     sessions: Vec<RunningSession>,
     venus: Option<PresentationProcess>,
@@ -880,7 +871,7 @@ impl SupervisorState {
 
 fn reap_finished_sessions(
     state: &mut SupervisorState,
-    programs: &Programs,
+    inputs: &Inputs,
     config: &Path,
 ) -> Result<(), String> {
     let mut index = 0;
@@ -894,7 +885,7 @@ fn reap_finished_sessions(
                 workspace
                     .session_exited(&session.id, |operation| {
                         apply_session_operation(
-                            programs,
+                            inputs,
                             config,
                             component_generation,
                             sessions,
@@ -935,10 +926,10 @@ fn close_workspace_tab(
     request_id: &str,
     tab: &str,
     state: &mut SupervisorState,
-    programs: &Programs,
+    inputs: &Inputs,
     config: &Path,
 ) -> Result<Snapshot, Failure> {
-    reap_finished_sessions(state, programs, config)
+    reap_finished_sessions(state, inputs, config)
         .map_err(|detail| failure("tab-close-failed", detail))?;
     let sessions = state
         .workspace
@@ -967,14 +958,15 @@ fn close_workspace_tab(
 }
 
 fn directory_picker_command(
-    programs: &Programs,
+    inputs: &Inputs,
     runtime: &Path,
     tab: &str,
     instance: &str,
     startup_animation: Option<&managed_environment::StartupAnimation>,
 ) -> Result<Vec<OsString>, String> {
-    let session_bin = programs
-        .session_bin
+    let session_bin = inputs
+        .managed
+        .shell_bin
         .as_ref()
         .ok_or("the installed Eon package has no directory picker")?;
     let mut command = vec![session_bin.join("eon-directory-picker").into_os_string()];
@@ -997,7 +989,7 @@ fn directory_picker_command(
 
 #[allow(clippy::too_many_arguments)]
 fn apply_session_operation(
-    programs: &Programs,
+    inputs: &Inputs,
     config: &Path,
     component_generation: &str,
     sessions: &mut Vec<RunningSession>,
@@ -1015,7 +1007,7 @@ fn apply_session_operation(
     };
     let child = match command {
         LaunchCommand::Project { tab, instance } => directory_picker_command(
-            programs,
+            inputs,
             session
                 .endpoint
                 .parent()
@@ -1029,7 +1021,7 @@ fn apply_session_operation(
         LaunchCommand::Pane => Vec::new(),
     };
     let running = start_orbit(
-        programs,
+        inputs,
         config,
         &session.endpoint,
         &session.id,
@@ -1057,7 +1049,7 @@ fn stop_owned_session(sessions: &mut Vec<RunningSession>, id: &str) -> Result<Op
 
 fn cancel_transient_popups(
     state: &mut SupervisorState,
-    programs: &Programs,
+    inputs: &Inputs,
     config: &Path,
 ) -> Result<(), String> {
     let ids = state
@@ -1079,7 +1071,7 @@ fn cancel_transient_popups(
             .ok_or("transient popup has no workspace owner")?
             .session_exited(&id, |operation| {
                 apply_session_operation(
-                    programs,
+                    inputs,
                     config,
                     component_generation,
                     sessions,
@@ -1109,7 +1101,7 @@ fn stop_transient_popups(state: &mut SupervisorState) -> Result<(), String> {
 
 fn reap_presentation(
     state: &mut SupervisorState,
-    programs: &Programs,
+    inputs: &Inputs,
     config: &Path,
 ) -> Result<bool, String> {
     let exited = match state.venus.as_mut() {
@@ -1122,7 +1114,7 @@ fn reap_presentation(
     };
     if exited {
         state.venus = None;
-        cancel_transient_popups(state, programs, config)?;
+        cancel_transient_popups(state, inputs, config)?;
     }
     Ok(exited)
 }
@@ -1210,7 +1202,7 @@ pub(super) fn try_lock_supervisor_lifecycle(path: &Path) -> Result<Option<fs::Fi
 fn dispatch_control_request(
     request: Request,
     state: &mut SupervisorState,
-    programs: &Programs,
+    inputs: &Inputs,
     config: &Path,
     runtime: &Path,
     generation: &str,
@@ -1227,7 +1219,7 @@ fn dispatch_control_request(
                     WorkspaceAction::InspectRuntime | WorkspaceAction::InspectPresentation,
                 ),
             ..
-        } => match runtime_status(generation, &state.sessions, mode) {
+        } => match runtime_status(inputs, generation, &state.sessions, mode) {
             Ok(runtime) => (
                 ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)),
                 false,
@@ -1256,7 +1248,7 @@ fn dispatch_control_request(
                     false,
                 );
             }
-            if let Err(detail) = reap_finished_sessions(state, programs, config) {
+            if let Err(detail) = reap_finished_sessions(state, inputs, config) {
                 return (
                     ControlResponse::Lifecycle(LifecycleResponse::Failure(failure(
                         "presentation-unavailable",
@@ -1274,7 +1266,7 @@ fn dispatch_control_request(
                     true,
                 );
             }
-            let result = reap_presentation(state, programs, config).and_then(|_| {
+            let result = reap_presentation(state, inputs, config).and_then(|_| {
                 if let Some(venus) = &state.venus {
                     return venus.present();
                 }
@@ -1288,14 +1280,16 @@ fn dispatch_control_request(
                         .endpoint
                         .clone()
                 };
-                let terminal = managed_environment::terminal_presentation(config)?;
+                let terminal =
+                    managed_environment::terminal_presentation(config, &inputs.defaults)?;
                 let command = venus_command(
-                    programs,
+                    inputs,
                     config,
                     &socket,
                     mode,
                     &terminal,
                     &state.application_id,
+                    state.decorations,
                 );
                 state.venus = Some(PresentationProcess::start(
                     command,
@@ -1305,7 +1299,7 @@ fn dispatch_control_request(
                 )?);
                 Ok(())
             });
-            match result.and_then(|()| runtime_status(generation, &state.sessions, mode)) {
+            match result.and_then(|()| runtime_status(inputs, generation, &state.sessions, mode)) {
                 Ok(runtime) => (
                     ControlResponse::Lifecycle(LifecycleResponse::Runtime(runtime)),
                     false,
@@ -1348,7 +1342,7 @@ fn dispatch_control_request(
         Request {
             id,
             action: Action::Workspace(WorkspaceAction::CloseTab { tab }),
-        } => match close_workspace_tab(&id, &tab, state, programs, config) {
+        } => match close_workspace_tab(&id, &tab, state, inputs, config) {
             Ok(snapshot) => (
                 ControlResponse::Workspace(Response::Snapshot(snapshot)),
                 false,
@@ -1374,13 +1368,14 @@ fn dispatch_control_request(
                 |command, directory| {
                     managed_environment::prepare_popup_command(
                         command,
-                        programs.session_bin.as_deref(),
+                        inputs.managed.shell_bin.as_deref(),
                         directory,
+                        &inputs.defaults,
                     )
                 },
                 |operation| {
                     apply_session_operation(
-                        programs,
+                        inputs,
                         config,
                         component_generation,
                         sessions,
@@ -1411,6 +1406,7 @@ fn dispatch_control_request(
 }
 
 fn runtime_status(
+    inputs: &Inputs,
     generation: &str,
     sessions: &[RunningSession],
     mode: LaunchMode,
@@ -1420,10 +1416,9 @@ fn runtime_status(
     }
     Ok(Runtime {
         generation: generation.into(),
-        eon_version: env!("CARGO_PKG_VERSION").into(),
+        eon_version: inputs.version.into(),
         workspace_protocol: VERSION,
-        component_report: eon_manifest::version_report(MANIFEST)
-            .map_err(|error| error.to_string())?,
+        component_report: inputs.components()?.report.clone(),
         sessions: sessions
             .iter()
             .filter(|session| !workspace::is_directory_picker_session(&session.id))
@@ -1458,8 +1453,8 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        LaunchMode, Programs, effective_uid, prepare_configuration, prepare_runtime,
-        temporary_directory, venus_command, xdg_path,
+        LaunchMode, effective_uid, prepare_configuration, prepare_runtime, temporary_directory,
+        venus_command, xdg_path,
     };
     use std::{
         ffi::OsString,
@@ -1545,12 +1540,13 @@ mod tests {
         crate::managed_environment::TerminalConfig {
             background_opacity,
             background_blur,
-            ..Default::default()
+            ..crate::product::inputs().defaults.terminal
         }
     }
 
     #[test]
     fn configured_typography_reaches_both_product_launches() {
+        let inputs = crate::product::inputs();
         let root = temporary_directory();
         fs::write(
             root.join("config.toml"),
@@ -1566,14 +1562,16 @@ rows = 30
         )
         .unwrap();
         for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
-            let terminal = crate::managed_environment::terminal_presentation(&root).unwrap();
+            let terminal =
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).unwrap();
             let command = venus_command(
-                &super::programs(true),
+                &inputs,
                 &root,
                 Path::new("/orbit.sock"),
                 mode,
                 &terminal,
                 "eon",
+                true,
             );
             let args = command
                 .get_args()
@@ -1602,6 +1600,7 @@ rows = 30
 
     #[test]
     fn configured_cursor_color_reaches_both_product_launches() {
+        let inputs = crate::product::inputs();
         let root = temporary_directory();
         for value in ["random", "preset:ice", "custom:#12ABCF"] {
             fs::write(
@@ -1609,16 +1608,18 @@ rows = 30
                 format!("[terminal]\ncursor_trail_color = '{value}'\n"),
             )
             .unwrap();
-            let terminal = crate::managed_environment::terminal_presentation(&root).unwrap();
+            let terminal =
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).unwrap();
             assert!(terminal.requires_startup_admission());
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
-                    &super::programs(true),
+                    &inputs,
                     &root,
                     Path::new("/runtime.sock"),
                     mode,
                     &terminal,
                     "eon",
+                    true,
                 );
                 let args = command.get_args().collect::<Vec<_>>();
                 assert!(
@@ -1630,16 +1631,18 @@ rows = 30
         }
 
         fs::write(root.join("config.toml"), "").unwrap();
-        let terminal = crate::managed_environment::terminal_presentation(&root).unwrap();
+        let terminal =
+            crate::managed_environment::terminal_presentation(&root, &inputs.defaults).unwrap();
         assert!(!terminal.requires_startup_admission());
         assert!(
             venus_command(
-                &super::programs(true),
+                &inputs,
                 &root,
                 Path::new("/runtime.sock"),
                 LaunchMode::Workspace,
                 &terminal,
                 "eon",
+                true,
             )
             .get_args()
             .all(|argument| argument != "--cursor-trail-color")
@@ -1649,6 +1652,7 @@ rows = 30
 
     #[test]
     fn configured_pane_frames_reach_only_workspace_launches() {
+        let inputs = crate::product::inputs();
         let root = temporary_directory();
         for (source, expected) in [
             ("", "true"),
@@ -1656,15 +1660,17 @@ rows = 30
             ("[terminal]\npane_frames = false\n", "false"),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
-            let terminal = crate::managed_environment::terminal_presentation(&root).unwrap();
+            let terminal =
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).unwrap();
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
-                    &super::programs(true),
+                    &inputs,
                     &root,
                     Path::new("/runtime.sock"),
                     mode,
                     &terminal,
                     "eon",
+                    true,
                 );
                 let args = command.get_args().collect::<Vec<_>>();
                 let values = args
@@ -1686,7 +1692,7 @@ rows = 30
             )
             .unwrap();
             assert!(
-                crate::managed_environment::terminal_presentation(&root)
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults)
                     .unwrap_err()
                     .contains("pane_frames")
             );
@@ -1696,22 +1702,21 @@ rows = 30
 
     #[test]
     fn venus_receives_workspace_endpoint_only_in_workspace_mode() {
-        let mut programs = Programs {
-            orbit: "/managed/orbit".into(),
-            venus: "/managed/venus".into(),
-            session_bin: None,
-            venus_decorations: true,
-        };
+        let mut inputs = crate::product::inputs();
+        inputs.orbit = "/managed/orbit".into();
+        inputs.venus = "/managed/venus".into();
+        inputs.managed.shell_bin = None;
         let config = Path::new("/config/eon");
         let socket = Path::new("/runtime/eon.sock");
 
         let workspace = venus_command(
-            &programs,
+            &inputs,
             config,
             socket,
             LaunchMode::Workspace,
             &terminal_presentation(0.88, true),
             "eon",
+            true,
         );
         assert_eq!(
             workspace.get_args().map(OsString::from).collect::<Vec<_>>(),
@@ -1730,12 +1735,13 @@ rows = 30
         );
 
         let terminal = venus_command(
-            &programs,
+            &inputs,
             config,
             Path::new("/runtime/orbit.sock"),
             LaunchMode::Terminal,
             &terminal_presentation(1.0, false),
             "eonterm",
+            true,
         );
         for command in [&workspace, &terminal] {
             let environment = command.get_envs().collect::<Vec<_>>();
@@ -1756,14 +1762,14 @@ rows = 30
             .map(OsString::from)
         );
 
-        programs.venus_decorations = false;
         let undecorated = venus_command(
-            &programs,
+            &inputs,
             config,
             Path::new("/runtime/orbit.sock"),
             LaunchMode::Terminal,
             &terminal_presentation(0.0, true),
             "eonova",
+            false,
         );
         assert_eq!(
             undecorated

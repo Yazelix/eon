@@ -10,8 +10,8 @@ use std::{
 };
 
 use eon_workspace_protocol::v7::{
-    ALT, CTRL, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_KEY_BYTES, MAX_LABEL_BYTES, PopupGeometry,
-    SHIFT, SUPER, Shortcut,
+    ALT, CTRL, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry, SHIFT, SUPER,
+    Shortcut,
 };
 
 pub(super) fn configured_program(variable: &str, fallback: &str) -> PathBuf {
@@ -27,45 +27,43 @@ pub(super) fn nonempty_environment_path(name: &str) -> Option<PathBuf> {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct EonConfig {
-    shell: ShellConfig,
-    terminal: TerminalConfig,
-    anima: StartupAnimation,
+    shell: ShellSettings,
+    terminal: TerminalSettings,
+    anima: AnimationSettings,
     popup: PopupSettings,
     popups: BTreeMap<String, PopupEntrySettings>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+pub(crate) struct Defaults {
+    pub(crate) shell: ShellConfig,
+    pub(crate) terminal: TerminalConfig,
+    pub(crate) anima: StartupAnimation,
+    pub(crate) popups: PopupCatalog,
+    pub(crate) custom_popup_keep_alive: bool,
+    pub(crate) ansi_palette: &'static str,
+    pub(crate) agent_commands: &'static [&'static [&'static str]],
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct StartupAnimation {
-    enabled: bool,
+    pub(crate) enabled: bool,
     pub(crate) style: String,
     pub(crate) duration_seconds: u64,
 }
 
-impl Default for StartupAnimation {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            style: "random".into(),
-            duration_seconds: 3,
-        }
-    }
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct AnimationSettings {
+    enabled: Option<bool>,
+    style: Option<String>,
+    duration_seconds: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct PopupSettings {
-    side_margin: f32,
-    vertical_margin: f32,
-}
-
-impl Default for PopupSettings {
-    fn default() -> Self {
-        Self {
-            side_margin: 8.0,
-            vertical_margin: 4.0,
-        }
-    }
+    side_margin: Option<f32>,
+    vertical_margin: Option<f32>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -107,30 +105,26 @@ pub(crate) struct PopupCatalog {
     pub(crate) entries: Vec<PopupDefinition>,
 }
 
-#[derive(Debug, Deserialize, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
-struct ShellConfig {
-    command: Vec<String>,
-    starship: bool,
-    zoxide: bool,
-    atuin: bool,
-    carapace: bool,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ShellConfig {
+    pub(crate) command: Vec<String>,
+    pub(crate) starship: bool,
+    pub(crate) zoxide: bool,
+    pub(crate) atuin: bool,
+    pub(crate) carapace: bool,
 }
 
-impl Default for ShellConfig {
-    fn default() -> Self {
-        Self {
-            command: vec!["eon-nu".into()],
-            starship: true,
-            zoxide: true,
-            atuin: true,
-            carapace: true,
-        }
-    }
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct ShellSettings {
+    command: Option<Vec<String>>,
+    starship: Option<bool>,
+    zoxide: Option<bool>,
+    atuin: Option<bool>,
+    carapace: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Debug)]
 pub(crate) struct TerminalConfig {
     pub(crate) background_opacity: f32,
     pub(crate) background_blur: bool,
@@ -144,21 +138,19 @@ pub(crate) struct TerminalConfig {
     pub(crate) rows: Option<u16>,
 }
 
-impl Default for TerminalConfig {
-    fn default() -> Self {
-        Self {
-            background_opacity: 0.8,
-            background_blur: true,
-            pane_frames: true,
-            cursor_trail_color: None,
-            font_family: None,
-            font_fallbacks: Vec::new(),
-            font_size: None,
-            line_height: None,
-            columns: None,
-            rows: None,
-        }
-    }
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct TerminalSettings {
+    background_opacity: Option<f32>,
+    background_blur: Option<bool>,
+    pane_frames: Option<bool>,
+    cursor_trail_color: Option<String>,
+    font_family: Option<String>,
+    font_fallbacks: Option<Vec<String>>,
+    font_size: Option<f32>,
+    line_height: Option<f32>,
+    columns: Option<u16>,
+    rows: Option<u16>,
 }
 
 impl TerminalConfig {
@@ -173,20 +165,20 @@ impl TerminalConfig {
     }
 }
 
-struct ManagedPrograms {
-    nu: PathBuf,
-    bash: PathBuf,
-    zsh: PathBuf,
-    fish: PathBuf,
-    helix: PathBuf,
-    yazi: PathBuf,
-    ya: PathBuf,
-    lazygit: PathBuf,
-    nu_vendor_autoload: Option<PathBuf>,
-    bash_rc: Option<PathBuf>,
-    zsh_config: Option<PathBuf>,
-    fish_init: Option<PathBuf>,
-    shell_bin: Option<PathBuf>,
+pub(crate) struct ManagedPrograms {
+    pub(crate) nu: PathBuf,
+    pub(crate) bash: PathBuf,
+    pub(crate) zsh: PathBuf,
+    pub(crate) fish: PathBuf,
+    pub(crate) helix: PathBuf,
+    pub(crate) yazi: PathBuf,
+    pub(crate) ya: PathBuf,
+    pub(crate) lazygit: PathBuf,
+    pub(crate) nu_vendor_autoload: Option<PathBuf>,
+    pub(crate) bash_rc: Option<PathBuf>,
+    pub(crate) zsh_config: Option<PathBuf>,
+    pub(crate) fish_init: Option<PathBuf>,
+    pub(crate) shell_bin: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -216,20 +208,24 @@ pub(crate) fn tool(invocation: &OsStr) -> Option<Tool> {
     }
 }
 
-pub(crate) fn command(
-    tool: Tool,
-    config: &Path,
-    arguments: &[OsString],
-) -> Result<Command, String> {
-    managed_command(tool, &managed_programs(), config, arguments)
+pub(crate) fn shell_command(root: &Path, defaults: &Defaults) -> Result<Vec<String>, String> {
+    Ok(read_shell_config(root, defaults)?.command)
 }
 
-pub(crate) fn shell_command(root: &Path) -> Result<Vec<String>, String> {
-    Ok(read_shell_config(root)?.command)
-}
-
-pub(crate) fn startup_animation(root: &Path) -> Result<Option<StartupAnimation>, String> {
-    let anima = read_config(root)?.anima;
+pub(crate) fn startup_animation(
+    root: &Path,
+    defaults: &Defaults,
+) -> Result<Option<StartupAnimation>, String> {
+    let settings = read_config(root)?.anima;
+    let anima = StartupAnimation {
+        enabled: settings.enabled.unwrap_or(defaults.anima.enabled),
+        style: settings
+            .style
+            .unwrap_or_else(|| defaults.anima.style.clone()),
+        duration_seconds: settings
+            .duration_seconds
+            .unwrap_or(defaults.anima.duration_seconds),
+    };
     if anima.style.is_empty()
         || anima.style.trim() != anima.style
         || anima.style.len() > 128
@@ -243,8 +239,30 @@ pub(crate) fn startup_animation(root: &Path) -> Result<Option<StartupAnimation>,
     Ok(anima.enabled.then_some(anima))
 }
 
-pub(crate) fn terminal_presentation(root: &Path) -> Result<TerminalConfig, String> {
-    let terminal = read_config(root)?.terminal;
+pub(crate) fn terminal_presentation(
+    root: &Path,
+    defaults: &Defaults,
+) -> Result<TerminalConfig, String> {
+    let settings = read_config(root)?.terminal;
+    let base = &defaults.terminal;
+    let terminal = TerminalConfig {
+        background_opacity: settings
+            .background_opacity
+            .unwrap_or(base.background_opacity),
+        background_blur: settings.background_blur.unwrap_or(base.background_blur),
+        pane_frames: settings.pane_frames.unwrap_or(base.pane_frames),
+        cursor_trail_color: settings
+            .cursor_trail_color
+            .or_else(|| base.cursor_trail_color.clone()),
+        font_family: settings.font_family.or_else(|| base.font_family.clone()),
+        font_fallbacks: settings
+            .font_fallbacks
+            .unwrap_or_else(|| base.font_fallbacks.clone()),
+        font_size: settings.font_size.or(base.font_size),
+        line_height: settings.line_height.or(base.line_height),
+        columns: settings.columns.or(base.columns),
+        rows: settings.rows.or(base.rows),
+    };
     if !terminal.background_opacity.is_finite()
         || !(0.0..=1.0).contains(&terminal.background_opacity)
     {
@@ -296,11 +314,17 @@ pub(crate) fn terminal_presentation(root: &Path) -> Result<TerminalConfig, Strin
     Ok(terminal)
 }
 
-pub(crate) fn popup_catalog(root: &Path) -> Result<PopupCatalog, String> {
+pub(crate) fn popup_catalog(root: &Path, defaults: &Defaults) -> Result<PopupCatalog, String> {
     let mut config = read_config(root)?;
     let geometry = PopupGeometry {
-        side_margin: config.popup.side_margin,
-        vertical_margin: config.popup.vertical_margin,
+        side_margin: config
+            .popup
+            .side_margin
+            .unwrap_or(defaults.popups.geometry.side_margin),
+        vertical_margin: config
+            .popup
+            .vertical_margin
+            .unwrap_or(defaults.popups.geometry.vertical_margin),
     };
     for (field, value) in [
         ("side_margin", geometry.side_margin),
@@ -314,31 +338,8 @@ pub(crate) fn popup_catalog(root: &Path) -> Result<PopupCatalog, String> {
     }
 
     let mut entries = Vec::new();
-    let builtins = [
-        ("project", "Project", "Alt+Z", PopupCommand::Project, false),
-        (
-            "git",
-            "Git",
-            "Alt+Shift+J",
-            PopupCommand::Argv(vec!["eon-lazygit".into()]),
-            true,
-        ),
-        (
-            "agent",
-            "Agent",
-            "Alt+Shift+L",
-            PopupCommand::AgentAuto,
-            true,
-        ),
-        (
-            "anima",
-            "Anima",
-            "Alt+Shift+A",
-            PopupCommand::Argv(vec!["anima".into()]),
-            false,
-        ),
-    ];
-    for (id, label, keybinding, command, keep_alive) in builtins {
+    for builtin in &defaults.popups.entries {
+        let id = builtin.id.as_str();
         let settings = config.popups.remove(id).unwrap_or_default();
         if id == "project" {
             if settings.command.is_some() {
@@ -362,17 +363,19 @@ pub(crate) fn popup_catalog(root: &Path) -> Result<PopupCatalog, String> {
         }
         let command = match settings.command {
             Some(command) => configured_popup_command(id, command)?,
-            None => command,
+            None => builtin.command.clone(),
         };
         entries.push(PopupDefinition {
             id: id.into(),
-            label: settings.label.unwrap_or_else(|| label.into()),
-            shortcut: parse_shortcut(
-                &format!("popups.{id}.keybinding"),
-                settings.keybinding.as_deref().unwrap_or(keybinding),
-            )?,
+            label: settings.label.unwrap_or_else(|| builtin.label.clone()),
+            shortcut: match settings.keybinding {
+                Some(keybinding) => {
+                    parse_shortcut(&format!("popups.{id}.keybinding"), &keybinding)?
+                }
+                None => builtin.shortcut.clone(),
+            },
             command,
-            keep_alive: settings.keep_alive.unwrap_or(keep_alive),
+            keep_alive: settings.keep_alive.unwrap_or(builtin.keep_alive),
         });
     }
 
@@ -391,7 +394,9 @@ pub(crate) fn popup_catalog(root: &Path) -> Result<PopupCatalog, String> {
             label: settings.label.unwrap_or_else(|| id.clone()),
             shortcut: parse_shortcut(&format!("popups.{id}.keybinding"), &keybinding)?,
             command: configured_popup_command(&id, command)?,
-            keep_alive: settings.keep_alive.unwrap_or(true),
+            keep_alive: settings
+                .keep_alive
+                .unwrap_or(defaults.custom_popup_keep_alive),
             id,
         });
     }
@@ -501,6 +506,12 @@ fn validate_popup_entries(entries: &[PopupDefinition]) -> Result<(), String> {
     let mut shortcuts = HashMap::new();
     for entry in entries {
         validate_popup_id(&entry.id)?;
+        entry.shortcut.validate().map_err(|_| {
+            format!(
+                "popups.{}.keybinding is not a supported modified physical key",
+                entry.id
+            )
+        })?;
         if entry.label.is_empty()
             || entry.label.len() > MAX_LABEL_BYTES
             || entry.label.chars().any(char::is_control)
@@ -509,9 +520,6 @@ fn validate_popup_entries(entries: &[PopupDefinition]) -> Result<(), String> {
                 "popups.{}.label must be nonempty, at most {MAX_LABEL_BYTES} UTF-8 bytes, and contain no controls",
                 entry.id
             ));
-        }
-        if entry.shortcut.key.len() > MAX_KEY_BYTES {
-            return Err(format!("popups.{}.keybinding key is too long", entry.id));
         }
         if workspace_shortcut(&entry.shortcut) {
             return Err(format!(
@@ -560,6 +568,7 @@ pub(crate) fn prepare_popup_command(
     command: &PopupCommand,
     session_bin: Option<&Path>,
     directory: &Path,
+    defaults: &Defaults,
 ) -> Result<Vec<OsString>, String> {
     match command {
         PopupCommand::Argv(argv) => {
@@ -573,16 +582,8 @@ pub(crate) fn prepare_popup_command(
         }
         PopupCommand::Project => Ok(Vec::new()),
         PopupCommand::AgentAuto => {
-            for (program, arguments) in [
-                ("codex", &["resume"][..]),
-                ("grok", &[][..]),
-                ("opencode", &[][..]),
-                ("pi", &[][..]),
-                ("claude", &["--resume"][..]),
-            ] {
-                let argv = std::iter::once(OsString::from(program))
-                    .chain(arguments.iter().map(OsString::from))
-                    .collect::<Vec<_>>();
+            for candidate in defaults.agent_commands {
+                let argv = candidate.iter().map(OsString::from).collect::<Vec<_>>();
                 if popup_executable(&argv[0], session_bin, directory)? {
                     return Ok(argv);
                 }
@@ -629,14 +630,17 @@ pub(crate) fn session_path(prefix: &Path) -> Result<OsString, String> {
     prepend_path(prefix, env::var_os("PATH").as_deref(), "Eon Session")
 }
 
-fn managed_command(
+pub(crate) fn command(
     tool: Tool,
     programs: &ManagedPrograms,
     config: &Path,
     arguments: &[OsString],
+    defaults: &Defaults,
 ) -> Result<Command, String> {
     let shell = match tool {
-        Tool::Nu | Tool::Bash | Tool::Zsh | Tool::Fish => Some(read_shell_config(config)?),
+        Tool::Nu | Tool::Bash | Tool::Zsh | Tool::Fish => {
+            Some(read_shell_config(config, defaults)?)
+        }
         _ => None,
     };
     let program = match tool {
@@ -736,38 +740,23 @@ fn integration_mask(shell: &ShellConfig, atuin_nobind: bool) -> u8 {
         | (u8::from(shell.atuin && atuin_nobind) << 4)
 }
 
-fn managed_programs() -> ManagedPrograms {
-    ManagedPrograms {
-        nu: configured_program("EON_NU", "nu"),
-        bash: configured_program("EON_BASH", "bash"),
-        zsh: configured_program("EON_ZSH", "zsh"),
-        fish: configured_program("EON_FISH", "fish"),
-        helix: configured_program("EON_HX", "hx"),
-        yazi: configured_program("EON_YAZI", "yazi"),
-        ya: configured_program("EON_YA", "ya"),
-        lazygit: configured_program("EON_LAZYGIT", "lazygit"),
-        nu_vendor_autoload: nonempty_environment_path("EON_NU_VENDOR_AUTOLOAD"),
-        bash_rc: nonempty_environment_path("EON_BASH_RC"),
-        zsh_config: nonempty_environment_path("EON_ZSH_CONFIG"),
-        fish_init: nonempty_environment_path("EON_FISH_INIT"),
-        shell_bin: nonempty_environment_path("EON_SESSION_BIN"),
-    }
-}
-
-fn read_shell_config(root: &Path) -> Result<ShellConfig, String> {
-    let config = read_config(root)?;
-    if config.shell.command.is_empty() || config.shell.command[0].is_empty() {
+fn read_shell_config(root: &Path, defaults: &Defaults) -> Result<ShellConfig, String> {
+    let settings = read_config(root)?.shell;
+    let base = &defaults.shell;
+    let shell = ShellConfig {
+        command: settings.command.unwrap_or_else(|| base.command.clone()),
+        starship: settings.starship.unwrap_or(base.starship),
+        zoxide: settings.zoxide.unwrap_or(base.zoxide),
+        atuin: settings.atuin.unwrap_or(base.atuin),
+        carapace: settings.carapace.unwrap_or(base.carapace),
+    };
+    if shell.command.is_empty() || shell.command[0].is_empty() {
         return Err("shell.command must not be empty".into());
     }
-    if config
-        .shell
-        .command
-        .iter()
-        .any(|argument| argument.contains('\0'))
-    {
+    if shell.command.iter().any(|argument| argument.contains('\0')) {
         return Err("shell.command must not contain NUL".into());
     }
-    Ok(config.shell)
+    Ok(shell)
 }
 
 fn read_config(root: &Path) -> Result<EonConfig, String> {
@@ -799,8 +788,8 @@ fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsSt
 #[cfg(test)]
 mod tests {
     use super::{
-        ManagedPrograms, PopupCommand, Tool, integration_mask, managed_command, popup_catalog,
-        prepare_popup_command, prepend_path, read_shell_config, startup_animation,
+        ManagedPrograms, PopupCommand, Tool, command as managed_command, integration_mask,
+        popup_catalog, prepare_popup_command, prepend_path, read_shell_config, startup_animation,
         terminal_presentation, tool,
     };
     use std::{
@@ -819,13 +808,104 @@ mod tests {
     }
 
     #[test]
+    fn supplied_defaults_survive_partial_overrides_and_repeated_reads() {
+        let root = crate::supervisor::temporary_directory();
+        let mut defaults = crate::product::inputs().defaults;
+        defaults.shell.command = vec!["supplied-shell".into(), "--interactive".into()];
+        defaults.shell.starship = false;
+        defaults.terminal.background_opacity = 0.37;
+        defaults.terminal.background_blur = false;
+        defaults.terminal.font_fallbacks = vec!["Supplied Font".into()];
+        defaults.anima.style = "aquarium".into();
+        defaults.anima.duration_seconds = 7;
+        defaults.popups.geometry.side_margin = 23.0;
+        defaults.custom_popup_keep_alive = false;
+        defaults.popups.entries[1].label = "Supplied Git".into();
+        defaults.popups.entries[1].command = PopupCommand::Argv(vec!["supplied-git".into()]);
+
+        assert_eq!(
+            super::shell_command(&root, &defaults).unwrap(),
+            defaults.shell.command
+        );
+        assert!(!super::read_shell_config(&root, &defaults).unwrap().starship);
+        assert_eq!(
+            super::terminal_presentation(&root, &defaults)
+                .unwrap()
+                .font_fallbacks,
+            ["Supplied Font"]
+        );
+        assert_eq!(
+            super::startup_animation(&root, &defaults)
+                .unwrap()
+                .unwrap()
+                .duration_seconds,
+            7
+        );
+        assert_eq!(
+            super::popup_catalog(&root, &defaults).unwrap(),
+            defaults.popups
+        );
+
+        fs::write(root.join("config.toml"), "[shell]\nzoxide = false\n[terminal]\npane_frames = false\nfont_fallbacks = []\n[anima]\nduration_seconds = 2\n[popup]\nvertical_margin = 0\n[popups.git]\nkeep_alive = false\n[popups.extra]\ncommand = ['supplied-extra']\nkeybinding = 'Alt+Shift+F'\n").unwrap();
+        let shell = super::read_shell_config(&root, &defaults).unwrap();
+        assert_eq!(shell.command, defaults.shell.command);
+        assert!(!shell.starship && !shell.zoxide && shell.atuin && shell.carapace);
+        let terminal = super::terminal_presentation(&root, &defaults).unwrap();
+        assert_eq!(terminal.background_opacity, 0.37);
+        assert!(!terminal.background_blur && !terminal.pane_frames);
+        assert!(terminal.font_fallbacks.is_empty());
+        let anima = super::startup_animation(&root, &defaults).unwrap().unwrap();
+        assert_eq!(
+            (anima.style.as_str(), anima.duration_seconds),
+            ("aquarium", 2)
+        );
+        let popups = super::popup_catalog(&root, &defaults).unwrap();
+        assert_eq!(
+            (popups.geometry.side_margin, popups.geometry.vertical_margin),
+            (23.0, 0.0)
+        );
+        assert_eq!(
+            popups.entries[1].command,
+            defaults.popups.entries[1].command
+        );
+        assert_eq!(popups.entries[1].label, "Supplied Git");
+        assert!(!popups.entries[1].keep_alive);
+        assert!(!popups.entries.last().unwrap().keep_alive);
+
+        fs::write(root.join("config.toml"), "[shell]\ncommand = ['later-shell']\n[terminal]\nbackground_opacity = 0.0\n[anima]\nenabled = false\n").unwrap();
+        assert_eq!(
+            super::shell_command(&root, &defaults).unwrap(),
+            ["later-shell"]
+        );
+        assert_eq!(
+            super::terminal_presentation(&root, &defaults)
+                .unwrap()
+                .background_opacity,
+            0.0
+        );
+        assert!(
+            super::startup_animation(&root, &defaults)
+                .unwrap()
+                .is_none()
+        );
+        fs::write(root.join("config.toml"), "[terminal]\nunknown = true\n").unwrap();
+        assert!(
+            super::terminal_presentation(&root, &defaults)
+                .unwrap_err()
+                .contains("unknown field")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn shell_configuration_is_strict_and_defaults_without_a_file() {
+        let inputs = crate::product::inputs();
         let root = std::env::temp_dir().join(format!(
             "eon-managed-environment-test-{}-0",
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
-        let default = read_shell_config(&root).unwrap();
+        let default = read_shell_config(&root, &inputs.defaults).unwrap();
         assert_eq!(default.command, ["eon-nu"]);
         assert!(default.starship && default.zoxide && default.atuin && default.carapace);
 
@@ -834,7 +914,7 @@ mod tests {
             "[shell]\ncommand = [\"eon-fish\", \"--no-config\"]\nstarship = false\nzoxide = false\natuin = false\ncarapace = false\n",
         )
         .unwrap();
-        let configured = read_shell_config(&root).unwrap();
+        let configured = read_shell_config(&root, &inputs.defaults).unwrap();
         assert_eq!(configured.command, ["eon-fish", "--no-config"]);
         assert!(
             !configured.starship && !configured.zoxide && !configured.atuin && !configured.carapace
@@ -852,26 +932,35 @@ mod tests {
             ("[shell\n", "invalid Eon configuration"),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
-            assert!(read_shell_config(&root).unwrap_err().contains(expected));
+            assert!(
+                read_shell_config(&root, &inputs.defaults)
+                    .unwrap_err()
+                    .contains(expected)
+            );
         }
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn startup_animation_settings_are_validated_and_can_be_disabled() {
+        let inputs = crate::product::inputs();
         let root = std::env::temp_dir().join(format!(
             "eon-managed-environment-test-{}-anima",
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
         fs::write(root.join("config.toml"), "[anima]\nenabled = false\n").unwrap();
-        assert!(startup_animation(&root).unwrap().is_none());
+        assert!(
+            startup_animation(&root, &inputs.defaults)
+                .unwrap()
+                .is_none()
+        );
         fs::write(
             root.join("config.toml"),
             "[anima]\nstyle = 'aquarium'\nduration_seconds = 5\n",
         )
         .unwrap();
-        let configured = startup_animation(&root).unwrap().unwrap();
+        let configured = startup_animation(&root, &inputs.defaults).unwrap().unwrap();
         assert_eq!(
             (configured.style.as_str(), configured.duration_seconds),
             ("aquarium", 5)
@@ -885,19 +974,24 @@ mod tests {
             ("[anima]\nenabled = 'yes'\n", "enabled"),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
-            assert!(startup_animation(&root).unwrap_err().contains(field));
+            assert!(
+                startup_animation(&root, &inputs.defaults)
+                    .unwrap_err()
+                    .contains(field)
+            );
         }
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn terminal_presentation_is_strict_and_bounded() {
+        let inputs = crate::product::inputs();
         let root = std::env::temp_dir().join(format!(
             "eon-managed-environment-test-{}-presentation",
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
-        let presentation = terminal_presentation(&root).unwrap();
+        let presentation = terminal_presentation(&root, &inputs.defaults).unwrap();
         assert_eq!(presentation.background_opacity, 0.8);
         assert!(presentation.background_blur);
 
@@ -917,7 +1011,7 @@ mod tests {
             ),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
-            let presentation = terminal_presentation(&root).unwrap();
+            let presentation = terminal_presentation(&root, &inputs.defaults).unwrap();
             assert_eq!(presentation.background_opacity, expected_opacity);
             assert_eq!(presentation.background_blur, expected_blur);
         }
@@ -959,7 +1053,9 @@ mod tests {
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert!(
-                terminal_presentation(&root).unwrap_err().contains(field),
+                terminal_presentation(&root, &inputs.defaults)
+                    .unwrap_err()
+                    .contains(field),
                 "invalid {field} configuration did not name its field"
             );
         }
@@ -968,13 +1064,14 @@ mod tests {
 
     #[test]
     fn popup_configuration_owns_defaults_overrides_and_collisions() {
+        let inputs = crate::product::inputs();
         let root = std::env::temp_dir().join(format!(
             "eon-managed-environment-test-{}-popups",
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
 
-        let defaults = popup_catalog(&root).unwrap();
+        let defaults = popup_catalog(&root, &inputs.defaults).unwrap();
         assert_eq!(
             defaults
                 .entries
@@ -1012,7 +1109,7 @@ keep_alive = false
 "#,
         )
         .unwrap();
-        let configured = popup_catalog(&root).unwrap();
+        let configured = popup_catalog(&root, &inputs.defaults).unwrap();
         assert_eq!(
             (
                 configured.geometry.side_margin,
@@ -1034,7 +1131,13 @@ keep_alive = false
             "[popups.files]\nenabled = false\n",
         )
         .unwrap();
-        assert_eq!(popup_catalog(&root).unwrap().entries.len(), 4);
+        assert_eq!(
+            popup_catalog(&root, &inputs.defaults)
+                .unwrap()
+                .entries
+                .len(),
+            4
+        );
 
         for (source, expected) in [
             (
@@ -1047,7 +1150,11 @@ keep_alive = false
             ),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
-            assert!(popup_catalog(&root).unwrap_err().contains(expected));
+            assert!(
+                popup_catalog(&root, &inputs.defaults)
+                    .unwrap_err()
+                    .contains(expected)
+            );
         }
 
         for keybinding in [
@@ -1069,7 +1176,7 @@ keep_alive = false
             )
             .unwrap();
             assert!(
-                popup_catalog(&root)
+                popup_catalog(&root, &inputs.defaults)
                     .unwrap_err()
                     .contains("conflicts with an Eon workspace shortcut"),
                 "{keybinding} was not reserved"
@@ -1082,7 +1189,7 @@ keep_alive = false
         )
         .unwrap();
         assert!(
-            popup_catalog(&root)
+            popup_catalog(&root, &inputs.defaults)
                 .unwrap()
                 .entries
                 .iter()
@@ -1104,13 +1211,18 @@ keep_alive = false
             ),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
-            assert!(popup_catalog(&root).unwrap_err().contains(expected));
+            assert!(
+                popup_catalog(&root, &inputs.defaults)
+                    .unwrap_err()
+                    .contains(expected)
+            );
         }
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn popup_executable_preflight_uses_the_session_context() {
+        let inputs = crate::product::inputs();
         let root = std::env::temp_dir().join(format!(
             "eon-managed-environment-test-{}-popup-cwd",
             std::process::id()
@@ -1123,10 +1235,10 @@ keep_alive = false
         let command = PopupCommand::Argv(vec!["./tool".into()]);
 
         assert_eq!(
-            prepare_popup_command(&command, None, &launch).unwrap(),
+            prepare_popup_command(&command, None, &launch, &inputs.defaults).unwrap(),
             [OsString::from("./tool")]
         );
-        assert!(prepare_popup_command(&command, None, &root).is_err());
+        assert!(prepare_popup_command(&command, None, &root, &inputs.defaults).is_err());
         fs::create_dir(launch.join("bin")).unwrap();
         let path_tool = launch.join("bin/path-tool");
         fs::write(&path_tool, "#!/bin/sh\n").unwrap();
@@ -1136,6 +1248,7 @@ keep_alive = false
                 &PopupCommand::Argv(vec!["path-tool".into()]),
                 Some(Path::new("bin")),
                 &launch,
+                &inputs.defaults
             )
             .unwrap(),
             [OsString::from("path-tool")]
@@ -1145,9 +1258,29 @@ keep_alive = false
                 &PopupCommand::Argv(vec![path_tool.into_os_string()]),
                 Some(Path::new("invalid:path")),
                 &launch,
+                &inputs.defaults
             )
             .unwrap_err()
             .contains("cannot construct Eon Session PATH")
+        );
+        let mut defaults = crate::product::inputs().defaults;
+        defaults.agent_commands = &[
+            &["./preferred-agent", "--preferred"],
+            &["./tool", "--fallback"],
+        ];
+        assert_eq!(
+            prepare_popup_command(&PopupCommand::AgentAuto, None, &launch, &defaults).unwrap(),
+            [OsString::from("./tool"), OsString::from("--fallback")]
+        );
+        let preferred = launch.join("preferred-agent");
+        fs::write(&preferred, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&preferred, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            prepare_popup_command(&PopupCommand::AgentAuto, None, &launch, &defaults).unwrap(),
+            [
+                OsString::from("./preferred-agent"),
+                OsString::from("--preferred")
+            ]
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -1189,6 +1322,7 @@ keep_alive = false
 
     #[test]
     fn managed_commands_use_exact_programs_and_private_configuration() {
+        let inputs = crate::product::inputs();
         use Tool::{Bash, Fish, Helix, LazyGit, Nu, Ya, Yazi, Zsh};
 
         let programs = ManagedPrograms {
@@ -1221,7 +1355,14 @@ keep_alive = false
                 &["CONFIG_DIR", "LG_CONFIG_FILE"][..],
             ),
         ] {
-            let command = managed_command(tool, &programs, config, &["--version".into()]).unwrap();
+            let command = managed_command(
+                tool,
+                &programs,
+                config,
+                &["--version".into()],
+                &inputs.defaults,
+            )
+            .unwrap();
             assert_eq!(command.get_program(), program);
             assert_eq!(
                 command.get_args().map(OsString::from).collect::<Vec<_>>(),
@@ -1244,7 +1385,14 @@ keep_alive = false
             }
         }
 
-        let command = managed_command(Nu, &programs, config, &["--version".into()]).unwrap();
+        let command = managed_command(
+            Nu,
+            &programs,
+            config,
+            &["--version".into()],
+            &inputs.defaults,
+        )
+        .unwrap();
         assert_eq!(command.get_program(), "/managed/nu");
         assert_eq!(
             command.get_args().map(OsString::from).collect::<Vec<_>>(),
@@ -1274,7 +1422,14 @@ keep_alive = false
                 vec!["-C", "source \"$EON_FISH_INIT\"", "--version"],
             ),
         ] {
-            let command = managed_command(tool, &programs, config, &["--version".into()]).unwrap();
+            let command = managed_command(
+                tool,
+                &programs,
+                config,
+                &["--version".into()],
+                &inputs.defaults,
+            )
+            .unwrap();
             assert_eq!(command.get_program(), program);
             assert_eq!(
                 command.get_args().map(OsString::from).collect::<Vec<_>>(),
@@ -1292,14 +1447,14 @@ keep_alive = false
         }
         assert_eq!(
             command_environment(
-                &managed_command(Zsh, &programs, config, &[]).unwrap(),
+                &managed_command(Zsh, &programs, config, &[], &inputs.defaults).unwrap(),
                 "ZDOTDIR"
             ),
             Some(Some(OsStr::new("/managed/zsh-config")))
         );
         assert_eq!(
             command_environment(
-                &managed_command(Fish, &programs, config, &[]).unwrap(),
+                &managed_command(Fish, &programs, config, &[], &inputs.defaults).unwrap(),
                 "EON_FISH_INIT"
             ),
             Some(Some(OsStr::new("/managed/fish-init")))

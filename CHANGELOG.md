@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Reject an invalid component graph before `eon window new` creates runtime or
+  window-parent directories.
+
 - Open an independent workspace with Alt+Shift+N, the desktop launcher's New
   Eon Window action, or `eon window new`. Window IDs support listing, reattach,
   and exact or batch Stop without interrupting other windows. Batch Stop visits
