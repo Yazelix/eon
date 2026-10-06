@@ -6,9 +6,11 @@ Eon owns product composition and distribution. It ships
 Eon as the full managed product and EonTerm as the reusable terminal product
 while preserving the boundaries of the projects it composes.
 
-The current repository contains a local `eon-runtime` library and the EONW crate.
-The [runtime library boundary](#runtime-library-boundary) separates runtime
-mechanisms from Eon assembly. Their transfer to a fourth repository is planned.
+Eon currently builds frozen local runtime and EONW trees. Their canonical
+producer is [Eon Runtime](https://github.com/Yazelix/eon-runtime), accepted at
+`b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`. The
+[runtime library boundary](#runtime-library-boundary) records that transfer;
+Eon and Venus consumer cutover remains planned.
 
 | Repository | Subsystem owner | Owns | Eon consumes |
 |---|---|---|---|
@@ -23,7 +25,7 @@ mechanisms from Eon assembly. Their transfer to a fourth repository is planned.
 | LazyGit | LazyGit | Git TUI behavior and configuration | A pinned executable and native configuration inputs |
 | Ratconfig | Ratconfig | User-facing configuration editing | A schema-aware configuration artifact and output contract |
 | Eon | Eon orchestrator | Eon and EonTerm assembly, version, defaults, component selection, updates, integration checks, distribution | Exact child revisions and their declared artifacts |
-| Eon (local `eon-runtime`) | Runtime library | Invocation, Session lifecycle, workspace topology, strict configuration parsing, generation identity and EONW consumption | Concrete assembly inputs and canonical Orbit/EONW protocols |
+| Eon Runtime | Runtime library and EONW | Invocation, Session lifecycle, workspace topology, strict configuration parsing, generation identity and canonical EONW codecs | Frozen runtime/codec migration copies; exact external selection remains planned |
 
 Nova stays independent. Eon may reuse proven ideas from Nova through explicit
 contracts, but the repositories do not share release identity or require each
@@ -243,13 +245,18 @@ reconciles invariants that cross these boundaries.
 
 ## Runtime library boundary
 
-**Status: local library checkpoint.** `eon-runtime-contract-26eu` defines the
-boundary; `eon-runtime-extraction-l4wh` tracks independent transfer and cutover.
+**Status: accepted independent producer; consumer cutover planned.**
+`eon-runtime-contract-26eu` defines the boundary;
+`eon-runtime-extraction-l4wh` tracks consumer rebinding and cutover.
 `eon-runtime-product-inputs-1dbd` established Eon-owned assembly inputs.
 `eon-runtime-seam-2tes` moves the nine cohesive mechanisms into
 `crates/eon-runtime`, consumed by Eon's actual executable and Nix packages.
-EONW remains the unchanged sibling `crates/eon-workspace-protocol`. Independent
-runtime/codec production and exact external selection remain planned.
+`eon-runtime-producer-68hq` accepts the independent runtime/EONW source at
+`b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`. Both complete crate trees and
+manifests equal Eon's accepted `e431d75` source; EONW retains v2–v7 bytes.
+Eon's local runtime/codec trees are frozen at that revision until cutover.
+Subsequent runtime changes belong only to Eon Runtime. Production Eon and Venus
+selection remains unchanged; exact external selection is planned.
 
 Eon's actual executable and Nix packager consume an exact runtime library and
 codec selection. Invocation must preserve existing Eon/EonTerm commands,
@@ -289,11 +296,12 @@ the entry point does not impose blanket graph validation on them.
 
 Source dependencies run from Eon to the library and selected Orbit/Venus
 artifacts, from runtime to Orbit's canonical protocol, and from Venus to Orbit's
-protocol and EONW. The local library has no Eon dependency, graph, validator or
+protocol and EONW. The library has no Eon dependency, graph, validator or
 reverse source include. Its unit tests use independent, test-only input data;
 the real Eon executable keeps its unchanged process integration tests.
-Building an independently transferred runtime without Eon remains the producer
-stage's acceptance boundary.
+The independent producer passes locked build/test/lint checks with ambient Eon
+checkouts unavailable. A disposable real Eon assembly passes the process suite
+against its exact Git source; this does not activate the production consumer.
 
 ### Defaults, overrides and generation
 

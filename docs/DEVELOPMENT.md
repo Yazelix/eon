@@ -9,7 +9,9 @@ product line.
 the cohesive runtime mechanisms behind `run(Inputs)`. Runtime unit tests use
 test-only inputs. `crates/eon/tests/workspace_control.rs` exercises the real Eon
 binary, aliases and self-launches. EONW remains in `crates/eon-workspace-protocol`.
-The local library is the checkpoint before independent runtime transfer.
+Those local trees are frozen at Eon `e431d75`, matching the accepted independent
+[Eon Runtime](https://github.com/Yazelix/eon-runtime) source `b8f18b4`.
+Runtime evolution belongs there; consumer rebinding and cutover remain planned.
 
 ## Sources of truth
 
