@@ -143,8 +143,16 @@ Ctrl+Shift+C copies the frozen selection even after output changes.
 
 The directory picker starts with Zoxide and fzf. Tab switches to Yazi, Shift+Z
 jumps through Zoxide history from the browser, `g h` goes home, `g /` goes to
-root, `g Space` accepts a folder path, and F1 opens browser help. Files are shown
-for orientation but are never opened or managed by the picker.
+root, `g Space` accepts a folder path, and F1 opens browser help. In the current
+`edge` build, `a` uses Yazi's native **Create:** prompt: a plain name creates a
+file; a name ending in `/` creates a folder. Creation highlights the item;
+Enter selects a folder. Esc returns input to normal mode or closes it;
+in help, it clears a filter or closes help. Existing targets require
+Yazi's native confirmation. Cancelling leaves created files and folders on disk.
+If creation fails, the pinned Yazi returns to browsing without an error dialog.
+Files cannot be selected as a tab directory or opened by the picker.
+Browsing, find, sorting and previews use Yazi defaults: `gg`/`G` reach the first
+or last entry, `H`/`L` go back/forward, and `/`/`?` with `n`/`N` find entries.
 
 ## CLI commands
 

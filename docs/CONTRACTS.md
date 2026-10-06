@@ -1089,20 +1089,27 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     child directories; Shift+Z searches history and only moves the browser.
     Enter uses the highlighted folder; Tab returns to quick search and preserves
     the browser directory for the next visit. Esc, q, Q, and Ctrl+C cancel
-    from the main folder list. Esc first dismisses a nested prompt, help screen,
-    or search. Startup, new-tab and Alt+Z pickers share these keys.
+    from the main folder list. Within input and help, Esc follows Yazi's native
+    mode/filter handling before closing. Startup, new-tab and Alt+Z pickers
+    share these keys. Native browsing, find, sorting and previews remain.
     `g h` reaches home, `g /` root, `g Space` accepts a typed path, and `.` toggles
-    hidden entries. The fixed
-    chooser-mode open returns the highlighted path without invoking a file
-    opener; the picker keymap excludes file-management operations.
-    Files remain visible for orientation. Browsing does not add Zoxide history.
-    Yazi owns directory enumeration and navigation; Eon performs no recursive
-    filesystem scan. A vanished or inaccessible final folder fails EON-C17
-    validation without mutation.
+    hidden entries. `a` uses Yazi's native `create`: a plain name creates a file,
+    and a name ending in `/` creates a directory. Creation highlights the item
+    without accepting the picker; Enter accepts only directories. Native input
+    cancellation and existing-target confirmation remain. Cancelling the picker
+    leaves successful creations on disk; pinned Yazi returns quietly on failure.
+    The fixed chooser-mode open returns the highlighted path without invoking
+    a file opener. Creation is the only enabled file-management mutation.
+    External file opening, interactive shell commands and suspension remain excluded.
+    Files cannot be accepted as a tab directory or opened by the chooser.
+    Browsing does not add Zoxide history.
+    Yazi owns directory enumeration, navigation and creation; Eon performs no
+    recursive filesystem scan. A vanished or inaccessible final folder fails
+    EON-C17 validation without mutation.
   - Each selection screen shows its own persistent footer: quick search offers
     Use directory, Browse folders, and Cancel; Yazi offers Use highlighted folder,
-    Quick search, Shift+Z Jump, Cancel, and Help; nested jump search offers Jump
-    and Back to folders. Browser shortcuts are absent from quick search. Eon's fixed Yazi
+    Create, Quick search, Shift+Z Jump, Cancel, and Help; nested jump search
+    offers Jump and Back to folders. Browser shortcuts are absent from quick search. Eon's fixed Yazi
     status configuration replaces file metadata with these picker actions.
     Browser hints appear only while the folder list owns input; native Yazi
     prompts and overlays hide them until the folder list regains focus.
@@ -1240,6 +1247,23 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     same-pane reattachment without replay and caller-PTY `eon anima`.
     Alt+Shift+A is advertised and routed by the accepted physical-shortcut path;
     that private compositor run did not supply a physical keyboard observation.
+  - **Native creation:** `eon-decide-yazi-picker-creation-e7z`, base
+    `5566a7a7c591132af2f20315712fc217673f8663`, prepared source
+    `/nix/store/pibi7h41h3ndkdhm3zgniq3xd68s937b-eon-source`, installed
+    `/nix/store/n5p1k52p079i1a7405w6l74lgyg1h592-eon-0.1.0`, Yazi
+    `aa526434f00bb44e2e902d9a4ac5f810da1018b9` passes file and trailing-slash
+    directory creation, separate acceptance, input/overwrite cancellation and
+    retained creation after picker cancellation without changing the live pane.
+    Exact profile identity, preserved user processes and private cleanup are in
+    `/home/lucca/.local/state/eon/proofs/eon-decide-yazi-picker-creation-e7z-native-create-2026-10-06/REPORT.json`.
+  - **Native browsing defaults:** The same bead's prepared source
+    `/nix/store/rs47x5kw6sh5ylznjb1n980njn24y54p-eon-source`, installed
+    `/nix/store/k82afnzs7khf8b5c3iym0b1jmvggdl96-eon-0.1.0`, same child pins,
+    passes inherited navigation/history, find/sort, modal input/help Esc and
+    text preview. Native creation, separate directory acceptance, Tab mode
+    switching and Ctrl+C cancellation preserve the existing pane. The installed
+    native report, exact candidate, captures, profile identity and cleanup are in
+    `/home/lucca/.local/state/eon/proofs/eon-decide-yazi-picker-creation-e7z-native-defaults-2026-10-06/REPORT.json`.
 - **Open proof:** Fractional scale, broader compositors, actual blur, current
   AT-SPI/screen-reader use and broad user environments remain qualified.
   Headless Mesa picker screenshots may intermittently omit a body even on the

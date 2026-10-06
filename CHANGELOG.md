@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Preserve Yazi's native browsing, find/sort, modal input/help, creation and
+  file previews in the directory picker, with Eon's selection controls.
+  `a` creates a file; append `/` to create a folder. Enter selects a folder
+  separately. Cancelling the picker leaves created files and folders on disk.
+
 - Deliver Orbit's click-selection ladder through Eon and EonTerm: two clicks
   select a word, three a space/tab-delimited span, and four or more the logical
   line across soft wraps. Dragging and frozen Copy preserve that selection.

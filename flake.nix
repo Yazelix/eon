@@ -626,43 +626,20 @@
         mkdir -p "$out"
         cat > "$out/keymap.toml" <<'EOF'
         [mgr]
-        keymap = [
+        prepend_keymap = [
           { on = "<Enter>", run = "open --hovered", desc = "Use the highlighted folder for the Eon tab" },
           { on = "q", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
           { on = "Q", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
           { on = "<C-c>", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
           { on = "<Esc>", run = "quit --no-cwd-file --code=130", desc = "Cancel folder selection" },
           { on = "<Tab>", run = "quit --code=10", desc = "Return to quick search" },
-          { on = "<Up>", run = "arrow prev", desc = "Previous entry" },
-          { on = "k", run = "arrow prev", desc = "Previous entry" },
-          { on = "<Down>", run = "arrow next", desc = "Next entry" },
-          { on = "j", run = "arrow next", desc = "Next entry" },
-          { on = "<Left>", run = "leave", desc = "Parent folder" },
-          { on = "h", run = "leave", desc = "Parent folder" },
-          { on = "<Right>", run = "enter", desc = "Enter folder" },
-          { on = "l", run = "enter", desc = "Enter folder" },
-          { on = "<PageUp>", run = "arrow -100%", desc = "Previous page" },
-          { on = "<PageDown>", run = "arrow 100%", desc = "Next page" },
-          { on = "Z", run = "plugin zoxide", desc = "Jump to a known folder without selecting it" },
-          { on = ["g", "h"], run = "cd ~", desc = "Home folder" },
           { on = ["g", "/"], run = "cd /", desc = "Filesystem root" },
-          { on = ["g", "<Space>"], run = "cd --interactive", desc = "Go to a folder path" },
-          { on = ".", run = "hidden toggle", desc = "Show or hide hidden entries" },
-          { on = "f", run = "filter --smart", desc = "Filter entries in this folder" },
-          { on = "<F1>", run = "help", desc = "Folder picker keys" },
+          # Keep file operations, openers, shells and suspension out of the picker.
+          ${lib.concatMapStringsSep "\n" (key: "{ on = ${builtins.toJSON key}, run = \"noop\" },") [
+            "o" "O" "<S-Enter>" "y" "x" "p" "P" "-" "_" "<C-->"
+            "d" "D" "r" ";" ":" "<C-z>"
+          ]}
         ]
-
-        [input]
-        prepend_keymap = [{ on = "<Esc>", run = "close", desc = "Back to folders" }]
-
-        [help]
-        prepend_keymap = [{ on = "<Esc>", run = "close", desc = "Back to folders" }]
-        EOF
-        cat > "$out/yazi.toml" <<'EOF'
-        [plugin]
-        fetchers = []
-        preloaders = []
-        previewers = [{ url = "*/", run = "folder" }]
         EOF
         cat > "$out/init.lua" <<'EOF'
         -- Replace file metadata with actions for this directory-only picker.
@@ -671,7 +648,7 @@
         end
         Status:children_add(function()
           return tostring(cx.layer) == "mgr"
-            and " Enter Use highlighted folder · Tab Quick search · Shift+Z Jump · Esc/Ctrl+C Cancel · F1 Help"
+            and " Enter Use folder · a Create · Tab Quick search · Shift+Z Jump · Esc/Ctrl+C Cancel · F1 Help"
             or ""
         end, 1000, Status.LEFT)
         EOF

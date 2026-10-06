@@ -70,6 +70,9 @@ The current `edge` build adds a short, dismissible Anima animation before the
 directory picker and opens independent workspaces with **Alt+Shift+N** or the
 launcher's **New Eon Window** action. `eon window new` prints an ID; `eon windows`
 lists windows for reattachment or exact Stop.
+In its Yazi picker, **a** uses native creation: add `/` for a folder.
+**Enter** selects a folder; cancelling leaves created files and folders on disk.
+Browsing, prompts, help and previews use Yazi defaults.
 
 ## Guides
 
@@ -89,20 +92,20 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 271 |
-| README | 108 |
+| README | 111 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 1,961 |
+| Architecture and contracts | 1,985 |
 | Distribution and references | 750 |
-| User guides | 327 |
+| User guides | 335 |
 | Development guide | 89 |
 | Benchmark report | 317 |
-| Changelog | 407 |
+| Changelog | 412 |
 | Rust source and tests | 5,057 |
 | Cargo manifests | 31 |
 | Component manifest | 431 |
-| Nix composition and checks | 1,223 |
+| Nix composition and checks | 1,200 |
 | Product defaults | 0 |
-| **Total** | **11,234** |
+| **Total** | **11,251** |
