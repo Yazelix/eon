@@ -42,7 +42,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 
 ## EON-C1 — Exact compatible component launch
 
-- **Status:** Candidate for four-click child adoption; earlier launch/input proof retained.
+- **Status:** Proven
 - **Consumer:** A user launching Eon or EonTerm from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -221,12 +221,33 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 - **Owner:** Eon assembly and product policy; Eon Runtime owns runtime
   mechanisms and state. Orbit, Venus and tools retain their subsystem authority.
 - **Consumes:** Accepted child contracts through EON-C2's exact graph.
-- **Child adoption candidate:** `eon-adopt-click-ladder-and-shortcut-spacing-h1nv`
-  selects Orbit `6bc269c40b18f08b95778939518f77556ba91c67` and Venus
+- **Child adoption proof:** `eon-adopt-click-ladder-and-shortcut-spacing-h1nv`,
+  Eon source `0d02d4b2e6310f863de6bd3d0164c7c3ec08811d`, selects Orbit
+  `6bc269c40b18f08b95778939518f77556ba91c67` and Venus
   `c02e371c44909aa64cb3f2d77284b8a8ab2b4cc5`, retaining Runtime
   `a57e105a5da87d9c65402c1c4c8ea8b5dc8adc45` and EONW7 at
-  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`. Installed proof is pending;
-  this does not refresh older source-specific proofs below.
+  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa` with ORBF2/ORBS13 unchanged.
+  - **Environment and artifacts:** x86_64 Linux, private native Wayland Sway
+    1.12 headless/pixman, Mesa 26.1.2 lavapipe, scale 1; installed Eon
+    `/nix/store/ij6ad279x1pjmgwwk992ig6rm1fckq84-eon-0.1.0` and EonTerm
+    `/nix/store/n2izc97m5i1zai5558ra7m7jnmg63s47-eonterm-0.1.0`.
+  - **Evidence:** Prepared locked Rust fmt/check, 114 tests and strict Clippy;
+    checked source preparation rejects changed Orbit codec bytes or inherited
+    Cargo configuration; both Nix products and all 12 flake checks pass.
+    Profile elements equal these artifacts and report the exact graph. Native
+    EonTerm pairs select words/spans/fourth-and-fifth-click lines, including
+    16-column soft wraps, delayed single drag, span drag during live output and
+    frozen explicit Copy after replacement. Full Eon Shortcuts passes physical
+    Alt+Slash, normal/compact header layout, scrolling, workspace/input isolation
+    and Escape focus restoration. Five pre-existing product identities and
+    unrelated profile elements survive; disposable generations stop and reap.
+    Retained scripts, clipboard text, captures and logs:
+    `~/.local/state/eon/proofs/eon-adopt-click-ladder-and-shortcut-spacing-h1nv-2026-10-06/REPORT.md`.
+  - **Limits:** This refreshes EON-C1/C2/C4's selected-child delivery and C20's
+    header spacing only. Older source-specific proofs below remain scoped.
+    Existing Sessions retain their prior runtime until an explicit restart.
+    Child wide trailing-spacer span truncation, copy trimming and unwritten
+    tab-gap limits remain; no screen-reader, macOS or wider-platform proof.
 - **Boundary:** No copied child schema, hidden fork, compatibility adapter, or
   second terminal/rendering owner.
 - **Assembly boundary:** `crates/eon/src/product.rs` owns concrete product inputs;
@@ -1288,7 +1309,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 
 ## EON-C20 — Discoverable native shortcuts
 
-- **Status:** Candidate for header-spacing adoption; original viewer proof retained.
+- **Status:** Proven
 - **Consumer:** One installed full-Eon user on native Linux Wayland.
 - **Trigger:** The user presses physical Alt+Slash from the Eon workspace.
 - **Result:** The exact accepted Venus client toggles one native, read-only
@@ -1310,6 +1331,13 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 - **Boundary:** No Eon-rendered viewer, second shortcut catalog, EONW change,
   Orbit update, child-application bindings, rebinding UI, command palette,
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
+- **Header-spacing proof:** EON-C4's exact `0d02d4b` child-adoption source and
+  installed Eon artifact, consuming Venus VEN-C20 proof
+  `8af87bb0d07bc975413b05e3bdea9404ed6c1e57` through selected `c02e371`.
+  Native 1100×650 and 320×240 scale-1 captures show separate readable title,
+  subtitle and first heading. Scrolling preserves the header/footer; workspace
+  state and PTY input remain unchanged, and Escape restores terminal input.
+  The original broader viewer proof remains scoped below.
 - **Proof:** `eon-deliver-native-shortcut-viewer-rif`, exact working-tree
   candidate over `7b69fb250723fab813446315396f2bf5b04466de` with corrected
   VEN-C5 graph identity.

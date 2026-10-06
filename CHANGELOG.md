@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Deliver Orbit's click-selection ladder through Eon and EonTerm: two clicks
+  select a word, three a space/tab-delimited span, and four or more the logical
+  line across soft wraps. Dragging and frozen Copy preserve that selection.
+  Full Eon's Shortcuts dialog separates its title, subtitle and first heading
+  at normal and compact window sizes.
+
 - Provide a pinned x86_64-linux `nix develop` environment with Rust, Cargo,
   formatting and lint tools, Git, and hash-verified Beads binaries carrying
   their upstream licenses. The development guide checks the composed Cargo
