@@ -118,7 +118,9 @@ bar also shows the monochrome OpenAI Blossom and its read-only Codex quota:
 elapsed/total positions and remaining percentages, visibly old last-good data,
 or an explicit blocked or unknown permission state. The chip disappears before
 tabs or controls under width pressure, and provider absence leaves the bar
-unchanged.
+unchanged. Authenticated account refreshes keep the recorded values. Failed
+refreshes show `old` only when the last successful value is more than one hour
+old; signing out clears quota.
 
 Tabs own launch directories; changing a shell's directory does not rename or
 retarget its tab. Project changes the directory used by future Sessions in the

@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keep recorded Codex quota through authenticated account refreshes. Show
+  `old` only after a failed refresh when the last successful value is more
+  than one hour old. Discard obsolete in-flight responses, replace the complete
+  observation on the next read, and clear quota on sign-out. Polling remains
+  at most once per minute.
+
 - Compose Eon and EonTerm from independently pinned Eon Runtime and EONW
   packages. Version reports name both sources; checked Nix preparation shares
   one accepted codec with Venus. Profile refresh preserves live generations;
