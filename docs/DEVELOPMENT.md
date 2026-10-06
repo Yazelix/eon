@@ -5,6 +5,12 @@ and distribution. Eon Sessions owns persistent terminal state and attachment;
 Eon Desktop owns native presentation and input. Yazelix Nova remains a separate
 product line.
 
+Enter the pinned x86_64-linux development environment with `nix develop`.
+It provides Rust and Cargo, formatting and lint tools, Git, `br` 0.7.2, and
+`bv` 0.25.2. The Beads binaries come from hash-verified release archives and
+retain their full upstream licenses under `share/licenses/<tool>/LICENSE`,
+including the OpenAI/Anthropic rider.
+
 `crates/eon` owns executable assembly and defaults. The independent
 [Eon Runtime](https://github.com/Yazelix/eon-runtime) repository owns the runtime
 mechanisms behind `run(Inputs)` and the canonical EONW package. Eon pins both
@@ -48,6 +54,19 @@ before substitution. Nix prepares one codec identity even when Cargo resolves
 identical packages at different runtime/codec Git revisions. Locked Rust checks
 for that composition consume the prepared source; Nix remains the alpha's
 sole composition channel.
+
+From the development shell, check the composed workspace using that source:
+
+```sh
+eon_source=$(nix build --no-link --print-out-paths .#default.src)
+cargo check --locked --workspace --manifest-path "$eon_source/Cargo.toml" \
+  --target-dir "$PWD/target/prepared"
+```
+
+The prepared source is an immutable snapshot; rerun the source build after
+editing. Build both installed products with
+`nix build --no-link .#default .#eonterm`. A workspace build of the raw Git tree
+resolves distinct codec Git identities and cannot substitute for this check.
 
 Use Beads for implementation plans and deferred decisions:
 

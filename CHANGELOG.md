@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Provide a pinned x86_64-linux `nix develop` environment with Rust, Cargo,
+  formatting and lint tools, Git, and hash-verified Beads binaries carrying
+  their upstream licenses. The development guide checks the composed Cargo
+  workspace through Eon's prepared Nix source.
+
 - Keep recorded Codex quota through authenticated account refreshes. Show
   `old` only after a failed refresh when the last successful value is more
   than one hour old. Discard obsolete in-flight responses, replace the complete
