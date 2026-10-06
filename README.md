@@ -94,15 +94,15 @@ Beads data, lock files, and generated artifacts.
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 1,924 |
+| Architecture and contracts | 1,933 |
 | Distribution and references | 750 |
-| User guides | 321 |
-| Development guide | 85 |
+| User guides | 327 |
+| Development guide | 89 |
 | Benchmark report | 317 |
 | Changelog | 401 |
 | Rust source and tests | 5,057 |
 | Cargo manifests | 31 |
 | Component manifest | 431 |
-| Nix composition and checks | 1,173 |
+| Nix composition and checks | 1,223 |
 | Product defaults | 0 |
-| **Total** | **11,131** |
+| **Total** | **11,200** |

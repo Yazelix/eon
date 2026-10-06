@@ -177,16 +177,16 @@
     "orbit": {
       "flake": false,
       "locked": {
-        "lastModified": 1790191879,
-        "narHash": "sha256-pJza06e0OHsg0+XrnB9DJNXktMtc7MQHXAztuX80eLA=",
+        "lastModified": 1791294468,
+        "narHash": "sha256-4/tM5yo/7kZihezBp6ousJbZr1DtGGsknAa+2G4FXyQ=",
         "ref": "refs/heads/edge",
-        "rev": "b6cecf8f2ee35570b41cfdc578b095889d917fe2",
-        "revCount": 213,
+        "rev": "6bc269c40b18f08b95778939518f77556ba91c67",
+        "revCount": 221,
         "type": "git",
         "url": "https://github.com/Yazelix/eon-sessions.git"
       },
       "original": {
-        "rev": "b6cecf8f2ee35570b41cfdc578b095889d917fe2",
+        "rev": "6bc269c40b18f08b95778939518f77556ba91c67",
         "type": "git",
         "url": "https://github.com/Yazelix/eon-sessions.git"
       }
@@ -340,16 +340,16 @@
     "venus": {
       "flake": false,
       "locked": {
-        "lastModified": 1791249761,
-        "narHash": "sha256-Bbxtda438PNO5aZ8OGD7QA5VwvjabXlc48uAj2+Gxek=",
+        "lastModified": 1791295905,
+        "narHash": "sha256-dE17W14seSGPexU+KcXjztTb4QqSKAQleWMQHNtXAUU=",
         "ref": "refs/heads/edge",
-        "rev": "bbf4cf41b289f441683eb7a3f225a26a4d3edacc",
-        "revCount": 474,
+        "rev": "c02e371c44909aa64cb3f2d77284b8a8ab2b4cc5",
+        "revCount": 478,
         "type": "git",
         "url": "https://github.com/Yazelix/eon-desktop.git"
       },
       "original": {
-        "rev": "bbf4cf41b289f441683eb7a3f225a26a4d3edacc",
+        "rev": "c02e371c44909aa64cb3f2d77284b8a8ab2b4cc5",
         "type": "git",
         "url": "https://github.com/Yazelix/eon-desktop.git"
       }

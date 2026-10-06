@@ -42,7 +42,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 
 ## EON-C1 — Exact compatible component launch
 
-- **Status:** Proven
+- **Status:** Candidate for four-click child adoption; earlier launch/input proof retained.
 - **Consumer:** A user launching Eon or EonTerm from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -62,6 +62,8 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     bounds, geometry validation, and synchronized presentation remain intact.
     Venus shows a bounded scrollback-position indicator; activating its visible
     ReturnToLive control returns to live rows without Eon owning viewport state.
+    Orbit owns words at two clicks, space/tab-delimited punctuation spans at
+    three and logical lines at four or later, with native drag and frozen copy.
   - Full Eon can invoke the manifest-pinned Anima executable for the optional
     fresh-workspace welcome step and `eon anima [style] [child options]`.
     The direct command uses the caller's terminal and returns the child's
@@ -219,6 +221,12 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 - **Owner:** Eon assembly and product policy; Eon Runtime owns runtime
   mechanisms and state. Orbit, Venus and tools retain their subsystem authority.
 - **Consumes:** Accepted child contracts through EON-C2's exact graph.
+- **Child adoption candidate:** `eon-adopt-click-ladder-and-shortcut-spacing-h1nv`
+  selects Orbit `6bc269c40b18f08b95778939518f77556ba91c67` and Venus
+  `c02e371c44909aa64cb3f2d77284b8a8ab2b4cc5`, retaining Runtime
+  `a57e105a5da87d9c65402c1c4c8ea8b5dc8adc45` and EONW7 at
+  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`. Installed proof is pending;
+  this does not refresh older source-specific proofs below.
 - **Boundary:** No copied child schema, hidden fork, compatibility adapter, or
   second terminal/rendering owner.
 - **Assembly boundary:** `crates/eon/src/product.rs` owns concrete product inputs;
@@ -1280,14 +1288,15 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 
 ## EON-C20 — Discoverable native shortcuts
 
-- **Status:** Proven
+- **Status:** Candidate for header-spacing adoption; original viewer proof retained.
 - **Consumer:** One installed full-Eon user on native Linux Wayland.
 - **Trigger:** The user presses physical Alt+Slash from the Eon workspace.
 - **Result:** The exact accepted Venus client toggles one native, read-only
   shortcut viewer containing its fixed Eon-surface bindings and the current
   enabled popup catalog supplied through current EONW v7. Opening, refreshing,
   scrolling, resizing, and closing the viewer change no workspace or Orbit
-  Session state.
+  Session state. Title, subtitle and first group heading occupy separate
+  readable vertical space at normal and compact window sizes.
 - **Important failures:** Eon rejects configured popup shortcuts that collide
   with Alt+Slash or positional Alt+0 through Alt+9 before workspace mutation.
   Invalid or stale component identity fails before profile activation. Profile

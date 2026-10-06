@@ -4,11 +4,11 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
     orbit = {
-      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=b6cecf8f2ee35570b41cfdc578b095889d917fe2";
+      url = "git+https://github.com/Yazelix/eon-sessions.git?rev=6bc269c40b18f08b95778939518f77556ba91c67";
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=bbf4cf41b289f441683eb7a3f225a26a4d3edacc";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=c02e371c44909aa64cb3f2d77284b8a8ab2b4cc5";
       flake = false;
     };
     runtime = {
@@ -83,6 +83,39 @@
       venusIdentity = component "venus";
       runtimeIdentity = component "eon-runtime";
       codecIdentity = component "eon-workspace-protocol";
+      orbitProtocolDependency = eonCargo.dev-dependencies.orbit-protocol;
+      # Runtime and Eon retain their accepted Git codec identity. A newer
+      # service source may supply it only while the standalone package is exact.
+      orbitProtocolSource =
+        let
+          runtimeCargo = builtins.fromTOML (builtins.readFile "${runtime}/crates/eon-runtime/Cargo.toml");
+          original = builtins.fetchGit {
+            url = orbitProtocolDependency.git;
+            inherit (orbitProtocolDependency) rev;
+          };
+          package = source:
+            let cargo = builtins.fromTOML (builtins.readFile "${source}/crates/protocol/Cargo.toml");
+            in
+            assert builtins.attrNames cargo == [ "dependencies" "package" ];
+            assert cargo.dependencies == { };
+            assert builtins.attrNames cargo.package == [ "edition" "name" "publish" "version" ];
+            assert builtins.all (value: !(builtins.isAttrs value)) (builtins.attrValues cargo.package);
+            assert cargo.package.name == "orbit-protocol";
+            assert !(builtins.pathExists "${source}/crates/protocol/build.rs");
+            assert builtins.all (dir: builtins.all (name:
+              !(builtins.pathExists "${source}/${dir}${name}"))
+              [ ".cargo/config" ".cargo/config.toml" ]) [ "" "crates/" "crates/protocol/" ];
+            builtins.path { path = "${source}/crates/protocol"; name = "orbit-protocol"; };
+          selected = package orbit;
+        in
+        assert orbitProtocolDependency == {
+          git = orbitIdentity.source.url;
+          rev = orbitProtocolDependency.rev;
+        };
+        assert builtins.match "[0-9a-f]{40}" orbitProtocolDependency.rev != null;
+        assert runtimeCargo.dependencies.orbit-protocol == orbitProtocolDependency;
+        assert selected == package original;
+        selected;
       # The approved graph is validated by eon-manifest. Both products force
       # this gate before translating any selected runtime or codec source.
       workspaceProtocolSource = import ./nix/workspace-package.nix {
@@ -182,13 +215,17 @@
         pkgs.vulkan-loader
         pkgs.wayland
       ];
-      venusProtocolSourceRevision = "b6cecf8f2ee35570b41cfdc578b095889d917fe2";
+      venusProtocolSourceRevision = venusCargo.dependencies.orbit-protocol.rev;
       venusSource =
         assert orbit.rev == (builtins.head venusIdentity.requires).revision;
+        assert venusCargo.dependencies.orbit-protocol == {
+          git = orbitIdentity.source.url;
+          rev = orbitIdentity.revision;
+        };
         pkgs.runCommand "eon-desktop-${venusIdentity.revision}" { } ''
           cp -R ${venus}/. "$out"
           chmod -R u+w "$out"
-          ln -s ${orbit}/crates/protocol "$out/orbit-protocol"
+          ln -s ${orbitProtocolSource} "$out/orbit-protocol"
           ln -s ${workspaceProtocolSource} "$out/eon-workspace-protocol"
           substituteInPlace "$out/Cargo.toml" \
             --replace-fail \
@@ -661,7 +698,7 @@
           cp -R ${runtime}/crates/eon-runtime "$out/crates/eon-runtime"
           chmod -R u+w "$out/crates/eon-runtime"
           ln -s ${workspaceProtocolSource} "$out/crates/eon-workspace-protocol"
-          ln -s ${orbit}/crates/protocol "$out/crates/orbit-protocol"
+          ln -s ${orbitProtocolSource} "$out/crates/orbit-protocol"
           substituteInPlace "$out/crates/eon/Cargo.toml" \
             --replace-fail \
               'eon-runtime = { git = "${runtimeIdentity.source.url}", rev = "${runtimeIdentity.revision}" }' \
@@ -672,11 +709,11 @@
           substituteInPlace \
             "$out/crates/eon/Cargo.toml" "$out/crates/eon-runtime/Cargo.toml" \
             --replace-fail \
-              'orbit-protocol = { git = "https://github.com/Yazelix/eon-sessions.git", rev = "${orbitIdentity.revision}" }' \
+              'orbit-protocol = { git = "${orbitProtocolDependency.git}", rev = "${orbitProtocolDependency.rev}" }' \
               'orbit-protocol = { path = "../orbit-protocol" }'
           substituteInPlace "$out/Cargo.lock" \
             --replace-fail \
-              'source = "git+https://github.com/Yazelix/eon-sessions.git?rev=${orbitIdentity.revision}#${orbitIdentity.revision}"' \
+              'source = "git+${orbitProtocolDependency.git}?rev=${orbitProtocolDependency.rev}#${orbitProtocolDependency.rev}"' \
               ""
           # Cargo distinguishes Git revisions even for identical codecs. The
           # forced package gate permits this one exact lock identity collapse.

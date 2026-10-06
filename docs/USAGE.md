@@ -135,6 +135,12 @@ you are. It appears in Eon's pane header or at the top right of EonTerm, updates
 as output continues, and disappears at live output. Click the whole pill to
 return there.
 
+In the current `edge` build, two clicks select a word, three select a
+space/tab-delimited span, and four or more select the logical line across soft
+wraps. Dragging extends that granularity; a delayed single click returns to
+cell selection. Release copies to both Wayland clipboard destinations, and
+Ctrl+Shift+C copies the frozen selection even after output changes.
+
 The directory picker starts with Zoxide and fzf. Tab switches to Yazi, Shift+Z
 jumps through Zoxide history from the browser, `g h` goes home, `g /` goes to
 root, `g Space` accepts a folder path, and F1 opens browser help. Files are shown

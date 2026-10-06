@@ -55,6 +55,10 @@ identical packages at different runtime/codec Git revisions. Locked Rust checks
 for that composition consume the prepared source; Nix remains the alpha's
 sole composition channel.
 
+The same check rejects Orbit codec byte or inherited Cargo-configuration drift.
+Eon and Runtime retain their accepted Git dependency pin; preparation uses the
+selected Orbit service's standalone codec only after byte equality is proved.
+
 From the development shell, check the composed workspace using that source:
 
 ```sh

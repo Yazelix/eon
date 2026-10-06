@@ -8,7 +8,8 @@ let
   codecIdentity = component "eon-workspace-protocol";
   runtimeIdentity = component "eon-runtime";
   venusIdentity = component "venus";
-  orbitIdentity = component "orbit";
+  orbitProtocolDependency = (builtins.fromTOML
+    (builtins.readFile "${producer}/crates/eon-runtime/Cargo.toml")).dependencies.orbit-protocol;
   interface = builtins.head codecIdentity.interfaces;
   revision = codecIdentity.revision;
   proofSource = builtins.fetchGit {
@@ -35,6 +36,13 @@ let
     printf '\n[target.\x27cfg(unix)\x27.dependencies]\neon-workspace-protocol = { path = "../other-codec" }\n' >> "$out/target-dependency/crates/eon-runtime/Cargo.toml"
     substituteInPlace "$out/dev-only/crates/eon-runtime/Cargo.toml" --replace-fail 'eon-workspace-protocol = { path = "../eon-workspace-protocol" }' ""
     printf '\n[dev-dependencies]\neon-workspace-protocol = { path = "../eon-workspace-protocol" }\n' >> "$out/dev-only/crates/eon-runtime/Cargo.toml"
+    for name in orbit-content orbit-build-input; do
+      cp -R ${eon.inputs.orbit} "$out/$name"
+      chmod -R u+w "$out/$name"
+    done
+    printf '\n// codec drift\n' >> "$out/orbit-content/crates/protocol/src/lib.rs"
+    mkdir -p "$out/orbit-build-input/.cargo"
+    printf '[build]\nrustflags = ["--cfg", "fixture"]\n' > "$out/orbit-build-input/.cargo/config.toml"
     for name in venus-lock venus-manifest venus-dev-only venus-patch venus-replace venus-build-input; do
       mkdir "$out/$name"
       cp ${venus}/Cargo.{toml,lock} "$out/$name/"
@@ -68,7 +76,7 @@ let
       }
       /name = "eon-workspace-protocol"/,/^\[\[package\]\]$/ { /^version =/a source = "git+${codecIdentity.source.url}?rev=${revision}#${revision}"
       }
-      /name = "orbit-protocol"/,/^\[\[package\]\]$/ { /^version =/a source = "git+${orbitIdentity.source.url}?rev=${orbitIdentity.revision}#${orbitIdentity.revision}"
+      /name = "orbit-protocol"/,/^\[\[package\]\]$/ { /^version =/a source = "git+${orbitProtocolDependency.git}?rev=${orbitProtocolDependency.rev}#${orbitProtocolDependency.rev}"
       }
     ' "$out/composed/Cargo.lock"
     sed -i '/name = "eon"/,/^\[\[package\]\]$/s|"eon-workspace-protocol"|"eon-workspace-protocol ${codecIdentity.version} (git+${codecIdentity.source.url}?rev=${revision})"|' "$out/composed/Cargo.lock"
@@ -110,6 +118,10 @@ let
   };
   composed = (import "${fixtures}/composed/flake.nix").outputs
     (eon.inputs // { self = eon; runtime = source "runtime-only"; });
+  rejectedOrbit = name: !(builtins.tryEval ((import ../flake.nix).outputs
+    (eon.inputs // { self = eon; orbit = eon.inputs.orbit // {
+      outPath = "${fixtures}/${name}";
+    }; })).packages.x86_64-linux.default.src.drvPath).success;
   normalizedSource = composed.packages.x86_64-linux.default.src;
   normalizedCodec = builtins.filter (x: x.name == codecIdentity.id)
     (builtins.fromTOML (builtins.readFile "${normalizedSource}/Cargo.lock")).package;
@@ -125,6 +137,7 @@ let
 in
 assert accepted {};
 assert accepted runtimeOnly;
+assert builtins.all rejectedOrbit [ "orbit-content" "orbit-build-input" ];
 assert builtins.all (name: rejected (runtimeDrift name)) [ "content" "manifest" "build-input" "lock" "ambiguous" "target-dependency" "dev-only" ];
 assert builtins.all (name: rejected (venusDrift name)) [ "venus-lock" "venus-manifest" "venus-dev-only" "venus-patch" "venus-replace" "venus-build-input" ];
 assert rejected { codecProofSource = proofSource // { rev = branchRevision; }; };

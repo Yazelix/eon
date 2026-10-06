@@ -71,7 +71,7 @@
       "id": "orbit",
       "project": "Eon Sessions",
       "version": "0.1.0",
-      "revision": "b6cecf8f2ee35570b41cfdc578b095889d917fe2",
+      "revision": "6bc269c40b18f08b95778939518f77556ba91c67",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -89,8 +89,8 @@
         { "id": "ORB-C5", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
         { "id": "ORB-C6", "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
         { "id": "ORB-C7", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
-        { "id": "ORB-C8", "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" },
-        { "id": "ORB-C9", "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" },
+        { "id": "ORB-C8", "proof": "6bc269c40b18f08b95778939518f77556ba91c67" },
+        { "id": "ORB-C9", "proof": "6bc269c40b18f08b95778939518f77556ba91c67" },
         { "id": "ORB-C10", "proof": "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c" },
         { "id": "ORB-C11", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
         { "id": "ORB-C12", "proof": "7de9980ffbd6417758698d5c33356204eeb24de5" },
@@ -106,7 +106,7 @@
       "id": "venus",
       "project": "Eon Desktop",
       "version": "0.1.0",
-      "revision": "bbf4cf41b289f441683eb7a3f225a26a4d3edacc",
+      "revision": "c02e371c44909aa64cb3f2d77284b8a8ab2b4cc5",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
@@ -121,7 +121,7 @@
         { "id": "VEN-C3", "proof": "a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8" },
         { "id": "VEN-C4", "proof": "b7404dae6c59a8e6de6ca9efbf2c907eedf1262b" },
         { "id": "VEN-C5", "proof": "3730201d6dd27e15fdcd1a8b0662aa476a587eb6" },
-        { "id": "VEN-C7", "proof": "773c6bab7d3e21e0b0d7d942c9bba72260a08b42" },
+        { "id": "VEN-C7", "proof": "c02e371c44909aa64cb3f2d77284b8a8ab2b4cc5" },
         { "id": "VEN-C8", "proof": "74d22276e9039dc3ee6151d69b9283114ab02ea1" },
         { "id": "VEN-C9", "proof": "90988f6ebcde68338e202a9c637c59398aafe93d" },
         { "id": "VEN-C10", "proof": "9c56eb17613e10ef7712a1852b049ed63cf22b18" },
@@ -132,7 +132,7 @@
         { "id": "VEN-C17", "proof": "ab24961bd6b2f9403736e52ebbac8cc266488a41" },
         { "id": "VEN-C18", "proof": "d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86" },
         { "id": "VEN-C19", "proof": "bc5a2bd3b2363abdea69c4cd89953b612bc970e8" },
-        { "id": "VEN-C20", "proof": "2f05a408e499117c1ddb57f99255dcdb4a236bdf" },
+        { "id": "VEN-C20", "proof": "8af87bb0d07bc975413b05e3bdea9404ed6c1e57" },
         { "id": "VEN-C21", "proof": "6aa79f6405229cd64bd1d55e01c5b11b96657c71" },
         { "id": "VEN-C22", "proof": "002784bedeceb71f767193a33fa66fa85ba59b30" },
         { "id": "VEN-C23", "proof": "a23f9eed95120ca4acea8789bf7d32d2472d84ce" }
@@ -141,7 +141,7 @@
       "requires": [
         {
           "component": "orbit",
-          "revision": "b6cecf8f2ee35570b41cfdc578b095889d917fe2",
+          "revision": "6bc269c40b18f08b95778939518f77556ba91c67",
           "interfaces": [
             { "id": "ORBF", "version": 2, "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
             { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
@@ -403,7 +403,7 @@
         },
         {
           "component": "orbit",
-          "revision": "b6cecf8f2ee35570b41cfdc578b095889d917fe2",
+          "revision": "6bc269c40b18f08b95778939518f77556ba91c67",
           "interfaces": [
             { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
           ]
