@@ -1,46 +1,19 @@
 let
   eon = builtins.getFlake ("path:" + toString ../.);
   pkgs = import eon.inputs.nixpkgs { system = "x86_64-linux"; };
-  revision = "b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa";
-  producer = builtins.fetchGit {
-    url = "https://github.com/Yazelix/eon-runtime.git";
-    rev = revision;
-  };
-  venus = builtins.fetchGit {
-    url = "https://github.com/Yazelix/eon-desktop.git";
-    rev = "bbf4cf41b289f441683eb7a3f225a26a4d3edacc";
-  };
-  canonical = builtins.fromJSON (builtins.readFile ../components/eon-alpha-v3.json);
-  interface = { id = "EONW"; version = 7; proof = revision; };
-  requirement = {
-    component = "eon-workspace-protocol";
-    inherit revision;
-    interfaces = [ interface ];
-  };
-  package = name: {
-    id = name;
-    project = "Eon Runtime";
-    version = (builtins.fromTOML (builtins.readFile "${producer}/crates/${name}/Cargo.toml")).package.version;
-    inherit revision;
-    target = canonical.product.target;
-    source = { kind = "git"; url = "https://github.com/Yazelix/eon-runtime.git"; };
-    artifacts = [ { id = name; kind = "cargo-package"; } ];
-    contracts = [];
-    interfaces = [];
-    requires = [];
-  };
-  codecIdentity = (package "eon-workspace-protocol") // { interfaces = [ interface ]; };
-  runtimeIdentity = (package "eon-runtime") // { requires = [ requirement ]; };
-  venusIdentity = (builtins.head (builtins.filter (x: x.id == "venus") canonical.components)) // {
-    revision = venus.rev;
-    requires = (builtins.head (builtins.filter (x: x.id == "venus") canonical.components)).requires ++ [ requirement ];
-  };
-  candidate = canonical // {
-    composition = canonical.composition // {
-      libraries = canonical.composition.libraries ++ [ runtimeIdentity.id codecIdentity.id ];
-    };
-    components = map (x: if x.id == "venus" then venusIdentity else x) canonical.components
-      ++ [ runtimeIdentity codecIdentity ];
+  producer = eon.inputs.runtime;
+  inherit (eon.inputs) venus;
+  candidate = builtins.fromJSON (builtins.readFile ../components/eon-alpha-v3.json);
+  component = id: builtins.head (builtins.filter (x: x.id == id) candidate.components);
+  codecIdentity = component "eon-workspace-protocol";
+  runtimeIdentity = component "eon-runtime";
+  venusIdentity = component "venus";
+  orbitIdentity = component "orbit";
+  interface = builtins.head codecIdentity.interfaces;
+  revision = codecIdentity.revision;
+  proofSource = builtins.fetchGit {
+    url = codecIdentity.source.url;
+    rev = interface.proof;
   };
   # Synthetic revisions exercise selection branches; these are not accepted sources.
   branchRevision = "1111111111111111111111111111111111111111";
@@ -75,22 +48,45 @@ let
     printf '\n[replace]\n"eon-workspace-protocol:0.1.0" = { path = "other-codec" }\n' >> "$out/venus-replace/Cargo.toml"
     mkdir "$out/venus-build-input/.cargo"
     printf '[build]\nrustflags = ["--cfg", "fixture"]\n' > "$out/venus-build-input/.cargo/config.toml"
+    # Exercise the actual production translation with Cargo's two Git codec
+    # identities, rather than only checking the package-selection predicate.
+    mkdir -p "$out/composed/nix" "$out/composed/assets"
+    for name in Cargo.toml flake.nix flake.lock LICENSE crates components licenses; do
+      cp -R ${eon.outPath}/"$name" "$out/composed/$name"
+    done
+    cp ${eon.packages.x86_64-linux.default.src}/Cargo.lock "$out/composed/Cargo.lock"
+    cp ${./workspace-package.nix} "$out/composed/nix/workspace-package.nix"
+    cp ${../assets/eon.png} "$out/composed/assets/eon.png"
+    chmod -R u+w "$out/composed"
+    sed -i '/^      "id": "eon-runtime",$/,/"target":/s/${runtimeIdentity.revision}/${branchRevision}/' "$out/composed/components/eon-alpha-v3.json"
+    substituteInPlace "$out/composed/crates/eon/Cargo.toml" --replace-fail \
+      'eon-runtime = { git = "${runtimeIdentity.source.url}", rev = "${runtimeIdentity.revision}" }' \
+      'eon-runtime = { git = "${runtimeIdentity.source.url}", rev = "${branchRevision}" }'
+    # Restore controlled Git identities from the single-package production lock.
+    sed -i '
+      /name = "eon-runtime"/,/^\[\[package\]\]$/ { /^version =/a source = "git+${runtimeIdentity.source.url}?rev=${branchRevision}#${branchRevision}"
+      }
+      /name = "eon-workspace-protocol"/,/^\[\[package\]\]$/ { /^version =/a source = "git+${codecIdentity.source.url}?rev=${revision}#${revision}"
+      }
+      /name = "orbit-protocol"/,/^\[\[package\]\]$/ { /^version =/a source = "git+${orbitIdentity.source.url}?rev=${orbitIdentity.revision}#${orbitIdentity.revision}"
+      }
+    ' "$out/composed/Cargo.lock"
+    sed -i '/name = "eon"/,/^\[\[package\]\]$/s|"eon-workspace-protocol"|"eon-workspace-protocol ${codecIdentity.version} (git+${codecIdentity.source.url}?rev=${revision})"|' "$out/composed/Cargo.lock"
+    sed -i '/name = "eon-runtime"/,/^\[\[package\]\]$/s|"eon-workspace-protocol"|"eon-workspace-protocol ${codecIdentity.version} (git+${runtimeIdentity.source.url}?rev=${branchRevision})"|' "$out/composed/Cargo.lock"
+    printf '\n[[package]]\nname = "eon-workspace-protocol"\nversion = "${codecIdentity.version}"\nsource = "git+${runtimeIdentity.source.url}?rev=${branchRevision}#${branchRevision}"\n' >> "$out/composed/Cargo.lock"
   '';
   inputs = {
     inherit runtimeIdentity codecIdentity venusIdentity;
     runtimeSource = producer;
-    codecSource = producer;
-    codecProofSource = producer;
+    codecSource = eon.inputs.workspaceProtocol;
+    codecProofSource = proofSource;
     venusSource = venus;
   };
   gate = import ./workspace-package.nix;
   source = name: { outPath = "${fixtures}/${name}"; rev = branchRevision; };
   accepted = overrides: (builtins.tryEval (gate (inputs // overrides))).success;
   rejected = overrides: !(accepted overrides);
-  runtimeOnly = {
-    runtimeIdentity = runtimeIdentity // { revision = branchRevision; };
-    runtimeSource = source "runtime-only";
-  };
+  runtimeOnly = runtimeDrift "runtime-only";
   runtimeDrift = name: {
     runtimeIdentity = runtimeIdentity // { revision = branchRevision; };
     runtimeSource = source name;
@@ -112,11 +108,16 @@ let
       interfaces = [ (interface // { proof = branchRevision; }) ];
     } else x) candidate.components;
   };
+  composed = (import "${fixtures}/composed/flake.nix").outputs
+    (eon.inputs // { self = eon; runtime = source "runtime-only"; });
+  normalizedSource = composed.packages.x86_64-linux.default.src;
+  normalizedCodec = builtins.filter (x: x.name == codecIdentity.id)
+    (builtins.fromTOML (builtins.readFile "${normalizedSource}/Cargo.lock")).package;
   validator = pkgs.rustPlatform.buildRustPackage {
     pname = "eon-manifest-check";
     version = (builtins.fromTOML (builtins.readFile ../crates/eon-manifest/Cargo.toml)).package.version;
-    src = eon.packages.x86_64-linux.default.src;
-    cargoLock.lockFile = "${eon.packages.x86_64-linux.default.src}/Cargo.lock";
+    src = normalizedSource;
+    cargoLock.lockFile = "${normalizedSource}/Cargo.lock";
     cargoBuildFlags = [ "--package" "eon-manifest" ];
     doCheck = false;
   };
@@ -126,13 +127,14 @@ assert accepted {};
 assert accepted runtimeOnly;
 assert builtins.all (name: rejected (runtimeDrift name)) [ "content" "manifest" "build-input" "lock" "ambiguous" "target-dependency" "dev-only" ];
 assert builtins.all (name: rejected (venusDrift name)) [ "venus-lock" "venus-manifest" "venus-dev-only" "venus-patch" "venus-replace" "venus-build-input" ];
-assert rejected { codecProofSource = producer // { rev = branchRevision; }; };
-assert rejected { codecSource = builtins.removeAttrs producer [ "rev" ]; };
-assert rejected { codecProofSource = producer // { dirtyRev = "${revision}-dirty"; }; };
+assert rejected { codecProofSource = proofSource // { rev = branchRevision; }; };
+assert rejected { codecSource = builtins.removeAttrs eon.inputs.workspaceProtocol [ "rev" ]; };
+assert rejected { codecProofSource = proofSource // { dirtyRev = "${interface.proof}-dirty"; }; };
 assert rejected { runtimeSource = producer // { rev = branchRevision; }; };
 assert rejected { codecSource = { outPath = "${fixtures}/content"; rev = revision; }; };
-assert rejected { codecProofSource = { outPath = "${fixtures}/content"; rev = revision; }; };
+assert rejected { codecProofSource = { outPath = "${fixtures}/content"; rev = interface.proof; }; };
 assert rejected { codecIdentity = codecIdentity // { interfaces = [ interface interface ]; }; };
+assert normalizedCodec == [ { name = codecIdentity.id; version = codecIdentity.version; } ];
 pkgs.runCommand "eon-workspace-package-check" {} ''
   ${validator}/bin/eon-manifest ${json "accepted-packages.json" candidate}
   ${validator}/bin/eon-manifest ${json "distinct-packages.json" distinctGraph}
@@ -144,4 +146,5 @@ pkgs.runCommand "eon-workspace-package-check" {} ''
   fi
   mkdir "$out"
   ln -s ${gate inputs} "$out/codec"
+  ln -s ${normalizedSource} "$out/normalized-source"
 ''

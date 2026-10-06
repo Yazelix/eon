@@ -187,9 +187,9 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
 
 ### How should shared popups extend the workspace wire contract without breaking the installed client?
 
-- **Owner:** Eon's shared workspace protocol; Venus consumes its exact crate.
+- **Owner:** Eon Runtime's canonical workspace protocol; Venus consumes its exact crate.
 - **Read first:** `eon-tool-popups-e13.1`, EON-C10's v5 seed contract and
-  `crates/eon-workspace-protocol/src/{v2,v3,v4,v5}.rs`. Inspect existing Eon
+  Eon Runtime's `crates/eon-workspace-protocol/src/{v2,v3,v4,v5}.rs`. Inspect its
   control/workspace consumers and Venus model/transport/scene/input consumers.
 - **Comparable implementations:** Eon's additive v3 seed
   `96119f29ca2e3ec4ad19bbe272708b07d588429a` and v4 seed
@@ -453,6 +453,21 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
 
 Composition and release references are routed by [Distribution and
 Composition](DISTRIBUTION.md#reference-routing), their owning policy document.
+
+## Runtime package composition
+
+### How should Eon consume independent runtime and codec revisions through one package owner?
+
+- **Owner:** Eon Nix source preparation; Eon Runtime owns implementation and EONW
+- **Read first:** [Eon Runtime at `b8f18b4`](https://github.com/Yazelix/eon-runtime/blob/b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa/README.md)
+  and Cargo's [Git dependencies](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#specifying-dependencies-from-git-repositories)
+- **Read additionally only if:** Read Cargo's [overrides](https://doc.rust-lang.org/cargo/reference/overriding-dependencies.html)
+  when a selected build shape introduces inherited or replaced dependencies.
+- **Preserve / reject:** Keep exact logical package pins, complete codec/build equality,
+  independent accepted proof and one checked Nix codec path. Cargo's distinct Git
+  identities require exact normalization before the composed locked Rust build.
+  Reject version-label equivalence, coupled revision promises, local maintained
+  copies, a second component graph and a general Cargo resolver.
 
 ## Review record template
 

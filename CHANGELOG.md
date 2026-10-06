@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Compose Eon and EonTerm from independently pinned Eon Runtime and EONW
+  packages. Version reports name both sources; checked Nix preparation shares
+  one accepted codec with Venus. Profile refresh preserves live generations;
+  retain their exact prior executable for reattachment after the graph changes.
+
 - Reject an invalid component graph before `eon window new` creates runtime or
   window-parent directories.
 

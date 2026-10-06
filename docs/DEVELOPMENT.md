@@ -5,14 +5,12 @@ and distribution. Eon Sessions owns persistent terminal state and attachment;
 Eon Desktop owns native presentation and input. Yazelix Nova remains a separate
 product line.
 
-`crates/eon` owns executable assembly and defaults; `crates/eon-runtime` owns
-the cohesive runtime mechanisms behind `run(Inputs)`. Runtime unit tests use
-test-only inputs. `crates/eon/tests/workspace_control.rs` exercises the real Eon
-binary, aliases and self-launches. EONW remains in `crates/eon-workspace-protocol`.
-Those local trees are frozen at Eon `e431d75`, matching the accepted independent
-[Eon Runtime](https://github.com/Yazelix/eon-runtime) source `b8f18b4`.
-Runtime evolution belongs there. Venus's provider rebind is accepted; Eon's
-producer activation remains pending in cutover.
+`crates/eon` owns executable assembly and defaults. The independent
+[Eon Runtime](https://github.com/Yazelix/eon-runtime) repository owns the runtime
+mechanisms behind `run(Inputs)` and the canonical EONW package. Eon pins both
+packages separately; its workspace contains only Eon and `eon-manifest`.
+`crates/eon/tests/workspace_control.rs` exercises the real Eon binary, aliases
+and self-launches. Runtime and codec unit tests live with their producer.
 
 ## Sources of truth
 
@@ -34,19 +32,22 @@ distribution-neutral component graph. Validate it with:
 cargo run --locked -p eon-manifest -- components/eon-alpha-v3.json
 ```
 
-The private package-selection gate is checked without changing production pins
-or activating the independent runtime:
+The package-selection and source-preparation check preserves production pins:
 
 ```sh
 nix build --impure --no-link --file nix/workspace-package-check.nix
 ```
 
-This check fetches the exact accepted producer and rebound Venus sources,
-rejects package/build/provenance drift, and exercises separate runtime/codec
-records through the existing graph validator. Cutover binds
+This check consumes the selected immutable runtime, codec and Venus sources
+and accepted codec proof. It rejects package/build/provenance drift and checks
+separate runtime/codec records through the existing graph validator. Its lock
+fixture uses production preparation, supporting equal or distinct source pins.
+Both production consumers bind
 [`nix/workspace-package.nix`](../nix/workspace-package.nix)'s returned codec path
-into both source-preparation consumers before substitution. The current product
-still builds the frozen local runtime and codec.
+before substitution. Nix prepares one codec identity even when Cargo resolves
+identical packages at different runtime/codec Git revisions. Locked Rust checks
+for that composition consume the prepared source; Nix remains the alpha's
+sole composition channel.
 
 Use Beads for implementation plans and deferred decisions:
 

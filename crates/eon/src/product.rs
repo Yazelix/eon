@@ -16,6 +16,7 @@ pub(crate) fn inputs() -> Inputs {
         include_bytes!("../../../Cargo.lock"),
         include_bytes!("../../../flake.nix"),
         include_bytes!("../../../flake.lock"),
+        include_bytes!("../../../nix/workspace-package.nix"),
         MANIFEST.as_bytes(),
     ];
     Inputs {

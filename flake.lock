@@ -239,8 +239,27 @@
         "nixpkgs": "nixpkgs_2",
         "orbit": "orbit",
         "ratconfig": "ratconfig",
+        "runtime": "runtime",
         "venus": "venus",
+        "workspaceProtocol": "workspaceProtocol",
         "yazi": "yazi"
+      }
+    },
+    "runtime": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791245927,
+        "narHash": "sha256-OeFjwt7JZSRJnskKWbKrujPsWhqU9jj7hnsGm0Rjq1M=",
+        "ref": "refs/heads/edge",
+        "rev": "b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa",
+        "revCount": 1,
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-runtime.git"
+      },
+      "original": {
+        "rev": "b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa",
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-runtime.git"
       }
     },
     "rust-analyzer-src": {
@@ -321,16 +340,16 @@
     "venus": {
       "flake": false,
       "locked": {
-        "lastModified": 1790301378,
-        "narHash": "sha256-FGusuHTuB3PnzHM8NrjwmoFK0OmJJdLJd/DvHieXsPo=",
+        "lastModified": 1791249761,
+        "narHash": "sha256-Bbxtda438PNO5aZ8OGD7QA5VwvjabXlc48uAj2+Gxek=",
         "ref": "refs/heads/edge",
-        "rev": "a23f9eed95120ca4acea8789bf7d32d2472d84ce",
-        "revCount": 471,
+        "rev": "bbf4cf41b289f441683eb7a3f225a26a4d3edacc",
+        "revCount": 474,
         "type": "git",
         "url": "https://github.com/Yazelix/eon-desktop.git"
       },
       "original": {
-        "rev": "a23f9eed95120ca4acea8789bf7d32d2472d84ce",
+        "rev": "bbf4cf41b289f441683eb7a3f225a26a4d3edacc",
         "type": "git",
         "url": "https://github.com/Yazelix/eon-desktop.git"
       }
@@ -350,6 +369,23 @@
         "repo": "wdotool",
         "rev": "662d7079b669de164797f46fd437c0cf7854bf82",
         "type": "github"
+      }
+    },
+    "workspaceProtocol": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791245927,
+        "narHash": "sha256-OeFjwt7JZSRJnskKWbKrujPsWhqU9jj7hnsGm0Rjq1M=",
+        "ref": "refs/heads/edge",
+        "rev": "b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa",
+        "revCount": 1,
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-runtime.git"
+      },
+      "original": {
+        "rev": "b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa",
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-runtime.git"
       }
     },
     "yazi": {

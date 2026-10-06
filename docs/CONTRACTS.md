@@ -568,8 +568,8 @@ show the median and observed minimum–maximum, not a confidence interval.
   process names, or moving branches.
 - **Assembly boundary:** `product.rs` supplies fallible validated component
   facts to the current runtime; graph failures precede runtime ownership effects,
-  including `window new` parent-directory creation. Consumer cutover to the
-  independent producer remains planned. See the
+  including `window new` parent-directory creation. The independent producer
+  owns the consumed runtime. See the
   [runtime input contract](ARCHITECTURE.md#ownership-and-invocation).
 - **Proof:** `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`
   - **Environment:** Nix-built x86_64 Linux Wayland alpha
@@ -613,11 +613,11 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Owner:** Eon's component manifest and validator.
 - **Boundary:** The manifest does not own process lifecycle, platform launch
   mechanics, package-manager policy, or child state.
-- **Planned extraction:** Separate runtime and EONW package records use the
+- **Package selection:** Separate runtime and EONW package records use the
   existing schema-3 graph and exact per-component checks; unchanged codec
   identity permits distinct source commits. The
   [package selection contract](ARCHITECTURE.md#independent-package-selection)
-  remains unimplemented.
+  is enforced by the shared Nix preparation gate; EON-C4 records cutover proof.
 - **Proof:** `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`
   - **Environment:** x86_64 Linux Nix alpha
   - **Evidence:** Manifest parser/compatibility checks, exact graph consumption
@@ -670,12 +670,12 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Boundary:** No copied child schema, hidden fork, compatibility adapter, or
   second terminal/rendering owner.
 - **Assembly boundary:** `crates/eon/src/product.rs` owns concrete product inputs;
-  Eon currently invokes frozen local runtime/codec migration copies. The
-  independent Eon Runtime repository owns the nine runtime mechanisms, parsing,
+  Eon invokes exact external runtime/codec packages. The independent Eon Runtime
+  repository owns the nine runtime mechanisms, parsing,
   validation, mutable state and canonical EONW. Eon retains assembly, defaults,
   graph, distribution and process exit handling. The
   [runtime boundary](ARCHITECTURE.md#runtime-library-boundary) records accepted
-  producer transfer and planned consumer cutover.
+  producer transfer and composed package selection.
 - **Assembly-input candidate (2026-10-05):** Mechanically verified and dogfooded
   on dirty `edge` based on `cda9662c2cfac092d98a998b3a54c9b0fb4f2b7a`.
   `eon-runtime-product-inputs-1dbd` records exact source hashes, both Nix artifacts,
@@ -701,7 +701,29 @@ show the median and observed minimum–maximum, not a confidence interval.
   dependencies, and unequal-version CLI/EONW plus assembly-generation checks.
   Both packages remain `0.1.0`; product version remains assembly-owned.
   This is producer acceptance, not new native proof or production activation.
-  Eon's local runtime/codec source is frozen until cutover.
+  The producer and extraction Beads retain the exact transfer proof.
+- **External cutover (2026-10-06):** Mechanically verified, installed, and
+  dogfooded on dirty `edge` based on `7cc82a2a7e3737086dcbb7b0756a4ff2e5a4f6af`.
+  `eon-runtime-cutover-y1wy` records exact candidate hashes and complete evidence.
+  Runtime and EONW select `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`, Venus
+  selects `bbf4cf41b289f441683eb7a3f225a26a4d3edacc`, and Orbit retains
+  `b6cecf8f2ee35570b41cfdc578b095889d917fe2`. No local production runtime or
+  codec copies remain. The 39-test Eon/manifest Rust route, both Nix products,
+  flake checks, package-selection/source-normalization check, and slim closure
+  plus co-installation check pass. A mechanically verified runtime-only
+  `c117b5eca2cee0125c8d7201e5f69cab13c1c45b` candidate passes locked prepared
+  Rust and both Nix routes with fixed codec/Venus; codec drift fails through
+  both actual production gates before substitution. This candidate is not an
+  accepted production pin. Installed artifacts are
+  `/nix/store/jlciixci56c353yijns5lidz1za1sp6a-eon-0.1.0` and
+  `/nix/store/2r1h7h5dz8kl0dd80872bnxvm2rxr91c-eonterm-0.1.0`.
+  A private Sway 1.12 native Wayland/Mesa Vulkan observation proves both old
+  products survive the named profile refresh, new launches use
+  `g1-b5f3ee783f374176d716de3488946ef4`, retained old executables reattach, and
+  the new client inspects and owner-stops old disposable Sessions while new
+  work remains alive. EonTerm configuration reread preserves its Session.
+  Host Sessions and unrelated profile elements are preserved; no automatic
+  adoption or same-generation compatibility is promised.
 - **Proof:** `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`
   - **Environment:** x86_64 Linux composed alpha
   - **Evidence:** Component-boundary checks, management consumer proof, package
@@ -1075,8 +1097,8 @@ show the median and observed minimum–maximum, not a confidence interval.
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content, or direct child-protocol escape hatch.
-- **Planned extraction:** The canonical EONW crate moves to `eon-runtime`
-  without changing its package/API or v2–v7 bytes. Venus rebinds once; later
+- **Package owner:** The canonical EONW crate lives in `eon-runtime`
+  with its accepted package/API and v2–v7 bytes. Venus consumes its exact pin; later
   runtime-only changes with unchanged codec identity retain its exact pin.
   See [package selection](ARCHITECTURE.md#independent-package-selection).
 - **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`
@@ -1215,14 +1237,13 @@ show the median and observed minimum–maximum, not a confidence interval.
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
   identity, presentation compatibility window, remote runtime, plugin API, service-manager
   requirement, or automatic eviction.
-- **Assembly boundary:** One local `eon-runtime` generation owner consumes immutable
+- **Assembly boundary:** The external `eon-runtime` generation owner consumes immutable
   runtime/EONW bytes and the supplied Eon assembly contribution, including
   generated-command inputs. Exact presentation checks remain;
   retain the prior executable to reattach incompatible old work. See
   [generation inputs](ARCHITECTURE.md#defaults-overrides-and-generation) and
   [cutover acceptance](ARCHITECTURE.md#acceptance-boundaries). EON-C4 records
-  the local-library and independent-producer proofs; consumer cutover remains
-  unproved.
+  the local-library, independent-producer and installed consumer cutover proofs.
 - **Proof:** `10c29edf861fac28db48f41a4546165f79777ee6`
   - **Environment:** x86_64 Linux Nix package and installed profile
   - **Evidence:** Separate namespaces, repeated launch, native Present,

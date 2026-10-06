@@ -78,7 +78,7 @@ lists windows for reattachment or exact Stop.
 - [Development](docs/DEVELOPMENT.md): component owners, proofs, and maintainer checks.
 - [Contracts](docs/CONTRACTS.md) and [architecture](docs/ARCHITECTURE.md): exact product boundaries and evidence.
   The [runtime library boundary](docs/ARCHITECTURE.md#runtime-library-boundary)
-  records the accepted independent producer and planned consumer cutover.
+  records independent package selection and the composed runtime.
 - [Changelog](CHANGELOG.md): accepted user-visible changes.
 
 ## LOC scorecard
@@ -88,21 +88,21 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy inputs | 269 |
+| Agent policy inputs | 271 |
 | README | 108 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 2,576 |
-| Distribution and references | 735 |
-| User guides | 316 |
-| Development guide | 65 |
+| Architecture and contracts | 2,596 |
+| Distribution and references | 750 |
+| User guides | 319 |
+| Development guide | 66 |
 | Benchmark report | 317 |
-| Changelog | 385 |
-| Rust source and tests | 18,423 |
-| Cargo manifests | 54 |
-| Component manifest | 374 |
-| Nix composition and checks | 1,075 |
+| Changelog | 390 |
+| Rust source and tests | 5,057 |
+| Cargo manifests | 31 |
+| Component manifest | 431 |
+| Nix composition and checks | 1,146 |
 | Product defaults | 0 |
-| **Total** | **24,959** |
+| **Total** | **11,744** |

@@ -8,8 +8,8 @@ publish = false
 
 [dependencies]
 eon-manifest = { path = "../eon-manifest" }
-eon-runtime = { path = "../eon-runtime" }
-eon-workspace-protocol = { path = "../eon-workspace-protocol" }
+eon-runtime = { git = "https://github.com/Yazelix/eon-runtime.git", rev = "b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa" }
+eon-workspace-protocol = { git = "https://github.com/Yazelix/eon-runtime.git", rev = "b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa" }
 
 [dev-dependencies]
 libc = "=0.2.189"

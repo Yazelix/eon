@@ -8,7 +8,15 @@
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=a23f9eed95120ca4acea8789bf7d32d2472d84ce";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=bbf4cf41b289f441683eb7a3f225a26a4d3edacc";
+      flake = false;
+    };
+    runtime = {
+      url = "git+https://github.com/Yazelix/eon-runtime.git?rev=b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa";
+      flake = false;
+    };
+    workspaceProtocol = {
+      url = "git+https://github.com/Yazelix/eon-runtime.git?rev=b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa";
       flake = false;
     };
     anima = {
@@ -44,6 +52,8 @@
       nixpkgs,
       orbit,
       venus,
+      runtime,
+      workspaceProtocol,
       anima,
       helix,
       yazi,
@@ -71,6 +81,22 @@
           throw "Eon manifest must contain exactly one ${id} component";
       orbitIdentity = component "orbit";
       venusIdentity = component "venus";
+      runtimeIdentity = component "eon-runtime";
+      codecIdentity = component "eon-workspace-protocol";
+      # The approved graph is validated by eon-manifest. Both products force
+      # this gate before translating any selected runtime or codec source.
+      workspaceProtocolSource = import ./nix/workspace-package.nix {
+        inherit runtimeIdentity codecIdentity venusIdentity;
+        runtimeSource = runtime;
+        codecSource = workspaceProtocol;
+        codecProofSource = builtins.fetchGit {
+          url = codecIdentity.source.url;
+          rev = (builtins.head (builtins.filter (x: x.id == "EONW") codecIdentity.interfaces)).proof;
+        };
+        venusSource = venus;
+      };
+      gitDependency = identity: "git+${identity.source.url}?rev=${identity.revision}";
+      gitSource = identity: "${gitDependency identity}#${identity.revision}";
       animaIdentity = component "anima";
       nushellIdentity = component "nushell";
       bashIdentity = component "bash";
@@ -157,21 +183,20 @@
         pkgs.wayland
       ];
       venusProtocolSourceRevision = "b6cecf8f2ee35570b41cfdc578b095889d917fe2";
-      workspaceProtocolRevision = "f41a41c9aecc4c436edfa2f394b832aa6d8711ad";
       venusSource =
         assert orbit.rev == (builtins.head venusIdentity.requires).revision;
         pkgs.runCommand "eon-desktop-${venusIdentity.revision}" { } ''
           cp -R ${venus}/. "$out"
           chmod -R u+w "$out"
           ln -s ${orbit}/crates/protocol "$out/orbit-protocol"
-          ln -s ${./crates/eon-workspace-protocol} "$out/eon-workspace-protocol"
+          ln -s ${workspaceProtocolSource} "$out/eon-workspace-protocol"
           substituteInPlace "$out/Cargo.toml" \
             --replace-fail \
               'orbit-protocol = { git = "https://github.com/Yazelix/eon-sessions.git", rev = "${venusProtocolSourceRevision}" }' \
               'orbit-protocol = { path = "orbit-protocol" }'
           substituteInPlace "$out/Cargo.toml" \
             --replace-fail \
-              'eon-workspace-protocol = { git = "https://github.com/Yazelix/eon.git", rev = "${workspaceProtocolRevision}" }' \
+              'eon-workspace-protocol = { git = "${codecIdentity.source.url}", rev = "${codecIdentity.revision}" }' \
               'eon-workspace-protocol = { path = "eon-workspace-protocol" }'
           substituteInPlace "$out/Cargo.lock" \
             --replace-fail \
@@ -179,7 +204,7 @@
               ""
           substituteInPlace "$out/Cargo.lock" \
             --replace-fail \
-              'source = "git+https://github.com/Yazelix/eon.git?rev=${workspaceProtocolRevision}#${workspaceProtocolRevision}"' \
+              'source = "${gitSource codecIdentity}"' \
               ""
         '';
       venusPackage =
@@ -625,6 +650,7 @@
               ./flake.nix
               ./flake.lock
               ./components/eon-alpha-v3.json
+              ./nix/workspace-package.nix
               ./crates
             ];
           };
@@ -632,7 +658,17 @@
         pkgs.runCommand "eon-${self.rev or self.dirtyRev or "source"}" { } ''
           cp -R ${source}/. "$out"
           chmod -R u+w "$out"
+          cp -R ${runtime}/crates/eon-runtime "$out/crates/eon-runtime"
+          chmod -R u+w "$out/crates/eon-runtime"
+          ln -s ${workspaceProtocolSource} "$out/crates/eon-workspace-protocol"
           ln -s ${orbit}/crates/protocol "$out/crates/orbit-protocol"
+          substituteInPlace "$out/crates/eon/Cargo.toml" \
+            --replace-fail \
+              'eon-runtime = { git = "${runtimeIdentity.source.url}", rev = "${runtimeIdentity.revision}" }' \
+              'eon-runtime = { path = "../eon-runtime" }' \
+            --replace-fail \
+              'eon-workspace-protocol = { git = "${codecIdentity.source.url}", rev = "${codecIdentity.revision}" }' \
+              'eon-workspace-protocol = { path = "../eon-workspace-protocol" }'
           substituteInPlace \
             "$out/crates/eon/Cargo.toml" "$out/crates/eon-runtime/Cargo.toml" \
             --replace-fail \
@@ -642,9 +678,31 @@
             --replace-fail \
               'source = "git+https://github.com/Yazelix/eon-sessions.git?rev=${orbitIdentity.revision}#${orbitIdentity.revision}"' \
               ""
+          # Cargo distinguishes Git revisions even for identical codecs. The
+          # forced package gate permits this one exact lock identity collapse.
+          ${lib.optionalString (gitDependency runtimeIdentity != gitDependency codecIdentity) ''
+            substituteInPlace "$out/Cargo.lock" \
+              --replace-fail '
+            [[package]]
+            name = "eon-workspace-protocol"
+            version = "${codecIdentity.version}"
+            source = "${gitSource runtimeIdentity}"
+            ' "" \
+              --replace-fail \
+                '"eon-workspace-protocol ${codecIdentity.version} (${gitDependency runtimeIdentity})"' \
+                '"eon-workspace-protocol"' \
+              --replace-fail \
+                '"eon-workspace-protocol ${codecIdentity.version} (${gitDependency codecIdentity})"' \
+                '"eon-workspace-protocol"'
+          ''}
+          ${lib.concatMapStringsSep "\n" (source: ''
+            substituteInPlace "$out/Cargo.lock" \
+              --replace-fail 'source = "${source}"' ""
+          '') (lib.unique [ (gitSource runtimeIdentity) (gitSource codecIdentity) ])}
         '';
 
       eonPackage =
+        assert builtins.pathExists workspaceProtocolSource;
         assert nixpkgs.rev == "567a49d1913ce81ac6e9582e3553dd90a955875f";
         assert ratconfig.rev == ratconfigIdentity.revision;
         assert manifest.product.target == system;
@@ -706,6 +764,8 @@
             ln -s ${atuinPackage}/bin/atuin "$out/libexec/eon/bin/atuin"
             ln -s ${carapacePackage}/bin/carapace "$out/libexec/eon/bin/carapace"
             install -Dm444 ${./LICENSE} "$out/share/licenses/eon/LICENSE"
+            install -Dm444 ${runtime}/LICENSE "$out/share/licenses/eon/eon-runtime/LICENSE"
+            install -Dm444 ${runtime}/NOTICE "$out/share/licenses/eon/eon-runtime/NOTICE"
             install -Dm444 ${anima}/LICENSE "$out/share/licenses/eon/anima/LICENSE"
             install -Dm444 ${nushellPackage.src}/LICENSE "$out/share/licenses/eon/nushell/LICENSE"
             install -Dm444 ${bashLicense} "$out/share/licenses/eon/bash/COPYING"
@@ -759,6 +819,8 @@
           postInstall = ''
             mv "$out/bin/eon" "$out/bin/eonterm"
             install -Dm444 ${./LICENSE} "$out/share/licenses/eonterm/LICENSE"
+            install -Dm444 ${runtime}/LICENSE "$out/share/licenses/eonterm/eon-runtime/LICENSE"
+            install -Dm444 ${runtime}/NOTICE "$out/share/licenses/eonterm/eon-runtime/NOTICE"
           '';
           postFixup = ''
             wrapProgram "$out/bin/eonterm" \
@@ -775,7 +837,13 @@
           };
         });
       eontermClosure = pkgs.closureInfo { rootPaths = [ eontermPackage ]; };
+      coinstalledProducts = pkgs.buildEnv {
+        name = "eon-products-profile-check";
+        paths = [ eonPackage eontermPackage ];
+      };
       eontermClosureCheck = pkgs.runCommand "eonterm-closure-check" { } ''
+        test -x ${coinstalledProducts}/bin/eon
+        test -x ${coinstalledProducts}/bin/eonterm
         for required in ${orbitPackage} ${venusPackage}; do
           ${pkgs.gnugrep}/bin/grep -Fx "$required" ${eontermClosure}/store-paths
         done

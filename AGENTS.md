@@ -281,6 +281,8 @@ Eon composes child repositories and keeps their subsystem ownership intact:
   attachment, and terminal state.
 - Eon Desktop contains Venus, which owns the native graphical client and
   renders Orbit sessions.
+- Eon Runtime owns the runtime mechanisms and canonical EONW, consumed as
+  independently pinned Rust packages.
 - Helix owns editing and language integration.
 - Yazi owns file management.
 - Ratconfig owns configuration editing.

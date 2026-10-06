@@ -71,6 +71,9 @@ eon stop all
 confirmation. Closing a window is therefore detach; stopping a generation ends
 its Sessions. Previous generations using EONW v2 through v7 can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
+The runtime extraction changes the component graph and selects a new generation.
+Reattach earlier work with its retained exact Eon or EonTerm executable; the
+new installed client can inspect and stop that work through its owner.
 `previous` attempts every non-dead generation except the installed build's exact
 current generation, including when current has not started.
 `all` includes current and stops it last. Each generation gets its own
