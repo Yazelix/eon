@@ -77,8 +77,8 @@ lists windows for reattachment or exact Stop.
 - [Configuration](docs/CONFIGURATION.md): terminal, shell, popups, and managed tools.
 - [Development](docs/DEVELOPMENT.md): component owners, proofs, and maintainer checks.
 - [Contracts](docs/CONTRACTS.md) and [architecture](docs/ARCHITECTURE.md): exact product boundaries and evidence.
-  The [runtime library boundary](docs/ARCHITECTURE.md#planned-runtime-library-boundary)
-  describes the planned extraction; the current runtime still lives in Eon.
+  The [runtime library boundary](docs/ARCHITECTURE.md#runtime-library-boundary)
+  separates Eon's assembly from its local runtime; independent transfer remains planned.
 - [Changelog](CHANGELOG.md): accepted user-visible changes.
 
 ## LOC scorecard
@@ -94,15 +94,15 @@ Beads data, lock files, and generated artifacts.
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 2,530 |
+| Architecture and contracts | 2,546 |
 | Distribution and references | 735 |
 | User guides | 316 |
-| Development guide | 42 |
+| Development guide | 48 |
 | Benchmark report | 317 |
 | Changelog | 385 |
-| Rust source and tests | 18,295 |
-| Cargo manifests | 38 |
+| Rust source and tests | 18,423 |
+| Cargo manifests | 54 |
 | Component manifest | 374 |
-| Nix composition | 840 |
+| Nix composition | 843 |
 | Product defaults | 0 |
-| **Total** | **24,511** |
+| **Total** | **24,680** |

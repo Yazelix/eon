@@ -1540,13 +1540,13 @@ mod tests {
         crate::managed_environment::TerminalConfig {
             background_opacity,
             background_blur,
-            ..crate::product::inputs().defaults.terminal
+            ..crate::fixtures::inputs().defaults.terminal
         }
     }
 
     #[test]
     fn configured_typography_reaches_both_product_launches() {
-        let inputs = crate::product::inputs();
+        let inputs = crate::fixtures::inputs();
         let root = temporary_directory();
         fs::write(
             root.join("config.toml"),
@@ -1600,7 +1600,7 @@ rows = 30
 
     #[test]
     fn configured_cursor_color_reaches_both_product_launches() {
-        let inputs = crate::product::inputs();
+        let inputs = crate::fixtures::inputs();
         let root = temporary_directory();
         for value in ["random", "preset:ice", "custom:#12ABCF"] {
             fs::write(
@@ -1652,7 +1652,7 @@ rows = 30
 
     #[test]
     fn configured_pane_frames_reach_only_workspace_launches() {
-        let inputs = crate::product::inputs();
+        let inputs = crate::fixtures::inputs();
         let root = temporary_directory();
         for (source, expected) in [
             ("", "true"),
@@ -1702,7 +1702,7 @@ rows = 30
 
     #[test]
     fn venus_receives_workspace_endpoint_only_in_workspace_mode() {
-        let mut inputs = crate::product::inputs();
+        let mut inputs = crate::fixtures::inputs();
         inputs.orbit = "/managed/orbit".into();
         inputs.venus = "/managed/venus".into();
         inputs.managed.shell_bin = None;

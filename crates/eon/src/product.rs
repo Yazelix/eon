@@ -1,9 +1,6 @@
-use crate::{
-    cli::{ComponentFacts, Inputs},
-    managed_environment::{
-        Defaults, ManagedPrograms, PopupCatalog, PopupCommand, PopupDefinition, ShellConfig,
-        StartupAnimation, TerminalConfig, configured_program, nonempty_environment_path,
-    },
+use eon_runtime::{
+    ComponentFacts, Defaults, Inputs, ManagedPrograms, PopupCatalog, PopupCommand, PopupDefinition,
+    ShellConfig, StartupAnimation, TerminalConfig,
 };
 use eon_workspace_protocol::v7::{ALT, PopupGeometry, SHIFT, Shortcut};
 
@@ -140,4 +137,14 @@ pub(crate) fn inputs() -> Inputs {
             shell_bin: nonempty_environment_path("EON_SESSION_BIN"),
         },
     }
+}
+
+fn configured_program(variable: &str, fallback: &str) -> std::path::PathBuf {
+    std::env::var_os(variable).map_or_else(|| fallback.into(), std::path::PathBuf::from)
+}
+
+fn nonempty_environment_path(name: &str) -> Option<std::path::PathBuf> {
+    std::env::var_os(name)
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
 }

@@ -1245,7 +1245,7 @@ mod tests {
     #[test]
     fn orbit_uses_configured_argv_only_for_default_sessions() {
         let root = temporary_directory();
-        let mut inputs = crate::product::inputs();
+        let mut inputs = crate::fixtures::inputs();
         inputs.orbit = "/managed/orbit".into();
         inputs.venus = "/managed/venus".into();
         inputs.managed.shell_bin = Some("/managed/bin".into());

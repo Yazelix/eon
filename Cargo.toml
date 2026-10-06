@@ -1,3 +1,3 @@
 [workspace]
-members = ["crates/eon", "crates/eon-manifest", "crates/eon-workspace-protocol"]
+members = ["crates/eon", "crates/eon-manifest", "crates/eon-runtime", "crates/eon-workspace-protocol"]
 resolver = "3"

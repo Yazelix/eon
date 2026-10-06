@@ -5,6 +5,12 @@ and distribution. Eon Sessions owns persistent terminal state and attachment;
 Eon Desktop owns native presentation and input. Yazelix Nova remains a separate
 product line.
 
+`crates/eon` owns executable assembly and defaults; `crates/eon-runtime` owns
+the cohesive runtime mechanisms behind `run(Inputs)`. Runtime unit tests use
+test-only inputs. `crates/eon/tests/workspace_control.rs` exercises the real Eon
+binary, aliases and self-launches. EONW remains in `crates/eon-workspace-protocol`.
+The local library is the checkpoint before independent runtime transfer.
+
 ## Sources of truth
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — naming, ownership, and sequencing;

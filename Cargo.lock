@@ -7,13 +7,11 @@ name = "eon"
 version = "0.1.0"
 dependencies = [
  "eon-manifest",
+ "eon-runtime",
  "eon-workspace-protocol",
  "libc",
  "orbit-protocol",
- "serde",
  "serde_json",
- "socket2",
- "toml",
 ]
 
 [[package]]
@@ -22,6 +20,19 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "eon-runtime"
+version = "0.1.0"
+dependencies = [
+ "eon-workspace-protocol",
+ "libc",
+ "orbit-protocol",
+ "serde",
+ "serde_json",
+ "socket2",
+ "toml",
 ]
 
 [[package]]

@@ -633,7 +633,8 @@
           cp -R ${source}/. "$out"
           chmod -R u+w "$out"
           ln -s ${orbit}/crates/protocol "$out/crates/orbit-protocol"
-          substituteInPlace "$out/crates/eon/Cargo.toml" \
+          substituteInPlace \
+            "$out/crates/eon/Cargo.toml" "$out/crates/eon-runtime/Cargo.toml" \
             --replace-fail \
               'orbit-protocol = { git = "https://github.com/Yazelix/eon-sessions.git", rev = "${orbitIdentity.revision}" }' \
               'orbit-protocol = { path = "../orbit-protocol" }'
@@ -671,6 +672,8 @@
           cargoTestFlags = [
             "--package"
             "eon"
+            "--package"
+            "eon-runtime"
           ];
           dontUseCargoParallelTests = true;
           nativeBuildInputs = [

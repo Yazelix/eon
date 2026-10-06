@@ -669,16 +669,28 @@ show the median and observed minimum–maximum, not a confidence interval.
 - **Consumes:** Accepted child contracts through EON-C2's exact graph.
 - **Boundary:** No copied child schema, hidden fork, compatibility adapter, or
   second terminal/rendering owner.
-- **Assembly boundary:** `product.rs` owns concrete product inputs in the current
-  crate; runtime owners retain parsing, validation and mutable state.
-  Eon retains assembly, defaults, graph and distribution during extraction;
-  `eon-runtime` is planned to own the existing runtime mechanisms and EONW.
-  The [fourth-repository boundary](ARCHITECTURE.md#planned-runtime-library-boundary)
-  has no runtime acceptance yet; the proofs below cover current ownership.
+- **Assembly boundary:** `crates/eon/src/product.rs` owns concrete product inputs;
+  the local `crates/eon-runtime` library owns the nine runtime mechanisms,
+  parsing, validation and mutable state. Eon retains assembly, defaults, graph,
+  distribution and process exit handling. EONW remains an unchanged sibling
+  crate. The [runtime boundary](ARCHITECTURE.md#runtime-library-boundary) records
+  the local checkpoint; independent fourth-repository transfer remains planned.
 - **Assembly-input candidate (2026-10-05):** Mechanically verified and dogfooded
   on dirty `edge` based on `cda9662c2cfac092d98a998b3a54c9b0fb4f2b7a`.
   `eon-runtime-product-inputs-1dbd` records exact source hashes, both Nix artifacts,
   installed-profile equality and private native Wayland observations.
+- **Local-library candidate (2026-10-05):** Mechanically verified and dogfooded
+  on dirty `edge` based on `fc41a09e240cc5d49caf0c0f06bd2edd4171b650`;
+  source set `11762717e95dc1e5e5e6b670e679f4a04f4f3f054d39628d6cc45641ada6166b`.
+  `eon-runtime-seam-2tes` records the 89-test Rust suite, both Nix artifacts and
+  exact profile equality, unequal product/library version and runtime-only
+  generation probes, and installed private Wayland checks of full Eon and
+  EonTerm close/reopen. EONW and accepted child pins remain unchanged.
+- **Packaging review (2026-10-05):** Source set
+  `3bcb16abee37a97e438662dfe7d898654141e44f93acf20a0dcc96a25accbd05` preserves all Rust sources.
+  `eon-runtime-seam-2tes` separately records equivalent normalized Cargo inputs,
+  rejection of a pin mismatch in either manifest, both Nix builds, and current
+  installed native Eon/EonTerm checks.
 - **Proof:** `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`
   - **Environment:** x86_64 Linux composed alpha
   - **Evidence:** Component-boundary checks, management consumer proof, package
@@ -1192,13 +1204,13 @@ show the median and observed minimum–maximum, not a confidence interval.
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
   identity, presentation compatibility window, remote runtime, plugin API, service-manager
   requirement, or automatic eviction.
-- **Assembly boundary:** One current runtime generation owner consumes immutable
+- **Assembly boundary:** One local `eon-runtime` generation owner consumes immutable
   runtime/EONW bytes and the supplied Eon assembly contribution, including
   generated-command inputs. Exact presentation checks remain;
   retain the prior executable to reattach incompatible old work. See
   [generation inputs](ARCHITECTURE.md#defaults-overrides-and-generation) and
-  [cutover acceptance](ARCHITECTURE.md#acceptance-boundaries). Existing proof
-  phases do not prove the extracted implementation.
+  [cutover acceptance](ARCHITECTURE.md#acceptance-boundaries). EON-C4 records
+  the local-library proof; independent producer and cutover remain unproved.
 - **Proof:** `10c29edf861fac28db48f41a4546165f79777ee6`
   - **Environment:** x86_64 Linux Nix package and installed profile
   - **Evidence:** Separate namespaces, repeated launch, native Present,

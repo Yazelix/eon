@@ -35,20 +35,20 @@ use std::{
 const EON_USAGE: &str = "usage: eon [run [-- COMMAND...]] | window <new|attach ID|stop ID [--json]|stop all> | windows [--json] | anima [STYLE] [CHILD OPTIONS...] | attach [GENERATION] | generations [--json] | stop <GENERATION|previous|all> [--json] | workspace [--json] | tab create [--json] | tab close TAB [--json] | tab directory TAB [--json] -- DIRECTORY | tab move <left|right> [--json] | pane create [--json] | pane move <up|down> [--json] | focus <ID|left|right|up|down> [--json] | versions | config-path";
 const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
-pub(crate) struct ComponentFacts {
-    pub(crate) report: String,
-    pub(crate) orbit_revision: String,
+pub struct ComponentFacts {
+    pub report: String,
+    pub orbit_revision: String,
 }
 
-pub(crate) struct Inputs {
-    pub(crate) version: &'static str,
-    pub(crate) components: Result<ComponentFacts, String>,
-    pub(crate) assembly: &'static [&'static [u8]],
-    pub(crate) defaults: managed_environment::Defaults,
-    pub(crate) orbit: PathBuf,
-    pub(crate) venus: PathBuf,
-    pub(crate) anima: PathBuf,
-    pub(crate) managed: managed_environment::ManagedPrograms,
+pub struct Inputs {
+    pub version: &'static str,
+    pub components: Result<ComponentFacts, String>,
+    pub assembly: &'static [&'static [u8]],
+    pub defaults: managed_environment::Defaults,
+    pub orbit: PathBuf,
+    pub venus: PathBuf,
+    pub anima: PathBuf,
+    pub managed: managed_environment::ManagedPrograms,
 }
 
 impl Inputs {
@@ -57,7 +57,7 @@ impl Inputs {
     }
 }
 
-pub(super) fn run(inputs: Inputs) -> (&'static str, Result<i32, String>) {
+pub fn run(inputs: Inputs) -> (&'static str, Result<i32, String>) {
     let mut arguments = env::args_os();
     let invocation = arguments.next().unwrap_or_default();
     let mut arguments: Vec<OsString> = arguments.collect();

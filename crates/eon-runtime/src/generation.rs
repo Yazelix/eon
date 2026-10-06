@@ -25,6 +25,8 @@ use std::{
 pub(super) fn current_generation(inputs: &Inputs) -> Result<String, String> {
     inputs.components()?;
     let mut sources: Vec<&[u8]> = vec![
+        include_bytes!("lib.rs"),
+        include_bytes!("../Cargo.toml"),
         include_bytes!("cli.rs"),
         include_bytes!("codex_quota.rs"),
         include_bytes!("control.rs"),
@@ -768,6 +770,15 @@ mod tests {
     }
 
     #[test]
+    fn current_generation_consumes_supplied_assembly() {
+        let mut inputs = crate::fixtures::inputs();
+        let first = current_generation(&inputs).unwrap();
+        assert_eq!(first, current_generation(&inputs).unwrap());
+        inputs.assembly = &[b"changed-assembly"];
+        assert_ne!(first, current_generation(&inputs).unwrap());
+    }
+
+    #[test]
     fn discovery_bounds_dead_cleanup_and_rejects_unsafe_metadata() {
         let root = temporary_directory();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
@@ -793,9 +804,9 @@ mod tests {
         let inspection = thread::spawn(move || {
             sender
                 .send(discover_generations(
-                    &crate::product::inputs(),
+                    &crate::fixtures::inputs(),
                     &inspection_root,
-                    &current_generation(&crate::product::inputs()).unwrap(),
+                    &current_generation(&crate::fixtures::inputs()).unwrap(),
                 ))
                 .unwrap();
         });
@@ -819,9 +830,9 @@ mod tests {
         );
 
         discover_generations(
-            &crate::product::inputs(),
+            &crate::fixtures::inputs(),
             &root,
-            &current_generation(&crate::product::inputs()).unwrap(),
+            &current_generation(&crate::fixtures::inputs()).unwrap(),
         )
         .unwrap();
         assert!(!dead.exists());

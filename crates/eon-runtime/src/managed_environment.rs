@@ -14,10 +14,6 @@ use eon_workspace_protocol::v7::{
     Shortcut,
 };
 
-pub(super) fn configured_program(variable: &str, fallback: &str) -> PathBuf {
-    env::var_os(variable).map_or_else(|| fallback.into(), PathBuf::from)
-}
-
 pub(super) fn nonempty_environment_path(name: &str) -> Option<PathBuf> {
     env::var_os(name)
         .filter(|value| !value.is_empty())
@@ -34,21 +30,21 @@ struct EonConfig {
     popups: BTreeMap<String, PopupEntrySettings>,
 }
 
-pub(crate) struct Defaults {
-    pub(crate) shell: ShellConfig,
-    pub(crate) terminal: TerminalConfig,
-    pub(crate) anima: StartupAnimation,
-    pub(crate) popups: PopupCatalog,
-    pub(crate) custom_popup_keep_alive: bool,
-    pub(crate) ansi_palette: &'static str,
-    pub(crate) agent_commands: &'static [&'static [&'static str]],
+pub struct Defaults {
+    pub shell: ShellConfig,
+    pub terminal: TerminalConfig,
+    pub anima: StartupAnimation,
+    pub popups: PopupCatalog,
+    pub custom_popup_keep_alive: bool,
+    pub ansi_palette: &'static str,
+    pub agent_commands: &'static [&'static [&'static str]],
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct StartupAnimation {
-    pub(crate) enabled: bool,
-    pub(crate) style: String,
-    pub(crate) duration_seconds: u64,
+pub struct StartupAnimation {
+    pub enabled: bool,
+    pub style: String,
+    pub duration_seconds: u64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -84,34 +80,34 @@ enum PopupCommandSetting {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum PopupCommand {
+pub enum PopupCommand {
     AgentAuto,
     Argv(Vec<OsString>),
     Project,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PopupDefinition {
-    pub(crate) id: String,
-    pub(crate) label: String,
-    pub(crate) shortcut: Shortcut,
-    pub(crate) command: PopupCommand,
-    pub(crate) keep_alive: bool,
+pub struct PopupDefinition {
+    pub id: String,
+    pub label: String,
+    pub shortcut: Shortcut,
+    pub command: PopupCommand,
+    pub keep_alive: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct PopupCatalog {
-    pub(crate) geometry: PopupGeometry,
-    pub(crate) entries: Vec<PopupDefinition>,
+pub struct PopupCatalog {
+    pub geometry: PopupGeometry,
+    pub entries: Vec<PopupDefinition>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ShellConfig {
-    pub(crate) command: Vec<String>,
-    pub(crate) starship: bool,
-    pub(crate) zoxide: bool,
-    pub(crate) atuin: bool,
-    pub(crate) carapace: bool,
+pub struct ShellConfig {
+    pub command: Vec<String>,
+    pub starship: bool,
+    pub zoxide: bool,
+    pub atuin: bool,
+    pub carapace: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -125,17 +121,17 @@ struct ShellSettings {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct TerminalConfig {
-    pub(crate) background_opacity: f32,
-    pub(crate) background_blur: bool,
-    pub(crate) pane_frames: bool,
-    pub(crate) cursor_trail_color: Option<String>,
-    pub(crate) font_family: Option<String>,
-    pub(crate) font_fallbacks: Vec<String>,
-    pub(crate) font_size: Option<f32>,
-    pub(crate) line_height: Option<f32>,
-    pub(crate) columns: Option<u16>,
-    pub(crate) rows: Option<u16>,
+pub struct TerminalConfig {
+    pub background_opacity: f32,
+    pub background_blur: bool,
+    pub pane_frames: bool,
+    pub cursor_trail_color: Option<String>,
+    pub font_family: Option<String>,
+    pub font_fallbacks: Vec<String>,
+    pub font_size: Option<f32>,
+    pub line_height: Option<f32>,
+    pub columns: Option<u16>,
+    pub rows: Option<u16>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -165,20 +161,20 @@ impl TerminalConfig {
     }
 }
 
-pub(crate) struct ManagedPrograms {
-    pub(crate) nu: PathBuf,
-    pub(crate) bash: PathBuf,
-    pub(crate) zsh: PathBuf,
-    pub(crate) fish: PathBuf,
-    pub(crate) helix: PathBuf,
-    pub(crate) yazi: PathBuf,
-    pub(crate) ya: PathBuf,
-    pub(crate) lazygit: PathBuf,
-    pub(crate) nu_vendor_autoload: Option<PathBuf>,
-    pub(crate) bash_rc: Option<PathBuf>,
-    pub(crate) zsh_config: Option<PathBuf>,
-    pub(crate) fish_init: Option<PathBuf>,
-    pub(crate) shell_bin: Option<PathBuf>,
+pub struct ManagedPrograms {
+    pub nu: PathBuf,
+    pub bash: PathBuf,
+    pub zsh: PathBuf,
+    pub fish: PathBuf,
+    pub helix: PathBuf,
+    pub yazi: PathBuf,
+    pub ya: PathBuf,
+    pub lazygit: PathBuf,
+    pub nu_vendor_autoload: Option<PathBuf>,
+    pub bash_rc: Option<PathBuf>,
+    pub zsh_config: Option<PathBuf>,
+    pub fish_init: Option<PathBuf>,
+    pub shell_bin: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -810,7 +806,7 @@ mod tests {
     #[test]
     fn supplied_defaults_survive_partial_overrides_and_repeated_reads() {
         let root = crate::supervisor::temporary_directory();
-        let mut defaults = crate::product::inputs().defaults;
+        let mut defaults = crate::fixtures::inputs().defaults;
         defaults.shell.command = vec!["supplied-shell".into(), "--interactive".into()];
         defaults.shell.starship = false;
         defaults.terminal.background_opacity = 0.37;
@@ -899,14 +895,14 @@ mod tests {
 
     #[test]
     fn shell_configuration_is_strict_and_defaults_without_a_file() {
-        let inputs = crate::product::inputs();
+        let inputs = crate::fixtures::inputs();
         let root = std::env::temp_dir().join(format!(
             "eon-managed-environment-test-{}-0",
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
         let default = read_shell_config(&root, &inputs.defaults).unwrap();
-        assert_eq!(default.command, ["eon-nu"]);
+        assert_eq!(default.command, ["fixture-shell"]);
         assert!(default.starship && default.zoxide && default.atuin && default.carapace);
 
         fs::write(
@@ -943,7 +939,7 @@ mod tests {
 
     #[test]
     fn startup_animation_settings_are_validated_and_can_be_disabled() {
-        let inputs = crate::product::inputs();
+        let inputs = crate::fixtures::inputs();
         let root = std::env::temp_dir().join(format!(
             "eon-managed-environment-test-{}-anima",
             std::process::id()
@@ -985,19 +981,19 @@ mod tests {
 
     #[test]
     fn terminal_presentation_is_strict_and_bounded() {
-        let inputs = crate::product::inputs();
+        let inputs = crate::fixtures::inputs();
         let root = std::env::temp_dir().join(format!(
             "eon-managed-environment-test-{}-presentation",
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
         let presentation = terminal_presentation(&root, &inputs.defaults).unwrap();
-        assert_eq!(presentation.background_opacity, 0.8);
+        assert_eq!(presentation.background_opacity, 0.6);
         assert!(presentation.background_blur);
 
         for (source, expected_opacity, expected_blur) in [
-            ("", 0.8, true),
-            ("[shell]\nstarship = false\n", 0.8, true),
+            ("", 0.6, true),
+            ("[shell]\nstarship = false\n", 0.6, true),
             ("[terminal]\nbackground_opacity = 0.0\n", 0.0, true),
             (
                 "[terminal]\nbackground_opacity = 0.88\nbackground_blur = false\n",
@@ -1064,7 +1060,7 @@ mod tests {
 
     #[test]
     fn popup_configuration_owns_defaults_overrides_and_collisions() {
-        let inputs = crate::product::inputs();
+        let inputs = crate::fixtures::inputs();
         let root = std::env::temp_dir().join(format!(
             "eon-managed-environment-test-{}-popups",
             std::process::id()
@@ -1085,7 +1081,7 @@ mod tests {
                 defaults.geometry.side_margin,
                 defaults.geometry.vertical_margin
             ),
-            (8.0, 4.0)
+            (11.0, 7.0)
         );
 
         fs::write(
@@ -1222,7 +1218,7 @@ keep_alive = false
 
     #[test]
     fn popup_executable_preflight_uses_the_session_context() {
-        let inputs = crate::product::inputs();
+        let inputs = crate::fixtures::inputs();
         let root = std::env::temp_dir().join(format!(
             "eon-managed-environment-test-{}-popup-cwd",
             std::process::id()
@@ -1263,7 +1259,7 @@ keep_alive = false
             .unwrap_err()
             .contains("cannot construct Eon Session PATH")
         );
-        let mut defaults = crate::product::inputs().defaults;
+        let mut defaults = crate::fixtures::inputs().defaults;
         defaults.agent_commands = &[
             &["./preferred-agent", "--preferred"],
             &["./tool", "--fallback"],
@@ -1322,7 +1318,7 @@ keep_alive = false
 
     #[test]
     fn managed_commands_use_exact_programs_and_private_configuration() {
-        let inputs = crate::product::inputs();
+        let inputs = crate::fixtures::inputs();
         use Tool::{Bash, Fish, Helix, LazyGit, Nu, Ya, Yazi, Zsh};
 
         let programs = ManagedPrograms {

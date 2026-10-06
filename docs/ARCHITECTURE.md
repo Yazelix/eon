@@ -6,9 +6,9 @@ Eon owns product composition and distribution. It ships
 Eon as the full managed product and EonTerm as the reusable terminal product
 while preserving the boundaries of the projects it composes.
 
-The current repository also contains runtime mechanisms and the EONW crate.
-The [planned runtime library boundary](#planned-runtime-library-boundary) moves
-those owners into a fourth repository while Eon retains product assembly.
+The current repository contains a local `eon-runtime` library and the EONW crate.
+The [runtime library boundary](#runtime-library-boundary) separates runtime
+mechanisms from Eon assembly. Their transfer to a fourth repository is planned.
 
 | Repository | Subsystem owner | Owns | Eon consumes |
 |---|---|---|---|
@@ -22,7 +22,8 @@ those owners into a fourth repository while Eon retains product assembly.
 | Yazi | Yazi | File management and navigation | A relocatable file-manager artifact and launch contract |
 | LazyGit | LazyGit | Git TUI behavior and configuration | A pinned executable and native configuration inputs |
 | Ratconfig | Ratconfig | User-facing configuration editing | A schema-aware configuration artifact and output contract |
-| Eon | Eon orchestrator | Eon and EonTerm product policy, launch mode, workspace topology and EONW, component selection, launch, updates, integration checks, distribution | Exact child revisions and their declared artifacts |
+| Eon | Eon orchestrator | Eon and EonTerm assembly, version, defaults, component selection, updates, integration checks, distribution | Exact child revisions and their declared artifacts |
+| Eon (local `eon-runtime`) | Runtime library | Invocation, Session lifecycle, workspace topology, strict configuration parsing, generation identity and EONW consumption | Concrete assembly inputs and canonical Orbit/EONW protocols |
 
 Nova stays independent. Eon may reuse proven ideas from Nova through explicit
 contracts, but the repositories do not share release identity or require each
@@ -137,12 +138,12 @@ They route changes and audits without creating additional product scope.
 - **Owns:** Product version, validated component facts, chosen shell/terminal/Anima
   and popup defaults, palette, Agent preference order, program fallbacks, opaque
   launch inputs, and the immutable assembly contribution to generation identity
-- **Invocation:** `main.rs` passes concrete inputs to the current runtime entry
-  point in `cli.rs`; graph failures are consumed only at required preflight
+- **Invocation:** `main.rs` passes concrete inputs to `eon_runtime::run`;
+  graph failures are consumed only at required preflight in private `cli.rs`
 
 ### CLI and executable boundary
 
-- **Owning surfaces:** `crates/eon/src/cli.rs` and `crates/eon/src/main.rs`
+- **Owning surfaces:** `crates/eon-runtime/src/cli.rs` and `crates/eon/src/main.rs`
 - **Owns:** `cli.rs` owns invocation selection, CLI argument and output projection, and
   managed-tool dispatch; `main.rs` owns executable composition and top-level error-to-exit
   mapping
@@ -151,7 +152,7 @@ They route changes and audits without creating additional product scope.
 
 ### Runtime and supervisor lifecycle
 
-- **Owning surfaces:** `crates/eon/src/supervisor.rs`
+- **Owning surfaces:** `crates/eon-runtime/src/supervisor.rs`
 - **Owns:** Launch mode, private configuration and product runtime roots, startup
   serialization, supervisor composition, presentation policy, and child
   lifecycle coordination
@@ -161,7 +162,7 @@ They route changes and audits without creating additional product scope.
 
 ### EONW transport
 
-- **Owning surfaces:** `crates/eon/src/control.rs`
+- **Owning surfaces:** `crates/eon-runtime/src/control.rs`
 - **Owns:** Owned mode-`0600` endpoint validation, bounded client connection and
   length-delimited request/response I/O, listener lifetime, socket identity, protocol
   failure projection, and concrete client probes
@@ -170,7 +171,7 @@ They route changes and audits without creating additional product scope.
 
 ### Generation lifecycle
 
-- **Owning surfaces:** `crates/eon/src/generation.rs`
+- **Owning surfaces:** `crates/eon-runtime/src/generation.rs`
 - **Owns:** One generation identity combining runtime/EONW bytes with the supplied
   assembly contribution, generation-directory projection, bounded discovery
   and classification, list output, explicit attachment selection, and validated owner-routed
@@ -180,7 +181,7 @@ They route changes and audits without creating additional product scope.
 
 ### Orbit Session lifecycle adapter
 
-- **Owning surfaces:** `crates/eon/src/sessions.rs`
+- **Owning surfaces:** `crates/eon-runtime/src/sessions.rs`
 - **Owns:** Ready-claim authority, management-record and peer validation, lease acquisition,
   same-boot recovery, Orbit launch and rollback, management Stop, terminal-record and
   endpoint reconciliation, durable and transient Session cleanup, and live Session
@@ -190,7 +191,7 @@ They route changes and audits without creating additional product scope.
 
 ### Workspace state
 
-- **Owning surfaces:** `crates/eon/src/workspace.rs`
+- **Owning surfaces:** `crates/eon-runtime/src/workspace.rs`
 - **Owns:** Live ordered tabs and panes, stable identities, authoritative tab launch
   directories, active selection, Session-to-endpoint mapping, one captured-tab
   directory-picker state, deterministic recovered-Session projection, semantic action
@@ -216,7 +217,7 @@ They route changes and audits without creating additional product scope.
 
 ### Managed environment
 
-- **Owning surfaces:** `crates/eon/src/managed_environment.rs` and its `flake.nix` wiring
+- **Owning surfaces:** `crates/eon-runtime/src/managed_environment.rs` and its `flake.nix` wiring
 - **Owns:** Stable managed command names, private configuration projection, strict
   configuration parsing, validation and overrides of assembly-supplied defaults;
   Nix generates the selected tools' startup files
@@ -240,14 +241,15 @@ injects paths without becoming a runtime owner. A subsystem review includes its
 direct callers and consumers; a separate repository integration review
 reconciles invariants that cross these boundaries.
 
-## Planned runtime library boundary
+## Runtime library boundary
 
-**Status: planned.** `eon-runtime-contract-26eu` defines this extraction;
-`eon-runtime-extraction-l4wh` tracks implementation and acceptance. The nine
-runtime modules and `crates/eon-workspace-protocol` still live in Eon.
-Existing EON-C proofs cover the current composition, not the extracted library.
-`eon-runtime-product-inputs-1dbd` implements the concrete assembly-input boundary
-inside the current crate; moving the library and codec remains planned.
+**Status: local library checkpoint.** `eon-runtime-contract-26eu` defines the
+boundary; `eon-runtime-extraction-l4wh` tracks independent transfer and cutover.
+`eon-runtime-product-inputs-1dbd` established Eon-owned assembly inputs.
+`eon-runtime-seam-2tes` moves the nine cohesive mechanisms into
+`crates/eon-runtime`, consumed by Eon's actual executable and Nix packages.
+EONW remains the unchanged sibling `crates/eon-workspace-protocol`. Independent
+runtime/codec production and exact external selection remain planned.
 
 Eon's actual executable and Nix packager consume an exact runtime library and
 codec selection. Invocation must preserve existing Eon/EonTerm commands,
@@ -257,7 +259,7 @@ adds an in-process Rust library, with no additional daemon or IPC boundary.
 
 ### Ownership and invocation
 
-| Owner | Responsibility after extraction |
+| Owner | Responsibility after independent transfer |
 |---|---|
 | Eon | Product contracts/version/default values, actual executable and exit/error mapping, canonical component graph and `eon-manifest`, assets, component selection, Nix translation and distribution |
 | `eon-runtime` | Existing `cli`, `codex_quota`, `control`, `generation`, `managed_environment`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
@@ -287,9 +289,11 @@ the entry point does not impose blanket graph validation on them.
 
 Source dependencies run from Eon to the library and selected Orbit/Venus
 artifacts, from runtime to Orbit's canonical protocol, and from Venus to Orbit's
-protocol and EONW. Runtime builds without an Eon checkout, graph, validator or
-reverse source include. The nine modules move together with private invariant
-owners; the real Eon executable keeps its process integration tests.
+protocol and EONW. The local library has no Eon dependency, graph, validator or
+reverse source include. Its unit tests use independent, test-only input data;
+the real Eon executable keeps its unchanged process integration tests.
+Building an independently transferred runtime without Eon remains the producer
+stage's acceptance boundary.
 
 ### Defaults, overrides and generation
 
