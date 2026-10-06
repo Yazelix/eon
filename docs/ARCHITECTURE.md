@@ -342,12 +342,22 @@ codec has explicit package metadata and no dependencies. Unrelated runtime
 files or lock entries do not change codec identity. Package/wire version labels
 alone cannot prove equivalence.
 
-Nix consumes the graph-selected codec artifact. Before replacing a Git
-dependency with a path, it checks the runtime's relied-on codec inputs and
-Venus's exact Cargo/lock declaration against that selected package's provenance.
-It compiles the selected artifact only after equivalence succeeds. Unproved
-codec drift fails before substitution; a newer runtime checkout is not an
-implicit codec selection.
+The private [`nix/workspace-package.nix`](../nix/workspace-package.nix) gate
+returns the selected codec path only after checking exact fetched revisions,
+complete package equality with the accepted proof and runtime's local codec,
+and the consumers' sole normal codec dependencies and lock declarations.
+`eon-manifest` owns graph and requirement validation. The gate's caller supplies
+immutable sources fetched from the validated graph and accepted proof; arbitrary
+paths carrying a claimed revision are not production provenance.
+
+The gate bounds the current explicit, dependency-free codec and resolver. It rejects
+inherited codec settings, producer profiles, codec overrides and Cargo configuration,
+and ignores unrelated runtime files, lock entries and unused workspace package metadata.
+A broader build shape needs renewed producer or affected-consumer evidence. The check
+uses accepted sources and synthetic drift fixtures; production binding remains
+pending in cutover. Cutover must use this returned path before the shared
+Git-to-path substitutions. A newer runtime checkout is not an implicit codec
+selection.
 
 A runtime-only R0 → R1 change with unchanged accepted codec P0 keeps Venus's
 source, exact EONW Cargo/lock pin and codec proof. It needs composed runtime and

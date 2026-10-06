@@ -11,7 +11,8 @@ test-only inputs. `crates/eon/tests/workspace_control.rs` exercises the real Eon
 binary, aliases and self-launches. EONW remains in `crates/eon-workspace-protocol`.
 Those local trees are frozen at Eon `e431d75`, matching the accepted independent
 [Eon Runtime](https://github.com/Yazelix/eon-runtime) source `b8f18b4`.
-Runtime evolution belongs there; consumer rebinding and cutover remain planned.
+Runtime evolution belongs there. Venus's provider rebind is accepted; Eon's
+producer activation remains pending in cutover.
 
 ## Sources of truth
 
@@ -32,6 +33,20 @@ distribution-neutral component graph. Validate it with:
 ```sh
 cargo run --locked -p eon-manifest -- components/eon-alpha-v3.json
 ```
+
+The private package-selection gate is checked without changing production pins
+or activating the independent runtime:
+
+```sh
+nix build --impure --no-link --file nix/workspace-package-check.nix
+```
+
+This check fetches the exact accepted producer and rebound Venus sources,
+rejects package/build/provenance drift, and exercises separate runtime/codec
+records through the existing graph validator. Cutover binds
+[`nix/workspace-package.nix`](../nix/workspace-package.nix)'s returned codec path
+into both source-preparation consumers before substitution. The current product
+still builds the frozen local runtime and codec.
 
 Use Beads for implementation plans and deferred decisions:
 
