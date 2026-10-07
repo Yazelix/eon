@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Print grouped, colorful CLI help with descriptions and examples for `eon -h`
+  and `eon --help`. Both exit successfully without workspace/configuration
+  effects. Redirected output is plain; `NO_COLOR` and `TERM=dumb` suppress color.
+  Invalid syntax returns a concise usage error with a help hint.
+
 - Keep cursor tails continuous across healthy pane/tab switches and layout
   changes. Eon owns the default duration multiplier `1.5` and the optional
   `[terminal] cursor_trail_duration` setting (`0.25`–`4.0`) for both products.

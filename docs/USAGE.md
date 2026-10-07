@@ -156,6 +156,11 @@ or last entry, `H`/`L` go back/forward, and `/`/`?` with `n`/`N` find entries.
 
 ## CLI commands
 
+The current `edge` build supports `eon -h` and `eon --help`: grouped commands,
+short descriptions, and examples without starting a workspace. Help uses color
+on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
+`TERM=dumb` disables color. Invalid syntax points to `eon --help`.
+
 | Command | Result |
 |---|---|
 | `eon` | Present the current workspace or start its first directory picker |

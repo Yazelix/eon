@@ -74,6 +74,12 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     `custom:#RRGGBB` parsing, colors and rendering; Orbit cursor authority remains.
     Native admission rejects an invalid choice before a new Session starts;
     rejected reopen preserves the existing Session and command.
+  - Standalone `eon -h` and `eon --help` print grouped command descriptions and
+    examples to stdout and exit successfully without starting children or
+    preparing configuration/runtime state. Terminal output uses color unless
+    `NO_COLOR` is nonempty or `TERM=dumb`; redirected output has no ANSI escapes.
+    Invalid syntax remains a concise stderr failure pointing to `eon --help`.
+    Child arguments, including Anima help, retain their existing forwarding.
   - Eon owns the cursor-tail duration default `1.5` and the optional
     `[terminal] cursor_trail_duration` multiplier in the same config file.
     Finite values from `0.25` through `4.0` apply on new/reopened Eon and EonTerm
@@ -89,6 +95,10 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   Venus native launch contracts.
 - **Boundary:** Eon does not infer compatibility from executables, store paths,
   process names, or moving branches.
+- **CLI help proof:** Candidate under `eon-readable-cli-help-5yh4`; Runtime
+  `f2d6d2c6c334403506bbea71831551ef9ce1122b` passes its Rust surface. Exact Eon
+  composition, installed stream/color/layout checks and profile refresh remain
+  pending; earlier runtime proofs do not cover this help extension.
 - **Assembly boundary:** `product.rs` supplies fallible validated component
   facts to the current runtime; graph failures precede runtime ownership effects,
   including `window new` parent-directory creation. The independent producer

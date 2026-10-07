@@ -53,7 +53,8 @@ nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-09-24
 
 The tag pins the release; `eon versions` reports the component graph.
 
-Run `eon` to start.
+Run `eon` to start. The current `edge` build groups commands and examples
+in `eon --help` (or `eon -h`).
 
 A fresh tagged-alpha workspace asks for a directory. Press Enter for a Zoxide
 match, or Tab to browse with Yazi. Closing the window leaves Sessions alive;
@@ -92,20 +93,20 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 271 |
-| README | 111 |
+| README | 112 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 2,037 |
+| Architecture and contracts | 2,047 |
 | Distribution and references | 750 |
-| User guides | 340 |
+| User guides | 345 |
 | Development guide | 89 |
 | Benchmark report | 317 |
-| Changelog | 420 |
-| Rust source and tests | 5,093 |
+| Changelog | 425 |
+| Rust source and tests | 5,156 |
 | Cargo manifests | 31 |
 | Component manifest | 431 |
 | Nix composition and checks | 1,200 |
 | Product defaults | 0 |
-| **Total** | **11,352** |
+| **Total** | **11,436** |

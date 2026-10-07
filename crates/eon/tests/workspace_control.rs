@@ -84,6 +84,69 @@ printf '\0%s\0' "$selection"
 }
 
 #[test]
+fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
+    let root = temporary_directory();
+    let config = root.join("config");
+    let absent_config = root.join("absent-config");
+    let runtime = root.join("runtime");
+    fs::create_dir(&config).unwrap();
+    fs::write(config.join("config.toml"), "invalid configuration = [").unwrap();
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    for (flag, config_home) in [("-h", &config), ("--help", &absent_config)] {
+        let output = eon_command(binary)
+            .arg(flag)
+            .env("EON_CONFIG_HOME", config_home)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .env("EON_ORBIT", root.join("missing-orbit"))
+            .env("EON_VENUS", root.join("missing-venus"))
+            .env("EON_ANIMA", root.join("missing-anima"))
+            .env_remove("NO_COLOR")
+            .env("TERM", "xterm-256color")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{flag}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(output.stderr.is_empty());
+        let help = stdout(&output);
+        assert!(!help.contains('\u{1b}'), "piped help must be plain text");
+        assert!(help.lines().count() > 20);
+        assert!(help.lines().all(|line| line.chars().count() <= 80));
+        for command in [
+            "window attach ID",
+            "tab directory TAB",
+            "config-path",
+            "eon run --",
+        ] {
+            assert!(help.contains(command), "missing {command}");
+        }
+        assert!(!runtime.exists());
+        assert!(!absent_config.exists());
+        assert_eq!(fs::read_dir(&config).unwrap().count(), 1);
+    }
+    for args in [vec!["unknown"], vec!["-h", "extra"], vec!["tab", "close"]] {
+        let output = eon_command(binary)
+            .args(&args)
+            .env("EON_CONFIG_HOME", &absent_config)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env_remove("EON_WINDOW_RUNTIME_DIR")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(error.contains("eon --help"));
+        assert!(error.len() < 200);
+        assert!(!runtime.exists());
+        assert!(!root.join("absent-config").exists());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn anima_command_preserves_child_arguments_status_and_avoids_workspace() {
     let root = temporary_directory();
     let anima = root.join("anima");
