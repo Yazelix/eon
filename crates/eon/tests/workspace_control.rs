@@ -115,6 +115,12 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
         assert!(!help.contains('\u{1b}'), "piped help must be plain text");
         assert!(help.lines().count() > 20);
         assert!(help.lines().all(|line| line.chars().count() <= 80));
+        let mut columns = help
+            .lines()
+            .filter(|line| line.starts_with("  "))
+            .map(|line| line.len() - line.rsplit_once("  ").unwrap().1.len());
+        let column = columns.next().expect("help includes command descriptions");
+        assert!(columns.all(|next| next == column));
         for command in [
             "window attach ID",
             "tab directory TAB",

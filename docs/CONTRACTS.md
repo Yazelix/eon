@@ -96,7 +96,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 - **Boundary:** Eon does not infer compatibility from executables, store paths,
   process names, or moving branches.
 - **CLI help proof:** Candidate under `eon-readable-cli-help-5yh4`; Runtime
-  `f2d6d2c6c334403506bbea71831551ef9ce1122b` passes its Rust surface. Exact Eon
+  `9780ccff908a7e5e506351ad017f219697e17681` passes its Rust surface. Exact Eon
   composition, installed stream/color/layout checks and profile refresh remain
   pending; earlier runtime proofs do not cover this help extension.
 - **Assembly boundary:** `product.rs` supplies fallible validated component

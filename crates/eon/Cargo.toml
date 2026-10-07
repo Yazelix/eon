@@ -8,7 +8,7 @@ publish = false
 
 [dependencies]
 eon-manifest = { path = "../eon-manifest" }
-eon-runtime = { git = "https://github.com/Yazelix/eon-runtime.git", rev = "f2d6d2c6c334403506bbea71831551ef9ce1122b" }
+eon-runtime = { git = "https://github.com/Yazelix/eon-runtime.git", rev = "9780ccff908a7e5e506351ad017f219697e17681" }
 eon-workspace-protocol = { git = "https://github.com/Yazelix/eon-runtime.git", rev = "b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa" }
 
 [dev-dependencies]
