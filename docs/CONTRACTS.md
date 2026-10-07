@@ -519,8 +519,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   reorder the active tab or selected pane, receive terminal exit, or recover
   accepted same-boot runs.
 - **Result:**
-  - Independent durable terminals appear as horizontal tabs containing vertical
-    accordion panes with exactly one expanded pane.
+  - A workspace contains horizontal tabs with vertical accordion panes. Each
+    pane views an independent persistent terminal. When the pane stack is
+    visible, exactly one pane is expanded.
   - Tabs use stable `tN` identities. Each tab header shows its number plus the
     leaf, `~`, or `/` derived from Eon's authoritative launch directory; actions
     retain `tN`, and accessibility includes full launch-path context. Venus

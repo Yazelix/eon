@@ -4,12 +4,10 @@
 
 ![Glowing violet three-fold Eon loop](assets/eon.png)
 
-Eon is a native Wayland terminal workspace with terminals that outlive its
-window. Each tab has a launch directory and a stack of panes; `eonterm` gives
-one command the same terminal lifecycle.
-
-A **workspace** contains **tabs**; each tab groups **panes** around a directory.
-A pane is a view of a persistent **terminal**.
+Eon is a native Wayland **workspace** whose **terminals** outlive its window.
+A workspace contains **tabs**; each tab groups **panes** around a launch
+directory. A pane is a view of a terminal. `eonterm` gives one command the same
+terminal lifecycle.
 
 ## Demo
 
@@ -96,12 +94,12 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 275 |
-| README | 115 |
+| README | 113 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 2,094 |
+| Architecture and contracts | 2,095 |
 | Distribution and references | 750 |
 | User guides | 352 |
 | Development guide | 89 |
@@ -112,4 +110,4 @@ Beads data, lock files, and generated artifacts.
 | Component manifest | 431 |
 | Nix composition and checks | 1,200 |
 | Product defaults | 0 |
-| **Total** | **11,510** |
+| **Total** | **11,509** |

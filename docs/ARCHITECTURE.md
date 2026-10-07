@@ -7,8 +7,8 @@ Eon as the full managed product and EonTerm as the reusable terminal product
 while preserving the boundaries of the projects it composes.
 
 Eon consumes independently pinned runtime and EONW packages from
-[Eon Runtime](https://github.com/Yazelix/eon-runtime), accepted at
-`b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`. The
+[Eon Runtime](https://github.com/Yazelix/eon-runtime). The
+[component manifest](../components/eon-alpha-v3.json) selects each source; the
 [runtime library boundary](#runtime-library-boundary) records package selection
 and installed consumer acceptance.
 
@@ -41,8 +41,8 @@ Orbit owns that terminal's process, PTY and terminal state. Closing its window
 detaches the view; explicitly stopping it ends the terminal.
 
 Product text uses these terms without requiring subsystem names. Technical
-`session-N` identities, socket paths, JSON `session` / `sessions` fields and
-protocol names retain their spellings and refer to terminals.
+`session-N` identities and JSON `session` / `sessions` fields refer to terminals.
+Their spellings, socket paths and protocol names remain unchanged.
 
 Repository documentation uses **Eon Desktop** and **Eon Sessions**. Engineering
 documentation uses **Eon orchestrator**, **Venus client**, and **Orbit terminal
