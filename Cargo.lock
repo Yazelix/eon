@@ -25,9 +25,9 @@ dependencies = [
 [[package]]
 name = "eon-runtime"
 version = "0.1.0"
-source = "git+https://github.com/Yazelix/eon-runtime.git?rev=a57e105a5da87d9c65402c1c4c8ea8b5dc8adc45#a57e105a5da87d9c65402c1c4c8ea8b5dc8adc45"
+source = "git+https://github.com/Yazelix/eon-runtime.git?rev=fb3c9c1b08c7a8c03ca4a8cc57628579c09bdeb4#fb3c9c1b08c7a8c03ca4a8cc57628579c09bdeb4"
 dependencies = [
- "eon-workspace-protocol 0.1.0 (git+https://github.com/Yazelix/eon-runtime.git?rev=a57e105a5da87d9c65402c1c4c8ea8b5dc8adc45)",
+ "eon-workspace-protocol 0.1.0 (git+https://github.com/Yazelix/eon-runtime.git?rev=fb3c9c1b08c7a8c03ca4a8cc57628579c09bdeb4)",
  "libc",
  "orbit-protocol",
  "serde",
@@ -39,7 +39,7 @@ dependencies = [
 [[package]]
 name = "eon-workspace-protocol"
 version = "0.1.0"
-source = "git+https://github.com/Yazelix/eon-runtime.git?rev=a57e105a5da87d9c65402c1c4c8ea8b5dc8adc45#a57e105a5da87d9c65402c1c4c8ea8b5dc8adc45"
+source = "git+https://github.com/Yazelix/eon-runtime.git?rev=fb3c9c1b08c7a8c03ca4a8cc57628579c09bdeb4#fb3c9c1b08c7a8c03ca4a8cc57628579c09bdeb4"
 
 [[package]]
 name = "eon-workspace-protocol"

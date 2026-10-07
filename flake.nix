@@ -8,11 +8,11 @@
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=c02e371c44909aa64cb3f2d77284b8a8ab2b4cc5";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=a27aad23822d3bd0b0e467ffc32c578bbde8b00d";
       flake = false;
     };
     runtime = {
-      url = "git+https://github.com/Yazelix/eon-runtime.git?rev=a57e105a5da87d9c65402c1c4c8ea8b5dc8adc45";
+      url = "git+https://github.com/Yazelix/eon-runtime.git?rev=fb3c9c1b08c7a8c03ca4a8cc57628579c09bdeb4";
       flake = false;
     };
     workspaceProtocol = {

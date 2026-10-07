@@ -1667,12 +1667,13 @@ fn rejected_native_startup_creates_no_session_in_either_product() {
     let root = temporary_directory();
     let config = root.join("config");
     let orbit_log = root.join("orbit.log");
+    let venus_log = root.join("venus.log");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     fs::create_dir(&config).unwrap();
     fs::write(
         config.join("config.toml"),
-        "[terminal]\ncursor_trail_color = 'preset:volt'\n",
+        "[terminal]\ncursor_trail_color = 'preset:volt'\ncursor_trail_duration = 2.5\n",
     )
     .unwrap();
     managed_orbit_executable(&orbit);
@@ -1680,7 +1681,10 @@ fn rejected_native_startup_creates_no_session_in_either_product() {
     let eonterm = root.join("eonterm");
     symlink(eon, &eonterm).unwrap();
     for response in ["exit 1", "printf wrong-v1", "exec cat >/dev/null"] {
-        executable(&venus, &format!("#!/bin/sh\n{response}\n"));
+        executable(
+            &venus,
+            &format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$EON_TEST_VENUS_LOG\"\n{response}\n"),
+        );
         for (binary, args) in [
             (eon, vec!["run", "--", "/bin/false"]),
             (eonterm.as_path(), vec!["--", "/bin/false"]),
@@ -1693,6 +1697,7 @@ fn rejected_native_startup_creates_no_session_in_either_product() {
                 .env("EON_ORBIT", &orbit)
                 .env("EON_VENUS", &venus)
                 .env("EON_TEST_ORBIT_LOG", &orbit_log)
+                .env("EON_TEST_VENUS_LOG", &venus_log)
                 .output()
                 .unwrap();
             assert!(!output.status.success());
@@ -1706,7 +1711,15 @@ fn rejected_native_startup_creates_no_session_in_either_product() {
                 "native rejection started an Orbit Session"
             );
             let stderr = String::from_utf8_lossy(&output.stderr);
-            assert!(stderr.contains("cannot admit Eon Desktop presentation"));
+            assert!(
+                stderr.contains("cannot admit Eon Desktop presentation"),
+                "{stderr}"
+            );
+            assert!(
+                fs::read_to_string(&venus_log)
+                    .unwrap()
+                    .contains("--cursor-trail-duration-v1\n2.5\n")
+            );
         }
     }
     fs::remove_dir_all(root).unwrap();
@@ -1734,6 +1747,26 @@ fn invalid_terminal_configuration_precedes_supervisor_generation_and_children() 
             "background_opacity",
         ),
         ("[terminal]\nbackground_blur = \"yes\"\n", "background_blur"),
+        (
+            "[terminal]\ncursor_trail_duration = nan\n",
+            "cursor_trail_duration",
+        ),
+        (
+            "[terminal]\ncursor_trail_duration = inf\n",
+            "cursor_trail_duration",
+        ),
+        (
+            "[terminal]\ncursor_trail_duration = 0.24\n",
+            "cursor_trail_duration",
+        ),
+        (
+            "[terminal]\ncursor_trail_duration = 4.01\n",
+            "cursor_trail_duration",
+        ),
+        (
+            "[terminal]\ncursor_trail_duration = '2'\n",
+            "cursor_trail_duration",
+        ),
         ("[terminal]\nfont_size = nan\n", "font_size"),
         ("[terminal]\nfont_size = 96.1\n", "font_size"),
         ("[terminal]\nline_height = 0.9\n", "line_height"),
@@ -1831,7 +1864,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--background-blur\n--pane-frames\ntrue\n--workspace\n{}\n",
+            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--background-blur\n--cursor-trail-duration-v1\n1.5\n--pane-frames\ntrue\n--workspace\n{}\n",
             control.display(),
         )
     );
@@ -1877,7 +1910,7 @@ cat >/dev/null
     fs::create_dir(&config).unwrap();
     fs::write(
         config.join("config.toml"),
-        "[terminal]\nbackground_opacity = 0.88\nbackground_blur = false\nfont_size = 20\ncolumns = 100\nrows = 30\n",
+        "[terminal]\nbackground_opacity = 0.88\nbackground_blur = false\ncursor_trail_duration = 2.5\nfont_size = 20\ncolumns = 100\nrows = 30\n",
     )
     .unwrap();
 
@@ -1944,7 +1977,7 @@ cat >/dev/null
 
     fs::write(
         config.join("config.toml"),
-        "[terminal]\nbackground_opacity = 0.0\nfont_size = 24\nline_height = 1.5\nrows = 24\n",
+        "[terminal]\nbackground_opacity = 0.0\ncursor_trail_duration = 3.0\nfont_size = 24\nline_height = 1.5\nrows = 24\n",
     )
     .unwrap();
     let mut repeated = eonterm(&command)
@@ -2013,7 +2046,7 @@ cat >/dev/null
 
     fs::write(
         config.join("config.toml"),
-        "[terminal]\nbackground_opacity = 0.0\nfont_size = 24\nline_height = 1.5\nrows = 24\n",
+        "[terminal]\nbackground_opacity = 0.0\ncursor_trail_duration = 3.0\nfont_size = 24\nline_height = 1.5\nrows = 24\n",
     )
     .unwrap();
     let reopened = eonterm(&config)
@@ -2063,6 +2096,8 @@ cat >/dev/null
         2
     );
     assert!(venus_log.contains("--background-opacity 0.88"));
+    assert!(venus_log.contains("--cursor-trail-duration-v1 2.5"));
+    assert!(venus_log.contains("--cursor-trail-duration-v1 3"));
     assert!(venus_log.contains("--background-opacity 0 --background-blur"));
     assert_eq!(venus_log.matches("--background-blur").count(), 1);
     assert!(venus_log.contains("--font-size 20 --columns 100 --rows 30"));

@@ -43,6 +43,7 @@ pub(crate) fn inputs() -> Inputs {
                 background_blur: true,
                 pane_frames: true,
                 cursor_trail_color: None,
+                cursor_trail_duration: Some(1.5),
                 font_family: None,
                 font_fallbacks: Vec::new(),
                 font_size: None,

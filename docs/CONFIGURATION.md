@@ -1,9 +1,9 @@
 # Configuration
 
 `eon config-path` prints the configuration root, normally
-`~/.config/eon`. Settings live in `config.toml`. The Anima startup and popup
-settings below require the current `edge` build. Omit `[anima]` from this example
-with the tagged alpha, which does not recognize it:
+`~/.config/eon`. Settings live in `config.toml`. This example describes the
+current `edge` build. The tagged alpha does not recognize `[anima]` or
+`cursor_trail_duration`; omit them when using that release:
 
 ```toml
 [terminal]
@@ -11,6 +11,7 @@ background_opacity = 0.80
 background_blur = true
 pane_frames = true
 cursor_trail_color = "preset:ice"
+cursor_trail_duration = 1.5
 font_family = "Iosevka"
 font_size = 16
 line_height = 1.125
@@ -36,6 +37,10 @@ values are `random`, `preset:<name>`, or `custom:#RRGGBB`. The presets are
 the terminal adds a contrasting cursor outline automatically. The cursor body
 uses the chosen color with a shape-aware contrasting edge unless Orbit supplies
 an explicit cursor color.
+
+`cursor_trail_duration` is a finite multiplier from `0.25` through `4.0`,
+defaulting to `1.5`. Larger values keep the tail visible longer. Eon owns this
+setting for both products; no Venus or Orbit configuration is needed.
 
 Opacity accepts `0.0` through `1.0`. Blur and pane frames are booleans. Font size
 accepts 6–96 logical pixels, line height accepts 1–3, and a supplied columns and

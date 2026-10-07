@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keep cursor tails continuous across healthy pane/tab switches and layout
+  changes. Eon owns the default duration multiplier `1.5` and the optional
+  `[terminal] cursor_trail_duration` setting (`0.25`–`4.0`) for both products.
+  Invalid durations fail before starting a Session; reopened surfaces read the
+  current configuration.
+
 - Preserve Yazi's native browsing, find/sort, modal input/help, creation and
   file previews in the directory picker, with Eon's selection controls.
   `a` creates a file; append `/` to create a folder. Enter selects a folder

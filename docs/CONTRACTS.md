@@ -74,6 +74,12 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     `custom:#RRGGBB` parsing, colors and rendering; Orbit cursor authority remains.
     Native admission rejects an invalid choice before a new Session starts;
     rejected reopen preserves the existing Session and command.
+  - Eon owns the cursor-tail duration default `1.5` and the optional
+    `[terminal] cursor_trail_duration` multiplier in the same config file.
+    Finite values from `0.25` through `4.0` apply on new/reopened Eon and EonTerm
+    surfaces. Invalid duration fails before children; live surfaces retain their
+    startup snapshot. Venus consumes the launch value and owns bounded motion,
+    including healthy pane/tab/layout continuity. No separate child configuration.
 - **Important failures:** Missing, malformed, incompatible, replaced, or
   non-ready components fail before publishing a usable workspace or terminal.
 - **Owner:** Eon graph validation, icon selection and desktop metadata; Eon
