@@ -14,7 +14,7 @@ and installed consumer acceptance.
 
 | Repository | Subsystem owner | Owns | Eon consumes |
 |---|---|---|---|
-| Eon Sessions | Orbit | Persistent sessions, PTYs, terminal state, attachment, transport | A versioned session and attachment contract |
+| Eon Sessions | Orbit | Persistent terminals, PTYs, terminal state, attachment, transport | A versioned session and attachment contract |
 | Eon Desktop | Venus | Native windows, surfaces, input, rendering, desktop integration | A versioned client artifact and launch contract |
 | Anima | Anima | Terminal animations, style selection, input dismissal, and playback timing | A pinned executable for startup, CLI, and transient popup |
 | Nushell | Nushell | Shell language, execution, and native configuration | A pinned shell artifact and vendor-autoload input |
@@ -25,7 +25,7 @@ and installed consumer acceptance.
 | LazyGit | LazyGit | Git TUI behavior and configuration | A pinned executable and native configuration inputs |
 | Ratconfig | Ratconfig | User-facing configuration editing | A schema-aware configuration artifact and output contract |
 | Eon | Eon orchestrator | Eon and EonTerm assembly, version, defaults, component selection, updates, integration checks, distribution | Exact child revisions and their declared artifacts |
-| Eon Runtime | Runtime library and EONW | Invocation, Session lifecycle, workspace topology, strict configuration parsing, generation identity and canonical EONW codecs | Independently pinned runtime and canonical codec packages |
+| Eon Runtime | Runtime library and EONW | Invocation, terminal lifecycle, workspace topology, strict configuration parsing, generation identity and canonical EONW codecs | Independently pinned runtime and canonical codec packages |
 
 Nova stays independent. Eon may reuse proven ideas from Nova through explicit
 contracts, but the repositories do not share release identity or require each
@@ -35,11 +35,17 @@ other at runtime.
 
 Public documentation presents the full composition as **Eon** and its reusable
 terminal product as **EonTerm**. Their only command spellings are `eon` and
-`eonterm`. It calls durable terminal work **Sessions** and does not require
-users to learn subsystem names.
+`eonterm`. A **workspace** contains **tabs** and **panes**. Each tab groups
+panes around a launch directory; a pane is a view of a persistent **terminal**.
+Orbit owns that terminal's process, PTY and terminal state. Closing its window
+detaches the view; explicitly stopping it ends the terminal.
+
+Product text uses these terms without requiring subsystem names. Technical
+`session-N` identities, socket paths, JSON `session` / `sessions` fields and
+protocol names retain their spellings and refer to terminals.
 
 Repository documentation uses **Eon Desktop** and **Eon Sessions**. Engineering
-documentation uses **Eon orchestrator**, **Venus client**, and **Orbit session
+documentation uses **Eon orchestrator**, **Venus client**, and **Orbit terminal
 runtime** when subsystem ownership matters. Venus and Orbit are not additional
 public products.
 
@@ -53,7 +59,7 @@ repository names.
 Coupled greenfield projects make simultaneous dogfooding expensive. Eon
 therefore uses one active implementation frontier:
 
-1. Eon Sessions proves Orbit's persistent local sessions, attachment, and
+1. Eon Sessions proves Orbit's persistent local terminals, attachment, and
    client-facing protocol against a simple reference client.
 2. Eon Desktop proves Venus's native graphical interaction against an accepted
    Orbit revision.
@@ -90,7 +96,7 @@ EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
 snapshots, supervisor lifecycle results, structured failures, and bounded
 framing. EONW v7 carries Eon-owned raw tab launch directories, the popup catalog,
-tab-scoped popup Sessions, explicit retarget and chooser-completion actions, and
+tab-scoped popup terminals, explicit retarget and chooser-completion actions, and
 an optional pending tab's absent pane selection without interpreting Orbit
 terminal metadata. Workspace and
 lifecycle results are separate types, so the pinned
@@ -123,7 +129,7 @@ Within one exact runtime generation, Eon consumes Orbit's canonical private
 management records and lease stream without copying their schema. Eon validates
 the complete live identity and acquires every lease before publishing EONW or
 Venus. Same-boot supervisor replacement retains the exact Orbit runs and maps
-their numeric Session identities into one synthetic `t1` whose launch directory
+their numeric terminal identities into one synthetic `t1` whose launch directory
 is fresh replacement policy; it does not reconstruct prior topology or launch
 directories. Whole-generation stop is EONW-owned product
 policy routed through Orbit-owned Stop and terminal records. Venus is tied to
@@ -160,7 +166,7 @@ assembly, manifest and Nix paths belong to this repository.
 - **Owns:** Launch mode, private configuration and product runtime roots, startup
   serialization, supervisor composition, presentation policy, and child
   lifecycle coordination
-- **Does not own:** CLI parsing, generation discovery policy, EONW transport, Orbit Session
+- **Does not own:** CLI parsing, generation discovery policy, EONW transport, Orbit terminal
   mechanisms, PTYs, terminal state, native rendering, persistent topology, or managed-tool
   behavior
 
@@ -180,15 +186,15 @@ assembly, manifest and Nix paths belong to this repository.
   assembly contribution, generation-directory projection, bounded discovery
   and classification, list output, explicit attachment selection, and validated owner-routed
   stop initiation
-- **Does not own:** EONW transport, Orbit Session lifecycle, component launch, topology, or
+- **Does not own:** EONW transport, Orbit terminal lifecycle, component launch, topology, or
   CLI dispatch
 
-### Orbit Session lifecycle adapter
+### Orbit terminal lifecycle adapter
 
 - **Owning surfaces:** `crates/eon-runtime/src/sessions.rs`
 - **Owns:** Ready-claim authority, management-record and peer validation, lease acquisition,
   same-boot recovery, Orbit launch and rollback, management Stop, terminal-record and
-  endpoint reconciliation, durable and transient Session cleanup, and live Session
+  endpoint reconciliation, durable and transient terminal cleanup, and live terminal
   bookkeeping
 - **Does not own:** Orbit-owned shutdown mechanics and terminal state, workspace topology,
   EONW transport, Venus presentation, or generation discovery
@@ -197,8 +203,8 @@ assembly, manifest and Nix paths belong to this repository.
 
 - **Owning surfaces:** `crates/eon-runtime/src/workspace.rs`
 - **Owns:** Live ordered tabs and panes, stable identities, authoritative tab launch
-  directories, active selection, Session-to-endpoint mapping, one captured-tab
-  directory-picker state, deterministic recovered-Session projection, semantic action
+  directories, active selection, terminal-to-endpoint mapping, one captured-tab
+  directory-picker state, deterministic recovered-terminal projection, semantic action
   results, and complete snapshots
 - **Does not own:** EONW encoding, Orbit state, prior-topology persistence, shell-CWD
   inference, picker rendering, or Venus geometry
@@ -259,7 +265,7 @@ and earlier acceptance remain in `eon-runtime-extraction-l4wh`.
 
 Eon's actual executable and Nix packager consume an exact runtime library and
 codec selection. Invocation must preserve existing Eon/EonTerm commands,
-errors, configuration, Session authority and generation isolation. Invalid
+errors, configuration, terminal authority and generation isolation. Invalid
 graph or package inputs fail at their existing required boundary. The extraction
 adds an in-process Rust library, with no additional daemon or IPC boundary.
 
@@ -270,7 +276,7 @@ adds an in-process Rust library, with no additional daemon or IPC boundary.
 | Eon | Product contracts/version/default values, actual executable and exit/error mapping, canonical component graph and `eon-manifest`, assets, component selection, Nix translation and distribution |
 | `eon-runtime` | Existing `cli`, `codex_quota`, `control`, `generation`, `managed_environment`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
 | `eon-workspace-protocol` in `eon-runtime` | Canonical EONW package/API/codecs, retaining package `0.1.0`, Rust `1.95`, Apache-2.0 and v2–v7 exports/bytes at transfer |
-| Orbit and Venus | Their existing Session/terminal and native-client authority |
+| Orbit and Venus | Their existing terminal and native-client authority |
 
 Eon calls one concrete library entry point. Runtime handles invocation selection,
 CLI projection and managed dispatch; Eon's real `main` retains process exit
@@ -309,7 +315,7 @@ An absent config file, section or field inherits those supplied defaults.
 Explicit values retain their current meaning, including false values and empty
 collections where accepted. Runtime preserves unknown-field rejection, popup
 constraints and validation bounds. It reads shell config for each new implicit
-shell Session and terminal config when opening or reopening a surface; it
+shell terminal and terminal config when opening or reopening a surface; it
 does not cache mutable config in the immutable assembly inputs.
 
 Deadlines, framing limits, grammar, permissions, identity checks and native

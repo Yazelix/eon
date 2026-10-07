@@ -12,7 +12,7 @@
       flake = false;
     };
     runtime = {
-      url = "git+https://github.com/Yazelix/eon-runtime.git?rev=9780ccff908a7e5e506351ad017f219697e17681";
+      url = "git+https://github.com/Yazelix/eon-runtime.git?rev=7c886d87551225c7581892901f95ac1b853952c7";
       flake = false;
     };
     workspaceProtocol = {
@@ -602,7 +602,7 @@
       desktopItem = pkgs.makeDesktopItem {
         name = "eon";
         desktopName = "Open Eon";
-        comment = "Launch Eon for desktop and Sessions";
+        comment = "Open an Eon workspace with persistent terminals";
         exec = "eon";
         actions.NewWindow = {
           name = "New Eon Window";
@@ -618,7 +618,7 @@
         keywords = [
           "terminal"
           "shell"
-          "sessions"
+          "workspace"
         ];
       };
 
@@ -818,7 +818,7 @@
               --prefix TERMINFO_DIRS : "${orbitPackage}/share/terminfo"
           '';
           meta = {
-            description = "Thin orchestrator for Eon for desktop and Sessions";
+            description = "Native terminal workspaces with persistent terminals";
             license = lib.licenses.asl20;
             mainProgram = "eon";
             platforms = [ system ];

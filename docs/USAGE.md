@@ -20,7 +20,7 @@ has partial M1 proof, including physical Scaleway tests. Venus acceptance and
 full Eon Nix composition remain open, so this release has no Mac install path.
 X11, Xwayland, ARM Linux, Intel macOS, direct bundles, Home Manager installation,
 background updates, and release automation are unsupported. Restarting the
-machine ends live Session process state.
+machine ends live terminal process state.
 
 ## Install and start
 
@@ -42,11 +42,11 @@ set `[anima].enabled = false` in `config.toml` to skip it. The directory picker
 then opens. Press Enter to use a Zoxide history
 match, or Tab to browse folders with Yazi. In the browser, Enter chooses the
 highlighted folder and F1 shows its keys. Cancelling a pending picker starts a
-Session in that tab's directory if it is the only tab; otherwise it removes
+terminal in that tab's directory if it is the only tab; otherwise it removes
 just that pending tab.
 
-A Session starts after the directory is chosen. Closing the Eon window detaches
-the desktop without stopping its Sessions or PTY commands. Reconnect with:
+A terminal starts after the directory is chosen. Closing the Eon window detaches
+the desktop without stopping its terminals or PTY commands. Reconnect with:
 
 ```sh
 eon attach
@@ -56,7 +56,7 @@ Press **Alt+/** inside Eon to open the native Shortcuts dialog. It includes the
 fixed workspace bindings and every enabled popup binding. Escape or Alt+/ closes
 it.
 
-### Stop Sessions
+### Stop terminals
 
 To inspect or stop work explicitly:
 
@@ -67,9 +67,9 @@ eon stop previous
 eon stop all
 ```
 
-`eon stop` shows the generation's live Session identities and asks for
+`eon stop` shows the generation's live terminal identities and asks for
 confirmation. Closing a window is therefore detach; stopping a generation ends
-its Sessions. Previous generations using EONW v2 through v7 can be stopped
+its terminals. Previous generations using EONW v2 through v7 can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
 The runtime extraction changes the component graph and selects a new generation.
 Reattach earlier work with its retained exact Eon or EonTerm executable; the
@@ -84,11 +84,15 @@ skips confirmation and returns an array of attempted results, or `[]` if there
 is nothing to stop.
 
 Run a batch command outside the generations it will stop when you need every
-attempt or a complete result: stopping the caller's own Session can terminate
+attempt or a complete result: stopping the caller's own terminal can terminate
 the CLI mid-batch. Fixed-namespace legacy work has no authoritative Stop action
 and is reported as unavailable.
 
 ## Workspace and picker
+
+A **workspace** is the whole collection of tabs and panes. A **tab** groups
+panes around its launch directory. A **pane** is a view of a persistent
+**terminal**, whose process, PTY and terminal state outlive the window.
 
 | Shortcut | Action |
 |---|---|
@@ -123,9 +127,9 @@ refreshes show `old` only when the last successful value is more than one hour
 old; signing out clears quota.
 
 Tabs own launch directories; changing a shell's directory does not rename or
-retarget its tab. Project changes the directory used by future Sessions in the
-captured tab without moving existing Sessions. Git and Agent are tab-scoped
-Sessions whose terminal state survives hiding and reopening. Anima is transient:
+retarget its tab. Project changes the directory used by future terminals in the
+captured tab without moving existing terminals. Git and Agent are tab-scoped
+terminals whose terminal state survives hiding and reopening. Anima is transient:
 closing its popup stops playback and returns to the tab.
 
 ### Scrolling and directory picker
@@ -169,17 +173,17 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon window new` | Open an independent Eon window and print its window ID |
 | `eon windows [--json]` | List independent windows and their generations |
 | `eon window attach ID` | Present one window's current generation after detach |
-| `eon window stop ID [--json]` | Stop only the selected window's Sessions |
+| `eon window stop ID [--json]` | Stop only the selected window's terminals |
 | `eon window stop all` | Attempt Stop in every independent window |
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
 | `eon generations [--json]` | List validated current and older generations |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
 | `eon stop previous [--json]` | Attempt every other non-dead generation |
 | `eon stop all [--json]` | Attempt every non-dead generation, including current |
-| `eon workspace [--json]` | Inspect the live tab, pane, popup, and Session mapping |
+| `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping |
 | `eon tab create [--json]` | Create a distinct pending tab with its directory picker, even while another picker is open |
 | `eon tab close TAB [--json]` | Close the expected active non-final tab |
-| `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future Sessions |
+| `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |
 | `eon tab move left\|right [--json]` | Move the active tab one position |
 | `eon pane create [--json]` | Create a pane in the active tab |
 | `eon pane move up\|down [--json]` | Move the selected pane one position |
@@ -190,11 +194,14 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 Workspace commands target the current-generation supervisor. Human and `--json`
 output describe the same result. A missing supervisor is not started implicitly;
 run `eon` first.
+The current `edge` build calls Orbit-backed instances terminals in human output.
+JSON retains the technical `session` / `sessions` fields and `session-N` IDs;
+these refer to terminals.
 Commands run inside an independent window target that window; commands outside
 one target the default workspace. `eon stop all` covers generations in that
 current namespace. `eon window stop all` covers independent windows and visits
-the caller's window last. Run it outside those Sessions when you need its final
-status; stopping its own Session can terminate the CLI.
+the caller's window last. Run it outside those terminals when you need its final
+status; stopping its own terminal can terminate the CLI.
 
 ## EonTerm
 
@@ -227,7 +234,7 @@ composition.
 - **The window closed but commands remain:** this is detach behavior. Use
   `eon attach` to return or `eon stop GENERATION` to end them.
 - **A replacement window rejects configuration:** fix `config.toml` and run
-  `eon attach`; the existing Sessions remain alive.
+  `eon attach`; the existing terminals remain alive.
 - **Graphics fail outside native Wayland or on unproved hardware:** that
   environment is outside the supported alpha boundary.
 

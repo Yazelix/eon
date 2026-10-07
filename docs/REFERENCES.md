@@ -82,14 +82,14 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
   only after Eon activates distribution graduation.
 - **Preserve / reject:** Study terminal search, graphics, URI handling, native Wayland
   integration, damage, benchmark methods, stripped archives, and package publication.
-  Preserve durable Orbit Sessions, Venus presentation, Eon workspace authority, and the
+  Preserve durable Orbit terminals, Venus presentation, Eon workspace authority, and the
   canonical component graph. Reject Monstar's PTY and terminal ownership, single-process
   architecture, renderer, Zig toolchain, direct dependency selection, feature-parity
   roadmap, and size or performance extrapolation across Eon's process boundary.
 
-## Session workspace experience
+## Terminal workspace experience
 
-### How should Eon organize and switch among durable terminal sessions without absorbing terminal or rendering state?
+### How should Eon organize and switch among durable terminals without absorbing terminal or rendering state?
 
 - **Owner:** Eon workspace policy and Venus presentation
 - **Read first:** [Canario](https://rapha.land/canario/) and its [frontend at Rio
@@ -101,9 +101,9 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
   Consume exact Orbit identities; do not simulate survival, copy source, or move PTY
   lifetime into Venus.
 
-### How should a native client borrow durable sessions across local and SSH hosts without taking ownership of their state?
+### How should a native client borrow durable terminals across local and SSH hosts without taking ownership of their state?
 
-- **Owner:** Eon lifecycle policy, Orbit sessions, and Venus presentation
+- **Owner:** Eon lifecycle policy, Orbit terminals, and Venus presentation
 - **Read first:** [Ghosthub `0.7.0` at
   `072cc83559bd`](https://github.com/kenn-io/ghosthub/tree/072cc83559bd590ed5d759af05ec0a1868dbf359)
 - **Read additionally only if:** Read its
@@ -120,7 +120,7 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
 
 ### How should Eon distinguish controller loss, host loss, presentation replay, provider resume, and remote transport without duplicating terminal authority?
 
-- **Owner:** Eon lifecycle policy, Orbit sessions, and Venus presentation
+- **Owner:** Eon lifecycle policy, Orbit terminals, and Venus presentation
 - **Read first:** [Unpeel `0.2.0` at
   `9580a83f009f`](https://github.com/unpeel-com/unpeel/tree/9580a83f009fe19775116cacb46e74570958ca56)
 - **Read additionally only if:** Read its [Host/Controller transport
@@ -137,7 +137,7 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
   process resurrection, remote-control-as-remote-compute, and inherited relay or mobile
   scope.
 
-### How should Eon separate live Session continuity from workspace reconstruction after the Session owner exits?
+### How should Eon separate live terminal continuity from workspace reconstruction after the terminal owner exits?
 
 - **Owner:** Eon durability policy over Orbit lifecycle
 - **Read first:** [TUIOS at
@@ -152,7 +152,7 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
   working directory as process, scrollback, or terminal-state survival; reject TUIOS daemon,
   emulator, multi-client, and terminal-in-terminal ownership.
 
-### How should one tab choose the launch directory for future Sessions without treating shell navigation as product policy?
+### How should one tab choose the launch directory for future terminals without treating shell navigation as product policy?
 
 - **Owner:** Eon workspace policy
 - **Read first:** Rust
@@ -221,7 +221,7 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
 
 ### How should Eon show Anima before a fresh picker and in an on-demand popup?
 
-- **Owner:** Eon launch and popup policy; Anima playback; Orbit terminal Session;
+- **Owner:** Eon launch and popup policy; Anima playback; Orbit terminal;
   Venus presentation.
 - **Read first:** [Anima 0.2.0 at `b3133f0`](https://github.com/Yazelix/anima/tree/b3133f057fa0029b3e06c85301161168c48bb799),
   especially its README, CLI entrypoint and screen runner; EON-C18 and Eon's
@@ -230,7 +230,7 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
   delegates `yzx anima` and presents a transient random animation on Alt+Shift+A.
 - **Preserve / reject:** Use one exact Anima executable through the component
   graph. Wait for Venus readiness before startup playback and reuse the
-  transient popup Session for on-demand playback. Do not copy style lists,
+  transient popup terminal for on-demand playback. Do not copy style lists,
   rendering, terminal-mode handling, or Nova's Zellij mechanism.
 
 
@@ -275,7 +275,7 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
   lifecycle](https://github.com/agentclientprotocol/agent-client-protocol/blob/9ef3e3800b4070632b54846b5ddf310fc4b35b03/docs/protocol/v1/prompt-turn.mdx)
   only when that protocol phase is in scope.
 - **Preserve / reject:** Keep provider sessions adapter-owned and distinct from Eon work and
-  Orbit Sessions. Reject universal-support assumptions, invented semantics, and ACP
+  Orbit terminals. Reject universal-support assumptions, invented semantics, and ACP
   conversation state as Eon work.
 
 ### How should a headless agent expose live activity separately from conversation context?
@@ -292,7 +292,7 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
   distinct from live observations, and explicit turn/tool start, end, progress and error
   events. These are useful sidebar inputs without parsing terminal output. Preserve
   provider evidence and keep conversation context distinct from Beads work and Orbit
-  Sessions. A process or turn ending is not proof that the work succeeded. This reference
+  terminals. A process or turn ending is not proof that the work succeeded. This reference
   selects no yoke/yoagent harness, transcript schema, provider support, embedded Nushell
   engine, web UI, or persistence mechanism.
 

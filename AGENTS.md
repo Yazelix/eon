@@ -277,10 +277,10 @@ or alternatives give materially worse results; explain why before doing so.
 
 Eon composes child repositories and keeps their subsystem ownership intact:
 
-- Eon Sessions contains Orbit, which owns persistent terminal sessions,
+- Eon Sessions contains Orbit, which owns persistent terminals,
   attachment, and terminal state.
 - Eon Desktop contains Venus, which owns the native graphical client and
-  renders Orbit sessions.
+  renders Orbit terminals.
 - Eon Runtime owns the runtime mechanisms and canonical EONW, consumed as
   independently pinned Rust packages.
 - Helix owns editing and language integration.
@@ -294,6 +294,10 @@ repository, compatibility layer, or release channel for Nova.
 
 Do not copy child behavior into Eon. Fix a child project when its contract is
 wrong or incomplete.
+
+Use workspace, tab, pane and terminal in product text as defined in
+`docs/ARCHITECTURE.md#naming-boundary`. Technical session identities, JSON fields,
+protocol names and the Eon Sessions repository name retain their spellings.
 
 ## One Active Frontier
 
@@ -405,7 +409,7 @@ Keep Eon's Linux and Wayland contracts independent of any specific init or
 service manager. Proof on systemd does not authorize a systemd runtime or
 distribution requirement. Orbit owns bounded PTY process-group shutdown and
 direct-child reaping without cgroup delegation; deliberately detached processes
-may survive Session stop. Claim non-systemd support only after installed
+may survive terminal stop. Claim non-systemd support only after installed
 dogfood in such an environment.
 
 Keep wire contracts, component identity, and product state platform-neutral
@@ -439,7 +443,7 @@ that the changed installed behavior or artifact passes its cheapest exact
 check. A build or profile-update failure leaves the change incomplete.
 
 Do not stop or restart a running Eon supervisor automatically because that
-terminates its live Sessions. Update the profile, preserve the running
+terminates its live terminals. Update the profile, preserve the running
 processes, and report that restart is required unless the user explicitly
 authorizes interruption.
 
@@ -493,5 +497,5 @@ when the change actually crosses them.
 | Promotion or release | Complete delivery and promotion proof. |
 
 Every route preserves Git and user state, validates trust boundaries, keeps
-exact pins exact, preserves live Sessions, and retains the cheapest check for a
+exact pins exact, preserves live terminals, and retains the cheapest check for a
 known regression.

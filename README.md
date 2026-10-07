@@ -4,9 +4,12 @@
 
 ![Glowing violet three-fold Eon loop](assets/eon.png)
 
-Eon is a native Wayland terminal workspace with Sessions that outlive its
+Eon is a native Wayland terminal workspace with terminals that outlive its
 window. Each tab has a launch directory and a stack of panes; `eonterm` gives
-one command the same Session lifecycle.
+one command the same terminal lifecycle.
+
+A **workspace** contains **tabs**; each tab groups **panes** around a directory.
+A pane is a view of a persistent **terminal**.
 
 ## Demo
 
@@ -14,10 +17,10 @@ one command the same Session lifecycle.
 
 ## Why Eon
 
-- **Sessions outlive the window.** [Eon Sessions](https://github.com/Yazelix/eon-sessions)
-  keeps each Session's PTY and terminal state apart from the window. Close Eon
+- **Terminals outlive the window.** [Eon Sessions](https://github.com/Yazelix/eon-sessions)
+  keeps each terminal's PTY and terminal state apart from the window. Close Eon
   to detach, then `eon attach` to return to the same work.
-  `eon stop GENERATION` ends Sessions.
+  `eon stop GENERATION` ends terminals.
 - **Tabs remember directories.** Find a directory with Zoxide quick search or
   browse in Yazi. New panes start in that tab's directory; move tabs and stacked
   panes with the keyboard.
@@ -57,10 +60,10 @@ Run `eon` to start. The current `edge` build groups commands and examples
 in `eon --help` (or `eon -h`).
 
 A fresh tagged-alpha workspace asks for a directory. Press Enter for a Zoxide
-match, or Tab to browse with Yazi. Closing the window leaves Sessions alive;
+match, or Tab to browse with Yazi. Closing the window leaves terminals alive;
 `eon attach` returns to them. **Alt+/** opens the shortcut guide in the window.
 
-To end Sessions explicitly, inspect `eon generations`, then run
+To end terminals explicitly, inspect `eon generations`, then run
 `eon stop GENERATION`, `eon stop previous`, or `eon stop all`.
 
 Linux Wayland is proved on COSMIC and private Sway. Other compositors,
@@ -92,21 +95,21 @@ Beads data, lock files, and generated artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Agent policy inputs | 271 |
-| README | 112 |
+| Agent policy inputs | 275 |
+| README | 115 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 2,060 |
+| Architecture and contracts | 2,071 |
 | Distribution and references | 750 |
-| User guides | 345 |
+| User guides | 352 |
 | Development guide | 89 |
 | Benchmark report | 317 |
-| Changelog | 425 |
-| Rust source and tests | 5,162 |
+| Changelog | 430 |
+| Rust source and tests | 5,164 |
 | Cargo manifests | 31 |
 | Component manifest | 431 |
 | Nix composition and checks | 1,200 |
 | Product defaults | 0 |
-| **Total** | **11,455** |
+| **Total** | **11,487** |

@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Use workspace, tab, pane and terminal consistently in product text. Help,
+  human workspace/generation output, Stop confirmations and Eon diagnostics
+  call each persistent Orbit-backed instance a terminal. Existing `session-N`
+  IDs, socket names, JSON fields and protocol identifiers retain their spellings.
+
 - Print grouped, colorful CLI help with descriptions and examples for `eon -h`
   and `eon --help`. Both exit successfully without workspace/configuration
   effects. Redirected output is plain; `NO_COLOR` and `TERM=dumb` suppress color.

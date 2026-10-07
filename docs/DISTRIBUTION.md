@@ -16,7 +16,7 @@ No channel requires systemd or another specific init or service manager. The
 accepted runtime proof uses COSMIC with systemd, so non-systemd native Wayland
 remains unproved. Eon and Orbit require no cgroup delegation. Orbit's accepted
 Linux lifecycle uses bounded PTY process-group shutdown and direct-child
-reaping; deliberately detached processes may survive Session stop.
+reaping; deliberately detached processes may survive terminal stop.
 
 Direct installation remains the long-term adoption path. It begins after Nix
 dogfood proves a useful product and the user approves distribution graduation.
@@ -48,7 +48,7 @@ The Nix-only phase follows these boundaries:
 
 Direct-distribution work requires a separate user decision after:
 
-- the Nix composition survives sustained fresh-session dogfood;
+- the Nix composition survives sustained dogfood with fresh terminals;
 - launch, configuration, diagnostics, upgrades, and failure behavior stabilize;
 - exact Eon Sessions and Eon Desktop revisions have no open P0 or P1 integration defect;
 - the component manifest describes the accepted product without relying on

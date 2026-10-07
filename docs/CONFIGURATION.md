@@ -49,8 +49,8 @@ most eight installed family names. Eon installs no fonts and compositors may
 ignore blur or initial window sizing.
 
 The terminal settings apply when a surface opens or reopens. Shell settings are
-read for each Session. Invalid startup configuration creates no fresh Session;
-a failed replacement leaves existing Sessions and commands alive.
+read for each terminal. Invalid startup configuration creates no fresh terminal;
+a failed replacement leaves existing terminals and commands alive.
 
 On a fresh full-Eon workspace, Anima plays after the desktop is ready and before
 the initial directory picker. Press any key other than its previous/next style
@@ -91,17 +91,17 @@ private per-user fallbacks.
 
 ## Managed tools
 
-A Session without an explicit command starts pinned Nushell. Select a different
+A terminal without an explicit command starts pinned Nushell. Select a different
 managed shell with `eon-bash`, `eon-zsh`, or `eon-fish` in `[shell].command`.
 Native user shell configuration loads before Eon's guarded Starship, Zoxide,
 Atuin, and Carapace integrations.
 
 Managed Nushell supports `clip copy` and `clip paste` through the native
-clipboard. Interactive `eon-nu` and default Eon Sessions also provide `clc`
+clipboard. Interactive `eon-nu` and default Eon terminals also provide `clc`
 and `clp` aliases. User autoload files run afterward and can override them.
 If no desktop clipboard is available, Nushell reports the error.
 
 The profile also exposes `eon-hx`, `eon-yazi`, `eon-ya`, `eon-lazygit`, and
-`eon-lg`. Inside Sessions their unprefixed names resolve to the pinned tools.
+`eon-lg`. Inside terminals their unprefixed names resolve to the pinned tools.
 Eon does not rewrite the parent PATH, aliases, shell startup files, or native
 tool data paths.

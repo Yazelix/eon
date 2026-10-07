@@ -19,9 +19,14 @@ and compatibility identities. EON-C4 records the external runtime composition;
 EON-C7 records the distinct tagged public alpha. Every proof below applies only
 to its named source, artifact, environment and surface; it does not promote a
 later pin or another platform. Profile refresh preserves live supervisors and
-Sessions; existing work retains its exact runtime until an explicit restart.
+terminals; existing work retains its exact runtime until an explicit restart.
 
 ## Rules
+
+Product vocabulary follows the [naming boundary](ARCHITECTURE.md#naming-boundary):
+workspace, tab, pane and terminal. Human help, output and diagnostics use
+terminal for each persistent Orbit-backed instance. Technical session IDs,
+socket names, JSON fields and protocol identifiers retain their spellings.
 
 - Each contract uses one `## EON-CN — Name` heading and the required fields
   `Status`, `Consumer`, `Trigger`, `Result`, `Important failures`, `Owner`,
@@ -54,7 +59,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     exact hicolor sizes and installed desktop metadata names `eon`.
   - The installed launcher action is named `Open Eon` and invokes the exact
     packaged executable. It may start or present the exact current generation,
-    so it promises neither a new window nor a new Session; live surfaces retain
+    so it promises neither a new window nor a new terminal; live surfaces retain
     terminal-authored titles.
   - Compatible terminal output leaves scrolling, selection, and full-Eon tab
     and pane focus usable between repaints. Orbit continues parsing output and
@@ -72,8 +77,8 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     reopened surfaces. Omission emits no override; Venus chooses one random
     preset per surface. Venus owns `random`, `preset:<name>` and
     `custom:#RRGGBB` parsing, colors and rendering; Orbit cursor authority remains.
-    Native admission rejects an invalid choice before a new Session starts;
-    rejected reopen preserves the existing Session and command.
+    Native admission rejects an invalid choice before a new terminal starts;
+    rejected reopen preserves the existing terminal and command.
   - Standalone `eon -h` and `eon --help` print grouped command descriptions and
     examples to stdout and exit successfully without starting children or
     preparing configuration/runtime state. Terminal output uses color unless
@@ -266,13 +271,13 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     profiles match the rebuilt path-working-tree artifacts. At the Eon-owned
     default `1.5`, keyboard/pointer pane/tab, layout and rapid-switch captures
     all show visible motion and settle. Installed duration rejection creates no
-    fresh Session in either product. EonTerm reopens from default `1.5` to
-    configured `2.5` with the same Orbit process and Session command. Source and
+    fresh terminal in either product. EonTerm reopens from default `1.5` to
+    configured `2.5` with the same Orbit process and terminal command. Source and
     binary hashes, commands, logs, setup negatives and captures are retained in
     `~/.local/state/eon/proofs/eon-cursor-tail-duration-1ca418d-2026-10-07/report.json`.
   - **Limits:** This advances EON-C1/C2/C4 only for this product configuration
     and exact child adoption. Four existing user component processes remain
-    unchanged. Live user Sessions retain their prior runtime until explicit
+    unchanged. Live user terminals retain their prior runtime until explicit
     restart. No macOS, broader compositor, latency, promotion or release proof.
 - **Installed viewport-request adoption proof:**
   `eon-adopt-pending-viewport-owner-9k4y`, 2026-10-06 path working tree based
@@ -295,7 +300,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   - **Limits:** This proves installed EON-C1/C2/C4 delivery of the accepted child
     revision. Queue saturation and pending-response ordering retain the child's
     scoped proof. No accessibility, macOS or wider-platform proof is added.
-    Existing Sessions keep their prior runtime until an explicit restart.
+    Existing terminals keep their prior runtime until an explicit restart.
 - **Child adoption proof:** `eon-adopt-click-ladder-and-shortcut-spacing-h1nv`,
   Eon source `0d02d4b2e6310f863de6bd3d0164c7c3ec08811d`, selects Orbit
   `6bc269c40b18f08b95778939518f77556ba91c67` and Venus
@@ -320,7 +325,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     `~/.local/state/eon/proofs/eon-adopt-click-ladder-and-shortcut-spacing-h1nv-2026-10-06/REPORT.md`.
   - **Limits:** This refreshes EON-C1/C2/C4's selected-child delivery and C20's
     header spacing only. Older source-specific proofs below remain scoped.
-    Existing Sessions retain their prior runtime until an explicit restart.
+    Existing terminals retain their prior runtime until an explicit restart.
     Child wide trailing-spacer span truncation, copy trimming and unwritten
     tab-gap limits remain; no screen-reader, macOS or wider-platform proof.
 - **Boundary:** No copied child schema, hidden fork, compatibility adapter, or
@@ -348,8 +353,8 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     `g1-b5f3ee783f374176d716de3488946ef4`.
     Both old products survive profile refresh; retained exact executables
     reattach, and the current client inspects and owner-stops old disposable
-    Sessions while new work remains alive. EonTerm rereads config without
-    replacing its Session. User Sessions and unrelated profile elements remain.
+    terminals while new work remains alive. EonTerm rereads config without
+    replacing its terminal. User terminals and unrelated profile elements remain.
   - **Package boundary:** Standalone producer acceptance in
     `eon-runtime-producer-68hq` retains runtime tree
     `3dcfef6bf31758233f2a33eb31d5184ebeae9843` and codec tree
@@ -462,7 +467,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   - **Evidence:** Manifest, locked Rust and flake checks; public-source install,
     picker/help, tab/pane creation/movement/close, directory inheritance and
     retargeting, invalid-path failure, detach/attach, diagnostics and Stop.
-    Supervisor loss preserves three full-Eon Sessions and EonTerm's one Session;
+    Supervisor loss preserves three full-Eon terminals and EonTerm's one terminal;
     fresh supervisors adopt them without duplicates. Real previous EONW v6
     Stop with current unstarted, then current `stop all`, pass. Candidate
     artifacts `/nix/store/y4bi72b9rb9yyxcb247gi87w7zkdwclk-eon-0.1.0` and
@@ -488,10 +493,10 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 - **Status:** Partially proved
 - **Consumer:** One local Eon workspace user.
 - **Trigger:** Launch, create or close a tab, create a pane, traverse focus,
-  reorder the active tab or selected pane, receive Session exit, or recover
+  reorder the active tab or selected pane, receive terminal exit, or recover
   accepted same-boot runs.
 - **Result:**
-  - Independent durable Sessions appear as horizontal tabs containing vertical
+  - Independent durable terminals appear as horizontal tabs containing vertical
     accordion panes with exactly one expanded pane.
   - Tabs use stable `tN` identities. Each tab header shows its number plus the
     leaf, `~`, or `/` derived from Eon's authoritative launch directory; actions
@@ -516,7 +521,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     receives no workspace-frame override. Requested initial grids account for
     the small bottom margin. Live surfaces retain their settings;
     malformed or duplicate values reject a new launch or replacement without
-    stopping existing Sessions. Eon supplies the default; Eon Runtime owns the
+    stopping existing terminals. Eon supplies the default; Eon Runtime owns the
     strict boolean and launch projection; Venus owns geometry, rendering,
     input and accessibility.
   - Left/right tab traversal and up/down pane traversal wrap at ordered edges
@@ -535,17 +540,17 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     mode.
   - Closing names the expected active `tN` and requires another live tab. A
     non-final pending tab first stops its exact picker, then disappears and
-    restores its prior tab. Eon stops the tab's pane and popup Sessions one at
+    restores its prior tab. Eon stops the tab's pane and popup terminals one at
     a time and prunes each
-    confirmed end through the normal Session-exit owner. Complete success
+    confirmed end through the normal terminal-exit owner. Complete success
     removes the tab with the same deterministic focus rule as natural exit.
-    If a later stop fails, no later Session is stopped, the action reports
-    failure, and every remaining live Session stays represented in the
-    partially pruned tab. A Session that ended naturally during the request is
+    If a later stop fails, no later terminal is stopped, the action reports
+    failure, and every remaining live terminal stays represented in the
+    partially pruned tab. A terminal that ended naturally during the request is
     reconciled and pruned as an exit rather than reported as a successful Stop.
     Venus maps Alt+Shift+W directly to this stable-target action; lowercase
     Ctrl+W remains terminal input.
-  - Ended Sessions leave no dead pane or empty tab; focus moves deterministically
+  - Ended terminals leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
     removed index, otherwise the preceding sibling; an empty workspace closes
     Venus and the supervisor.
@@ -559,19 +564,19 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   recovery leaves accepted topology unchanged. A repeated request ID never
   repeats a stop, and a replay naming a removed tab cannot close its successor.
   Picker-stop failure changes no topology; durable partial-stop behavior is the
-  explicit result above. Exhausted pane numbers fail before Session start;
-  unknown or repeated Session-exit notices remove nothing; losing a view never
-  silently stops or substitutes a Session.
+  explicit result above. Exhausted pane numbers fail before terminal start;
+  unknown or repeated terminal-exit notices remove nothing; losing a view never
+  silently stops or substitutes a terminal.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
-  enforcement; Eon supplies product defaults/policy. Orbit owns Sessions and
+  enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v7 workspace/popup values, Orbit Session
+- **Consumes:** Current EONW v7 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`; v5 origin proofs remain scoped below.
 - **Boundary:** No arbitrary split tree, simultaneous expanded panes, arbitrary
   reorder target or cross-tab pane movement, picker relocation, durable layout
-  restoration, a user-facing per-pane Session stop/restart action, terminal
+  restoration, a user-facing per-pane terminal stop/restart action, terminal
   content/history, provider state, plugin surface, remote access, or
-  reconstructed Session state.
+  reconstructed terminal state.
 - **Proof:** Eon `5f23a7bac127785d913a718e5fb1afc53d9d91ae` and the
   following distinct accepted or dogfooded slices.
   - **Environment:** x86_64 Linux Nix packages and isolated native Sway;
@@ -583,7 +588,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     `19d7d28a2aba09c0afe3173d25bbb76ec3edce49`. Movement candidate over
     `9f420ad7f7d4a09ec4294e5ecb191ca2a3d2b7d3` in
     `/nix/store/dbxxlkrh6ygvksra9rxdvqzzj4228jbq-eon-0.1.0` proves adjacent
-    swaps and stable Session mappings through locked Rust/Nix and installed CLI.
+    swaps and stable terminal mappings through locked Rust/Nix and installed CLI.
   - **Close and shortcuts:** EONW
     `c305453bba4fe50c29f65e829b9cd65af31ced8a`, Venus
     `d2d798099934dcf8037bfad6ab856e40c9b989fe`, artifact
@@ -612,7 +617,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     `/nix/store/xbkp5n2m3hz9da7xcspk61aidp6x3brh-eonterm-0.1.0`.
     Scale-1 colored-underlay/pixel checks prove stack-shaped highlights,
     full-width separators and a terminal-color/alpha 4px gap; reopened 100×30
-    PTYs retain the same Sessions. Sway proves alpha/color, not compositor blur.
+    PTYs retain the same terminals. Sway proves alpha/color, not compositor blur.
   - **Tab presentation:** `eon-install-rounded-adaptive-tabs-5eu`, Eon
     `b25da77fb61ed1e82a237d22ffd0c7e8394ce7df`, Venus
     `f5c679443b2fbda1a7a8f91c98d312811bee2cdf`, artifact
@@ -632,16 +637,16 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 ## EON-C9 — Managed shell environment
 
 - **Status:** Proven
-- **Consumer:** Eon Sessions launched under Nushell, Bash, Zsh, or Fish.
+- **Consumer:** Eon terminals launched under Nushell, Bash, Zsh, or Fish.
 - **Trigger:** Eon constructs a child launch environment.
 - **Result:**
   - Eon selects exact Nushell, Bash, Zsh, Fish, Starship, Zoxide, fzf, Atuin,
     Carapace, Helix, Yazi, and LazyGit artifacts.
   - Stable `eon-*` commands expose managed shells and tools outside Eon; one
-    child-private PATH exposes accepted unprefixed names inside Sessions.
+    child-private PATH exposes accepted unprefixed names inside terminals.
   - Configuration accepts one direct argv command and independent Starship,
     Zoxide, Atuin, and Carapace booleans. Defaults are `command = ["eon-nu"]`
-    and `true`; each new Session rereads them without rewriting running shells.
+    and `true`; each new terminal rereads them without rewriting running shells.
   - Managed shells load native user configuration before bounded Eon activation.
     Disabled integrations suppress only Eon's hook; existing prompts,
     completers, same-tool hooks, normal Starship discovery, and Atuin policy
@@ -654,7 +659,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     autoload may override the aliases afterward.
 - **Important failures:** Invalid or unreadable configuration, empty command,
   missing artifact, manifest mismatch, or shell launch fails explicitly without
-  a replacement Session. Optional integration failure warns without preventing
+  a replacement terminal. Optional integration failure warns without preventing
   shell launch. Unavailable native clipboard access reports Nushell's own error.
   Eon never mutates global configuration, startup files, aliases, or PATH.
 - **Owner:** Eon supplies defaults, component selection and Nix shell adapters;
@@ -670,7 +675,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   `eon-nushell-native-clipboard-jwvp`.
   - **Environment:** x86_64 Linux Nix alpha; private native Wayland for clipboard.
   - **Evidence:** Four-shell environment/activation checks, native hook and Fish
-    preservation, private Session PATH, fzf-option isolation and tool glyphs;
+    preservation, private terminal PATH, fzf-option isolation and tool glyphs;
     base `6dfcb473beccadd6e145235009240c81dd570fe5`, glyphs
     `fb95671d855fa944c3717103cb13bd0135f8aec8`, private PATH
     `c0d044c69318a921f9f9139bcaf2de9afce683d3`. Clipboard's managed-command,
@@ -690,10 +695,10 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   - Eon returns one complete typed result from the sole live workspace owner;
     human-readable CLI output and deterministic structured output project the
     same result.
-  - Workspace results carry ordered tab, pane, and Session identities, active
+  - Workspace results carry ordered tab, pane, and terminal identities, active
     and selected identities, liveness, exact raw tab launch-directory bytes,
     and exact opaque Orbit endpoint bytes. Lifecycle results carry generation,
-    component/protocol identity, live Sessions, and owner-authored attach/stop
+    component/protocol identity, live terminals, and owner-authored attach/stop
     availability.
   - CLI JSON emits opaque directories and endpoints as ordered byte arrays
     without changing EONW. Each connection carries one length-delimited request
@@ -705,7 +710,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 - **Important failures:** Malformed, oversized, incompatible, unavailable,
   rejected, timed-out, partially read, or response-lost operations fail within
   the shared bound without reconstructing hidden state or reviving completed
-  Stop. Accepted Stop names affected live Sessions, sends canonical Stop through
+  Stop. Accepted Stop names affected live terminals, sends canonical Stop through
   every validated management lease before waiting, and returns only after every
   exact terminal record is complete.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
@@ -726,19 +731,19 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   Agent defaults to the first available provider in the accepted Nova order on
   Alt+Shift+L. Git and Agent remain live when hidden. Reopening at the same tab
   directory preserves identity; explicit retargeting changes no process until
-  the next invocation, which stops the exact old Session before starting a
+  the next invocation, which stops the exact old terminal before starting a
   fresh one at the new directory. A stop failure preserves the old instance; a
   start failure records no replacement.
   Anima defaults to Alt+Shift+A and launches the pinned random native animation
   as a transient popup. A dismissal, replacement, or tab close stops its Orbit
-  Session, restores the prior tab focus, and leaves no hidden animation running.
+  terminal, restores the prior tab focus, and leaves no hidden animation running.
 - **Configuration:** `[popup]` owns finite side and vertical margins, defaulting
   to 8 and 4 logical pixels. `[popups.<id>]` owns direct argv, physical shortcut,
   label, enabled state and keep-alive lifetime. Only Agent accepts `"auto"`.
   Eon rejects unknown fields, malformed or colliding shortcuts, unbounded
   values and unavailable executables before mutating workspace state. It does
   not install providers, cache selection, interpret shell strings, or expose
-  commands over EONW. Bare executables resolve through the Session PATH;
+  commands over EONW. Bare executables resolve through the terminal PATH;
   relative executable paths resolve against the owning tab's launch directory.
 - **Target safety:** Invocation names the tab, entry and expected instance
   (absence means no instance exists). Focus-only and toggle intents are
@@ -750,11 +755,11 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   remains explicit retargeting, not chooser completion.
 - **Bounds/failures:** Preserve the 2 MiB envelope, 64 tabs, raw Unix directory
   and endpoint bytes. At most 32 enabled entries and 256 combined pane/popup
-  Sessions are represented. Reject malformed framing, invalid or aliased
+  terminals are represented. Reject malformed framing, invalid or aliased
   identities/endpoints, broken selections, duplicate entry/chord assignments,
   invalid geometry and stale popup targets. No terminal contents cross EONW.
 - **Popup snapshot:** The catalog carries enabled entries, normalized physical
-  shortcuts and logical-pixel margins; per-tab popup Sessions/selection and
+  shortcuts and logical-pixel margins; per-tab popup terminals/selection and
   pending-tab state are explicit. Popup-only tabs are valid. Commands, provider
   selection, cwd and lifetime remain runtime policy and never cross EONW. The
   retired v4 picker opcode is unavailable; Project uses ordinary popup invocation.
@@ -809,11 +814,11 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     that generation; earlier outcomes remain and later targets continue.
     Failed or unavailable targets do not suppress later targets while the CLI
     remains running.
-    A Stop of the caller's own Session can terminate the CLI before it receives
+    A Stop of the caller's own terminal can terminate the CLI before it receives
     that result or attempts later targets; run from outside selected generations
     when a complete result is required. When the CLI completes, it exits
     nonzero if any Stop attempt fails. `all` stops current last so earlier
-    targets can finish when invoked inside a current Session.
+    targets can finish when invoked inside a current terminal.
     Neither command forcibly kills a process or treats fixed-namespace legacy
     work as stoppable.
   - Implicit attach selects only a live supervisor reporting the exact current
@@ -822,13 +827,13 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     current, previous, legacy, dead, incompatible, and corrupt candidates.
   - One per-generation lifecycle lock covers listener and runtime teardown so a
     replacement cannot overlap cleanup; concurrent launch converges on one
-    supervisor and Session set.
+    supervisor and terminal set.
   - Present requests native presentation without replacing the live Venus
-    process, Orbit attachment, or Session.
+    process, Orbit attachment, or terminal.
   - Dead exact residue is removed only after the recorded process is absent or
     dead; a later launch may then create one fresh run.
-  - A current launch overlapping clean exit of the final Session waits for the
-    retiring supervisor, then starts one fresh Session instead of reporting
+  - A current launch overlapping clean exit of the final terminal waits for the
+    retiring supervisor, then starts one fresh terminal instead of reporting
     presentation success against ended state.
 - **Important failures:** Unknown EONW version, incompatible presentation,
   stale or mismatched process identity, lost control, partial Stop, or live
@@ -894,13 +899,13 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   surface without Eon workspace actions.
 - **Trigger:** EonTerm launches one exact command after `--`.
 - **Result:**
-  - `eonterm -- COMMAND...` launches one exact nonempty argv in one Orbit Session
+  - `eonterm -- COMMAND...` launches one exact nonempty argv in one Orbit terminal
     and one Venus surface without workspace topology. Optional
     `--no-decorations` is fixed for the supervisor lifetime.
   - `eonterm generations`, `attach`, and `stop` expose EON-C11 within EonTerm's
     separate namespace.
   - Repeated launch presents an attached surface; after detachment it opens one
-    replacement against the same live Session with the original decoration
+    replacement against the same live terminal with the original decoration
     choice. Later invocations do not mutate that choice.
   - Workspace actions return `workspace-unavailable` and create no hidden
     topology.
@@ -908,7 +913,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   component, startup failure, supervisor loss, or explicit Stop follows the same
   bounded ownership and cleanup rules without creating workspace state.
 - **Owner:** Eon defines and packages the standalone product; Eon Runtime
-  implements exact-command launch/generation mechanisms. Orbit owns the Session and
+  implements exact-command launch/generation mechanisms. Orbit owns the terminal and
   Venus owns the surface.
 - **Consumes:** EON-C1 through EON-C4, EON-C11, Orbit, and Venus.
 - **Boundary:** EonTerm consumes no EON-C9 managed environment and adds no tabs,
@@ -922,7 +927,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     `816372ea9ffe90f08ff442b5763a3b5413b7906c`, palette
     `285c6bf48fb402a673eb997594b6eb1bbcb1429b`, lifecycle
     `63686a12b752c9423b2096d5e32aa5842f2184fc`. C7 names the public native
-    artifact and same-Session recovery; C4 names external package/closure,
+    artifact and same-terminal recovery; C4 names external package/closure,
     co-installation and config-reread proof for EonTerm.
 
 ## EON-C13 — Terminal-background opacity policy
@@ -1026,10 +1031,10 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   authorize no PID, signal, pathname, process-name, group, cgroup, or pidfd
   fallback. A lost response after validated Stop cannot revive the supervisor.
   A marked Live record rejected after spawn is stopped through canonical
-  management using its published identity and is never published as a Session.
+  management using its published identity and is never published as a terminal.
 - **Owner:** Eon Runtime generation/recovery enforcement, bounded enumeration,
   projection, lease collection, deadline, EONW ordering, retained launch claim,
-  and exact residue; Orbit `ORB-C13` owns live identity, Ready, lease, Session state,
+  and exact residue; Orbit `ORB-C13` owns live identity, Ready, lease, terminal state,
   `ORB-C12` cleanup, tombstone, and endpoint cleanup.
 - **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v1, and Venus `VEN-C14`.
 - **Boundary:** Same boot and login only; no prior-topology persistence, Orbit or
@@ -1049,7 +1054,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     `871c9f639e519c7e3201fa5d9755d0a77a4cb0df`, compact recovery
     `cfcb38e4284843f163c1a04f8c71052f31c0ac5b` and synthetic-tab directory at
     the base. C7 names exact native artifacts recovering three full-Eon and one
-    EonTerm Session without duplicates. Prior adversarial checks keep their
+    EonTerm terminal without duplicates. Prior adversarial checks keep their
     scope; no logout, Orbit-restart or machine-restart recovery is proved.
 
 ## EON-C16 — Caller-owned application identity
@@ -1078,7 +1083,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     `ab24961bd6b2f9403736e52ebbac8cc266488a41`; exact historical Eonova
     embedding `a9d5946686ab28e51b2c10cc9f2d3f6fb1282b52`.
   - **Evidence:** CLI rejection, exact Venus argv and distinct launcher grouping,
-    repeated-launch convergence and unchanged Session; Eon
+    repeated-launch convergence and unchanged terminal; Eon
     `/nix/store/q5lbbk5nqh778yqz7al0zxfin5x7vp0r-eon-0.1.0`, EonTerm
     `/nix/store/a3rf1w4fq615sa153plp7kihqnqdm25a-eonterm-0.1.0`, embedding
     `/nix/store/vjrwggm7655zhfv9x2fj3h5ny8sflixk-eonova-0.1.0`.
@@ -1094,11 +1099,11 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   - Every live tab has one stable `tN` identity and one authoritative absolute
     launch directory. Panes retain `pN` identities.
   - Fresh `t1` validates the supervisor's absolute launch directory before any
-    Session recovery or startup. A new tab inherits the active tab's value;
+    terminal recovery or startup. A new tab inherits the active tab's value;
     EON-C18's pending picker commits its first-pane directory or uses the
     validated value for the sole-tab cancellation fallback.
   - `SetTabDirectory` changes exactly one addressed tab. Later panes in that tab
-    start with the accepted directory; existing Sessions and terminal CWDs do
+    start with the accepted directory; existing terminals and terminal CWDs do
     not change.
   - Current EONW v7 returns the exact accepted raw path bytes. Venus derives a
     bounded `N  leaf`, `N  ~`, or `N  /` label while retaining `tN` for actions and
@@ -1108,12 +1113,12 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 - **Important failures:** Empty, relative, NUL-containing, oversized, missing,
   non-directory, unknown-tab, or stale-tab updates change nothing. Once a path
   passes validation, later disappearance leaves its policy value stored; a
-  later Session startup fails without committing pane topology or leaving
+  later terminal startup fails without committing pane topology or leaving
   launch residue.
 - **Owner:** Eon Runtime owns tab identity, launch-directory state, validation,
-  mutation, inheritance and recovery fallback. Orbit owns each Session's terminal
+  mutation, inheritance and recovery fallback. Orbit owns each terminal's
   CWD; Venus owns native projection of the authoritative workspace state.
-- **Consumes:** Current EONW v7, Orbit Session startup, and Venus `VEN-C8`.
+- **Consumes:** Current EONW v7, Orbit terminal startup, and Venus `VEN-C8`.
 - **Boundary:** No manual names, path canonicalization, retained directory
   handles, filesystem watching, shell-`cd` tracking, pane-CWD inference,
   retargeting of existing processes, persistence, picker UI, or compatibility
@@ -1128,7 +1133,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     locked Rust/Nix, manifest and generation checks. Installed
     `/nix/store/j4h0bmyvkndzvhi3l9r96b7f57jxlmm8-eon-0.1.0` uses
     `g1-a9a0102de0a2c56d1d5bdda6c25bb3dc`. C7 adds native selection,
-    inheritance/retargeting, existing Session CWD preservation, later-pane CWD,
+    inheritance/retargeting, existing terminal CWD preservation, later-pane CWD,
     invalid-path rejection and synthetic recovery fallback.
 - **Open proof:** Current-alpha AT-SPI launch-path context remains unproved;
   prior focused path-context checks are not a screen-reader workflow.
@@ -1143,13 +1148,13 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 - **Result:**
   - On a fresh full-Eon workspace, after Venus accepts the initial presentation,
     Eon may play one short Anima animation in the initial transient Project
-    Session before starting the normal directory picker. The default is enabled,
+    terminal before starting the normal directory picker. The default is enabled,
     a random native style, and three seconds; `[anima].enabled = false` skips it.
     Any key other than Anima's style-browsing keys dismisses playback without
     becoming picker input. This step does not run for later tabs, attachment,
     reconnection, same-boot recovery, or EonTerm.
   - A fresh workspace and every later new tab begin as one active pending tab
-    with no durable pane. Eon starts one transient Orbit Session running the
+    with no durable pane. Eon starts one transient Orbit terminal running the
     exact packaged ranked-directory picker at the inherited launch directory.
     Ambient fzf default options cannot alter its command, layout, or bindings.
     Each picker instance has a distinct endpoint within that workspace, including
@@ -1189,7 +1194,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     Browser hints appear only while the folder list owns input; native Yazi
     prompts and overlays hide them until the folder list regains focus.
   - Accepting a valid choice atomically commits the tab directory and starts
-    exactly one first `pN` Session there. Cancelling a pending picker starts
+    exactly one first `pN` terminal there. Cancelling a pending picker starts
     its first pane at that tab's validated directory only when it is the
     workspace's sole tab; otherwise it removes only the pending tab.
   - Alt+Z keeps the existing explicit retarget behavior after a tab has panes;
@@ -1198,7 +1203,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     tab, never as a normal `pN` pane. The picker tab may remain live while
     another durable tab is active. A picker-owned pending tab remains pane-free,
     with an absent selected pane instead of a sentinel or placeholder process.
-    Lifecycle inspection and Stop may report zero durable Sessions during the
+    Lifecycle inspection and Stop may report zero durable terminals during the
     initial picker; the transient picker remains excluded from that list.
   - Venus can start a full-Eon presentation from the workspace endpoint alone
     while the initial tab is pending; the picker endpoint in its first snapshot
@@ -1214,12 +1219,12 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     cancellation. Tab navigation by identity remains available. Other tabs
     allow pane creation, pane focus by direction or identity, pane/tab movement,
     explicit directory updates, and stable-target close. These actions preserve
-    the picker's binding and Session. Mutations of the picker-bound tab remain
+    the picker's binding and terminal. Mutations of the picker-bound tab remain
     blocked except directory acceptance and closing its non-final pending tab;
-    that close stops the transient Session before removing the tab. Cancellation
+    that close stops the transient terminal before removing the tab. Cancellation
     of the selected pending tab restores its previous tab if that tab survives,
     otherwise the nearest surviving tab. Background picker cancellation leaves
-    the selected tab in focus. A workspace with no running Sessions ends.
+    the selected tab in focus. A workspace with no running terminals ends.
     Pickers remain attached across tab switches; established tabs may open
     their own popup while another picker remains live elsewhere. EONW v7 permits
     multiple pending tabs, each retaining its exact Project picker across switches;
@@ -1228,7 +1233,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 - **Important failures:** Cancel, empty or invalid selection, picker launch or
   exit, target disappearance, duplicate invocation, origin-tab loss, or
   presentation detachment follows the sole-tab or remaining-tab fallback without a
-  partial tab, consumed pane or durable Session identity, changed existing
+  partial tab, consumed pane or durable terminal identity, changed existing
   process, or transient process, endpoint, record, pane, or modal residue.
   Left/right with only one live tab succeeds unchanged; final-tab close remains
   unavailable. A duplicate close cannot stop the picker twice or remove another
@@ -1244,7 +1249,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   rendering, input dismissal, playback timing, and terminal restoration. Eon
   consumes one directory result without interpreting Yazi's navigation state.
 - **Consumes:** EON-C17, current EONW v7 popup/pending-tab values, Orbit's
-  accepted Session startup/attachment/exit/stop contracts and the selected exact
+  accepted terminal startup/attachment/exit/stop contracts and the selected exact
   Venus consumer; original v5 acceptance is scoped in Proof.
 - **Boundary:** No custom filesystem walker, editor/file-opening integration,
   copied Nova plugin, normal-pane identity, client-supplied command,
@@ -1369,8 +1374,8 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     Present messages retain their 250 ms write timeout.
 - **Important failures:** Eon Runtime rejects malformed configuration with field
   diagnostics before children. Venus admits fonts and actual initial native
-  geometry before any new Session or user command. Rejected, lost or timed-out
-  admission closes only the attempted presentation and preserves durable Sessions.
+  geometry before any new terminal or user command. Rejected, lost or timed-out
+  admission closes only the attempted presentation and preserves durable terminals.
 - **Owner:** Eon supplies terminal defaults; Eon Runtime owns strict parsing,
   argv projection and authoritative startup Snapshot transfer; Venus owns font
   resolution, native readiness and geometry.
@@ -1384,7 +1389,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     `ec80e36625dec73544c0cb64becf4b135c932a63`, Orbit
     `91999d79546422b49bdbc124166a65859d0bd872`, unchanged wire contracts.
   - **Evidence:** Locked Rust, manifest, both Nix packages and flake checks;
-    initial EOF/malformed readiness/timeout create no Session; invalid config
+    initial EOF/malformed readiness/timeout create no terminal; invalid config
     and rejected reopen preserve the command. Initial artifacts
     `/nix/store/p86cvamyyk5iri47xpdc77kdm8pa267v-eon-0.1.0` and
     `/nix/store/vh88p7zlvmfsag96zd6w5shnnkxi5ydw-eonterm-0.1.0` admit DejaVu
@@ -1399,7 +1404,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     `/nix/store/cig8r1rifpl2lzswi4ga6l744y3v0ck9-eon-0.1.0` and
     `/nix/store/95x87mc3gdc22fvk920dz6jg6mfr3qxs-eonterm-0.1.0` prove one
     absolute five-second snapshot-write/readiness budget, not the 250 ms normal
-    Present timeout. Scale-1.25 real grids and same-Session reopen pass.
+    Present timeout. Scale-1.25 real grids and same-terminal reopen pass.
   - **Limits:** This proves the named configuration/startup/typography/IME/AT-SPI
     slice at these revisions. It does not establish current-alpha screen-reader
     use, full fractional/HiDPI coverage, stable-seat IME, broader compositors or
@@ -1415,17 +1420,17 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   shortcut viewer containing its fixed Eon-surface bindings and the current
   enabled popup catalog supplied through current EONW v7. Opening, refreshing,
   scrolling, resizing, and closing the viewer change no workspace or Orbit
-  Session state. Title, subtitle and first group heading occupy separate
+  terminal state. Title, subtitle and first group heading occupy separate
   readable vertical space at normal and compact window sizes.
 - **Important failures:** Eon rejects configured popup shortcuts that collide
   with Alt+Slash or positional Alt+0 through Alt+9 before workspace mutation.
   Invalid or stale component identity fails before profile activation. Profile
-  refresh preserves running supervisors and Sessions; they retain their older
+  refresh preserves running supervisors and terminals; they retain their older
   client until a normal restart.
 - **Owner:** Eon owns component/default selection, profile delivery and
   installed acceptance; Eon Runtime enforces configured popup collisions.
   Venus owns viewer state, input, rendering, focus, and accessibility.
-- **Consumes:** Venus VEN-C20 and VEN-C5, current EONW v7 and Orbit Sessions;
+- **Consumes:** Venus VEN-C20 and VEN-C5, current EONW v7 and Orbit terminals;
   the original v5 installed proof remains scoped below.
 - **Boundary:** No Eon-rendered viewer, second shortcut catalog, EONW change,
   Orbit update, child-application bindings, rebinding UI, command palette,
@@ -1481,7 +1486,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, current EONW v7 and Orbit Sessions; distinct
+- **Consumes:** Venus VEN-C21, current EONW v7 and Orbit terminals; distinct
   header/quota refinements and original component identities are scoped below.
 - **Boundary:** C22 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
@@ -1582,7 +1587,7 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   - **Delivery and limits:** Active profile elements resolve to the built
     Eon artifact above and EonTerm
     `/nix/store/1yml5hjg8krz03qqq3k33nj9qg2fjag3-eonterm-0.1.0`.
-    Private processes/directories were removed; live user Sessions were not
+    Private processes/directories were removed; live user terminals were not
     restarted. The original recurring episodes remain uncorrelated; the
     notification gap was reproduced and corrected at the owning worker.
 
@@ -1593,25 +1598,25 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 - **Trigger:** `eon window new`, the desktop launcher's New Eon Window action,
   or Venus's Alt+Shift+N shortcut.
 - **Result:** A fresh directory picker opens in a second native window with its
-  own Eon supervisor, tabs, focus, and durable Orbit Sessions. The original
-  window and its Sessions remain unchanged. `window new` reports a stable ID;
+  own Eon supervisor, tabs, focus, and durable Orbit terminals. The original
+  window and its terminals remain unchanged. `window new` reports a stable ID;
   `eon windows` discovers it, `eon window attach ID` presents its current
-  generation after detach, and `eon window stop ID` stops only its Sessions.
+  generation after detach, and `eon window stop ID` stops only its terminals.
   `eon window stop all` covers independent windows and attempts the caller's
   own window last; existing `eon stop all` remains scoped to the caller's
   current runtime namespace. Piped confirmations remain available to later
   windows, one answer per prompt.
 - **Important failures:** Identity collision, unsafe runtime path, failed
   startup, or stale target neither replaces an existing window nor stops or
-  retargets its Sessions. An uncertain startup retains its ID, process, and
-  private log for inspection instead of killing possible live Sessions.
+  retargets its terminals. An uncertain startup retains its ID, process, and
+  private log for inspection instead of killing possible live terminals.
 - **Owner:** Eon Runtime owns window identity, namespace and launch/lifecycle
   enforcement; Eon supplies product composition. Venus invokes the exact Eon
   executable supplied by its supervisor and presents one window per process;
-  Orbit owns each Session and its single presentation attachment.
+  Orbit owns each terminal and its single presentation attachment.
 - **Consumes:** EON-C1, EON-C8, EON-C11, EON-C15, EONW v7, and VEN-C23.
 - **Boundary:** Bare `eon` retains its current presentation behavior. Windows
-  have independent workspaces; no Session, tab, pane, or focus state is shared.
+  have independent workspaces; no terminal, tab, pane, or focus state is shared.
   The eight-hex-digit ID is unique by atomic directory reservation, not a
   secret. This does not establish macOS or another distribution channel.
 - **Proof:** Eon `bdbe9b5436e4ff8a734210cd25c581983f6f2ed0`,

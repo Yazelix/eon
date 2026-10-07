@@ -112,6 +112,7 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
         );
         assert!(output.stderr.is_empty());
         let help = stdout(&output);
+        assert!(help.contains("terminals") && !help.contains("Sessions"));
         assert!(!help.contains('\u{1b}'), "piped help must be plain text");
         assert!(help.lines().count() > 20);
         assert!(help.lines().all(|line| line.chars().count() <= 80));
@@ -2346,6 +2347,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     assert!(human.status.success());
     assert!(stdout(&human).contains("active t1\n"));
     assert_eq!(stdout(&human).matches("  pane ").count(), 3);
+    assert_eq!(stdout(&human).matches(" terminal=session-").count(), 3);
 
     let mut incompatible = encode_request(&Request {
         id: "incompatible-1".into(),
@@ -2923,7 +2925,7 @@ fn replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacement
     let stderr = String::from_utf8_lossy(&waiting.stderr);
     assert_eq!(waiting.status.code(), Some(1), "{stderr}");
     assert!(
-        stderr.contains("ended Sessions cleanup exceeded five seconds"),
+        stderr.contains("ended terminal cleanup exceeded five seconds"),
         "{stderr}"
     );
     assert_eq!(object_identity(&record), tombstone_record);
@@ -3139,7 +3141,7 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert_recovery_failure(
         &eonterm,
         &["--", "/bin/false"],
-        "EonTerm cannot recover more than one live Session",
+        "EonTerm cannot recover more than one live terminal",
     );
 
     fs::set_permissions(&first_record, fs::Permissions::from_mode(0o640)).unwrap();
@@ -3239,7 +3241,7 @@ fn rejected_ready_identity_stops_the_spawned_session_through_management() {
         (
             "EON_TEST_ORBIT_COMPONENT_GENERATION",
             "wrong-generation",
-            "Sessions record reports component generation wrong-generation",
+            "terminal record reports component generation wrong-generation",
         ),
         (
             "EON_TEST_ORBIT_SESSION_ID",
@@ -3333,7 +3335,7 @@ fn marked_ready_claim_never_falls_back_to_child_stop() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "{stderr}");
-    assert!(stderr.contains("invalid Sessions record"), "{stderr}");
+    assert!(stderr.contains("invalid terminal record"), "{stderr}");
     let orbit_pid: i32 = fs::read_to_string(&orbit_log)
         .unwrap()
         .trim()
