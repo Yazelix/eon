@@ -227,6 +227,30 @@ Sessions; existing work retains its exact runtime until an explicit restart.
 - **Owner:** Eon assembly and product policy; Eon Runtime owns runtime
   mechanisms and state. Orbit, Venus and tools retain their subsystem authority.
 - **Consumes:** Accepted child contracts through EON-C2's exact graph.
+- **Installed cursor-tail configuration and continuity proof:** Eon source
+  `1ca418d9370061b4ba5ac03c0225236ad2b1461d` selects Venus
+  `a27aad23822d3bd0b0e467ffc32c578bbde8b00d` and Runtime
+  `fb3c9c1b08c7a8c03ca4a8cc57628579c09bdeb4`, preserving Orbit
+  `6bc269c40b18f08b95778939518f77556ba91c67` and codec
+  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa` (ORBF2/ORBS13/EONW7).
+  - **Environment and artifacts:** x86_64 Linux, private Sway 1.12
+    headless/pixman, Nix Mesa 26.1.2 lavapipe, scale 1. Prepared source
+    `/nix/store/ran5w3mj2gqnxfv725d7fhx7yrxdaqnx-eon-source`;
+    installed Eon `/nix/store/40bb9d041r46qiplaisd1rav5cl0w2ng-eon-0.1.0`
+    and EonTerm `/nix/store/qn4g3bgb1zdaba8bly9rqwxygqai02zf-eonterm-0.1.0`.
+  - **Evidence:** Prepared-source fmt/check/test/clippy (114 tests), package
+    selection, both Nix products and closure/co-installation pass. Active
+    profiles match the rebuilt path-working-tree artifacts. At the Eon-owned
+    default `1.5`, keyboard/pointer pane/tab, layout and rapid-switch captures
+    all show visible motion and settle. Installed duration rejection creates no
+    fresh Session in either product. EonTerm reopens from default `1.5` to
+    configured `2.5` with the same Orbit process and Session command. Source and
+    binary hashes, commands, logs, setup negatives and captures are retained in
+    `~/.local/state/eon/proofs/eon-cursor-tail-duration-1ca418d-2026-10-07/report.json`.
+  - **Limits:** This advances EON-C1/C2/C4 only for this product configuration
+    and exact child adoption. Four existing user component processes remain
+    unchanged. Live user Sessions retain their prior runtime until explicit
+    restart. No macOS, broader compositor, latency, promotion or release proof.
 - **Child adoption proof:** `eon-adopt-click-ladder-and-shortcut-spacing-h1nv`,
   Eon source `0d02d4b2e6310f863de6bd3d0164c7c3ec08811d`, selects Orbit
   `6bc269c40b18f08b95778939518f77556ba91c67` and Venus
