@@ -100,6 +100,29 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Venus native launch contracts.
 - **Boundary:** Eon does not infer compatibility from executables, store paths,
   process names, or moving branches.
+- **Product terminology proof:** Accepted on x86_64 Linux, 2026-10-07, under
+  `eon-workspace-terminal-terminology-f65b`, from Eon
+  `cf1dda4b48eecf796f2d991424f91aa19ce098ac` and Runtime
+  `7c886d87551225c7581892901f95ac1b853952c7`. EONW remains
+  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`, with exact codec tree
+  `8409c419a3496d6f01eeef65295f5d95b943313e`; Orbit and Venus remain
+  `6bc269c40b18f08b95778939518f77556ba91c67` and
+  `a27aad23822d3bd0b0e467ffc32c578bbde8b00d`.
+  Prepared-source locked Rust tests (115), formatting, Clippy, the exact package
+  gate and complete `path:` flake check passed. Profile refresh selects
+  `/nix/store/9s4mnhbcpnrqykp1fkpld1b6gcqwz8rl-eon-0.1.0` and
+  `/nix/store/hvmafa29k3z4z46p05wazymfagx6zvzv-eonterm-0.1.0`.
+  Installed piped/80-column PTY help, color gates and launcher metadata use
+  terminal wording. Private Sway 1.12 headless/pixman with Mesa Vulkan proves
+  human workspace/generation output, declined Stop confirmation, and both
+  products' detach messages. Full-Eon reopen retains exact `session-N` JSON
+  identities, endpoints and Orbit process identity. Technical fields, codes,
+  socket names and codec package bytes remain unchanged. Earlier build attempts
+  hit lifecycle deadlines under disk load; clean serial Rust and delivery runs
+  passed with unchanged deadlines. Only Eon/EonTerm profile elements changed;
+  original user processes remain alive at exact prior identities. This proves
+  product wording and its installed consumers, without extending native UI,
+  platform or lifecycle guarantees. Existing work retains its prior runtime.
 - **CLI help proof:** Accepted on x86_64 Linux, 2026-10-07, under
   `eon-readable-cli-help-5yh4`, from Eon source
   `43cd92879b20dca21c3d5a12fa16060c267bc129` and Runtime
