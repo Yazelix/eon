@@ -95,10 +95,23 @@ Sessions; existing work retains its exact runtime until an explicit restart.
   Venus native launch contracts.
 - **Boundary:** Eon does not infer compatibility from executables, store paths,
   process names, or moving branches.
-- **CLI help proof:** Candidate under `eon-readable-cli-help-5yh4`; Runtime
-  `9780ccff908a7e5e506351ad017f219697e17681` passes its Rust surface. Exact Eon
-  composition, installed stream/color/layout checks and profile refresh remain
-  pending; earlier runtime proofs do not cover this help extension.
+- **CLI help proof:** Accepted on x86_64 Linux, 2026-10-07, under
+  `eon-readable-cli-help-5yh4`, from Eon source
+  `43cd92879b20dca21c3d5a12fa16060c267bc129` and Runtime
+  `9780ccff908a7e5e506351ad017f219697e17681`; the remaining component graph
+  is unchanged. Prepared-source locked workspace tests (115), formatting and
+  Clippy passed, as did the exact package gate and the complete `path:` flake
+  check with one build job and two cores. Refreshed installed profiles resolve to
+  `/nix/store/y01wzxbgwnqsqs8jamq1hryvbiyd3pgq-eon-0.1.0` and
+  `/nix/store/hkiy054zj6hap9fya7adxlkd62w4hd8d-eonterm-0.1.0`.
+  Both installed help flags returned 0 with empty stderr, 43 identical plain
+  lines, aligned descriptions and a 79-column maximum. An 80-column stdout PTY
+  proved color and the empty/nonempty `NO_COLOR` and `TERM=dumb` gates; piping
+  stayed escape-free even with terminal stdin. Private invalid/missing config
+  and runtime state remained untouched. Captured ANSI was reviewed on
+  representative dark/light palettes. Anima help forwarding and EonTerm syntax
+  passed; three baseline live child identities and unrelated profiles stayed
+  unchanged. This CLI proof does not extend existing native presentation proofs.
 - **Assembly boundary:** `product.rs` supplies fallible validated component
   facts to the current runtime; graph failures precede runtime ownership effects,
   including `window new` parent-directory creation. The independent producer
