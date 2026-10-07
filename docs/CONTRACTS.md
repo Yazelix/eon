@@ -251,6 +251,28 @@ Sessions; existing work retains its exact runtime until an explicit restart.
     and exact child adoption. Four existing user component processes remain
     unchanged. Live user Sessions retain their prior runtime until explicit
     restart. No macOS, broader compositor, latency, promotion or release proof.
+- **Installed viewport-request adoption proof:**
+  `eon-adopt-pending-viewport-owner-9k4y`, 2026-10-06 path working tree based
+  on Eon `3c8d1e0fe1a3c3bd3cec88c32d94ce775771cdb8`, prepared source
+  `/nix/store/46ff5h10am2clgg7aqqq7shxclc4dimn-eon-source`, selects Venus
+  `c7a0d07612e710854275a31500aaec651cc50a6f`. Orbit `6bc269c`, Runtime
+  `a57e105`, EONW7 codec `b8f18b4` and ORBF2/ORBS13 remain exact.
+  - **Environment and artifacts:** x86_64 Linux, private native Wayland Sway
+    1.12 headless/pixman, Mesa 26.1.2 lavapipe, scale 1; installed Eon
+    `/nix/store/952w0qbh5446hm0vbnlp6rv529hmy383-eon-0.1.0` and EonTerm
+    `/nix/store/0iv18b4yqf5q2ka95yrv4wlbg4wl81c4-eonterm-0.1.0`.
+  - **Evidence:** Manifest/lock identity, both Nix products and EonTerm
+    closure/co-installation pass; active profiles equal the artifacts. Native
+    wheel, held upward selection/autoscroll, wheel after release and ReturnToLive
+    pass in both products with real Orbit/Venus and fresh clipboard oracles.
+    Full Eon's workspace/input isolation, user process/profile preservation and
+    disposable-generation cleanup pass. Exact commands, test results, captures,
+    setup negatives and fresh-directory replay instructions are retained in
+    `~/.local/state/eon/proofs/eon-adopt-pending-viewport-owner-2026-10-06/REPORT.md`.
+  - **Limits:** This proves installed EON-C1/C2/C4 delivery of the accepted child
+    revision. Queue saturation and pending-response ordering retain the child's
+    scoped proof. No accessibility, macOS or wider-platform proof is added.
+    Existing Sessions keep their prior runtime until an explicit restart.
 - **Child adoption proof:** `eon-adopt-click-ladder-and-shortcut-spacing-h1nv`,
   Eon source `0d02d4b2e6310f863de6bd3d0164c7c3ec08811d`, selects Orbit
   `6bc269c40b18f08b95778939518f77556ba91c67` and Venus

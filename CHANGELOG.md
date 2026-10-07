@@ -11,6 +11,8 @@ installation, and proven contract changes.
   Invalid durations fail before starting a Session; reopened surfaces read the
   current configuration.
 
+- Select accepted Venus `c7a0d07` for the Linux Eon and EonTerm packages.
+
 - Preserve Yazi's native browsing, find/sort, modal input/help, creation and
   file previews in the directory picker, with Eon's selection controls.
   `a` creates a file; append `/` to create a folder. Enter selects a folder
