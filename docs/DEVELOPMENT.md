@@ -79,6 +79,10 @@ Linux package checks use the sandbox's executable `/dev/shm` for ephemeral test
 state, keeping lifecycle records and sockets off the builder's disk journal.
 Sources and compilation stay in the ordinary build directory.
 
+`nix build --no-link .#checks.x86_64-linux.helix-grammars` runs the pinned
+Helix source-delivery check. It rejects evaluation-time Codeberg and SourceHut
+fetches and compiles all ten bundled grammars through Helix's production builder.
+
 Use Beads for implementation plans and deferred decisions:
 
 ```sh

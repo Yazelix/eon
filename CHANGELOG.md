@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Pin Nova Helix `817dcbca` with bundled Codeberg and SourceHut grammar sources.
+  Nix evaluation and those grammar builds do not need either source host.
+  The existing Linux delivery job checks the bundled grammars before packaging.
+
 - Keep Linux Nix lifecycle-check state in the sandbox's executable tmpfs.
   Compilation stays disk-backed; all checks and lifecycle deadlines stay enabled.
 

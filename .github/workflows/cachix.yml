@@ -36,6 +36,9 @@ jobs:
           # Push only the completed products' runtime closures, not the whole store.
           skipPush: true
 
+      - name: Check bundled Helix grammars without source-host fetches
+        run: nix build --print-build-logs --no-link .#checks.x86_64-linux.helix-grammars
+
       - name: Build the canonical Linux packages
         run: nix build --print-build-logs --no-link --print-out-paths .#packages.x86_64-linux.default .#packages.x86_64-linux.eonterm > "$RUNNER_TEMP/eon-store-paths"
 

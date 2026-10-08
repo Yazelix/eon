@@ -32,7 +32,7 @@
       inputs.kinestra.follows = "kinestra";
     };
     helix = {
-      url = "github:luccahuguet/yazelix-helix/7e6cd307d00783c16ad4cff99ed71936d34f6572";
+      url = "github:Yazelix/nova-helix/817dcbca8b99c3db35ea66ded7492673d1a397ad";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     yazi = {
@@ -948,6 +948,7 @@
       };
       checks.${system} = {
         default = eonPackage;
+        helix-grammars = helix.checks.${system}.codeberg_grammars;
         eonterm-closure = eontermClosureCheck;
         managed-command-path = managedCommandPathCheck;
         shell-environment = shellEnvironmentCheck;

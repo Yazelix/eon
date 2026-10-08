@@ -313,11 +313,11 @@
       "id": "helix",
       "project": "Helix",
       "version": "25.7.1",
-      "revision": "7e6cd307d00783c16ad4cff99ed71936d34f6572",
+      "revision": "817dcbca8b99c3db35ea66ded7492673d1a397ad",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",
-        "url": "https://github.com/luccahuguet/yazelix-helix.git"
+        "url": "https://github.com/Yazelix/nova-helix.git"
       },
       "artifacts": [
         { "id": "executable", "kind": "file" }

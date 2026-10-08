@@ -188,7 +188,9 @@ repository secret. Never put the token in Git, an issue, or a pull request. Cach
 reads are public; only the credential check and upload step receive the token.
 A missing secret fails before installing tools or building the package.
 
-A push to `edge` or a manual dispatch builds `packages.x86_64-linux.default`
+A push to `edge` or a manual dispatch first runs the pinned Helix grammar check,
+which rejects Codeberg and SourceHut evaluation fetches and compiles their bundled
+sources. It then builds `packages.x86_64-linux.default`
 and `packages.x86_64-linux.eonterm` with their required package checks. An explicit
 `cachix push` publishes both outputs and their runtime dependencies. Paths
 already available from `cache.nixos.org` remain there rather than being copied
