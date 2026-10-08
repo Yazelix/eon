@@ -84,19 +84,15 @@ when it contains the exact package you request; source builds remain available.
 Reading it needs no account or token. Trust its signing key only if you trust
 the cache owner to supply binaries.
 
-Newer revisions advertise the cache through `nixConfig`; Nix asks before
-accepting those settings. The tagged alpha above predates these hints. To use
-the cache with that tag, or with Eon consumed as another flake's input, configure
-the consuming Nix installation explicitly:
+With the Cachix CLI installed, start cache setup with:
 
 ```sh
 cachix use eon-yazelix
 ```
 
-This requires the Cachix CLI and permission to configure your Nix installation.
-See [cache configuration and publishing](docs/DISTRIBUTION.md#optional-binary-cache)
-for the URL, public key, and maintainer setup. The cache follows `edge`; it does
-not promise binaries for the historical alpha tag or every revision.
+Follow the [installation-specific setup](docs/DISTRIBUTION.md#optional-binary-cache)
+for NixOS activation and multi-user permissions. The cache follows `edge`; it
+does not promise binaries for the historical alpha tag or every revision.
 
 ## Guides
 
@@ -116,13 +112,13 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 275 |
-| README | 136 |
+| README | 132 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
 | Architecture and contracts | 2,144 |
-| Distribution and references | 805 |
+| Distribution and references | 817 |
 | User guides | 352 |
 | Development guide | 89 |
 | Benchmark report | 317 |
@@ -131,6 +127,6 @@ Beads data, lock files, and generated artifacts.
 | Cargo manifests | 31 |
 | Component manifest | 431 |
 | Nix composition and checks | 1,207 |
-| Hosted cache workflow | 48 |
+| Hosted cache workflow | 45 |
 | Product defaults | 0 |
-| **Total** | **11,881** |
+| **Total** | **11,886** |

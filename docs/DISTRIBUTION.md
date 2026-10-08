@@ -162,11 +162,23 @@ extra-trusted-public-keys = [
 ];
 ```
 
-Accept the flake settings when Nix prompts, or configure the URL and key in your
-own Nix configuration. `cachix use eon-yazelix` configures them through the
-Cachix CLI. Flake input consumers must configure their consuming installation;
-an input's `nixConfig` does not configure the parent flake. Historical tags do
-not acquire the new hints or guaranteed cache coverage.
+Accept the flake settings when Nix prompts, or use the Cachix CLI to configure
+them explicitly with `cachix use eon-yazelix`. Setup depends on your installation:
+
+- **NixOS:** integrate the generated Cachix configuration into your system
+  configuration, then activate it with your normal NixOS rebuild/switch workflow
+  before installing Eon. Writing the configuration alone does not activate the
+  cache; see the [Cachix FAQ](https://docs.cachix.org/faq).
+- **Multi-user Nix:** if your user is not trusted by the Nix daemon, ask an
+  administrator to configure the cache URL and signing key for the daemon.
+  Accepting flake settings does not bypass these
+  [daemon permissions](https://nix.dev/manual/nix/2.35/installation/multi-user.html).
+- **Single-user Nix:** the CLI updates your writable `nix.conf`; no NixOS
+  activation is needed.
+
+Flake input consumers must configure their consuming installation; an input's
+`nixConfig` does not configure the parent flake. Historical tags do not acquire
+the new hints or guaranteed cache coverage.
 
 ### Publishing
 
