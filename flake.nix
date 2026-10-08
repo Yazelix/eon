@@ -1,6 +1,13 @@
 {
   description = "Eon Linux alpha";
 
+  nixConfig = {
+    extra-substituters = [ "https://eon-yazelix.cachix.org" ];
+    extra-trusted-public-keys = [
+      "eon-yazelix.cachix.org-1:kPIp7u0Gjoz0GNzmRqeaqs798vU2raSOUpK+3xi7oK0="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/567a49d1913ce81ac6e9582e3553dd90a955875f";
     orbit = {

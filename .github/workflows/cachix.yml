@@ -1,0 +1,48 @@
+name: Publish Linux binary cache
+
+on:
+  push:
+    branches: [edge]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eon-cachix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    # No paid private-repository runs or publishing from forks.
+    if: github.repository == 'Yazelix/eon' && github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check publishing credential
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: |
+          if [ -z "$CACHIX_AUTH_TOKEN" ]; then
+            echo '::error::Set the per-cache write token as the CACHIX_AUTH_TOKEN repository secret.'
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+      - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
+        with:
+          name: eon-yazelix
+          # Push only the completed package's runtime closure, not the whole store.
+          skipPush: true
+
+      - name: Build the canonical Linux package
+        run: nix build --no-link --print-out-paths .#packages.x86_64-linux.default > "$RUNNER_TEMP/eon-store-paths"
+
+      - name: Publish runtime closure
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+        run: cachix push eon-yazelix < "$RUNNER_TEMP/eon-store-paths"

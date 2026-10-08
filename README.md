@@ -76,6 +76,28 @@ In its Yazi picker, **a** uses native creation: add `/` for a folder.
 **Enter** selects a folder; cancelling leaves created files and folders on disk.
 Browsing, prompts, help and previews use Yazi defaults.
 
+### Optional binary cache
+
+The public `eon-yazelix` Cachix cache is donated and managed by
+[bioinformatist](https://github.com/bioinformatist). It can avoid local builds
+when it contains the exact package you request; source builds remain available.
+Reading it needs no account or token. Trust its signing key only if you trust
+the cache owner to supply binaries.
+
+Newer revisions advertise the cache through `nixConfig`; Nix asks before
+accepting those settings. The tagged alpha above predates these hints. To use
+the cache with that tag, or with Eon consumed as another flake's input, configure
+the consuming Nix installation explicitly:
+
+```sh
+cachix use eon-yazelix
+```
+
+This requires the Cachix CLI and permission to configure your Nix installation.
+See [cache configuration and publishing](docs/DISTRIBUTION.md#optional-binary-cache)
+for the URL, public key, and maintainer setup. The cache follows `edge`; it does
+not promise binaries for the historical alpha tag or every revision.
+
 ## Guides
 
 - [Using Eon](docs/USAGE.md): workspace controls, commands, EonTerm, and troubleshooting.
@@ -94,20 +116,21 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 275 |
-| README | 113 |
+| README | 136 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
 | Architecture and contracts | 2,144 |
-| Distribution and references | 750 |
+| Distribution and references | 805 |
 | User guides | 352 |
 | Development guide | 89 |
 | Benchmark report | 317 |
-| Changelog | 439 |
+| Changelog | 443 |
 | Rust source and tests | 5,341 |
 | Cargo manifests | 31 |
 | Component manifest | 431 |
-| Nix composition and checks | 1,200 |
+| Nix composition and checks | 1,207 |
+| Hosted cache workflow | 48 |
 | Product defaults | 0 |
-| **Total** | **11,744** |
+| **Total** | **11,881** |
