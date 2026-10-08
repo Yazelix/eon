@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Stop every managed run in the selected generation, including a picker whose
+  Ready publication outlasted startup. Failed cleanup retains its supervisor
+  for retry and excludes completed terminals from live inventory. Stop result
+  timing accounts for a preceding operation and bounded cleanup. Failed natural
+  exit reconciliation still collects other results and restores retryable leases.
+  Discovery reaps ended direct children before retiring their records.
+  Failed Stop still reaps Venus when its window closes before cleanup is
+  retried, preserving unfinished terminals and their retry owner.
+
 - Use workspace, tab, pane and terminal consistently in product text. Help,
   human workspace/generation output, Stop confirmations and Eon diagnostics
   call each persistent Orbit-backed instance a terminal. Existing `session-N`

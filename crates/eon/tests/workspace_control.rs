@@ -429,6 +429,13 @@ fn publish_management_record(path: &Path, record: &ManagementRecord) {
     claim.try_lock().unwrap();
     assert_eq!(object_identity(path), expected);
     claim.write_all(b"1").unwrap();
+    if matches!(record, ManagementRecord::Live(identity) if identity.session_id.starts_with("directory-picker"))
+        && let Some(delay) = std::env::var_os("EON_TEST_PICKER_READY_DELAY_MS")
+    {
+        thread::sleep(Duration::from_millis(
+            delay.to_str().unwrap().parse().unwrap(),
+        ));
+    }
     if std::env::var_os("EON_TEST_REPLACE_READY_RECORD").is_some() {
         fs::remove_file(path).unwrap();
         let mut replacement = fs::OpenOptions::new()
@@ -1636,6 +1643,176 @@ fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
 
 fn stdout(output: &Output) -> &str {
     std::str::from_utf8(&output.stdout).unwrap()
+}
+
+#[test]
+fn stop_accounts_for_late_ready_picker_and_retains_partial_cleanup_owner() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    disable_startup_animation(&config);
+    let stop = root.join("stop");
+    let fail = root.join("fail");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    let venus_pid = root.join("venus.pid");
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    executable(&bin.join("eon-directory-picker"), "#!/bin/sh\ncat\n");
+    executable(&bin.join("eon-nu"), "#!/bin/sh\ncat\n");
+    managed_orbit_executable(&orbit);
+    executable(
+        &venus,
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\nexec cat >/dev/null\n",
+    );
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let mut supervisor = TestProcess {
+        child: eon_command(binary)
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_VENUS_PID", &venus_pid)
+            .env("EON_SESSION_BIN", &bin)
+            .env("EON_TEST_STOP", &stop)
+            .env("EON_TEST_PICKER_READY_DELAY_MS", "5100")
+            .env("EON_TEST_FAIL_STOP_ONCE", &fail)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop,
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !generation.join("orbit.sock").exists() {
+        assert!(
+            Instant::now() < deadline,
+            "late Ready fallback did not start"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    let picker = live_identity(&generation.join("k1.sock"));
+    let first = live_identity(&generation.join("orbit.sock"));
+    assert!(
+        invoke(binary, &runtime, &config, &["pane", "create", "--json"])
+            .status
+            .success()
+    );
+    let second = live_identity(&generation.join("session-2.sock"));
+    fs::write(&fail, "session-2").unwrap();
+    let id = generation.file_name().unwrap().to_str().unwrap();
+    let failed = invoke(binary, &runtime, &config, &["stop", id, "--json"]);
+    assert_eq!(failed.status.code(), Some(2), "{}", stdout(&failed));
+    assert!(stdout(&failed).contains("injected stop failure"));
+    assert!(
+        supervisor.child.try_wait().unwrap().is_none(),
+        "partial Stop discarded its owner"
+    );
+    wait_for_process_removal(picker.process_id, "late Ready picker survived Stop");
+    wait_for_process_removal(first.process_id, "completed terminal survived Stop");
+    let venus_pid: u32 = fs::read_to_string(venus_pid).unwrap().parse().unwrap();
+    // SAFETY: this is the unreaped presentation child recorded by this test's supervisor.
+    assert_eq!(unsafe { libc::kill(venus_pid as i32, libc::SIGTERM) }, 0);
+    wait_for_process_removal(venus_pid, "partial Stop retained an ended Venus child");
+    let inventory = invoke(binary, &runtime, &config, &["generations", "--json"]);
+    assert!(inventory.status.success(), "{}", stdout(&inventory));
+    assert!(
+        stdout(&inventory).contains("\"sessions\":[\"session-2\"]"),
+        "{}",
+        stdout(&inventory)
+    );
+    assert!(matches!(
+        workspace_action(&control, "blocked", Action::CreatePane),
+        Response::Failure(_)
+    ));
+    let retried = invoke(binary, &runtime, &config, &["stop", id, "--json"]);
+    assert!(retried.status.success(), "{}", stdout(&retried));
+    wait_for_successful_exit(&mut supervisor.child);
+    wait_for_process_removal(second.process_id, "retried terminal survived Stop");
+    assert!(!generation.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn stop_result_covers_queued_operation_and_managed_cleanup() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    disable_startup_animation(&config);
+    let stop = root.join("stop");
+    let delay = root.join("delay");
+    fs::write(&delay, "3500").unwrap();
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let mut supervisor = TestProcess {
+        child: eon_command(binary)
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop)
+            .env("EON_TEST_DELAY_SESSION_2_MS", "3500")
+            .env("EON_TEST_STOP_DELAY", &delay)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop,
+    };
+    let generation = generation_runtime(&runtime);
+    wait_for_connection(&generation.join("eon.sock"));
+    let id = generation.file_name().unwrap().to_str().unwrap();
+    let mut stopping = eon_command(binary)
+        .args(["stop", id])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut prompt = Vec::new();
+    while !prompt.ends_with(b"[y/N] ") {
+        let mut byte = [0];
+        stopping
+            .stderr
+            .as_mut()
+            .unwrap()
+            .read_exact(&mut byte)
+            .unwrap();
+        prompt.push(byte[0]);
+    }
+    let mut creating = eon_command(binary)
+        .args(["pane", "create", "--json"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !generation.join("session-2.sock.record").exists() {
+        assert!(Instant::now() < deadline, "queued pane did not start");
+        thread::sleep(Duration::from_millis(10));
+    }
+    stopping.stdin.take().unwrap().write_all(b"y\n").unwrap();
+    assert!(creating.wait().unwrap().success());
+    let result = stopping.wait_with_output().unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(stdout(&result).contains("session-1, session-2"));
+    wait_for_successful_exit(&mut supervisor.child);
+    assert!(!generation.exists());
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

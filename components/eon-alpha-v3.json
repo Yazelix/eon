@@ -382,7 +382,7 @@
       "id": "eon-runtime",
       "project": "Eon Runtime",
       "version": "0.1.0",
-      "revision": "7c886d87551225c7581892901f95ac1b853952c7",
+      "revision": "02865fdf908d8139d4c94180703381f6029c0598",
       "target": "x86_64-linux",
       "source": {
         "kind": "git",

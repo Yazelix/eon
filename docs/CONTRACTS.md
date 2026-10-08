@@ -1045,7 +1045,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Stop. Only winning that still-empty inode authorizes local Child rollback;
     after Orbit marks and atomically publishes Ready, cleanup is management-only.
   - Explicit generation Stop uses canonical management for every acquired run
-    and succeeds only after matching tombstones and cleanup.
+    and discovers untracked runs through the same bounded generation record
+    and lease validation used for recovery, including late-Ready pickers.
+    It succeeds only after matching tombstones and cleanup.
   - Eon removes exact owned dead residue only after the recorded process is
     absent or dead.
 - **Important failures:** Unsafe, missing, replaced, malformed, oversized,
@@ -1053,9 +1055,18 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   wrong-UID, wrong-process, Busy, partial acquisition, Orbit exit, deadline, or
   transport failures publish no partial workspace, launch no duplicate run, and
   authorize no PID, signal, pathname, process-name, group, cgroup, or pidfd
-  fallback. A lost response after validated Stop cannot revive the supervisor.
+  fallback. A lost response after completed Stop cannot revive the supervisor.
   A marked Live record rejected after spawn is stopped through canonical
   management using its published identity and is never published as a terminal.
+  Failed Stop retains its supervisor and unfinished leases for explicit retry;
+  completed runs leave live inventory. Workspace mutations and presentation
+  remain unavailable until cleanup succeeds. Failed natural-exit reconciliation
+  still collects other results and restores retryable leases. Discovery reaps
+  ended untracked direct children before retiring their canonical records.
+  During failed cleanup, it still reaps an exited presentation child without
+  changing the workspace or launching replacement terminals.
+  Stop's result read timeout allows one preceding five-second operation plus
+  five-second cleanup and a one-second margin; excessive queues can still fail.
 - **Owner:** Eon Runtime generation/recovery enforcement, bounded enumeration,
   projection, lease collection, deadline, EONW ordering, retained launch claim,
   and exact residue; Orbit `ORB-C13` owns live identity, Ready, lease, terminal state,
@@ -1066,6 +1077,44 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   manager, broker, or compatibility adapter. Tombstones grant no authority and
   must be reconciled before their workspace slot is reused.
 - **Proof:** `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`.
+  - **Stop repair:** `eon-repair-stop-completion-picker-cleanup-1xxu`, Runtime
+    `eceac276803a1ec819a402905c685e1c2a2e5865`, unchanged EONW
+    `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`, Orbit
+    `6bc269c40b18f08b95778939518f77556ba91c67` and Venus
+    `a27aad23822d3bd0b0e467ffc32c578bbde8b00d`. The Eon working-tree candidate
+    over `92e0d7b379a14d003f37e5c2df9c468cb43e74b7` passes complete producer
+    and composed locked Rust checks, both Nix products and package identity gate.
+    Installed `/nix/store/w9pd9b36yb0ndz007sjhfjwgjzq3lm5a-eon-0.1.0`
+    on isolated Sway 1.12 / Mesa software Vulkan proves two-pane window Stop,
+    active-picker cleanup and preservation of peer/older work. Exact candidate
+    file hashes, regression negatives, native process identities and profile
+    proof remain in `eon-stop-1xxu-2026-10-07-222631` under Eon's proof root.
+  - **Reviewed correction:** Runtime `4d8074a51022e828872abb127f77c27e26d5f2eb`
+    collects all Stop results after a natural-exit cleanup failure and simplifies
+    finished-run iteration. Its focused red/green regression, complete locked
+    Rust checks, both Nix products and installed native window/picker/older-work
+    proof pass. Installed artifact:
+    `/nix/store/i15qjws0vqrc5jmngvdqffbqzyq6s5bz-eon-0.1.0`; exact candidate
+    hashes and the host Nix cache negative remain in
+    `eon-stop-1xxu-review-2026-10-07-225703` under Eon's proof root.
+  - **Ended-discovery correction:** Runtime
+    `9bc86e08f2bd2c45b32b8e74068a28e1cb03f675` shares the existing child reaper
+    with discovery, reaping ended untracked direct children before record
+    retirement and rejecting wrong-start identities. Its focused red/green
+    regression, complete producer/composed Rust checks, both Nix products and
+    installed native window/picker/older-work proof pass. Installed artifact:
+    `/nix/store/41jhpaaqdawq0ka7mgp8z0xcy98l7w78-eon-0.1.0`; exact candidate
+    hashes and retained host/build negatives remain in
+    `eon-stop-1xxu-review2-2026-10-07` under Eon's proof root.
+  - **Presentation retry correction:** Runtime
+    `02865fdf908d8139d4c94180703381f6029c0598` reaps exited Venus while
+    incomplete Stop retains its owner and unfinished runs, without workspace
+    mutation or replacement launches. The extended regression is red/green;
+    full producer/composed Rust, both Nix artifacts and installed native
+    close-before-retry checks pass. EonTerm uses per-build executable RAM scratch
+    with unchanged `/build` paths/tests; host deadline negatives remain retained.
+    Installed Eon: `/nix/store/qnfhshxx9kdzbazgx90cjv3xhb62g1ds-eon-0.1.0`;
+    exact hashes/evidence: `eon-stop-1xxu-review3-2026-10-08` in Eon's proof root.
   - **Environment:** x86_64 Linux packaged installed recovery and adversarial
     lifecycle checks.
   - **Evidence:** Ready serialization, supervisor loss, exact adoption, Busy and
