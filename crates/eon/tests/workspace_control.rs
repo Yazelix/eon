@@ -3544,6 +3544,7 @@ fn marked_ready_claim_never_falls_back_to_child_stop() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(1), "{stderr}");
     assert!(stderr.contains("invalid terminal record"), "{stderr}");
+    wait_for(&orbit_log);
     let orbit_pid: i32 = fs::read_to_string(&orbit_log)
         .unwrap()
         .trim()
