@@ -188,10 +188,12 @@ repository secret. Never put the token in Git, an issue, or a pull request. Cach
 reads are public; only the credential check and upload step receive the token.
 A missing secret fails before installing tools or building the package.
 
-A manual dispatch builds `packages.x86_64-linux.default` and
-`packages.x86_64-linux.eonterm` with their required package checks. An explicit
-`cachix push` publishes both outputs and their runtime closures, including
-dependencies downloaded from other caches.
+A push to `edge` or a manual dispatch builds `packages.x86_64-linux.default`
+and `packages.x86_64-linux.eonterm` with their required package checks. An explicit
+`cachix push` publishes both outputs and their runtime dependencies. Paths
+already available from `cache.nixos.org` remain there rather than being copied
+into Cachix; keep that standard cache and its signing key configured alongside
+Eon's cache. See the [Cachix FAQ](https://docs.cachix.org/faq).
 It does not upload every compiler, build intermediate, or unrelated store path.
 No pull-request event runs the workflow, and forks cannot publish through it.
 Maintain repository write access carefully: trusted workflow editors can expose
@@ -199,21 +201,19 @@ Actions secrets.
 
 Each run uses one standard `ubuntu-24.04` GitHub-hosted runner, with a 90-minute
 job timeout and cancellation of superseded runs on the same ref. Frequency is
-one run per explicit dispatch. Automatic `edge` publishing remains gated on a
-successful hosted build/upload and fresh-store substitution of both products.
-It runs only in the public upstream repository: standard public-runner minutes
-are free and do not draw from the organization's private-repository allowance. No larger runner,
+one run per `edge` push or explicit dispatch. It runs only in the public upstream
+repository: standard public-runner minutes are free and do not draw from the
+organization's private-repository allowance. No larger runner,
 Actions artifact, or Actions cache is used. GitHub paid runner spend is zero;
 Cachix storage and retention remain with bioinformatist. Remove or revisit this
 job if builds repeatedly exceed the timeout, the cache donation ends, or free
 public-runner eligibility changes. Local `nix build .#default .#eonterm` remains
 canonical.
 
-After the first successful publish, verify both exact outputs' `.narinfo`
-records at the cache URL and build the same revision in a fresh Nix store with
-the cache/key configured. Confirm substitution rather than a local compile before claiming
-that installation is accelerated. A local build alone does not prove upload or
-fresh-store substitution.
+To verify publication, check both exact outputs' `.narinfo` records at the cache
+URL and realise them in a fresh Nix store with both caches and signing keys
+configured, signatures required, and local builds disabled. A local build alone
+does not prove upload or fresh-store substitution.
 
 ## Canonical release input
 

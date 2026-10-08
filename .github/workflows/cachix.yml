@@ -1,6 +1,8 @@
 name: Publish Linux binary cache
 
 on:
+  push:
+    branches: [edge]
   workflow_dispatch:
 
 permissions:
@@ -35,7 +37,7 @@ jobs:
           skipPush: true
 
       - name: Build the canonical Linux packages
-        run: nix build --no-link --print-out-paths .#packages.x86_64-linux.default .#packages.x86_64-linux.eonterm > "$RUNNER_TEMP/eon-store-paths"
+        run: nix build --print-build-logs --no-link --print-out-paths .#packages.x86_64-linux.default .#packages.x86_64-linux.eonterm > "$RUNNER_TEMP/eon-store-paths"
 
       - name: Publish runtime closure
         env:

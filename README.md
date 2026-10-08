@@ -128,6 +128,6 @@ Beads data, lock files, and generated artifacts.
 | Cargo manifests | 31 |
 | Component manifest | 431 |
 | Nix composition and checks | 1,207 |
-| Hosted cache workflow | 43 |
+| Hosted cache workflow | 45 |
 | Product defaults | 0 |
-| **Total** | **11,889** |
+| **Total** | **11,891** |
