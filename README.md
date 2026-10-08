@@ -91,8 +91,9 @@ cachix use eon-yazelix
 ```
 
 Follow the [installation-specific setup](docs/DISTRIBUTION.md#optional-binary-cache)
-for NixOS activation and multi-user permissions. The cache follows `edge`; it
-does not promise binaries for the historical alpha tag or every revision.
+for NixOS activation and multi-user permissions. The cache publishes selected
+`edge` builds of Eon and EonTerm; it does not promise binaries for the historical
+alpha tag or every revision.
 
 ## Guides
 
@@ -112,21 +113,21 @@ Beads data, lock files, and generated artifacts.
 | Surface | Lines |
 |---|---:|
 | Agent policy inputs | 275 |
-| README | 132 |
+| README | 133 |
 | Repository ignore rules | 3 |
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
 | Architecture and contracts | 2,144 |
-| Distribution and references | 817 |
+| Distribution and references | 820 |
 | User guides | 352 |
 | Development guide | 89 |
 | Benchmark report | 317 |
-| Changelog | 443 |
+| Changelog | 444 |
 | Rust source and tests | 5,341 |
 | Cargo manifests | 31 |
 | Component manifest | 431 |
 | Nix composition and checks | 1,207 |
-| Hosted cache workflow | 45 |
+| Hosted cache workflow | 43 |
 | Product defaults | 0 |
-| **Total** | **11,886** |
+| **Total** | **11,889** |

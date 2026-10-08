@@ -6,8 +6,9 @@ installation, and proven contract changes.
 ## Unreleased
 
 - Advertise the optional public `eon-yazelix` binary cache for newer flake
-  revisions. A bounded Linux publishing workflow targets `edge`; uploads need
-  maintainer token setup. Source builds and historical release tags are unchanged.
+  revisions. A bounded manual Linux workflow publishes Eon and EonTerm; uploads
+  need a maintainer-configured token. Source builds and historical release tags
+  are unchanged.
 
 - Stop every managed run in the selected generation, including a picker whose
   Ready publication outlasted startup. Failed cleanup retains its supervisor

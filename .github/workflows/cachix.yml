@@ -1,8 +1,6 @@
 name: Publish Linux binary cache
 
 on:
-  push:
-    branches: [edge]
   workflow_dispatch:
 
 permissions:
@@ -33,11 +31,11 @@ jobs:
       - uses: cachix/cachix-action@38b082610b782e7e93e209c35fd730d399dee866 # v17
         with:
           name: eon-yazelix
-          # Push only the completed package's runtime closure, not the whole store.
+          # Push only the completed products' runtime closures, not the whole store.
           skipPush: true
 
-      - name: Build the canonical Linux package
-        run: nix build --no-link --print-out-paths .#packages.x86_64-linux.default > "$RUNNER_TEMP/eon-store-paths"
+      - name: Build the canonical Linux packages
+        run: nix build --no-link --print-out-paths .#packages.x86_64-linux.default .#packages.x86_64-linux.eonterm > "$RUNNER_TEMP/eon-store-paths"
 
       - name: Publish runtime closure
         env:
