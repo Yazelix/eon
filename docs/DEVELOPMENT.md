@@ -64,13 +64,20 @@ From the development shell, check the composed workspace using that source:
 ```sh
 eon_source=$(nix build --no-link --print-out-paths .#default.src)
 cargo check --locked --workspace --manifest-path "$eon_source/Cargo.toml" \
-  --target-dir "$PWD/target/prepared"
+  --target-dir "$PWD/target/$(basename "$eon_source")"
 ```
+
+The target directory belongs to that snapshot: Nix normalizes source timestamps,
+so sharing a target directory can make Cargo reuse stale artifacts after edits.
 
 The prepared source is an immutable snapshot; rerun the source build after
 editing. Build both installed products with
 `nix build --no-link .#default .#eonterm`. A workspace build of the raw Git tree
 resolves distinct codec Git identities and cannot substitute for this check.
+
+Linux package checks use the sandbox's executable `/dev/shm` for ephemeral test
+state, keeping lifecycle records and sockets off the builder's disk journal.
+Sources and compilation stay in the ordinary build directory.
 
 Use Beads for implementation plans and deferred decisions:
 

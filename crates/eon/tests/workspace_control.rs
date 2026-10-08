@@ -21,7 +21,7 @@ use std::{
         ffi::OsStrExt,
         fs::{MetadataExt, OpenOptionsExt, PermissionsExt, symlink},
         net::{UnixListener, UnixStream},
-        process::ExitStatusExt,
+        process::{CommandExt, ExitStatusExt},
     },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Output, Stdio},
@@ -48,6 +48,20 @@ impl Drop for TestProcess {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+    }
+}
+
+struct ManagedChild(Child);
+
+impl Drop for ManagedChild {
+    fn drop(&mut self) {
+        if self.0.try_wait().unwrap().is_some() {
+            return;
+        }
+        // SAFETY: this still-unreaped child was spawned as its own group leader.
+        let result = unsafe { libc::kill(-i32::try_from(self.0.id()).unwrap(), libc::SIGKILL) };
+        assert!(result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH));
+        wait_for_exit(&mut self.0);
     }
 }
 
@@ -605,13 +619,16 @@ fn managed_orbit_helper() {
         .map(|separator| &arguments[separator + 1..])
         .unwrap_or(&[]);
     let mut child = std::env::var_os("EON_TEST_RUN_CHILD").map(|_| {
-        Command::new(&command[0])
-            .args(&command[1..])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap()
+        ManagedChild(
+            Command::new(&command[0])
+                .args(&command[1..])
+                .process_group(0)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        )
     });
     let mut client: Option<(UnixStream, Vec<u8>, bool)> = None;
     loop {
@@ -686,10 +703,7 @@ fn managed_orbit_helper() {
                 .as_deref()
                 == Some(&identity.session_id)
             {
-                if let Some(child) = &mut child {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
+                drop(child.take());
                 finish_managed_orbit(
                     &record_path,
                     &presentation,
@@ -720,10 +734,7 @@ fn managed_orbit_helper() {
             {
                 thread::sleep(Duration::from_millis(delay.parse().unwrap()));
             }
-            if let Some(child) = &mut child {
-                let _ = child.kill();
-                let _ = child.wait();
-            }
+            drop(child.take());
             finish_managed_orbit(
                 &record_path,
                 &presentation,
@@ -737,13 +748,14 @@ fn managed_orbit_helper() {
             return;
         }
 
-        let child_status = child.as_mut().and_then(|child| child.try_wait().unwrap());
+        let child_status = child.as_mut().and_then(|child| child.0.try_wait().unwrap());
         let initial_exit = presentation.file_name() == Some(OsStr::new("orbit.sock"))
             && std::env::var_os("EON_TEST_EXIT_INITIAL")
                 .is_some_and(|path| Path::new(&path).exists());
         let requested_exit =
             std::env::var_os("EON_TEST_STOP").is_some_and(|path| Path::new(&path).exists());
         if child_status.is_some() || initial_exit || requested_exit {
+            drop(child.take());
             let outcome = child_status.map_or_else(
                 || {
                     ProcessOutcome::ExitCode(
@@ -1270,6 +1282,7 @@ fn directory_picker_retargets_cancels_and_stops_with_venus() {
     let selection = root.join("picker-selection");
     let orbit_log = root.join("orbit-cwd.log");
     let venus_pid = root.join("venus.pid");
+    let picker_child_pid = root.join("picker-child.pid");
     let venus_args = root.join("venus.args");
     let orbit = root.join("orbit");
     let venus = root.join("venus");
@@ -1288,7 +1301,7 @@ cat >/dev/null
     );
     executable(
         &session_bin.join("zoxide"),
-        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_PICKER_RELEASE\" ]; do sleep 0.01; done\ncat \"$EON_TEST_PICKER_SELECTION\"\n",
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_PICKER_CHILD_PID\"\nwhile [ ! -e \"$EON_TEST_PICKER_RELEASE\" ]; do sleep 0.01; done\ncat \"$EON_TEST_PICKER_SELECTION\"\n",
     );
     executable(
         &session_bin.join("eon-nu"),
@@ -1313,6 +1326,7 @@ cat >/dev/null
         .env("EON_TEST_NATURAL_EXIT_ON_STOP", "session-1")
         .env("EON_TEST_PICKER_RELEASE", &release)
         .env("EON_TEST_PICKER_SELECTION", &selection)
+        .env("EON_TEST_PICKER_CHILD_PID", &picker_child_pid)
         .env("FZF_DEFAULT_OPTS", "--preview=cat {}")
         .env("FZF_DEFAULT_OPTS_FILE", root.join("ambient-fzf-opts"))
         .env("EON_TEST_ORBIT_CWD_LOG", &orbit_log)
@@ -1493,12 +1507,18 @@ cat >/dev/null
     wait_for_picker_close(&control, &selected);
 
     fs::remove_file(&release).unwrap();
+    fs::remove_file(&picker_child_pid).unwrap();
     fs::write(&selection, initial.as_os_str().as_bytes()).unwrap();
     assert!(matches!(
         invoke_project(&control, "picker-client-loss"),
         Response::Snapshot(snapshot) if project_popup(&snapshot).is_some()
     ));
     let lost_client_picker = picker_endpoint(&control);
+    wait_for(&picker_child_pid);
+    let picker_child = fs::read_to_string(&picker_child_pid)
+        .unwrap()
+        .parse::<u32>()
+        .unwrap();
     let pid = fs::read_to_string(&venus_pid)
         .unwrap()
         .parse::<i32>()
@@ -1507,6 +1527,17 @@ cat >/dev/null
     assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
     wait_for_picker_close(&control, &selected);
     assert!(!lost_client_picker.exists());
+    let process = Path::new("/proc").join(picker_child.to_string());
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while process.exists() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    if process.exists() {
+        // Release the leaked probe before reporting the regression.
+        fs::write(&release, "").unwrap();
+        wait_for_process_removal(picker_child, "released picker child did not exit");
+        panic!("mock terminal Stop left its picker descendant running");
+    }
 
     fs::write(&fail_stop_once, "session-2").unwrap();
     assert!(matches!(

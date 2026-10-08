@@ -1041,9 +1041,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     launch directories, and request history are not restored. After recovered
     `t1`, later creation starts at `t2`.
   - Before spawn, Eon creates and retains the exact empty owned mode-0600
-    management record inode and holds its exclusive lock through rollback or
-    Stop. Only winning that still-empty inode authorizes local Child rollback;
-    after Orbit marks and atomically publishes Ready, cleanup is management-only.
+    management record inode. Orbit locks it, marks publication and atomically
+    replaces it with Ready. Local Child rollback requires winning the lock on
+    that unchanged still-empty inode; marking revokes signal authority even
+    before publication completes. After publication, cleanup is management-only.
   - Explicit generation Stop uses canonical management for every acquired run
     and discovers untracked runs through the same bounded generation record
     and lease validation used for recovery, including late-Ready pickers.

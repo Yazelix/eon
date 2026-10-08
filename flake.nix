@@ -755,6 +755,14 @@
             "eon-runtime"
           ];
           dontUseCargoParallelTests = true;
+          preCheck = lib.optionalString pkgs.stdenv.isLinux ''
+            # Keep ephemeral lifecycle state off the builder's disk journal.
+            eonTestBuildTmpdir="$TMPDIR"
+            export TMPDIR=/dev/shm
+          '';
+          postCheck = lib.optionalString pkgs.stdenv.isLinux ''
+            export TMPDIR="$eonTestBuildTmpdir"
+          '';
           nativeBuildInputs = [
             pkgs.copyDesktopItems
             pkgs.makeWrapper

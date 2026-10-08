@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keep Linux Nix lifecycle-check state in the sandbox's executable tmpfs.
+  Compilation stays disk-backed; all checks and lifecycle deadlines stay enabled.
+
 - Advertise the optional public `eon-yazelix` binary cache for newer flake
   revisions. A bounded Linux workflow publishes Eon and EonTerm on `edge` pushes
   and manual dispatches; uploads need a maintainer-configured token. Source builds
