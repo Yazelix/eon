@@ -118,7 +118,7 @@ Beads data, lock files, and generated artifacts.
 | License | 201 |
 | Third-party notices | 37 |
 | Binding license notice | 21 |
-| Architecture and contracts | 2,178 |
+| Architecture and contracts | 2,205 |
 | Distribution and references | 822 |
 | User guides | 352 |
 | Development guide | 100 |
@@ -130,4 +130,4 @@ Beads data, lock files, and generated artifacts.
 | Nix composition and checks | 1,216 |
 | Hosted cache workflow | 48 |
 | Product defaults | 0 |
-| **Total** | **11,995** |
+| **Total** | **12,022** |

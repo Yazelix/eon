@@ -280,6 +280,31 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon assembly and product policy; Eon Runtime owns runtime
   mechanisms and state. Orbit, Venus and tools retain their subsystem authority.
 - **Consumes:** Accepted child contracts through EON-C2's exact graph.
+- **Installed label delivery proof:** Accepted on 2026-10-09 under
+  `eon-decide-tab-house-icon-lff4`, Eon source
+  `ebb66eb0b902f3b4058c0b59d63bdbb73c6d61a6` selects Venus source and scoped
+  VEN-C8 proof `42a5ad291995847d5fa36bb62344065f95f6866f`; child metadata
+  `10f36c9d67c69565dd45144809cbd99f92f93371` records the deterministic proof.
+  All other component, interface and proof identities remain unchanged.
+  - **Artifacts:** Installed Eon
+    `/nix/store/hq5j2crskbwpvk5si65b391zq8c7rl7r-eon-0.1.0` and EonTerm
+    `/nix/store/z3nqld6fvwdwhcrns1pqrf4r8yq6k69y-eonterm-0.1.0` bind Venus
+    `/nix/store/71wlly0fqnxdb004zrpvxia0pzjf2icx-yazelix-venus-0.1.0`.
+  - **Evidence:** Both Nix products pass with 78 Eon/runtime tests each and
+    145 ordinary Venus tests. Refreshed profiles equal the built artifacts;
+    unrelated profile elements survive. Private Sway 1.12 headless/GLES2 at
+    scale 1 shows `1 account` with pane `p1 ~`, then the same tab and exact
+    launch directory with `p1 ~/pjs/eon`. Alt+M/K pane creation/selection,
+    Alt+Shift+T tab creation and Alt+1 selection preserve the original terminal;
+    three native key inputs reach it with unchanged terminal modes. All seven
+    original process identities survive and private runtime state is removed.
+    Commands, source checks, captures and cleanup are retained in
+    `~/.local/state/eon/proofs/eon-home-labels-option-1-2026-10-09/report.txt`.
+  - **Limits:** Two earlier private probes exposed an empty picker fixture;
+    overriding Zoxide's home exclusion and checking its candidate list fixes
+    the fixture. Production source is unchanged between probes. Existing live
+    supervisors retain their old runtime until user-chosen restart. Live COSMIC,
+    fractional scale, screen-reader workflows and macOS remain unproved here.
 - **Installed half-block delivery proof:** Accepted on 2026-10-09 under
   `eon-deliver-venus-half-block-fix-qfee`, Eon source
   `62ac66c18b30b1e9056a9534dd84c083f03f1a69` selects Venus
@@ -636,6 +661,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   reconstructed terminal state.
 - **Proof:** Eon `5f23a7bac127785d913a718e5fb1afc53d9d91ae` and the
   following distinct accepted or dogfooded slices.
+  - EON-C4 records the current ordinary tab names and compact text pane paths.
   - **Environment:** x86_64 Linux Nix packages and isolated native Sway;
     visual refinements use Sway 1.12 / Mesa 26.1.2 lavapipe at scale 1.
   - **Evidence:** Wrapped traversal, composition, creation, exit pruning,
@@ -1231,6 +1257,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   retargeting of existing processes, persistence, picker UI, or compatibility
   service accepting EONW v1 and v2.
 - **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`.
+  - EON-C4 records current label delivery with unchanged launch directories.
   - **Environment:** x86_64 Linux Nix package and installed Eon profile;
     Venus `2622c124be5ba8a62037c6de952ebf3928347387`.
   - **Evidence:** Raw-directory v3 seed
