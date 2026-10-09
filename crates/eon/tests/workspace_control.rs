@@ -2836,73 +2836,90 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
 
 #[test]
 fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
-    let root = temporary_directory();
-    let runtime = root.join("runtime");
-    let config = root.join("config");
-    disable_startup_animation(&config);
-    let stop = root.join("stop");
-    let exit_initial = root.join("exit-initial");
-    let venus_pid = root.join("venus.pid");
-    let orbit = root.join("orbit");
-    let venus = root.join("venus");
-    managed_orbit_executable(&orbit);
-    executable(
-        &venus,
-        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\ncat >/dev/null\n",
-    );
+    for unclean in [false, true] {
+        let root = temporary_directory();
+        let runtime = root.join("runtime");
+        let config = root.join("config");
+        disable_startup_animation(&config);
+        let stop = root.join("stop");
+        let exit_initial = root.join("exit-initial");
+        let venus_pid = root.join("venus.pid");
+        let orbit = root.join("orbit");
+        let venus = root.join("venus");
+        managed_orbit_executable(&orbit);
+        executable(
+            &venus,
+            "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\ncat >/dev/null\n",
+        );
 
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    let child = eon_command(&binary)
-        .arg("run")
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .env("EON_ORBIT", &orbit)
-        .env("EON_VENUS", &venus)
-        .env("EON_TEST_STOP", &stop)
-        .env("EON_TEST_EXIT_INITIAL", &exit_initial)
-        .env("EON_TEST_VENUS_PID", &venus_pid)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let mut supervisor = TestProcess {
-        child,
-        stop: stop.clone(),
-    };
-    let generation = generation_runtime(&runtime);
-    let control = generation.join("eon.sock");
-    wait_for(&control);
-    wait_for(&venus_pid);
-    let pane = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
-    assert!(
-        pane.status.success(),
-        "stdout={} stderr={}",
-        stdout(&pane),
-        String::from_utf8_lossy(&pane.stderr)
-    );
+        let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+        let child = eon_command(&binary)
+            .arg("run")
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop)
+            .env("EON_TEST_EXIT_INITIAL", &exit_initial)
+            .env("EON_TEST_VENUS_PID", &venus_pid)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut supervisor = TestProcess {
+            child,
+            stop: stop.clone(),
+        };
+        let generation = generation_runtime(&runtime);
+        let control = generation.join("eon.sock");
+        wait_for(&control);
+        wait_for(&venus_pid);
+        let pane = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
+        assert!(
+            pane.status.success(),
+            "stdout={} stderr={}",
+            stdout(&pane),
+            String::from_utf8_lossy(&pane.stderr)
+        );
 
-    fs::write(&exit_initial, "").unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let snapshot = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
-        if snapshot.status.success()
-            && !stdout(&snapshot).contains("\"id\":\"p1\"")
-            && stdout(&snapshot).contains("\"id\":\"p2\"")
-        {
-            break;
+        let peer = live_identity(&generation.join("session-2.sock"));
+        if unclean {
+            let identity = live_identity(&generation.join("orbit.sock"));
+            // SAFETY: this exact still-owned Orbit process belongs to the test.
+            assert_eq!(
+                unsafe { libc::kill(identity.process_id as i32, libc::SIGKILL) },
+                0
+            );
+        } else {
+            fs::write(&exit_initial, "").unwrap();
         }
-        assert!(Instant::now() < deadline, "initial pane was not removed");
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert!(supervisor.child.try_wait().unwrap().is_none());
-    let pid: i32 = fs::read_to_string(&venus_pid).unwrap().parse().unwrap();
-    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
-    assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let snapshot = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
+            if snapshot.status.success()
+                && !stdout(&snapshot).contains("\"id\":\"p1\"")
+                && stdout(&snapshot).contains("\"id\":\"p2\"")
+            {
+                break;
+            }
+            assert!(Instant::now() < deadline, "initial pane was not removed");
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(supervisor.child.try_wait().unwrap().is_none());
+        assert_eq!(live_identity(&generation.join("session-2.sock")), peer);
+        assert!(!artifact_path(&generation.join("orbit.sock"), ".record").exists());
+        let pid: i32 = fs::read_to_string(&venus_pid).unwrap().parse().unwrap();
+        // SAFETY: signal 0 performs existence/permission checking without sending a signal.
+        assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
 
-    fs::write(&stop, "").unwrap();
-    wait_for_successful_exit(&mut supervisor.child);
-    assert!(!control.exists());
-    fs::remove_dir_all(root).unwrap();
+        fs::write(&stop, "").unwrap();
+        assert_eq!(
+            wait_for_exit(&mut supervisor.child).code(),
+            Some(i32::from(unclean))
+        );
+        assert!(!control.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[test]

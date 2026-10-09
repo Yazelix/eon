@@ -19,7 +19,7 @@
       flake = false;
     };
     runtime = {
-      url = "git+https://github.com/Yazelix/eon-runtime.git?rev=02865fdf908d8139d4c94180703381f6029c0598";
+      url = "git+https://github.com/Yazelix/eon-runtime.git?rev=e30cf43b7ccc752d33edd4626aabbc4fd1cec579";
       flake = false;
     };
     workspaceProtocol = {

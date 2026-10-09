@@ -248,16 +248,16 @@
     "runtime": {
       "flake": false,
       "locked": {
-        "lastModified": 1791417967,
-        "narHash": "sha256-H9IMqrHA7+I1WN2CzEFhVbct6SeDSCJW2Y7YKuNuwIQ=",
+        "lastModified": 1791582404,
+        "narHash": "sha256-48gkKnMmbivDJM9ukCtUFJPlbM+l3zuM7CY0IwOidiI=",
         "ref": "refs/heads/edge",
-        "rev": "02865fdf908d8139d4c94180703381f6029c0598",
-        "revCount": 12,
+        "rev": "e30cf43b7ccc752d33edd4626aabbc4fd1cec579",
+        "revCount": 13,
         "type": "git",
         "url": "https://github.com/Yazelix/eon-runtime.git"
       },
       "original": {
-        "rev": "02865fdf908d8139d4c94180703381f6029c0598",
+        "rev": "e30cf43b7ccc752d33edd4626aabbc4fd1cec579",
         "type": "git",
         "url": "https://github.com/Yazelix/eon-runtime.git"
       }

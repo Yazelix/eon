@@ -1086,8 +1086,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Proven on x86_64 Linux native Wayland
 - **Consumer:** One local Eon or EonTerm user on the same boot and login.
-- **Trigger:** An Eon-launched Orbit crosses Ready, its supervisor disappears, a
-  replacement targets the same exact generation, or the user requests Stop.
+- **Trigger:** An Eon-launched Orbit crosses Ready, its supervisor disappears,
+  its acquired owner dies, a replacement targets the same exact generation,
+  or the user requests Stop.
 - **Result:**
   - Eon assigns canonical `session-N`, one fresh opaque run ID, and the exact
     Orbit component revision, then validates complete live identity and acquires
@@ -1110,11 +1111,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     It succeeds only after matching tombstones and cleanup.
   - Eon removes exact owned dead residue only after the recorded process is
     absent or dead.
+  - When an acquired Orbit dies without publishing a
+    tombstone, Runtime retires only its exact validated Live record and dead
+    endpoints and reaps its ended child. Full Eon applies normal ended-pane
+    pruning; healthy terminals and their native workspace remain usable.
+    Owner loss is a local failure, not a canonical terminal outcome or
+    successful Stop.
 - **Important failures:** Unsafe, missing, replaced, malformed, oversized,
   incompatible, duplicate, zero, noncanonical, overflowing, wrong-generation,
-  wrong-UID, wrong-process, Busy, partial acquisition, Orbit exit, deadline, or
-  transport failures publish no partial workspace, launch no duplicate run, and
-  authorize no PID, signal, pathname, process-name, group, cgroup, or pidfd
+  wrong-UID, wrong-process, Busy, partial acquisition, unreconciled Orbit exit,
+  deadline, or transport failures publish no partial workspace, launch no
+  duplicate run, and authorize no PID, signal, pathname, process-name, group, cgroup, or pidfd
   fallback. A lost response after completed Stop cannot revive the supervisor.
   A marked Live record rejected after spawn is stopped through canonical
   management using its published identity and is never published as a terminal.
@@ -1131,6 +1138,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   projection, lease collection, deadline, EONW ordering, retained launch claim,
   and exact residue; Orbit `ORB-C13` owns live identity, Ready, lease, terminal state,
   `ORB-C12` cleanup, tombstone, and endpoint cleanup.
+- **Crash-isolation phase:** Accepted on 2026-10-09 under
+  `eon-isolate-unclean-orbit-exit-1v4a`; exact acceptance is recorded below.
 - **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v1, and Venus `VEN-C14`.
 - **Boundary:** Same boot and login only; no prior-topology persistence, Orbit or
   machine restart recovery, logout/reboot survival, remote authority, service
@@ -1175,6 +1184,31 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     with unchanged `/build` paths/tests; host deadline negatives remain retained.
     Installed Eon: `/nix/store/qnfhshxx9kdzbazgx90cjv3xhb62g1ds-eon-0.1.0`;
     exact hashes/evidence: `eon-stop-1xxu-review3-2026-10-08` in Eon's proof root.
+  - **Crash isolation:** Runtime `e30cf43b7ccc752d33edd4626aabbc4fd1cec579`,
+    unchanged EONW `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`, Orbit
+    `6bc269c40b18f08b95778939518f77556ba91c67` and Venus
+    `42a5ad291995847d5fa36bb62344065f95f6866f`. The Eon candidate over
+    `d57862d3d7a17de21be5c54a46d448b70d9235b6` passes focused process and
+    trust-boundary red/green checks, full affected locked Rust checks, both Nix
+    products and flake checks. Installed Eon
+    `/nix/store/0x45gqbyy6sllrcwprnnddflyxr80nsh-eon-0.1.0` on private
+    Sway 1.12 / Mesa software Vulkan preserves the same native window, peer
+    Orbit/work PID identities and keyboard input after selected-pane SIGKILL,
+    with no duplicate Orbit. Normal exit, Stop and recovery regressions pass;
+    live EOF and replaced record/socket objects remain non-success.
+    EonTerm `/nix/store/km9290jl3ldq8b9da19acn4jvjfkg05g-eonterm-0.1.0`
+    passes its shared package/lifecycle boundary without a multi-terminal claim.
+    A private installed-profile replacement from exact `hq5j2crs` to this Eon
+    artifact preserves a real Codex process and ordinary shell work through
+    upgrade, rollback, detach and exact-old-binary reattachment. The agent
+    completes and its task passes an independent test; new-generation work
+    launches while the old terminal continues. This proves process continuity,
+    not provider semantic state, source-fetch parity or a direct-bundle updater.
+    Source identities, hashes, commands, logs, cleanup and the silent 12-second
+    Kinestra capture remain in `eon-orbit-crash-1v4a-2026-10-09` under Eon's
+    proof root. Keyboard-injection negatives are retained separately; no
+    restart persistence, killed-terminal restoration or screen-reader
+    qualification is established by this repair.
   - **Environment:** x86_64 Linux packaged installed recovery and adversarial
     lifecycle checks.
   - **Evidence:** Ready serialization, supervisor loss, exact adoption, Busy and

@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keep healthy terminals and the native workspace usable when an owned Orbit
+  crashes without publishing its final result. Prune the ended pane after
+  verified death and exact cleanup; retain a local failure status without
+  reporting a successful Stop or inventing a terminal outcome.
+
 - Show ordinary tab directory names, including the home directory name, and
   compact text pane paths with `~` for home and `~/` for descendants.
 
