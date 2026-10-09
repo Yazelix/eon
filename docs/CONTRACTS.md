@@ -123,6 +123,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   original user processes remain alive at exact prior identities. This proves
   product wording and its installed consumers, without extending native UI,
   platform or lifecycle guarantees. Existing work retains its prior runtime.
+- **Half-block child delivery:** EON-C4 records the exact installed adoption of
+  Venus `bac1d8d155c04840d672f2d1bb299a830dcb625f` and its scoped native proof.
 - **CLI help proof:** Accepted on x86_64 Linux, 2026-10-07, under
   `eon-readable-cli-help-5yh4`, from Eon source
   `43cd92879b20dca21c3d5a12fa16060c267bc129` and Runtime
@@ -278,6 +280,37 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon assembly and product policy; Eon Runtime owns runtime
   mechanisms and state. Orbit, Venus and tools retain their subsystem authority.
 - **Consumes:** Accepted child contracts through EON-C2's exact graph.
+- **Installed half-block delivery proof:** Accepted on 2026-10-09 under
+  `eon-deliver-venus-half-block-fix-qfee`, Eon source
+  `62ac66c18b30b1e9056a9534dd84c083f03f1a69` selects Venus
+  `bac1d8d155c04840d672f2d1bb299a830dcb625f`; child proof metadata
+  `c849868fb592dd502aca9ab38db08776bd3cfd0e` retains renderer correctness.
+  Orbit `6bc269c40b18f08b95778939518f77556ba91c67`, Runtime
+  `02865fdf908d8139d4c94180703381f6029c0598`, codec
+  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa` and Anima
+  `b3133f057fa0029b3e06c85301161168c48bb799` remain unchanged.
+  - **Environment and artifacts:** x86_64 Linux, private Sway 1.12
+    headless/GLES2, Nix Mesa 26.1.2, Intel/i915 Vulkan, scale 1. Prepared source
+    `/nix/store/yss006f7zf7gkgdrdryj4z2p5zbgviwa-eon-source`; installed Eon
+    `/nix/store/q30y475q7mvqlivyd5axkj808rjfz6na-eon-0.1.0` and EonTerm
+    `/nix/store/zzsxzc47gi8ylnyk2ji4ji9yaf3pjjhx-eonterm-0.1.0`.
+  - **Evidence:** Manifest/lock identity and both Nix builds pass, including
+    78 Eon/runtime tests per product and 145 Venus tests. Refreshed profiles
+    equal the built artifacts and bind the accepted Venus. Installed caller-PTY
+    plasma at 160×48 records 22.62 visible changes/s, p95 gap 66.67 ms and Venus
+    CPU 14.8% of one core; retained installed baseline records 5.08–5.23/s,
+    p95 216.67–233.33 ms and CPU 90.3–92.0%. Escape exits successfully and
+    restores caller terminal modes. Native startup/picker handoff, physical
+    Alt+Shift+A open/close, unchanged pane selection and subsequent physical-key
+    terminal input pass. Commands, recordings, resource samples, negatives and
+    cleanup evidence are retained in
+    `~/.local/state/eon/proofs/eon-venus-half-block-delivery-2026-10-09/report.txt`.
+  - **Limits:** One installed performance sample confirms delivery alongside
+    the child's repeated owner proof; sampled visible changes are not hardware
+    FPS or a performance guarantee. Four original live process identities are
+    preserved; unrelated profiles survive the Eon refresh. Existing windows
+    retain their prior runtime until explicit restart. Live COSMIC, other scales,
+    macOS, promotion and release are outside this delivery proof.
 - **Installed cursor-tail configuration and continuity proof:** Eon source
   `1ca418d9370061b4ba5ac03c0225236ad2b1461d` selects Venus
   `a27aad23822d3bd0b0e467ffc32c578bbde8b00d` and Runtime
