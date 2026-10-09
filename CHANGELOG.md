@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Use Venus's exact half-block rendering for Anima graphics, preserving colors
+  and styles while avoiding repeated text shaping during dense animation.
+
 - Pin Nova Helix `817dcbca` with bundled Codeberg and SourceHut grammar sources.
   Nix evaluation and those grammar builds do not need either source host.
   The existing Linux delivery job checks the bundled grammars before packaging.
