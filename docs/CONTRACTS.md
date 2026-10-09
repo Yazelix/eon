@@ -556,8 +556,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     pane views an independent persistent terminal. When the pane stack is
     visible, exactly one pane is expanded.
   - Tabs use stable `tN` identities. Each tab header shows its number plus the
-    leaf, `~`, or `/` derived from Eon's authoritative launch directory; actions
-    retain `tN`, and accessibility includes full launch-path context. Venus
+    directory leaf or `/` derived from Eon's authoritative launch directory;
+    actions retain `tN`, and accessibility includes full launch-path context. Venus
     renders pill-shaped, separated tabs sized to shaped labels, capped near 280
     logical pixels at default typography. Long names use middle ellipsis;
     narrow tabs retain their number whenever it fits. Hover previews the launch
@@ -565,7 +565,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Selected fill and brighter text identify the active tab without an underline;
     keyboard focus adds a separate rounded outline.
   - Each pane is identified as `pN`, two ASCII spaces, and a compact working-
-    directory label; home uses the packaged marker, descendants use `~/`, and
+    directory label; home uses `~`, descendants use `~/`, and
     external paths remain absolute.
   - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
     `config.toml` defaults to `true` and requests one rounded border around the
@@ -1213,7 +1213,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     start with the accepted directory; existing terminals and terminal CWDs do
     not change.
   - Current EONW v7 returns the exact accepted raw path bytes. Venus derives a
-    bounded `N  leaf`, `N  ~`, or `N  /` label while retaining `tN` for actions and
+    bounded `N  leaf` or `N  /` label while retaining `tN` for actions and
     exposing identity plus bounded path context to accessibility.
   - Same-boot recovery assigns synthetic `t1` the replacement supervisor's
     launch directory as fresh policy and never infers prior policy from a pane.

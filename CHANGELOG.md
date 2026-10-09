@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Show ordinary tab directory names, including the home directory name, and
+  compact text pane paths with `~` for home and `~/` for descendants.
+
 - Use Venus's exact half-block rendering for Anima graphics, preserving colors
   and styles while avoiding repeated text shaping during dense animation.
 
