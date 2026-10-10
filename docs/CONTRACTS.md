@@ -648,7 +648,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Picker-stop failure changes no topology; durable partial-stop behavior is the
   explicit result above. Exhausted pane numbers fail before terminal start;
   unknown or repeated terminal-exit notices remove nothing; losing a view never
-  silently stops or substitutes a terminal.
+  silently stops or substitutes a terminal. Rejected workspace actions retain
+  their explanation across unchanged polls and announce it without moving
+  terminal focus; a changed workspace retires the notice.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
