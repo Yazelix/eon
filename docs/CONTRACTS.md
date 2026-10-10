@@ -711,6 +711,28 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Venus `94b15af20d1798b648f4d9945fd6bb647f10add8` retains long-label proof
     in `ven-2fq`. Picker-scoped actions and v7 pending tabs are proved in C18;
     public-alpha native topology and recovery are proved in C7.
+  - **Reader-repair composition:** `eon-adopt-accepted-venus-reader-repairs-pmcd`,
+    Eon `3baf0b87ae52ba47927280a92ab3e9d4d3101e99`, Venus
+    `5dca0688644ef11f7fa8e845bb42842603189d32` and AccessKit
+    `0f9d186ec6f5e66fe4ccc131ca318dc2725c12f5` preserve Orbit
+    `6bc269c40b18f08b95778939518f77556ba91c67`, Runtime
+    `e30cf43b7ccc752d33edd4626aabbc4fd1cec579` and EONW v7
+    `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`. Prepared locked Rust
+    fmt/check/test/strict Clippy, exact graph validation, Nix composition,
+    both product builds and affected package checks pass. The refreshed active
+    profile matches working-tree artifact
+    `/nix/store/pymbyq1gdc13h7rlmdpfw6nmck99md44-eon-0.1.0`.
+    On private native Sway 1.12/headless/pixman at scale 1 with Nix Mesa 26.1.2
+    lavapipe, Orca 49.4 and AT-SPI 2.58.1, real Orca D-Bus line commands read
+    consecutive visible live/history/returned rows. After history/Say All and
+    assistive Return to live, the reader synthesizes exact selection `é 界`
+    at 206..210 without compensating focus keys. SSIP, synthesized PCM/WAV,
+    exact source/artifacts and cleanup are retained in
+    `~/.local/state/eon/proofs/eon-reader-adoption-pmcd-2026-10-10/acceptance.json`.
+    All four ambient process identities and other profile elements survive;
+    live work retains its old runtime. This scoped adoption does not accept
+    native reader-key delivery, full picker/failure qualification, human
+    listening, broader platforms/compositors or distribution graduation.
 - **Open proof:** Current-alpha AT-SPI labels and screen-reader use remain open.
   Blank/incomplete headless picker captures occurred on both compared tab
   artifacts; their cause remains unresolved. These slices do not establish
