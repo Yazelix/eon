@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Use Venus's accepted terminal text geometry and exact AccessKit cache repair
+  for bounded Orca line review and terminal selection after Return to live
+  output. Complete Linux screen-reader qualification remains pending.
+
 - Keep healthy terminals and the native workspace usable when an owned Orbit
   crashes without publishing its final result. Prune the ended pane after
   verified death and exact cleanup; retain a local failure status without

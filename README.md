@@ -123,11 +123,11 @@ Beads data, lock files, and generated artifacts.
 | User guides | 352 |
 | Development guide | 100 |
 | Benchmark report | 317 |
-| Changelog | 462 |
+| Changelog | 466 |
 | Rust source and tests | 5,390 |
 | Cargo manifests | 31 |
 | Component manifest | 431 |
-| Nix composition and checks | 1,216 |
+| Nix composition and checks | 1,217 |
 | Hosted cache workflow | 48 |
 | Product defaults | 0 |
-| **Total** | **12,078** |
+| **Total** | **12,083** |

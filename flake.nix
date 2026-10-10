@@ -15,7 +15,7 @@
       flake = false;
     };
     venus = {
-      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=42a5ad291995847d5fa36bb62344065f95f6866f";
+      url = "git+https://github.com/Yazelix/eon-desktop.git?rev=5dca0688644ef11f7fa8e845bb42842603189d32";
       flake = false;
     };
     runtime = {
@@ -259,6 +259,7 @@
           cargoLock = {
             lockFile = "${venusSource}/Cargo.lock";
             outputHashes."dpi-0.1.1" = "sha256-fJQqcXhKPGtivKo1AyyGhy1oNebTFGyzWDmOesFsltI=";
+            outputHashes."accesskit-0.24.1" = "sha256-W4Zk2BcKSPztJeeWBtQS3ugV0WPZWD0x8aX6R37zqj8=";
           };
           nativeBuildInputs = [
             pkgs.makeWrapper
