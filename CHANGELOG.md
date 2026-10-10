@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keep rejected workspace actions available across polling and announce the
+  failure once to the attached reader without moving terminal focus. Successful
+  retry retires the notice; full screen-reader qualification remains open.
+
 - Use Venus's accepted terminal text geometry and exact AccessKit cache repair
   for bounded Orca line review and terminal selection after Return to live
   output. Complete Linux screen-reader qualification remains pending.

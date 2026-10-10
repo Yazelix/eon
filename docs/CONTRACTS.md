@@ -280,6 +280,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon assembly and product policy; Eon Runtime owns runtime
   mechanisms and state. Orbit, Venus and tools retain their subsystem authority.
 - **Consumes:** Accepted child contracts through EON-C2's exact graph.
+- **Workspace failure-notice delivery:** EON-C8 records the exact installed
+  composition, scoped native proof and remaining reader qualification limit.
 - **Installed label delivery proof:** Accepted on 2026-10-09 under
   `eon-decide-tab-house-icon-lff4`, Eon source
   `ebb66eb0b902f3b4058c0b59d63bdbb73c6d61a6` selects Venus source and scoped
@@ -561,8 +563,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `1a2bb60fb17ead6ecdbc8658dce5af8b21b002e9f06c33076fe0ea49e6ad2f61`.
     The tag predates edge Anima, independent windows and external runtime
     composition; their proofs belong to C18, C23 and C4.
-- **Open proof:** Current-alpha AT-SPI application tree was unavailable in that
-  clean account; current labels and screen-reader workflows remain unproved.
+- **Open proof:** EON-C8 records current reader qualification as No-Go on the
+  direct terminal-focus picker transition, with scoped positive observations.
   Wider compositors, fractional/HiDPI coverage, proprietary NVIDIA and installed
   non-systemd behavior remain qualified. C19 proves only its named initial-grid,
   typography, IME and AT-SPI slice. Machine-restart recovery is not supported.
@@ -713,28 +715,40 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Venus `94b15af20d1798b648f4d9945fd6bb647f10add8` retains long-label proof
     in `ven-2fq`. Picker-scoped actions and v7 pending tabs are proved in C18;
     public-alpha native topology and recovery are proved in C7.
-  - **Reader-repair composition:** `eon-adopt-accepted-venus-reader-repairs-pmcd`,
-    Eon `3baf0b87ae52ba47927280a92ab3e9d4d3101e99`, Venus
-    `5dca0688644ef11f7fa8e845bb42842603189d32` and AccessKit
-    `0f9d186ec6f5e66fe4ccc131ca318dc2725c12f5` preserve Orbit
+  - **Reader notice delivery and qualification:**
+    `eon-qualify-repaired-linux-screen-reader-tvkf`, Eon source
+    `f29a4a168ae6f21f26c6c48995a6cb31becce96c`, adopts Venus
+    `dd31c0e74628674c772b1494590ce31cacce1ef0`. AccessKit remains
+    `0f9d186ec6f5e66fe4ccc131ca318dc2725c12f5`, Orbit
     `6bc269c40b18f08b95778939518f77556ba91c67`, Runtime
     `e30cf43b7ccc752d33edd4626aabbc4fd1cec579` and EONW v7
     `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`. Prepared locked Rust
-    fmt/check/test/strict Clippy, exact graph validation, Nix composition,
-    both product builds and affected package checks pass. The refreshed active
-    profile matches working-tree artifact
-    `/nix/store/pymbyq1gdc13h7rlmdpfw6nmck99md44-eon-0.1.0`.
-    On private native Sway 1.12/headless/pixman at scale 1 with Nix Mesa 26.1.2
-    lavapipe, Orca 49.4 and AT-SPI 2.58.1, real Orca D-Bus line commands read
-    consecutive visible live/history/returned rows. After history/Say All and
-    assistive Return to live, the reader synthesizes exact selection `é 界`
-    at 206..210 without compensating focus keys. SSIP, synthesized PCM/WAV,
-    exact source/artifacts and cleanup are retained in
-    `~/.local/state/eon/proofs/eon-reader-adoption-pmcd-2026-10-10/acceptance.json`.
-    All four ambient process identities and other profile elements survive;
-    live work retains its old runtime. This scoped adoption does not accept
-    native reader-key delivery, full picker/failure qualification, human
-    listening, broader platforms/compositors or distribution graduation.
+    fmt/check/test/strict Clippy, graph validation, Nix source-preparation,
+    both product builds and affected package checks pass (120 Rust tests).
+    The refreshed active Eon profile matches working-tree artifact
+    `/nix/store/w3jj26v5yhncr7laq1ylkqdvhq710vn2-eon-0.1.0`, selecting the
+    exact Venus package proved by its owner. Other profile elements and all
+    four ambient process identities survive; running work retains its runtime.
+    In private native COSMIC/Sway 1.12 with Mesa 26.1.2 lavapipe, normal Orca
+    `24c64c15c1e1a75f95d74f7d623f62ab028fd3a9` reads initial picker/Yazi,
+    labels, shortcuts, live/history/returned lines and exact selection `é 界`
+    at 206..210 immediately after assistive Return to live retires its control.
+    Genuine native reader keys, SSIP and non-silent captured PCM also prove
+    selected-Orbit crash continuation and the actual missing-directory launch
+    failure: one announcement, 12.87 seconds of retained explanation, quiet
+    polling, unchanged topology/focus/healthy peers, exact successful retry,
+    notice retirement and continued healthy reading/input.
+    Complete reader qualification remains **No-Go**: creating a picker directly
+    from terminal focus after Say All leaves query and full path in the current
+    terminal, but native Say All speaks only the footer. The pane-focus route
+    passes. Ownership and baseline causality of this distinction are unresolved;
+    it is not attributed to the notice repair or the accepted Orca correction.
+    Evidence, both private cleanups and the corrected fixed-row harness oracle
+    are retained in
+    `~/.local/state/eon/proofs/eon-reader-notice-adoption-2026-10-10-_g_st2lx/qualification.json`
+    (SHA-256 `9bca8c6fb10ade1eed3baa8643f5b7af01fcff146d64a166f7721046e0643b51`).
+    This accepts notice-repair delivery, not full reader, human-listening,
+    wider-platform/compositor or distribution graduation claims.
 - **Open proof:** Current-alpha AT-SPI labels and screen-reader use remain open.
   Blank/incomplete headless picker captures occurred on both compared tab
   artifacts; their cause remains unresolved. These slices do not establish
