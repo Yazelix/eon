@@ -15,11 +15,12 @@ and remaining limitations. Owning Beads and Git retain execution history;
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
 The [component manifest](../components/eon-alpha-v3.json) owns selected source
-and compatibility identities. EON-C4 records the external runtime composition;
-EON-C7 records the distinct tagged public alpha. Every proof below applies only
-to its named source, artifact, environment and surface; it does not promote a
-later pin or another platform. Profile refresh preserves live supervisors and
-terminals; existing work retains its exact runtime until an explicit restart.
+and compatibility identities. EON-C4 records the runtime composition and its
+earlier external cutover proofs; EON-C7 records the distinct tagged public
+alpha. Every proof below applies only to its named source, artifact, environment
+and surface; it does not promote a later pin or another platform. Profile
+refresh preserves live supervisors and terminals; existing work retains its
+exact runtime until an explicit restart.
 
 ## Rules
 
@@ -56,7 +57,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Result:**
   - Eon validates one compatible component set, launches only that set, crosses
     each required Ready boundary before publication, and reports every exact
-    component revision.
+    external component revision and the generation of its in-tree build.
   - `assets/eon.png` is the transparent canonical application icon; Nix derives
     exact hicolor sizes and installed desktop metadata names `eon`.
   - The installed launcher action is named `Open Eon` and invokes the exact
@@ -146,7 +147,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   unchanged. This CLI proof does not extend existing native presentation proofs.
 - **Assembly boundary:** `product.rs` supplies fallible validated component
   facts to the current runtime; graph failures precede runtime ownership effects,
-  including `window new` parent-directory creation. The independent producer
+  including `window new` parent-directory creation. Eon Runtime in `runtime/`
   owns the consumed runtime. See the
   [runtime input contract](ARCHITECTURE.md#ownership-and-invocation).
 - **Proof:** Eon `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`,
@@ -168,7 +169,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `33ec3062f72a732290dcd6c6f40a2d5f535d6a7cbfcaf7455a0a5c4f03a52e0d`,
     and exact launcher action `32c768e0d9a62984640a516c34d0cb0db16e8adb`.
     Earlier continuous-output/synchronized-scroll evidence is retained in nxh
-    and Git; the current exact external composition is proved in EON-C4.
+    and Git; the earlier external composition is proved in EON-C4.
   - **Cursor configuration:** `eon-compose-yazelix-cursors-bcc` at Eon
     `06402130ddccc3a02298eb3131fbe9f53d9b99a0`, Venus
     `73195f5812cdc8f32841eab644c1bf4b3af9f756`, EONW v5: focused launch/rejection,
@@ -434,13 +435,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     tab-gap limits remain; no screen-reader, macOS or wider-platform proof.
 - **Boundary:** No copied child schema, hidden fork, compatibility adapter, or
   second terminal/rendering owner.
-- **Assembly boundary:** `crates/eon/src/product.rs` owns concrete product inputs;
-  Eon invokes exact external runtime/codec packages. The independent Eon Runtime
-  repository owns the nine runtime mechanisms, parsing,
-  validation, mutable state and canonical EONW. Eon retains assembly, defaults,
+- **Assembly boundary:** `eon/crates/eon/src/product.rs` owns concrete product
+  inputs; Eon invokes the in-tree runtime and codec crates. Eon Runtime in
+  `runtime/` owns the nine runtime mechanisms, parsing, validation, mutable
+  state and canonical EONW. Eon retains assembly, defaults,
   graph, distribution and process exit handling. The
-  [runtime boundary](ARCHITECTURE.md#runtime-library-boundary) records accepted
-  producer transfer and composed package selection.
+  [runtime boundary](ARCHITECTURE.md#runtime-library-boundary) records the
+  runtime seam and in-tree package selection.
 - **Proof:** External cutover in Eon
   `51666e2fcb925a7d2abde204ac402ecf83d1769f`, recorded by
   `eon-runtime-cutover-y1wy` on the exact candidate based on
@@ -948,7 +949,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     shell and Nix checks plus installed
     `/nix/store/60814358az00zr420rmbai7lz5qy1a1x-eon-0.1.0` round-trip Unicode
     through commands/aliases and `wl-paste`; native user autoload overrides and
-    the no-display native error remain intact. C4 proves external composition.
+    the no-display native error remain intact. C4 proves the earlier external
+    composition.
 
 ## EON-C10 — Typed workspace control
 
@@ -1116,8 +1118,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
   identity, presentation compatibility window, remote runtime, plugin API, service-manager
   requirement, or automatic eviction.
-- **Assembly boundary:** The external `eon-runtime` generation owner consumes immutable
-  runtime/EONW bytes and the supplied Eon assembly contribution, including
+- **Assembly boundary:** The `eon-runtime` generation owner consumes immutable
+  runtime/EONW bytes and Eon's source-tree digest, which includes
   generated-command inputs. Exact presentation checks remain;
   retain the prior executable to reattach incompatible old work. See
   [generation inputs](ARCHITECTURE.md#defaults-overrides-and-generation) and
@@ -1273,9 +1275,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   its acquired owner dies, a replacement targets the same exact generation,
   or the user requests Stop.
 - **Result:**
-  - Eon assigns canonical `session-N`, one fresh opaque run ID, and the exact
-    Orbit component revision, then validates complete live identity and acquires
-    the sole management lease within one shared five-second operation.
+  - Eon assigns canonical `session-N`, one fresh opaque run ID, and the runtime
+    generation ID as component generation, then validates complete live identity
+    and acquires the sole management lease within one shared five-second
+    operation.
   - Replacement EonTerm recovers exactly one live run; replacement full Eon
     acquires at most 256 valid runs, sorts positive canonical N numerically, and
     projects them into synthetic `t1` as `pN` with the lowest selected. That tab

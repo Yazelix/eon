@@ -13,10 +13,9 @@ duplicating product pins. Implementing Beads record exact inspected revisions.
 
 ### Does an Eon design question depend on terminal service, engine, attachment, or diagnostic-client internals?
 
-- **Owner:** Orbit through Eon Sessions
-- **Read first:** [Eon Sessions
-  contracts](https://github.com/Yazelix/eon-sessions/blob/edge/docs/CONTRACTS.md) and
-  [reference routing](https://github.com/Yazelix/eon-sessions/blob/edge/docs/REFERENCES.md)
+- **Owner:** Orbit
+- **Read first:** [Orbit contracts](../orbit/docs/CONTRACTS.md) and
+  [reference routing](../orbit/docs/REFERENCES.md)
 - **Read additionally only if:** Follow only the child route matching a demonstrated Orbit
   contract gap.
 - **Preserve / reject:** Consume accepted Orbit contracts. Do not repeat or reopen engine

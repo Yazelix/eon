@@ -44,10 +44,10 @@ Product text uses these terms without requiring subsystem names. Technical
 `session-N` identities and JSON `session` / `sessions` fields refer to terminals.
 Their spellings, socket paths and protocol names remain unchanged.
 
-Repository documentation uses **Eon Desktop** and **Eon Sessions**. Engineering
-documentation uses **Eon orchestrator**, **Venus client**, and **Orbit terminal
-runtime** when subsystem ownership matters. Venus and Orbit are not additional
-public products.
+Documentation names the subsystems **Orbit**, **Venus** and **Eon Runtime**
+when ownership matters; engineering documentation may say **Eon orchestrator**,
+**Venus client**, and **Orbit terminal runtime**. Venus and Orbit are not
+additional public products.
 
 Platform qualifiers describe Eon rather than Venus. Use **Eon for desktop** for
 the implemented desktop surface. If later surfaces are implemented, use **Eon
@@ -59,12 +59,11 @@ repository names.
 Coupled greenfield projects make simultaneous dogfooding expensive. Eon
 therefore uses one active implementation frontier:
 
-1. Eon Sessions proves Orbit's persistent local terminals, attachment, and
-   client-facing protocol against a simple reference client.
-2. Eon Desktop proves Venus's native graphical interaction against an accepted
-   Orbit revision.
-3. Eon composes accepted Eon Sessions and Eon Desktop revisions with its
-   managed interactive environment and Ratconfig through Nix.
+1. Orbit proves its persistent local terminals, attachment, and client-facing
+   protocol against a simple reference client.
+2. Venus proves its native graphical interaction against an accepted Orbit.
+3. Eon composes accepted Orbit and Venus with its managed interactive
+   environment and Ratconfig through Nix.
 
 This order lets each project use a substitute peer. Orbit can use a small CLI or
 test client before Venus exists. Venus can use recorded protocol fixtures and a
@@ -149,14 +148,12 @@ its Eon owner by a private stream and exits on owner EOF.
 
 Eon's internal boundaries follow owned invariants rather than delivery phases.
 They route changes and audits without creating additional product scope.
-Runtime and codec paths below are relative to `runtime/`; assembly and
-manifest crate paths are relative to `eon/`; Nix paths are relative to the
-repository root.
+Paths below are relative to the repository root.
 
 ### Product assembly
 
-- **Owning surfaces:** `crates/eon/src/product.rs` and `crates/eon/build.rs`, which
-  digests the source tree
+- **Owning surfaces:** `eon/crates/eon/src/product.rs` and
+  `eon/crates/eon/build.rs`, which digests the source tree
 - **Owns:** Product version, validated component facts, chosen shell/terminal/Anima
   and popup defaults, palette, Agent preference order, program fallbacks, opaque
   launch inputs, and the immutable assembly contribution to generation identity
@@ -165,7 +162,7 @@ repository root.
 
 ### CLI and executable boundary
 
-- **Owning surfaces:** `crates/eon-runtime/src/cli.rs` and `crates/eon/src/main.rs`
+- **Owning surfaces:** `runtime/crates/eon-runtime/src/cli.rs` and `eon/crates/eon/src/main.rs`
 - **Owns:** `cli.rs` owns invocation selection, CLI argument and output projection, and
   managed-tool dispatch; `main.rs` owns executable composition and top-level error-to-exit
   mapping
@@ -174,7 +171,7 @@ repository root.
 
 ### Runtime and supervisor lifecycle
 
-- **Owning surfaces:** `crates/eon-runtime/src/supervisor.rs`
+- **Owning surfaces:** `runtime/crates/eon-runtime/src/supervisor.rs`
 - **Owns:** Launch mode, private configuration and product runtime roots, startup
   serialization, supervisor composition, presentation policy, and child
   lifecycle coordination
@@ -184,7 +181,7 @@ repository root.
 
 ### EONW transport
 
-- **Owning surfaces:** `crates/eon-runtime/src/control.rs`
+- **Owning surfaces:** `runtime/crates/eon-runtime/src/control.rs`
 - **Owns:** Owned mode-`0600` endpoint validation, bounded client connection and
   length-delimited request/response I/O, listener lifetime, socket identity, protocol
   failure projection, and concrete client probes
@@ -193,7 +190,7 @@ repository root.
 
 ### Generation lifecycle
 
-- **Owning surfaces:** `crates/eon-runtime/src/generation.rs`
+- **Owning surfaces:** `runtime/crates/eon-runtime/src/generation.rs`
 - **Owns:** One generation identity combining runtime/EONW bytes with the supplied
   assembly contribution, generation-directory projection, bounded discovery
   and classification, list output, explicit attachment selection, and validated owner-routed
@@ -203,7 +200,7 @@ repository root.
 
 ### Orbit terminal lifecycle adapter
 
-- **Owning surfaces:** `crates/eon-runtime/src/sessions.rs`
+- **Owning surfaces:** `runtime/crates/eon-runtime/src/sessions.rs`
 - **Owns:** Ready-claim authority, management-record and peer validation, lease acquisition,
   same-boot recovery, Orbit launch and rollback, management Stop, terminal-record and
   endpoint reconciliation, durable and transient terminal cleanup, and live terminal
@@ -213,7 +210,7 @@ repository root.
 
 ### Workspace state
 
-- **Owning surfaces:** `crates/eon-runtime/src/workspace.rs`
+- **Owning surfaces:** `runtime/crates/eon-runtime/src/workspace.rs`
 - **Owns:** Live ordered tabs and panes, stable identities, authoritative tab launch
   directories, active selection, terminal-to-endpoint mapping, one captured-tab
   directory-picker state, deterministic recovered-terminal projection, semantic action
@@ -223,7 +220,7 @@ repository root.
 
 ### EONW boundary
 
-- **Owning surfaces:** `crates/eon-workspace-protocol`
+- **Owning surfaces:** `runtime/crates/eon-workspace-protocol`
 - **Owns:** Versioned values, bounded message codec, validation, complete workspace
   snapshots, supervisor identity and capabilities, presentation and stop results, and
   structured failures
@@ -232,14 +229,14 @@ repository root.
 
 ### Component graph
 
-- **Owning surfaces:** `components/eon-alpha-v3.json` and `crates/eon-manifest`
+- **Owning surfaces:** `components/eon-alpha-v3.json` and `eon/crates/eon-manifest`
 - **Owns:** Stable component identity, compatibility requirements, abstract artifact
   declarations, graph validation, and version reporting
 - **Does not own:** Resolved package paths, launch policy, or package construction
 
 ### Managed environment
 
-- **Owning surfaces:** `crates/eon-runtime/src/managed_environment.rs` and `nix/shell-environment.nix`
+- **Owning surfaces:** `runtime/crates/eon-runtime/src/managed_environment.rs` and `nix/shell-environment.nix`
 - **Owns:** Stable managed command names, private configuration projection, strict
   configuration parsing, validation and overrides of assembly-supplied defaults;
   Nix generates the selected tools' startup files
@@ -278,11 +275,11 @@ adds an in-process Rust library, with no additional daemon or IPC boundary.
 
 ### Ownership and invocation
 
-| Owner | Responsibility after independent transfer |
+| Owner | Responsibility |
 |---|---|
 | Eon | Product contracts/version/default values, actual executable and exit/error mapping, canonical component graph and `eon-manifest`, assets, component selection, Nix translation and distribution |
 | `eon-runtime` | Existing `cli`, `quota`, `control`, `generation`, `managed_environment`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
-| `eon-workspace-protocol` in `eon-runtime` | Canonical EONW package/API/codecs, retaining package `0.1.0`, Rust `1.95`, Apache-2.0 and v2–v7 exports/bytes at transfer |
+| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codecs v2–v9 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
 | Orbit and Venus | Their existing terminal and native-client authority |
 
 Eon calls one concrete library entry point. Runtime handles invocation selection,
@@ -401,11 +398,11 @@ artifact requirements activate with direct-distribution work.
 ## Activation boundary
 
 Planning can refine contracts, references, and Beads. Runtime work begins after
-the user activates an implementation bead and its upstream proof revisions exist.
-The active Eon slice launches one accepted Eon Desktop and Eon Sessions pair,
-supplies the accepted managed environment, preserves Eon component and native
-shell configuration boundaries, reports component identity through one
-Nix-managed path, and exposes its live workspace through EONW v8. Venus
-consumption follows an exact Eon producer proof; the canonical composition graph
-changes only after an exact consumer proof exists. Later slices earn their scope
+the user activates an implementation bead and its prerequisite proofs exist. The
+active Eon slice launches one accepted Venus and Orbit pair, supplies the
+accepted managed environment, preserves Eon component and native shell
+configuration boundaries, reports component identity through one Nix-managed
+path, and exposes its live workspace through EONW v9. Venus consumes a new EONW
+version only after Eon Runtime's producer proof; the graph's interface versions
+change only after Venus's consumer proof exists. Later slices earn their scope
 through dogfooding. Direct distribution has its own activation gate.

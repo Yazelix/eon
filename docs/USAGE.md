@@ -30,7 +30,10 @@ Install the public alpha:
 nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-09-24
 ```
 
-Run `eon` to start. `eon versions` shows the installed component revisions.
+Run `eon` to start. `eon versions` shows the installed component revisions. On
+the current `edge` build, it shows the generation of the in-tree build and each
+exact external component revision; Orbit, Venus and Eon Runtime report
+`workspace`.
 
 Bottom shortcut hints, Anima startup, its popup and CLI command, and the independent-window shortcut,
 launcher action, and `eon window` commands below require the current `edge`
@@ -247,8 +250,9 @@ composition.
 
 ## Troubleshooting and reporting
 
-- **Nix cannot fetch a child input:** check access to GitHub and retry. The
-  locked Eon Sessions and Eon Desktop source revisions are public.
+- **Nix cannot fetch an input:** check access to GitHub and retry. The current
+  `edge` build fetches only external inputs; Orbit, Venus and Eon Runtime build
+  from this repository.
 - **A workspace command reports a missing supervisor:** run `eon`, then retry.
 - **The window closed but commands remain:** this is detach behavior. Use
   `eon attach` to return or `eon stop GENERATION` to end them.

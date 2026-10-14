@@ -3,8 +3,8 @@
 ## Goals
 
 Eon alpha and early dogfood use Nix as the sole installation and composition
-channel. This phase spends project time on Eon Sessions, Eon Desktop, and Eon
-contracts instead of portable archives and installer maintenance.
+channel. This phase spends project time on Orbit, Venus, and Eon contracts
+instead of portable archives and installer maintenance.
 
 The current accepted channel targets x86_64 Linux on native Wayland. Apple
 Silicon macOS is the only approved expansion and remains within the same
@@ -56,7 +56,7 @@ Direct-distribution work requires a separate user decision after:
 
 - the Nix composition survives sustained dogfood with fresh terminals;
 - launch, configuration, diagnostics, upgrades, and failure behavior stabilize;
-- exact Eon Sessions and Eon Desktop revisions have no unresolved P0 or P1
+- the exact Eon revision has no unresolved P0 or P1 Orbit or Venus
   integration defect outside an explicitly accepted limitation;
 - the component manifest describes the accepted product without relying on
   derivation identity;
@@ -341,7 +341,7 @@ Wayland host with the documented kernel capabilities.
 
 A direct release candidate should also prove:
 
-- component revisions match the reviewed manifest;
+- external component revisions match the reviewed manifest;
 - direct and Nix channels report the same component set;
 - bundles contain no undeclared store paths or machine-local references;
 - installation, upgrade, rollback, and removal preserve user data;

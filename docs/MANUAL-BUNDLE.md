@@ -52,11 +52,13 @@ The retained candidate uses a disposable proof key whose private part was
 removed. Its accompanying public key alone supplies no release authority.
 Lucca's approved release trust anchor remains a publication prerequisite.
 
-Inside the archive, `component-manifest.json` and `flake.lock` are exact producer
-inputs. `provenance.json` schema 1 binds their SHA-256 values, composed package,
-target and helper source identity. `closure-paths.txt` lists the complete private
-closure; absolute `/nix/store` symlinks resolve within that view. These receipts
-consume the canonical graph rather than selecting components independently.
+Inside the archive, `component-manifest.json` and `flake.lock` are exact
+producer inputs. `provenance.json` schema 1 binds their SHA-256 values, composed
+package, target and helper source identity. The composed package path binds the
+in-tree Orbit, Venus, runtime and Eon sources. `closure-paths.txt` lists the
+complete private closure; absolute `/nix/store` symlinks resolve within that
+view. These receipts consume the canonical graph rather than selecting
+components independently.
 
 ## Retained development proof
 
