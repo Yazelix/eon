@@ -369,15 +369,14 @@ fn decision_sections(text: &str, errors: &mut Vec<String>) -> Vec<DecisionSectio
     sections
 }
 
-fn bead_ids(text: &str) -> BTreeSet<String> {
+fn cites_known_bead(text: &str, known_beads: &BTreeSet<String>) -> bool {
     text.split(|character: char| {
         !character.is_ascii_lowercase()
             && !character.is_ascii_digit()
             && character != '-'
             && character != '.'
     })
-    .map(|candidate| candidate.trim_end_matches('.').to_owned())
-    .collect()
+    .any(|candidate| known_beads.contains(candidate.trim_end_matches('.')))
 }
 
 fn check_crates(text: &str, known_beads: &BTreeSet<String>, errors: &mut Vec<String>) {
@@ -448,7 +447,7 @@ fn check_crates(text: &str, known_beads: &BTreeSet<String>, errors: &mut Vec<Str
             ));
         }
         let evidence = section.fields.get("Evidence").map_or("", String::as_str);
-        if bead_ids(evidence).is_disjoint(known_beads) {
+        if !cites_known_bead(evidence, known_beads) {
             errors.push(format!(
                 "{CRATES}: selected {boundary} decision lacks an existing evidence Bead"
             ));

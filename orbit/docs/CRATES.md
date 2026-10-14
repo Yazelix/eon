@@ -112,7 +112,8 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 - **Credible alternatives:** Python 3 standard library; an owned Rust JSON parser;
   `json` 0.12.4
 - **Why:** Typed Beads input keeps Orbit's contract cross-links and crate-evidence checks in
-  the Rust-owned stack. The tool does not compile or alter the Orbit runtime, and its two
+  the Rust-owned stack, and the same crates decode `cargo metadata` for the workspace
+  dependency-direction test. The tool does not compile or alter the Orbit runtime, and its two
   direct crates are already in the workspace graph at these versions. Fixed grammars use
   owned scanners, so regex, Markdown, CLI, error, hashing, and test-framework crates are
   unnecessary.
