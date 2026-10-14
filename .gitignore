@@ -1,3 +1,5 @@
 # bv (beads viewer) local config and caches
 .bv/
 target/
+# br 0.7.2 quarantined WAL indexes (local recovery artifacts)
+.beads/.br-wal-index-*/
