@@ -1332,6 +1332,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   manager, broker, or compatibility adapter. Tombstones grant no authority and
   must be reconciled before their workspace slot is reused.
 - **Proof:** `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`.
+  - **In-tree component generation:** `eon-monorepo-2oko.2` records the
+    sandboxed Rust suite and both Nix product builds for the runtime generation
+    ID as component generation. Installed re-proof is pending in this repository
+    under `eon-monorepo-2oko.6`.
   - **Stop repair:** `eon-repair-stop-completion-picker-cleanup-1xxu`, Runtime
     `eceac276803a1ec819a402905c685e1c2a2e5865`, unchanged EONW
     `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`, Orbit

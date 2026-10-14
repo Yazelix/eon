@@ -41,12 +41,10 @@ cargo run --locked -p eon-manifest -- components/eon-alpha-v3.json
 
 Nix builds Orbit, Venus, Eon and EonTerm from the in-tree crates with the root
 `Cargo.lock`. A workspace component's path must hold the expected Cargo package
-at its manifest version. Eon's build script digests every regular file in its
-source tree outside dot entries and `target` directories into the generation
-identity, so any in-tree change selects a new generation. A Cargo checkout also
-hashes its docs and assets; Nix hashes only the workspace source set. Cargo
-needs every workspace member, so Nix rebuilds Orbit and Venus after edits under
-`eon/` or `runtime/` too.
+at its manifest version. Any in-tree change selects a new generation through
+Eon's [source-tree digest](ARCHITECTURE.md#in-tree-package-selection); a Cargo
+checkout also hashes its docs and assets. Cargo needs every workspace member,
+so Nix rebuilds Orbit and Venus after edits under `eon/` or `runtime/` too.
 
 `nix build .#manual-bundle` assembles the unpublished Linux direct candidate
 from the same package. Its [manual delivery contract](MANUAL-BUNDLE.md) records

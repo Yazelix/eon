@@ -128,10 +128,10 @@ artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Rust source and tests | 14,588 |
-| Cargo manifests | 27 |
+| Rust source and tests | 14,578 |
+| Cargo manifests | 24 |
 | Agent guidelines | 37 |
-| README | 142 |
+| README | 137 |
 | License and notice | 209 |
 | Repository ignore rules | 1 |
-| **Total** | **15,004** |
+| **Total** | **14,986** |

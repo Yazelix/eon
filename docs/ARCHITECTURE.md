@@ -294,7 +294,7 @@ pair.
 | Product version | Version from `eon/crates/eon/Cargo.toml`, used by CLI and EONW runtime diagnostics; library and codec versions retain their own Cargo owners |
 | Fallible validated component facts | The sole graph validator's report |
 | Concrete defaults | Chosen shell/terminal/Anima settings, popup definitions/margins, palette, program fallbacks and Agent preference order |
-| Immutable assembly contribution | A digest of every regular file in the Eon build's source tree outside dot entries and `target` directories; in Nix, the workspace source set with the graph, Cargo lock and Nix recipes |
+| Immutable assembly contribution | Eon's source-tree digest; see [In-tree package selection](#in-tree-package-selection) |
 | Opaque launch inputs | Existing component/program paths and environment/configuration projection, preserving current resolution and override order |
 
 Eon may precompute graph validation without effects and pass its result.
@@ -343,25 +343,22 @@ and its Nix recipes, all with the root `Cargo.lock`. It checks that each
 workspace component's path holds the expected Cargo package at the graph's
 version.
 
-Eon's build script digests the path and bytes of every regular file in its
-build's source tree outside dot entries and `target` directories; Nix builds supply only the workspace source set. That digest is Eon's assembly contribution, so a change in any
-in-tree component selects a new generation. Orbit terminal records carry the
-runtime's generation ID as their component generation. Mutable configuration,
-store and profile paths never enter the digest.
+Eon's build script digests the path and bytes of each file in the source tree
+that [EON-C3](CONTRACTS.md#eon-c3--distribution-neutral-runtime-inputs) names.
+That digest is Eon's assembly contribution, so a change in any in-tree component
+selects a new generation.
+Orbit terminal records carry the runtime's generation ID as their component
+generation. Mutable configuration, store and profile paths never enter the
+digest.
 
 ### Acceptance boundaries
 
-The external composition was accepted through these boundaries. In-tree, the
-producer, provider and package-selection rows are history; the generation
-red/green check and the workspace version assertion replace them.
+The runtime library and its cutover were accepted through these boundaries.
 
 | Boundary | Cheapest falsifier and implementation owner |
 |---|---|
 | Defaults/config/preflight | Actual parser/launch effects with supplied non-default values and absent/partial overrides; invalid graph creates no runtime owner/socket/child. `eon-runtime-product-inputs-1dbd` |
 | Library/version/generation | Real Eon process suite, unequal library/product versions, stable-input identity and runtime-only A/B with fixed codec/Venus. `eon-runtime-seam-2tes` |
-| Independent producer | Locked build/tests without Eon plus exact runtime/codec source comparison. `eon-runtime-producer-68hq` |
-| Venus provider | Exact Cargo/lock provider move with unchanged codec/API/bytes and other dependencies. `eon-runtime-venus-rebind-tbmn` |
-| Package selection | Same codec inputs at distinct runtime/codec revisions pass; codec/build drift under unchanged labels fails before substitution; unrelated exact component checks still reject. `eon-runtime-package-identity-dmbj` |
 | Composed activation | Locked Rust and both Nix products accept runtime-only A/B with fixed Venus/codec; installed old/new generations retain owner authority. `eon-runtime-cutover-y1wy` |
 
 Cutover refreshes the named profile elements without restarting live work.
