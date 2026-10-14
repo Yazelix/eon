@@ -8,7 +8,7 @@ or `.agent-protocols.exceptions.json`, then render from the pinned source.
 ## Protocol import record
 
 - Source: `https://github.com/Yazelix/starcompass`
-- Source commit: `4a8554661fe8821cd2d9e6540a5fec07c0268b84`
+- Source commit: `0e1b9c62a5f95531e5f511856e403aecb7639816`
 - Profiles: `greenfield`, `orchestrator`, `terminal-engine`
 - Manifest: `.agent-protocols.json` (schema 1)
 - Directory rules: `orbit/`, `runtime/`, `venus/`; read a directory's `AGENTS.md` before changing files under it.
@@ -450,6 +450,14 @@ repository evidence; use another agent only when the user explicitly asks.
 
 Do not add mirror tests for literals, defaults, or configuration values. Test
 the artifact or behavior that consumes the value.
+
+Run the Rust test suites in an isolated sandbox, never inside a live Eon
+session's environment. They start supervisors and helper processes. Use
+private PID, network, `/dev`, and `/tmp` namespaces, an empty
+`$XDG_RUNTIME_DIR` without Wayland or D-Bus, and a cleared environment that
+keeps only the toolchain variables, for example with bubblewrap. Set
+`FONTCONFIG_FILE` to the packaged Venus font configuration for Venus's font
+tests.
 
 ## Local Runtime Synchronization
 
