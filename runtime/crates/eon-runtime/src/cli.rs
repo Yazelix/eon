@@ -35,13 +35,9 @@ use std::{
 const EON_USAGE: &str = "invalid command or arguments\nusage: eon [COMMAND]\nRun `eon --help` for commands and examples.";
 const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
-pub struct ComponentFacts {
-    pub report: String,
-}
-
 pub struct Inputs {
     pub version: &'static str,
-    pub components: Result<ComponentFacts, String>,
+    pub component_report: Result<String, String>,
     pub assembly: &'static [&'static [u8]],
     pub defaults: managed_environment::Defaults,
     pub orbit: PathBuf,
@@ -52,8 +48,8 @@ pub struct Inputs {
 }
 
 impl Inputs {
-    pub(crate) fn components(&self) -> Result<&ComponentFacts, String> {
-        self.components.as_ref().map_err(Clone::clone)
+    pub(crate) fn component_report(&self) -> Result<&str, String> {
+        self.component_report.as_deref().map_err(Clone::clone)
     }
 }
 
@@ -404,7 +400,7 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
                 inputs.version,
                 current_generation(inputs)?,
                 VERSION,
-                inputs.components()?.report
+                inputs.component_report()?
             ))?;
             Ok(0)
         }

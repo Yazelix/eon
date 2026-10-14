@@ -10,7 +10,7 @@ mod supervisor;
 mod windows;
 mod workspace;
 
-pub use cli::{ComponentFacts, Inputs, run};
+pub use cli::{Inputs, run};
 pub use managed_environment::{
     Defaults, ManagedPrograms, PopupCatalog, PopupCommand, PopupDefinition, ShellConfig,
     StartupAnimation, TerminalConfig,

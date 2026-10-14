@@ -23,7 +23,7 @@ use std::{
 };
 
 pub(super) fn current_generation(inputs: &Inputs) -> Result<String, String> {
-    inputs.components()?;
+    inputs.component_report()?;
     let mut sources: Vec<&[u8]> = vec![
         include_bytes!("lib.rs"),
         include_bytes!("../Cargo.toml"),
@@ -97,7 +97,7 @@ fn discover_generations(
     root: &Path,
     current: &str,
 ) -> Result<Vec<GenerationRecord>, String> {
-    let component_report = &inputs.components()?.report;
+    let component_report = inputs.component_report()?;
     if !private_directory_exists(root, "runtime directory")? {
         return Ok(vec![unstarted_current_generation(root, current)]);
     }
@@ -185,7 +185,7 @@ fn inspect_selected_generation(
     {
         return Ok(None);
     }
-    let component_report = &inputs.components()?.report;
+    let component_report = inputs.component_report()?;
     Ok(Some(inspect_generation(
         target,
         if target == current {

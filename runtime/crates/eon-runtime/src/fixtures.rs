@@ -1,17 +1,15 @@
 //! Test-only supplied inputs; no Eon assembly or graph dependency.
 
 use crate::{
-    ComponentFacts, Defaults, Inputs, ManagedPrograms, PopupCatalog, PopupCommand, PopupDefinition,
-    ShellConfig, StartupAnimation, TerminalConfig,
+    Defaults, Inputs, ManagedPrograms, PopupCatalog, PopupCommand, PopupDefinition, ShellConfig,
+    StartupAnimation, TerminalConfig,
 };
 use eon_workspace_protocol::v9::{ALT, PopupGeometry, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     Inputs {
         version: "fixture-product",
-        components: Ok(ComponentFacts {
-            report: "fixture-components".into(),
-        }),
+        component_report: Ok("fixture-components".into()),
         codexbar: "missing-fixture-codexbar".into(),
         assembly: &[b"fixture-assembly"],
         defaults: Defaults {

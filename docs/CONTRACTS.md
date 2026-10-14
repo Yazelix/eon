@@ -226,7 +226,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   in-tree component.
 - **Important failures:** Unknown components, duplicate identities, incompatible
   protocol versions, malformed or missing external revisions, a revision on an
-  in-tree component or on a requirement for one, invalid workspace paths, or
+  in-tree component or on any requirement, invalid workspace paths, or
   channel-specific graph drift fail validation.
 - **Owner:** Eon's component manifest and validator.
 - **Boundary:** The manifest does not own process lifecycle, platform launch

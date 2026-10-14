@@ -335,12 +335,13 @@ PIDs and live state do not enter it; normal runtime use evaluates no Nix.
 ### In-tree package selection
 
 Orbit, Venus, `eon-runtime` and `eon-workspace-protocol` are in-tree graph
-components with `workspace` sources: the repository revision identifies them,
-so they carry no revision of their own and requirements on them name none.
-Their interfaces and proofs still bind requirements. Nix builds Orbit and Venus
-from the in-tree crates and Eon from those crates plus the graph and its Nix
-recipes, all with the root `Cargo.lock`. It checks each workspace component's
-Cargo version against the graph.
+components with `workspace` sources: the repository revision identifies them, so
+they carry no revision of their own. A requirement names its target and
+interfaces, never a revision; the target alone owns its identity. Nix builds
+Orbit and Venus from the in-tree crates and Eon from those crates plus the graph
+and its Nix recipes, all with the root `Cargo.lock`. It checks that each
+workspace component's path holds the expected Cargo package at the graph's
+version.
 
 Eon's build script digests the path and bytes of every regular file in its
 build's source tree outside dot entries and `target` directories; Nix builds supply only the workspace source set. That digest is Eon's assembly contribution, so a change in any

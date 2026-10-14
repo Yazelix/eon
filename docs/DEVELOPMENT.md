@@ -13,10 +13,11 @@ including the OpenAI/Anthropic rider.
 
 One Cargo workspace holds Orbit (`orbit/`), Venus (`venus/`), Eon Runtime with
 EONW (`runtime/`) and Eon (`eon/`). `eon/crates/eon` owns executable assembly
-and defaults; `runtime/` owns the runtime mechanisms behind `run(Inputs)` and the
-canonical EONW package. `eon/crates/eon/tests/workspace_control.rs` exercises the
-real Eon binary, aliases and self-launches. Run `cargo test --locked --workspace`
-only in the isolated sandbox that the root `AGENTS.md` describes.
+and defaults; `runtime/` owns the runtime mechanisms behind `run(Inputs)` and
+the canonical EONW package. `eon/crates/eon/tests/workspace_control.rs`
+exercises the real Eon binary, aliases and self-launches. Run `cargo test
+--locked --workspace` only in the isolated sandbox that the root `AGENTS.md`
+describes.
 
 ## Sources of truth
 
@@ -39,13 +40,13 @@ cargo run --locked -p eon-manifest -- components/eon-alpha-v3.json
 ```
 
 Nix builds Orbit, Venus, Eon and EonTerm from the in-tree crates with the root
-`Cargo.lock`. A workspace component's Cargo version must match its manifest
-version. Eon's build script digests every regular file in its source tree
-outside dot entries and `target` directories into the generation identity, so
-any in-tree change selects a new generation. A Cargo checkout also hashes its
-docs and assets; Nix hashes only the workspace source set. Cargo needs every
-workspace member, so Nix rebuilds Orbit and Venus after edits under `eon/` or
-`runtime/` too.
+`Cargo.lock`. A workspace component's path must hold the expected Cargo package
+at its manifest version. Eon's build script digests every regular file in its
+source tree outside dot entries and `target` directories into the generation
+identity, so any in-tree change selects a new generation. A Cargo checkout also
+hashes its docs and assets; Nix hashes only the workspace source set. Cargo
+needs every workspace member, so Nix rebuilds Orbit and Venus after edits under
+`eon/` or `runtime/` too.
 
 `nix build .#manual-bundle` assembles the unpublished Linux direct candidate
 from the same package. Its [manual delivery contract](MANUAL-BUNDLE.md) records

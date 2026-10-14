@@ -100,7 +100,6 @@ struct Interface {
 #[serde(deny_unknown_fields)]
 struct Requirement {
     component: String,
-    revision: Option<String>,
     interfaces: Vec<Interface>,
 }
 
@@ -261,10 +260,6 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
                 "component cannot require itself",
             )?;
             required(
-                requirement.revision.as_deref().is_none_or(revision),
-                "invalid required revision",
-            )?;
-            required(
                 !requirement.interfaces.is_empty(),
                 "component requirement has no interfaces",
             )?;
@@ -340,10 +335,6 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
             let target = components
                 .get(requirement.component.as_str())
                 .ok_or_else(|| Error("requirement references missing component".into()))?;
-            required(
-                target.revision == requirement.revision,
-                "required component revision is incompatible",
-            )?;
             for interface in &requirement.interfaces {
                 required(
                     target.interfaces.contains(interface),
@@ -460,10 +451,16 @@ mod tests {
         component_mut(&mut path, "orbit")["artifacts"][0]["path"] = "bin/other".into();
         assert!(parse_and_validate(&serde_json::to_string(&path).unwrap()).is_err());
 
-        let mut launch = canonical;
+        let mut launch = canonical.clone();
         component_mut(&mut launch, "orbit")["launch"] =
             serde_json::json!({ "artifact": "terminfo" });
         assert!(parse_and_validate(&serde_json::to_string(&launch).unwrap()).is_err());
+
+        // A requirement names its target; the target alone carries the revision.
+        let mut required_revision = canonical;
+        component_mut(&mut required_revision, "venus")["requires"][0]["revision"] =
+            Value::String("1".repeat(40));
+        assert!(parse_and_validate(&serde_json::to_string(&required_revision).unwrap()).is_err());
     }
 
     #[test]
@@ -503,11 +500,6 @@ mod tests {
             "executable component has no file artifact",
             &no_file_artifact,
         );
-
-        let mut incompatible = canonical.clone();
-        component_mut(&mut incompatible, "venus")["requires"][0]["revision"] =
-            Value::String("1".repeat(40));
-        rejected("required component revision is incompatible", &incompatible);
 
         let mut null_revision = canonical.clone();
         component_mut(&mut null_revision, "anima")["revision"] = Value::String("0".repeat(40));

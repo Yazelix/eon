@@ -1,6 +1,6 @@
 use eon_runtime::{
-    ComponentFacts, Defaults, Inputs, ManagedPrograms, PopupCatalog, PopupCommand, PopupDefinition,
-    ShellConfig, StartupAnimation, TerminalConfig,
+    Defaults, Inputs, ManagedPrograms, PopupCatalog, PopupCommand, PopupDefinition, ShellConfig,
+    StartupAnimation, TerminalConfig,
 };
 use eon_workspace_protocol::v9::{ALT, PopupGeometry, SHIFT, Shortcut};
 
@@ -9,9 +9,7 @@ pub(crate) fn inputs() -> Inputs {
     const ASSEMBLY: &[&[u8]] = &[env!("EON_WORKSPACE_DIGEST").as_bytes()];
     Inputs {
         version: env!("CARGO_PKG_VERSION"),
-        components: eon_manifest::version_report(MANIFEST)
-            .map(|report| ComponentFacts { report })
-            .map_err(|error| error.to_string()),
+        component_report: eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string()),
         assembly: ASSEMBLY,
         defaults: Defaults {
             show_version: true,

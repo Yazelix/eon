@@ -3,7 +3,7 @@
 //! change to any in-tree component selects a different generation.
 
 use std::{
-    env, fs,
+    env, fs, io,
     path::{Path, PathBuf},
 };
 
@@ -21,7 +21,12 @@ fn main() {
     for relative in &files {
         let path = root.join(relative);
         println!("cargo::rerun-if-changed={}", path.display());
-        let contents = fs::read(&path).unwrap();
+        let contents = match fs::read(&path) {
+            Ok(contents) => contents,
+            // A temporary file removed during the walk is not a source.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => panic!("cannot read {}: {error}", path.display()),
+        };
         for input in [relative.as_bytes(), &contents] {
             for byte in (input.len() as u64).to_le_bytes().iter().chain(input) {
                 hash ^= u128::from(*byte);

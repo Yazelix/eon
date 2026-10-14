@@ -66,15 +66,25 @@
           throw "Eon manifest must contain exactly one ${id} component";
       orbitIdentity = component "orbit";
       venusIdentity = component "venus";
-      # In-tree components build from this one source. eon-manifest validates
-      # the graph; each in-tree Cargo package must match its declared version.
+      # eon-manifest validates the graph. Each in-tree component's path must
+      # hold the Cargo package Nix builds for it, at the declared version.
+      workspacePackages = {
+        orbit = "yazelix-orbit";
+        venus = "yazelix-venus";
+        eon-runtime = "eon-runtime";
+        eon-workspace-protocol = "eon-workspace-protocol";
+      };
       workspaceVersions = builtins.all (
         identity:
         identity.source.kind != "workspace"
-        || lib.assertMsg (
-          (builtins.fromTOML (builtins.readFile ./${identity.source.path}/Cargo.toml)).package.version
-          == identity.version
-        ) "${identity.id} manifest version does not match its Cargo package"
+        || (
+          let
+            cargo = (builtins.fromTOML (builtins.readFile ./${identity.source.path}/Cargo.toml)).package;
+          in
+          lib.assertMsg (
+            cargo.name == workspacePackages.${identity.id} && cargo.version == identity.version
+          ) "${identity.id} manifest path or version does not match its Cargo package"
+        )
       ) manifest.components;
       # Cargo needs only the crates to build Orbit and Venus. Eon also compiles
       # in the graph and digests its Nix recipes into its generation identity.
@@ -190,17 +200,17 @@
       orbitPackage =
         assert ghostty.rev == "a887df42c56f6de86c0fe6da9c4eeca37931e083";
         pkgs.rustPlatform.buildRustPackage {
-          pname = "yazelix-orbit";
+          pname = workspacePackages.orbit;
           inherit (orbitIdentity) version;
           src = crateSource;
           cargoLock = workspaceCargoLock;
           cargoBuildFlags = [
             "--package"
-            "yazelix-orbit"
+            workspacePackages.orbit
           ];
           cargoTestFlags = [
             "--package"
-            "yazelix-orbit"
+            workspacePackages.orbit
           ];
           # The accepted upstream suite needs host /bin/sh and set-ID chmod,
           # neither of which exists in the Nix build sandbox.
@@ -231,17 +241,17 @@
       ];
       venusPackage =
         pkgs.rustPlatform.buildRustPackage {
-          pname = "yazelix-venus";
+          pname = workspacePackages.venus;
           inherit (venusIdentity) version;
           src = crateSource;
           cargoLock = workspaceCargoLock;
           cargoBuildFlags = [
             "--package"
-            "yazelix-venus"
+            workspacePackages.venus
           ];
           cargoTestFlags = [
             "--package"
-            "yazelix-venus"
+            workspacePackages.venus
           ];
           nativeBuildInputs = [
             pkgs.makeWrapper

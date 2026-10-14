@@ -314,8 +314,8 @@ fn validate_runtime(inputs: &Inputs, info: &Runtime, generation: &str) -> Result
             info.workspace_protocol
         ));
     }
-    let components = &inputs.components()?.report;
-    if &info.component_report != components {
+    let components = inputs.component_report()?;
+    if info.component_report != components {
         return Err("supervisor reports a different component graph".into());
     }
     Ok(())
@@ -1491,7 +1491,7 @@ fn runtime_status(
         generation: generation.into(),
         eon_version: inputs.version.into(),
         workspace_protocol: VERSION,
-        component_report: inputs.components()?.report.clone(),
+        component_report: inputs.component_report()?.to_owned(),
         sessions: sessions
             .iter()
             .filter(|session| {

@@ -11,9 +11,9 @@ Both crates build and test without the Eon crates.
 ## Consumer boundary
 
 Eon's actual executable calls `eon_runtime::run(inputs)`. The concrete root
-exports construct `Inputs`, `ComponentFacts`, defaults and managed-program
-inputs; the nine mechanism modules remain private. `run` returns the product
-label and exit result. Eon retains process exit/error handling.
+exports construct `Inputs`, defaults and managed-program inputs; the nine
+mechanism modules remain private. `run` returns the product label and exit
+result. Eon retains process exit/error handling.
 The private CLI prints grouped Eon help for standalone `-h` and `--help`,
 with terminal-only color and concise usage errors; child options remain forwarded.
 
