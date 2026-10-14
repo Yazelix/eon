@@ -765,3 +765,155 @@ mod tests {
         assert!(errors.contains("Renderer has invalid decision status Chosen"));
     }
 }
+
+#[cfg(test)]
+mod dependency_direction {
+    use serde::Deserialize;
+    use std::{collections::BTreeSet, fs, path::PathBuf, process::Command};
+
+    const PROTOCOLS: &[&str] = &["orbit-protocol", "eon-workspace-protocol"];
+    /// Allowed workspace dependencies per member; `None` leaves a member's
+    /// workspace edges unrestricted.
+    const ALLOWED_WORKSPACE_DEPENDENCIES: &[(&str, Option<&[&str]>)] = &[
+        ("orbit-protocol", Some(&[])),
+        ("eon-workspace-protocol", Some(&[])),
+        ("yazelix-venus", Some(PROTOCOLS)),
+        ("eon-runtime", Some(PROTOCOLS)),
+        (
+            "eon-manifest",
+            Some(&["eon-runtime", "orbit-protocol", "eon-workspace-protocol"]),
+        ),
+        (
+            "eon",
+            Some(&[
+                "eon-runtime",
+                "eon-manifest",
+                "orbit-protocol",
+                "eon-workspace-protocol",
+            ]),
+        ),
+        ("yazelix-orbit", None),
+        ("orbit-governance", None),
+    ];
+    const TERMINAL_ENGINE: &str = "libghostty-vt";
+    const TERMINAL_ENGINE_FAMILY: &str = "libghostty";
+    const TERMINAL_ENGINE_OWNER: &str = "yazelix-orbit";
+
+    #[derive(Deserialize)]
+    struct Metadata {
+        packages: Vec<Package>,
+    }
+
+    #[derive(Deserialize)]
+    struct Package {
+        name: String,
+        manifest_path: PathBuf,
+        dependencies: Vec<Dependency>,
+    }
+
+    #[derive(Deserialize)]
+    struct Dependency {
+        name: String,
+    }
+
+    fn workspace_packages() -> Vec<Package> {
+        let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+        let output = Command::new(cargo)
+            .args([
+                "metadata",
+                "--format-version",
+                "1",
+                "--no-deps",
+                "--offline",
+            ])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output()
+            .expect("run cargo metadata");
+        assert!(
+            output.status.success(),
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<Metadata>(&output.stdout)
+            .expect("parse cargo metadata")
+            .packages
+    }
+
+    fn inherits_workspace_settings(manifest: &str) -> bool {
+        manifest.lines().any(|line| {
+            let setting = line.split('#').next().unwrap_or_default();
+            setting
+                .split_whitespace()
+                .collect::<String>()
+                .contains("workspace=true")
+        })
+    }
+
+    fn violations(packages: &[Package]) -> BTreeSet<String> {
+        let members = packages
+            .iter()
+            .map(|package| package.name.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut errors = BTreeSet::new();
+        for package in packages {
+            let Some((_, allowed)) = ALLOWED_WORKSPACE_DEPENDENCIES
+                .iter()
+                .find(|(name, _)| *name == package.name)
+            else {
+                errors.insert(format!(
+                    "workspace member {} has no dependency-direction rule",
+                    package.name
+                ));
+                continue;
+            };
+            for dependency in &package.dependencies {
+                let edge = format!("{} -> {}", package.name, dependency.name);
+                if dependency.name.starts_with(TERMINAL_ENGINE_FAMILY)
+                    && package.name != TERMINAL_ENGINE_OWNER
+                {
+                    errors.insert(format!(
+                        "forbidden dependency {edge}: only {TERMINAL_ENGINE_OWNER} may depend on {TERMINAL_ENGINE_FAMILY} crates"
+                    ));
+                }
+                if members.contains(dependency.name.as_str())
+                    && allowed.is_some_and(|allowed| !allowed.contains(&dependency.name.as_str()))
+                {
+                    errors.insert(format!("forbidden workspace dependency {edge}"));
+                }
+            }
+            if package.name == TERMINAL_ENGINE_OWNER
+                && !package
+                    .dependencies
+                    .iter()
+                    .any(|dependency| dependency.name == TERMINAL_ENGINE)
+            {
+                errors.insert(format!(
+                    "{TERMINAL_ENGINE_OWNER} no longer depends on {TERMINAL_ENGINE}; update the terminal-engine rule"
+                ));
+            }
+            if PROTOCOLS.contains(&package.name.as_str()) {
+                let manifest =
+                    fs::read_to_string(&package.manifest_path).expect("read protocol manifest");
+                if inherits_workspace_settings(&manifest) {
+                    errors.insert(format!(
+                        "{} inherits workspace settings in {}",
+                        package.name,
+                        package.manifest_path.display()
+                    ));
+                }
+            }
+        }
+        errors
+    }
+
+    #[test]
+    fn workspace_crates_keep_their_dependency_direction() {
+        let errors = violations(&workspace_packages());
+
+        assert!(
+            errors.is_empty(),
+            "dependency direction violations:\n{}",
+            errors.into_iter().collect::<Vec<_>>().join("\n")
+        );
+    }
+}

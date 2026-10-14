@@ -123,6 +123,16 @@ structure, hashes, framing, and local suffix agree; it treats the canonical
 protocol section as opaque. Complete canonical-protocol authentication still
 uses a source checkout at the exact commit in `.agent-protocols.json`.
 
+The tool's test, run by `cargo test --locked --workspace`, also enforces the
+workspace dependency direction that the root `AGENTS.md` owns, including that
+the protocol crates' manifests inherit no workspace settings. It reads
+`cargo metadata` and checks every kind of direct declared dependency, not code
+semantics or crates reached through third-party packages. It allows `eon` to
+depend on `eon-manifest` and gives Orbit and this tool no workspace-edge rule.
+Any other new workspace member fails until the test gives it one. Orbit must
+keep its direct `libghostty-vt` dependency, so renaming the engine crate fails
+the test instead of disabling the rule.
+
 ## Documentation map
 
 The [contract index](CONTRACTS.md) is the durable behavioral source of
