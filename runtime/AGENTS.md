@@ -1,8 +1,12 @@
-# Eon Runtime
+# Agent Guidelines for `runtime/`
+
+These directory-local rules add to the repository root `AGENTS.md`, which
+holds the protocol import and the repository-wide rules. Do not edit this
+generated file directly. Edit `.agent-protocols.local.md` in this directory,
+then render from the pinned source.
 
 Eon Runtime owns the `eon-runtime` library and the canonical
-`eon-workspace-protocol` crate (EONW). The root `AGENTS.md` applies; these
-rules add Runtime's local limits.
+`eon-workspace-protocol` crate (EONW).
 
 Runtime modules stay private; consumers call `run(Inputs)` through the concrete
 root exports. Eon supplies the product version, defaults, validated component

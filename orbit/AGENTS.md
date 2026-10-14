@@ -1,8 +1,13 @@
-# Orbit
+# Agent Guidelines for `orbit/`
+
+These directory-local rules add to the repository root `AGENTS.md`, which
+holds the protocol import and the repository-wide rules. Do not edit this
+generated file directly. Edit `.agent-protocols.local.md` in this directory,
+then render from the pinned source.
 
 Orbit is Eon's terminal-session engine: the `yazelix-orbit` server, the
 standalone `orbit-protocol` crate (ORBS and ORBF), and the `orbit-governance`
-tool. The root `AGENTS.md` applies; these rules add Orbit's local limits.
+tool.
 
 ## Terminal authority
 

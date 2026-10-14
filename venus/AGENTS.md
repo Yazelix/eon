@@ -1,9 +1,13 @@
-# Venus
+# Agent Guidelines for `venus/`
+
+These directory-local rules add to the repository root `AGENTS.md`, which
+holds the protocol import and the repository-wide rules. Do not edit this
+generated file directly. Edit `.agent-protocols.local.md` in this directory,
+then render from the pinned source.
 
 Venus is Eon's native graphical client, `yazelix-venus`. It materializes
 Orbit-authored presentation and Eon-authored workspace topology, collects
-native input, and sends semantic actions and resize requests. The root
-`AGENTS.md` applies; these rules add Venus's local limits.
+native input, and sends semantic actions and resize requests.
 
 ## Boundary
 

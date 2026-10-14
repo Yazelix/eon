@@ -8,9 +8,10 @@ or `.agent-protocols.exceptions.json`, then render from the pinned source.
 ## Protocol import record
 
 - Source: `https://github.com/Yazelix/starcompass`
-- Source commit: `f7ff2a64101618b39e7ee71ece0710ef2d7d10b9`
+- Source commit: `4a8554661fe8821cd2d9e6540a5fec07c0268b84`
 - Profiles: `greenfield`, `orchestrator`, `terminal-engine`
 - Manifest: `.agent-protocols.json` (schema 1)
+- Directory rules: `orbit/`, `runtime/`, `venus/`; read a directory's `AGENTS.md` before changing files under it.
 
 | Protocol | Version | SHA-256 |
 | --- | ---: | --- |
@@ -267,9 +268,6 @@ workspace:
 - `runtime/`: Eon Runtime, which owns runtime mechanisms and canonical EONW.
 - `eon/` and the repository root: Eon's product crates, Nix composition,
   product documentation, and distribution.
-
-`orbit/`, `venus/`, and `runtime/` each have an `AGENTS.md` with only that
-subsystem's local rules. Read it before changing files under that directory.
 
 ## Status
 
