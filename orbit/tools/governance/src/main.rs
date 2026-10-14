@@ -6,6 +6,9 @@ use std::{
     process::ExitCode,
 };
 
+const CONTRACTS: &str = "orbit/docs/CONTRACTS.md";
+const CRATES: &str = "orbit/docs/CRATES.md";
+const BEADS: &str = ".beads/issues.jsonl";
 const CONTRACT_STATUSES: &[&str] = &["Planned", "Partially proved", "Proved", "Retired"];
 const DECISION_STATUSES: &[&str] = &["Selected", "Planned", "Candidate", "Deferred"];
 
@@ -114,7 +117,7 @@ fn contract_sections(text: &str, errors: &mut Vec<String>) -> Vec<ContractSectio
         if !line.trim_start().starts_with("## ") {
             parse_labeled_field(
                 line,
-                "docs/CONTRACTS.md",
+                CONTRACTS,
                 &section.id,
                 &mut section.fields,
                 &mut current_field,
@@ -126,7 +129,7 @@ fn contract_sections(text: &str, errors: &mut Vec<String>) -> Vec<ContractSectio
         sections.push(section);
     }
     if sections.is_empty() {
-        errors.push("docs/CONTRACTS.md: no ORB-C* contract sections".to_owned());
+        errors.push(format!("{CONTRACTS}: no ORB-C* contract sections"));
     }
     sections
 }
@@ -168,17 +171,14 @@ fn check_contracts(text: &str, errors: &mut Vec<String>) -> BTreeSet<String> {
     let mut known = BTreeSet::new();
     for section in sections {
         let Some(id) = contract_id(&section.id) else {
-            errors.push(format!(
-                "docs/CONTRACTS.md: malformed contract ID {}",
-                section.id
-            ));
+            errors.push(format!("{CONTRACTS}: malformed contract ID {}", section.id));
             continue;
         };
         if !known.insert(id.to_owned()) {
-            errors.push(format!("docs/CONTRACTS.md: duplicate contract ID {id}"));
+            errors.push(format!("{CONTRACTS}: duplicate contract ID {id}"));
         }
         if section.title.is_empty() {
-            errors.push(format!("docs/CONTRACTS.md: {id} requires a title"));
+            errors.push(format!("{CONTRACTS}: {id} requires a title"));
         }
         for field in REQUIRED_FIELDS {
             if section
@@ -187,13 +187,13 @@ fn check_contracts(text: &str, errors: &mut Vec<String>) -> BTreeSet<String> {
                 .is_none_or(|value| value.is_empty())
             {
                 errors.push(format!(
-                    "docs/CONTRACTS.md: {id} requires a nonempty {field} field"
+                    "{CONTRACTS}: {id} requires a nonempty {field} field"
                 ));
             }
         }
         for field in section.fields.keys() {
             if !ALLOWED_FIELDS.contains(&field.as_str()) {
-                errors.push(format!("docs/CONTRACTS.md: {id} has unknown {field} field"));
+                errors.push(format!("{CONTRACTS}: {id} has unknown {field} field"));
             }
         }
         let status = section
@@ -203,7 +203,7 @@ fn check_contracts(text: &str, errors: &mut Vec<String>) -> BTreeSet<String> {
             .unwrap_or("");
         if !CONTRACT_STATUSES.contains(&status) {
             errors.push(format!(
-                "docs/CONTRACTS.md: {id} has invalid contract status {status}"
+                "{CONTRACTS}: {id} has invalid contract status {status}"
             ));
         }
         if status == "Proved" {
@@ -216,7 +216,7 @@ fn check_contracts(text: &str, errors: &mut Vec<String>) -> BTreeSet<String> {
                 .and_then(|value| value.strip_suffix('`'));
             if !proof.is_some_and(|value| lowercase_hex(value, 40)) {
                 errors.push(format!(
-                    "docs/CONTRACTS.md: Proved {id} requires a full 40-character proof commit"
+                    "{CONTRACTS}: Proved {id} requires a full 40-character proof commit"
                 ));
             }
             if section
@@ -225,7 +225,7 @@ fn check_contracts(text: &str, errors: &mut Vec<String>) -> BTreeSet<String> {
                 .is_none_or(|value| matches!(value.as_str(), "" | "—" | "-"))
             {
                 errors.push(format!(
-                    "docs/CONTRACTS.md: Proved {id} requires a named check or evidence"
+                    "{CONTRACTS}: Proved {id} requires a named check or evidence"
                 ));
             }
         }
@@ -263,7 +263,7 @@ fn load_issues(text: &str, errors: &mut Vec<String>) -> Vec<Issue> {
         match serde_json::from_str::<Issue>(line) {
             Ok(issue) => issues.push(issue),
             Err(error) => errors.push(format!(
-                ".beads/issues.jsonl:{}: invalid issue JSON: {error}",
+                "{BEADS}:{}: invalid issue JSON: {error}",
                 number + 1
             )),
         }
@@ -325,7 +325,7 @@ fn decision_sections(text: &str, errors: &mut Vec<String>) -> Vec<DecisionSectio
         .iter()
         .position(|line| *line == "## Current decisions")
     else {
-        errors.push("docs/CRATES.md: missing ## Current decisions section".to_owned());
+        errors.push(format!("{CRATES}: missing ## Current decisions section"));
         return Vec::new();
     };
     let mut sections = Vec::new();
@@ -353,7 +353,7 @@ fn decision_sections(text: &str, errors: &mut Vec<String>) -> Vec<DecisionSectio
         };
         parse_labeled_field(
             line,
-            "docs/CRATES.md",
+            CRATES,
             &section.boundary,
             &mut section.fields,
             &mut current_field,
@@ -364,25 +364,9 @@ fn decision_sections(text: &str, errors: &mut Vec<String>) -> Vec<DecisionSectio
         sections.push(section);
     }
     if sections.is_empty() {
-        errors.push("docs/CRATES.md: no decision sections".to_owned());
+        errors.push(format!("{CRATES}: no decision sections"));
     }
     sections
-}
-
-fn valid_bead_id(candidate: &str) -> bool {
-    let Some(tail) = candidate
-        .strip_prefix("orb-")
-        .or_else(|| candidate.strip_prefix("ven-"))
-    else {
-        return false;
-    };
-    !tail.is_empty()
-        && tail.split(['.', '-']).all(|part| {
-            !part.is_empty()
-                && part
-                    .bytes()
-                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
-        })
 }
 
 fn bead_ids(text: &str) -> BTreeSet<String> {
@@ -392,8 +376,7 @@ fn bead_ids(text: &str) -> BTreeSet<String> {
             && character != '-'
             && character != '.'
     })
-    .filter(|candidate| valid_bead_id(candidate))
-    .map(str::to_owned)
+    .map(|candidate| candidate.trim_end_matches('.').to_owned())
     .collect()
 }
 
@@ -411,11 +394,9 @@ fn check_crates(text: &str, known_beads: &BTreeSet<String>, errors: &mut Vec<Str
     for section in sections {
         let boundary = &section.boundary;
         if boundary.is_empty() {
-            errors.push("docs/CRATES.md: decision requires a boundary heading".to_owned());
+            errors.push(format!("{CRATES}: decision requires a boundary heading"));
         } else if !boundaries.insert(boundary.clone()) {
-            errors.push(format!(
-                "docs/CRATES.md: duplicate decision boundary {boundary}"
-            ));
+            errors.push(format!("{CRATES}: duplicate decision boundary {boundary}"));
         }
         for field in REQUIRED_FIELDS {
             if section
@@ -424,15 +405,13 @@ fn check_crates(text: &str, known_beads: &BTreeSet<String>, errors: &mut Vec<Str
                 .is_none_or(|value| value.is_empty())
             {
                 errors.push(format!(
-                    "docs/CRATES.md: {boundary} requires a nonempty {field} field"
+                    "{CRATES}: {boundary} requires a nonempty {field} field"
                 ));
             }
         }
         for field in section.fields.keys() {
             if !REQUIRED_FIELDS.contains(&field.as_str()) {
-                errors.push(format!(
-                    "docs/CRATES.md: {boundary} has unknown {field} field"
-                ));
+                errors.push(format!("{CRATES}: {boundary} has unknown {field} field"));
             }
         }
         let status = section
@@ -443,7 +422,7 @@ fn check_crates(text: &str, known_beads: &BTreeSet<String>, errors: &mut Vec<Str
         let category = status.split_whitespace().next().unwrap_or_default();
         if !DECISION_STATUSES.contains(&category) {
             errors.push(format!(
-                "docs/CRATES.md: {boundary} has invalid decision status {status}"
+                "{CRATES}: {boundary} has invalid decision status {status}"
             ));
             continue;
         }
@@ -456,7 +435,7 @@ fn check_crates(text: &str, known_beads: &BTreeSet<String>, errors: &mut Vec<Str
             .map_or("", String::as_str);
         if !has_exact_version(selected) && !has_full_commit(selected) {
             errors.push(format!(
-                "docs/CRATES.md: selected {boundary} decision lacks an exact version or commit"
+                "{CRATES}: selected {boundary} decision lacks an exact version or commit"
             ));
         }
         let alternatives = section
@@ -465,13 +444,13 @@ fn check_crates(text: &str, known_beads: &BTreeSet<String>, errors: &mut Vec<Str
             .map_or("", String::as_str);
         if matches!(alternatives, "" | "—" | "-" | "None") {
             errors.push(format!(
-                "docs/CRATES.md: selected {boundary} decision lacks credible alternatives"
+                "{CRATES}: selected {boundary} decision lacks credible alternatives"
             ));
         }
         let evidence = section.fields.get("Evidence").map_or("", String::as_str);
         if bead_ids(evidence).is_disjoint(known_beads) {
             errors.push(format!(
-                "docs/CRATES.md: selected {boundary} decision lacks an existing evidence Bead"
+                "{CRATES}: selected {boundary} decision lacks an existing evidence Bead"
             ));
         }
     }
@@ -490,24 +469,19 @@ fn check_unknown_references(
 
 fn check_repository(root: &Path) -> Vec<String> {
     let mut errors = Vec::new();
-    let contracts = read_text(root, "docs/CONTRACTS.md", &mut errors);
+    let contracts = read_text(root, CONTRACTS, &mut errors);
     let known_contracts = check_contracts(&contracts, &mut errors);
-    let beads = read_text(root, ".beads/issues.jsonl", &mut errors);
+    let beads = read_text(root, BEADS, &mut errors);
     let issues = load_issues(&beads, &mut errors);
     check_issue_references(&issues, &known_contracts, &mut errors);
-    let crates = read_text(root, "docs/CRATES.md", &mut errors);
+    let crates = read_text(root, CRATES, &mut errors);
     check_crates(
         &crates,
         &issues.iter().map(|issue| issue.id.clone()).collect(),
         &mut errors,
     );
-    check_unknown_references(
-        "docs/CONTRACTS.md",
-        &contracts,
-        &known_contracts,
-        &mut errors,
-    );
-    check_unknown_references("docs/CRATES.md", &crates, &known_contracts, &mut errors);
+    check_unknown_references(CONTRACTS, &contracts, &known_contracts, &mut errors);
+    check_unknown_references(CRATES, &crates, &known_contracts, &mut errors);
     errors
 }
 
@@ -565,7 +539,7 @@ mod tests {
             ));
             fs::create_dir(&root).expect("create fixture root");
             let issue = json!({
-                "id": "orb-proof",
+                "id": "eon-proof.1",
                 "status": "closed",
                 "issue_type": "task",
                 "description": "This docs-only task preserves ORB-C1."
@@ -585,7 +559,7 @@ mod tests {
 
         fn write_fixture(&self) {
             self.write(
-                "docs/CONTRACTS.md",
+                CONTRACTS,
                 &format!(
                     "# Contracts\n\n## ORB-C1 — Durable session\n\n\
                      - **Status:** Proved\n\
@@ -600,14 +574,14 @@ mod tests {
                 ),
             );
             self.write(
-                "docs/CRATES.md",
+                CRATES,
                 "# Crates\n\n## Current decisions\n\n\
                  ### Terminal\n\n\
                  - **Selected shape:** libghostty-vt 0.2.1\n\
                  - **Status:** Selected for proof\n\
                  - **Credible alternatives:** owned parser\n\
                  - **Why:** Sole authority\n\
-                 - **Evidence:** orb-proof\n\n\
+                 - **Evidence:** eon-proof.1.\n\n\
                  ### Renderer\n\n\
                  - **Selected shape:** Undecided\n\
                  - **Status:** Planned\n\
@@ -620,7 +594,7 @@ mod tests {
 
         fn write_issue(&self) {
             self.write(
-                ".beads/issues.jsonl",
+                BEADS,
                 &(serde_json::to_string(&self.issue).expect("serialize issue") + "\n"),
             );
         }
@@ -640,7 +614,7 @@ mod tests {
     fn valid_repository_accepts_docs_only_task_without_gate_markers() {
         let repository = TestRepository::new();
         let issue = serde_json::to_string(&repository.issue).expect("serialize issue");
-        repository.write(".beads/issues.jsonl", &format!("{issue}\n{issue}\n"));
+        repository.write(BEADS, &format!("{issue}\n{issue}\n"));
 
         assert!(repository.errors().is_empty());
     }
@@ -676,7 +650,7 @@ mod tests {
     fn invalid_metadata_failures_are_reported_together() {
         let mut repository = TestRepository::new();
         repository.write(
-            "docs/CONTRACTS.md",
+            CONTRACTS,
             &format!(
                 "# Contracts\n\n\
                  ## ORB-C1 — One\n\n\
@@ -723,11 +697,11 @@ mod tests {
         );
         repository.issue["description"] = json!("Preserve ORB-C1 and unknown ORB-C9.");
         repository.write(
-            ".beads/issues.jsonl",
+            BEADS,
             &(serde_json::to_string(&repository.issue).expect("serialize issue") + "\n{\n"),
         );
         repository.write(
-            "docs/CRATES.md",
+            CRATES,
             "# Crates\n\n## Current decisions\n\n\
              ### Runtime\n\n\
              - **Selected shape:** Owned loop\n\
@@ -739,7 +713,7 @@ mod tests {
              - **Selected shape:** Maybe\n\
              - **Status:** Chosen\n\
              - **Credible alternatives:** owned code\n\
-             - **Evidence:** orb-proof\n\
+             - **Evidence:** eon-proof.1\n\
              - **Unexpected:** no\n",
         );
 
@@ -754,8 +728,8 @@ mod tests {
         assert!(errors.contains("ORB-C2 requires a full 40-character proof commit"));
         assert!(errors.contains("ORB-C2 requires a named check or evidence"));
         assert!(errors.contains("unknown contract reference ORB-C9"));
-        assert!(errors.contains("docs/CONTRACTS.md: unknown contract reference ORB-C8"));
-        assert!(errors.contains("docs/CRATES.md: unknown contract reference ORB-C7"));
+        assert!(errors.contains("orbit/docs/CONTRACTS.md: unknown contract reference ORB-C8"));
+        assert!(errors.contains("orbit/docs/CRATES.md: unknown contract reference ORB-C7"));
         assert!(errors.contains("invalid issue JSON"));
         assert!(errors.contains("Renderer requires a nonempty Why field"));
         assert!(errors.contains("Renderer has unknown Unexpected field"));
@@ -772,28 +746,26 @@ mod dependency_direction {
     use std::{collections::BTreeSet, fs, path::PathBuf, process::Command};
 
     const PROTOCOLS: &[&str] = &["orbit-protocol", "eon-workspace-protocol"];
-    /// Allowed workspace dependencies per member; `None` leaves a member's
-    /// workspace edges unrestricted.
-    const ALLOWED_WORKSPACE_DEPENDENCIES: &[(&str, Option<&[&str]>)] = &[
-        ("orbit-protocol", Some(&[])),
-        ("eon-workspace-protocol", Some(&[])),
-        ("yazelix-venus", Some(PROTOCOLS)),
-        ("eon-runtime", Some(PROTOCOLS)),
+    const ALLOWED_WORKSPACE_DEPENDENCIES: &[(&str, &[&str])] = &[
+        ("orbit-protocol", &[]),
+        ("eon-workspace-protocol", &[]),
+        ("yazelix-orbit", &["orbit-protocol"]),
+        ("orbit-governance", &[]),
+        ("yazelix-venus", PROTOCOLS),
+        ("eon-runtime", PROTOCOLS),
         (
             "eon-manifest",
-            Some(&["eon-runtime", "orbit-protocol", "eon-workspace-protocol"]),
+            &["eon-runtime", "orbit-protocol", "eon-workspace-protocol"],
         ),
         (
             "eon",
-            Some(&[
+            &[
                 "eon-runtime",
                 "eon-manifest",
                 "orbit-protocol",
                 "eon-workspace-protocol",
-            ]),
+            ],
         ),
-        ("yazelix-orbit", None),
-        ("orbit-governance", None),
     ];
     const TERMINAL_ENGINE: &str = "libghostty-vt";
     const TERMINAL_ENGINE_FAMILY: &str = "libghostty";
@@ -876,7 +848,7 @@ mod dependency_direction {
                     ));
                 }
                 if members.contains(dependency.name.as_str())
-                    && allowed.is_some_and(|allowed| !allowed.contains(&dependency.name.as_str()))
+                    && !allowed.contains(&dependency.name.as_str())
                 {
                     errors.insert(format!("forbidden workspace dependency {edge}"));
                 }

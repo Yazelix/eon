@@ -2,24 +2,20 @@
 
 ## Local checks
 
+Run these from the repository root:
+
 ```sh
-cargo fmt --all --check
-cargo check --locked --workspace
-cargo test --locked --workspace
-cargo run --locked --quiet -p orbit-governance -- .
-cargo install --locked \
-  --git https://github.com/luccahuguet/starcompass.git \
-  --rev 95c29fa76a971726b65e1d1dc06c518d525c46a2 \
-  --root target/starcompass
-target/starcompass/bin/starcompass check-consumer \
-  --overlay .agent-protocols.local.md \
-  --exceptions .agent-protocols.exceptions.json \
-  --manifest .agent-protocols.json \
-  --agents AGENTS.md
-cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo fmt --check -p yazelix-orbit -p orbit-protocol -p orbit-governance
+cargo clippy --locked -p yazelix-orbit -p orbit-protocol -p orbit-governance \
+  --all-targets -- -D warnings
+cargo run --locked --quiet -p orbit-governance
 git diff --check
 br ready
 ```
+
+`cargo test --locked --workspace` runs Orbit's suites with the rest of the
+workspace; run it only in the isolated sandbox that the root `AGENTS.md`
+describes.
 
 Beads contain the dependency-ordered experiment plan.
 
@@ -39,20 +35,20 @@ focus and tiling temporarily. Evidence includes local paths, machine and display
 details, and process logs; review it before sharing.
 
 ```sh
-tools/perf/orbit-venus-baseline.sh --self-check
+orbit/tools/perf/orbit-venus-baseline.sh --self-check
 
 export ORB_BASELINE_CPUS=9-15
 export ORB_BASELINE_GRID='58 93'
 export ORB_BASELINE_NVIM="$(command -v nvim)"
 export ORB_BASELINE_YAZI="$(command -v yazi)"
 
-tools/perf/orbit-venus-baseline.sh throughput \
+orbit/tools/perf/orbit-venus-baseline.sh throughput \
   /exact/orbit/bin/yazelix-orbit \
   /exact/venus/bin/yazelix-venus \
   /exact/vtebench-checkout \
   /tmp/eon-performance
 
-tools/perf/orbit-venus-baseline.sh lifecycle \
+orbit/tools/perf/orbit-venus-baseline.sh lifecycle \
   /exact/orbit/bin/yazelix-orbit \
   /exact/venus/bin/yazelix-venus \
   /tmp/eon-performance
@@ -77,35 +73,25 @@ wrong-output screenshots, or internal timestamps.
 
 ## CI
 
-The [CI workflow](../.github/workflows/ci.yml) runs on pushes to `edge` that
-change Cargo metadata, Rust source or tests, `build.rs`, Rust toolchain files,
-the governance tool or its governed metadata, or the workflow itself. Its
-standard Ubuntu job installs checksum-verified Zig 0.15.2, logs toolchain
-versions, installs Starcompass from its immutable public Git revision, and runs
-the workspace and consumer-import checks above with a ten-minute limit.
-
-`gh workflow run ci.yml --ref edge` additionally starts one manual-only Apple
-Silicon macOS job. It verifies the arm64 host and toolchain, installs the
-checksum-verified Zig 0.15.2 macOS archive, and runs the all-target workspace
-check and full native test suite with a twenty-minute limit. Pushes do not start
-the macOS job. Superseded runs are cancelled.
-
-The repository or its owning account must retain a $0 Actions product budget
-with **Stop usage when budget limit is reached**, budget threshold alerts, and
-included-usage alerts enabled. The workflow does not run for unrelated
-documentation.
+No hosted workflow runs these checks. Orbit's former Ubuntu and manual Apple
+Silicon jobs were not carried into the consolidated repository; re-homing them
+is a separate `AP-CI-001` decision. The root
+[Cachix workflow](../../.github/workflows/cachix.yml) builds and publishes the
+Linux Nix packages only.
 
 ## Governance check
 
-The governance command checks only deterministic repository facts:
+Run from the repository root, the governance command reads Orbit's contract
+and crate records under `orbit/docs/` and the shared `.beads/issues.jsonl`. It
+checks only deterministic repository facts:
 
 - Contract sections and crate-decision records retain their canonical labeled
   fields. Contract sections use unique `ORB-C*` IDs and a known status; proved
-  sections name a full Git commit and a check or evidence. `docs/CONTRACTS.md`,
-  `docs/CRATES.md`, and Beads cannot refer to an unknown contract.
+  sections name a full Git commit and a check or evidence. `CONTRACTS.md`,
+  `CRATES.md`, and Beads cannot refer to an unknown contract.
 - Selected crate decisions name an exact version or commit, alternatives, and
-  an existing evidence Bead. Selected, planned, candidate, and deferred
-  decisions remain distinct.
+  an existing evidence Bead from the shared tracker. Selected, planned,
+  candidate, and deferred decisions remain distinct.
 - Beads JSON must parse so those contract and crate-evidence links can be
   checked. `br doctor` owns tracker schema, duplicate IDs, storage, and
   integrity.
@@ -115,23 +101,18 @@ reference, crate, closure, portability, or protocol-exception prose;
 `AGENTS.md` and applicability-aware review own that policy. It cannot establish
 that an agent read a reference, that evidence is truthful, or that a runtime
 contract actually passes. It deliberately does not parse `.agent-protocols.*`
-or generated `AGENTS.md`: Starcompass owns that interpretation. CI installs
-Starcompass from exact public Git revision
-`95c29fa76a971726b65e1d1dc06c518d525c46a2` and runs its source-independent
-`check-consumer` command against the four local import files. That proves their
-structure, hashes, framing, and local suffix agree; it treats the canonical
-protocol section as opaque. Complete canonical-protocol authentication still
-uses a source checkout at the exact commit in `.agent-protocols.json`.
+or generated `AGENTS.md`: Starcompass owns that interpretation.
 
 The tool's test, run by `cargo test --locked --workspace`, also enforces the
-workspace dependency direction that the root `AGENTS.md` owns, including that
-the protocol crates' manifests inherit no workspace settings. It reads
+workspace dependency direction in the root `AGENTS.md`, including that the
+protocol crates' manifests inherit no workspace settings. It reads
 `cargo metadata` and checks every kind of direct declared dependency, not code
-semantics or crates reached through third-party packages. It allows `eon` to
-depend on `eon-manifest` and gives Orbit and this tool no workspace-edge rule.
-Any other new workspace member fails until the test gives it one. Orbit must
-keep its direct `libghostty-vt` dependency, so renaming the engine crate fails
-the test instead of disabling the rule.
+semantics or crates reached through third-party packages. Every workspace
+member needs a rule. Beyond `AGENTS.md`, the test lets `eon` depend on
+`eon-manifest`, limits Orbit to `orbit-protocol` and this tool to no workspace
+crate (chosen in `eon-monorepo-2oko.8`), and fails a new member until the test
+gives it one. Orbit must keep its direct `libghostty-vt` dependency, so
+renaming the engine crate fails the test instead of disabling the rule.
 
 ## Documentation map
 
