@@ -1,0 +1,112 @@
+{
+  "schema": 1,
+  "source": {
+    "repository": "https://github.com/Yazelix/starcompass",
+    "commit": "f7ff2a64101618b39e7ee71ece0710ef2d7d10b9"
+  },
+  "profiles": [
+    "greenfield",
+    "orchestrator",
+    "terminal-engine"
+  ],
+  "protocols": [
+    {
+      "id": "AP-SCOPE-001",
+      "version": 3,
+      "sha256": "cae30f9031beea4f831a89445f35807f50618e0f2cb0432f3b94bec40da9aeef"
+    },
+    {
+      "id": "AP-CONTRACT-001",
+      "version": 4,
+      "sha256": "cdf2e5d69cefd34ceeeaa6b7511b21f921e2be50c17d3c01b85120b20234cff7"
+    },
+    {
+      "id": "AP-REFERENCE-001",
+      "version": 3,
+      "sha256": "186fa74aa530c9c76ae507685461dff2b1506ecb5087230ded51f02cecb9231a"
+    },
+    {
+      "id": "AP-MINIMAL-001",
+      "version": 4,
+      "sha256": "612bc9c62a20adf7332724d4663af0a0e591d624de2a76b1c257a9ed428db1f6"
+    },
+    {
+      "id": "AP-DEPENDENCY-001",
+      "version": 2,
+      "sha256": "ded49add538b82de0a9c522bc8a34720f4ebbb47f39fc2f7ddb25e7aad1700d3"
+    },
+    {
+      "id": "AP-OWNERSHIP-001",
+      "version": 2,
+      "sha256": "d218a4e0625b659ec366284110bdfce02bd66cb229ab6ba07f2317092ea13053"
+    },
+    {
+      "id": "AP-TEST-001",
+      "version": 3,
+      "sha256": "58b5837cb679e958192b366bb15d6e34649f5a91ff9f4accdc7edb4ef5cdb873"
+    },
+    {
+      "id": "AP-PROOF-001",
+      "version": 6,
+      "sha256": "01fc3712fd369189b934b0503173e6a8963be64b7f18869abfaef3cca53866f7"
+    },
+    {
+      "id": "AP-PLAN-001",
+      "version": 11,
+      "sha256": "fcb7c8d2b99c6641a7cd1244072eda6230f1ccfc3a4aa47c29cf2525fcb1376d"
+    },
+    {
+      "id": "AP-CI-001",
+      "version": 3,
+      "sha256": "c7cb65a81ce8434d02f2d19306bf93358f3624d0b77886bc91d4de93f7a779ba"
+    },
+    {
+      "id": "AP-EXCEPTION-001",
+      "version": 2,
+      "sha256": "2c4f00299922edac83286821af07ad485e5a630bca6acbbce918d87614abb395"
+    },
+    {
+      "id": "AP-GIT-001",
+      "version": 5,
+      "sha256": "f2c3254311de57a23a13aa382fe3285e65bb34e535ecd813d1be783ca79d4bf9"
+    },
+    {
+      "id": "AP-ORCHESTRATOR-001",
+      "version": 2,
+      "sha256": "f78ebc0db6db525aac1d3226703af7e84cba9953c579470763831241a7d0c2ad"
+    },
+    {
+      "id": "AP-FRONTIER-001",
+      "version": 2,
+      "sha256": "0777c74645955a26dc3829812ff26fa1a00a017c3b4cc1ac6740284f2664566c"
+    },
+    {
+      "id": "AP-PORTABILITY-001",
+      "version": 2,
+      "sha256": "a2f5025bc7a10436b5c2f8f42c6002ccf1e361f05abbff3dea6507a3426394c0"
+    },
+    {
+      "id": "AP-TERMINAL-001",
+      "version": 2,
+      "sha256": "c1805e12ca5c41d3ed2a6b24739fcded2ad986758fda01fdfa3132c9f8351d9c"
+    },
+    {
+      "id": "AP-FAILURE-001",
+      "version": 4,
+      "sha256": "450e48b4e1532ff50a9a1da7faa49e3539450e0676f3c530f888d33b4b752e80"
+    }
+  ],
+  "exceptions": [
+    {
+      "approved_at": "2026-08-09",
+      "approved_by": "user",
+      "protocol": "AP-TEST-001",
+      "reason": "The user requires the active agent to reuse its existing context instead of invoking another agent for validation.",
+      "review_condition": "Review only if the user explicitly reauthorizes isolated agent trials.",
+      "scope": "Agent-instruction, prompt, and skill changes in the Eon repository"
+    }
+  ],
+  "overlay": {
+    "sha256": "3f890898bec2eb2f7c0c3360b86a22619a8287dab51da8c48ace14a40f7259d1"
+  }
+}
