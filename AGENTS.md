@@ -8,7 +8,7 @@ or `.agent-protocols.exceptions.json`, then render from the pinned source.
 ## Protocol import record
 
 - Source: `https://github.com/Yazelix/starcompass`
-- Source commit: `0e1b9c62a5f95531e5f511856e403aecb7639816`
+- Source commit: `4af5a3265acd425d1359f56f805221fc264a9e1a`
 - Profiles: `greenfield`, `orchestrator`, `terminal-engine`
 - Manifest: `.agent-protocols.json` (schema 1)
 - Directory rules: `orbit/`, `runtime/`, `venus/`; read a directory's `AGENTS.md` before changing files under it.
@@ -24,6 +24,7 @@ or `.agent-protocols.exceptions.json`, then render from the pinned source.
 | `AP-TEST-001` | 3 | `58b5837cb679e958192b366bb15d6e34649f5a91ff9f4accdc7edb4ef5cdb873` |
 | `AP-PROOF-001` | 6 | `01fc3712fd369189b934b0503173e6a8963be64b7f18869abfaef3cca53866f7` |
 | `AP-PLAN-001` | 11 | `fcb7c8d2b99c6641a7cd1244072eda6230f1ccfc3a4aa47c29cf2525fcb1376d` |
+| `AP-SESSION-001` | 1 | `f8bdac637027895ec8d1ad4f192e13808d095a809d091b76eadadaf936b2a340` |
 | `AP-CI-001` | 3 | `c7cb65a81ce8434d02f2d19306bf93358f3624d0b77886bc91d4de93f7a779ba` |
 | `AP-EXCEPTION-001` | 2 | `2c4f00299922edac83286821af07ad485e5a630bca6acbbce918d87614abb395` |
 | `AP-GIT-001` | 5 | `f2c3254311de57a23a13aa382fe3285e65bb34e535ecd813d1be783ca79d4bf9` |
@@ -184,6 +185,16 @@ acceptance, material failures/negatives, constraining rejections, and approvals.
 Baseline/reference comments record only changed identities, dirty state,
 mechanism/stop decisions, and first check. Keep status/prerequisites honest; use
 the issue tool, never its storage.
+
+### AP-SESSION-001 — Session continuity across compaction
+
+Treat context compaction as lossy. Write each user decision to its durable
+owner when it is made, and reread the active issue after any compaction. Once
+a session has compacted, start the next issue in a fresh session; within an
+issue, a second compaction or any sign of lost context triggers a handoff
+comment (state, next step, open decisions) and a new session. Prefer a
+clean-break restart to compaction, and start a large issue fresh when most of
+the context is already used.
 
 ### AP-CI-001 — Bounded continuous integration
 
@@ -374,6 +385,16 @@ and the artifact.
   revision finds nothing actionable; any fix resets that. Simplification never
   loses demonstrated regression coverage. Record one ledger line per slice in
   its bead: pass count and findings.
+- **Autonomous review.** Run the loop in read-only review subagents without
+  waiting for the user. Each reviewer reads the owning bead itself, not a
+  paraphrase, plus the diff, and reports concrete failures with `file:line` or
+  says that nothing is actionable. Keep briefs neutral: never mention earlier
+  passes or passing checks. Exclude only gaps the bead records as accepted with
+  a reason, and let a reviewer flag one anyway if it judges it more severe. The
+  implementing agent fixes or records each finding and asks the user only when
+  a finding needs a scope, contract, or other user-owned decision. Keep design
+  decisions in the main session; delegate reading-heavy review, search, and
+  investigation.
 
 ## Composition and Distribution
 
@@ -484,17 +505,6 @@ All tracked changes originate on `edge`. Work on `edge` by default. The `main`
 and `stable` branches are promotion-only channels. Do not create branches,
 merge commits, rebase published channel history, force-push, or promote without
 explicit user direction.
-
-## Sessions
-
-When a bead closes in a session that has compacted its context, tell the user
-to start a new session for the next bead; an uncompacted session continues.
-Inside a bead, after the second context
-compaction or the first sign of lost context, stop: record the state, next
-step, and open decisions in a bead comment, commit safe work, and ask for a
-new session. Count compactions from the session record. Write each user
-decision to the owning bead or memory when it is made. After any compaction,
-reread the active bead before continuing.
 
 ## Beads
 
