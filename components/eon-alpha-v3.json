@@ -1,5 +1,5 @@
 {
-  "schema": 3,
+  "schema": 4,
   "product": {
     "id": "eon-alpha",
     "target": "x86_64-linux"
@@ -71,13 +71,12 @@
     },
     {
       "id": "orbit",
-      "project": "Eon Sessions",
+      "project": "Orbit",
       "version": "0.1.0",
-      "revision": "427cf2d074cd1db905a2cc2602a5475065d1c790",
       "target": "x86_64-linux",
       "source": {
-        "kind": "git",
-        "url": "https://github.com/Yazelix/eon-sessions.git"
+        "kind": "workspace",
+        "path": "orbit"
       },
       "artifacts": [
         { "id": "executable", "kind": "file" },
@@ -106,13 +105,12 @@
     },
     {
       "id": "venus",
-      "project": "Eon Desktop",
+      "project": "Venus",
       "version": "0.1.0",
-      "revision": "d0642ed9fc190539811168553c972107336fa213",
       "target": "x86_64-linux",
       "source": {
-        "kind": "git",
-        "url": "https://github.com/Yazelix/eon-desktop.git"
+        "kind": "workspace",
+        "path": "venus"
       },
       "artifacts": [
         { "id": "executable", "kind": "file" }
@@ -146,7 +144,6 @@
       "requires": [
         {
           "component": "orbit",
-          "revision": "427cf2d074cd1db905a2cc2602a5475065d1c790",
           "interfaces": [
             { "id": "ORBF", "version": 2, "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
             { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
@@ -154,7 +151,6 @@
         },
         {
           "component": "eon-workspace-protocol",
-          "revision": "d0a184bb4d45d3e50787f7c17606df652727fb9a",
           "interfaces": [
             { "id": "EONW", "version": 9, "proof": "d0a184bb4d45d3e50787f7c17606df652727fb9a" }
           ]
@@ -399,11 +395,10 @@
       "id": "eon-runtime",
       "project": "Eon Runtime",
       "version": "0.1.0",
-      "revision": "0de24d01a9022388282dd92d91f6ed1099771b57",
       "target": "x86_64-linux",
       "source": {
-        "kind": "git",
-        "url": "https://github.com/Yazelix/eon-runtime.git"
+        "kind": "workspace",
+        "path": "runtime/crates/eon-runtime"
       },
       "artifacts": [
         { "id": "eon-runtime", "kind": "cargo-package" }
@@ -413,14 +408,12 @@
       "requires": [
         {
           "component": "eon-workspace-protocol",
-          "revision": "d0a184bb4d45d3e50787f7c17606df652727fb9a",
           "interfaces": [
             { "id": "EONW", "version": 9, "proof": "d0a184bb4d45d3e50787f7c17606df652727fb9a" }
           ]
         },
         {
           "component": "orbit",
-          "revision": "427cf2d074cd1db905a2cc2602a5475065d1c790",
           "interfaces": [
             { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
           ]
@@ -431,11 +424,10 @@
       "id": "eon-workspace-protocol",
       "project": "Eon Runtime",
       "version": "0.1.0",
-      "revision": "d0a184bb4d45d3e50787f7c17606df652727fb9a",
       "target": "x86_64-linux",
       "source": {
-        "kind": "git",
-        "url": "https://github.com/Yazelix/eon-runtime.git"
+        "kind": "workspace",
+        "path": "runtime/crates/eon-workspace-protocol"
       },
       "artifacts": [
         { "id": "eon-workspace-protocol", "kind": "cargo-package" }

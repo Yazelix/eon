@@ -37,7 +37,6 @@ const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id
 
 pub struct ComponentFacts {
     pub report: String,
-    pub orbit_revision: String,
 }
 
 pub struct Inputs {

@@ -643,14 +643,12 @@ fn supervise(
     if mode == LaunchMode::Workspace {
         workspace::validate_initial_directory(&launch_directory)?;
     }
-    let component_generation = inputs.components()?.orbit_revision.clone();
     let deadline = Instant::now() + SESSION_START_TIMEOUT;
     let popup_catalog = popups.unwrap_or_else(|| managed_environment::PopupCatalog {
         geometry: inputs.defaults.popups.geometry,
         entries: Vec::new(),
     });
-    let (mut sessions, recovered_picker) =
-        recover_sessions(runtime, mode, &component_generation, deadline)?;
+    let (mut sessions, recovered_picker) = recover_sessions(runtime, mode, generation, deadline)?;
     let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
     let initial_endpoint = runtime.join("orbit.sock");
     let initial_session_id = "session-1";
@@ -726,7 +724,7 @@ fn supervise(
             config,
             &initial_endpoint,
             initial_session_id,
-            &component_generation,
+            generation,
             &launch_directory,
             &initial_child,
             deadline,
@@ -752,7 +750,7 @@ fn supervise(
                     apply_session_operation(
                         inputs,
                         config,
-                        &component_generation,
+                        generation,
                         &mut sessions,
                         &mut initial_child,
                         operation,
@@ -773,7 +771,7 @@ fn supervise(
         None
     };
     let mut state = SupervisorState {
-        component_generation,
+        component_generation: generation.to_owned(),
         application_id: application_id.into(),
         decorations,
         workspace,

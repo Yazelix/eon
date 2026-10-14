@@ -6,29 +6,12 @@ use eon_workspace_protocol::v9::{ALT, PopupGeometry, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     const MANIFEST: &str = include_str!("../../../../components/eon-alpha-v3.json");
-    const ASSEMBLY: &[&[u8]] = &[
-        include_bytes!("main.rs"),
-        include_bytes!("product.rs"),
-        include_bytes!("../../eon-manifest/src/lib.rs"),
-        include_bytes!("../../eon-manifest/Cargo.toml"),
-        include_bytes!("../Cargo.toml"),
-        include_bytes!("../../../../Cargo.toml"),
-        include_bytes!("../../../../Cargo.lock"),
-        include_bytes!("../../../../flake.nix"),
-        include_bytes!("../../../../flake.lock"),
-        include_bytes!("../../../../nix/workspace-package.nix"),
-        MANIFEST.as_bytes(),
-    ];
+    const ASSEMBLY: &[&[u8]] = &[env!("EON_WORKSPACE_DIGEST").as_bytes()];
     Inputs {
         version: env!("CARGO_PKG_VERSION"),
-        components: (|| {
-            Ok(ComponentFacts {
-                report: eon_manifest::version_report(MANIFEST)
-                    .map_err(|error| error.to_string())?,
-                orbit_revision: eon_manifest::component_revision(MANIFEST, "orbit")
-                    .map_err(|error| error.to_string())?,
-            })
-        })(),
+        components: eon_manifest::version_report(MANIFEST)
+            .map(|report| ComponentFacts { report })
+            .map_err(|error| error.to_string()),
         assembly: ASSEMBLY,
         defaults: Defaults {
             show_version: true,

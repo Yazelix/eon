@@ -6,16 +6,16 @@ Eon owns product composition and distribution. It ships
 Eon as the full managed product and EonTerm as the reusable terminal product
 while preserving the boundaries of the projects it composes.
 
-Eon consumes independently pinned runtime and EONW packages from
-[Eon Runtime](https://github.com/Yazelix/eon-runtime). The
-[component manifest](../components/eon-alpha-v3.json) selects each source; the
-[runtime library boundary](#runtime-library-boundary) records package selection
-and installed consumer acceptance.
+This repository holds Orbit, Venus, Eon Runtime with EONW, and Eon as one Cargo
+workspace. The [component manifest](../components/eon-alpha-v3.json) names each
+in-tree component's workspace path and each external source's exact revision;
+the [runtime library boundary](#runtime-library-boundary) records the runtime
+seam.
 
 | Repository | Subsystem owner | Owns | Eon consumes |
 |---|---|---|---|
-| Eon Sessions | Orbit | Persistent terminals, PTYs, terminal state, attachment, transport | A versioned session and attachment contract |
-| Eon Desktop | Venus | Native windows, surfaces, input, rendering, desktop integration | A versioned client artifact and launch contract |
+| Eon (`orbit/`) | Orbit | Persistent terminals, PTYs, terminal state, attachment, transport | A versioned session and attachment contract |
+| Eon (`venus/`) | Venus | Native windows, surfaces, input, rendering, desktop integration | A versioned client artifact and launch contract |
 | Anima | Anima | Terminal animations, style selection, input dismissal, and playback timing | A pinned executable for startup, CLI, and transient popup |
 | Nushell | Nushell | Shell language, execution, and native configuration | A pinned shell artifact and vendor-autoload input |
 | Starship | Starship | Prompt rendering, native modules, and configuration discovery | A pinned prompt artifact and guarded native initialization |
@@ -24,8 +24,8 @@ and installed consumer acceptance.
 | Yazi | Yazi | File management and navigation | A relocatable file-manager artifact and launch contract |
 | LazyGit | LazyGit | Git TUI behavior and configuration | A pinned executable and native configuration inputs |
 | Ratconfig | Ratconfig | User-facing configuration editing | A schema-aware configuration artifact and output contract |
-| Eon | Eon orchestrator | Eon and EonTerm assembly, version, defaults, component selection, updates, integration checks, distribution | Exact child revisions and their declared artifacts |
-| Eon Runtime | Runtime library and EONW | Invocation, terminal lifecycle, workspace topology, strict configuration parsing, generation identity and canonical EONW codecs | Independently pinned runtime and canonical codec packages |
+| Eon | Eon orchestrator | Eon and EonTerm assembly, version, defaults, component selection, updates, integration checks, distribution | In-tree subsystems, exact external revisions, and their declared artifacts |
+| Eon (`runtime/`) | Runtime library and EONW | Invocation, terminal lifecycle, workspace topology, strict configuration parsing, generation identity and canonical EONW codecs | In-tree runtime and canonical codec packages |
 
 Nova stays independent. Eon may reuse proven ideas from Nova through explicit
 contracts, but the repositories do not share release identity or require each
@@ -149,12 +149,14 @@ its Eon owner by a private stream and exits on owner EOF.
 
 Eon's internal boundaries follow owned invariants rather than delivery phases.
 They route changes and audits without creating additional product scope.
-Runtime and codec paths below belong to [Eon Runtime](https://github.com/Yazelix/eon-runtime);
-assembly, manifest and Nix paths belong to this repository.
+Runtime and codec paths below are relative to `runtime/`; assembly and
+manifest crate paths are relative to `eon/`; Nix paths are relative to the
+repository root.
 
 ### Product assembly
 
-- **Owning surface:** `crates/eon/src/product.rs`
+- **Owning surfaces:** `crates/eon/src/product.rs` and `crates/eon/build.rs`, which
+  digests the source tree
 - **Owns:** Product version, validated component facts, chosen shell/terminal/Anima
   and popup defaults, palette, Agent preference order, program fallbacks, opaque
   launch inputs, and the immutable assembly contribution to generation identity
@@ -237,7 +239,7 @@ assembly, manifest and Nix paths belong to this repository.
 
 ### Managed environment
 
-- **Owning surfaces:** `crates/eon-runtime/src/managed_environment.rs` and Eon's `flake.nix` wiring
+- **Owning surfaces:** `crates/eon-runtime/src/managed_environment.rs` and `nix/shell-environment.nix`
 - **Owns:** Stable managed command names, private configuration projection, strict
   configuration parsing, validation and overrides of assembly-supplied defaults;
   Nix generates the selected tools' startup files
@@ -246,7 +248,7 @@ assembly, manifest and Nix paths belong to this repository.
 ### Nix alpha composition
 
 - **Owning surfaces:** `flake.nix`
-- **Owns:** Exact source resolution, child builds, opaque launch-path injection, full Eon
+- **Owns:** In-tree workspace builds, exact external source resolution, opaque launch-path injection, full Eon
   desktop packaging, and the slim EonTerm package
 - **Does not own:** Runtime product semantics or a second component graph
 
@@ -263,18 +265,13 @@ reconciles invariants that cross these boundaries.
 
 ## Runtime library boundary
 
-**Status: accepted external composition on x86_64 Linux native Wayland.**
-Eon and EonTerm select independent runtime and EONW package records from
-Eon Runtime `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`, with rebound Venus
-`bbf4cf41b289f441683eb7a3f225a26a4d3edacc` and accepted Orbit
-`b6cecf8f2ee35570b41cfdc578b095889d917fe2`. The runtime and codec retain their
-accepted transferred trees and EONW v2–v7 bytes. This repository contains no
-runtime or codec production copies. `eon-runtime-cutover-y1wy` records composed
-build, generation and installed migration evidence; the extraction sequence
-and earlier acceptance remain in `eon-runtime-extraction-l4wh`.
+**Status: in-tree composition on x86_64 Linux native Wayland.** Eon and
+EonTerm build Eon Runtime, EONW, Orbit and Venus from this workspace.
+`eon-runtime-cutover-y1wy` and `eon-runtime-extraction-l4wh` record the earlier
+external composition.
 
-Eon's actual executable and Nix packager consume an exact runtime library and
-codec selection. Invocation must preserve existing Eon/EonTerm commands,
+Eon's actual executable and Nix packager consume the in-tree runtime library and
+codec. Invocation must preserve existing Eon/EonTerm commands,
 errors, configuration, terminal authority and generation isolation. Invalid
 graph or package inputs fail at their existing required boundary. The extraction
 adds an in-process Rust library, with no additional daemon or IPC boundary.
@@ -292,15 +289,15 @@ Eon calls one concrete library entry point. Runtime handles invocation selection
 CLI projection and managed dispatch; Eon's real `main` retains process exit
 mapping and the private picker's failure delay. Public inputs carry product
 data, not access to private runtime operations. Rust type and function spellings
-remain implementation choices; the selected package version and exact source
-pin define the accepted API pair.
+remain implementation choices; the repository revision defines the accepted API
+pair.
 
 | Eon-supplied input | Required meaning |
 |---|---|
-| Product version | Version from `crates/eon/Cargo.toml`, used by CLI and EONW runtime diagnostics; library and codec versions retain their own Cargo owners |
-| Fallible validated component facts | The sole graph validator's report and exact Orbit revision, including independently selected runtime/codec identities |
+| Product version | Version from `eon/crates/eon/Cargo.toml`, used by CLI and EONW runtime diagnostics; library and codec versions retain their own Cargo owners |
+| Fallible validated component facts | The sole graph validator's report |
 | Concrete defaults | Chosen shell/terminal/Anima settings, popup definitions/margins, palette, program fallbacks and Agent preference order |
-| Immutable assembly contribution | Executable/assembly/default/validator/graph, product Cargo/lock and Nix recipe/lock/generated-command inputs needed by generation identity |
+| Immutable assembly contribution | A digest of every regular file in the Eon build's source tree outside dot entries and `target` directories; in Nix, the workspace source set with the graph, Cargo lock and Nix recipes |
 | Opaque launch inputs | Existing component/program paths and environment/configuration projection, preserving current resolution and override order |
 
 Eon may precompute graph validation without effects and pass its result.
@@ -314,9 +311,7 @@ artifacts, from runtime to Orbit's canonical protocol, and from Venus to Orbit's
 protocol and EONW. The library has no Eon dependency, graph, validator or
 reverse source include. Its unit tests use independent, test-only input data;
 the real Eon executable keeps its unchanged process integration tests.
-The independent producer passes locked build/test/lint checks with ambient Eon
-checkouts unavailable. A disposable real Eon assembly passes the process suite
-against its exact Git source; this does not activate the production consumer.
+`eon-runtime` builds and tests without the Eon crates.
 
 ### Defaults, overrides and generation
 
@@ -340,55 +335,27 @@ runtime, defaults or generated-command changes select a different generation.
 Source relocation may change identity. Store/profile paths, mutable config,
 PIDs and live state do not enter it; normal runtime use evaluates no Nix.
 
-### Independent package selection
+### In-tree package selection
 
-Runtime and EONW are separate packages in the same fourth repository. Use two
-logical `library` records with `cargo-package` artifacts in Eon's existing
-schema-3 graph. Each record names its own exact source, Cargo version and
-accepted proof. Their source URL may match while their revisions differ.
-Venus's EONW requirement targets the codec record; exact revision and interface
-proof equality still apply to the named component. Other requirements retain
-the same checks.
+Orbit, Venus, `eon-runtime` and `eon-workspace-protocol` are in-tree graph
+components with `workspace` sources: the repository revision identifies them,
+so they carry no revision of their own and requirements on them name none.
+Their interfaces and proofs still bind requirements. Nix builds Orbit and Venus
+from the in-tree crates and Eon from those crates plus the graph and its Nix
+recipes, all with the root `Cargo.lock`. It checks each workspace component's
+Cargo version against the graph.
 
-For runtime revision R1 and codec revision P0, unchanged-package acceptance
-covers the complete codec crate, its Cargo manifest and relevant effective
-dependency/build inputs, including inherited settings if present. The current
-codec has explicit package metadata and no dependencies. Unrelated runtime
-files or lock entries do not change codec identity. Package/wire version labels
-alone cannot prove equivalence.
-
-The private [`nix/workspace-package.nix`](../nix/workspace-package.nix) gate
-returns the selected codec path only after checking exact fetched revisions,
-complete package equality with the accepted proof and runtime's local codec,
-and the consumers' sole normal codec dependencies and lock declarations.
-`eon-manifest` owns graph and requirement validation. The gate's caller supplies
-immutable sources fetched from the validated graph and accepted proof; arbitrary
-paths carrying a claimed revision are not production provenance.
-
-The gate bounds the current explicit, dependency-free codec and resolver. It rejects
-inherited codec settings, producer profiles, codec overrides and Cargo configuration,
-and ignores unrelated runtime files, lock entries and unused workspace package metadata.
-A broader build shape needs renewed producer or affected-consumer evidence. The check
-uses accepted sources and synthetic drift fixtures. Both production consumers
-use this returned path before their Git-to-path substitutions. For different
-Git revisions, source preparation collapses the exact proved-identical codec
-lock entries and references to one path package before Cargo compilation.
-A newer runtime checkout is not an implicit codec
-selection.
-
-A runtime-only R0 → R1 change with unchanged accepted codec P0 keeps Venus's
-source, exact EONW Cargo/lock pin and codec proof. It needs composed runtime and
-package checks and changes generation, but no codec version bump or Venus
-source/native proof solely for that change. Initial provider relocation still
-requires the one-time Venus rebind. Changed codec content or relevant build
-inputs need new producer evidence and explicit affected-consumer acceptance.
-
-Cargo's [workspace](https://doc.rust-lang.org/cargo/reference/workspaces.html)
-and [Git dependency](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#specifying-dependencies-from-git-repositories)
-mechanisms support separate packages and exact source selection. They do not
-establish Eon's package-equivalence or runtime acceptance.
+Eon's build script digests the path and bytes of every regular file in its
+build's source tree outside dot entries and `target` directories; Nix builds supply only the workspace source set. That digest is Eon's assembly contribution, so a change in any
+in-tree component selects a new generation. Orbit terminal records carry the
+runtime's generation ID as their component generation. Mutable configuration,
+store and profile paths never enter the digest.
 
 ### Acceptance boundaries
+
+The external composition was accepted through these boundaries. In-tree, the
+producer, provider and package-selection rows are history; the generation
+red/green check and the workspace version assertion replace them.
 
 | Boundary | Cheapest falsifier and implementation owner |
 |---|---|

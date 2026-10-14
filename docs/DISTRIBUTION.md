@@ -267,15 +267,16 @@ does not prove upload or fresh-store substitution.
 
 ## Canonical release input
 
-A versioned component manifest records each component's project, exact revision,
-abstract artifacts, platform, and compatibility contract. Nix consumes this
+A versioned component manifest records each component's project, source,
+abstract artifacts, platform, and compatibility contract. External components
+carry an exact revision; the repository revision identifies in-tree ones. Nix consumes this
 manifest during alpha and owns physical package paths. Release tooling extends
 the graph with consumed portable artifact locators, checksums, and provenance
 after distribution graduation.
 
-The manifest should remain small enough for humans to review. Child repositories
-build and test their owned artifacts. Eon verifies compatibility and assembles
-the product without rebuilding child behavior.
+The manifest should remain small enough for humans to review. Each in-tree
+subsystem builds and tests its owned crates; Eon verifies compatibility and
+assembles the product without copying subsystem behavior.
 
 ## Channel sequence
 
@@ -327,7 +328,8 @@ canonical manifest can drive it without a parallel product definition.
 An alpha candidate should prove:
 
 - Nix consumes the reviewed component manifest;
-- the installed composition reports every exact component revision;
+- the installed composition reports every exact external component revision and
+  the generation of its in-tree build;
 - normal runtime use invokes no Nix evaluator;
 - product state uses stable component identity instead of persisted store paths;
 - Eon runs in a clean Nix-enabled native Wayland environment.

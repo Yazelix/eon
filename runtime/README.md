@@ -1,7 +1,7 @@
 # Eon Runtime
 
 The runtime library and canonical workspace protocol used by Eon and Venus.
-The repository builds independently of Eon's product checkout.
+Both crates build and test without the Eon crates.
 
 | Package | Owns | Version |
 |---|---|---|
@@ -31,13 +31,14 @@ Initial workspace launch and explicit directory selection retain their own paths
 A failed first-pane fallback reports the error and leaves other tabs running.
 
 Eon supplies its own product version, chosen defaults, validated component
-report and Orbit revision, opaque executable paths, and immutable assembly
-contribution. The runtime has no dependency on Eon, its component graph,
-validator, product defaults, assets or Nix expressions.
+report, opaque executable paths, and immutable assembly contribution. The
+runtime has no dependency on Eon, its component graph, validator, product
+defaults, assets or Nix expressions.
 
 Runtime combines its own immutable runtime/EONW bytes with the supplied assembly
-contribution to compute one `g1-` generation. Mutable configuration, live state
-and store/profile paths do not become generation identity. Orbit remains the
+contribution to compute one `g1-` generation, which Orbit terminal records carry as their
+component generation. Mutable configuration, live state and store/profile paths
+do not become generation identity. Orbit remains the
 terminal owner; Venus remains the native presentation owner.
 
 When an acquired Orbit dies without a final result, Runtime validates the dead
@@ -45,10 +46,10 @@ process and original Live record before retiring its exact residue. Healthy
 terminals remain usable; owner loss is a local failure, not a successful Stop
 or a fabricated terminal outcome.
 
-The accepted concrete assembly is illustrated by Eon's
-[product inputs](https://github.com/Yazelix/eon/blob/10b4a26e71187fb8eced55d1b23c821e4e3d8bd6/crates/eon/src/product.rs).
-Select Git dependencies by exact accepted commit and package name; crates are
-not published to a registry. Eon owns product composition and distribution.
+Eon's `eon/crates/eon/src/product.rs` supplies the concrete inputs; its
+`build.rs` digests the source tree into the assembly contribution.
+Consumers in this workspace use path dependencies; crates are not published to
+a registry. Eon owns product composition and distribution.
 
 CodexBar CLI owns Codex and Claude quota collection and credential access.
 Eon supplies its opaque executable path. Independent workers use explicit Codex
@@ -84,39 +85,33 @@ copied both complete crate trees, including manifests and unit tests:
 | `eon-workspace-protocol` | `8409c419a3496d6f01eeef65295f5d95b943313e` |
 
 The codec tree also equals Venus's historical Eon dependency at
-`f41a41c9aecc4c436edfa2f394b832aa6d8711ad`. Runtime's exact Orbit protocol
-dependency remains `b6cecf8f2ee35570b41cfdc578b095889d917fe2`.
+`f41a41c9aecc4c436edfa2f394b832aa6d8711ad`. Runtime depends on the in-tree
+Orbit protocol crate.
 
-Runtime and codec have separate package manifests and version owners. They may
-initially share a repository commit without requiring future revisions to
-match. A runtime-only change can retain a prior accepted codec pin when its
-complete package and relevant build inputs remain identical. Matching SemVer
-or wire labels alone is insufficient.
+Runtime and codec have separate package manifests and version owners.
 
 EONW's complete package is its Cargo manifest and `src/lib.rs`, `src/v2.rs`
 through `src/v9.rs`. It has no external dependencies, feature declarations,
-build script or workspace-inherited settings. The root workspace uses resolver
-3 and declares no shared metadata, dependencies, patches or build profiles.
-Changes to those facts require renewed package/build-input evidence.
+build script or workspace-inherited settings.
 
 Eon's `eon-runtime-producer-68hq` holds the accepted transfer revision and
-verification evidence. Runtime evolution has one owner here; Eon owns consumer
-selection and installed-product proof under independently pinned packages.
+verification evidence. Runtime evolution has one owner here; Eon owns product
+composition and installed-product proof.
 
 ## Development
 
-Use Rust 1.95 or later. From this checkout:
+Use Rust 1.95 or later. From the repository root:
 
 ```sh
-cargo fmt --all --check
-cargo check --locked --workspace
-cargo test --locked --workspace
-cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo fmt --check -p eon-runtime -p eon-workspace-protocol
+cargo check --locked -p eon-runtime -p eon-workspace-protocol
+cargo test --locked -p eon-runtime -p eon-workspace-protocol
+cargo clippy --locked -p eon-runtime -p eon-workspace-protocol --all-targets -- -D warnings
 ```
 
+Run the tests only in the isolated sandbox that the root `AGENTS.md` describes.
 Tests use independent supplied inputs. Eon's actual executable integration
-tests stay with Eon and are exercised against exact producer candidates during
-integration. Wire/source comparison does not claim a new native platform proof.
+tests stay with Eon in `eon/crates/eon/tests`.
 The composed product is proved on x86_64 Linux native Wayland; Apple Silicon
 macOS remains unproved for Eon. This transfer expands no platform support.
 

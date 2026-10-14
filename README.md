@@ -127,5 +127,5 @@ alpha tag or every revision.
 - [Linux installer](docs/INSTALLER.md): verified development installation, rollback and retained payloads.
 - [Contracts](docs/CONTRACTS.md) and [architecture](docs/ARCHITECTURE.md): exact product boundaries and evidence.
   The [runtime library boundary](docs/ARCHITECTURE.md#runtime-library-boundary)
-  records independent package selection and the composed runtime.
+  records the runtime seam and in-tree package selection.
 - [Changelog](CHANGELOG.md): accepted user-visible changes.

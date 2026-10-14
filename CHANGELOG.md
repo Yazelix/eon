@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Build Orbit, Venus and Eon Runtime from this repository. `eon versions`
+  reports `workspace` as their revision; the generation ID on its first line
+  identifies the build. Orbit's and Venus's licenses install under
+  `share/licenses/orbit/` and `share/licenses/venus/`.
+
 - Show Claude’s original orange splat icon in the quota chip.
 
 - Bundle pinned CodexBar CLI for Codex and Claude quota through canonical EONW v9.

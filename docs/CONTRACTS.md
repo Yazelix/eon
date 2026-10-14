@@ -213,59 +213,52 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C2 — One component compatibility graph
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** Every Eon distribution and runtime launch path.
 - **Trigger:** A product generation resolves or validates its component set.
 - **Result:** One versioned manifest defines component identity, compatibility,
   and abstract artifacts for every channel without encoding launch policy.
-  Anima is a pinned tool in that graph, with one executable artifact.
+  Orbit, Venus, Eon Runtime and EONW are in-tree components: each names its
+  workspace path, and the repository revision identifies it. External
+  components keep an exact Git revision; Anima is a pinned tool with one
+  executable artifact. `eon versions` reports `workspace` as the revision of an
+  in-tree component.
 - **Important failures:** Unknown components, duplicate identities, incompatible
-  protocol versions, malformed revisions, or channel-specific graph drift fail
-  validation.
+  protocol versions, malformed or missing external revisions, a revision on an
+  in-tree component or on a requirement for one, invalid workspace paths, or
+  channel-specific graph drift fail validation.
 - **Owner:** Eon's component manifest and validator.
 - **Boundary:** The manifest does not own process lifecycle, platform launch
-  mechanics, package-manager policy, or child state.
-- **Package selection:** Separate runtime and EONW package records use the
-  existing schema-3 graph and exact per-component checks; unchanged codec
-  identity permits distinct source commits. The
-  [package selection contract](ARCHITECTURE.md#independent-package-selection)
-  is enforced by the shared Nix preparation gate; EON-C4 records cutover proof.
-- **Scoped caret refresh:** EON-C8 records the exact accepted Venus revision
-  and installed proof; the graph schema and validator remain unchanged.
-- **Proof:** Eon `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`;
-  exact external package selection and source preparation in EON-C4.
-  - **Environment:** x86_64 Linux Nix alpha.
-  - **Evidence:** Manifest parser/compatibility checks, installed graph
-    consumption by Eon and EonTerm, and historical Eonova consumption;
-    manifest base `234ad77ced4924d95400b5c39822b3fb9b928c95`, ORBS v7 refresh
-    `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`. The 91c6ed5 proof selects
-    Orbit `91999d79546422b49bdbc124166a65859d0bd872` and Venus
-    `e13970e90289d0d86f0adcbf350e4b9c1d5e5219`, ORBF v1 / ORBS v10.
-    EON-C4 names the cutover graph, artifacts and runtime-only A/B checks.
+  mechanics, package-manager policy, or child state. In-tree contract and
+  interface proofs remain on their components.
+- **Proof:** Pending re-proof in this repository under `eon-monorepo-2oko.6`.
+  `eon-monorepo-2oko.2` records the schema-4 validator checks and both Nix
+  product builds.
 
 ## EON-C3 — Distribution-neutral runtime inputs
 
-- **Status:** Proven
+- **Status:** Candidate
 - **Consumer:** Eon launch and every distribution channel.
 - **Trigger:** A channel supplies exact component artifacts to Eon.
 - **Result:** Eon receives explicit component paths, treats Nix store paths as
   opaque inputs, and invokes no Nix evaluator during normal runtime. The Nix
   full-Eon launcher supplies the pinned Anima executable as an opaque input.
+  Nix builds Orbit, Venus, Eon and EonTerm from the in-tree crates. Generation
+  identity covers every regular file in the Eon build's source tree outside dot
+  entries and `target` directories; in Nix, that is the in-tree workspace
+  source set.
 - **Important failures:** Missing, non-executable, incompatible, or substituted
   artifacts fail before accepted launch.
-- **Owner:** Eon supplies validated component facts; the distribution supplies
-  artifacts; Eon Runtime validates and consumes opaque launch inputs.
+- **Owner:** Eon supplies validated component facts and its source digest; the
+  distribution supplies artifacts; Eon Runtime validates and consumes opaque
+  launch inputs.
 - **Consumes:** EON-C2's component graph.
 - **Boundary:** Runtime code does not construct, persist, inspect, or derive
-  identity from Nix store paths.
-- **Proof:** Eon `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`;
-  external runtime composition in EON-C4.
-  - **Environment:** Nix-built x86_64 Linux alpha.
-  - **Evidence:** Exact protocol-source substitution, package checks and
-    evaluator-absence checks; launch-input base
-    `a2792cc77f8254cc277d64eb41f65725b69ccf70` and ORBS v7 composition
-    `b44d968e38474fc5b75a41bcde2ad750da0d1e3e`. EON-C1 names the 91c6ed5
-    component set and artifacts; EON-C4 records independent package inputs.
+  identity from Nix store paths. The source digest reads workspace files, never
+  store or profile paths.
+- **Proof:** Pending re-proof in this repository under `eon-monorepo-2oko.6`.
+  `eon-monorepo-2oko.2` records the generation red/green check and both Nix
+  product builds.
 
 ## EON-C4 — Thin orchestrator ownership
 
@@ -995,10 +988,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content, or direct child-protocol escape hatch.
-- **Package owner:** The canonical EONW crate lives in `eon-runtime`
-  with its accepted package/API and v2–v7 bytes. Venus consumes its exact pin; later
-  runtime-only changes with unchanged codec identity retain its exact pin.
-  See [package selection](ARCHITECTURE.md#independent-package-selection).
+- **Package owner:** The canonical EONW crate lives in
+  `runtime/crates/eon-workspace-protocol` with its accepted package/API and
+  v2–v9 bytes. Venus, Eon Runtime and Eon consume it by path.
+  See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
   Agent defaults to the first available provider in the accepted Nova order on

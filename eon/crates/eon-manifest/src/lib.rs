@@ -58,7 +58,7 @@ struct Component {
     id: String,
     project: String,
     version: String,
-    revision: String,
+    revision: Option<String>,
     target: String,
     source: Source,
     artifacts: Vec<Artifact>,
@@ -68,10 +68,10 @@ struct Component {
 }
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Source {
-    kind: String,
-    url: String,
+#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
+enum Source {
+    Git { url: String },
+    Workspace { path: String },
 }
 
 #[derive(Deserialize)]
@@ -100,7 +100,7 @@ struct Interface {
 #[serde(deny_unknown_fields)]
 struct Requirement {
     component: String,
-    revision: String,
+    revision: Option<String>,
     interfaces: Vec<Interface>,
 }
 
@@ -129,21 +129,13 @@ pub fn version_report(input: &str) -> Result<String, Error> {
     lines.extend(manifest.components.iter().map(|component| {
         format!(
             "{} {} {} {}",
-            component.id, component.version, component.revision, component.target
+            component.id,
+            component.version,
+            component.revision.as_deref().unwrap_or("workspace"),
+            component.target
         )
     }));
     Ok(lines.join("\n"))
-}
-
-pub fn component_revision(input: &str, id: &str) -> Result<String, Error> {
-    let manifest = parse(input)?;
-    validate(&manifest)?;
-    manifest
-        .components
-        .into_iter()
-        .find(|component| component.id == id)
-        .map(|component| component.revision)
-        .ok_or_else(|| Error(format!("manifest has no {id} component")))
 }
 
 fn parse(input: &str) -> Result<Manifest, Error> {
@@ -169,7 +161,7 @@ fn validate_strings(value: &serde_json::Value) -> Result<(), Error> {
 }
 
 fn validate(manifest: &Manifest) -> Result<(), Error> {
-    required(manifest.schema == 3, "unsupported manifest schema")?;
+    required(manifest.schema == 4, "unsupported manifest schema")?;
     required(token(&manifest.product.id), "invalid product id")?;
     required(token(&manifest.product.target), "invalid product target")?;
     required(!manifest.components.is_empty(), "component set is empty")?;
@@ -185,26 +177,40 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
             !component.version.trim().is_empty(),
             "missing component version",
         )?;
-        required(revision(&component.revision), "invalid component revision")?;
         required(
             component.target == manifest.product.target,
             "component target differs from product target",
         )?;
-        required(
-            component.source.kind == "git"
-                && component
-                    .source
-                    .url
-                    .strip_prefix("https://")
-                    .and_then(|source| source.split_once('/'))
-                    .is_some_and(|(host, path)| {
-                        !host.is_empty()
-                            && path.rsplit('/').next().is_some_and(|repository| {
-                                repository != ".git" && repository.ends_with(".git")
-                            })
-                    }),
-            "component source must be an HTTPS Git repository",
-        )?;
+        match &component.source {
+            Source::Git { url } => {
+                required(
+                    component.revision.as_deref().is_some_and(revision),
+                    "invalid component revision",
+                )?;
+                required(
+                    url.strip_prefix("https://")
+                        .and_then(|source| source.split_once('/'))
+                        .is_some_and(|(host, path)| {
+                            !host.is_empty()
+                                && path.rsplit('/').next().is_some_and(|repository| {
+                                    repository != ".git" && repository.ends_with(".git")
+                                })
+                        }),
+                    "component source must be an HTTPS Git repository",
+                )?;
+            }
+            // The repository revision identifies in-tree components.
+            Source::Workspace { path } => {
+                required(
+                    component.revision.is_none(),
+                    "workspace component cannot carry a revision",
+                )?;
+                required(
+                    path.split('/').all(token),
+                    "invalid workspace component path",
+                )?;
+            }
+        }
         required(
             !component.artifacts.is_empty(),
             "component has no artifacts",
@@ -254,7 +260,10 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
                 requirement.component != component.id,
                 "component cannot require itself",
             )?;
-            required(revision(&requirement.revision), "invalid required revision")?;
+            required(
+                requirement.revision.as_deref().is_none_or(revision),
+                "invalid required revision",
+            )?;
             required(
                 !requirement.interfaces.is_empty(),
                 "component requirement has no interfaces",
@@ -418,7 +427,7 @@ fn token(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{component_revision, parse_and_validate, version_report};
+    use super::{parse_and_validate, version_report};
     use serde_json::Value;
 
     const CANONICAL: &str = include_str!("../../../../components/eon-alpha-v3.json");
@@ -469,15 +478,11 @@ mod tests {
         for component in manifest["components"].as_array().unwrap() {
             assert_eq!(
                 lines.next().unwrap().split(' ').collect::<Vec<_>>(),
-                ["id", "version", "revision", "target"].map(|key| component[key].as_str().unwrap())
-            );
-            assert_eq!(
-                component_revision(CANONICAL, component["id"].as_str().unwrap()).unwrap(),
-                component["revision"].as_str().unwrap()
+                ["id", "version", "revision", "target"]
+                    .map(|key| component[key].as_str().unwrap_or("workspace"))
             );
         }
         assert!(lines.next().is_none());
-        assert!(component_revision(CANONICAL, "missing").is_err());
     }
 
     #[test]
@@ -505,8 +510,28 @@ mod tests {
         rejected("required component revision is incompatible", &incompatible);
 
         let mut null_revision = canonical.clone();
-        component_mut(&mut null_revision, "orbit")["revision"] = Value::String("0".repeat(40));
+        component_mut(&mut null_revision, "anima")["revision"] = Value::String("0".repeat(40));
         rejected("invalid component revision", &null_revision);
+
+        let mut unpinned = canonical.clone();
+        component_mut(&mut unpinned, "anima")
+            .as_object_mut()
+            .unwrap()
+            .remove("revision");
+        rejected("invalid component revision", &unpinned);
+
+        let mut pinned_workspace = canonical.clone();
+        component_mut(&mut pinned_workspace, "orbit")["revision"] = Value::String("1".repeat(40));
+        rejected(
+            "workspace component cannot carry a revision",
+            &pinned_workspace,
+        );
+
+        for path in ["", "/orbit", "orbit/", "../orbit", "orbit/./src"] {
+            let mut graph = canonical.clone();
+            component_mut(&mut graph, "orbit")["source"]["path"] = Value::String(path.into());
+            rejected("invalid workspace component path", &graph);
+        }
 
         let mut bad_interface = canonical.clone();
         component_mut(&mut bad_interface, "venus")["requires"][0]["interfaces"][0]["version"] =
@@ -527,13 +552,13 @@ mod tests {
 
         for url in ["https:///repo.git", "https://example.com/.git"] {
             let mut graph = canonical.clone();
-            component_mut(&mut graph, "orbit")["source"]["url"] = Value::String(url.into());
+            component_mut(&mut graph, "anima")["source"]["url"] = Value::String(url.into());
             rejected("component source must be an HTTPS Git repository", &graph);
         }
 
         for path in [r"\u002fnix\/store\/escaped", r"\u002fnix\/store"] {
             let escaped_path = CANONICAL.replacen(
-                "\"project\": \"Eon Desktop\"",
+                "\"project\": \"Venus\"",
                 &format!("\"project\": \"{path}\""),
                 1,
             );
@@ -546,8 +571,8 @@ mod tests {
         rejected("invalid component revision", &mutable_revision);
 
         let duplicate = CANONICAL.replacen(
-            "{\n  \"schema\": 3,",
-            "{\n  \"schema\": 3,\n  \"schema\": 3,",
+            "{\n  \"schema\": 4,",
+            "{\n  \"schema\": 4,\n  \"schema\": 4,",
             1,
         );
         assert!(parse_and_validate(&duplicate).is_err());

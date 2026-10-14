@@ -11,7 +11,6 @@ pub(crate) fn inputs() -> Inputs {
         version: "fixture-product",
         components: Ok(ComponentFacts {
             report: "fixture-components".into(),
-            orbit_revision: "fixture-orbit".into(),
         }),
         codexbar: "missing-fixture-codexbar".into(),
         assembly: &[b"fixture-assembly"],

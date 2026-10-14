@@ -462,18 +462,14 @@ Composition](DISTRIBUTION.md#reference-routing), their owning policy document.
 
 ## Runtime package composition
 
-### How should Eon consume independent runtime and codec revisions through one package owner?
+### How should Eon build the runtime and codec it ships?
 
-- **Owner:** Eon Nix source preparation; Eon Runtime owns implementation and EONW
-- **Read first:** [Eon Runtime at `b8f18b4`](https://github.com/Yazelix/eon-runtime/blob/b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa/README.md)
-  and Cargo's [Git dependencies](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#specifying-dependencies-from-git-repositories)
-- **Read additionally only if:** Read Cargo's [overrides](https://doc.rust-lang.org/cargo/reference/overriding-dependencies.html)
-  when a selected build shape introduces inherited or replaced dependencies.
-- **Preserve / reject:** Keep exact logical package pins, complete codec/build equality,
-  independent accepted proof and one checked Nix codec path. Cargo's distinct Git
-  identities require exact normalization before the composed locked Rust build.
-  Reject version-label equivalence, coupled revision promises, local maintained
-  copies, a second component graph and a general Cargo resolver.
+- **Owner:** Eon's Nix composition; Eon Runtime owns implementation and EONW
+- **Read first:** [In-tree package selection](ARCHITECTURE.md#in-tree-package-selection)
+  and Cargo's [workspaces](https://doc.rust-lang.org/cargo/reference/workspaces.html)
+- **Preserve / reject:** Keep path dependencies within the workspace, one root
+  `Cargo.lock` and one component graph. Reject Git pins on in-tree crates, local
+  maintained copies and a second component graph.
 
 ## Review record template
 

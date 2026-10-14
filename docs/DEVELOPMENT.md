@@ -1,8 +1,8 @@
 # Development
 
 Eon owns orchestration, product configuration, component selection, updates,
-and distribution. Eon Sessions owns persistent terminal state and attachment;
-Eon Desktop owns native presentation and input. Yazelix Nova remains a separate
+and distribution. Orbit owns persistent terminal state and attachment; Venus
+owns native presentation and input. Yazelix Nova remains a separate
 product line.
 
 Enter the pinned x86_64-linux development environment with `nix develop`.
@@ -11,12 +11,12 @@ It provides Rust and Cargo, formatting and lint tools, Git, `br` 0.7.2, and
 retain their full upstream licenses under `share/licenses/<tool>/LICENSE`,
 including the OpenAI/Anthropic rider.
 
-`crates/eon` owns executable assembly and defaults. The independent
-[Eon Runtime](https://github.com/Yazelix/eon-runtime) repository owns the runtime
-mechanisms behind `run(Inputs)` and the canonical EONW package. Eon pins both
-packages separately; its workspace contains only Eon and `eon-manifest`.
-`crates/eon/tests/workspace_control.rs` exercises the real Eon binary, aliases
-and self-launches. Runtime and codec unit tests live with their producer.
+One Cargo workspace holds Orbit (`orbit/`), Venus (`venus/`), Eon Runtime with
+EONW (`runtime/`) and Eon (`eon/`). `eon/crates/eon` owns executable assembly
+and defaults; `runtime/` owns the runtime mechanisms behind `run(Inputs)` and the
+canonical EONW package. `eon/crates/eon/tests/workspace_control.rs` exercises the
+real Eon binary, aliases and self-launches. Run `cargo test --locked --workspace`
+only in the isolated sandbox that the root `AGENTS.md` describes.
 
 ## Sources of truth
 
@@ -38,22 +38,12 @@ distribution-neutral component graph. Validate it with:
 cargo run --locked -p eon-manifest -- components/eon-alpha-v3.json
 ```
 
-The package-selection and source-preparation check preserves production pins:
-
-```sh
-nix build --impure --no-link --file nix/workspace-package-check.nix
-```
-
-This check consumes the selected immutable runtime, codec and Venus sources
-and accepted codec proof. It rejects package/build/provenance drift and checks
-separate runtime/codec records through the existing graph validator. Its lock
-fixture uses production preparation, supporting equal or distinct source pins.
-Both production consumers bind
-[`nix/workspace-package.nix`](../nix/workspace-package.nix)'s returned codec path
-before substitution. Nix prepares one codec identity even when Cargo resolves
-identical packages at different runtime/codec Git revisions. Locked Rust checks
-for that composition consume the prepared source; Nix remains the alpha's
-sole composition owner.
+Nix builds Orbit, Venus, Eon and EonTerm from the in-tree crates with the root
+`Cargo.lock`. A workspace component's Cargo version must match its manifest
+version. Eon's build script digests every regular file in its source tree
+outside dot entries and `target` directories into the generation identity, so
+any in-tree change selects a new generation. A Cargo checkout also hashes its
+docs and assets; Nix hashes only the workspace source set.
 
 `nix build .#manual-bundle` assembles the unpublished Linux direct candidate
 from the same package. Its [manual delivery contract](MANUAL-BUNDLE.md) records
@@ -72,26 +62,7 @@ and rejects a dynamic bootstrap. Signed TLS delivery and native active-work
 proofs remain with `eon-prove-thin-linux-bundle-installer-8r7n`.
 The [installer contract](INSTALLER.md) records target tools and recovery.
 
-The package-selection check rejects Orbit codec byte or inherited Cargo-configuration drift.
-Eon, Runtime and Venus retain their accepted Git dependency pins; preparation
-uses the selected Orbit service's standalone codec only after complete package
-and inherited Cargo-configuration equality is proved for each selected pin.
-
-From the development shell, check the composed workspace using that source:
-
-```sh
-eon_source=$(nix build --no-link --print-out-paths .#default.src)
-cargo check --locked --workspace --manifest-path "$eon_source/Cargo.toml" \
-  --target-dir "$PWD/target/$(basename "$eon_source")"
-```
-
-The target directory belongs to that snapshot: Nix normalizes source timestamps,
-so sharing a target directory can make Cargo reuse stale artifacts after edits.
-
-The prepared source is an immutable snapshot; rerun the source build after
-editing. Build both installed products with
-`nix build --no-link .#default .#eonterm`. A workspace build of the raw Git tree
-resolves distinct codec Git identities and cannot substitute for this check.
+Build both installed products with `nix build --no-link .#default .#eonterm`.
 
 Linux package checks use the sandbox's executable `/dev/shm` for ephemeral test
 state, keeping lifecycle records and sockets off the builder's disk journal.
