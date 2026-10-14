@@ -1,0 +1,10 @@
+[package]
+name = "yazelix-orbit"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+libc = "=0.2.189"
+libghostty-vt = "=0.2.2"
+orbit-protocol = { path = "crates/protocol" }

@@ -1,0 +1,6 @@
+/target/
+/.direnv/
+/result
+
+# bv (beads viewer) local config and caches
+.bv/

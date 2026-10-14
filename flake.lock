@@ -1,0 +1,411 @@
+{
+  "nodes": {
+    "anima": {
+      "inputs": {
+        "fenix": "fenix",
+        "kinestra": [
+          "kinestra"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "recording-mars": "recording-mars"
+      },
+      "locked": {
+        "lastModified": 1791753668,
+        "narHash": "sha256-pwc16/OAxCGBJY1mzYSOgGLtGo0OpVT2yp7nk+0v4Yc=",
+        "owner": "Yazelix",
+        "repo": "anima",
+        "rev": "aa93bf16474f2e6692fdf96a82f6664fa03a18e6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Yazelix",
+        "repo": "anima",
+        "rev": "aa93bf16474f2e6692fdf96a82f6664fa03a18e6",
+        "type": "github"
+      }
+    },
+    "fenix": {
+      "inputs": {
+        "nixpkgs": [
+          "anima",
+          "nixpkgs"
+        ],
+        "rust-analyzer-src": "rust-analyzer-src"
+      },
+      "locked": {
+        "lastModified": 1777969788,
+        "narHash": "sha256-8sr3w0KyQ0K7TEd8pYwYrxiDk0GZ4A7iIcl1lsxlzVM=",
+        "owner": "nix-community",
+        "repo": "fenix",
+        "rev": "3abc2d5559f4dc30c710ab152abcb4cb60b561ba",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "fenix",
+        "type": "github"
+      }
+    },
+    "flake-parts": {
+      "inputs": {
+        "nixpkgs-lib": "nixpkgs-lib"
+      },
+      "locked": {
+        "lastModified": 1782949081,
+        "narHash": "sha256-vp6Y/Grm98ESt6ceOkWiHWyZRDV3J1RID4w+6NWK9yA=",
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "rev": "17c9d6cdfc60c64f4ee8d306f9bc0b4ccb51481e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "hercules-ci",
+        "repo": "flake-parts",
+        "type": "github"
+      }
+    },
+    "ghostty": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1783806457,
+        "narHash": "sha256-1Zz65SCk3rkJ9+Q0MmyNOTNiDSLBRIHRd3IvFM4iNXw=",
+        "owner": "ghostty-org",
+        "repo": "ghostty",
+        "rev": "a887df42c56f6de86c0fe6da9c4eeca37931e083",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ghostty-org",
+        "repo": "ghostty",
+        "rev": "a887df42c56f6de86c0fe6da9c4eeca37931e083",
+        "type": "github"
+      }
+    },
+    "helix": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "rust-overlay": "rust-overlay_2"
+      },
+      "locked": {
+        "lastModified": 1791297813,
+        "narHash": "sha256-mIfZqSHy2ebFQKuEAuQELe64/qEl9Cua6ZkME6P/PFk=",
+        "owner": "Yazelix",
+        "repo": "nova-helix",
+        "rev": "817dcbca8b99c3db35ea66ded7492673d1a397ad",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Yazelix",
+        "repo": "nova-helix",
+        "rev": "817dcbca8b99c3db35ea66ded7492673d1a397ad",
+        "type": "github"
+      }
+    },
+    "kinestra": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ],
+        "wdotool": "wdotool"
+      },
+      "locked": {
+        "lastModified": 1790213094,
+        "narHash": "sha256-DAFdpAp4761ewTDWtdLBBkOUS7+CUPpQCQxSWuv+OyU=",
+        "owner": "Yazelix",
+        "repo": "kinestra",
+        "rev": "d1589705677dc001304584150557e67cef67f580",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Yazelix",
+        "repo": "kinestra",
+        "rev": "d1589705677dc001304584150557e67cef67f580",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1781577229,
+        "narHash": "sha256-lrp67w8AulE9Ks53n27I45ADSzbOCn4H+CNW1Ck8B+8=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+        "type": "github"
+      }
+    },
+    "nixpkgs-lib": {
+      "locked": {
+        "lastModified": 1782614948,
+        "narHash": "sha256-ePjCwr1sNm9NYUqywL7QfK3JnlS015msC+eBu2zKlp8=",
+        "owner": "nix-community",
+        "repo": "nixpkgs.lib",
+        "rev": "db3f255737b94216eb71cce308e2912cf6bc2d7c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "nixpkgs.lib",
+        "type": "github"
+      }
+    },
+    "nixpkgs_2": {
+      "locked": {
+        "lastModified": 1781577229,
+        "narHash": "sha256-lrp67w8AulE9Ks53n27I45ADSzbOCn4H+CNW1Ck8B+8=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "567a49d1913ce81ac6e9582e3553dd90a955875f",
+        "type": "github"
+      }
+    },
+    "orbit": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791804436,
+        "narHash": "sha256-DIv8SzFcXPFeQ+GUzLC8uWY98/KOIssEw6o0tO9zuyI=",
+        "ref": "refs/heads/edge",
+        "rev": "427cf2d074cd1db905a2cc2602a5475065d1c790",
+        "revCount": 223,
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-sessions.git"
+      },
+      "original": {
+        "rev": "427cf2d074cd1db905a2cc2602a5475065d1c790",
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-sessions.git"
+      }
+    },
+    "ratconfig": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1785593744,
+        "narHash": "sha256-I9+pRyfLVq4QYcATNjNr1ix+dIk8WlYawt5HI13gaZo=",
+        "owner": "luccahuguet",
+        "repo": "ratconfig",
+        "rev": "e6ec2ebfe84b2358186410680cbcaf0564eb59a2",
+        "type": "github"
+      },
+      "original": {
+        "owner": "luccahuguet",
+        "repo": "ratconfig",
+        "rev": "e6ec2ebfe84b2358186410680cbcaf0564eb59a2",
+        "type": "github"
+      }
+    },
+    "recording-mars": {
+      "inputs": {
+        "flake-parts": "flake-parts",
+        "nixpkgs": "nixpkgs",
+        "rust-overlay": "rust-overlay",
+        "systems": "systems"
+      },
+      "locked": {
+        "lastModified": 1786291144,
+        "narHash": "sha256-F6wT7v1mpq6t4ADAh2aPfbTGuFZxhQ73w8BgIb8lt+E=",
+        "owner": "Yazelix",
+        "repo": "mars",
+        "rev": "21109e3ebc24b63da11bae644dfb9bab28ce0e18",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Yazelix",
+        "repo": "mars",
+        "rev": "21109e3ebc24b63da11bae644dfb9bab28ce0e18",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "anima": "anima",
+        "ghostty": "ghostty",
+        "helix": "helix",
+        "kinestra": "kinestra",
+        "nixpkgs": "nixpkgs_2",
+        "orbit": "orbit",
+        "ratconfig": "ratconfig",
+        "runtime": "runtime",
+        "venus": "venus",
+        "workspaceProtocol": "workspaceProtocol",
+        "yazi": "yazi"
+      }
+    },
+    "runtime": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791942098,
+        "narHash": "sha256-AbGE638NQwkXIFXRW3ONEOu6iQjOBs7/PbX0LW0Gm/A=",
+        "ref": "refs/heads/edge",
+        "rev": "0de24d01a9022388282dd92d91f6ed1099771b57",
+        "revCount": 23,
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-runtime.git"
+      },
+      "original": {
+        "rev": "0de24d01a9022388282dd92d91f6ed1099771b57",
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-runtime.git"
+      }
+    },
+    "rust-analyzer-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1777924689,
+        "narHash": "sha256-9Z0puLyCSYvtYhP1IZMxC05DSgwA+5rE99jsv1KErc4=",
+        "owner": "rust-lang",
+        "repo": "rust-analyzer",
+        "rev": "91c7c2c4ca6a0520cfbf97e369e4fb7bf0b63b7a",
+        "type": "github"
+      },
+      "original": {
+        "owner": "rust-lang",
+        "ref": "nightly",
+        "repo": "rust-analyzer",
+        "type": "github"
+      }
+    },
+    "rust-overlay": {
+      "inputs": {
+        "nixpkgs": [
+          "anima",
+          "recording-mars",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1783144302,
+        "narHash": "sha256-NQnzmXwpEAd5tjMBh2+P/y9NknF+WHv5+6yoXoN4h/Y=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "fe5aee0952e8e1525533d61defd9e36513db811b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "rust-overlay_2": {
+      "inputs": {
+        "nixpkgs": [
+          "helix",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1775358767,
+        "narHash": "sha256-f2eC+WIfhjevCPQILuV08i/kmKZzYZpUvkom/33VxCA=",
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "rev": "20fd44bc663daa53a2575e01293e24e681d62244",
+        "type": "github"
+      },
+      "original": {
+        "owner": "oxalica",
+        "repo": "rust-overlay",
+        "type": "github"
+      }
+    },
+    "systems": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "venus": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791948099,
+        "narHash": "sha256-MKA/39HZnxjxyk7HM/ffPJb9Cs/ehvLySU5VKjXrbHo=",
+        "ref": "refs/heads/edge",
+        "rev": "d0642ed9fc190539811168553c972107336fa213",
+        "revCount": 553,
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-desktop.git"
+      },
+      "original": {
+        "rev": "d0642ed9fc190539811168553c972107336fa213",
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-desktop.git"
+      }
+    },
+    "wdotool": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1779523593,
+        "narHash": "sha256-V0DOznaptdFrNxtTpJZtJIVikZTXa9zacNFWceGAu+o=",
+        "owner": "cushycush",
+        "repo": "wdotool",
+        "rev": "662d7079b669de164797f46fd437c0cf7854bf82",
+        "type": "github"
+      },
+      "original": {
+        "owner": "cushycush",
+        "repo": "wdotool",
+        "rev": "662d7079b669de164797f46fd437c0cf7854bf82",
+        "type": "github"
+      }
+    },
+    "workspaceProtocol": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1791941796,
+        "narHash": "sha256-DPy1RhuUbhT1KmdQLqNbC8hLBHWw/4BcaOjG05pG5II=",
+        "ref": "refs/heads/edge",
+        "rev": "d0a184bb4d45d3e50787f7c17606df652727fb9a",
+        "revCount": 22,
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-runtime.git"
+      },
+      "original": {
+        "rev": "d0a184bb4d45d3e50787f7c17606df652727fb9a",
+        "type": "git",
+        "url": "https://github.com/Yazelix/eon-runtime.git"
+      }
+    },
+    "yazi": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1778004159,
+        "narHash": "sha256-sdaqZwLb+fBTg5Pd6WWfOWKCavsXWSSZrBEXuYuc8iM=",
+        "owner": "sxyazi",
+        "repo": "yazi",
+        "rev": "aa526434f00bb44e2e902d9a4ac5f810da1018b9",
+        "type": "github"
+      },
+      "original": {
+        "owner": "sxyazi",
+        "repo": "yazi",
+        "rev": "aa526434f00bb44e2e902d9a4ac5f810da1018b9",
+        "type": "github"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

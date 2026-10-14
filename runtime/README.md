@@ -1,0 +1,142 @@
+# Eon Runtime
+
+The runtime library and canonical workspace protocol used by Eon and Venus.
+The repository builds independently of Eon's product checkout.
+
+| Package | Owns | Version |
+|---|---|---|
+| `eon-runtime` | Invocation, terminal lifecycle, workspace state, configuration parsing and generation identity | `0.1.0` |
+| `eon-workspace-protocol` | EONW v2–v9 types and bounded codecs | `0.1.0` |
+
+## Consumer boundary
+
+Eon's actual executable calls `eon_runtime::run(inputs)`. The concrete root
+exports construct `Inputs`, `ComponentFacts`, defaults and managed-program
+inputs; the nine mechanism modules remain private. `run` returns the product
+label and exit result. Eon retains process exit/error handling.
+The private CLI prints grouped Eon help for standalone `-h` and `--help`,
+with terminal-only color and concise usage errors; child options remain forwarded.
+
+Popup configuration rejects Alt+Shift+B, reserved for the native window's
+shortcut-hints visibility toggle, before creating workspace state.
+
+The optional native version label uses the supervising product version. Runtime
+parses `[bar] show_version` against the assembly-supplied default when opening
+or reopening a workspace presentation; hiding it omits the version launch input.
+
+Later tabs begin in the current user's native home directory, validated before
+creation. Dismissing a pending Project picker keeps the tab and starts its first
+pane at that directory; an explicit tab close removes it without a replacement.
+Initial workspace launch and explicit directory selection retain their own paths.
+A failed first-pane fallback reports the error and leaves other tabs running.
+
+Eon supplies its own product version, chosen defaults, validated component
+report and Orbit revision, opaque executable paths, and immutable assembly
+contribution. The runtime has no dependency on Eon, its component graph,
+validator, product defaults, assets or Nix expressions.
+
+Runtime combines its own immutable runtime/EONW bytes with the supplied assembly
+contribution to compute one `g1-` generation. Mutable configuration, live state
+and store/profile paths do not become generation identity. Orbit remains the
+terminal owner; Venus remains the native presentation owner.
+
+When an acquired Orbit dies without a final result, Runtime validates the dead
+process and original Live record before retiring its exact residue. Healthy
+terminals remain usable; owner loss is a local failure, not a successful Stop
+or a fabricated terminal outcome.
+
+The accepted concrete assembly is illustrated by Eon's
+[product inputs](https://github.com/Yazelix/eon/blob/10b4a26e71187fb8eced55d1b23c821e4e3d8bd6/crates/eon/src/product.rs).
+Select Git dependencies by exact accepted commit and package name; crates are
+not published to a registry. Eon owns product composition and distribution.
+
+CodexBar CLI owns Codex and Claude quota collection and credential access.
+Eon supplies its opaque executable path. Independent workers use explicit Codex
+CLI and Claude OAuth sources, with no browser fallback or inference. Each read
+has a ten-second deadline, 64 KiB output cap and process-group cleanup; reads
+remain at least one minute apart. Raw provider JSON and identities are discarded.
+
+Runtime validates timestamps, actual periods and percentages, rounding remaining
+percentages down once. Failed reads mark last-good facts stale immediately;
+observations also become stale after 15 minutes and disappear after one hour.
+Windows disappear at a supplied reset; missing reset times remain unknown.
+Successful missing quota clears prior facts. Existing `claude-statusline` wrappers
+are drained silently with a two-second/64 KiB bound, without writing quota state.
+Eon's [EON-C27](https://github.com/Yazelix/eon/blob/edge/docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
+owns product policy and installed acceptance.
+
+EONW v9 permits genuinely absent provider resets, including stale observations.
+Historical v2–v8 APIs and validators remain unchanged. The current CLI inspects
+and stops v2–v8 supervisors through their historical lifecycle codecs;
+presentation remains bound to the original exact executable.
+
+## Package provenance
+
+The transfer source is Eon
+[`e431d75`](https://github.com/Yazelix/eon/commit/e431d7583c84ff574054d2edf556e9827114987e).
+The initial transfer at
+[`b8f18b4`](https://github.com/Yazelix/eon-runtime/commit/b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa)
+copied both complete crate trees, including manifests and unit tests:
+
+| Package | Original Git subtree |
+|---|---|
+| `eon-runtime` | `3dcfef6bf31758233f2a33eb31d5184ebeae9843` |
+| `eon-workspace-protocol` | `8409c419a3496d6f01eeef65295f5d95b943313e` |
+
+The codec tree also equals Venus's historical Eon dependency at
+`f41a41c9aecc4c436edfa2f394b832aa6d8711ad`. Runtime's exact Orbit protocol
+dependency remains `b6cecf8f2ee35570b41cfdc578b095889d917fe2`.
+
+Runtime and codec have separate package manifests and version owners. They may
+initially share a repository commit without requiring future revisions to
+match. A runtime-only change can retain a prior accepted codec pin when its
+complete package and relevant build inputs remain identical. Matching SemVer
+or wire labels alone is insufficient.
+
+EONW's complete package is its Cargo manifest and `src/lib.rs`, `src/v2.rs`
+through `src/v9.rs`. It has no external dependencies, feature declarations,
+build script or workspace-inherited settings. The root workspace uses resolver
+3 and declares no shared metadata, dependencies, patches or build profiles.
+Changes to those facts require renewed package/build-input evidence.
+
+Eon's `eon-runtime-producer-68hq` holds the accepted transfer revision and
+verification evidence. Runtime evolution has one owner here; Eon owns consumer
+selection and installed-product proof under independently pinned packages.
+
+## Development
+
+Use Rust 1.95 or later. From this checkout:
+
+```sh
+cargo fmt --all --check
+cargo check --locked --workspace
+cargo test --locked --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+```
+
+Tests use independent supplied inputs. Eon's actual executable integration
+tests stay with Eon and are exercised against exact producer candidates during
+integration. Wire/source comparison does not claim a new native platform proof.
+The composed product is proved on x86_64 Linux native Wayland; Apple Silicon
+macOS remains unproved for Eon. This transfer expands no platform support.
+
+## License
+
+[Apache-2.0](LICENSE). [NOTICE](NOTICE) records the immutable transfer source.
+Eon assets and their unrelated third-party notices are not part of this source
+library.
+
+## LOC scorecard
+
+Tracked handwritten text and code; excludes Git data, lock files and generated
+artifacts.
+
+| Surface | Lines |
+|---|---:|
+| Rust source and tests | 14,588 |
+| Cargo manifests | 27 |
+| Agent guidelines | 37 |
+| README | 142 |
+| License and notice | 209 |
+| Repository ignore rules | 1 |
+| **Total** | **15,004** |

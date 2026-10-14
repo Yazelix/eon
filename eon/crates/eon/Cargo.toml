@@ -1,0 +1,17 @@
+[package]
+name = "eon"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "Apache-2.0"
+publish = false
+
+[dependencies]
+eon-manifest = { path = "../eon-manifest" }
+eon-runtime = { path = "../../../runtime/crates/eon-runtime" }
+eon-workspace-protocol = { path = "../../../runtime/crates/eon-workspace-protocol" }
+
+[dev-dependencies]
+libc = "=0.2.189"
+orbit-protocol = { path = "../../../orbit/crates/protocol" }
+serde_json = "=1.0.151"

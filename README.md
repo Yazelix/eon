@@ -1,0 +1,131 @@
+# Eon
+
+*Build for Eons.*
+
+![Glowing violet three-fold Eon loop](assets/eon.png)
+
+Eon is a native Wayland **workspace** whose **terminals** outlive its window.
+A workspace contains **tabs**; each tab groups **panes** around a launch
+directory. A pane is a view of a terminal. `eonterm` gives one command the same
+terminal lifecycle.
+
+## Demo
+
+![Animated Eon demo: switch between Yazi and Quick Search, arrange tabs and panes, then open LazyGit and Codex](assets/demo/eon-demo.gif)
+
+## Why Eon
+
+- **Terminals outlive the window.** [Eon Sessions](https://github.com/Yazelix/eon-sessions)
+  keeps each terminal's PTY and terminal state apart from the window. Close Eon
+  to detach, then `eon attach` to return to the same work.
+  `eon stop GENERATION` ends terminals.
+- **Tabs remember directories.** Find a directory with Zoxide quick search or
+  browse in Yazi. New panes start in that tab's directory; move tabs and stacked
+  panes with the keyboard.
+- **A pinned tool set.** The current `edge` build pins Anima, Nushell, Helix,
+  Yazi, and LazyGit together.
+  Git and Agent popups stay with their tab; the Agent popup uses your installed
+  client.
+- **Native Vulkan graphics.** [Eon Desktop](https://github.com/Yazelix/eon-desktop)
+  draws terminal text and workspace chrome with `wgpu` on Vulkan. A hardware
+  adapter uses the GPU; Mesa lavapipe can render in software. Eon requests blur
+  for its translucent Wayland window; compositor support determines whether the
+  frosted backdrop appears.
+
+## Get started
+
+The Nix-only alpha supports **x86_64 Linux on native Wayland**. You need Git,
+Nix with flakes enabled, and a Wayland session. [Platform details](docs/USAGE.md#supported-environment)
+cover the proved setup and current limits.
+
+**Mac:** Orbit passed native Apple Silicon tests. Venus rendered and handled
+input on M1, including our physical Scaleway Mac. Venus still has open Mac
+checks, and Eon's Nix package targets Linux only. This release has no Mac
+install path or ETA; Intel Macs are outside scope.
+
+We're looking for Apple Silicon Mac testers. If you'd like to help,
+[open an issue](https://github.com/Yazelix/eon/issues/new).
+
+Install the tagged alpha with one command:
+
+```sh
+nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-09-24
+```
+
+The tag pins the release; `eon versions` reports the component graph.
+
+Run `eon` to start. The current `edge` build groups commands and examples
+in `eon --help` (or `eon -h`).
+
+A fresh tagged-alpha workspace asks for a directory. Press Enter for a Zoxide
+match, or Tab to browse with Yazi. Closing the window leaves terminals alive;
+`eon attach` returns to them. **Alt+/** opens the shortcut guide in the window.
+
+The current `edge` build shows bottom shortcut hints. **Alt+Shift+B** hides or
+restores them for that window; **Alt+/** always opens the complete guide.
+Later tabs start in your home directory. **Esc** dismisses their directory
+picker into a terminal; **Alt+Shift+W** closes a tab you no longer want.
+The top bar identifies the running `EON <version>`. Set `[bar] show_version = false`
+in [config.toml](docs/CONFIGURATION.md) to hide it when a window next opens.
+Pinned CodexBar CLI supplies Codex and Claude quota beside the tabs, using your
+existing local authentication, with Codex’s white mark and Claude’s orange splat.
+Both available five-hour/seven-day remaining
+percentages appear by default, with reset details on hover. Failed readings say
+`old` and expire; Claude needs no status-line setup. See
+[quota behavior](docs/CONFIGURATION.md#agent-quota).
+
+To end terminals explicitly, inspect `eon generations`, then run
+`eon stop GENERATION`, `eon stop previous`, or `eon stop all`.
+
+Linux Wayland is proved on COSMIC and private Sway. Bounded
+[reader qualification](docs/CONTRACTS.md#eon-c8--durable-tab-and-pane-workspace)
+records exact Eon and Orca revisions; the tagged alpha remains unqualified for readers.
+Other compositors, non-systemd hosts and recovery after a machine restart
+remain unproved. [Report a problem](https://github.com/Yazelix/eon/issues).
+
+The current `edge` build adds a short, dismissible Anima animation before the
+directory picker and opens independent workspaces with **Alt+Shift+N** or the
+launcher's **New Eon Window** action. `eon window new` prints an ID; `eon windows`
+lists windows for reattachment or exact Stop.
+In Eon's native terminal, `eon anima accelerando` shows the 8,192-glyph alien
+alphabet in long green trails; add `--symbols` to mix in letters, digits and
+punctuation. Add `--big` for large, solid block glyphs; combine `--big --symbols`
+for matching large letters, digits and punctuation. Add `--bold` for heavier
+native glyphs; it combines with either option. Large solid blocks already fill
+their cells. Random playback includes Accelerando. Eon bundles Regular and Bold
+Accelerando Terminal faces; other terminals need these fonts for native-size
+playback. There is no substitute alphabet.
+In its Yazi picker, **a** uses native creation: add `/` for a folder.
+**Enter** selects a folder; cancelling leaves created files and folders on disk.
+Browsing, prompts, help and previews use Yazi defaults.
+
+### Optional binary cache
+
+The public `eon-yazelix` Cachix cache is donated and managed by
+[bioinformatist](https://github.com/bioinformatist). It can avoid local builds
+when it contains the exact package you request; source builds remain available.
+Reading it needs no account or token. Trust its signing key only if you trust
+the cache owner to supply binaries.
+
+With the Cachix CLI installed, start cache setup with:
+
+```sh
+cachix use eon-yazelix
+```
+
+Follow the [installation-specific setup](docs/DISTRIBUTION.md#optional-binary-cache)
+for NixOS activation and multi-user permissions. The cache publishes selected
+`edge` builds of Eon and EonTerm; it does not promise binaries for the historical
+alpha tag or every revision.
+
+## Guides
+
+- [Using Eon](docs/USAGE.md): workspace controls, commands, EonTerm, and troubleshooting.
+- [Configuration](docs/CONFIGURATION.md): terminal, shell, popups, and managed tools.
+- [Development](docs/DEVELOPMENT.md): component owners, proofs, and maintainer checks.
+- [Manual Linux bundle](docs/MANUAL-BUNDLE.md): unpublished Nix-free candidate and delivery limits.
+- [Linux installer](docs/INSTALLER.md): verified development installation, rollback and retained payloads.
+- [Contracts](docs/CONTRACTS.md) and [architecture](docs/ARCHITECTURE.md): exact product boundaries and evidence.
+  The [runtime library boundary](docs/ARCHITECTURE.md#runtime-library-boundary)
+  records independent package selection and the composed runtime.
+- [Changelog](CHANGELOG.md): accepted user-visible changes.

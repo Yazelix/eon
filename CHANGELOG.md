@@ -1,0 +1,561 @@
+# Changelog
+
+This file records user-visible runtime, command, configuration, packaging,
+installation, and proven contract changes.
+
+## Unreleased
+
+- Show Claude’s original orange splat icon in the quota chip.
+
+- Bundle pinned CodexBar CLI for Codex and Claude quota through canonical EONW v9.
+  Claude needs no status-line setup; idle windows can lack a reset. Failed reads
+  mark retained values `old` immediately and all readings expire after one hour.
+  Keep existing Claude status-line wrappers silent and stateless.
+
+- Show optional Claude subscription quota beside Codex through an explicit
+  `eon claude-statusline` feed and canonical EONW v8. Keep reset details,
+  observation age, stale/absent states and accessible provider labels. Preserve
+  inspection and Stop for existing v7 supervisors after the protocol upgrade.
+
+- Keep tab labels, Project text, controls and shortcut hints readable when the
+  generic UI font is unavailable, preserving terminal fallback order and spacing.
+
+- Align the shortcut footer and main frame with matching rounded outer
+  corners, side and bottom insets, and a straight shared separator. Keep the
+  separator clear at minimum font sizes.
+
+- Show the supervising `EON <version>` in soft cyan and regular terminal monospace
+  in spare top-bar space, with a full-version hover description and static
+  accessibility label. Place the badge before shortcut help and close,
+  with matching accessibility order. `[bar] show_version = false`
+  hides it on the next presentation open or reopen; narrow windows hide it first.
+
+- Start later tabs and their directory pickers in the current user's home
+  directory. Dismissing a pending picker opens its first terminal and keeps
+  the tab; explicit tab close removes it without starting a terminal.
+
+- Show a compact bottom shortcut hints bar, toggled with Alt+Shift+B. Hints
+  follow current bindings and enabled popup shortcuts; narrow windows drop
+  whole hints. Hide the header Shortcuts button when all hints fit, preserving
+  keyboard focus and Alt+/ access to the complete viewer. F6 stays in full help
+  and keyboard navigation, without a footer hint. Project also stays in full
+  help on Alt+Z, without a footer hint. Group shared modifiers with C/A/S headers,
+  short labels and one move hint for both axes.
+  Spread compact groups across the bar with equal gaps and outer groups near
+  the edges; center a lone group. Give modifier headers padded rounded backgrounds
+  and continue the main frame through a straight footer separator. Distinguish
+  coral red modifier headers without braces
+  from mint keys and gray labels. Show the compact tab range as 1..9.
+  Copy/Paste and Open link stay in full help, without compact footer hints.
+
+- Pin Orbit `427cf2d` with libghostty-vt 0.2.2 and explicitly build its native
+  library for the portable baseline CPU, avoiding cache-builder-specific
+  instruction requirements. Ghostty and ORBF v2 / ORBS v13 remain unchanged.
+
+- Pin Anima `aa93bf1` with opt-in `eon anima accelerando --bold` and the
+  matching Accelerando Terminal Bold face. It combines with `--big` and
+  `--symbols`; the Regular font and default playback remain unchanged.
+
+- Pin Venus `74d1ca0` to resolve native Accelerando glyphs efficiently while
+  preserving automatic font selection, explicit font choices and cell spacing.
+
+- Pin Anima `395016b` with optional `eon anima accelerando --big` playback.
+  Solid block glyphs and matching `--symbols` preserve the terminal font size;
+  native-size playback and startup defaults are unchanged.
+
+- Order the bundled Nerd Font and Accelerando faces before general font search
+  in Eon and EonTerm. Accelerando keeps its existing animation cadence without
+  changing glyph size, trails or the primary text family.
+
+- Pin Anima `1d02919` with all 8,192 native Accelerando alien glyphs and the
+  bundled Accelerando Terminal font. `eon anima accelerando` uses alien-only
+  green trails; `--symbols` mixes in letters, digits and punctuation. Random
+  playback includes Accelerando. Eon and EonTerm share the packaged font without
+  replacing the primary text family or Nerd Font icons. Other terminals require
+  font setup. The `logo` style is removed; `static` remains available.
+
+- Qualify bounded Linux reader workflows with upstream Orca
+  `d13f83dcf230fe1e66f1ed6dbfbf057840f55a6a`: native picker query/path reading,
+  selection after Return to live, and crash/failure recovery pass. GNOME
+  Terminal/Vim confirms the upstream Say All correction against the old reader.
+  EON-C8 records exact artifacts and limits; broader reader support is unproved.
+
+- Provide an unpublished static Linux bundle installer with signed-checksum
+  verification, private extraction, atomic selection and explicit rollback.
+  Upgrades and removal retain payloads and live terminals; public release
+  trust and redistribution clearance remain gated.
+  Host GNU coreutils `timeout` bounds preflight checks, including wrapper
+  children. Empty or relative XDG data directories use the standard fallback.
+  Archive link validation applies only to link entries, so unused directory
+  and file header fields do not cause overflow or false extraction failures.
+
+- Provide an unpublished manual Nix-free Linux bundle from the canonical
+  composition, with relocation, native workspace and verification proof.
+  Linux user namespaces are required; public release remains gated.
+
+- Expose Orbit's authoritative terminal caret through the accepted Venus
+  package, preserving selections and history.
+
+- Keep rejected workspace actions available across polling and announce the
+  failure once to the attached reader without moving terminal focus. Successful
+  retry retires the notice.
+
+- Use Venus's accepted terminal text geometry and exact AccessKit cache repair
+  for bounded Orca line review and terminal selection after Return to live
+  output.
+
+- Keep healthy terminals and the native workspace usable when an owned Orbit
+  crashes without publishing its final result. Prune the ended pane after
+  verified death and exact cleanup; retain a local failure status without
+  reporting a successful Stop or inventing a terminal outcome.
+
+- Show ordinary tab directory names, including the home directory name, and
+  compact text pane paths with `~` for home and `~/` for descendants.
+
+- Use Venus's exact half-block rendering for Anima graphics, preserving colors
+  and styles while avoiding repeated text shaping during dense animation.
+
+- Pin Nova Helix `817dcbca` with bundled Codeberg and SourceHut grammar sources.
+  Nix evaluation and those grammar builds do not need either source host.
+  The existing Linux delivery job checks the bundled grammars before packaging.
+
+- Keep Linux Nix lifecycle-check state in the sandbox's executable tmpfs.
+  Compilation stays disk-backed; all checks and lifecycle deadlines stay enabled.
+
+- Advertise the optional public `eon-yazelix` binary cache for newer flake
+  revisions. A bounded Linux workflow publishes Eon and EonTerm on `edge` pushes
+  and manual dispatches; uploads need a maintainer-configured token. Source builds
+  and historical release tags are unchanged.
+
+- Stop every managed run in the selected generation, including a picker whose
+  Ready publication outlasted startup. Failed cleanup retains its supervisor
+  for retry and excludes completed terminals from live inventory. Stop result
+  timing accounts for a preceding operation and bounded cleanup. Failed natural
+  exit reconciliation still collects other results and restores retryable leases.
+  Discovery reaps ended direct children before retiring their records.
+  Failed Stop still reaps Venus when its window closes before cleanup is
+  retried, preserving unfinished terminals and their retry owner.
+
+- Use workspace, tab, pane and terminal consistently in product text. Help,
+  human workspace/generation output, Stop confirmations and Eon diagnostics
+  call each persistent Orbit-backed instance a terminal. Existing `session-N`
+  IDs, socket names, JSON fields and protocol identifiers retain their spellings.
+
+- Print grouped, colorful CLI help with descriptions and examples for `eon -h`
+  and `eon --help`. Both exit successfully without workspace/configuration
+  effects. Redirected output is plain; `NO_COLOR` and `TERM=dumb` suppress color.
+  Invalid syntax returns a concise usage error with a help hint.
+
+- Keep cursor tails continuous across healthy pane/tab switches and layout
+  changes. Eon owns the default duration multiplier `1.5` and the optional
+  `[terminal] cursor_trail_duration` setting (`0.25`–`4.0`) for both products.
+  Invalid durations fail before starting a Session; reopened surfaces read the
+  current configuration.
+
+- Select accepted Venus `c7a0d07` for the Linux Eon and EonTerm packages.
+
+- Preserve Yazi's native browsing, find/sort, modal input/help, creation and
+  file previews in the directory picker, with Eon's selection controls.
+  `a` creates a file; append `/` to create a folder. Enter selects a folder
+  separately. Cancelling the picker leaves created files and folders on disk.
+
+- Deliver Orbit's click-selection ladder through Eon and EonTerm: two clicks
+  select a word, three a space/tab-delimited span, and four or more the logical
+  line across soft wraps. Dragging and frozen Copy preserve that selection.
+  Full Eon's Shortcuts dialog separates its title, subtitle and first heading
+  at normal and compact window sizes.
+
+- Provide a pinned x86_64-linux `nix develop` environment with Rust, Cargo,
+  formatting and lint tools, Git, and hash-verified Beads binaries carrying
+  their upstream licenses. The development guide checks the composed Cargo
+  workspace through Eon's prepared Nix source.
+
+- Keep recorded Codex quota through authenticated account refreshes. Show
+  `old` only after a failed refresh when the last successful value is more
+  than one hour old. Discard obsolete in-flight responses, replace the complete
+  observation on the next read, and clear quota on sign-out. Polling remains
+  at most once per minute.
+
+- Compose Eon and EonTerm from independently pinned Eon Runtime and EONW
+  packages. Version reports name both sources; checked Nix preparation shares
+  one accepted codec with Venus. Profile refresh preserves live generations;
+  retain their exact prior executable for reattachment after the graph changes.
+
+- Reject an invalid component graph before `eon window new` creates runtime or
+  window-parent directories.
+
+- Open an independent workspace with Alt+Shift+N, the desktop launcher's New
+  Eon Window action, or `eon window new`. Window IDs support listing, reattach,
+  and exact or batch Stop without interrupting other windows. Batch Stop visits
+  the caller's window last and consumes one confirmation per prompt.
+
+## linux-alpha-2026-09-24
+
+- Pin Yazelix Anima for a dismissible three-second random animation before a
+  fresh full-Eon picker, `eon anima` in the caller's terminal, and a transient
+  Alt+Shift+A popup. `[anima]` controls startup playback; Anima owns its styles.
+
+- Enable Nushell's native `clip copy` and `clip paste` in managed Eon shells,
+  with `clc` and `clp` aliases during interactive startup.
+
+- Deliver the accepted ORBS v13 Orbit and Venus pair to Eon and EonTerm.
+  Dragging a terminal selection upward at the first visible row scrolls through
+  earlier output while extending the selection; release copies the selected text.
+
+- Make the packaged Git popup available on Eon's Session PATH.
+
+- Provide a scripted native Wayland demo of the Yazi and Quick Search picker,
+  tabs, panes, LazyGit, and a real Codex popup. The README shows its GIF over
+  a soft focus wallpaper. Run `nix run .#record-demo` from the Eon checkout
+  with an authenticated Codex CLI to regenerate the media.
+
+- Make the Nix-only Linux alpha installable from the public Eon flake without
+  repository credentials. `nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-09-24`
+  installs it in one command. The locked Orbit and Venus sources remain exact;
+  the package carries their Apache licenses and MIT notices for Ghostty, its
+  Rust bindings, and the OpenAI mark.
+
+- Add `eon stop previous` and `eon stop all` to attempt Stop across the
+  discovered generations. The first preserves current even when unstarted;
+  the second includes current.
+  Each target keeps its own confirmation and supervisor
+  validation, and failures do not skip later targets while the CLI is running.
+  Fixed-namespace legacy work reports its own unavailable reason.
+  Declining a confirmation names only the skipped generation.
+
+- Let `eon generations` inspect previous EONW v2–v6 supervisors and let
+  `eon stop GENERATION` stop their Sessions through their own lifecycle codec.
+  Cross-version presentation remains unavailable; legacy fixed-namespace work
+  still has no authoritative Stop action.
+
+- Match the cursor body to the selected trail RGB with a contrasting edge when
+  Orbit has no explicit cursor color; preserve explicit colors, shape, and blink
+  behavior.
+
+- Let New tab create a separate pending tab and Project picker while another
+  picker is open. Switching tabs preserves each picker; Alt+Shift+W closes the
+  selected pending tab and stops only its picker. EONW v7 keeps older wire
+  revisions strict and uses the exact Venus v7 consumer. A background picker
+  exit leaves the selected tab in focus.
+
+- Place the Eon Bar's New tab button directly after fitting tabs and keep it
+  visible at the tab-region edge when tabs overflow. The accessibility tree
+  places it before the optional Codex quota chip. Keep the chip adjacent to
+  Shortcuts and the blank window-drag region continuous.
+
+- Deliver the accepted Orbit ORBS v12 and Venus pair to Eon and EonTerm.
+  The scrollback pill shows `↓ N rows`; clicking anywhere on it returns to
+  live output without sending terminal input.
+
+- Show a conditional read-only Codex quota chip in the Eon Bar when the user's
+  compatible authenticated Codex CLI supplies rate-limit facts. Fresh quota,
+  reset-bounded old data, and blocked or unknown access stay distinct; provider
+  absence leaves the core bar unchanged. The chip yields before tabs and fixed
+  controls in narrow windows. The exact monochrome OpenAI Blossom replaces the
+  visible provider word while hover and accessibility keep the explicit name.
+  Eon owns bounded provider lifecycle and normalized EONW v6 facts; accepted
+  Venus `247dcb2dc853e604d51ac727471e1e65e1535f1d` owns native presentation.
+
+- Deliver the native one-row Eon Bar with scrollable tabs, adjacent New tab,
+  Shortcuts, and active-tab Close controls, keyboard and accessibility
+  activation, shortcut-bearing tooltips, responsive narrow layouts, and an
+  empty native Wayland window-drag region.
+
+- Configure each new or reopened Eon and EonTerm cursor tail as random, one of
+  Venus's eight named color presets, or a custom RGB color. Omission keeps the
+  random default; Venus validates explicit choices before Eon starts a new
+  Session or command.
+
+- Add the native Shortcuts dialog on Alt+/. It shows Venus's fixed Eon bindings
+  and the current enabled popup catalog, scrolls without changing workspace or
+  Session state, and closes with Escape or Alt+/. Alt+1 through Alt+9 select tab
+  positions 1 through 9 and Alt+0 selects position 10. Popup configuration
+  reserves these bindings. Hyperlinks retain only Ctrl+click to open and
+  Ctrl+Shift+C to copy their hovered target.
+
+- Activate EONW v5 and tab-scoped popup Sessions with the accepted Venus
+  consumer. Alt+Z uses the shared host for Project, Alt+Shift+J opens Git, and
+  Alt+Shift+L selects an installed Agent. Same-directory reopen preserves tool
+  state; the first invocation after tab retarget replaces the popup at the new
+  directory. `config.toml` controls popup margins, direct argv entries,
+  physical shortcuts, labels, enablement, and keep-alive lifetime. Legacy EONW
+  v4 workspaces remain inspectable but are no longer attachable by current Venus.
+  Popup outlines keep the pane stack's exact outer edges across toggles, and a
+  small top gutter separates the compact border label from terminal content.
+
+- Keep routine workspace navigation quiet: singleton traversal, selecting the
+  current target and reordering at an edge succeed unchanged. Hide routine pane
+  attachment progress while retaining genuine errors. The accepted paired
+  Orbit ORBF v2 / ORBS v11 and Venus update shows `↑ N rows` in Eon and EonTerm
+  while scrolled back, updates it as output continues, and hides it at live output.
+
+- Connect the pane stack within one rounded border, with full-width separators,
+  a small tinted bottom gap, stack-shaped selected/hovered header fills and
+  distinct keyboard focus. Set
+  `[terminal] pane_frames = false` to hide the border and separators.
+  Pane-list changes also resize the selected terminal when
+  its endpoint remains unchanged.
+
+- Use pill-shaped workspace tabs without a selection underline; keep the
+  selected fill, bright label and rounded keyboard-focus outline.
+
+- Package rounded, adaptive workspace tabs with middle ellipsis for long names,
+  launch-path previews on hover, and scrolling across the whole tab strip.
+
+- Use Tab to switch between quick search and folder browsing in startup,
+  new-tab, and Alt+Z directory pickers. Esc and Ctrl+C cancel from either main
+  screen; Esc dismisses nested browser prompts first. Switching back to the
+  browser preserves its current folder.
+
+- Package Venus's reduced per-cell text-buffer allocation in Eon and EonTerm,
+  preserving glyph selection and cell geometry.
+
+- Give large workspace startup snapshots the full native-admission deadline.
+
+- Configure terminal font family, ordered fallbacks, size, line height, and
+  initial columns/rows for Eon and EonTerm. Validate configured native startup
+  before starting a new Session or command; reopen applies current settings
+  while preserving live Sessions. Consume Venus `ec80e36625dec73544c0cb64becf4b135c932a63`.
+
+- Package Venus fixes for font-only workspace sizing and native startup
+  stalling until unrelated input arrives.
+
+- Package accepted Venus startup typography and terminal geometry support
+  (`9157f7fbed0318d94a0697c01a23de2bed86946a`). Eon and EonTerm retain their
+  current presentation defaults; persistent typography configuration remains a
+  separate product slice.
+
+- Use Nova’s Alt+Shift+T for new tabs and Alt+Shift+W for closing the active
+  non-final tab. Ctrl+T and Ctrl+Shift+W remain available to terminal programs.
+
+- Keep long tab directory names visible on one header line, including
+  underscores, through Venus `94b15af20d1798b648f4d9945fd6bb647f10add8`.
+- Launch Eon and EonTerm without a delegated cgroup, consuming Orbit's accepted
+  bounded PTY shutdown contract through the existing Ready and management checks.
+- Show shortcuts in the screen where they work: quick search, Yazi folder
+  browsing, and nested history search each have their own persistent footer.
+  Browser hints hide while a Yazi prompt or overlay handles input.
+- Keep rapid picker cancellation and reopening attached to the current picker,
+  including repeated directory selection in the same tab.
+- Accept a directory, switch to browsing, or cancel quick search while the
+  directory-history query is still running; stop and reap the query without
+  waiting for its remaining results.
+- Browse tab directories outside Zoxide history with Yazi. Shift+Z jumps to a
+  known folder without committing; Enter uses the highlighted folder.
+
+- Keep other tabs usable while a directory picker is open: create and focus
+  panes, reorder panes or tabs, update launch directories, and close unrelated
+  tabs without disturbing the picker. Tab selection by identity remains
+  available; starting another picker or new tab still requires finishing it.
+- Keep scrolling, cell/word/line selection, and tab/pane focus usable during
+  compatible live output by composing accepted Orbit `91999d7` and Venus
+  `e13970e`. Reading retained history leaves terminal parsing and query replies
+  running, with existing geometry, history, and synchronized-output boundaries.
+- Preserve retained scrollback motion when DEC 2026 synchronized output overlaps
+  a semantic preview or signed scroll. Eon composes Orbit
+  `64b225eb249490c9075894814942652a8b9d6192` with unchanged ORBS v10 and Venus
+  `7f325a31d0052d84a1a09ff065c0e9103563c0e8`; Orbit holds one unresolved
+  request until normal or watchdog release instead of failing it.
+- Preserve touchpad fling momentum when Venus transiently times out acquiring a
+  presentation texture during live output; explicit surface occlusion still
+  cancels the gesture.
+- Add stable-target `eon tab close TAB` and Ctrl+Shift+W closing for non-final
+  tabs. Pending tabs stop their picker before removal; durable tabs stop and
+  prune each confirmed Orbit Session and retain every still-live mapping after
+  a partial failure.
+- Add semantic CLI actions that move the active tab left/right or selected pane
+  up/down by one adjacent position without wrapping, changing identity, or
+  stopping any Orbit Session. Ctrl+Alt+H/L and Ctrl+Alt+K/J invoke the same
+  movement directly without a mode.
+- Keep Alt+H/L and CLI left/right tab traversal available while a directory
+  picker is open. The picker stays bound to its original tab across ordinary
+  and wrapped traversal, while unrelated picker-blocked actions remain blocked.
+- Wrap left/right tab traversal and up/down pane traversal at ordered workspace
+  edges when at least two targets exist; singleton axes remain unavailable
+  without changing topology or Sessions.
+- Keep retained scrollback responsive under continuous terminal output by
+  composing Orbit's corrected bounded scroll-outcome queue admission with
+  Venus's compatible viewport retention, transient routing retirement, and
+  exact in-flight outcome admission.
+- Open the ranked directory picker before the first durable Session in a fresh
+  full-Eon workspace and in every Ctrl+T tab. Accepting starts exactly one first
+  pane in the chosen directory. Cancelling fresh `t1` falls back to Eon's
+  validated launch directory; cancelling a later pending tab removes it and
+  restores prior focus. EONW v4 represents the pane-free pending tab, and Venus
+  starts full Eon from the workspace endpoint without an initial Orbit endpoint.
+- Open one tab-bound ranked directory picker from anywhere in a full-Eon tab
+  with Alt+Z. Eon runs the packaged Zoxide and fzf in a transient Orbit Session;
+  Venus keeps the tab bar visible and presents the picker with a one-cell inset.
+  The exact picker ignores ambient fzf default options and uses a private socket
+  no longer than the primary Session socket.
+  Accepting a valid path retargets only future Sessions in the captured tab,
+  cancel changes nothing, and an actionable error remains visible for a bounded
+  interval before cleanup. Tab or presentation loss retries transient Orbit Stop
+  failure and leaves no picker state. EONW v4 carries the semantic action and
+  modal endpoint.
+- Validate full Eon's initial tab launch directory before recovering or starting
+  Sessions, so a startup filesystem race cannot report failure after launching
+  a persistent Session.
+- Keep every valid EONW v4 workspace snapshot representable within its bounded
+  2 MiB frame, so accepted high-bound workspace actions still return their
+  complete typed result.
+- Give every full-Eon tab a stable `tN` identity and one authoritative launch
+  directory, expose explicit retargeting through `eon tab directory`, and start
+  later panes there without changing existing Sessions. EONW v4 carries exact
+  raw directory bytes into Venus labels and the runtime-generation identity.
+- Compose accepted ORBS v10 native cell, word, and logical-line selection,
+  terminal mouse capture with Shift override, and automatic ordinary-plus-primary
+  Wayland clipboard copy for installed dogfood. Host selection keeps only the
+  latest unpresented frame so touchpad drag tracks promptly and stops at release.
+- Compose accepted ORBS v7 bounded preview windows and Venus multi-row
+  compositor-paced kinetic scrollback for installed native-Wayland dogfood.
+- Give full Eon, standalone EonTerm, and approved EonTerm compositions distinct
+  native Wayland application identities without changing terminal titles or
+  child process state.
+- Let the next launch replace exact owned Session records and sockets after
+  both their Eon supervisor and recorded Orbit process have died unexpectedly.
+- Wait for Eon's current delegated cgroup before forking a new Orbit process,
+  preventing asynchronous desktop-launch placement from leaving Orbit in the
+  inherited login cgroup without requiring a compositor or service-manager API.
+- Make an attach-capable launch that overlaps clean exit of the last Session
+  wait for the retiring supervisor and start one fresh Session instead of
+  reporting a successful presentation against the ended Session.
+- Name the installed launcher action `Open Eon`, identify panes as `p1`, `p2`,
+  and so on, and show that identity, two spaces, then a `~/`-anchored path below
+  home, an absolute path elsewhere, or Nova's exact-home marker. Unset or empty
+  `HOME` leaves paths absolute. Exhausted numeric pane identities fail before
+  starting another Session. New full-Eon windows omit the redundant native
+  title bar while the selected terminal keeps compositor title semantics.
+  The action invokes its exact packaged executable without depending on the
+  desktop session's `PATH`; EonTerm remains decorated by default.
+- Encode Kitty Space releases in Orbit and remove Venus's duplicate-input
+  workaround, so new Eon launches deliver one space per physical press.
+- Serialize Session startup with Orbit's exact retained Ready claim. Only an
+  empty locked claim permits local-child rollback; after Orbit marks it, Eon
+  uses management Stop for a rejected spawned identity and never falls back to
+  a Child or PID signal.
+
+- Refresh new Eon and EonTerm launches to the accepted post-audit Orbit and
+  Venus sources, including bounded renderer failures and retained events,
+  coherent native input and accessibility, and corrected X11 lifecycle behavior.
+- Recover exact current-generation Orbit runs after same-boot Eon or EonTerm
+  supervisor loss, preserving their process, PTY child, and terminal state while
+  projecting full Eon into one deterministic numeric workspace; the accepted
+  installed boundary covers three full Eon Sessions, one EonTerm Session,
+  competing replacement controls, and unrelated-Session isolation.
+- Acquire Orbit's sole canonical management lease before publishing Sessions or
+  Venus, and complete whole-generation stop only after every exact Orbit
+  tombstone; uncertain recovery or stop fails without PID or signal fallback.
+- Bound management connection and partial-response pressure inside the same
+  five-second recovery deadline.
+- Finish the supervisor after an exact Stop even when the EONW client disappears
+  before receiving its result, without reviving stopped Sessions or stale state.
+- Refresh the canonical composition to Orbit ORB-C13/ORBS v4 and the accepted
+  stream-supervised Venus, whose replacement lifetime follows Eon's control EOF.
+- Consume Venus's blue cursor-tail default for new and replacement Eon and
+  EonTerm surfaces without adding Eon-owned cursor configuration.
+- Request compositor-owned terminal background blur by default for Eon and
+  EonTerm, allow strict `terminal.background_blur = false` opt-out, and keep
+  opacity independent when Venus is created or reopened.
+- Accept finite `terminal.background_opacity` values from `0.0` through `1.0`
+  for Eon and EonTerm, default to `0.80`, and apply the current value whenever
+  Venus is created or reopened without restarting its live Orbit Session.
+- Preserve Sessions through client-pressure disconnects, transient PTY closure,
+  and concurrent stale-socket claims while rejecting contradictory presentation
+  capabilities.
+- Return a committed workspace snapshot when Session startup finishes within
+  Eon's accepted work bound instead of reporting the supervisor unavailable.
+- Preserve live replacement supervisor sockets and generation directories when
+  dead-generation inspection races with startup, without waiting on its lock.
+- Report empty and overlong focus identities as local `malformed-action` errors
+  without contacting or blaming the Eon supervisor.
+- Preserve the existing Venus window and request native presentation when a live
+  Eon or EonTerm generation is launched again.
+- Present synchronized terminal updates atomically in new Eon and EonTerm
+  Sessions, while bounding producers that omit the closing marker.
+- Render adjacent Unicode full-block cells without visible seams in packaged
+  native Eon and Eonova terminal surfaces.
+- Initialize new Eon and EonTerm Sessions with Eon's vivid ANSI palette while
+  preserving program overrides, direct RGB, extended colors, and live older
+  runtime generations.
+- Expose generation listing, exact attach, and owner-routed stop through
+  `eonterm` so its separate runtime namespace remains manageable across updates.
+  Reconnect guidance names the exact generation.
+- Paste ordinary native clipboard text through Orbit's semantic normal or
+  bracketed-paste path in packaged Eon and Eonova surfaces.
+- Deliver bounded terminal-requested text to the ordinary or primary native
+  clipboard in packaged Eon and Eonova surfaces.
+- Render Unicode Braille progress cells with distinct dots in packaged native
+  Eon and Eonova surfaces while preserving their cell-grid bounds.
+- Preserve Shift-produced layout text such as `?`, `:`, and `+` in the packaged
+  native terminal surface without changing modified shortcuts.
+- Component graph schema 3 removes inert artifact paths and launch declarations;
+  Nix owns physical paths and Rust owns launch policy.
+- Preserve native Fish per-command completions when Carapace is enabled while
+  retaining its fallback definitions for commands without native coverage.
+- Reject an invalid embedded component graph before selecting a runtime
+  generation, creating runtime state, or starting a child.
+- Serialize supervisor control-socket acquisition so concurrent launches
+  converge on one live owner instead of unlinking a newly bound peer.
+- Refuse a whole-generation stop when its validated supervisor is replaced
+  during confirmation, preserving the replacement and its live Sessions.
+- Resolve the four stable managed-shell commands from the Session-private PATH
+  so direct package launches do not depend on an ambient Eon profile.
+- Include generated managed-shell and private Session command behavior in the
+  runtime-generation identity so profile updates select a fresh supervisor
+  without stopping older work.
+- Preserve every opaque Orbit endpoint byte in workspace-action JSON by
+  reporting `endpoint` as an ordered integer array instead of a lossy string.
+- Publish `eonterm [--no-decorations] -- COMMAND...` as the slim reusable
+  terminal product. It preserves Eon's proved exact-command lifecycle while
+  excluding the managed shell and tool bundle. Remove the former `eon terminal`
+  spelling without an alias.
+- Supply Symbols Nerd Font Mono to packaged Venus so Yazi can render its
+  supported private-use icons without an ambient font.
+- Exit quietly when a downstream reader closes piped CLI output while keeping
+  other detected stdout write failures explicit.
+- Isolate supervisors by a deterministic runtime-generation identity. Bare
+  `eon` attaches only to the exact current generation while older live and
+  fixed-namespace legacy workspaces remain discoverable. Add deterministic
+  human and JSON generation listing, explicit compatible attach, and confirmed
+  owner-routed whole-generation stop without PID or process-tree inference.
+- Extend EONW v1 with additive supervisor identity and stop actions whose result
+  type remains separate from the pinned Venus workspace response.
+- Supply pinned Nushell, Bash, Zsh, Fish, Starship, Zoxide, Atuin, Carapace,
+  Helix, Yazi, and LazyGit through bounded `eon-*` commands and a
+  Session-private PATH. Let users select one direct shell argv and disable each
+  shell integration in `config.toml`; load native shell and tool configuration;
+  preserve existing prompt, completer, and same-tool hooks; keep Nushell user
+  autoload last; honor `ATUIN_NOBIND`; and suppress Nushell's stock banner.
+- Keep the user's global shell environment unchanged, resolve a relative Eon
+  configuration root once, and reject ambient Helix, Yazi, or LazyGit
+  configuration-path overrides that bypass Eon's private root.
+- Add Eon-owned live tabs and vertical pane stacks with stable-ID and direct
+  directional CLI actions, deterministic JSON output, and one Orbit process per pane.
+- Remove a pane when its Orbit Session exits, select the nearest survivor,
+  remove an empty tab, and close Eon when the final pane exits.
+- Expose those actions and complete accepted workspace snapshots through the
+  bounded, versioned, dependency-free EONW v1 local protocol while preserving
+  human and JSON CLI projections.
+- Render every fitting pane header around one selected Session, bind Alt+H/L and
+  Alt+K/J traversal plus Alt+M and Ctrl+T creation, refresh external actions
+  within one second, and keep reattachment available while another pane remains
+  live.
+- Keep terminal text and Unicode table borders on the authoritative Venus cell
+  grid, and anchor shaped input-method preedit text and underlines at the cursor.
+- Recover the selected live Session automatically after retryable local socket
+  loss while retaining its last coherent presentation until a fresh frame.
+- Ship the x86_64 Linux alpha through one locked Nix flake with an Eon desktop
+  entry that groups its X11/Xwayland window and uses a transparent violet
+  three-fold loop icon rendered at native launcher sizes.
+- Add `eon`, `eon run -- COMMAND...`, `eon attach`, `eon versions`, and
+  `eon config-path`.
+- Make bare `eon` and the desktop launcher reconnect to the live workspace;
+  keep `eon run` as the explicit start command.
+- Supply pinned Mesa Vulkan drivers to desktop-launched Venus instead of
+  depending on shell-only graphics environment variables.
+- Keep Orbit sessions alive across Venus exit and reconnect them through the
+  same private local socket.
+- Ignore relative XDG base paths, create missing configuration and runtime
+  directories with mode `0700`, preserve existing configuration-directory
+  permissions, and reject unsafe existing runtime directories without mutation.

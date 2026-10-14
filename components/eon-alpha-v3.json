@@ -1,0 +1,448 @@
+{
+  "schema": 3,
+  "product": {
+    "id": "eon-alpha",
+    "target": "x86_64-linux"
+  },
+  "composition": {
+    "services": ["orbit"],
+    "clients": ["venus"],
+    "tools": ["anima", "nushell", "bash", "zsh", "fish", "starship", "zoxide", "fzf", "atuin", "carapace", "helix", "yazi", "lazygit", "codexbar"],
+    "libraries": ["ratconfig", "eon-runtime", "eon-workspace-protocol"]
+  },
+  "activation": {
+    "required_contracts": [
+      { "component": "orbit", "contract": "ORB-C1" },
+      { "component": "orbit", "contract": "ORB-C2" },
+      { "component": "orbit", "contract": "ORB-C3" },
+      { "component": "orbit", "contract": "ORB-C4" },
+      { "component": "orbit", "contract": "ORB-C5" },
+      { "component": "orbit", "contract": "ORB-C6" },
+      { "component": "orbit", "contract": "ORB-C7" },
+      { "component": "orbit", "contract": "ORB-C8" },
+      { "component": "orbit", "contract": "ORB-C9" },
+      { "component": "orbit", "contract": "ORB-C11" },
+      { "component": "orbit", "contract": "ORB-C12" },
+      { "component": "orbit", "contract": "ORB-C13" },
+      { "component": "venus", "contract": "VEN-C1" },
+      { "component": "venus", "contract": "VEN-C2" },
+      { "component": "venus", "contract": "VEN-C3" },
+      { "component": "venus", "contract": "VEN-C4" },
+      { "component": "venus", "contract": "VEN-C5" },
+      { "component": "venus", "contract": "VEN-C7" },
+      { "component": "venus", "contract": "VEN-C8" },
+      { "component": "venus", "contract": "VEN-C9" },
+      { "component": "venus", "contract": "VEN-C10" },
+      { "component": "venus", "contract": "VEN-C11" },
+      { "component": "venus", "contract": "VEN-C13" },
+      { "component": "venus", "contract": "VEN-C14" },
+      { "component": "venus", "contract": "VEN-C15" },
+      { "component": "venus", "contract": "VEN-C18" },
+      { "component": "venus", "contract": "VEN-C20" },
+      { "component": "venus", "contract": "VEN-C21" },
+      { "component": "venus", "contract": "VEN-C22" },
+      { "component": "venus", "contract": "VEN-C23" },
+      { "component": "venus", "contract": "VEN-C24" },
+      { "component": "venus", "contract": "VEN-C25" }
+    ],
+    "required_interfaces": [
+      { "component": "orbit", "interface": "ORBF", "version": 2 },
+      { "component": "orbit", "interface": "ORBS", "version": 13 },
+      { "component": "eon-workspace-protocol", "interface": "EONW", "version": 9 }
+    ]
+  },
+  "components": [
+    {
+      "id": "anima",
+      "project": "Yazelix Anima",
+      "version": "0.2.0",
+      "revision": "aa93bf16474f2e6692fdf96a82f6664fa03a18e6",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/Yazelix/anima.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "orbit",
+      "project": "Eon Sessions",
+      "version": "0.1.0",
+      "revision": "427cf2d074cd1db905a2cc2602a5475065d1c790",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/Yazelix/eon-sessions.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" },
+        { "id": "terminfo", "kind": "file" }
+      ],
+      "contracts": [
+        { "id": "ORB-C1", "proof": "d96fff2015cded947c881c454216c6bf0ad69b7b" },
+        { "id": "ORB-C2", "proof": "d96fff2015cded947c881c454216c6bf0ad69b7b" },
+        { "id": "ORB-C3", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
+        { "id": "ORB-C4", "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
+        { "id": "ORB-C5", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
+        { "id": "ORB-C6", "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
+        { "id": "ORB-C7", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
+        { "id": "ORB-C8", "proof": "6bc269c40b18f08b95778939518f77556ba91c67" },
+        { "id": "ORB-C9", "proof": "6bc269c40b18f08b95778939518f77556ba91c67" },
+        { "id": "ORB-C10", "proof": "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c" },
+        { "id": "ORB-C11", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
+        { "id": "ORB-C12", "proof": "7de9980ffbd6417758698d5c33356204eeb24de5" },
+        { "id": "ORB-C13", "proof": "7de9980ffbd6417758698d5c33356204eeb24de5" }
+      ],
+      "interfaces": [
+        { "id": "ORBF", "version": 2, "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
+        { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
+      ],
+      "requires": []
+    },
+    {
+      "id": "venus",
+      "project": "Eon Desktop",
+      "version": "0.1.0",
+      "revision": "d0642ed9fc190539811168553c972107336fa213",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/Yazelix/eon-desktop.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [
+        { "id": "VEN-C1", "proof": "58f2eaa8057627bdbf73262fdb10a1dc8b681ffc" },
+        { "id": "VEN-C2", "proof": "58f2eaa8057627bdbf73262fdb10a1dc8b681ffc" },
+        { "id": "VEN-C3", "proof": "a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8" },
+        { "id": "VEN-C4", "proof": "dd31c0e74628674c772b1494590ce31cacce1ef0" },
+        { "id": "VEN-C5", "proof": "3730201d6dd27e15fdcd1a8b0662aa476a587eb6" },
+        { "id": "VEN-C7", "proof": "5dca0688644ef11f7fa8e845bb42842603189d32" },
+        { "id": "VEN-C8", "proof": "dd31c0e74628674c772b1494590ce31cacce1ef0" },
+        { "id": "VEN-C9", "proof": "90988f6ebcde68338e202a9c637c59398aafe93d" },
+        { "id": "VEN-C10", "proof": "9c56eb17613e10ef7712a1852b049ed63cf22b18" },
+        { "id": "VEN-C11", "proof": "74ab5a0b661210f0afec94086f5358fe50b01f05" },
+        { "id": "VEN-C13", "proof": "2d3498258920736eb1bdae2b8869b6547b9735d4" },
+        { "id": "VEN-C14", "proof": "a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8" },
+        { "id": "VEN-C15", "proof": "7fc7e4ba97aaf48b586002934a580ef2d1c31694" },
+        { "id": "VEN-C17", "proof": "ab24961bd6b2f9403736e52ebbac8cc266488a41" },
+        { "id": "VEN-C18", "proof": "d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86" },
+        { "id": "VEN-C19", "proof": "bc5a2bd3b2363abdea69c4cd89953b612bc970e8" },
+        { "id": "VEN-C20", "proof": "8af87bb0d07bc975413b05e3bdea9404ed6c1e57" },
+        { "id": "VEN-C21", "proof": "1897526455a23bf8ed390bb2e144f87280968d6c" },
+        { "id": "VEN-C22", "proof": "002784bedeceb71f767193a33fa66fa85ba59b30" },
+        { "id": "VEN-C23", "proof": "a23f9eed95120ca4acea8789bf7d32d2472d84ce" },
+        { "id": "VEN-C24", "proof": "dc5a4fb7008ae612cdc6935267a39aec3441060b" },
+        { "id": "VEN-C25", "proof": "3b9f57820ec2cfcc1cab691a765ec6ff68e5111b" },
+        { "id": "VEN-C26", "proof": "d0642ed9fc190539811168553c972107336fa213" }
+      ],
+      "interfaces": [],
+      "requires": [
+        {
+          "component": "orbit",
+          "revision": "427cf2d074cd1db905a2cc2602a5475065d1c790",
+          "interfaces": [
+            { "id": "ORBF", "version": 2, "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
+            { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
+          ]
+        },
+        {
+          "component": "eon-workspace-protocol",
+          "revision": "d0a184bb4d45d3e50787f7c17606df652727fb9a",
+          "interfaces": [
+            { "id": "EONW", "version": 9, "proof": "d0a184bb4d45d3e50787f7c17606df652727fb9a" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "nushell",
+      "project": "Nushell",
+      "version": "0.113.1",
+      "revision": "7b7df4aa68e957cf38b9d8157c35fa7523f44a6d",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/nushell/nushell.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "bash",
+      "project": "GNU Bash",
+      "version": "5.3p9",
+      "revision": "b8c60bc9ca365f8261fa97900b6fa939f6ebc303",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://git.savannah.gnu.org/git/bash.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "zsh",
+      "project": "Zsh",
+      "version": "5.9.1",
+      "revision": "0e0d4ea11731c47f57bad042fbe75e3979d8a1d2",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/zsh-users/zsh.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "fish",
+      "project": "Fish",
+      "version": "4.7.1",
+      "revision": "efb0223da10367031b7c887a3e40eccdf9bf7b06",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/fish-shell/fish-shell.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "starship",
+      "project": "Starship",
+      "version": "1.25.1",
+      "revision": "8758daa7767d4e73874330b1e262fca66a7ffd30",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/starship/starship.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "zoxide",
+      "project": "Zoxide",
+      "version": "0.9.9",
+      "revision": "9cdc6aa3740b4d8a9d62406c99e84c5de49645e9",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/ajeetdsouza/zoxide.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "fzf",
+      "project": "fzf",
+      "version": "0.73.1",
+      "revision": "ce4bef75954bebd87e0886435bcf8c6904328ab0",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/junegunn/fzf.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "atuin",
+      "project": "Atuin",
+      "version": "18.16.1",
+      "revision": "671f96b60dac49d1d2de73cc0812986a5e22ce7b",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/atuinsh/atuin.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "carapace",
+      "project": "Carapace",
+      "version": "1.6.3",
+      "revision": "e4ed2a5ae661848b228224ad7edb20ea678d33d4",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/carapace-sh/carapace-bin.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "helix",
+      "project": "Helix",
+      "version": "25.7.1",
+      "revision": "817dcbca8b99c3db35ea66ded7492673d1a397ad",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/Yazelix/nova-helix.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "yazi",
+      "project": "Yazi",
+      "version": "26.5.6",
+      "revision": "aa526434f00bb44e2e902d9a4ac5f810da1018b9",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/sxyazi/yazi.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" },
+        { "id": "companion", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "lazygit",
+      "project": "LazyGit",
+      "version": "0.62.2",
+      "revision": "009c8975beb322f9374789476ac65dfa02321fce",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/jesseduffield/lazygit.git"
+      },
+      "artifacts": [
+        { "id": "executable", "kind": "file" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "ratconfig",
+      "project": "Ratconfig",
+      "version": "6.0.0",
+      "revision": "e6ec2ebfe84b2358186410680cbcaf0564eb59a2",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/luccahuguet/ratconfig.git"
+      },
+      "artifacts": [
+        { "id": "crate", "kind": "cargo-package" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "codexbar",
+      "project": "CodexBar",
+      "version": "0.74.1",
+      "revision": "7c08c0ae783b72040b728757eb85a6cfe4fc2443",
+      "target": "x86_64-linux",
+      "source": { "kind": "git", "url": "https://github.com/steipete/CodexBar.git" },
+      "artifacts": [{ "id": "executable", "kind": "file" }],
+      "contracts": [],
+      "interfaces": [],
+      "requires": []
+    },
+    {
+      "id": "eon-runtime",
+      "project": "Eon Runtime",
+      "version": "0.1.0",
+      "revision": "0de24d01a9022388282dd92d91f6ed1099771b57",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/Yazelix/eon-runtime.git"
+      },
+      "artifacts": [
+        { "id": "eon-runtime", "kind": "cargo-package" }
+      ],
+      "contracts": [],
+      "interfaces": [],
+      "requires": [
+        {
+          "component": "eon-workspace-protocol",
+          "revision": "d0a184bb4d45d3e50787f7c17606df652727fb9a",
+          "interfaces": [
+            { "id": "EONW", "version": 9, "proof": "d0a184bb4d45d3e50787f7c17606df652727fb9a" }
+          ]
+        },
+        {
+          "component": "orbit",
+          "revision": "427cf2d074cd1db905a2cc2602a5475065d1c790",
+          "interfaces": [
+            { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "eon-workspace-protocol",
+      "project": "Eon Runtime",
+      "version": "0.1.0",
+      "revision": "d0a184bb4d45d3e50787f7c17606df652727fb9a",
+      "target": "x86_64-linux",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/Yazelix/eon-runtime.git"
+      },
+      "artifacts": [
+        { "id": "eon-workspace-protocol", "kind": "cargo-package" }
+      ],
+      "contracts": [],
+      "interfaces": [{ "id": "EONW", "version": 9, "proof": "d0a184bb4d45d3e50787f7c17606df652727fb9a" }],
+      "requires": []
+    }
+  ]
+}

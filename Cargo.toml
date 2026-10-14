@@ -1,0 +1,23 @@
+[workspace]
+members = [
+    "orbit",
+    "orbit/crates/protocol",
+    "orbit/tools/governance",
+    "venus",
+    "runtime/crates/eon-runtime",
+    "runtime/crates/eon-workspace-protocol",
+    "eon/crates/eon",
+    "eon/crates/eon-manifest",
+]
+resolver = "3"
+
+[patch.crates-io]
+accesskit = { git = "https://github.com/Yazelix/accesskit.git", rev = "0f9d186ec6f5e66fe4ccc131ca318dc2725c12f5" }
+accesskit_consumer = { git = "https://github.com/Yazelix/accesskit.git", rev = "0f9d186ec6f5e66fe4ccc131ca318dc2725c12f5" }
+accesskit_atspi_common = { git = "https://github.com/Yazelix/accesskit.git", rev = "0f9d186ec6f5e66fe4ccc131ca318dc2725c12f5" }
+accesskit_unix = { git = "https://github.com/Yazelix/accesskit.git", rev = "0f9d186ec6f5e66fe4ccc131ca318dc2725c12f5" }
+winit = { git = "https://github.com/Yazelix/winit-0.30.git", rev = "7c209ec5bebbd2963f75a39f79b320af6b03f72c" }
+
+[profile.release]
+lto = "thin"
+strip = "debuginfo"
