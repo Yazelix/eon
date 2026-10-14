@@ -485,6 +485,16 @@ and `stable` branches are promotion-only channels. Do not create branches,
 merge commits, rebase published channel history, force-push, or promote without
 explicit user direction.
 
+## Sessions
+
+Each bead gets a fresh session. When a bead closes, tell the user to start a
+new session for the next one. Inside a bead, after the second context
+compaction or the first sign of lost context, stop: record the state, next
+step, and open decisions in a bead comment, commit safe work, and ask for a
+new session. Count compactions from the session record. Write each user
+decision to the owning bead or memory when it is made. After any compaction,
+reread the active bead before continuing.
+
 ## Beads
 
 Use `br` for all issue work. Do not edit `.beads/` files directly. Serialize
