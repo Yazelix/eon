@@ -131,9 +131,6 @@ evidence or internal development work.
 References are studied when a slice begins; they do not authorize additional
 features or dependencies.
 
-Implementation Beads begin with a recorded execution baseline, then pass the
-reference gate and any triggered crate gate before code shape is chosen. Proof
-is tied to exact commits, cross-repository consumers pin those revisions, and
-only the user may grant a narrowly recorded protocol exception. OS-specific
-runtime mechanics stay behind a narrow platform seam while the core ownership
-and protocol remain platform-neutral.
+The [root](../../AGENTS.md) and [Orbit](../AGENTS.md) `AGENTS.md` files own
+implementation policy: reference and dependency gates, proof tied to exact
+commits, protocol exceptions, and the platform seam.

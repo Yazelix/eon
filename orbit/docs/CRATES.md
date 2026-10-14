@@ -2,8 +2,8 @@
 
 This is the durable index of direct and architecture-shaping crate decisions.
 The [reference map](REFERENCES.md) records projects worth studying; appearance
-there does not approve a dependency. `AGENTS.md` defines the crate gate, and
-Beads retain the full candidate evidence.
+there does not approve a dependency. The [root `AGENTS.md`](../../AGENTS.md)
+defines the dependency gate, and Beads retain the full candidate evidence.
 
 ## Current decisions
 
@@ -107,25 +107,17 @@ Beads retain the full candidate evidence.
 ### Repository governance metadata
 
 - **Selected shape:** Private `orbit-governance` Rust workspace tool with `serde` 1.0.229
-  and `serde_json` 1.0.151; Starcompass `check-consumer` from public Git revision
-  `95c29fa76a971726b65e1d1dc06c518d525c46a2`
-- **Status:** Selected for repository checks; neither tool is a product dependency
-- **Credible alternatives:** Python 3 standard library; an owned Rust JSON or
-  protocol-import parser; `json` 0.12.4; a manual source-backed Starcompass checkout only; a
-  future exact crates.io or checksum-pinned binary release
+  and `serde_json` 1.0.151
+- **Status:** Selected for repository checks; not a product dependency
+- **Credible alternatives:** Python 3 standard library; an owned Rust JSON parser;
+  `json` 0.12.4
 - **Why:** Typed Beads input keeps Orbit's contract cross-links and crate-evidence checks in
-  the Rust-owned stack. The isolated package does not compile or alter the Orbit runtime and
-  adds eleven normal packages to its tool-only graph. Fixed grammars use owned scanners, so
-  regex, Markdown, CLI, error, hashing, and test-framework crates are unnecessary.
-  Starcompass alone interprets the four protocol-import files; Orbit owns no import parser
-  LOC. Orbit installs its binary-only, MIT-or-Apache-2.0 source at an immutable revision and
-  runs the source-independent check without credentials. The revision keeps the locked four
-  direct crates and 35 registry package instances in CI only, with no Orbit manifest,
-  lockfile, runtime, secret, cache, artifact, or dependency-graph change. The command treats
-  canonical prose as opaque; the separate manifest-pinned source-backed check authenticates
-  it.
-- **Evidence:** Crate and reference gates in `orb-9o6`; Starcompass distribution proof
-  `ap-82h`; revision adoption in `orb-consume-starcompass-dfq`
+  the Rust-owned stack. The tool does not compile or alter the Orbit runtime, and its two
+  direct crates are already in the workspace graph at these versions. Fixed grammars use
+  owned scanners, so regex, Markdown, CLI, error, hashing, and test-framework crates are
+  unnecessary.
+- **Evidence:** Crate and reference gates in `orb-9o6`; consolidated-tree record in
+  `eon-monorepo-2oko.9`
 
 ### Structured presentation extraction
 
