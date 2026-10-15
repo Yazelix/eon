@@ -867,8 +867,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   machine restart recovery, logout/reboot survival, remote authority, service
   manager, broker, or compatibility adapter. Tombstones grant no authority and
   must be reconciled before their workspace slot is reused.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
-  - **Environment:** Automated tier; installed tier.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
+  upgrade and rollback: installed builds
+  `/nix/store/gg71kiz3k854f4xihasr1pwligypznl3-eon-0.1.0` of
+  `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` and
+  `/nix/store/vscla3lxvsn3mm5hv51lpcqjn1w97fvp-eon-0.1.0` of
+  `a3cc5e0d687c73bb482dd6f7887a49c9c9c23c0a`, `eon-upgrade-continuity-kgba`.
+  - **Environment:** Automated tier; installed tier. Upgrade and rollback: a
+    throwaway Nix profile on private headless Sway 1.12 (wlroots, pixman) in
+    bubblewrap, x86_64 Linux.
   - **Evidence:** Identity and Ready
     (`session_identity_is_positive_canonical_decimal`,
     `marked_ready_claim_never_falls_back_to_child_stop`,
@@ -887,12 +894,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `failed_natural_cleanup_still_finalizes_other_runs_and_restores_leases`);
     owner loss (`lost_owner_cleanup_requires_death_and_original_owned_objects`,
     `discovery_reaps_untracked_ended_children_before_removing_records`).
-    Installed checklist items 2 and 12.
+    Installed checklist items 2 and 12. Installed upgrade between two
+    generations sharing EONW v9 and identical Orbit and Venus builds, then
+    rollback: the older generation's terminals kept running and stayed listed
+    as previous; the newer generation launched alongside them; after rollback,
+    bare `eon attach` presented the original terminals; `eon stop all` stopped
+    both generations.
 - **Open proof:** Pending re-proof in this repository: installed native
   selected-pane crash isolation with healthy peers, supervisor-loss adoption of
-  several full-Eon terminals, and process continuity across an installed-profile
-  upgrade and rollback. No logout, Orbit-restart or machine-restart recovery is
-  proved.
+  several full-Eon terminals, and upgrade and rollback that change the Orbit or
+  Venus build or the EONW version. No logout, Orbit-restart or machine-restart
+  recovery is proved.
 
 ## EON-C16 — Caller-owned application identity
 
