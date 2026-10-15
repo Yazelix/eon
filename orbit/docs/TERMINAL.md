@@ -1,5 +1,10 @@
 # Terminal state and attachment
 
+Orbit, Venus, Eon and Eon Runtime commit hashes from before 2026-10-14 in this
+file refer to the private pre-consolidation archive. They record history, not
+proof in this repository; the contract indexes own current proof status.
+Upstream project revisions keep their usual meaning.
+
 ## Current implementation
 
 Orbit owns one real PTY and the authoritative libghostty terminal. A client can
@@ -26,12 +31,12 @@ cells. Extraction failure does not publish an estimated position.
 | Producer | Accepted source | Change |
 |---|---|---|
 | ORBS v11 / ORBF v2 | `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5` | Complete frames carry scrollback position. |
-| ORBS v12 | `f8ad14e5195109ba8cb421f30e5ae4a9619a1419` | Return to live output; pinned by Venus and Eon. |
+| ORBS v12 | `f8ad14e5195109ba8cb421f30e5ae4a9619a1419` | Return to live output. |
 | ORBS v13 | `b6cecf8f2ee35570b41cfdc578b095889d917fe2` | One upward host-selection tick with an applied distance and complete frame. |
 
-Wire versions are exact and have no adapter. v13 has Linux headless producer
-proof; its Venus pointer cadence and installed Eon acceptance are separate work.
-The [contract index](CONTRACTS.md) records the exact proofs and gaps. Eonova
+Wire versions are exact and have no adapter. Venus and Eon consume ORBS v13 from
+the in-tree `orbit-protocol` crate. The [contract index](CONTRACTS.md) records
+the current proofs and gaps. Eonova
 remains an independent product line outside Eon's component graph.
 
 ### Input and selection

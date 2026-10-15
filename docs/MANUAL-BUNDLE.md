@@ -1,5 +1,10 @@
 # Manual Linux bundle
 
+Orbit, Venus, Eon and Eon Runtime commit hashes from before 2026-10-14 in this
+file refer to the private pre-consolidation archive. They record history, not
+proof in this repository; the contract indexes own current proof status.
+Upstream project revisions keep their usual meaning.
+
 `nix build .#manual-bundle` produces the development archive
 `eon-0.1.0-x86_64-linux.tar.zst` and `SHA256SUMS`. Nix builds the artifact;
 the extracted entrypoint requires no installed Nix, store, daemon or evaluator.

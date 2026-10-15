@@ -6,7 +6,8 @@ Hover an explicit OSC 8 link to highlight it and preview its actual target.
 Ctrl+left click opens it on Linux; Command+left click opens it on macOS.
 Ctrl+Shift+C on Linux or Command+C on macOS copies the hovered target
 unless the terminal has selected text, in which case it copies that selection.
-Physical M1 proof covers both Command actions on an exact hovered link.
+Physical M1 proof of both Command actions on an exact hovered link predates this
+repository and awaits re-proof here.
 Ordinary clicks retain terminal mouse reporting and selection behavior;
 ordinary URL-looking text is not detected as a link. The accessibility tree
 exposes each current visible target as an Open link followed by a Copy button.
@@ -148,7 +149,8 @@ Terminal programs can also request bounded text writes through Orbit. On Linux,
 Venus sends the standard destination to the ordinary clipboard and sends the
 selection or primary destination to the primary clipboard. The macOS candidate
 uses Command+C and Command+V and maps every destination to the general native
-pasteboard; it does not emulate a primary selection. M1 proof covers one
-Unicode terminal clipboard write, one Unicode Command+V paste, and visible
-rejection of empty, PNG-only, and oversized values. A native host-access failure
+pasteboard; it does not emulate a primary selection. Pre-consolidation M1
+proof, awaiting re-proof here, covered one Unicode terminal clipboard write, one
+Unicode Command+V paste, and visible rejection of empty, PNG-only, and
+oversized values. A native host-access failure
 notice remains unaccepted.

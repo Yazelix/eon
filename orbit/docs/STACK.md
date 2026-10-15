@@ -105,7 +105,7 @@ but it is not the product UI or runtime plugin ABI.
   does not host arbitrary plugins in its owner loop. A future read-only observer
   or exporter would require a separate contract and failure-isolation decision.
 - Eon may expose orchestration, workspace metadata, launch-policy, or action
-  capabilities. It must not absorb behavior already owned by a child repository.
+  capabilities. It must not absorb behavior already owned by Orbit or Venus.
 - Venus may expose commands, status items, sidebars, inspectors, or panels. UI
   contributions should use host-rendered declarative data and events rather
   than raw GPU, window, or terminal authority.
@@ -113,9 +113,8 @@ but it is not the product UI or runtime plugin ABI.
   them through Yazi's supported surface.
 
 Every accepted extension contract names one owner, its capabilities, lifecycle,
-failure behavior, versioning, compatibility policy, and cheapest proof. A
-cross-repository extension cannot hide a missing Orbit, Venus, Eon, or
-child-repository contract.
+failure behavior, versioning, compatibility policy, and cheapest proof. An
+extension cannot hide a missing Orbit, Venus, Eon, or subsystem contract.
 
 ## Venus framework gate
 

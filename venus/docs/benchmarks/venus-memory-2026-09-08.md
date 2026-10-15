@@ -1,5 +1,10 @@
 # Venus cell-buffer memory
 
+Orbit, Venus, Eon and Eon Runtime commit hashes from before 2026-10-14 in this
+file refer to the private pre-consolidation archive. They record history, not
+proof in this repository; the contract indexes own current proof status.
+Upstream project revisions keep their usual meaning.
+
 `ven-profile-venus-memory-u3o`, 2026-09-08. Source
 `541a9cb43c155b8b97069904593dc81c73682613` is mechanically verified and
 dogfooded on an isolated native Wayland display. This is a Venus allocation

@@ -1,5 +1,10 @@
 # Session protocol
 
+Orbit, Venus, Eon and Eon Runtime commit hashes from before 2026-10-14 in this
+file refer to the private pre-consolidation archive. They record history, not
+proof in this repository; the contract indexes own current proof status.
+Upstream project revisions keep their usual meaning.
+
 ORBS carries exact-version session messages. ORBF carries complete terminal
 frames inside those messages; [`orbit-protocol`](../crates/protocol) owns both
 codecs.
@@ -49,13 +54,13 @@ authoritative terminal state. The initial contract covers surviving client and
 observer exits and disconnections while Orbit continues running; it does not
 cover Orbit or machine restarts.
 
-The first accepted cross-repository integration used Venus source
+The first accepted integration, before consolidation, used Venus source
 `e5e37a3df119ee2bcfa2493a2ce5a46307493732` with canonical ORBF v1 over
 ORBS v6 at exact Orbit proof `780f5d746175b4a9b71df57c51ed4bfcc4c4c375`. Eon source
 `10c402b3754d600a6bb0a0da0de2ff6d1d4feca3` composes that accepted pair;
 Eonova source `92acf64e8c43531bd4c5d639bdfa99b717dfe5b3` consumes the resulting Eon
-runtime. Accepted x86_64 Linux evidence
-covers same-boot recovery, owner-routed Stop, and native Wayland delivery to the
+runtime. That pre-consolidation x86_64 Linux evidence
+covered same-boot recovery, owner-routed Stop, and native Wayland delivery to the
 primary selection. Ordinary clipboard delivery, Wayland without data-control,
 broader compositors, and macOS Venus/Eon composition remain unproved. No
 adapter, feature probe, dual-version support, or compatibility window exists.

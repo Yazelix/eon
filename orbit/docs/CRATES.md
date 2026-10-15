@@ -1,5 +1,10 @@
 # Orbit crate decisions
 
+Orbit, Venus, Eon and Eon Runtime commit hashes from before 2026-10-14 in this
+file refer to the private pre-consolidation archive. They record history, not
+proof in this repository; the contract indexes own current proof status.
+Upstream project revisions keep their usual meaning.
+
 This is the durable index of direct and architecture-shaping crate decisions.
 The [reference map](REFERENCES.md) records projects worth studying; appearance
 there does not approve a dependency. The [root `AGENTS.md`](../../AGENTS.md)
@@ -144,8 +149,8 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 
 - **Selected shape:** Private `orbit-protocol` 0.1.0 workspace library with `std` only and
   no external dependency
-- **Status:** Selected and proved for ORBS v10; ORBS v9 remains the immutable prior routing
-  proof, and Venus, Eon, and Eonova consume exact v10 compositions
+- **Status:** Selected for ORBS v13, which Venus and Eon consume from the in-tree crate. Its
+  ORBS v9 and v10 proofs predate consolidation; Eonova is outside Eon's component graph
 - **Credible alternatives:** Root library target with terminal features; a second Venus
   decoder; a second handwritten session schema; bincode 2.0.1; postcard 1.1.3; prost 0.14.4;
   rkyv 0.8.17; capnp 0.27.0; a separately published protocol repository

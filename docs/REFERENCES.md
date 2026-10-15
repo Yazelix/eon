@@ -1,13 +1,18 @@
 # Reference Routing
 
+Orbit, Venus, Eon and Eon Runtime commit hashes from before 2026-10-14 in this
+file refer to the private pre-consolidation archive. They record history, not
+proof in this repository; the contract indexes own current proof status.
+Upstream project revisions keep their usual meaning.
+
 Use references to answer a named design question. Read only the matching route,
 start with `Read first`, and inspect an additional source only when its condition
 applies. Adjacent routes are not required reading. `Owner` identifies the
 subsystem that may adopt the evidence; a reference does not transfer ownership.
 
-Eon keeps cross-product comparisons and cross-repository routes here. Child
-repositories keep evidence for their own contracts and link here instead of
-duplicating product pins. Implementing Beads record exact inspected revisions.
+Eon keeps cross-product comparisons and cross-subsystem routes here. Orbit and
+Venus keep evidence for their own contracts in their `docs/` and link here
+instead of duplicating product pins. Implementing Beads record exact inspected revisions.
 
 ## Orbit and terminal architecture
 

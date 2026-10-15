@@ -1,5 +1,10 @@
 # Venus reference routing
 
+Orbit, Venus, Eon and Eon Runtime commit hashes from before 2026-10-14 in this
+file refer to the private pre-consolidation archive. They record history, not
+proof in this repository; the contract indexes own current proof status.
+Upstream project revisions keep their usual meaning.
+
 References answer a named question; they do not select dependencies or authorize
 source reuse. Before code, the implementing Bead records exact releases or
 commits, useful mechanisms, rejected surrounding scope, license compatibility,
@@ -220,10 +225,10 @@ interaction remain separate evidence from pure shaping and geometry checks.
 ## Required before the first client implementation
 
 - Orbit `ORB-C1` through `ORB-C6`, ORBF v1, ORBS v1, and the dependency-free
-  `orbit-protocol` 0.1.0 package are accepted at
-  `c905bf9610581747f1b07565814b501ca66cfaa6`; `ORB-C7` is partially proved at
-  that revision. Venus must consume the package at that exact Git revision and
-  must not mirror either codec or its semantic values.
+  `orbit-protocol` 0.1.0 package were accepted at archive revision
+  `c905bf9610581747f1b07565814b501ca66cfaa6`, when `ORB-C7` was partially
+  proved. Venus now consumes the in-tree package and must not mirror either
+  codec or its semantic values.
 - [FrankenTUI](https://github.com/Dicklesworthstone/frankentui) is required for
   backend boundaries, deterministic rendering transitions, and test
   architecture. Inspect its
@@ -825,7 +830,8 @@ on negated `cmp`, and its failure screenshots retained that stale feedback. The
 corrected workflow failed before runner allocation in run 34833225890 because
 the account reached its payment or spending limit. That hosted evidence left
 native empty-paste and host-access failure notices open; VEN-C16's later
-physical proof accepts empty-paste only.
+physical proof, which predates this repository and awaits re-proof here,
+accepted empty-paste only.
 
 ## Watchlist
 

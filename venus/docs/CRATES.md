@@ -1,5 +1,10 @@
 # Venus crate decisions
 
+Orbit, Venus, Eon and Eon Runtime commit hashes from before 2026-10-14 in this
+file refer to the private pre-consolidation archive. They record history, not
+proof in this repository; the contract indexes own current proof status.
+Upstream project revisions keep their usual meaning.
+
 `ven-upt.1` records the user-selected thin winit, wgpu, glyphon, and AccessKit
 shape. `ven-upt.2` implements it with exact direct versions and features in
 `Cargo.toml`. `ven-4sn` adds the minimum native text-clipboard owner.
@@ -51,9 +56,10 @@ for one zero-payload semantic action without a new dependency or adapter.
 
 ### Eon workspace protocol consumer
 
-- **Selected shape:** Exact Eon Runtime Git revision
-  `d0a184bb4d45d3e50787f7c17606df652727fb9a` of the dependency-free,
-  publish-false, Apache-2.0 `eon-workspace-protocol` 0.1.0 package (EONW v9).
+- **Selected shape:** The in-tree path dependency on the dependency-free,
+  publish-false, Apache-2.0 `eon-workspace-protocol` 0.1.0 package (EONW v9);
+  before consolidation Venus pinned Eon Runtime revision
+  `d0a184bb4d45d3e50787f7c17606df652727fb9a`.
 - **Status:** Active for internal development
 - **Owner consequence:** Eon Runtime owns canonical EONW values and validation.
   The runtime owns workspace topology, pending tabs, tab launch directories,
@@ -74,8 +80,9 @@ for one zero-payload semantic action without a new dependency or adapter.
 
 ### Orbit protocol consumer
 
-- **Selected shape:** Exact Git revision `6bc269c40b18f08b95778939518f77556ba91c67` of the
-  dependency-free, publish-false `orbit-protocol` 0.1.0 package
+- **Selected shape:** The in-tree path dependency on the dependency-free,
+  publish-false `orbit-protocol` 0.1.0 package; before consolidation Venus pinned
+  Orbit revision `6bc269c40b18f08b95778939518f77556ba91c67`
 - **Status:** Active
 - **Owner consequence:** Orbit alone owns ORBS v13, ORBF v2, semantic values, history, its display-row position and absolute return-to-live,
   terminal-versus-host left-pointer routing, selection and completion revisions, typed wheel
@@ -159,8 +166,8 @@ owns the decision and scoped delivery proof.
 
 - **Selected shape:** wl-clipboard-rs 0.9.3 on Linux and target-only arboard
   3.6.1 on macOS, both with default features disabled
-- **Status:** Active on native Linux Wayland; implemented with partial native
-  proof on unsupported Apple Silicon macOS
+- **Status:** Active on native Linux Wayland; implemented on unsupported Apple
+  Silicon macOS, whose partial native proof awaits re-proof in this repository
 - **Owner consequence:** The host reads ordinary clipboard text once after an explicit paste
   shortcut and writes canonical bounded `CopiedText` and `ClipboardWrite` effects through
   Wayland data-control or the general macOS pasteboard. All macOS destinations collapse to
