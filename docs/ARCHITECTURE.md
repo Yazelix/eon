@@ -403,3 +403,24 @@ path, and exposes its live workspace through EONW v9. Venus consumes a new EONW
 version only after Eon Runtime's producer proof; the graph's interface versions
 change only after Venus's consumer proof exists. Later slices earn their scope
 through dogfooding. Direct distribution has its own activation gate.
+
+## Remote access
+
+**Status: planned and unproved; no contract.** On 2026-10-15 the user chose
+SSH as Eon's remote path: a user keeps Eon's window on a local Wayland desktop
+while terminals, editor, Git and agents run on a headless Linux server. Eon
+opens no network listener and owns no login, authentication or encryption.
+`eon-remote-ssh-x7dr` owns the candidate shapes (a Waypipe-forwarded window
+first and, only if that falls short, a local Venus with a remote supervisor
+over SSH-forwarded sockets), their measurements, and keeping remote work alive
+after the SSH session ends. EON-C15 currently excludes both logout survival and
+remote authority.
+
+| Owner | Responsibility |
+|---|---|
+| OpenSSH | Reachability, authentication, encryption, host configuration, keys and jump hosts |
+| Waypipe | Candidate external tool for the first shape: Wayland forwarding, buffer transfer and compression |
+| Eon | Remote launch policy and disconnect-versus-Stop policy |
+| Eon Runtime | Supervisor start on the server (headless start open in `eon-remote-ssh-x7dr.3`) and any Eon-owned survival mechanism (open in `eon-remote-ssh-x7dr.2`) |
+| Orbit | Terminal authority over local Unix sockets; any row-patch protocol for slow links is a separate decision |
+| Venus | Presentation of the workspace, including the attached machine if Venus stays local |

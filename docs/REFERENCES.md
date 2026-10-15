@@ -141,6 +141,34 @@ instead of duplicating product pins. Implementing Beads record exact inspected r
   process resurrection, remote-control-as-remote-compute, and inherited relay or mobile
   scope.
 
+### How should Eon reach a workspace on a remote host over SSH without owning a transport or login?
+
+- **Owner:** Eon remote launch and lifecycle policy, Eon Runtime, Venus
+  presentation, and Orbit for any slow-link replication
+- **Read first:** [Waypipe `v0.11.0` at
+  `cd86eda4308f`](https://gitlab.freedesktop.org/mstoeckl/waypipe/-/tree/cd86eda4308ff11cc38c85cb75b58ce840c3b45e),
+  the version in Eon's pinned nixpkgs, and its `waypipe ssh` mode
+- **Read additionally only if:** When Venus stays local and the supervisor runs
+  remotely, read OpenSSH's Unix-socket forwarding, added in
+  [OpenSSH 6.7](https://www.openssh.org/txt/release-6.7), in the OpenBSD 7.7
+  [`ssh -L`](https://man.openbsd.org/OpenBSD-7.7/ssh#L) and
+  [`ControlMaster`](https://man.openbsd.org/OpenBSD-7.7/ssh_config#ControlMaster)
+  manuals, and compare servers started over SSH: [Zed remote development at
+  `badd2157d6a5`](https://github.com/zed-industries/zed/blob/badd2157d6a507009e8db7c4b24e28fb73979948/docs/src/remote-development.md),
+  [VS Code Remote-SSH at
+  `f7ee5a5c642a`](https://github.com/microsoft/vscode-docs/blob/f7ee5a5c642aee433e093d8d10a9c056770c77e3/docs/remote/ssh.md),
+  WezTerm [SSH](https://github.com/wezterm/wezterm/blob/577474d89ee61aef4a48145cdec82a638d874751/docs/config/lua/SshDomain.md)
+  and [TLS](https://github.com/wezterm/wezterm/blob/577474d89ee61aef4a48145cdec82a638d874751/docs/config/lua/TlsDomainClient.md)
+  domains at `577474d89ee6`, and [Mosh at
+  `decd9b705eb8`](https://github.com/mobile-shell/mosh/tree/decd9b705eb81626f694335b8d5940538beb06da)
+  for state synchronization.
+  Reconnect, host-loss and controller semantics stay with the Ghosthub and
+  Unpeel routes above.
+- **Preserve / reject:** Preserve the user's SSH configuration, keys and jump
+  hosts, OpenSSH as the connection owner, and Orbit as sole terminal authority.
+  Reject an Eon network listener, Eon-owned login or cryptography, a second
+  terminal emulator, and multi-client attachment.
+
 ### How should Eon separate live terminal continuity from workspace reconstruction after the terminal owner exits?
 
 - **Owner:** Eon durability policy over Orbit lifecycle
