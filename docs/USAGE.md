@@ -10,6 +10,9 @@ Before installing, you need:
 - Git and Nix with flakes enabled; and
 - a native Wayland session.
 
+Venus draws with `wgpu` on Vulkan: a hardware adapter uses the GPU, and Mesa
+lavapipe can render in software.
+
 Before Eon moved into one repository, the accepted runtime proof used COSMIC
 with systemd and Mesa on Intel hardware. This repository's installed checks so
 far run on a private headless Sway, plus a brief COSMIC launch check; the full
@@ -106,7 +109,7 @@ panes around its launch directory. A **pane** is a view of a persistent
 | Alt+Shift+T | Create a tab through the directory picker |
 | Alt+M | Create a pane in the active tab |
 | Alt+Shift+W | Close the active non-final tab |
-| Alt+Shift+N | Open an independent Eon window |
+| Alt+Shift+N | Open an independent Eon window (also the desktop launcher's **New Eon Window** action) |
 | Alt+Z | Open the tab's Project directory picker |
 | Alt+Shift+J | Open or hide the tab's Git popup |
 | Alt+Shift+L | Open or hide the tab's Agent popup |
@@ -120,6 +123,7 @@ between the scrollable tabs and those controls moves the undecorated window;
 tabs, controls, pane headers, and terminal content remain ordinary targets.
 Pinned CodexBar CLI supplies read-only Codex and Claude quota from their local
 authentication. Codex also needs a compatible `codex` executable on `PATH`.
+Codex chips show its white mark and Claude chips its orange splat.
 Both available five-hour/seven-day windows show remaining percentages, with reset
 and freshness details on hover. Missing resets stay unknown. Failed readings say
 `old` immediately; readings disappear after one hour. Chips yield before tabs
@@ -221,6 +225,17 @@ one target the default workspace. `eon stop all` covers generations in that
 current namespace. `eon window stop all` covers independent windows and visits
 the caller's window last. Run it outside those terminals when you need its final
 status; stopping its own terminal can terminate the CLI.
+
+### Accelerando glyphs
+
+In Eon's native terminal, `eon anima accelerando` shows the 8,192-glyph alien
+alphabet in long green trails; add `--symbols` to mix in letters, digits and
+punctuation. Add `--big` for large, solid block glyphs; combine `--big --symbols`
+for matching large letters, digits and punctuation. Add `--bold` for heavier
+native glyphs; it combines with either option. Large solid blocks already fill
+their cells. Random playback includes Accelerando. Eon bundles Regular and Bold
+Accelerando Terminal faces; other terminals need these fonts for native-size
+playback. There is no substitute alphabet.
 
 ## EonTerm
 
