@@ -95,3 +95,10 @@ workspace on an isolated Wayland display. Install Codex CLI and sign in with
 `codex login` first; the Agent popup uses that login for a fresh, read-only
 session. The capture uses a soft focus wallpaper behind translucent terminals
 and writes the GIF, MP4, and PNG poster to `assets/demo/`.
+
+`nix run .#record-demo -- features` records the clips and stills behind
+eonterm.com's Features page into `assets/demo/features/`, as web-encoded MP4
+clips and WebP stills. The clips and the Eon Bar still show the live Codex and
+Claude quota chips, so sign in to both first. The recorder reads those logins
+in place through `CODEX_HOME` and `CLAUDE_CONFIG_DIR`. A Claude rate limit
+hides or ages that chip, so re-record when it clears.

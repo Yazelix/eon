@@ -586,6 +586,7 @@
         runtimeInputs = [ pkgs.swaybg ];
         environment = {
           EON_BIN = "${eonPackage}/bin/eon";
+          EONTERM_BIN = "${eontermPackage}/bin/eonterm";
           ZOXIDE_BIN = "${zoxidePackage}/bin/zoxide";
           EON_DEMO_PATH = lib.makeBinPath [ pkgs.coreutils pkgs.bash pkgs.git ];
         };

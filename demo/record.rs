@@ -2,8 +2,9 @@ use kinestra::{Error, Recorder, Result, Size};
 use serde_json::Value;
 use std::{
     env,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs,
+    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, ExitCode, Stdio},
     time::{Duration, Instant},
@@ -57,7 +58,19 @@ fn action(r: &mut Recorder, eon: &Path, home: &Path, args: &[&str]) -> Result<()
     Ok(())
 }
 
-fn record(r: &mut Recorder) -> Result<()> {
+struct Demo {
+    root: PathBuf,
+    eon: PathBuf,
+    zoxide: OsString,
+    codex: PathBuf,
+    codex_home: PathBuf,
+    work: PathBuf,
+    home: PathBuf,
+    demo: PathBuf,
+}
+
+/// Builds the isolated home, demo project and Zoxide history every recipe starts from.
+fn prepare(r: &mut Recorder) -> Result<Demo> {
     let root = env::current_dir()?;
     if !root.join("components/eon-alpha-v3.json").is_file() {
         return Err(Error::Invalid(
@@ -90,7 +103,8 @@ fn record(r: &mut Recorder) -> Result<()> {
                 .join(".codex")
         });
     let work = r.work().to_path_buf();
-    let home = work.join("home");
+    // Nested one level down so Yazi's parent column shows only this folder, not recorder files.
+    let home = work.join("home/home");
     let demo = home.join("demo");
     fs::create_dir_all(demo.join("src"))?;
     fs::create_dir_all(demo.join("docs"))?;
@@ -177,7 +191,29 @@ if $count == 1 {
     let mut history = isolated(&zoxide, &home);
     history.arg("add").arg(&demo);
     r.exec(&mut history)?;
+    Ok(Demo {
+        root,
+        eon,
+        zoxide,
+        codex,
+        codex_home,
+        work,
+        home,
+        demo,
+    })
+}
 
+fn record(r: &mut Recorder) -> Result<()> {
+    let Demo {
+        root,
+        eon,
+        zoxide,
+        codex_home,
+        work,
+        home,
+        demo,
+        ..
+    } = prepare(r)?;
     r.wayland_display(Size::new(1280, 720)?)?;
     let mut wallpaper = r.command("swaymsg");
     wallpaper
@@ -315,20 +351,456 @@ if $count == 1 {
     })?;
     r.gif(&video, &gif, 800, 10)?;
 
-    let assets = root.join("assets/demo");
-    fs::create_dir_all(&assets)?;
-    for (source, name) in [
-        (&video, "eon-demo.mp4"),
-        (&poster, "eon-demo.png"),
-        (&gif, "eon-demo.gif"),
-    ] {
+    publish(
+        &root.join("assets/demo"),
+        [&video, &poster, &gif].map(PathBuf::as_path),
+    )
+}
+
+/// Copies finished files into place through temporary names, so no partial asset is visible.
+fn publish<'a>(assets: &Path, files: impl IntoIterator<Item = &'a Path>) -> Result<()> {
+    fs::create_dir_all(assets)?;
+    for source in files {
+        let name = source
+            .file_name()
+            .ok_or_else(|| Error::Invalid("asset has no file name".into()))?
+            .to_string_lossy();
         let temporary = assets.join(format!(".{name}.tmp"));
         fs::copy(source, &temporary)?;
-        fs::rename(temporary, assets.join(name))?;
+        fs::rename(temporary, assets.join(&*name))?;
     }
     Ok(())
 }
 
+fn has_app(node: &Value, app_id: &str) -> bool {
+    node["app_id"] == app_id
+        || ["nodes", "floating_nodes"].iter().any(|key| {
+            node[*key]
+                .as_array()
+                .is_some_and(|children| children.iter().any(|child| has_app(child, app_id)))
+        })
+}
+
+/// Runs an Eon command the way a user does and waits for its window. Plain `eon` and `eonterm`
+/// run the supervisor itself, which outlives its window. Kinestra's `launch` would signal that
+/// process group, and with it the terminals, before presenting the reattach, and would report
+/// `eon attach`, which asks the running supervisor for a window and exits, as a crash. A supervisor's `stop` is registered as soon as it
+/// starts, with a kill of its process group behind it in case the stop fails; cleanup runs in
+/// reverse registration order.
+fn present(
+    r: &mut Recorder,
+    mut command: Command,
+    app_id: &str,
+    log: &Path,
+    stop: Option<Command>,
+) -> Result<()> {
+    for (key, value) in r.command("true").get_envs() {
+        match value {
+            Some(value) => command.env(key, value),
+            None => command.env_remove(key),
+        };
+    }
+    let child = command
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(fs::File::create(log)?)
+        .stderr(fs::File::create(log.with_extension("err"))?)
+        .spawn()?;
+    if let Some(stop) = stop {
+        let mut kill = Command::new("sh");
+        kill.args([
+            "-c",
+            &format!("kill -KILL -{} 2>/dev/null; true", child.id()),
+        ]);
+        r.on_exit(kill);
+        r.on_exit(stop);
+    }
+    wait_window(r, app_id, true)
+}
+
+/// Snapshots only while the window is open, so a crashed client fails the take instead of
+/// publishing an empty frame.
+fn shoot(r: &mut Recorder, app_id: &str, output: &Path) -> Result<()> {
+    wait_window(r, app_id, true)?;
+    r.snapshot(output)
+}
+
+fn wait_window(r: &mut Recorder, app_id: &str, shown: bool) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let tree = r.output(r.command("swaymsg").args(["-t", "get_tree"]))?;
+        if serde_json::from_str::<Value>(&tree).is_ok_and(|tree| has_app(&tree, app_id) == shown) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            let state = if shown { "open" } else { "close" };
+            return Err(Error::Timeout(format!(
+                "waiting for window {app_id} to {state}"
+            )));
+        }
+        r.sleep(Duration::from_millis(100))?;
+    }
+}
+
+/// Asks the window to close as a user would, then waits until it is gone.
+fn close_window(r: &mut Recorder, app_id: &str) -> Result<()> {
+    r.exec(
+        r.command("swaymsg")
+            .arg(format!("[app_id=\"^{app_id}$\"]"))
+            .arg("kill"),
+    )?;
+    wait_window(r, app_id, false)
+}
+
+fn active_tab(state: &Value) -> Option<&Value> {
+    state["tabs"]
+        .as_array()?
+        .iter()
+        .find(|tab| tab["id"] == state["active_tab"])
+}
+
+fn popup_chosen(entry: &'static str) -> impl Fn(&Value) -> bool {
+    move |state| {
+        active_tab(state)
+            .and_then(|tab| tab["popups"].as_array())
+            .is_some_and(|popups| {
+                popups
+                    .iter()
+                    .any(|popup| popup["entry"] == entry && popup["chosen"] == true)
+            })
+    }
+}
+
+fn popup_hidden(state: &Value) -> bool {
+    active_tab(state).is_some_and(|tab| tab["selected_popup"].is_null())
+}
+
+/// Records one short clip per feature for eonterm.com, with the live Codex and Claude quota chips.
+fn features(r: &mut Recorder) -> Result<()> {
+    let Demo {
+        root,
+        eon,
+        zoxide,
+        codex,
+        codex_home,
+        work,
+        home,
+        demo,
+    } = prepare(r)?;
+    let eonterm = env::var_os("EONTERM_BIN").expect("Nix supplies EONTERM_BIN");
+    let claude_config = env::var_os("CLAUDE_CONFIG_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env::var_os("HOME").expect("the host has a home directory"))
+                .join(".claude")
+        });
+    if !claude_config.join(".credentials.json").is_file() {
+        return Err(Error::Invalid(
+            "sign in to Claude Code before recording the quota chips".into(),
+        ));
+    }
+    // Quota reads the host logins in place: PATH gains a directory exposing only `codex`.
+    let bin = work.join("bin");
+    fs::create_dir_all(&bin)?;
+    std::os::unix::fs::symlink(&codex, bin.join("codex"))?;
+    let path = env::join_paths(
+        env::split_paths(&env::var_os("EON_DEMO_PATH").expect("Nix supplies EON_DEMO_PATH"))
+            .chain([bin]),
+    )
+    .map_err(|error| Error::Invalid(error.to_string()))?;
+    let eon_command = |args: &[&str]| {
+        let mut command = isolated(&eon, &home);
+        command
+            .current_dir(&demo)
+            .env("PATH", &path)
+            .env("CODEX_HOME", &codex_home)
+            .env("CLAUDE_CONFIG_DIR", &claude_config)
+            .args(args);
+        command
+    };
+
+    r.wayland_display(Size::new(1280, 720)?)?;
+    let mut wallpaper = r.command("swaymsg");
+    wallpaper
+        .args(["output", "*", "bg"])
+        .arg(root.join("assets/demo/wallpaper-frosted.png"))
+        .arg("fill");
+    r.exec(&mut wallpaper)?;
+    // The takes are keyboard-driven, so the idle pointer would only cover content.
+    r.exec(r.command("swaymsg").args(["seat", "*", "hide_cursor", "1"]))?;
+    let mut stop = isolated(&eon, &home);
+    stop.args(["stop", "all", "--json"]);
+    present(
+        r,
+        eon_command(&[]),
+        "eon",
+        &work.join("eon.log"),
+        Some(stop),
+    )?;
+    // The first quota read lands during the tab setup. Each provider reads again a minute after
+    // its last read, and Claude's endpoint rate-limits often enough that a failed refresh can
+    // mark the chip old mid-run. Workspace JSON omits quota, so check the stills and re-record.
+    r.sleep(Duration::from_secs(4))?;
+
+    let out = work.join("features");
+    fs::create_dir_all(&out)?;
+    let file = |name: &str| out.join(name);
+    let mut assets = Vec::new();
+
+    let active_panes = |count: usize| {
+        move |state: &Value| {
+            active_tab(state)
+                .and_then(|tab| tab["panes"].as_array())
+                .is_some_and(|panes| panes.len() == count)
+        }
+    };
+    let focus_demo_tab = |r: &mut Recorder| {
+        action(r, &eon, &home, &["focus", "t1"])?;
+        wait_for(r, &eon, &home, "demo tab focused", |state| {
+            state["active_tab"] == "t1"
+        })
+    };
+    for directory in ["docs", "src"] {
+        let mut history = isolated(&zoxide, &home);
+        history.arg("add").arg(demo.join(directory));
+        r.exec(&mut history)?;
+    }
+    // Clips read better with several tabs, so open demo and docs before the first take.
+    r.type_text("demo", Duration::from_millis(80))?;
+    r.key("Return", Duration::from_millis(300))?;
+    wait_for(r, &eon, &home, "demo tab", active_panes(1))?;
+    r.key("Alt+Shift+t", Duration::from_millis(600))?;
+    r.type_text("docs", Duration::from_millis(80))?;
+    r.key("Return", Duration::from_millis(300))?;
+    wait_for(r, &eon, &home, "docs tab", |state| {
+        state["active_tab"] == "t2" && state["tabs"][1]["pending"] == false
+    })?;
+    focus_demo_tab(r)?;
+    r.sleep(Duration::from_secs(1))?;
+
+    let clip = file("directory-picker.mp4");
+    let poster = file("directory-picker.png");
+    r.record(&clip, |r| {
+        r.sleep(Duration::from_millis(600))?;
+        r.key("Alt+Shift+t", Duration::from_millis(1000))?;
+        r.key("Tab", Duration::from_millis(1200))?;
+        shoot(r, "eon", &poster)?;
+        r.sleep(Duration::from_millis(800))?;
+        r.key("Tab", Duration::from_millis(800))?;
+        r.type_text("src", Duration::from_millis(110))?;
+        r.key("Return", Duration::from_millis(300))?;
+        wait_for(r, &eon, &home, "source tab", |state| {
+            state["active_tab"] == "t3" && state["tabs"][2]["pending"] == false
+        })?;
+        r.sleep(Duration::from_millis(1500))
+    })?;
+    assets.extend([clip, poster]);
+
+    focus_demo_tab(r)?;
+    let clip = file("tabs-panes.mp4");
+    let poster = file("tabs-panes.png");
+    r.record(&clip, |r| {
+        r.sleep(Duration::from_millis(600))?;
+        r.key("Alt+m", Duration::from_millis(300))?;
+        wait_for(r, &eon, &home, "second pane", active_panes(2))?;
+        r.sleep(Duration::from_millis(1200))?;
+        r.key("Alt+m", Duration::from_millis(300))?;
+        wait_for(r, &eon, &home, "third pane", active_panes(3))?;
+        r.sleep(Duration::from_millis(900))?;
+        r.key("Ctrl+Alt+k", Duration::from_millis(300))?;
+        wait_for(r, &eon, &home, "pane moved up", |state| {
+            active_tab(state).is_some_and(|tab| tab["panes"][1]["id"] == "p5")
+        })?;
+        r.sleep(Duration::from_millis(500))?;
+        shoot(r, "eon", &poster)?;
+        r.sleep(Duration::from_millis(400))?;
+        r.key("Ctrl+Alt+l", Duration::from_millis(300))?;
+        wait_for(r, &eon, &home, "tab moved right", |state| {
+            state["tabs"][1]["id"] == "t1"
+        })?;
+        r.sleep(Duration::from_millis(900))?;
+        r.key("Alt+h", Duration::from_millis(300))?;
+        wait_for(r, &eon, &home, "previous tab focused", |state| {
+            state["active_tab"] == "t2"
+        })?;
+        r.sleep(Duration::from_millis(900))?;
+        r.key("Alt+l", Duration::from_millis(300))?;
+        wait_for(r, &eon, &home, "demo tab focused", |state| {
+            state["active_tab"] == "t1"
+        })?;
+        r.sleep(Duration::from_millis(1000))
+    })?;
+    // The top row alone shows tabs, both quota chips and the running version.
+    let bar = file("eon-bar.png");
+    r.exec(
+        r.command("ffmpeg")
+            .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-i"])
+            .arg(&poster)
+            .args(["-vf", "crop=1280:32:0:0", "-y"])
+            .arg(&bar),
+    )?;
+    assets.extend([clip, poster, bar]);
+
+    // A ticking counter shows the terminal kept running while no window existed.
+    // One wtype call for this whole command lost letters on the isolated display,
+    // while single characters arrive intact.
+    for character in
+        "1..999 | each {|i| print $\"still running ($i)\"; sleep 1sec } | ignore".chars()
+    {
+        r.type_text(&character.to_string(), Duration::from_millis(10))?;
+    }
+    r.key("Return", Duration::from_secs(3))?;
+    let clip = file("detach-reattach.mp4");
+    let poster = file("detach-reattach.png");
+    r.record(&clip, |r| {
+        r.sleep(Duration::from_millis(1500))?;
+        close_window(r, "eon")?;
+        // With the window gone, the supervisor still reporting every pane shows the terminals
+        // outlived it.
+        wait_for(
+            r,
+            &eon,
+            &home,
+            "terminals without a window",
+            active_panes(3),
+        )?;
+        r.sleep(Duration::from_secs(2))?;
+        present(
+            r,
+            eon_command(&["attach"]),
+            "eon",
+            &work.join("attach.log"),
+            None,
+        )?;
+        r.sleep(Duration::from_millis(2500))?;
+        shoot(r, "eon", &poster)?;
+        r.sleep(Duration::from_millis(500))
+    })?;
+    assets.extend([clip, poster]);
+
+    let clip = file("git-popup.mp4");
+    let poster = file("git-popup.png");
+    r.record(&clip, |r| {
+        r.sleep(Duration::from_millis(600))?;
+        r.key("Alt+Shift+j", Duration::from_millis(300))?;
+        wait_for(r, &eon, &home, "Git popup", popup_chosen("git"))?;
+        r.sleep(Duration::from_millis(700))?;
+        r.key("Return", Duration::from_millis(400))?;
+        r.sleep(Duration::from_millis(1500))?;
+        shoot(r, "eon", &poster)?;
+        r.sleep(Duration::from_millis(1200))?;
+        r.key("Alt+Shift+j", Duration::from_millis(300))?;
+        wait_for(r, &eon, &home, "Git popup hidden", popup_hidden)?;
+        r.sleep(Duration::from_millis(800))
+    })?;
+    assets.extend([clip, poster]);
+
+    let clip = file("agent-popup.mp4");
+    let poster = file("agent-popup.png");
+    r.record(&clip, |r| {
+        r.sleep(Duration::from_millis(600))?;
+        r.key("Alt+Shift+l", Duration::from_millis(300))?;
+        wait_for(r, &eon, &home, "Agent popup", popup_chosen("agent"))?;
+        r.sleep(Duration::from_secs(1))?;
+        r.key("Return", Duration::from_millis(500))?;
+        r.sleep(Duration::from_secs(6))?;
+        shoot(r, "eon", &poster)?;
+        r.sleep(Duration::from_millis(800))
+    })?;
+    assets.extend([clip, poster]);
+    r.key("Alt+Shift+l", Duration::from_millis(300))?;
+    wait_for(r, &eon, &home, "Agent popup hidden", popup_hidden)?;
+
+    let clip = file("anima.mp4");
+    let poster = file("anima.png");
+    r.record(&clip, |r| {
+        r.sleep(Duration::from_millis(600))?;
+        r.key("Alt+Shift+a", Duration::from_millis(300))?;
+        wait_for(r, &eon, &home, "Anima popup", popup_chosen("anima"))?;
+        r.sleep(Duration::from_secs(2))?;
+        shoot(r, "eon", &poster)?;
+        r.sleep(Duration::from_secs(1))?;
+        r.key("Alt+Shift+a", Duration::from_millis(300))?;
+        wait_for(r, &eon, &home, "Anima dismissed", popup_hidden)?;
+        r.sleep(Duration::from_millis(600))
+    })?;
+    assets.extend([clip, poster]);
+
+    let shortcuts = file("shortcuts.png");
+    r.key("Alt+slash", Duration::from_millis(1200))?;
+    shoot(r, "eon", &shortcuts)?;
+    r.key("Escape", Duration::from_millis(600))?;
+    assets.push(shortcuts);
+
+    close_window(r, "eon")?;
+    let still = file("eonterm.png");
+    // EonTerm stops by generation, so name the one its terminal will start in.
+    let mut generations = isolated(&eonterm, &home);
+    generations.args(["generations", "--json"]);
+    let listing = serde_json::from_str::<Value>(&r.output(&mut generations)?)
+        .map_err(|error| Error::Invalid(error.to_string()))?;
+    let generation = listing["generations"]
+        .as_array()
+        .and_then(|records| records.iter().find(|record| record["kind"] == "current"))
+        .and_then(|record| record["id"].as_str())
+        .ok_or_else(|| Error::Invalid("EonTerm reported no current generation".into()))?;
+    let mut terminal = isolated(&eonterm, &home);
+    terminal
+        .current_dir(&demo)
+        .arg("--")
+        .arg(&eon)
+        .args(["anima", "accelerando", "--big"]);
+    let mut stop = isolated(&eonterm, &home);
+    stop.args(["stop", generation, "--json"]);
+    present(
+        r,
+        terminal,
+        "eonterm",
+        &work.join("eonterm.log"),
+        Some(stop),
+    )?;
+    r.sleep(Duration::from_secs(3))?;
+    shoot(r, "eonterm", &still)?;
+    close_window(r, "eonterm")?;
+    assets.push(still);
+
+    // Capture stays near-lossless; the published clips and stills are encoded once for the web.
+    let mut published = Vec::new();
+    for asset in &assets {
+        let video = asset.extension() == Some(OsStr::new("mp4"));
+        let web = asset.with_extension(if video { "web.mp4" } else { "webp" });
+        let mut encode = r.command("ffmpeg");
+        encode
+            .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-i"])
+            .arg(asset);
+        if video {
+            encode
+                .args(["-an", "-c:v", "libx264", "-crf", "28", "-preset", "slow"])
+                .args(["-pix_fmt", "yuv420p", "-movflags", "+faststart"]);
+        } else {
+            encode.args(["-c:v", "libwebp", "-quality", "85"]);
+        }
+        r.exec(encode.arg("-y").arg(&web))?;
+        if video {
+            fs::rename(&web, asset)?;
+            published.push(asset.clone());
+        } else {
+            published.push(web);
+        }
+    }
+    publish(
+        &root.join("assets/demo/features"),
+        published.iter().map(PathBuf::as_path),
+    )
+}
+
 fn main() -> ExitCode {
-    kinestra::run(record)
+    match env::args().nth(1).as_deref() {
+        None => kinestra::run(record),
+        Some("features") => kinestra::run(features),
+        Some(other) => {
+            eprintln!("unknown recipe {other:?}; run with no argument or `features`");
+            ExitCode::FAILURE
+        }
+    }
 }
