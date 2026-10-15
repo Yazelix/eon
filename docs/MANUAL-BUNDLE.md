@@ -62,7 +62,8 @@ components independently.
 
 ## Retained development proof
 
-The 2026-10-10 candidate archive has SHA-256
+This proof predates the single repository and awaits re-proof here. The
+2026-10-10 candidate archive has SHA-256
 `ad351bb2c914f7319ba0bd1006a8ab77041a05375687a6aac350cd7a6294f971`.
 Its Eon artifact is `/nix/store/ayb2ilp1rq7c95q4r1b3qn8qzdx5pw02-eon-0.1.0`,
 with Orbit `6bc269c40b18f08b95778939518f77556ba91c67` and Venus
@@ -84,7 +85,7 @@ The owning bead retains exact source hashes, commands, receipts and the
 assert-based native probe under
 `~/.local/state/eon/proofs/eon-manual-bundle-2026-10-10-m7mqh_vg/`.
 This scripted native interaction shares the host kernel; it is not independent
-machine, hardware-GPU or human screen-reader acceptance. EON-C8 retains the
+machine, hardware-GPU or human screen-reader acceptance. VEN-C1 records the
 narrow Orca limitation.
 
 ## Installer and publication handoff
@@ -93,7 +94,7 @@ The [static installer](INSTALLER.md) consumes this verified artifact, preserves
 its layout and selects its root entrypoint. Its accepted development proof
 under `eon-prove-thin-linux-bundle-installer-8r7n` covers placement, upgrade,
 rollback and owned removal while retaining every version at its original path.
-EON-C5/C6 record its exact second archive and unchanged component graph.
+That bead records its exact second archive and unchanged component graph.
 
 Existing component notices remain in the closure; Eon's license and Bubblewrap's
 upstream source/license are also carried at the archive root. Publication still

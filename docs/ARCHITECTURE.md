@@ -124,15 +124,14 @@ out of EONW and Venus. v7 also permits distinct pending Project pickers in
 separate tabs while preserving the v6 single-pending validator. Eon provides no
 version negotiation layer. Existing live supervisors retain their generation
 until explicitly stopped; the updated executable starts a separate generation.
-Composed activation requires an exact v8 Venus consumer.
+Composed activation requires an exact v9 Venus consumer.
 
-The optional Claude observation adds only bounded presentation facts. Runtime's
-explicit status-line collector observes ordinary responses and owns source
-binding, normalization, observation age and expiry; Venus owns its native chip.
-Repeated cached callbacks cannot advance observation time. Credential contents,
-account identity, source-session IDs and raw status-line payloads stay outside
-EONW and Venus. The private collector cache is scoped to Eon's runtime root;
-independent windows consume the same selected source without a provider daemon.
+The optional Claude observation adds only bounded presentation facts. Under
+EON-C27, pinned CodexBar collects it; Runtime owns bounded subprocesses,
+validation, observation age and expiry, and Venus owns its native chip.
+`eon claude-statusline` remains a bounded silent sink that writes no quota
+state. Credential contents, account identity and raw provider output stay
+outside EONW and Venus.
 
 Within one exact runtime generation, Eon consumes Orbit's canonical private
 management records and lease stream without copying their schema. Eon validates

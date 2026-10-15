@@ -23,17 +23,16 @@ defines the dependency gate, and Beads retain the full candidate evidence.
   safety and Windows linking fixes, and leaves the dependency graph unchanged.
   Adopting the upstream release avoids an owned build-script patch; Rust-only
   CPU flags do not control this Zig build. No owned runtime logic is added.
-- **Evidence:** `orb-bi4.1` and its immutable negative corpus at
-  `ac0a291ebe7fcebe4d7cace914b89363856c4903`; accepted `orb-bi4.3` proof
-  `e4fde443e625180d7332eff4dff366f64bee30a8`; portable build adoption
-  `427cf2d074cd1db905a2cc2602a5475065d1c790` ([PR #1](https://github.com/Yazelix/eon-sessions/pull/1)),
-  with downstream acceptance tracked by Eon `eon-portable-orbit-cpu-omxq`.
+- **Evidence:** `orb-bi4.1` and its immutable negative corpus; accepted `orb-bi4.3`
+  proof; portable build adoption with downstream acceptance tracked by Eon
+  `eon-portable-orbit-cpu-omxq`. Those Beads record the pre-consolidation
+  revisions.
 
 ### Platform-specific PTY and local-runtime mechanics
 
 - **Selected shape:** One concrete `src/platform.rs` seam around direct `libc` 0.2.189 calls
-- **Status:** Selected and proved for ordinary and managed x86_64 Linux and Apple
-  Silicon macOS Sessions
+- **Status:** Selected and proved for ordinary and managed x86_64 Linux Sessions;
+  Apple Silicon macOS proof awaits re-proof in this repository
 - **Credible alternatives:** Handwritten C ABI with no crate; `pty-process` 0.5.3; `nix`
   0.31.3 with narrow `fs`, `poll`, `process`, `signal`, and `term` features; `portable-pty`
   0.9.0; `rustix` 1.1.4 with `rustix-openpty` 0.2.0
@@ -49,17 +48,15 @@ defines the dependency gate, and Beads retain the full candidate evidence.
   13 tests and the canonical checks, removed 44 owned lines, and added `pty-process`,
   `rustix`, and `linux-raw-sys` to the normal Linux graph. The accepted proof retains the
   no-manifest candidate; adopting `pty-process` remains a separate user-approved crate gate.
-  Native Apple Silicon proof confirms Darwin's zero-length master-read closure maps to the
-  existing platform-neutral `Closed` outcome without a second PTY implementation. The same
+  Pre-consolidation native Apple Silicon proof confirmed Darwin's zero-length master-read
+  closure maps to the existing platform-neutral `Closed` outcome without a second PTY implementation. The same
   seam uses Darwin `getpeereid` and `proc_pidinfo(PROC_PIDTBSDINFO)` for the existing
   management peer and opaque process-start identities without changing management policy or
   adding a dependency.
 - **Evidence:** Retroactive crate gate in `orb-bi4.2`; exact Apple, Ghostty, portable-pty,
   and libc sources plus the portability disposition are recorded in `orb-pmp`;
-  post-candidate `pty-process` evidence is recorded there for a future decision; accepted
-  ordinary ORB-C14 proof `6c90ef467abb520a2226a8674a7d0d7fb6f54099`; accepted native
-  management proof `0233f4d34b294a50c5bc7f373859cf4ec04d2414` in
-  [native run 34654742795](https://github.com/Yazelix/eon-sessions/actions/runs/34654742795)
+  post-candidate `pty-process` evidence is recorded there for a future decision. The
+  native ORB-C14 proofs are pending re-proof in this repository.
 
 ### Linux PTY Session shutdown
 
@@ -192,18 +189,18 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 
 ### Native Venus window, font, and renderer
 
-- **Selected shape:** Eon Desktop pins `winit` 0.30.13, `wgpu` 30.0.0, `glyphon` 0.12.0 with
+- **Selected shape:** Venus pins `winit` 0.30.13, `wgpu` 30.0.0, `glyphon` 0.12.0 with
   `cosmic-text` 0.19.0, `AccessKit` 0.24.1, `accesskit_winit` 0.33.2, and `pollster` 1.0.1
-- **Status:** Selected and proved in Eon Desktop; none are Eon Sessions dependencies
+- **Status:** Selected and proved in Venus; none are Orbit dependencies
 - **Credible alternatives:** An owned `cosmic-text` atlas; `softbuffer` plus `tiny-skia`;
   Vello plus Parley; Sugarloaf after a proved glyphon failure; no unnecessary `librio`,
   Ratatui, Qwertty, or full UI framework dependency
 - **Why:** Venus owns native lifecycle, input, GPU presentation, text shaping, and
-  accessibility while Orbit remains the sole terminal authority. The selected stack passed
-  the native consumer proof and the corrected sustained-output envelope at Venus
-  `8929c9f9d151641a343813ddeb6005cb9c771286` without changing ORBS v1 or adding an Orbit
-  dependency. VEN-C16 proves Linux native Wayland at Venus
-  `e033efadf023492ae02eb1e9036de98ad93d2f98`; X11, Xwayland, macOS, and other native
+  accessibility while Orbit remains the sole terminal authority. Before consolidation the
+  selected stack passed the native consumer proof and the corrected sustained-output
+  envelope at Venus `8929c9f9d151641a343813ddeb6005cb9c771286` without changing ORBS v1 or
+  adding an Orbit dependency, and VEN-C16 proved Linux native Wayland at Venus
+  `e033efadf023492ae02eb1e9036de98ad93d2f98`; VEN-C16 now cites this repository. X11, Xwayland, macOS, and other native
   platforms are unsupported. Broader Wayland compositor coverage remains unproved.
 - **Evidence:** Venus `ven-upt.1`, `ven-upt.2`, `ven-39u`, and
   `ven-venus-linux-wayland-only-ndj`; Orbit acceptance in `orb-bi4.4` and `orb-bi4.5`

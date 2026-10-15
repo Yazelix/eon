@@ -19,8 +19,8 @@ CPU features. Older-hardware qualification applies only to the exact tested
 artifact; a successful local build does not prove cache substitution.
 
 No channel requires systemd or another specific init or service manager. The
-accepted runtime proof uses COSMIC with systemd, so non-systemd native Wayland
-remains unproved. Eon and Orbit require no cgroup delegation. Orbit's accepted
+accepted runtime proof used COSMIC with systemd before consolidation and awaits
+re-proof here, so non-systemd native Wayland remains unproved. Eon and Orbit require no cgroup delegation. Orbit's accepted
 Linux lifecycle uses bounded PTY process-group shutdown and direct-child
 reaping; deliberately detached processes may survive terminal stop.
 
@@ -64,14 +64,13 @@ Direct-distribution work requires a separate user decision after:
 
 `eon-p93` completed the graduation decision on 2026-10-10: Go to develop one
 manual Nix-free x86_64 Linux native-Wayland bundle, then its thin user-local
-installer, then qualify the public beta. The accepted decision candidate is Eon
-`dd8d79562e40caf318d82058297633349531c40d`, installed as
-`/nix/store/30b0mfch6a7axslib86660gxhl7n4p4c-eon-0.1.0`, with accepted Venus
-`58f2eaa8057627bdbf73262fdb10a1dc8b681ffc`. The exact graph and scoped proof
-reuse are recorded in `eon-p93`; EON-C8 and EON-C15 retain reader and lifecycle
-evidence. Normal alpha installation remains Nix-only. The unpublished
-[manual bundle](MANUAL-BUNDLE.md) and [installer](INSTALLER.md) prove the
-unpublished direct-delivery lifecycle under EON-C5/C6. Public-beta
+installer, then qualify the public beta. The accepted decision candidate
+predates this repository; `eon-p93` records its exact revisions and artifact,
+the exact graph, and scoped proof reuse including reader and lifecycle evidence.
+Normal alpha installation remains Nix-only. The unpublished
+[manual bundle](MANUAL-BUNDLE.md) and [installer](INSTALLER.md) proved the
+unpublished direct-delivery lifecycle under EON-C5/C6 before consolidation;
+that proof awaits re-proof in this repository. Public-beta
 qualification, release trust and redistribution clearance remain separate gates.
 
 Alpha development remains the active focus by user decision on 2026-10-11.
@@ -99,9 +98,10 @@ requires its separate approval and delivery/public-beta gates.
 On 2026-10-10 the user accepted the demonstrated
 [Orca #757](https://gitlab.gnome.org/GNOME/orca/-/work_items/757) Say All
 reading-position failure as an upstream limitation for distribution work.
-`eon-p93` records its scope and review conditions. On 2026-10-11, EON-C8 verifies
-the upstream correction at exact Orca `d13f83dc` with GNOME Terminal/Vim and
-bounded current-development Eon workflows. The historical reader failures
+`eon-p93` records its scope and review conditions. On 2026-10-11, before
+consolidation, EON-C8 verified the upstream correction at exact Orca `d13f83dc`
+with GNOME Terminal/Vim and bounded current-development Eon workflows; that
+qualification awaits re-proof in this repository. The historical reader failures
 remain recorded; older readers and broader support remain unqualified. This
 review changes no distribution approval, accepts no pending child revision
 and waives no other defect.

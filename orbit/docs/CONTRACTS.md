@@ -5,19 +5,11 @@ ownership boundaries, proof status, and remaining gaps. `AGENTS.md` governs how
 agents work, Beads govern authorized changes, and this index records what the
 system must preserve.
 
-Accepted build hardening `427cf2d074cd1db905a2cc2602a5475065d1c790`
-([PR #1](https://github.com/Yazelix/eon-sessions/pull/1)) selects
-`libghostty-vt` and `libghostty-vt-sys` 0.2.2. The native build explicitly
-passes `-Dcpu=baseline` by default, preserving Ghostty
+Orbit builds `libghostty-vt` and `libghostty-vt-sys` 0.2.2. The native build
+explicitly passes `-Dcpu=baseline` by default, preserving Ghostty
 `a887df42c56f6de86c0fe6da9c4eeca37931e083`, generated bindings and
-ORBF v2 / ORBS v13. The accepted tree is identical to reviewed PR head
-`91c53751dcce45b21b86bea0a84028f9df4fda14`: locked workspace checks,
-Clippy and governance pass, with 81 tests passed and two measurement tests
-ignored on x86_64 Linux, Rust 1.96.0 and Zig 0.15.2. This preserves the
-headless terminal contract checks; it does not refresh native Apple Silicon
-proof or establish older-CPU compatibility for a published cache artifact.
-Eon `eon-portable-orbit-cpu-omxq` owns exact downstream package adoption
-and records the remaining cache/hardware acceptance.
+ORBF v2 / ORBS v13. This preserves the headless terminal contract checks; it
+does not establish older-CPU compatibility for a published cache artifact.
 
 ## Status
 
@@ -29,114 +21,25 @@ and records the remaining cache/hardware acceptance.
 - **Retired:** the user explicitly replaced or removed the contract; its ID is
   never reused
 
-Accepted producer `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`
-(`orb-scrollback-position-cpb`) changes ORB-C4,
-ORB-C6 and ORB-C8 to canonical ORBF v2 carried by ORBS v11. It adds two
-little-endian `u64` fields after cursor metadata and before rows:
-`ScrollPosition.rows_from_live` and `ScrollPosition.history_rows`. The latter
-excludes the active viewport; the former cannot exceed it and is zero at live
-bottom. Both are zero on the alternate screen. Counts describe current wrapped
-display rows, not stable logical lines, and are extracted with each complete
-frame through the existing synchronized publication owner. Output, scrolling,
-reflow, pruning, clear/reset, screen switches and reattachment therefore carry
-position at that frame's revision. Failed engine extraction does not fabricate
-zero or publish a partial frame. Existing 4 MiB/100,000-cell bounds remain.
+Proofs cite revisions of this repository. "Pending re-proof in this
+repository" marks an earlier proof that was not repeated after consolidation;
+it is re-proved when that platform or feature is next touched.
 
-This is an explicitly breaking, exact-version boundary with no compatibility
-window. The diagnostic client and owned test fixtures consume the canonical
-crate in this repository. Venus, Eon's direct protocol consumer and Eonova's
-independent composition retain their accepted pins until their own coordinated
-updates. Producer acceptance precedes Venus consumption, then paired Eon
-delivery; this producer does not prove or install a visible indicator. The full
-workspace checks pass (77 tests; two manual measurements remain ignored) on
-x86_64 Linux, Rust 1.96.0 and Zig 0.15.2. They preserve ORB-C1-C3, ORB-C5,
-ORB-C7 and ORB-C9-C13 through the new envelope. Exact inputs, results and limits:
-`~/.local/state/eon/proofs/orb-scrollback-position-cpb-2026-09-09/REPORT.md`.
+Canonical ORBF v2 carries two little-endian `u64` fields after cursor metadata
+and before rows: `ScrollPosition.rows_from_live` and
+`ScrollPosition.history_rows`. The latter excludes the active viewport; the
+former cannot exceed it and is zero at live bottom. Both are zero on the
+alternate screen. Counts describe current wrapped display rows, not stable
+logical lines, and are extracted with each complete frame through the existing
+synchronized publication owner. Output, scrolling, reflow, pruning,
+clear/reset, screen switches and reattachment therefore carry position at that
+frame's revision. Failed engine extraction does not fabricate zero or publish a
+partial frame. Existing 4 MiB/100,000-cell bounds remain.
 
-Accepted producer `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`
-(`orb-return-to-live-scroll-b62`) changes ORB-C8 under exact-version ORBS v12:
-one zero-payload `ReturnToLive` request moves the authoritative primary viewport
-to live output with no PTY input, even beyond the relative 1,024-row limit.
-Orbit uses the existing libghostty Bottom operation and complete-frame publisher;
-ORBF v2 is unchanged. The request fails without mutation when terminal-owned
-routing or the alternate screen is active, waits for synchronized output, and
-preflights bounded frame admission. Venus and Eon subsequently pinned this
-revision; independent Eonova adoption and native macOS proof are separate.
-
-Accepted producer `b6cecf8f2ee35570b41cfdc578b095889d917fe2`
-(`orb-selection-upward-autoscroll-zlt`) extends ORB-C8 and ORB-C9 under
-exact-version ORBS v13. During one active primary-screen host gesture, each
-`AutoscrollUp` action resolves a top-row surface position, moves the authoritative
-viewport by at most one older retained row, extends libghostty's tracked
-selection, and returns the applied distance with a complete frame. It uses the
-existing bounded scroll outcome and synchronized-output deferral. Ordinary
-signed scroll and return-to-live still clear selection. The x86_64 Linux
-headless producer proof covers the new action; Venus and Eon subsequently
-adopted this exact ORBS v13 source.
-
-Accepted producer `6bc269c40b18f08b95778939518f77556ba91c67`
-(`orb-click-selection-ladder-325`) changes ORB-C9 under unchanged ORBF v2 and
-ORBS v13: double-click retains native word selection, triple-click selects a
-space/tab-delimited span including punctuation, and fourth-or-later repeat
-clicks select logical lines. Matching drags and upward ticks retain the native
-tracked anchor, repeat validation, and lifecycle owner. The exact protocol tree
-is unchanged. Venus and Eon retain Orbit `b6cecf8f2ee35570b41cfdc578b095889d917fe2`
-and its earlier granularity until separate accepted-source adoption and native
-pointer/clipboard proof. This Linux producer proof does not extend native
-macOS qualification.
-
-Accepted ORBS v7 changes ORB-C8 and preserves the ORBS-carried behavior of
-ORB-C3 through ORB-C7, ORB-C9, and ORB-C11 at
-`baf8aa28dcaa50484cd221aa7730defedc2356bb`.
-
-Accepted exact-version ORBS v8 changes ORB-C9 from client-resolved cells to
-Orbit-resolved pointer gestures at
-`d9b22eb294f8f42b4f49324fd5467eab239c2917`. It preserves every other ORBS v7
-contract and has no compatibility window.
-
-Accepted exact-version ORBS v9 changes ORB-C5 and ORB-C9 so Orbit routes one
-left-pointer sequence from authoritative terminal mouse state and tags host
-selection copy destinations at
-`aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`. It intentionally replaces ORBS
-v8 without a compatibility window; current exact consumers use superseding
-ORBS v10.
-
-Accepted exact-version ORBS v10 hardens ORB-C9 so an accepted Finish reports
-the authoritative presentation revision at sequence completion at
-`59975e9176f5caf8b78dc3273e88d9ecbb75dc3f`. It intentionally replaces ORBS v9
-without an adapter or compatibility window and preserves the ORBS-carried
-behavior of ORB-C3 through ORB-C8 and ORB-C11.
-
-Accepted Orbit `70861097a825c2fbfaea53a8ca9437f45e8602eb` hardens ORB-C9
-under unchanged ORBS v10 by superseding wholly unsent host-selection frames.
-It preserves every other accepted Orbit contract and the exact wire bytes.
-
-Accepted Orbit `4e03fe280a714c3f3e29d31d0ec6374eaaf4ecea` changes ORB-C8
-under unchanged ORBS v10 so lagging relative preview and signed-scroll requests
-resolve against current authoritative terminal state. It preserves every other
-accepted Orbit contract and the exact wire bytes.
-
-Accepted Orbit `a65e199e16e97330175e314cacf791fa00f53069` hardens ORB-C7
-and ORB-C8 so one partially transmitted maximum frame cannot falsely exhaust
-the fixed capacity required by one atomic maximum scroll outcome. The wire and
-replacement order remain unchanged.
-
-Accepted Orbit `64b225eb249490c9075894814942652a8b9d6192` changes ORB-C8
-under unchanged ORBS v10 so one relative preview or signed-scroll request held
-during DEC 2026 synchronized output resolves after normal or watchdog release.
-It preserves every other accepted Orbit contract and the exact wire bytes.
-
-Accepted Orbit `61c1dc0bc4c9fc3b592058ff8fa5f6cd7b957046` changes ORB-C9
-under unchanged ORBS v10 so compatible PTY output preserves active host
-selection and repeat-click classification through libghostty-tracked content
-movement. It preserves every other accepted Orbit contract and the exact wire
-bytes.
-
-Accepted Orbit `91999d79546422b49bdbc124166a65859d0bd872` hardens ORB-C9
-under unchanged ORBS v10 so a Begin from an already-presented, non-future
-revision resolves against current authority instead of racing continuous PTY
-output. It preserves every other accepted Orbit contract and the exact wire
-bytes.
+ORBS v7 through v13 are explicitly breaking, exact-version boundaries with no
+compatibility window or adapter; each replaced its predecessor. The diagnostic
+client, owned test fixtures, Venus and Eon consume the canonical crate in this
+repository. Each contract below states the current ORBS v13 behavior.
 
 ## ORB-C1 — Session survival across client loss
 
@@ -152,14 +55,14 @@ bytes.
 - **Owner:** Orbit's concrete runtime coordinator with the isolated platform PTY
   lifecycle.
 - **Boundary:** Persistence across Orbit or machine restart is excluded.
-- **Proof:** `6c90ef467abb520a2226a8674a7d0d7fb6f54099`
-  - **Environment:** x86_64 Linux; GitHub-hosted `macos-15-arm64` runner,
-    macOS 15.7.9 (24G830)
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
   - **Evidence:**
     - [`transient_pty_eio_recovers_when_the_live_child_reopens_the_terminal`](../tests/lifecycle.rs)
     - [`simultaneous_stale_socket_claim_has_one_reachable_owner`](../tests/lifecycle.rs)
-    - Native Apple Silicon and Linux CI run
-      [34649967366](https://github.com/Yazelix/eon-sessions/actions/runs/34649967366)
+    - Workspace suite
+- **Open proof:** Pending re-proof in this repository: the native Apple Silicon
+  run of these checks.
 
 ## ORB-C2 — Sole terminal-state authority
 
@@ -174,12 +77,12 @@ bytes.
 - **Owner:** Orbit's platform-neutral concrete runtime coordinator.
 - **Boundary:** Ordered client-visible effects beyond the current transport
   contract remain unproved.
-- **Proof:** `d96fff2015cded947c881c454216c6bf0ad69b7b`
-  - **Environment:** x86_64 Linux
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
   - **Evidence:**
     - [`ansi_palette_is_bounded_and_resets_to_supplied_defaults`](../src/main.rs)
     - [`conformance_c2_parser_state_and_terminal_replies_survive_client_failure`](../tests/lifecycle.rs)
-    - Canonical Rust verification suite
+    - Workspace suite
 
 ## ORB-C3 — Bounded interactive and metadata attachment
 
@@ -199,19 +102,17 @@ bytes.
   PTY, child, other role, or cleanup.
 - **Owner:** Orbit attachment transport and runtime coordinator with canonical
   `orbit-protocol` ORBS v7.
-- **Consumes:** Canonical ORBS v7; Venus
-  `f13dc7ac2e9a24c5cff5bb7e618436783ec76dbf` and Eon
-  `b44d968e38474fc5b75a41bcde2ad750da0d1e3e` adopted that exact version,
-  while current consumers use superseding ORBS v10.
+- **Consumes:** Canonical ORBS v7 behavior, preserved through ORBS v13; Venus
+  and Eon consume it in this repository.
 - **Boundary:** Visible text observation, agent observation, multiple observers,
   multiple interactive clients, remote access, and process authority are
   excluded.
-- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
-  - **Environment:** x86_64 Linux
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
   - **Evidence:**
     - [`metadata_observer_is_read_only_and_keeps_only_the_latest_change`](../src/attachment.rs)
     - [`metadata_observer_streams_inactive_title_and_cwd_without_owning_input`](../tests/lifecycle.rs)
-    - Canonical Rust verification suite
+    - Workspace suite
 
 ## ORB-C4 — Coherent ordered presentation
 
@@ -225,14 +126,16 @@ bytes.
   publish partial state or violate final convergence.
 - **Owner:** Orbit attachment transport and synchronized runtime publication
   with canonical session and complete-frame codecs.
-- **Consumes:** Canonical ORBF v2 in ORBS v11; installed consumers retain prior exact pins.
+- **Consumes:** Canonical ORBF v2 in ORBS v13; Venus and Eon consume it in this
+  repository.
 - **Boundary:** Native presentation quality remains Venus-owned.
-- **Proof:** `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`
-  - **Environment:** x86_64 Linux
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
   - **Evidence:**
     - [`synchronized_presentation_coalesces_defers_and_times_out`](../src/runtime.rs)
     - [`real_pty_synchronized_output_holds_split_large_update`](../src/presentation.rs)
     - [`conformance_c4_real_pty_reattach_converges_through_complete_ordered_frames`](../src/presentation.rs)
+    - Workspace suite
 
 ## ORB-C5 — Semantic terminal interaction
 
@@ -255,17 +158,16 @@ bytes.
   emit partial input, or synthesize terminal input.
 - **Owner:** Canonical platform-neutral `orbit-protocol` values and Orbit's
   semantic interaction owner.
-- **Consumes:** Canonical ORBS v9 semantic input; Venus
-  `1034817bbe2352fb4b1026bce6b1f02eedd67e37` and Eon
-  `df8e07462a8faf548b1afde89b77b96b8095b194` consume the preserved behavior
-  through exact ORBS v10.
+- **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v13;
+  Venus and Eon consume it in this repository.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
-- **Proof:** `aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672`
-  - **Environment:** x86_64 Linux
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
   - **Evidence:**
     - [`kitty_release_never_falls_back_to_text`](../src/interaction.rs)
-    - Accepted real-PTY semantic-input lifecycle checks
+    - [`conformance_c5_authoritative_input_modes_and_resize_survive_detach`](../tests/lifecycle.rs)
     - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
+    - Workspace suite
 
 ## ORB-C6 — Rich presentation without silent degradation
 
@@ -278,14 +180,15 @@ bytes.
   boundary.
 - **Owner:** Orbit's authoritative extraction and synchronized publication with
   canonical `orbit-protocol` values and codecs.
-- **Consumes:** Canonical ORBF v2 in ORBS v11; installed consumers retain prior exact pins.
+- **Consumes:** Canonical ORBF v2 in ORBS v13; Venus and Eon consume it in this
+  repository.
 - **Boundary:** Kitty graphics remain explicitly unsupported.
-- **Proof:** `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`
-  - **Environment:** x86_64 Linux
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
   - **Evidence:**
     - [`conformance_c6_direct_rows_match_rich_canonical_frame_rows`](../src/presentation.rs)
     - [`orbf_v2_cell_width_topology_is_validated_at_every_acceptance_boundary`](../crates/protocol/src/lib.rs)
-    - Canonical ORBF-in-ORBS codec checks
+    - Canonical ORBF-in-ORBS codec checks in the workspace suite
 
 ## ORB-C7 — Bounded attachment pressure
 
@@ -302,12 +205,13 @@ bytes.
 - **Owner:** Orbit attachment transport in the concrete runtime coordinator.
 - **Boundary:** The proof covers one local input client plus one metadata
   observer.
-- **Proof:** `a65e199e16e97330175e314cacf791fa00f53069`
-  - **Environment:** x86_64 Linux
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
   - **Evidence:**
     - [`pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision`](../src/attachment.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
     - [`metadata_observer_streams_inactive_title_and_cwd_without_owning_input`](../tests/lifecycle.rs)
+    - Workspace suite
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
@@ -363,44 +267,33 @@ bytes.
 - **Owner:** Orbit's semantic interaction and synchronized-presentation owners
   with libghostty's native viewport, byte-budgeted history, one canonical row
   extractor, and bounded output queue.
-- **Consumes:** Canonical ORBF v2 in accepted ORBS v13. Venus
-  `773c6bab7d3e21e0b0d7d942c9bba72260a08b42` and Eon
-  `00a180c5940f0af84fc84cd0e4134a01824a61a7` select exact Orbit
-  `b6cecf8f2ee35570b41cfdc578b095889d917fe2`; installed Eon proof is
-  `1501cc91c7c18bb095731481acdb9098e7a8d530`.
-  Under the prior ORBS v10 proof, Venus
-  `7f325a31d0052d84a1a09ff065c0e9103563c0e8` and Eon
-  `e1a5a9e02f7102cef48b25a83f740ea716647fa1` consume exact Orbit
-  `64b225eb249490c9075894814942652a8b9d6192`.
+- **Consumes:** Canonical ORBF v2 in accepted ORBS v13; Venus and Eon consume
+  it in this repository.
 - **Boundary:** Arbitrary line-count guarantees, gesture cadence, downward
   selection autoscroll, velocity, kinetic effects, graphics, and restart
   persistence are excluded; physical wheels retain their existing typed
   terminal-routed or one-row behavior. This does not accept Eonova or native
   Apple Silicon use of ORBS v13.
-- **Proof:** `6bc269c40b18f08b95778939518f77556ba91c67`
-  - **Environment:** x86_64 Linux, headless producer checks
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
   - **Evidence:**
     - [`conformance_c8_scroll_position_follows_published_terminal_state`](../src/runtime.rs)
+    - [`conformance_c8_authoritative_viewport_routes_wheel_and_key_from_terminal_state`](../src/interaction.rs)
     - [`scroll_position_is_canonical_at_every_acceptance_boundary`](../crates/protocol/src/lib.rs)
     - [`vertical_scroll_batches_are_bounded_and_canonical`](../crates/protocol/src/session/tests.rs)
     - [`pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision`](../src/attachment.rs)
     - [`conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative`](../src/interaction.rs)
     - [`conformance_c8_return_to_live_is_one_authoritative_jump_without_pty_input`](../src/interaction.rs)
     - [`conformance_c9_upward_selection_scroll_keeps_one_gesture_and_exact_copy`](../src/interaction.rs)
+      covers cell, span, and line granularity with unchanged deferral, bounds,
+      ordered outcomes, and exact Unicode copy.
     - [`return_to_live_has_zero_payload`](../crates/protocol/src/session/tests.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
     - [`real_pty_synchronized_output_holds_split_large_update`](../src/presentation.rs)
-    - `cargo fmt --check`, `cargo check --workspace --locked`,
-      `cargo test --workspace --locked` (81 passed, 2 ignored), and
-      `cargo clippy --workspace --locked --all-targets -- -D warnings` passed.
-    - The upward-tick regression covers cell, span, and line granularity with
-      unchanged deferral, bounds, ordered outcomes, and exact Unicode copy.
-    - Prior ORBS v13 producer proof: `b6cecf8f2ee35570b41cfdc578b095889d917fe2`.
-    - Prior ORBS v12 producer proof: `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`.
-    - Prior ORBS v11 producer proof: `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`.
-    - Prior ORBS v10 installed proof only: Eon `e1a5a9e02f7102cef48b25a83f740ea716647fa1` refreshed profile
-      `/nix/store/f46g210pffvzlyix6nv0rh3dsl5arv5m-eon-0.1.0` and passed the
-      same split real-PTY regression against its installed Orbit binary.
+    - Workspace suite
+- **Open proof:** Pending re-proof in this repository: installed scrollback and
+  ReturnToLive through Venus (`eon-monorepo-2oko.6` dogfood item 9 was not
+  exercised).
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
@@ -469,22 +362,16 @@ bytes.
 - **Owner:** Orbit's semantic interaction owner with authoritative mouse modes,
   libghostty current-viewport gesture selection, and canonical ORBS v13. Venus
   owns native event delivery and clipboard effects.
-- **Consumes:** Accepted ORBS v13 and ORB-C7 bounded-pressure behavior; accepted
-  ORBS v9 remains the prior routing and host-selection proof. Historical Venus
-  `e13970e90289d0d86f0adcbf350e4b9c1d5e5219` and Eon
-  `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f` consumed prior gestures through
-  exact ORBS v10. Current Venus/Eon Orbit pins retain the prior ORBS v13 source
-  `b6cecf8f2ee35570b41cfdc578b095889d917fe2`; native 2/3/4-click adoption is
-  separate.
+- **Consumes:** Accepted ORBS v13 and ORB-C7 bounded-pressure behavior; Venus
+  and Eon consume it in this repository.
 - **Boundary:** Configurable word separators or click thresholds, block selection,
   downward autoscroll, cadence, semantic command-output selection, search,
   graphics, and restart persistence are excluded.
   Spans retain native word-selection limits: a wide-character trailing spacer
   can stop the selected span (`a;界,é` selects `a;界`). This inherited
   libghostty limitation is outside the click-ladder correction.
-- **Proof:** `6bc269c40b18f08b95778939518f77556ba91c67`
-  - **Environment:** x86_64 Linux headless ORBS v13 producer; historical
-    downstream installed Sway 1.12 native Wayland proof covers ORBS v10 only
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
   - **Evidence:**
     - [`authoritative_selection_click_ladder_preserves_wrapped_text_and_copy`](../src/interaction.rs)
       checks exact highlighted cells, frozen text for both copy effects,
@@ -496,30 +383,20 @@ bytes.
     - [`every_client_message_round_trips`](../crates/protocol/src/session/tests.rs)
       and [`malformed_typed_payloads_are_rejected`](../crates/protocol/src/session/tests.rs)
       cover the exact ORBS v13 action and invalid positions.
-    - `cargo fmt --check`, `cargo check --workspace --locked`,
-      `cargo test --workspace --locked` (81 passed, 2 ignored), and
-      `cargo clippy --workspace --locked --all-targets -- -D warnings` passed.
-      `cargo build --locked` passes. The exact protocol subtree is unchanged.
-    - Prior ORBS v13 producer proof: `b6cecf8f2ee35570b41cfdc578b095889d917fe2`.
-    - Prior ORBS v10 producer proof: `91999d79546422b49bdbc124166a65859d0bd872`.
     - [`authoritative_selection_accepts_presented_input_and_freezes_copy`](../src/interaction.rs)
     - [`active_selection_tracks_scrolling_pty_output`](../src/interaction.rs)
     - [`authoritative_selection_uses_libghostty_click_and_drag_granularity`](../src/interaction.rs)
     - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
     - [`host_selection_supersedes_unpresented_drag_frames_before_release`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
-    - Historical ORBS v10 Eon `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f` acceptance in
-      `eon-accept-live-output-input-nxh` composes that ORBS v10 Orbit source and
-      Venus `e13970e90289d0d86f0adcbf350e4b9c1d5e5219`. Installed EonTerm
-      passes cell/word/line drag and repeat-click selection, both clipboard
-      destinations, and explicit frozen copy while output and terminal replies
-      continue. Appends, DEC 2026 batches, and active-screen redraws retain
-      anchored history. That proof closed the ORBS v10 downstream-adoption gap.
-      Other clipboard effects remain separate.
+    - Workspace suite
+- **Open proof:** Pending re-proof in this repository: the installed click
+  selection ladder, drag selection and copy/paste through Venus
+  (`eon-monorepo-2oko.6` dogfood item 9 was not exercised).
 
 ## ORB-C10 — Eon terminal identity
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** Every Orbit-owned PTY child and its launch environment.
 - **Trigger:** Orbit launches a PTY child.
 - **Result:** The child receives `TERM=eon` and `COLORTERM=truecolor`; the launch
@@ -530,11 +407,15 @@ bytes.
 - **Owner:** Orbit's platform PTY seam and
   [`terminfo/eon.terminfo`](../terminfo/eon.terminfo); Eon installs the entry.
 - **Boundary:** Other distribution formats remain outside the Nix alpha.
-- **Proof:** `7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c`
-  - **Environment:** x86_64 Linux Nix alpha
-  - **Evidence:** `orb-j0m.6` isolated `tic`, `infocmp`, real-PTY `TERM`, `clear`,
-    and post-clear checks; Eon composition proof
-    `eae70e8d3ed4348b389f320dfd49d7db29478546`
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; `nix build .#default`, installed
+    `/nix/store/gg71kiz3k854f4xihasr1pwligypznl3-eon-0.1.0`
+  - **Evidence:** The Nix build compiles the entry with `tic`; with only the
+    installed Orbit package's `share/terminfo`, `infocmp -x eon` resolves the
+    entry and `TERM=eon tput clear` emits the clear sequence. The platform seam
+    sets `TERM` and `COLORTERM` in [`src/platform.rs`](../src/platform.rs).
+- **Open proof:** Pending re-proof in this repository: the isolated real-PTY
+  `TERM` and post-`clear` check.
 
 ## ORB-C11 — Ordered terminal-authored clipboard writes
 
@@ -555,11 +436,14 @@ bytes.
 - **Consumes:** Canonical ORBS v7.
 - **Boundary:** Ordinary clipboard delivery, Wayland without data-control,
   broader compositors, and non-Linux policy remain unproved.
-- **Proof:** `baf8aa28dcaa50484cd221aa7730defedc2356bb`
-  - **Environment:** x86_64 Linux Wayland primary-selection consumer
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
   - **Evidence:**
     - [`src/attachment.rs`](../src/attachment.rs) ordered bounded output checks
-    - `orb-ll1.1` codec, callback, pressure, and real-PTY ordered-effect checks
+    - [`real_pty_clipboard_write_precedes_its_frame`](../src/presentation.rs)
+    - [`clipboard_capture_is_attached_typed_and_bounded`](../src/runtime.rs)
+    - [`clipboard_output_pressure_disconnects_without_retaining_effects`](../src/runtime.rs)
+    - Workspace suite
 
 ## ORB-C12 — Bounded Session shutdown
 
@@ -593,26 +477,24 @@ bytes.
     group, and SIGHUP-ignoring foreground jobs whose shell exits during grace may
     survive.
   - Orbit scans no process names, ancestry, session IDs, or procfs and claims no
-    whole-descendant cleanup. Native macOS proof covers direct-child HUP and
-    reaping; the special detached and foreground-group topology remains
-    Linux-proved only.
-- **Proof:** `0233f4d34b294a50c5bc7f373859cf4ec04d2414`
-  - **Environment:** x86_64 Linux; GitHub-hosted `macos-15-arm64` runner,
-    macOS 15.7.9 (24G830)
+    whole-descendant cleanup. Native macOS proof of direct-child HUP and
+    reaping is pending re-proof in this repository; the special detached and
+    foreground-group topology remains Linux-proved only.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`;
+    installed `/nix/store/gg71kiz3k854f4xihasr1pwligypznl3-eon-0.1.0` driven
+    headlessly by a Kinestra recipe on a private headless Sway (wlroots, pixman)
   - **Evidence:**
     - [`shutdown_hups_the_unreaped_direct_child`](../tests/lifecycle.rs)
     - [`shutdown_escalates_foreground_and_permits_a_detached_process`](../tests/lifecycle.rs)
     - [`stale_socket_and_safe_signal_shutdown`](../tests/lifecycle.rs)
     - [`writing_descendant_cannot_hold_server_open_after_known_child_exit`](../tests/lifecycle.rs)
-    - Prior accepted Linux lifecycle proof
-      `7de9980ffbd6417758698d5c33356204eeb24de5`
-    - Native Apple Silicon CI run
-      [34654742795](https://github.com/Yazelix/eon-sessions/actions/runs/34654742795)
-      proves direct-child HUP/reap, bounded signal shutdown, and authorized
-      management Stop.
-    - Eon `ced9e4ae11ed21a0f05d50cd470491adffa73b54` consumes this shutdown
-      boundary; composed recovery and Stop acceptance is recorded at Eon
-      `0bf0b165d06b4a8162be497011070f61f6c2000a`.
+    - Workspace suite
+    - Eon consumes this shutdown boundary; `eon-monorepo-2oko.6` dogfood
+      checklist item 12 stops the installed generation.
+- **Open proof:** Pending re-proof in this repository: the native Apple Silicon
+  direct-child HUP/reap, bounded signal shutdown, and authorized management
+  Stop run.
 
 ## ORB-C13 — Same-boot management ownership
 
@@ -674,22 +556,19 @@ bytes.
   - Platform-neutral identity, lease, status, and failure values use shared
     endpoint, permission, record, and polling mechanics with isolated Linux and
     Darwin peer-credential and process-start identity mechanisms.
-- **Proof:** `0233f4d34b294a50c5bc7f373859cf4ec04d2414`
-  - **Environment:** x86_64 Linux; GitHub-hosted `macos-15-arm64` runner,
-    macOS 15.7.9 (24G830), Rust/Cargo 1.98.1, Zig 0.15.2
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
   - **Evidence:**
-    - Accepted management proof `3186519af709a94005974a97212814c05715a99d`
     - [`managed_run_survives_launcher_loss_and_has_one_replacement_owner`](../tests/lifecycle.rs)
     - [`management_authority_negatives_fail_closed_without_stopping_session`](../tests/lifecycle.rs)
-    - Native Apple Silicon and Linux CI run
-      [34654742795](https://github.com/Yazelix/eon-sessions/actions/runs/34654742795)
-    - Eon `ced9e4ae11ed21a0f05d50cd470491adffa73b54` consumes management v1;
-      composed recovery and Stop acceptance is recorded at Eon
-      `0bf0b165d06b4a8162be497011070f61f6c2000a`.
+    - Workspace suite
+    - Eon consumes management v1 in this repository.
+- **Open proof:** Pending re-proof in this repository: the native Apple Silicon
+  management run.
 
 ## ORB-C14 — Apple Silicon macOS platform
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** A native Orbit user on `aarch64-darwin`.
 - **Trigger:** The Orbit server launches one ordinary or managed PTY Session
   with local Unix endpoints on Apple Silicon macOS.
@@ -706,23 +585,22 @@ bytes.
   not a runtime or support claim.
 - **Owner:** Orbit's existing platform seam owns native mechanics; the shared
   runtime and protocol owners retain every product invariant.
-- **Boundary:** Native proof covers ordinary and managed Orbit Sessions,
+- **Boundary:** The contract covers ordinary and managed Orbit Sessions,
   including bounded direct-child shutdown. Venus and Eon integration, Nix
   packaging, `x86_64-darwin`, signing, notarization, direct distribution,
   remote transport, and restart persistence remain unsupported.
-- **Proof:** `0233f4d34b294a50c5bc7f373859cf4ec04d2414`
-  - **Environment:** GitHub-hosted `macos-15-arm64` runner, macOS 15.7.9
-    (24G830), Rust/Cargo 1.98.1, Zig 0.15.2.
-  - **Evidence:** Native Apple Silicon CI run
-    [34654742795](https://github.com/Yazelix/eon-sessions/actions/runs/34654742795)
-    passed 32 Orbit unit tests (2 ignored) and all 15 native lifecycle tests;
-    the same source passed 33 Orbit unit tests (2 ignored) and all 18 Linux
-    lifecycle tests. The native lifecycle covers attachment negotiation, real
-    PTY input and resize, detach/reconnect, bounded pressure, metadata,
-    owner-only endpoint permissions, EOF, stale-socket ownership, direct-child
-    HUP/reaping, signal cleanup, management launch and replacement, Busy,
-    status, Stop, tombstones, stale process-start identity, record and endpoint
-    substitution, and fail-closed permission checks.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
+  - **Evidence:** On x86_64 Linux, the lifecycle suite in
+    [`tests/lifecycle.rs`](../tests/lifecycle.rs) exercises the shared Unix
+    seam: attachment negotiation, real PTY input and resize, detach/reconnect,
+    bounded pressure, metadata, owner-only endpoint permissions, EOF,
+    stale-socket ownership, direct-child HUP/reaping, signal cleanup, and
+    management launch, replacement, Busy, status, Stop, tombstones, and
+    fail-closed identity and permission checks. It does not run the isolated
+    Darwin peer and process-start identity calls.
+- **Open proof:** Pending re-proof in this repository: the native Apple Silicon
+  run of the Orbit unit and lifecycle tests on `aarch64-darwin`.
 
 ## Focused terminal conformance corpus
 
@@ -734,7 +612,7 @@ expectations:
 cargo test --locked conformance_
 ```
 
-The command runs the pinned `libghostty-vt` 0.2.1 path backed by Ghostty
+The command runs the pinned `libghostty-vt` 0.2.2 path backed by Ghostty
 `a887df42c56f6de86c0fe6da9c4eeca37931e083`. Protocol-only checks remain in
 the normal suite because they do not exercise that terminal engine.
 
@@ -775,7 +653,7 @@ remains owned by `orb-vt-unicode-baselines-i32`; performance remains owned by
 - Contract IDs are stable and repository-qualified. Never renumber or reuse an
   ID; mark an explicitly removed contract retired.
 - Only user-approved user-visible behavior, correctness boundaries, ownership
-  invariants, and cross-repository interfaces receive contract IDs.
+  invariants, and interfaces between subsystems receive contract IDs.
 - Do not index functions, modules, dependencies, configuration literals,
   individual tests, or speculative future features.
 - Every product implementation Bead names the contract IDs it creates, changes,

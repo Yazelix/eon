@@ -66,7 +66,7 @@ Orbit starts ordinary and managed PTY Sessions on x86_64 Linux and Apple
 Silicon macOS with user process permissions and no service-manager requirement.
 SIGINT, SIGTERM, and SIGHUP send SIGHUP to the initial PTY process group and the
 terminal's current foreground group; authorized management Stop uses the same
-path on both proved targets. Orbit gives the child up to 500 ms to exit. If it
+path on both targets. Orbit gives the child up to 500 ms to exit. If it
 remains unreaped, Orbit sends SIGKILL to its still-stable initial group and
 re-reads the terminal's foreground group before escalating it. If the child
 exits during the grace period, Orbit sends no later signal to the cached
@@ -79,8 +79,8 @@ detached process, a non-foreground group outside the initial group, or a
 SIGHUP-ignoring foreground job whose shell exits during the grace period may
 survive. Orbit does not scan process names, ancestry, session IDs, or procfs to
 find it. Client disconnection remains non-destructive and separate from
-explicit Session stop. Native macOS proof covers direct-child HUP and reaping;
-the special detached and foreground-group topology remains Linux-proved only.
+explicit Session stop. Native macOS proof of direct-child HUP and reaping awaits
+re-proof in this repository; the special detached and foreground-group topology remains Linux-proved only.
 
 ### Platform seam and checks
 
@@ -117,17 +117,16 @@ on typed responses, frames, and PTY state. With bounded timeouts they cover:
 
 ## Initial boundaries
 
-- ordinary and managed Orbit PTY Sessions are proved on x86_64 Linux and Apple
-  Silicon macOS; Venus/Eon composition, packaging, and distribution remain
+- ordinary and managed Orbit PTY Sessions are proved on x86_64 Linux; their
+  Apple Silicon macOS proof awaits re-proof in this repository; Venus/Eon composition, packaging, and distribution remain
   unsupported on macOS as separate downstream scope
 - local Unix socket transport
 - one terminal session, one input-capable client, and one read-only metadata
   observer
 - one product binary, one private canonical protocol library, and one isolated
   repository-governance tool; only the binary owns terminal and PTY authority
-- [Eon Desktop](https://github.com/Yazelix/eon-desktop) owns graphical
-  implementation through Venus; the [contract index](CONTRACTS.md) records the
-  exact historical producer and consumer proofs
+- [Venus](../../venus/README.md) owns graphical implementation; the
+  [contract index](CONTRACTS.md) records the producer and consumer proofs
 - no multiplayer, remote transport, Zellij compatibility, layouts, tabs,
   plugins, or configuration framework
 - Mars and Mars Next may inform behavior, but their code and architecture are

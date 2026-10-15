@@ -14,13 +14,25 @@ and remaining limitations. Owning Beads and Git retain execution history;
   contract
 - **Retired:** explicitly replaced or removed; its ID is never reused
 
+Proofs cite revisions of this repository. "Pending re-proof in this repository"
+marks an earlier proof that was not repeated after consolidation; it is
+re-proved when that platform or feature is next touched.
+
 The [component manifest](../components/eon-alpha-v3.json) owns selected source
-and compatibility identities. EON-C4 records the runtime composition and its
-earlier external cutover proofs; EON-C7 records the distinct tagged public
-alpha. Every proof below applies only to its named source, artifact, environment
-and surface; it does not promote a later pin or another platform. Profile
-refresh preserves live supervisors and terminals; existing work retains its
-exact runtime until an explicit restart.
+and compatibility identities. Every proof below applies only to its named
+revision, artifact, environment and surface; it does not promote a later pin or
+another platform. Profile refresh preserves live supervisors and terminals;
+existing work retains its exact runtime until an explicit restart.
+
+The consolidation re-proof at `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, owned
+by `eon-monorepo-2oko.6`, has two tiers. The automated tier is sandboxed
+`cargo test --locked --offline --workspace` and `nix flake check` (checks
+`default`, `eonterm-closure`, `helix-grammars`, `managed-command-path` and
+`shell-environment`) on x86_64 Linux. The installed tier is one dogfood session
+of the installed Nix profile `/nix/store/gg71kiz3k854f4xihasr1pwligypznl3-eon-0.1.0`
+and `/nix/store/hk9v6q6c42x4sagpzrk20q32znw9sal1-eonterm-0.1.0`, driven
+headlessly by a Kinestra recipe on a private headless Sway (wlroots, pixman) on
+x86_64 Linux, following that bead's numbered checklist and recorded results.
 
 ## Rules
 
@@ -32,13 +44,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - Each contract uses one `## EON-CN — Name` heading and the required fields
   `Status`, `Consumer`, `Trigger`, `Result`, `Important failures`, `Owner`,
   `Boundary`, and `Proof`.
+- A retired contract keeps only its heading, a `Status` naming the date,
+  approver and replacement, and a `Reason`.
 - Add optional `Consumes` and `Open proof` fields when applicable; nest
   `Environment` and `Evidence` under `Proof`, and use nested bullets instead of
   prose table cells.
 - Contract IDs are stable and repository-qualified. Never renumber or reuse an
   ID; mark an explicitly removed contract retired.
 - Only current user-visible behavior, correctness boundaries, ownership
-  invariants, and cross-repository interfaces belong here.
+  invariants, and interfaces between subsystems belong here.
 - Every implementation Bead names the contracts it changes, proves, consumes,
   hardens, or preserves and records exact child revisions.
 - Historical execution evidence belongs in Beads and Git, not this current-state
@@ -103,114 +117,32 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Venus native launch contracts.
 - **Boundary:** Eon does not infer compatibility from executables, store paths,
   process names, or moving branches.
-- **Product terminology proof:** Accepted on x86_64 Linux, 2026-10-07, under
-  `eon-workspace-terminal-terminology-f65b`, from Eon
-  `cf1dda4b48eecf796f2d991424f91aa19ce098ac` and Runtime
-  `7c886d87551225c7581892901f95ac1b853952c7`. EONW remains
-  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`, with exact codec tree
-  `8409c419a3496d6f01eeef65295f5d95b943313e`; Orbit and Venus remain
-  `6bc269c40b18f08b95778939518f77556ba91c67` and
-  `a27aad23822d3bd0b0e467ffc32c578bbde8b00d`.
-  Prepared-source locked Rust tests (115), formatting, Clippy, the exact package
-  gate and complete `path:` flake check passed. Profile refresh selects
-  `/nix/store/9s4mnhbcpnrqykp1fkpld1b6gcqwz8rl-eon-0.1.0` and
-  `/nix/store/hvmafa29k3z4z46p05wazymfagx6zvzv-eonterm-0.1.0`.
-  Installed piped/80-column PTY help, color gates and launcher metadata use
-  terminal wording. Private Sway 1.12 headless/pixman with Mesa Vulkan proves
-  human workspace/generation output, declined Stop confirmation, and both
-  products' detach messages. Full-Eon reopen retains exact `session-N` JSON
-  identities, endpoints and Orbit process identity. Technical fields, codes,
-  socket names and codec package bytes remain unchanged. Earlier build attempts
-  hit lifecycle deadlines under disk load; clean serial Rust and delivery runs
-  passed with unchanged deadlines. Only Eon/EonTerm profile elements changed;
-  original user processes remain alive at exact prior identities. This proves
-  product wording and its installed consumers, without extending native UI,
-  platform or lifecycle guarantees. Existing work retains its prior runtime.
-- **Half-block child delivery:** EON-C4 records the exact installed adoption of
-  Venus `bac1d8d155c04840d672f2d1bb299a830dcb625f` and its scoped native proof.
-- **CLI help proof:** Accepted on x86_64 Linux, 2026-10-07, under
-  `eon-readable-cli-help-5yh4`, from Eon source
-  `43cd92879b20dca21c3d5a12fa16060c267bc129` and Runtime
-  `9780ccff908a7e5e506351ad017f219697e17681`; the remaining component graph
-  is unchanged. Prepared-source locked workspace tests (115), formatting and
-  Clippy passed, as did the exact package gate and the complete `path:` flake
-  check with one build job and two cores. Refreshed installed profiles resolve to
-  `/nix/store/y01wzxbgwnqsqs8jamq1hryvbiyd3pgq-eon-0.1.0` and
-  `/nix/store/hkiy054zj6hap9fya7adxlkd62w4hd8d-eonterm-0.1.0`.
-  Both installed help flags returned 0 with empty stderr, 43 identical plain
-  lines, aligned descriptions and a 79-column maximum. An 80-column stdout PTY
-  proved color and the empty/nonempty `NO_COLOR` and `TERM=dumb` gates; piping
-  stayed escape-free even with terminal stdin. Private invalid/missing config
-  and runtime state remained untouched. Captured ANSI was reviewed on
-  representative dark/light palettes. Anima help forwarding and EonTerm syntax
-  passed; three baseline live child identities and unrelated profiles stayed
-  unchanged. This CLI proof does not extend existing native presentation proofs.
 - **Assembly boundary:** `product.rs` supplies fallible validated component
   facts to the current runtime; graph failures precede runtime ownership effects,
   including `window new` parent-directory creation. Eon Runtime in `runtime/`
   owns the consumed runtime. See the
   [runtime input contract](ARCHITECTURE.md#ownership-and-invocation).
-- **Proof:** Eon `91c6ed5d51b5a09d5c9e1d2e30aebc191c10223f`,
-  `eon-accept-live-output-input-nxh`.
-  - **Environment:** Installed x86_64 Linux, isolated Sway 1.12 native Wayland;
-    Orbit `91999d79546422b49bdbc124166a65859d0bd872`, Venus
-    `e13970e90289d0d86f0adcbf350e4b9c1d5e5219`, ORBF v1 / ORBS v10 / EONW v4.
-  - **Evidence:** Manifest/lock identity, both Nix package/flake routes and
-    profile equality; artifacts
-    `/nix/store/jy82yqqn0sinvjkl9n405742q8483f5y-eon-0.1.0` and
-    `/nix/store/pd5c82936b6z24ss03dhdvrb0zmq8v90-eonterm-0.1.0`.
-    Installed EonTerm retained anchored history and terminal-query replies
-    during appends, split 16 KiB DEC 2026 batches and active-screen redraws;
-    cell/word/line click-drag, both clipboards, frozen copy and return to live
-    passed. Full Eon's two tabs/three panes accepted native directional,
-    identity and pointer focus during output. No performance bound is claimed.
-  - **Launch and icon:** Ready base `7cbcf1d4ce8ac186dc3ceff48240f04c437709af`,
-    icon selection `32936b92e9c20a000d21f123869e0b749ff39618` with master SHA-256
-    `33ec3062f72a732290dcd6c6f40a2d5f535d6a7cbfcaf7455a0a5c4f03a52e0d`,
-    and exact launcher action `32c768e0d9a62984640a516c34d0cb0db16e8adb`.
-    Earlier continuous-output/synchronized-scroll evidence is retained in nxh
-    and Git; the earlier external composition is proved in EON-C4.
-  - **Cursor configuration:** `eon-compose-yazelix-cursors-bcc` at Eon
-    `06402130ddccc3a02298eb3131fbe9f53d9b99a0`, Venus
-    `73195f5812cdc8f32841eab644c1bf4b3af9f756`, EONW v5: focused launch/rejection,
-    locked Rust and both Nix/flake routes; installed private Sway 1.12 / Mesa
-    26.1.2 lavapipe proves omission, `preset:forest`, `custom:#12ABCF` and
-    invalid `preset:volt` rejection before Orbit. Artifacts
-    `/nix/store/2hwrjd93r0qy84r42xkmq82il50i9w3x-eon-0.1.0` and
-    `/nix/store/2fk1w9rvkc469ahgi5grr6p89k2l68gm-eonterm-0.1.0`.
-    Eon `b8cb7feceb6df71868d9de46a0bd843d68a14a14` / Venus
-    `f6c1ebdb16df2960077dbd88ab6728a921b789d8` proves the visible black fallback
-    outline in installed EonTerm
-    `/nix/store/92cfax22s9f3v5n3sqjmkspkpzgakhj9-eonterm-0.1.0`.
-    Venus VEN-C1 owns rendering, explicit Orbit-color precedence and the
-    block body's existing 0.55 alpha; these are distinct scoped proofs.
-  - **Child presentation integrations:** Upward-selection acceptance at Eon
-    `00a180c5940f0af84fc84cd0e4134a01824a61a7` / Venus
-    `773c6bab7d3e21e0b0d7d942c9bba72260a08b42` / Orbit
-    `b6cecf8f2ee35570b41cfdc578b095889d917fe2` (ORBS v13)
-    on private scale-1 Sway copies
-    78 contiguous Unicode lines in installed
-    `/nix/store/p3wslkacd971fpw3vyghn6cx32kicizn-eon-0.1.0`.
-    `eon-accept-scrollback-position-j7f` at Eon
-    `a9841c740d048e52f199cfc7ad965404dacf0cb1`, Orbit
-    `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5` (ORBS v11), Venus
-    `247dcb2dc853e604d51ac727471e1e65e1535f1d` proves 10→16 scrolled rows,
-    then no indicator at live bottom in installed
-    `/nix/store/h1d86xgn75mp5qny96iz5ysbkhp4gxx3-eon-0.1.0` and
-    `/nix/store/bk39s868z0jj1grm1psaq2c4k1mjw3dd-eonterm-0.1.0`.
-    `eon-deliver-return-to-live-eon-14g` at Eon
-    `f4dc4824d422d2ec0d926e45036c35e2f95522ed`, Orbit
-    `f8ad14e5195109ba8cb421f30e5ae4a9619a1419` (ORBS v12), Venus
-    `ead00dfcb3510eb595173c02f4627d2cd8b36b0a` proves 10→16 retained rows and
-    visible native ReturnToLive clicks in installed
-    `/nix/store/ils9na81wh4gd22dk8cla7095wy0y3gn-eon-0.1.0` and
-    `/nix/store/3ldfxmkyjvq1xymzpi74l5dziysfmgic-eonterm-0.1.0`.
-    Both use x86_64 Linux, private Sway 1.12 headless/pixman, Mesa 26.1.2
-    lavapipe at scale 1. Hidden/stale hit testing remains Venus's source proof;
-    Orbit/Venus retain state, rendering and hit-test authority.
-  - **Limits:** These checks do not promote later pins, fractional scale,
-    broader compositors, screen-reader use or non-systemd support. EON-C7
-    records public-alpha qualification; EON-C18 retains picker proof limits.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** Graph validation and version report
+    (`canonical_manifest_is_valid`, `invalid_graphs_are_rejected`,
+    `version_report_contains_identity_without_resolved_paths`); help
+    (`help_is_readable_and_does_not_start_or_prepare_a_workspace`); Anima
+    forwarding (`anima_command_preserves_child_arguments_status_and_avoids_workspace`);
+    cursor-tail launch values (`configured_cursor_tail_reaches_both_product_launches`);
+    failed native admission (`rejected_native_startup_creates_no_session_in_either_product`);
+    the `default` and `eonterm-closure` Nix checks. Installed checklist items
+    1 (Anima welcome, picker, first terminal) and 7 (terminal text including
+    box drawing, Braille and CJK); Lucca opened the installed build from the
+    `Open Eon` desktop entry on COSMIC (recorded in `eon-monorepo-2oko.6`).
+- **Open proof:** Pending re-proof in this repository: installed
+  `eon anima accelerando` playback, installed scrollback,
+  ReturnToLive, click-selection ladder and copy/paste, installed help color
+  gates (`NO_COLOR`, `TERM=dumb`, 80-column PTY), explicit cursor-trail colors
+  and durations on new and reopened surfaces, hicolor icon sizes, retained
+  history and terminal-query replies during synchronized-output bursts, and
+  COSMIC sessions. Fractional scale, broader compositors and screen-reader use
+  remain unproved.
 
 ## EON-C2 — One component compatibility graph
 
@@ -232,9 +164,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Boundary:** The manifest does not own process lifecycle, platform launch
   mechanics, package-manager policy, or child state. In-tree contract and
   interface proofs remain on their components.
-- **Proof:** Pending re-proof in this repository under `eon-monorepo-2oko.6`.
-  `eon-monorepo-2oko.2` records the schema-4 validator checks and both Nix
-  product builds.
+- **Proof:** Candidate; mechanically verified at
+  `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier on x86_64 Linux.
+  - **Evidence:** `canonical_manifest_is_valid`,
+    `removed_graph_fields_are_rejected`, `invalid_graphs_are_rejected` and
+    `version_report_contains_identity_without_resolved_paths`; both Nix
+    products build from the one graph.
 
 ## EON-C3 — Distribution-neutral runtime inputs
 
@@ -257,9 +193,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Boundary:** Runtime code does not construct, persist, inspect, or derive
   identity from Nix store paths. The source digest reads workspace files, never
   store or profile paths.
-- **Proof:** Pending re-proof in this repository under `eon-monorepo-2oko.6`.
-  `eon-monorepo-2oko.2` records the generation red/green check and both Nix
-  product builds.
+- **Proof:** Candidate; mechanically verified at
+  `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier on x86_64 Linux.
+  - **Evidence:** `generation_identity_is_stable_bounded_and_namespaced` and
+    `current_generation_consumes_supplied_assembly`; the `default` and
+    `eonterm-closure` Nix checks build Orbit, Venus, Eon and EonTerm from the
+    in-tree crates.
 
 ## EON-C4 — Thin orchestrator ownership
 
@@ -278,161 +218,6 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon assembly and product policy; Eon Runtime owns runtime
   mechanisms and state. Orbit, Venus and tools retain their subsystem authority.
 - **Consumes:** Accepted child contracts through EON-C2's exact graph.
-- **Portable Orbit build delivery:** Mechanically verified and installed on
-  x86_64 Linux, 2026-10-12, under `eon-portable-orbit-cpu-omxq`. Accepted Orbit
-  `427cf2d074cd1db905a2cc2602a5475065d1c790` selects libghostty-vt/sys 0.2.2.
-  Nix supplies `LIBGHOSTTY_VT_SYS_CPU=baseline`; the binding owns compilation,
-  with the same Ghostty source and ORBF v2 / ORBS v13. Complete codec equality
-  permits Venus's unchanged codec pin; a real ORBS v12 substitution is rejected.
-  Both product builds pass 79 tests each; the package gate and full flake check
-  pass. Refreshed working-tree Eon `/nix/store/ld5jdfn031yhmnz7x5n8xdhln52yz2gr-eon-0.1.0`
-  and EonTerm `/nix/store/1rzyd1s4ahkzjf0pak2x2bvqin4rdkf6-eonterm-0.1.0`
-  consume Orbit `/nix/store/mdrfk0m73rpc61pqzb3l2wsakliqm6mx-yazelix-orbit-0.1.0`.
-  QEMU 11.0.1 `qemu64` reproduces SIGILL with the prior installed Orbit; this
-  exact replacement serves a real PTY frame, accepts input and exits cleanly.
-  Private Sway 1.12/pixman with Mesa lavapipe displays installed EonTerm output
-  and completes exact-generation Stop. All 16 original process identities and
-  unrelated profile entries survive. Logs, controls and capture are retained in
-  `~/.local/state/eon/proofs/eon-portable-orbit-cpu-2026-10-12-omxq/`.
-  [Cache publication](https://github.com/Yazelix/eon/actions/runs/38244456786)
-  for Eon `9c264f7eb8964ae01e815649d3f2173681e08384` and signed substitution of
-  `/nix/store/973nbz7a1vqfq6669xcnqjhpafz40rbm-eon-0.1.0` and
-  `/nix/store/i6y44c3xpz5z4702y818dgpgkz2jzgd2-eonterm-0.1.0` pass from an
-  empty store (411 paths; local and remote builds disabled). The downloaded
-  Orbit also passes the `qemu64` PTY/input/exit check. Its machine code matches
-  the local build; six host-kernel metadata bytes differ. Physical Ryzen,
-  native macOS and performance remain unqualified.
-- **Workspace failure-notice and caret delivery:** EON-C8 records the installed
-  composition, scoped native proof and remaining reader qualification limit.
-- **Installed label delivery proof:** Accepted on 2026-10-09 under
-  `eon-decide-tab-house-icon-lff4`, Eon source
-  `ebb66eb0b902f3b4058c0b59d63bdbb73c6d61a6` selects Venus source and scoped
-  VEN-C8 proof `42a5ad291995847d5fa36bb62344065f95f6866f`; child metadata
-  `10f36c9d67c69565dd45144809cbd99f92f93371` records the deterministic proof.
-  All other component, interface and proof identities remain unchanged.
-  - **Artifacts:** Installed Eon
-    `/nix/store/hq5j2crskbwpvk5si65b391zq8c7rl7r-eon-0.1.0` and EonTerm
-    `/nix/store/z3nqld6fvwdwhcrns1pqrf4r8yq6k69y-eonterm-0.1.0` bind Venus
-    `/nix/store/71wlly0fqnxdb004zrpvxia0pzjf2icx-yazelix-venus-0.1.0`.
-  - **Evidence:** Both Nix products pass with 78 Eon/runtime tests each and
-    145 ordinary Venus tests. Refreshed profiles equal the built artifacts;
-    unrelated profile elements survive. Private Sway 1.12 headless/GLES2 at
-    scale 1 shows `1 account` with pane `p1 ~`, then the same tab and exact
-    launch directory with `p1 ~/pjs/eon`. Alt+M/K pane creation/selection,
-    Alt+Shift+T tab creation and Alt+1 selection preserve the original terminal;
-    three native key inputs reach it with unchanged terminal modes. All seven
-    original process identities survive and private runtime state is removed.
-    Commands, source checks, captures and cleanup are retained in
-    `~/.local/state/eon/proofs/eon-home-labels-option-1-2026-10-09/report.txt`.
-  - **Limits:** Two earlier private probes exposed an empty picker fixture;
-    overriding Zoxide's home exclusion and checking its candidate list fixes
-    the fixture. Production source is unchanged between probes. Existing live
-    supervisors retain their old runtime until user-chosen restart. Live COSMIC,
-    fractional scale, screen-reader workflows and macOS remain unproved here.
-- **Installed half-block delivery proof:** Accepted on 2026-10-09 under
-  `eon-deliver-venus-half-block-fix-qfee`, Eon source
-  `62ac66c18b30b1e9056a9534dd84c083f03f1a69` selects Venus
-  `bac1d8d155c04840d672f2d1bb299a830dcb625f`; child proof metadata
-  `c849868fb592dd502aca9ab38db08776bd3cfd0e` retains renderer correctness.
-  Orbit `6bc269c40b18f08b95778939518f77556ba91c67`, Runtime
-  `02865fdf908d8139d4c94180703381f6029c0598`, codec
-  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa` and Anima
-  `b3133f057fa0029b3e06c85301161168c48bb799` remain unchanged.
-  - **Environment and artifacts:** x86_64 Linux, private Sway 1.12
-    headless/GLES2, Nix Mesa 26.1.2, Intel/i915 Vulkan, scale 1. Prepared source
-    `/nix/store/yss006f7zf7gkgdrdryj4z2p5zbgviwa-eon-source`; installed Eon
-    `/nix/store/q30y475q7mvqlivyd5axkj808rjfz6na-eon-0.1.0` and EonTerm
-    `/nix/store/zzsxzc47gi8ylnyk2ji4ji9yaf3pjjhx-eonterm-0.1.0`.
-  - **Evidence:** Manifest/lock identity and both Nix builds pass, including
-    78 Eon/runtime tests per product and 145 Venus tests. Refreshed profiles
-    equal the built artifacts and bind the accepted Venus. Installed caller-PTY
-    plasma at 160×48 records 22.62 visible changes/s, p95 gap 66.67 ms and Venus
-    CPU 14.8% of one core; retained installed baseline records 5.08–5.23/s,
-    p95 216.67–233.33 ms and CPU 90.3–92.0%. Escape exits successfully and
-    restores caller terminal modes. Native startup/picker handoff, physical
-    Alt+Shift+A open/close, unchanged pane selection and subsequent physical-key
-    terminal input pass. Commands, recordings, resource samples, negatives and
-    cleanup evidence are retained in
-    `~/.local/state/eon/proofs/eon-venus-half-block-delivery-2026-10-09/report.txt`.
-  - **Limits:** One installed performance sample confirms delivery alongside
-    the child's repeated owner proof; sampled visible changes are not hardware
-    FPS or a performance guarantee. Four original live process identities are
-    preserved; unrelated profiles survive the Eon refresh. Existing windows
-    retain their prior runtime until explicit restart. Live COSMIC, other scales,
-    macOS, promotion and release are outside this delivery proof.
-- **Installed cursor-tail configuration and continuity proof:** Eon source
-  `1ca418d9370061b4ba5ac03c0225236ad2b1461d` selects Venus
-  `a27aad23822d3bd0b0e467ffc32c578bbde8b00d` and Runtime
-  `fb3c9c1b08c7a8c03ca4a8cc57628579c09bdeb4`, preserving Orbit
-  `6bc269c40b18f08b95778939518f77556ba91c67` and codec
-  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa` (ORBF2/ORBS13/EONW7).
-  - **Environment and artifacts:** x86_64 Linux, private Sway 1.12
-    headless/pixman, Nix Mesa 26.1.2 lavapipe, scale 1. Prepared source
-    `/nix/store/ran5w3mj2gqnxfv725d7fhx7yrxdaqnx-eon-source`;
-    installed Eon `/nix/store/40bb9d041r46qiplaisd1rav5cl0w2ng-eon-0.1.0`
-    and EonTerm `/nix/store/qn4g3bgb1zdaba8bly9rqwxygqai02zf-eonterm-0.1.0`.
-  - **Evidence:** Prepared-source fmt/check/test/clippy (114 tests), package
-    selection, both Nix products and closure/co-installation pass. Active
-    profiles match the rebuilt path-working-tree artifacts. At the Eon-owned
-    default `1.5`, keyboard/pointer pane/tab, layout and rapid-switch captures
-    all show visible motion and settle. Installed duration rejection creates no
-    fresh terminal in either product. EonTerm reopens from default `1.5` to
-    configured `2.5` with the same Orbit process and terminal command. Source and
-    binary hashes, commands, logs, setup negatives and captures are retained in
-    `~/.local/state/eon/proofs/eon-cursor-tail-duration-1ca418d-2026-10-07/report.json`.
-  - **Limits:** This advances EON-C1/C2/C4 only for this product configuration
-    and exact child adoption. Four existing user component processes remain
-    unchanged. Live user terminals retain their prior runtime until explicit
-    restart. No macOS, broader compositor, latency, promotion or release proof.
-- **Installed viewport-request adoption proof:**
-  `eon-adopt-pending-viewport-owner-9k4y`, 2026-10-06 path working tree based
-  on Eon `3c8d1e0fe1a3c3bd3cec88c32d94ce775771cdb8`, prepared source
-  `/nix/store/46ff5h10am2clgg7aqqq7shxclc4dimn-eon-source`, selects Venus
-  `c7a0d07612e710854275a31500aaec651cc50a6f`. Orbit `6bc269c`, Runtime
-  `a57e105`, EONW7 codec `b8f18b4` and ORBF2/ORBS13 remain exact.
-  - **Environment and artifacts:** x86_64 Linux, private native Wayland Sway
-    1.12 headless/pixman, Mesa 26.1.2 lavapipe, scale 1; installed Eon
-    `/nix/store/952w0qbh5446hm0vbnlp6rv529hmy383-eon-0.1.0` and EonTerm
-    `/nix/store/0iv18b4yqf5q2ka95yrv4wlbg4wl81c4-eonterm-0.1.0`.
-  - **Evidence:** Manifest/lock identity, both Nix products and EonTerm
-    closure/co-installation pass; active profiles equal the artifacts. Native
-    wheel, held upward selection/autoscroll, wheel after release and ReturnToLive
-    pass in both products with real Orbit/Venus and fresh clipboard oracles.
-    Full Eon's workspace/input isolation, user process/profile preservation and
-    disposable-generation cleanup pass. Exact commands, test results, captures,
-    setup negatives and fresh-directory replay instructions are retained in
-    `~/.local/state/eon/proofs/eon-adopt-pending-viewport-owner-2026-10-06/REPORT.md`.
-  - **Limits:** This proves installed EON-C1/C2/C4 delivery of the accepted child
-    revision. Queue saturation and pending-response ordering retain the child's
-    scoped proof. No accessibility, macOS or wider-platform proof is added.
-    Existing terminals keep their prior runtime until an explicit restart.
-- **Child adoption proof:** `eon-adopt-click-ladder-and-shortcut-spacing-h1nv`,
-  Eon source `0d02d4b2e6310f863de6bd3d0164c7c3ec08811d`, selects Orbit
-  `6bc269c40b18f08b95778939518f77556ba91c67` and Venus
-  `c02e371c44909aa64cb3f2d77284b8a8ab2b4cc5`, retaining Runtime
-  `a57e105a5da87d9c65402c1c4c8ea8b5dc8adc45` and EONW7 at
-  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa` with ORBF2/ORBS13 unchanged.
-  - **Environment and artifacts:** x86_64 Linux, private native Wayland Sway
-    1.12 headless/pixman, Mesa 26.1.2 lavapipe, scale 1; installed Eon
-    `/nix/store/ij6ad279x1pjmgwwk992ig6rm1fckq84-eon-0.1.0` and EonTerm
-    `/nix/store/n2izc97m5i1zai5558ra7m7jnmg63s47-eonterm-0.1.0`.
-  - **Evidence:** Prepared locked Rust fmt/check, 114 tests and strict Clippy;
-    checked source preparation rejects changed Orbit codec bytes or inherited
-    Cargo configuration; both Nix products and all 12 flake checks pass.
-    Profile elements equal these artifacts and report the exact graph. Native
-    EonTerm pairs select words/spans/fourth-and-fifth-click lines, including
-    16-column soft wraps, delayed single drag, span drag during live output and
-    frozen explicit Copy after replacement. Full Eon Shortcuts passes physical
-    Alt+Slash, normal/compact header layout, scrolling, workspace/input isolation
-    and Escape focus restoration. Five pre-existing product identities and
-    unrelated profile elements survive; disposable generations stop and reap.
-    Retained scripts, clipboard text, captures and logs:
-    `~/.local/state/eon/proofs/eon-adopt-click-ladder-and-shortcut-spacing-h1nv-2026-10-06/REPORT.md`.
-  - **Limits:** This refreshes EON-C1/C2/C4's selected-child delivery and C20's
-    header spacing only. Older source-specific proofs below remain scoped.
-    Existing terminals retain their prior runtime until an explicit restart.
-    Child wide trailing-spacer span truncation, copy trimming and unwritten
-    tab-gap limits remain; no screen-reader, macOS or wider-platform proof.
 - **Boundary:** No copied child schema, hidden fork, compatibility adapter, or
   second terminal/rendering owner.
 - **Assembly boundary:** `eon/crates/eon/src/product.rs` owns concrete product
@@ -442,76 +227,24 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   graph, distribution and process exit handling. The
   [runtime boundary](ARCHITECTURE.md#runtime-library-boundary) records the
   runtime seam and in-tree package selection.
-- **Proof:** External cutover in Eon
-  `51666e2fcb925a7d2abde204ac402ecf83d1769f`, recorded by
-  `eon-runtime-cutover-y1wy` on the exact candidate based on
-  `7cc82a2a7e3737086dcbb7b0756a4ff2e5a4f6af`.
-  - **Environment:** x86_64 Linux, Nix; isolated Sway 1.12 native Wayland / Mesa
-    Vulkan. Runtime and codec `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`,
-    Venus `bbf4cf41b289f441683eb7a3f225a26a4d3edacc`, Orbit
-    `b6cecf8f2ee35570b41cfdc578b095889d917fe2`, ORBF v2 / ORBS v13 / EONW v7.
-  - **Evidence:** Locked Eon/manifest Rust route (39 tests), both Nix products,
-    flake checks, package-selection/source-normalization and slim-closure plus
-    co-installation checks. Installed artifacts
-    `/nix/store/jlciixci56c353yijns5lidz1za1sp6a-eon-0.1.0` and
-    `/nix/store/2r1h7h5dz8kl0dd80872bnxvm2rxr91c-eonterm-0.1.0` use
-    `g1-b5f3ee783f374176d716de3488946ef4`.
-    Both old products survive profile refresh; retained exact executables
-    reattach, and the current client inspects and owner-stops old disposable
-    terminals while new work remains alive. EonTerm rereads config without
-    replacing its terminal. User terminals and unrelated profile elements remain.
-  - **Package boundary:** Standalone producer acceptance in
-    `eon-runtime-producer-68hq` retains runtime tree
-    `3dcfef6bf31758233f2a33eb31d5184ebeae9843` and codec tree
-    `8409c419a3496d6f01eeef65295f5d95b943313e`, with 50 producer tests and
-    35 real-Eon process tests. Product, runtime and codec versions retain
-    separate owners; no reverse dependency or local production copy remains.
-    `eon-runtime-venus-rebind-tbmn` and `eon-runtime-package-identity-dmbj`
-    retain the one-time provider rebind and fail-closed package gate evidence.
-  - **Independent revision check:** Mechanically verified runtime-only
-    `c117b5eca2cee0125c8d7201e5f69cab13c1c45b` with fixed codec/Venus passes
-    locked prepared Rust and both Nix routes, producing a different generation.
-    This is not an accepted production pin or a separate native proof. Codec
-    drift under unchanged labels fails through both production gates before
-    substitution. The private A/B check consumes canonical inputs.
-  - **Child allocation ownership:** `eon-integrate-venus-cell-buffer-memory-o5b`
-    at Eon `7b7382395dad6608fdda40814c2dbf33806dd0e3` selects Venus
-    `541a9cb43c155b8b97069904593dc81c73682613`; the child owns the correction.
-    Manifest and both Nix builds pass; installed Eon
-    `/nix/store/5bw42dbymran4nwv5p64izm7nnfp45ha-eon-0.1.0` and EonTerm
-    `/nix/store/nqdpbgmp0a1w102s22ldnf8r97vgm1pg-eonterm-0.1.0` pass three
-    paired fresh-process runs per product on x86_64 Pop!_OS 24.04 / private
-    Sway 1.12 headless/pixman / Mesa 26.1.2 lavapipe, scale 1. A fixed 10,030-row
-    Unicode workload at 120×30 cells, terminal-query barrier and three-second
-    settle gives median paired PSS savings 4.48 MiB (4.20–4.70) for Eon and
-    4.66 MiB (2.64–4.73) for EonTerm; all 12 captures match their baseline bytes.
-    Ranges are observed minima/maxima, not confidence intervals.
-    Exact old/new packages, raw measurements and reproduction remain in that
-    issue's proof archive. Small warm-host samples with unfrozen shared mappings
-    prove no GPU, throughput, long-term growth or history-efficiency claim and
-    do not replace the COSMIC/Intel benchmark.
-  - **Native launch boundary:** Eon
-    `be9d0e37c7d0029d6832ff609082faa885280762`, Orbit
-    `91999d79546422b49bdbc124166a65859d0bd872`, Venus
-    `d1223463b2b513c04242df50a4bd948d0533cfde`, ORBF v1 / ORBS v10 / EONW v4:
-    launcher-environment regression, locked Rust/Nix checks and installed
-    private Sway 1.12 / Mesa 26.1.2 / GIO 2.80.0 proof in
-    `/nix/store/8r53v42plymxhys76mv582za20l382qa-eon-0.1.0` and
-    `/nix/store/q441sjfvgvkq00yim4gd97f540pmnbg5-eonterm-0.1.0` preserves
-    host XDG handler preferences and distinct product config. Exact copy,
-    registered-handler dispatch, native failure and captured input pass;
-    handler delivery does not prove browser content loading. Input correction
-    `07867f99d176012a9d34a61aa37b5de9ce0888af` / Venus
-    `cf3a9169f2cd95d42c689134a52d51d9147ff37c` retains key press/repeat/release
-    isolation; its installed artifacts remain in Git at that proof.
-  - **Limits:** Source transfer and package equality change no wire/API,
-    native platform claim or child authority. Presentation still requires exact
-    graph identity; old work may need its prior executable. Earlier assembly,
-    seam and composition proofs remain in their owning Beads and Git.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** The workspace suites run with in-tree Orbit, Venus, Eon
+    Runtime and EONW; `orbit-governance`'s
+    `workspace_crates_keep_their_dependency_direction` enforces the crate
+    ownership edges; the `eonterm-closure` check keeps Eon-only tools out of
+    EonTerm. Installed checklist items 1, 4 and 11 exercise Eon policy over
+    child-owned terminals, popups and tools.
+- **Open proof:** Pending re-proof in this repository: portable-CPU Orbit under
+  QEMU `qemu64`, Cachix publication and signed substitution from an empty
+  store, host XDG handler preservation for desktop launches, memory
+  measurements. Physical Ryzen, native macOS and performance remain
+  unqualified.
 
 ## EON-C5 — Direct bundle lifecycle
 
-- **Status:** Proven for the unpublished Linux slice
+- **Status:** Pending re-proof in this repository (proven before consolidation
+  for the unpublished Linux slice)
 - **Consumer:** A user installing Eon without adopting an unrelated toolchain.
 - **Trigger:** Install, upgrade, inspect, roll back or remove a direct Eon bundle.
 - **Result:** The operation affects only the selected Eon bundle and its owned
@@ -528,48 +261,24 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Boundary:** `eon-p93` approves one Linux bundle and installer development
   sequence. Normal alpha installation remains Nix-based; public release trust,
   qualification and publication retain separate gates and explicit approval.
-- **Proof:** `eon-prove-manual-nix-free-linux-bundle-216b`, 2026-10-10:
-  [manual artifact and verification](MANUAL-BUNDLE.md), archive SHA-256
-  `ad351bb2c914f7319ba0bd1006a8ab77041a05375687a6aac350cd7a6294f971`.
-  Relocated read-only extraction, native useful workspace, managed tools,
-  detach/reopen, Stop and signature/checksum rejection pass in an isolated
-  non-Nix user environment on Pop!_OS 24.04/Linux 7.1.5, private Sway/lavapipe.
-  Existing user processes are preserved. The proof key has no release authority.
-- **Installer proof:** `eon-prove-thin-linux-bundle-installer-8r7n`, 2026-10-11:
-  static bootstrap
-  `/nix/store/q93wjavplmcxmg62z5hlqdl5gz2psn7f-eon-install-static-x86_64-unknown-linux-musl-0.1.0`.
-  The retained unchanged verification/selection proof covers signed loopback
-  TLS installation/dry-run, rejected signature/hash/download/traversal,
-  interrupted extraction and retry with the prior selector usable.
-  Seven focused Rust checks cover archive, ownership, locking,
-  failed activation, preflight child cleanup and XDG environment fallback.
-  Host GNU coreutils `timeout` owns the preflight process group; failed or
-  timed-out checks leave the prior selector usable.
-  - Private Sway 1.12/pixman and Mesa 26.1.2 lavapipe on the same Linux host
-    hide host Nix, checkout and home. Upgrade/rollback between the manual
-    archive above and SHA-256
-    `271e013eda7a6b4667a9491a1ae04d2905d83c85d3b4420523eb4f5bdb37560c`
-    preserve exact Orbit, ordinary-workload and bundled Helix identities.
-    Exact retained reattachment, a second live generation
-    and removal preserve payloads/configuration and seven ambient processes.
-  - Proof root: `~/.local/state/eon/proofs/eon-installer-review-2026-10-11-08l4lm2k/`.
-    The earlier `eon-installer-2026-10-10-2uahgczq/` proof retains exact idle
-    authenticated Codex 0.162.1 process evidence for the unchanged runtime
-    and archives. Its bootstrap hit an account-routing timeout in the rerun.
-    This is scripted native interaction, not human acceptance; no model turn,
-    semantic resume, live handoff or restart persistence is claimed.
-    See [installer recovery](INSTALLER.md).
-  - Parser correction: unused non-link header fields bypass link validation,
-    avoiding root-directory overflow and false file rejection. Seven checks
-    and signed installed extraction qualify the corrected bootstrap under
-    `~/.local/state/eon/proofs/eon-installer-review2-2026-10-11-2u3zxw74/`;
-    the earlier native lifecycle proof applies to unchanged runtime behavior.
+- **Proof:** Pending re-proof in this repository.
+  - **Environment:** Not repeated after consolidation.
+  - **Evidence:** Before consolidation, `eon-prove-manual-nix-free-linux-bundle-216b`
+    and `eon-prove-thin-linux-bundle-installer-8r7n` proved relocated
+    extraction, signature and checksum rejection, interrupted extraction,
+    upgrade, rollback and removal with live work preserved. See
+    [manual bundle](MANUAL-BUNDLE.md) and [installer recovery](INSTALLER.md).
+    At `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, sandboxed
+    `cargo test --locked --offline --manifest-path installer/Cargo.toml`
+    passes the installer's extraction, checksum, selection, removal and locking
+    tests; bundle delivery is not repeated.
 - **Open gates:** Publication, release trust, exact redistribution obligations
   and wider public-beta qualification remain separate.
 
 ## EON-C6 — Shared graph across distribution channels
 
-- **Status:** Proven for the manual and installed Linux slices
+- **Status:** Pending re-proof in this repository (proven before consolidation
+  for the manual and installed Linux slices)
 - **Consumer:** Nix alpha and any later approved distribution channel.
 - **Trigger:** A channel composes an Eon product artifact.
 - **Result:** Every channel consumes the same accepted EON-C2 component graph
@@ -579,20 +288,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon distribution composition consuming EON-C2.
 - **Boundary:** The manual and installed candidates remain unpublished;
   ordinary alpha installation uses Nix. Public-beta delivery retains its own proof.
-- **Proof:** The EON-C5 archive contains the unchanged canonical manifest
-  SHA-256 `33af3e8b9996e7e1e28f907cf8cfba99c6f7fd79cf9be99dea25523f9e0e4a9f`
-  and lock SHA-256 `d5f743e09adb246cd10815808e28b2541636a8d2cb85c9daaff60f3c555de952`.
-  Nix and extracted entrypoints report identical exact diagnostics from
-  `/nix/store/ayb2ilp1rq7c95q4r1b3qn8qzdx5pw02-eon-0.1.0`; no child binary
-  or package binding is rewritten. The isolated native check preserves terminal
-  identity/lifecycle while hiding the host store and checkout. See
-  [manual proof limits](MANUAL-BUNDLE.md#retained-development-proof).
-- **Installer delivery:** Both C5 archives retain those exact manifest/lock
-  bytes. The second wraps
-  `/nix/store/f9j917vzqqnn64ni2vc67cz6g4jsx19r-eon-0.1.0`; the flake change
-  gives it a distinct generated-runtime identity without a child refresh.
-  The installer selects complete payloads and defines no second component
-  graph. C5 records native old/new generation coexistence and proof limits.
+- **Proof:** Pending re-proof in this repository.
+  - **Environment:** Not repeated after consolidation.
+  - **Evidence:** Before consolidation, both EON-C5 archives carried the
+    canonical manifest and lock bytes unchanged and reported the same exact
+    diagnostics as the Nix product; see
+    [manual proof limits](MANUAL-BUNDLE.md#retained-development-proof). The
+    Nix channel's use of the one graph is EON-C2's automated evidence.
 
 ## EON-C7 — Native Linux Wayland and Apple Silicon macOS
 
@@ -612,41 +314,27 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon platform and distribution policy; child-owned kernel
   capabilities remain explicit child contracts.
 - **Boundary:** Current accepted support remains x86_64 Linux native Wayland.
-  Orbit `ORB-C14` has native Apple Silicon proof; Venus `VEN-C16` has partial
-  M1 proof, including physical Scaleway runs. Apple Silicon macOS remains
+  Native Apple Silicon proofs for Orbit `ORB-C14` and Venus `VEN-C16` are
+  pending re-proof in this repository. Apple Silicon macOS remains
   unsupported until Venus and full-Eon native proofs pass. X11, Xwayland,
   Intel macOS, signing, notarization, direct bundles, and public macOS
   distribution remain outside this contract.
-- **Proof:** Linux qualification in `eon-qualify-linux-public-alpha-8ue`;
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
   the combined Linux/macOS contract is not proved.
-  - **Environment:** Clean `nobody` account, x86_64 Linux, isolated Sway 1.12
-    native Wayland, pixman / Mesa lavapipe; no checkout, user credentials or
-    readable netrc. Candidate Eon
-    `3b4f388e63f5f9fc5e234727e4f8b52ea4c9ca74`, Orbit
-    `b6cecf8f2ee35570b41cfdc578b095889d917fe2`, Venus
-    `773c6bab7d3e21e0b0d7d942c9bba72260a08b42`, EONW v7.
-  - **Evidence:** Manifest, locked Rust and flake checks; public-source install,
-    picker/help, tab/pane creation/movement/close, directory inheritance and
-    retargeting, invalid-path failure, detach/attach, diagnostics and Stop.
-    Supervisor loss preserves three full-Eon terminals and EonTerm's one terminal;
-    fresh supervisors adopt them without duplicates. Real previous EONW v6
-    Stop with current unstarted, then current `stop all`, pass. Candidate
-    artifacts `/nix/store/y4bi72b9rb9yyxcb247gi87w7zkdwclk-eon-0.1.0` and
-    `/nix/store/lwii3cff1i8z3v7lqjg6zzf38wcbcpjn-eonterm-0.1.0` use
-    `g1-c432a14b396ca1060a2d65be3d7f28ba`.
-  - **Published slice:** `linux-alpha-2026-09-24` points to Eon
-    `3550368ac2a7ecd689df75a75aff7007523b7dbf`; fresh public-tag install gives
-    `/nix/store/kkilnkvxcjymxswy3bz5ryrjd3qwmf1v-eon-0.1.0` with the same
-    graph and native-tested binary SHA-256
-    `1a2bb60fb17ead6ecdbc8658dce5af8b21b002e9f06c33076fe0ea49e6ad2f61`.
-    The tag predates edge Anima, independent windows and external runtime
-    composition; their proofs belong to C18, C23 and C4.
-- **Open proof:** EON-C8 records bounded current-development reader qualification
-  at one exact Orca revision; the tagged alpha and broader reader use remain
-  unqualified.
-  Wider compositors, fractional/HiDPI coverage, proprietary NVIDIA and installed
-  non-systemd behavior remain unproved. C19 proves only its named initial-grid,
-  typography, IME and AT-SPI slice. Machine-restart recovery is not supported.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** Installed checklist items 1 through 5 and 10 through 12 cover
+    native launch, picker, tabs and panes, popups, shortcuts and hints, detach
+    and attach, generations, independent windows, EonTerm and exact-generation
+    Stop on headless Sway; items 6 through 8 pass for the Eon Bar and version
+    label, terminal text and opacity. Lucca opened the build from the desktop
+    entry on COSMIC and reported a general visual pass.
+- **Open proof:** Pending re-proof in this repository: installed quota chip
+  detail, Accelerando playback, blur, pointer interaction (item 9), a full
+  COSMIC checklist, install from this repository's first tag, clean-account public-source qualification,
+  supervisor-loss adoption, and native Stop of a previous-EONW generation.
+  EON-C8 records reader qualification as pending. Wider compositors,
+  fractional/HiDPI coverage, proprietary NVIDIA and installed non-systemd
+  behavior remain unproved. Machine-restart recovery is not supported.
   Native Apple Silicon proof follows Orbit ORB-C14, Venus VEN-C16, then
   `eon-prove-full-eon-apple-silicon-macos-t8o`; compile/evaluation is insufficient.
 
@@ -736,170 +424,36 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
 - **Consumes:** Current EONW v7 workspace/popup values, Orbit terminal
-  identities/endpoints and Venus `VEN-C8`; v5 origin proofs remain scoped below.
+  identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, simultaneous expanded panes, arbitrary
   reorder target or cross-tab pane movement, picker relocation, durable layout
   restoration, a user-facing per-pane terminal stop/restart action, terminal
   content/history, provider state, plugin surface, remote access, or
   reconstructed terminal state.
-- **Proof:** Eon `5f23a7bac127785d913a718e5fb1afc53d9d91ae` and the
-  following distinct accepted or dogfooded slices.
-  - EON-C4 records the current ordinary tab names and compact text pane paths.
-  - **Environment:** x86_64 Linux Nix packages and isolated native Sway;
-    visual refinements use Sway 1.12 / Mesa 26.1.2 lavapipe at scale 1.
-  - **Evidence:** Wrapped traversal, composition, creation, exit pruning,
-    `tN`/`pN` projection, launch-directory labels and focused accessibility;
-    topology base `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`, compact headers
-    `e77e842fe8c7070a96047dff1bf028ccbd49b788` with exact Venus
-    `19d7d28a2aba09c0afe3173d25bbb76ec3edce49`. Movement candidate over
-    `9f420ad7f7d4a09ec4294e5ecb191ca2a3d2b7d3` in
-    `/nix/store/dbxxlkrh6ygvksra9rxdvqzzj4228jbq-eon-0.1.0` proves adjacent
-    swaps and stable terminal mappings through locked Rust/Nix and installed CLI.
-  - **Close and shortcuts:** EONW
-    `c305453bba4fe50c29f65e829b9cd65af31ced8a`, Venus
-    `d2d798099934dcf8037bfad6ab856e40c9b989fe`, artifact
-    `/nix/store/x408dv5djxnia3sh88jwalhpqxfbmh2r-eon-0.1.0` prove ordered
-    moves, stable close, deduplication and partial-stop topology. Current Nova
-    shortcut acceptance at Eon `fea679260dd81fcdbb907e804156b00244af2324`,
-    Venus `0791f00926cd5cc4fedcc7737aeac7bb68569aff`, artifact
-    `/nix/store/578xxkf17cin8sdn6pb5rr10hxz4yfqg-eon-0.1.0` proves native
-    Alt+Shift+T/W, pending/durable close, final-tab protection and unchanged
-    Ctrl+T/Ctrl+Shift+W terminal bytes (`ven-yp4`).
-  - **Quiet navigation:** `eon-quiet-workspace-navigation-y7a`, Eon
-    `07dc210a49cd30f3b58fa65fd9e9a45b421e9b36`, Venus
-    `b7404dae6c59a8e6de6ca9efbf2c907eedf1262b`, Orbit
-    `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`, EONW v4:
-    locked Rust/Nix plus installed
-    `/nix/store/8mykzkf3fp5d8f3xpyk8ax3ysirnr2xz-eon-0.1.0` proves unchanged
-    no-op snapshots, native focus and stale-target rejection. Venus's real
-    Application check proves quiet connection phases and visible offline failure.
-  - **Pane frames:** `eon-pane-stack-delivery-jfo` and `ven-connected-pane-stack-0ub`
-    retain dogfood of omitted/true/false, rejection and reopen, native focus/input,
-    picker/grid geometry and no EonTerm override. Corrected candidate over Eon
-    `b29f0d7d205c03a2d9b8d81ee600499dfe2f9af6`, Venus
-    `bc5a2bd3b2363abdea69c4cd89953b612bc970e8`, Orbit
-    `91999d79546422b49bdbc124166a65859d0bd872`, EONW v4 uses
-    `/nix/store/52xxap7klyzcg1fdvgwnz7w30v24q2gx-eon-0.1.0` and
-    `/nix/store/xbkp5n2m3hz9da7xcspk61aidp6x3brh-eonterm-0.1.0`.
-    Scale-1 colored-underlay/pixel checks prove stack-shaped highlights,
-    full-width separators and a terminal-color/alpha 4px gap; reopened 100×30
-    PTYs retain the same terminals. Sway proves alpha/color, not compositor blur.
-  - **Tab presentation:** `eon-install-rounded-adaptive-tabs-5eu`, Eon
-    `b25da77fb61ed1e82a237d22ffd0c7e8394ce7df`, Venus
-    `f5c679443b2fbda1a7a8f91c98d312811bee2cdf`, artifact
-    `/nix/store/7b710jwv0rfikvviq9pfsj7axrcncc23-eon-0.1.0` proves natural/capped
-    rounded labels, full-path hover, pointer/keyboard selection, stable launch
-    directories, overflow and whole-strip wheel routing without workspace
-    mutation. Header correction `0f2b76d2153db8e5716d0cccd78b26802684b5be` /
-    Venus `94b15af20d1798b648f4d9945fd6bb647f10add8` retains long-label proof
-    in `ven-2fq`. Picker-scoped actions and v7 pending tabs are proved in C18;
-    public-alpha native topology and recovery are proved in C7.
-  - **Reader notice delivery and qualification:**
-    `eon-qualify-repaired-linux-screen-reader-tvkf`, Eon source
-    `f29a4a168ae6f21f26c6c48995a6cb31becce96c`, adopts Venus
-    `dd31c0e74628674c772b1494590ce31cacce1ef0`. AccessKit remains
-    `0f9d186ec6f5e66fe4ccc131ca318dc2725c12f5`, Orbit
-    `6bc269c40b18f08b95778939518f77556ba91c67`, Runtime
-    `e30cf43b7ccc752d33edd4626aabbc4fd1cec579` and EONW v7
-    `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`. Prepared locked Rust
-    fmt/check/test/strict Clippy, graph validation, Nix source-preparation,
-    both product builds and affected package checks pass (120 Rust tests).
-    The refreshed active Eon profile matches working-tree artifact
-    `/nix/store/w3jj26v5yhncr7laq1ylkqdvhq710vn2-eon-0.1.0`, selecting the
-    exact Venus package proved by its owner. Other profile elements and all
-    four ambient process identities survive; running work retains its runtime.
-    In private native COSMIC/Sway 1.12 with Mesa 26.1.2 lavapipe, normal Orca
-    `24c64c15c1e1a75f95d74f7d623f62ab028fd3a9` reads initial picker/Yazi,
-    labels, shortcuts, live/history/returned lines and exact selection `é 界`
-    at 206..210 immediately after assistive Return to live retires its control.
-    Genuine native reader keys, SSIP and non-silent captured PCM also prove
-    selected-Orbit crash continuation and the actual missing-directory launch
-    failure: one announcement, 12.87 seconds of retained explanation, quiet
-    polling, unchanged topology/focus/healthy peers, exact successful retry,
-    notice retirement and continued healthy reading/input.
-    This reader candidate recorded **No-Go**: creating a picker directly
-    from terminal focus after Say All leaves query and full path in the current
-    terminal, but native Say All speaks only the footer. The pane-focus route
-    passes. Ownership was unresolved in that observation; the subsequent caret
-    delivery below retains the separately diagnosed upstream Orca limitation.
-    Evidence, both private cleanups and the corrected fixed-row harness oracle
-    are retained in
-    `~/.local/state/eon/proofs/eon-reader-notice-adoption-2026-10-10-_g_st2lx/qualification.json`
-    (SHA-256 `9bca8c6fb10ade1eed3baa8643f5b7af01fcff146d64a166f7721046e0643b51`).
-    This accepts notice-repair delivery, not full reader, human-listening,
-    wider-platform/compositor or distribution graduation claims.
-  - **Authoritative terminal caret delivery:**
-    `eon-adopt-venus-authoritative-caret-45yu`, Eon source
-    `dd8d79562e40caf318d82058297633349531c40d`, selects accepted Venus source
-    and scoped VEN-C1/C2 proof `58f2eaa8057627bdbf73262fdb10a1dc8b681ffc`.
-    All other component and proof identities remain unchanged. Both affected
-    Nix products and their configured Eon/Runtime Cargo checks pass. Eon's
-    version report validates the selected graph; both launchers bind Venus
-    `/nix/store/qg80g4hxd9kw5zsal3qwcg8mkl9qm7n0-yazelix-venus-0.1.0`.
-    The refreshed active Eon profile resolves to the just-built
-    `/nix/store/30b0mfch6a7axslib86660gxhl7n4p4c-eon-0.1.0`.
-    On x86_64 Linux native Wayland, private COSMIC/Sway 1.12, scale 1 and Mesa
-    26.1.2 lavapipe, unmodified Orca `24c64c15c1e1a75f95d74f7d623f62ab028fd3a9`
-    reports picker caret 27 and exact selected text `é 界` at 206..210.
-    Native line review reaches live/history/returned rows; caret offsets are
-    527/-1/527 respectively. Assistive Return to live retires its control.
-    Native reader keys, SSIP and non-silent PCM are retained. Cleanup preserves
-    all seven ambient process identities, other profile elements and user
-    focus; running workspaces retain their previous executables.
-    With this Orca revision, terminal-to-picker Say All speaks only the footer.
-    The user accepted [Orca #757](https://gitlab.gnome.org/GNOME/orca/-/work_items/757)
-    as a distribution-work limitation; this observation supplies no passing
-    full-reader, human-listening, wider-platform or graduation claim.
-    Exact identities, observations, proof reuse and cleanup are retained in
-    `~/.local/state/eon/proofs/eon-venus-caret-adoption-2026-10-10-65vnxfkj/acceptance.json`.
-  - **Bounded Linux reader qualification, 2026-10-11:**
-    `eon-qualify-repaired-linux-screen-reader-tvkf` accepts the installed
-    `/nix/store/f9j917vzqqnn64ni2vc67cz6g4jsx19r-eon-0.1.0`, matching the
-    working-tree Nix output based on `d3b280870e046246f91c3c82f235c3ef9c6e90e5`
-    plus retained pre-existing installer changes. Venus remains `58f2eaa8`,
-    Orbit `6bc269c4`, Runtime `e30cf43b`, EONW v7 `b8f18b43` and AccessKit
-    `0f9d186e`; full identities and input hashes are retained in the proof.
-    Unmodified upstream Orca `d13f83dcf230fe1e66f1ed6dbfbf057840f55a6a`,
-    `/nix/store/c42n0q6450rv6w286568h81w0i2dniaa-orca-51.1-d13f83dc`, includes
-    [the #757 correction](https://gitlab.gnome.org/GNOME/orca/-/commit/f0189cbf9e97208b7aceada7602bf00d2172aad3).
-    GNOME Terminal 3.60.0/VTE 0.84.0/Vim 9.1 on the unchanged GPL-3 document
-    proves red/green: after `20Gzt`, Say All, Ctrl+F and Say All, old Orca
-    `401c9ba7` skips the current page's first line; fixed Orca reads it at caret 0.
-    A clean native Eon run uses normal/no-debug Orca, AT-SPI 2.60.1, private
-    COSMIC `41497b42` on Sway 1.12, Mesa 26.1.2 lavapipe and scale 1.
-    Native reader keys, SSIP and non-silent eSpeakNG PCM prove initial
-    picker/Yazi launch, labels/focus/shortcuts/AT actions, live/history/returned
-    line review and immediate selection `é 界` after Return to live. Selected
-    Orbit crash preserves healthy peers and caret-based reading/input. Actual
-    missing-directory failure announces once, retains its explanation quietly,
-    commits no failed launch and permits exact retry with notice retirement.
-    Direct terminal-focus picker after Say All reads both query and full path.
-    Cleanup removes private processes/state and preserves seven ambient process
-    identities, the complete active profile, running terminals and user focus.
-    Evidence and excluded attempts are retained in
-    `~/.local/state/eon/proofs/eon-reader-upstream-2026-10-11-u_z79lrt/qualification.json`
-    (SHA-256 `3d86a1fc3bdcee4715f33b2881a728d382345323a7e584c6a8c5894e67de7b15`).
-    Original GPL-header attempts aborted in a Speech Dispatcher mark callback;
-    the adopted unchanged-document pair completed. General speech-stack
-    reliability, human listening, other readers/compositors, HiDPI, macOS,
-    non-systemd, the tagged alpha and public-beta qualification remain unproved.
-    The host reader, product pins/profile and live supervisors were not changed.
-  - **Picker capture correction, 2026-10-11:** Delayed-return PNGs within each
-    of the two historical tab-artifact runs are byte-identical, despite previews
-    appearing complete or blank. Independent FFmpeg decoding shows intact
-    content. Three private Sway 1.12/pixman, Mesa 26.1.2 lavapipe, scale-1 runs of
-    installed `/nix/store/f9j917vzqqnn64ni2vc67cz6g4jsx19r-eon-0.1.0` show complete
-    quick-search/Yazi/returned-picker frames; cancellation succeeds.
-    The false signal arose in preview inspection; no rendering defect was found.
-    Nested COSMIC inner captures were complete, but outer EGL submission errors
-    exclude that comparison from clean compositor-presentation proof.
-    Evidence and preserved source/profile/process identities are retained in
-    `~/.local/state/eon/proofs/eon-picker-rendering-2026-10-11-x0tei9df/investigation.json`
-    (SHA-256 `6b72ceed888940fffb0a055828bb7d86d548d5a42f121a58c182d9fa0b0f3442`).
-- **Open proof:** Tagged-alpha AT-SPI labels and broader reader use remain open.
-  These bounded observations do not establish
-  uninterrupted picker rendering, fractional-scale, wider compositor,
-  non-systemd or new EonTerm native interaction coverage.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** Topology and pruning
+    (`delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`,
+    `session_exit_prunes_the_workspace_and_the_last_exit_closes_eon`,
+    `replacement_eon_adopts_exact_runs_and_projects_numeric_workspace`,
+    `pending_tabs_keep_independent_pickers_and_close_only_the_selected_tab`);
+    movement and close (`round_trips_v4_movement_without_widening_v3`,
+    `round_trips_v4_tab_close_without_widening_v3`,
+    `reorder_parser_accepts_only_each_workspace_axis`,
+    `tab_close_parser_requires_one_stable_identity`); pane frames
+    (`configured_pane_frames_reach_only_workspace_launches`,
+    `pane_frame_option_is_a_strict_single_boolean`); Venus labels and
+    accessibility order (`tab_directory_labels_use_current_position_and_bounded_path_context`,
+    `pane_metadata_label_is_bounded_safe_and_has_honest_fallbacks`,
+    `workspace_accessibility_order_matches_tabs_then_one_expanded_pane`).
+    Installed checklist items 3 and 4.
+- **Open proof:** Pending re-proof in this repository: bounded Linux reader
+  qualification with unmodified upstream Orca
+  `d13f83dcf230fe1e66f1ed6dbfbf057840f55a6a`, which includes
+  [the #757 correction](https://gitlab.gnome.org/GNOME/orca/-/commit/f0189cbf9e97208b7aceada7602bf00d2172aad3);
+  native selected-Orbit crash continuation and the rejected-action notice; pixel
+  checks of pane frames. Installed AT-SPI labels and broader reader use remain open. These checks do not establish uninterrupted picker rendering,
+  fractional-scale, wider compositor or non-systemd coverage.
 
 ## EON-C9 — Managed shell environment
 
@@ -937,20 +491,19 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   editor replacement, or remote/headless clipboard bridge. Arbitrary argv
   remains unmanaged and `eon run -- COMMAND...` remains the explicit escape
   hatch.
-- **Proof:** Base `9f6599d103162061ee666126c2eddce03383afb6`;
-  native clipboard `99c8e44385424775648238459bdb66f3607d9bfe` in
-  `eon-nushell-native-clipboard-jwvp`.
-  - **Environment:** x86_64 Linux Nix alpha; private native Wayland for clipboard.
-  - **Evidence:** Four-shell environment/activation checks, native hook and Fish
-    preservation, private terminal PATH, fzf-option isolation and tool glyphs;
-    base `6dfcb473beccadd6e145235009240c81dd570fe5`, glyphs
-    `fb95671d855fa944c3717103cb13bd0135f8aec8`, private PATH
-    `c0d044c69318a921f9f9139bcaf2de9afce683d3`. Clipboard's managed-command,
-    shell and Nix checks plus installed
-    `/nix/store/60814358az00zr420rmbai7lz5qy1a1x-eon-0.1.0` round-trip Unicode
-    through commands/aliases and `wl-paste`; native user autoload overrides and
-    the no-display native error remain intact. C4 proves the earlier external
-    composition.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier on x86_64 Linux.
+  - **Evidence:** The `shell-environment` and `managed-command-path` Nix checks
+    (version output from all four managed shells, Zsh and Fish Carapace
+    completion, `eon-*` commands, native `clip copy`/`clip paste` and the
+    `clc`/`clp` aliases);
+    `managed_commands_use_exact_programs_and_private_configuration`,
+    `session_path_contains_one_managed_prefix`,
+    `shell_configuration_is_strict_and_defaults_without_a_file` and
+    `managed_invocation_names_are_bounded`.
+- **Open proof:** Pending re-proof in this repository: interactive managed
+  startup of each shell, and a native Wayland clipboard round trip through
+  `clip copy`, the aliases and `wl-paste`.
 
 ## EON-C10 — Typed workspace control
 
@@ -985,7 +538,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
 - **Consumes:** Current EONW v7 and accepted Orbit management operations; the
-  v5 popup shape and historical lifecycle codecs retain their scoped proofs.
+  v5 popup shape and historical lifecycle codecs are covered by the codec tests
+  cited in Proof.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
@@ -1033,27 +587,25 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   retired v4 picker opcode is unavailable; Project uses ordinary popup invocation.
   Older fixed-namespace work may be inspectable without being presentable. There
   is no negotiation or adapter.
-- **Proof:** Base `9f6599d103162061ee666126c2eddce03383afb6`;
-  v5 seed `0cc8f477298681ae3945903e8fdb5852d487c5ab` and activation
-  `2214a4f592f78437c2f74aff0a1df8d1cc7ee5a4` with Venus
-  `d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`.
-  - **Environment:** x86_64 Linux Nix package and installed profile.
-  - **Evidence:** Codec/version rejection, raw directories/endpoints, CLI
-    projection, absolute connection/read deadlines, management Stop and
-    response-loss finality. Origin proofs: v2
-    `7bb50873ae27e09dfebd8a6ca2f8075bac07afe8`, v3
-    `96119f29ca2e3ec4ad19bbe272708b07d588429a`, lifecycle tags
-    `fd6b348494111a0d18e241787da14ea99ee117a9`, CLI
-    `d0c22080647a97b425b2448fe612c41be0357e57`, deadlines
-    `a390fc5c007900c3fc8c9c49df85f9b8acc06d4a`, management Stop
-    `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`, lost response
-    `56fcae2d00baecf9b69e4650882a69e50419f56b`, maximum-bound snapshot
-    `10c29edf861fac28db48f41a4546165f79777ee6`.
-    v5 codec checks protect exact/common action bytes, retired picker-opcode
-    refusal, lifecycle results, stale/absent/wrong-tab popup targets,
-    popup-only/pending tabs, ownership/geometry and frame bounds. The seed's
-    mechanical proof is distinct from installed activation in C18. C18/C22/C23
-    name v7 consumers; C4 proves the external v2–v7 package owner.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
+    `round_trips_v2_bounds_and_rejects_invalid_inputs`,
+    `common_actions_stay_exact_and_new_requests_are_bounded`,
+    `popup_targets_round_trip_and_do_not_follow_replacements`,
+    `snapshots_preserve_hidden_and_inactive_work_and_reject_broken_ownership`,
+    `every_legal_snapshot_fits_the_frame_budget`); popup policy
+    (`popup_configuration_owns_defaults_overrides_and_collisions`,
+    `popup_executable_preflight_uses_the_session_context`,
+    `popup_identity_reuses_hides_and_replaces_only_after_retarget`,
+    `chooser_result_requires_its_exact_live_invocation`); deadlines and
+    failures (`unix_connection_attempt_obeys_timeout`,
+    `management_response_obeys_one_deadline_across_partial_reads`,
+    `lost_stop_response_still_finishes_the_supervisor`,
+    `missing_supervisor_is_a_structured_workspace_failure`,
+    `invalid_focus_is_rejected_before_supervisor_connection`,
+    `closed_stdout_pipe_is_not_a_panic`). Installed checklist items 3 and 4
+    (`eon workspace` against the window; Project, Git, Agent and Anima popups).
 
 ## EON-C11 — Runtime generations and presentation
 
@@ -1123,42 +675,27 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   generated-command inputs. Exact presentation checks remain;
   retain the prior executable to reattach incompatible old work. See
   [generation inputs](ARCHITECTURE.md#defaults-overrides-and-generation) and
-  [cutover acceptance](ARCHITECTURE.md#acceptance-boundaries). EON-C4 records
-  the local-library, independent-producer and installed consumer cutover proofs.
-- **Proof:** Base `10c29edf861fac28db48f41a4546165f79777ee6`, artifact
-  `/nix/store/dbiv438iwn9mljrwfg6d29ypg96hp00c-eon-0.1.0`.
-  - **Environment:** x86_64 Linux Nix packages and installed profiles;
-    native slices use isolated Sway 1.12 Wayland.
-  - **Evidence:** Separate namespaces, repeated launch, native Present,
-    owner-routed Stop, supervisor-loss replacement, dead-residue correction
-    and concurrent convergence. Generated identity
-    `4beb441301d84039570dd07138da2a6f70b3ed23`, convergence
-    `36c95ad04cb9519f88b907642c8147d95f56ee83`, EonTerm lifecycle
-    `63686a12b752c9423b2096d5e32aa5842f2184fc`, codec sensitivity
-    `3c1d6e08d223df753eb88ca031d108ed1abe8ee3` and bounded frames at the base
-    retain their scoped checks in Git. C15 owns exact same-boot recovery;
-    C4 proves both immutable contributions and cutover old/new generation behavior.
-  - **Cgroup-free launch:** `eon-uj7`, Eon
-    `76b9f5635d9ae545dadb0326976f309afae8fd25`, artifacts
-    `/nix/store/p4hbh2jlr6i22mah8r3f5g2lc696m0r6-eon-0.1.0` and
-    `/nix/store/i53rvda2crdyv4fzsy6vyawzgvd4yb9f-eonterm-0.1.0` pass locked
-    Rust/Nix and native launch, detach/reopen and Stop with `/sys/fs/cgroup`
-    hidden. This proves no cgroup requirement, not installed non-systemd support
-    or whole-descendant cleanup.
-  - **Historical codecs:** `eon-stop-older-eonw-generations-k40`, Eon
-    `446d8a7e4f537d2ee439c5441a6b20203d4ea71d`, artifact
-    `/nix/store/0rir9q0a42d77jhh9z615acz3qch8z83-eon-0.1.0`: v2–v6
-    owner-routed fixtures, locked Rust/Nix and real installed v6 Stop including
-    an empty isolated supervisor. v2–v5 are fixture-verified only; legacy has
-    no authoritative Stop. The public qualification in C7 adds native previous
-    v6/current Stop; C4 adds exact v7 cutover migration.
-  - **Batch selection/cancellation:** `eon-stop-generations-batch-gdb` and Git
-    `f4e6a4dfd31c1b9f84aefdbb70a3619c649df4e1` retain final current-unstarted,
-    legacy/corrupt target, caller-lifetime and human-decline regression proof.
-    Installed `/nix/store/s28ypi05i5jw7n49sdskzzc65kmr6m72-eon-0.1.0`
-    successfully stops a private v6 fixture with current unstarted; these
-    installed substitute-owner checks are not native Stop acceptance.
-    C23 proves one piped confirmation per prompt and caller-last window Stop.
+  [cutover acceptance](ARCHITECTURE.md#acceptance-boundaries).
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** `generation_identity_is_stable_bounded_and_namespaced`,
+    `discovery_bounds_dead_cleanup_and_rejects_unsafe_metadata`,
+    `concurrent_launches_converge_and_generation_stop_is_owner_routed`,
+    `bare_eon_attaches_only_to_the_live_current_generation`,
+    `launch_overlapping_last_session_exit_starts_a_fresh_session`,
+    `old_supervisor_remains_inspectable_but_not_presentable`,
+    `previous_supervisors_keep_inspection_and_stop_without_presentation`,
+    `current_cli_stops_known_previous_eonw_generations_through_their_supervisors`,
+    `previous_and_all_stop_older_generations_when_current_is_unstarted`,
+    `batch_stop_preserves_current_until_all_and_reports_unavailable_generations`,
+    `legacy_workspace_is_visible_but_not_attachable_or_stoppable` and
+    `stop_confirmation_refuses_a_replacement_supervisor`. Installed checklist
+    items 2 and 12: detach and attach of one live generation, and Stop of that
+    one exact generation.
+- **Open proof:** Pending re-proof in this repository: native Present of a live
+  surface, launch with `/sys/fs/cgroup` hidden, and native Stop of a real
+  previous-EONW supervisor. Fixture-only historical codecs remain
+  fixture-verified.
 
 ## EON-C12 — Standalone exact-command terminal
 
@@ -1188,15 +725,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   panes, key remapping, preset, wrapper, persisted mode marker, workspace,
   managed-tool/default-shell command, remote access, focus guarantee, or Zellij
   policy. Bare `eon` and `eon run` retain workspace meanings.
-- **Proof:** `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`.
-  - **Environment:** x86_64 Linux Nix package and installed runtime.
-  - **Evidence:** Exact argv/environment, vivid palette, repeated launch,
-    supervisor-loss recovery and clean Stop; product
-    `816372ea9ffe90f08ff442b5763a3b5413b7906c`, palette
-    `285c6bf48fb402a673eb997594b6eb1bbcb1429b`, lifecycle
-    `63686a12b752c9423b2096d5e32aa5842f2184fc`. C7 names the public native
-    artifact and same-terminal recovery; C4 names external package/closure,
-    co-installation and config-reread proof for EonTerm.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** `eonterm_reopens_without_workspace_or_a_second_session`,
+    `eonterm_replaces_exact_residue_after_its_supervisor_and_session_die` and
+    `rejected_native_startup_creates_no_session_in_either_product`; the
+    `eonterm-closure` Nix check. Installed checklist item 11: launch, detach,
+    `eonterm attach` and exact Stop; `--no-decorations` started.
+- **Open proof:** Pending re-proof in this repository: native supervisor-loss
+  recovery of the same EonTerm terminal, and `--no-decorations` rendering
+  under a decorating compositor.
 
 ## EON-C13 — Terminal-background opacity policy
 
@@ -1214,28 +752,27 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   returns bounded presentation failure without stopping Orbit or its child.
 - **Owner:** Eon supplies the default; Eon Runtime owns strict configuration
   and launch projection; Venus owns native rendering.
-- **Consumes:** Venus `VEN-C11`; its original exact acceptance is scoped below.
+- **Consumes:** Venus `VEN-C11`.
 - **Boundary:** Opacity affects only terminal default background and padding, not
   explicit cells, text, cursor, selection, chrome, decorations, input, hit
   testing, accessibility, or click-through. No profile, public override,
   watcher, live reload, Orbit restart, non-Wayland claim, or renderer fallback.
-- **Proof:** `7303ee5cca3925939b84267bd54587a2cfb223a6`,
-  `eon-default-opacity-0-80-eonova-rollout-elu`.
-  - **Environment:** x86_64 Linux COSMIC Wayland; Venus VEN-C11
-    `74ab5a0b661210f0afec94086f5358fe50b01f05`, Orbit
-    `6de95296d252c119d4fdba2d9b03cec1a09355ae`, ORBS v3 / EONW v1.
-  - **Evidence:** Config admission/rejection, both products' argv, values and
-    live/replacement behavior; locked Rust/Nix checks. Config-free installed
-    EonTerm `/nix/store/8a31d8p6vcxld23j05wjzisw8b0n68bp-eonterm-0.1.0`
-    launches real Venus with `--background-opacity 0.8`; Eon artifact
-    `/nix/store/3b7zzsn9ah79qm4r49rdxmcp9fsdfq56-eon-0.1.0`.
-    Earlier explicit-value/reopen and native visual acceptance remains in
-    `eon-eonterm-presentation-e4f`; C4 adds cutover reread evidence without a
-    new compositor visual claim.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** `bare_eon_attaches_only_to_the_live_current_generation` checks
+    the default `--background-opacity 0.8`;
+    `eonterm_reopens_without_workspace_or_a_second_session` rereads an explicit
+    value on reopen;
+    `invalid_presentation_configuration_precedes_supervisor_generation_and_children`
+    rejects invalid values; Venus `background_opacity_selects_only_proved_surface_modes`,
+    `background_opacity_premultiplies_clear_colors` and
+    `background_opacity_skips_only_default_cell_backgrounds`. Installed checklist
+    item 8 at the `0.80` default.
 
 ## EON-C14 — Default compositor blur policy
 
-- **Status:** Proven
+- **Status:** Proven by the automated tier; the installed backdrop is pending
+  re-proof in this repository.
 - **Consumer:** Every Eon or EonTerm Venus surface.
 - **Trigger:** Eon creates or reopens a surface while
   `$EON_CONFIG_HOME/config.toml` contains optional strict boolean
@@ -1251,25 +788,26 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Venus/compositor best effort and does not make Eon launch fail.
 - **Owner:** Eon supplies the default; Eon Runtime owns strict configuration
   and launch projection; Venus and the compositor own native behavior.
-- **Consumes:** Venus `VEN-C15` and EON-C13; original acceptance is scoped below.
+- **Consumes:** Venus `VEN-C15` and EON-C13.
 - **Boundary:** No capability probe, automatic opacity, blur strength, public
   override, watcher, live reload, fallback renderer, Eonova-specific policy, or
   non-Wayland visual claim.
-- **Proof:** `b41be3a00a8e47a435521509c3d060d80e0524a5`,
-  `eon-consume-venus-background-blur-k8o`.
-  - **Environment:** x86_64 Linux COSMIC Wayland; Venus VEN-C15
-    `7fc7e4ba97aaf48b586002934a580ef2d1c31694`, Orbit
-    `6de95296d252c119d4fdba2d9b03cec1a09355ae`, ORBF v1 / ORBS v3 / EONW v1.
-  - **Evidence:** Default/true/off admission, independent opacity, exact argv
-    and native visual acceptance; locked Rust/Nix checks and installed
-    `/nix/store/ky1f6a1q5iz2lg95ph81kgs1b6ragms3-eon-0.1.0` and
-    `/nix/store/qh2gsxryzlyypva6087sw0bp0ninyhj3-eonterm-0.1.0`.
-    Config-free real Venus receives one blur token; unsupported compositor
-    behavior remains best effort, and Sway alpha checks do not prove blur.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier.
+  - **Evidence:** `bare_eon_attaches_only_to_the_live_current_generation` checks
+    one default `--background-blur`; `eonterm_reopens_without_workspace_or_a_second_session`
+    omits blur under `background_blur = false`, then rereads the configuration
+    on reopen and restores the default blur once the setting is removed;
+    `invalid_presentation_configuration_precedes_supervisor_generation_and_children`
+    rejects invalid values.
+- **Open proof:** Pending re-proof in this repository: the installed frosted
+  backdrop on a blur-capable compositor such as COSMIC; headless Sway has no
+  blur protocol.
 
 ## EON-C15 — Same-boot Orbit recovery
 
-- **Status:** Proven on x86_64 Linux native Wayland
+- **Status:** Proven on x86_64 Linux by the automated tier; installed
+  supervisor-loss adoption is pending re-proof in this repository.
 - **Consumer:** One local Eon or EonTerm user on the same boot and login.
 - **Trigger:** An Eon-launched Orbit crosses Ready, its supervisor disappears,
   its acquired owner dies, a replacement targets the same exact generation,
@@ -1324,95 +862,37 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   projection, lease collection, deadline, EONW ordering, retained launch claim,
   and exact residue; Orbit `ORB-C13` owns live identity, Ready, lease, terminal state,
   `ORB-C12` cleanup, tombstone, and endpoint cleanup.
-- **Crash-isolation phase:** Accepted on 2026-10-09 under
-  `eon-isolate-unclean-orbit-exit-1v4a`; exact acceptance is recorded below.
 - **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v1, and Venus `VEN-C14`.
 - **Boundary:** Same boot and login only; no prior-topology persistence, Orbit or
   machine restart recovery, logout/reboot survival, remote authority, service
   manager, broker, or compatibility adapter. Tombstones grant no authority and
   must be reconciled before their workspace slot is reused.
-- **Proof:** `6b3c64d13c2fee205a6f1c218b1c4fc107507f1e`.
-  - **In-tree component generation:** `eon-monorepo-2oko.2` records the
-    sandboxed Rust suite and both Nix product builds for the runtime generation
-    ID as component generation. Installed re-proof is pending in this repository
-    under `eon-monorepo-2oko.6`.
-  - **Stop repair:** `eon-repair-stop-completion-picker-cleanup-1xxu`, Runtime
-    `eceac276803a1ec819a402905c685e1c2a2e5865`, unchanged EONW
-    `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`, Orbit
-    `6bc269c40b18f08b95778939518f77556ba91c67` and Venus
-    `a27aad23822d3bd0b0e467ffc32c578bbde8b00d`. The Eon working-tree candidate
-    over `92e0d7b379a14d003f37e5c2df9c468cb43e74b7` passes complete producer
-    and composed locked Rust checks, both Nix products and package identity gate.
-    Installed `/nix/store/w9pd9b36yb0ndz007sjhfjwgjzq3lm5a-eon-0.1.0`
-    on isolated Sway 1.12 / Mesa software Vulkan proves two-pane window Stop,
-    active-picker cleanup and preservation of peer/older work. Exact candidate
-    file hashes, regression negatives, native process identities and profile
-    proof remain in `eon-stop-1xxu-2026-10-07-222631` under Eon's proof root.
-  - **Reviewed correction:** Runtime `4d8074a51022e828872abb127f77c27e26d5f2eb`
-    collects all Stop results after a natural-exit cleanup failure and simplifies
-    finished-run iteration. Its focused red/green regression, complete locked
-    Rust checks, both Nix products and installed native window/picker/older-work
-    proof pass. Installed artifact:
-    `/nix/store/i15qjws0vqrc5jmngvdqffbqzyq6s5bz-eon-0.1.0`; exact candidate
-    hashes and the host Nix cache negative remain in
-    `eon-stop-1xxu-review-2026-10-07-225703` under Eon's proof root.
-  - **Ended-discovery correction:** Runtime
-    `9bc86e08f2bd2c45b32b8e74068a28e1cb03f675` shares the existing child reaper
-    with discovery, reaping ended untracked direct children before record
-    retirement and rejecting wrong-start identities. Its focused red/green
-    regression, complete producer/composed Rust checks, both Nix products and
-    installed native window/picker/older-work proof pass. Installed artifact:
-    `/nix/store/41jhpaaqdawq0ka7mgp8z0xcy98l7w78-eon-0.1.0`; exact candidate
-    hashes and retained host/build negatives remain in
-    `eon-stop-1xxu-review2-2026-10-07` under Eon's proof root.
-  - **Presentation retry correction:** Runtime
-    `02865fdf908d8139d4c94180703381f6029c0598` reaps exited Venus while
-    incomplete Stop retains its owner and unfinished runs, without workspace
-    mutation or replacement launches. The extended regression is red/green;
-    full producer/composed Rust, both Nix artifacts and installed native
-    close-before-retry checks pass. EonTerm uses per-build executable RAM scratch
-    with unchanged `/build` paths/tests; host deadline negatives remain retained.
-    Installed Eon: `/nix/store/qnfhshxx9kdzbazgx90cjv3xhb62g1ds-eon-0.1.0`;
-    exact hashes/evidence: `eon-stop-1xxu-review3-2026-10-08` in Eon's proof root.
-  - **Crash isolation:** Runtime `e30cf43b7ccc752d33edd4626aabbc4fd1cec579`,
-    unchanged EONW `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`, Orbit
-    `6bc269c40b18f08b95778939518f77556ba91c67` and Venus
-    `42a5ad291995847d5fa36bb62344065f95f6866f`. The Eon candidate over
-    `d57862d3d7a17de21be5c54a46d448b70d9235b6` passes focused process and
-    trust-boundary red/green checks, full affected locked Rust checks, both Nix
-    products and flake checks. Installed Eon
-    `/nix/store/0x45gqbyy6sllrcwprnnddflyxr80nsh-eon-0.1.0` on private
-    Sway 1.12 / Mesa software Vulkan preserves the same native window, peer
-    Orbit/work PID identities and keyboard input after selected-pane SIGKILL,
-    with no duplicate Orbit. Normal exit, Stop and recovery regressions pass;
-    live EOF and replaced record/socket objects remain non-success.
-    EonTerm `/nix/store/km9290jl3ldq8b9da19acn4jvjfkg05g-eonterm-0.1.0`
-    passes its shared package/lifecycle boundary without a multi-terminal claim.
-    A private installed-profile replacement from exact `hq5j2crs` to this Eon
-    artifact preserves a real Codex process and ordinary shell work through
-    upgrade, rollback, detach and exact-old-binary reattachment. The agent
-    completes and its task passes an independent test; new-generation work
-    launches while the old terminal continues. This proves process continuity,
-    not provider semantic state, source-fetch parity or a direct-bundle updater.
-    Source identities, hashes, commands, logs, cleanup and the silent 12-second
-    Kinestra capture remain in `eon-orbit-crash-1v4a-2026-10-09` under Eon's
-    proof root. Keyboard-injection negatives are retained separately; no
-    restart persistence, killed-terminal restoration or screen-reader
-    qualification is established by this repair.
-  - **Environment:** x86_64 Linux packaged installed recovery and adversarial
-    lifecycle checks.
-  - **Evidence:** Ready serialization, supervisor loss, exact adoption, Busy and
-    saturated-listener bounds, partial-response deadlines, lost-response Stop,
-    tombstones and dead-residue relaunch; base
-    `9f9b5c3144bf0f8e4cb8e0ec2b5b09d254b04910`, lost response
-    `56fcae2d00baecf9b69e4650882a69e50419f56b`, connect deadline
-    `a4f0122862b7293326c22530f787124a47d0f560`, response deadline
-    `ced9e4ae11ed21a0f05d50cd470491adffa73b54`, Ready serialization
-    `871c9f639e519c7e3201fa5d9755d0a77a4cb0df`, compact recovery
-    `cfcb38e4284843f163c1a04f8c71052f31c0ac5b` and synthetic-tab directory at
-    the base. C7 names exact native artifacts recovering three full-Eon and one
-    EonTerm terminal without duplicates. Prior adversarial checks keep their
-    scope; no logout, Orbit-restart or machine-restart recovery is proved.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** Identity and Ready
+    (`session_identity_is_positive_canonical_decimal`,
+    `marked_ready_claim_never_falls_back_to_child_stop`,
+    `rejected_ready_identity_stops_the_spawned_session_through_management`,
+    `desktop_launch_failure_stops_the_ready_session_through_management`);
+    replacement and recovery
+    (`replacement_eon_adopts_exact_runs_and_projects_numeric_workspace`,
+    `replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacements`,
+    `replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it`,
+    `eonterm_replaces_exact_residue_after_its_supervisor_and_session_die`);
+    Stop and cleanup
+    (`stop_accounts_for_late_ready_picker_and_retains_partial_cleanup_owner`,
+    `stop_result_covers_queued_operation_and_managed_cleanup`,
+    `lost_stop_response_still_finishes_the_supervisor`,
+    `failed_directory_picker_stop_is_retried_during_supervisor_cleanup`,
+    `failed_natural_cleanup_still_finalizes_other_runs_and_restores_leases`);
+    owner loss (`lost_owner_cleanup_requires_death_and_original_owned_objects`,
+    `discovery_reaps_untracked_ended_children_before_removing_records`).
+    Installed checklist items 2 and 12.
+- **Open proof:** Pending re-proof in this repository: installed native
+  selected-pane crash isolation with healthy peers, supervisor-loss adoption of
+  several full-Eon terminals, and process continuity across an installed-profile
+  upgrade and rollback. No logout, Orbit-restart or machine-restart recovery is
+  proved.
 
 ## EON-C16 — Caller-owned application identity
 
@@ -1430,21 +910,18 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon supplies defaults; Eon Runtime validates and projects EonTerm
   CLI input; the embedding composition owns its identifier/desktop metadata;
   Venus owns native mapping only.
-- **Consumes:** Venus `VEN-C17`; original exact acceptance is scoped below.
+- **Consumes:** Venus `VEN-C17`.
 - **Boundary:** Immutable launch metadata only; no runtime protocol, branding
   provider, desktop discovery, child inspection, or wider platform promise.
-- **Proof:** Identity source `6a3236bb342c535aca16acdf563ff66386e8f6e5`
-  and dead-residue correction `5631d8dc4de49bfd3831aa3abef300b7734ad36c`,
-  `eon-eonterm-application-identity-xwi`.
-  - **Environment:** x86_64 Linux COSMIC Wayland; Venus VEN-C17
-    `ab24961bd6b2f9403736e52ebbac8cc266488a41`; exact historical Eonova
-    embedding `a9d5946686ab28e51b2c10cc9f2d3f6fb1282b52`.
-  - **Evidence:** CLI rejection, exact Venus argv and distinct launcher grouping,
-    repeated-launch convergence and unchanged terminal; Eon
-    `/nix/store/q5lbbk5nqh778yqz7al0zxfin5x7vp0r-eon-0.1.0`, EonTerm
-    `/nix/store/a3rf1w4fq615sa153plp7kihqnqdm25a-eonterm-0.1.0`, embedding
-    `/nix/store/vjrwggm7655zhfv9x2fj3h5ny8sflixk-eonova-0.1.0`.
-    This retains caller-owned identity proof, not activation of Nova integration.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** `venus_receives_workspace_endpoint_only_in_workspace_mode`
+    checks the projected `--application-id` for both products. Installed
+    checklist items 1 and 11 launch Eon and EonTerm; item 1's launch waited for
+    the Sway tree to show the native app ID `eon`.
+- **Open proof:** Pending re-proof in this repository: installed rejection of
+  invalid EonTerm identities, distinct launcher grouping, and an approved
+  embedding's caller-owned identity.
 
 ## EON-C17 — Tab launch directory
 
@@ -1481,26 +958,24 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   handles, filesystem watching, shell-`cd` tracking, pane-CWD inference,
   retargeting of existing processes, persistence, picker UI, or compatibility
   service accepting EONW v1 and v2.
-- **Proof:** `9f6599d103162061ee666126c2eddce03383afb6`.
-  - EON-C4 records current label delivery with unchanged launch directories.
-  - **Environment:** x86_64 Linux Nix package and installed Eon profile;
-    Venus `2622c124be5ba8a62037c6de952ebf3928347387`.
-  - **Evidence:** Raw-directory v3 seed
-    `96119f29ca2e3ec4ad19bbe272708b07d588429a`, v4 pending seed
-    `aaafc9127c054e683abfceb3c8fcaae201a7a763`; codec/workspace/CLI, actual
-    multi-tab CWD, rollback/disappearance and maximum-bound snapshot checks;
-    locked Rust/Nix, manifest and generation checks. Installed
-    `/nix/store/j4h0bmyvkndzvhi3l9r96b7f57jxlmm8-eon-0.1.0` uses
-    `g1-a9a0102de0a2c56d1d5bdda6c25bb3dc`. C7 adds native selection,
-    inheritance/retargeting, existing terminal CWD preservation, later-pane CWD,
-    invalid-path rejection and synthetic recovery fallback.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** `launch_directory_can_disappear_after_the_initial_session_starts`,
+    `tab_directory_retargets_future_sessions_without_crossing_tabs`,
+    `new_tabs_start_at_home_and_reject_unavailable_home_without_mutation`,
+    `tab_directory_parser_preserves_one_opaque_path_argument`,
+    `replacement_eon_adopts_exact_runs_and_projects_numeric_workspace` and
+    `round_trips_v2_bounds_and_rejects_invalid_inputs`; Venus
+    `tab_directory_labels_use_current_position_and_bounded_path_context`.
+    Installed checklist items 3 and 4.
 - **Open proof:** Current-alpha AT-SPI launch-path context remains unproved;
   prior focused path-context checks are not a screen-reader workflow.
 
 ## EON-C18 — Picker-first tab directories
 
-- **Status:** Proven for home-directory tabs, picker dismissal, shared popups
-  and v7 multi-pending tabs on x86_64 Linux native Wayland.
+- **Status:** Proven for home-directory tabs, picker dismissal and shared popups
+  on x86_64 Linux native Wayland; v7 multi-pending tabs are proven by the
+  automated tier.
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z in an existing tab.
@@ -1613,196 +1088,42 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   consumes one directory result without interpreting Yazi's navigation state.
 - **Consumes:** EON-C17, current EONW v7 popup/pending-tab values, Orbit's
   accepted terminal startup/attachment/exit/stop contracts and the selected exact
-  Venus consumer; original v5 acceptance is scoped in Proof.
+  Venus consumer.
 - **Boundary:** No custom filesystem walker, editor/file-opening integration,
   copied Nova plugin, normal-pane identity, client-supplied command,
   simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
   tab, EonTerm action, or additional platform.
-- **Proof:** Distinct v5 activation, v7 multi-pending and picker/tool slices.
-  - **Environment:** x86_64 Linux Nix packages, isolated native Sway 1.12
-    Wayland; named Mesa/headless qualifications remain attached to each slice.
-  - **Evidence:** The following exact slices retain their distinct codec,
-    runtime, installed native or packaged-tool checks and acceptance limits.
-  - **Home-directory tabs and picker dismissal:** `eon-new-tabs-home-4jqa`,
-    Eon source `1909c7b4029d688940b1c46f5729a591cc11f2b3` selects Runtime
-    `f569bfd94ef970f5786a344c575c6c6f0a8c1cba` with unchanged canonical EONW
-    `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`, Orbit
-    `427cf2d074cd1db905a2cc2602a5475065d1c790` and Venus
-    `1897526455a23bf8ed390bb2e144f87280968d6c`.
-    Runtime fmt/check/full tests/strict all-target Clippy, production-prepared
-    Eon fmt/check/strict all-target Clippy, focused home-directory red/green
-    and both Nix package builds/tests pass (38 process and 42 runtime tests
-    per package). Only the Runtime lock input changes; the complete codec
-    package and root build inputs remain identical to the prior producer.
-    The consuming process regression proves distinct initial/custom-home
-    directories, actual picker and first-pane launch CWD, retained tab on
-    dismissal, explicit pending close, and healthy terminal/supervisor survival
-    after the pending tab's home disappears. Owner checks cover unresolved,
-    relative and missing home without mutation, failed picker starts,
-    background completion without focus change and codec-valid failure cleanup.
-    Profiles resolve to Eon `/nix/store/8ixfswcxmfalcrlxmfb9maj8ijivys6v-eon-0.1.0`
-    and EonTerm `/nix/store/1b65lj0l1wxi0p50y1lyq42qn47amlb9-eonterm-0.1.0`.
-    One isolated installed Sway 1.12/pixman/Mesa software-Vulkan observation on
-    x86_64 Linux native Wayland uses physical Alt+Shift+T and Escape in quick
-    search and Yazi. Each tab keeps its identity and gains exactly one first
-    pane in `/home/lucca`; installed Yazi's process CWD is also `/home/lucca`.
-    The initial tab retains its distinct launch directory. Physical Alt+Shift+W
-    closes a pending tab without launching a pane; existing terminal process
-    identities and shortcut isolation remain. Picker/browser/pane captures
-    are visually inspected. Exact installed version and profile identities,
-    private process/Wayland/DBus cleanup and unrelated profile preservation pass.
-    53 of 58 baseline ambient executable/start identities remain;
-    others exited or changed outside proof-owned processes. No ambient stop,
-    restart or desktop focus change was issued. Live windows retain their build.
-    Proof uses the recorded working tree with pre-existing unrelated installer
-    edits preserved; it is not a clean-tree release or promotion claim.
-    No performance, macOS, broader-compositor or screen-reader claim. Evidence:
-    `~/.local/state/eon/proofs/eon-new-tabs-home-2026-10-12/`.
-  - **v5 activation:** Eon `2214a4f592f78437c2f74aff0a1df8d1cc7ee5a4`, Venus
-    `d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86`, Orbit
-    `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5` (ORBF v2 / ORBS v11), artifact
-    `/nix/store/4bni992l878fsl8jqgqh61zkfvvdisph-eon-0.1.0` passes locked
-    Rust/Nix, nine installed popup states and user acceptance in
-    `eon-tool-popups-e13.3`. Original Alt+Z COSMIC proof at
-    `9f6599d103162061ee666126c2eddce03383afb6`, Orbit
-    `70861097a825c2fbfaea53a8ca9437f45e8602eb`, Venus
-    `2622c124be5ba8a62037c6de952ebf3928347387`, artifact
-    `/nix/store/nqcjvnxyjrnjm1hwl4lcwqzi0jmyfvli-eon-0.1.0` retains exact
-    cleanup, recovery, hostile-default and durable-only Stop proof in Git.
-  - **Mode and footer:** `eon-picker-mode-switching-6bo` at
-    `f75c910a6a8488bdad3c614544769080261e4560`, Orbit
-    `91999d79546422b49bdbc124166a65859d0bd872`, Venus
-    `541a9cb43c155b8b97069904593dc81c73682613`, artifact
-    `/nix/store/024j1lxhwmxwgmkh4r4yxkz0hd2p1qyh-eon-0.1.0` proves the shared
-    Tab/Enter/cancel/nested-Esc behavior, raw-path roundtrips and later-pane CWD
-    without changing existing process CWD. `eon-picker-context-hints-j57`
-    retains exact candidate hashes over `9cf712e031924f874a681036d931c24aa906b29d`,
-    the same Orbit and Venus `e13970e90289d0d86f0adcbf350e4b9c1d5e5219`,
-    artifact `/nix/store/qyxb0m5f19kplh6qbxknm3b63gzhyw31-eon-0.1.0`: private
-    1100×750/720×600 native quick/browser/jump/help checks and nested-prompt
-    regression prove contextual hints without premature directory commitment.
-  - **Selection and cleanup:** `eon-yazi-highlighted-directory-d5d`, prepared
-    source `/nix/store/zdwl036r2r9gd9knrwfm835mj0ra16lz-eon-source`, artifact
-    `/nix/store/hij0is9qld30dgwag1hfa03cbzj4jahn-eon-0.1.0` proves distinct
-    raw non-UTF-8 highlighted/parent results by regression and packaged Yazi PTY;
-    this was mechanically verified, not a fresh full-Eon native observation.
-    Review at `4298fbb8868752e3d6c8eb4fd79fae067ab3e2a1`, Orbit
-    `91999d79546422b49bdbc124166a65859d0bd872`, Venus
-    `e13970e90289d0d86f0adcbf350e4b9c1d5e5219`, artifact
-    `/nix/store/008jbiqsprwvyn2w7bfnc7rqhd1vk36x-eon-0.1.0` proves blocked
-    history-child reaping, exact distinct picker endpoints, immediate reopen,
-    empty-history Browse, Shift+Z, untracked-child choice, new-pane CWD and
-    native Ctrl+C cleanup. Native raw-path/home/root/q/Q and inherited-PWD
-    checks remain at `e1896db32e1780ad8c29db40a3f22fa9b6bbf252`; its earlier
-    Esc-to-Browse behavior is superseded by the accepted mode-switch contract.
-  - **Other-tab actions:** `eon-confine-picker-blocking-to-its-tab-7g5`, Eon
-    `6879dbc78975c135f9d794759b0fa6485ad207eb`, the same 91999d7/e13970e pair,
-    artifact `/nix/store/23shhmi4q15blg0y2a56718s6xyfz821-eon-0.1.0` proves
-    native/CLI other-tab actions, exact picker binding, late acceptance and final
-    cancellation. Its one-pending restriction is historical, not current v7.
-  - **v7 multi-pending:** `eon-allow-pending-tabs-with-pickers-gnz`, producer
-    `f41a41c9aecc4c436edfa2f394b832aa6d8711ad`, Venus
-    `479d7cef29aaa40d2d93d610567517357479877c`, Orbit
-    `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`, artifact
-    `/nix/store/0m637rzcg5ksm27c5q0p6pd8gk2mw9yc-eon-0.1.0` passes locked
-    Rust/Nix and native physical Alt+Shift+T, tab switching, independent browsing
-    and exact selected-picker close. Background-exit correction
-    `d0cf639a0edfb9fffd8142a709c5a858d34ec7e2`, artifact
-    `/nix/store/svdyvf9s861vdgb85gpli0pdwvww30ny-eon-0.1.0`, preserves the
-    selected tab when another pending picker exits; wire and child pins stay exact.
-  - **Anima:** `eon-anima-startup-5el`, Eon
-    `4ff62dbd1b4645ee8f2bd927d233388230f06a10`, Anima
-    `b3133f057fa0029b3e06c85301161168c48bb799`, Orbit
-    `b6cecf8f2ee35570b41cfdc578b095889d917fe2`, Venus
-    `773c6bab7d3e21e0b0d7d942c9bba72260a08b42`; the tested working trees
-    pass locked Rust/Nix. Simplified prepared source
-    `/nix/store/5xjs4w72z0drwm1s99vzgp259lky3030-eon-source`
-    and installed `/nix/store/9zwwy9jxnig5cy90s0j6xcrkqznq888d-eon-0.1.0`
-    prove native startup then picker; the initial installed
-    `/nix/store/2axg20ry5dl48dflcc8bq57yg07cp1bd-eon-0.1.0` proves early key
-    dismissal without picker leakage, disabled startup, popup rendering/removal,
-    same-pane reattachment without replay and caller-PTY `eon anima`.
-    Alt+Shift+A is advertised and routed by the accepted physical-shortcut path;
-    that private compositor run did not supply a physical keyboard observation.
-  - **Accelerando refresh:** `eon-refresh-anima-accelerando-4bsv`, Anima
-    `536ba51d2c215e75c95208c2972d569893bf5356`, Eon
-    `/nix/store/bbjq2d4h8r04i7wqa6wvha2wzna2wnrp-eon-0.1.0`, direct archive
-    SHA-256 `6e2a222a13a3e747151d0a558858758cb27e03b7e2257b246c7d4449bbabee8c`
-    pass manifest validation, the affected Nix build and 79 package tests.
-    The exact Nix profile and separate direct desktop launcher select this
-    artifact. Caller-PTY Accelerando playback restores terminal state; private
-    native Wayland startup renders moving glyphs and returns to the picker.
-    This same-host software-GPU proof does not qualify other hosts or GPUs.
-  - **Compact Accelerando refresh:** `eon-anima-dense-accelerando-wpf6`, Anima
-    `5b79232f4aefcd7d947a1b968098f1d46fc2ab8c`, Eon
-    `/nix/store/9vvh2sjf9500986kq10d0przsb3xpnia-eon-0.1.0`, direct archive
-    SHA-256 `54c02ead44418d4a641b9fc9feca34f469742de332ebefd1c118b4587d635429`
-    pass exact manifest/lock and installed identity checks, both affected builds
-    and 79 package tests. The refreshed profile and direct desktop entry select
-    this artifact; previous payloads and live supervisors are retained.
-    Caller-PTY playback restores terminal state. Private native Wayland startup
-    renders moving compact Braille glyphs, then returns to the picker with no
-    private process survivors. Font-dependent appearance and the prior
-    same-host software-GPU qualification remain explicit limits. Proof:
-    `~/.local/state/eon/proofs/eon-anima-density-2026-10-11-2b0egbiq/`.
-  - **Small mixed-symbol Accelerando refresh:** `eon-anima-small-mixed-rain-bzz2`,
-    Anima `c856ca165af8d7363663047b6c6ce3399d8ce02c`, Eon
-    `/nix/store/l3bfihcz1gap4hd3dj9j7ah102y4mh0h-eon-0.1.0`, direct archive
-    SHA-256 `6d90653388b3d82d1f99109121ecae143560f1bffc8853d9c77bf2afca91493c`
-    pass exact manifest/lock identity, both affected builds and 79 package tests.
-    The Nix profile and direct desktop entry select this artifact. Caller-PTY
-    playback restores terminal state; actual desktop-entry launch in private
-    native Wayland renders moving small alien glyphs and mixed code symbols,
-    then returns to the picker with no private process survivors. Existing
-    supervisors and prior payloads are preserved. Compact glyph projection
-    intentionally loses fine detail; font-dependent appearance and same-host
-    software-GPU qualification remain limits. Proof:
-    `~/.local/state/eon/proofs/eon-anima-small-rain-2026-10-11-qt4kv_ti/`.
-  - **Native-font Accelerando refresh:** `eon-anima-font-rain-80z3`, Anima
-    `1d0291909b73006c8ebfb694e8e37f6d150afb91`, Eon
-    `/nix/store/mcdkp2ccbpczxcsq6vmihcfyc7gxim8b-eon-0.1.0`, direct archive
-    SHA-256 `d9ad655b6431bc35f42092a8fea07577c6474e962258f33492dafbae304df147`
-    pass exact manifest/lock identity, Eon/EonTerm/bundle builds, 79 Eon package
-    tests, 146 Venus tests (five existing ignores) and standalone EonTerm closure.
-    Both the Nix profile and separate direct desktop select this artifact.
-    Installed caller-PTY checks distinguish alien-only default and `--symbols`,
-    restore terminal state and emit native glyphs without Braille projection.
-    The actual desktop entry renders moving native rain and returns to the picker;
-    the shared EonTerm package renders ordinary text, Nerd icons and alien glyphs.
-    The font-only artifact preserves all 8,192 mappings and its permission notice;
-    neither the primary text family nor the Nerd Font ranges change.
-    Private Wayland/lavapipe captures are agent inspected; broader GPU/platform
-    and user visual acceptance are unclaimed. Prior payloads and the 25 ambient
-    processes still present before installation remain intact. One baseline Venus
-    process exited before installation for an unassigned reason. Proof:
-    `~/.local/state/eon/proofs/eon-anima-font-rain-2026-10-11-4ixn6b97/`.
-  - **Native creation:** `eon-decide-yazi-picker-creation-e7z`, base
-    `5566a7a7c591132af2f20315712fc217673f8663`, prepared source
-    `/nix/store/pibi7h41h3ndkdhm3zgniq3xd68s937b-eon-source`, installed
-    `/nix/store/n5p1k52p079i1a7405w6l74lgyg1h592-eon-0.1.0`, Yazi
-    `aa526434f00bb44e2e902d9a4ac5f810da1018b9` passes file and trailing-slash
-    directory creation, separate acceptance, input/overwrite cancellation and
-    retained creation after picker cancellation without changing the live pane.
-    Exact profile identity, preserved user processes and private cleanup are in
-    `/home/lucca/.local/state/eon/proofs/eon-decide-yazi-picker-creation-e7z-native-create-2026-10-06/REPORT.json`.
-  - **Native browsing defaults:** The same bead's prepared source
-    `/nix/store/rs47x5kw6sh5ylznjb1n980njn24y54p-eon-source`, installed
-    `/nix/store/k82afnzs7khf8b5c3iym0b1jmvggdl96-eon-0.1.0`, same child pins,
-    passes inherited navigation/history, find/sort, modal input/help Esc and
-    text preview. Native creation, separate directory acceptance, Tab mode
-    switching and Ctrl+C cancellation preserve the existing pane. The installed
-    native report, exact candidate, captures, profile identity and cleanup are in
-    `/home/lucca/.local/state/eon/proofs/eon-decide-yazi-picker-creation-e7z-native-defaults-2026-10-06/REPORT.json`.
-- **Open proof:** Fractional scale, broader compositors, actual blur, current
-  AT-SPI/screen-reader use and broad user environments remain qualified.
-  EON-C8 records the correction to the misleading blank-capture previews.
-  No capture stability or latency bound is claimed.
-  The tagged public alpha predates Anima.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** Picker lifecycle
+    (`directory_picker_browse_preserves_raw_directory_and_cancellation`,
+    `directory_picker_retargets_cancels_and_stops_with_venus`,
+    `failed_directory_picker_stop_is_retried_during_supervisor_cleanup`,
+    `replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it`);
+    home and pending tabs (`new_tabs_start_at_home_and_reject_unavailable_home_without_mutation`,
+    `pending_tabs_keep_independent_pickers_and_close_only_the_selected_tab`,
+    `background_pending_picker_exit_keeps_the_selected_tab`,
+    `two_pending_tabs_roundtrip_without_relaxing_v6_or_identity_checks`);
+    popups (`popup_switching_stops_transients_without_leaving_empty_tabs`,
+    `chooser_result_requires_its_exact_live_invocation`); Anima
+    (`anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dismissal`,
+    `failed_or_stuck_startup_anima_reports_and_continues_to_picker`,
+    `startup_animation_settings_are_validated_and_can_be_disabled`); Venus
+    `independent_pending_picker_tabs_attach_only_the_active_endpoint` and
+    `shared_popup_projection_keeps_hidden_work_and_one_input_surface`.
+    Installed checklist items 1, 3 and 4.
+- **Open proof:** Pending re-proof in this repository: installed
+  multi-pending tabs; Yazi's native find, sort, help and Esc handling; raw non-UTF-8 directory selection in the packaged
+  picker; installed Accelerando playback. Fractional scale,
+  broader compositors, actual blur, current AT-SPI/screen-reader use and broad
+  user environments remain unqualified. No capture stability or latency bound
+  is claimed.
 
 ## EON-C19 — Terminal typography and initial geometry configuration
 
-- **Status:** Proven
+- **Status:** Proven by the automated tier; installed configured typography and
+  geometry are pending re-proof in this repository.
 - **Consumer:** Eon and EonTerm users opening a native surface.
 - **Trigger:** Create or reopen Venus using one `$EON_CONFIG_HOME/config.toml`
   snapshot.
@@ -1835,57 +1156,28 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   EonTerm share that configuration; EonTerm does not consume the Anima executable.
   The exact Anima component pin owns the font revision. Its U+100000–U+101FFF
   mapping preserves Venus's Nerd Font ranges and the primary text family.
-  EON-C18's native-font refresh records exact shared-package font/icon proof.
-- **Generic UI font delivery:** Eon source
-  `271ed8c570710b92ddd16843ab14625e6cbf5e61` selects accepted Venus
-  `e652ab9b3a59727cd22534769ec9eca0e354b0d0` (Desktop PR #1), preserving Orbit,
-  Runtime, EONW, defaults and terminal fallback order.
-  - Both working-tree Nix products build with the retained pre-existing changes.
-    Packaged Venus passes 153 tests (five existing native tests ignored); each
-    product passes 38 Eon integration and 43 Runtime tests.
-  - Refreshed Eon `/nix/store/kk1p4vnmcqax30n95vz6h3wdv30mmhpd-eon-0.1.0`
-    and EonTerm `/nix/store/xlijcnkph61lwb95mpyfkzvwk7ngabhw-eonterm-0.1.0`
-    both consume Venus `/nix/store/yiag27qwkf8ibkla818a0rlr4qjrck48-yazelix-venus-0.1.0`.
-  - Private Sway 1.12/pixman, Mesa 26.1.2 lavapipe, x86_64 Linux Wayland,
-    960×600 at scale 1: hiding ambient fonts reproduces missing tab/Project,
-    control and footer glyphs in the old build; updated installed Eon renders
-    them and Shortcuts correctly. Visually inspected captures retain identical
-    sampled ordinary/Nerd/regular/bold Accelerando pixels. Native key input
-    reaches the same terminal/workspace; exact-generation Stop cleans private work.
-  - All 65 ambient product identities and unrelated profile elements survive.
-    Existing generations keep their old build; no ambient restart, performance,
-    hardware-GPU, broader compositor, macOS or reader qualification is claimed.
-    Evidence: `~/.local/state/eon/proofs/eon-font-2026-10-13-twbt5jj4/`.
 - **Boundary:** Native Linux Wayland; no system-wide font installation, live
   reload, Eon renderer, second schema or primary-font default change.
-- **Proof:** Initial Eon `b693a877cd4d630fe15aabf852de4e978fc166dc` and
-  startup-transfer correction `0b0b6312531229270c157df31ba49800a6daef03`,
-  `eon-terminal-typography-geometry-config-b63`.
-  - **Environment:** x86_64 Linux, isolated Sway 1.12 / lavapipe 26.1.1; Venus
-    `ec80e36625dec73544c0cb64becf4b135c932a63`, Orbit
-    `91999d79546422b49bdbc124166a65859d0bd872`, unchanged wire contracts.
-  - **Evidence:** Locked Rust, manifest, both Nix packages and flake checks;
-    initial EOF/malformed readiness/timeout create no terminal; invalid config
-    and rejected reopen preserve the command. Initial artifacts
-    `/nix/store/p86cvamyyk5iri47xpdc77kdm8pa267v-eon-0.1.0` and
-    `/nix/store/vh88p7zlvmfsag96zd6w5shnnkxi5ydw-eonterm-0.1.0` admit DejaVu
-    Sans Mono / Symbols Nerd Font Mono, 20 px / 1.5 and actual 100×30 PTYs,
-    including the full-Eon picker. Reopen applies 24 px / 1.25 and 90×28
-    with the same Orbit/command; live presentation keeps its snapshot.
-    Missing-font failure, initial scales 1/1.25/1.5/2, later resize, physical
-    input, exact `Regular` selection/copy, `é界` preedit, `ime-é界` commit,
-    AT-SPI text/bounds and recovered-workspace admission pass.
-  - **Transfer deadline:** Delayed-reader/stalled-transfer regression, locked
-    Rust/Nix and installed
-    `/nix/store/cig8r1rifpl2lzswi4ga6l744y3v0ck9-eon-0.1.0` and
-    `/nix/store/95x87mc3gdc22fvk920dz6jg6mfr3qxs-eonterm-0.1.0` prove one
-    absolute five-second snapshot-write/readiness budget, not the 250 ms normal
-    Present timeout. Scale-1.25 real grids and same-terminal reopen pass.
-  - **Limits:** This proves the named configuration/startup/typography/IME/AT-SPI
-    slice at these revisions. It does not establish current-alpha screen-reader
-    use, full fractional/HiDPI coverage, stable-seat IME, broader compositors or
-    installed non-systemd support; C7 retains those gaps. Earlier child startup
-    refinements remain scoped to their exact Git/Beads records.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** `terminal_presentation_is_strict_and_bounded`,
+    `configured_typography_reaches_both_product_launches`,
+    `startup_snapshot_transfer_uses_the_admission_deadline`,
+    `rejected_native_startup_creates_no_session_in_either_product` and
+    `invalid_presentation_configuration_precedes_supervisor_generation_and_children`;
+    Venus `configured_fonts_resolve_fallbacks_and_scale_one_grid`,
+    `typography_options_are_bounded_and_composable`,
+    `default_font_matches_nova_at_supported_scales`,
+    `nerd_font_symbols_use_the_packaged_face_and_bounded_blank_space` and
+    `accelerando_specialty_routing_preserves_explicit_fonts_and_styles`.
+    Installed checklist item 7: default terminal text, box drawing, Braille and
+    CJK.
+- **Open proof:** Pending re-proof in this repository: configured fonts, grid
+  and reopen on an installed surface; missing-font failure; initial scales
+  1.25, 1.5 and 2; IME preedit and commit; AT-SPI text and bounds; generic UI
+  font fallback with ambient fonts hidden. Current-alpha screen-reader use, full
+  fractional/HiDPI coverage, stable-seat IME, broader compositors and installed
+  non-systemd support remain unproved.
 
 ## EON-C20 — Discoverable native shortcuts
 
@@ -1906,37 +1198,21 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns component/default selection, profile delivery and
   installed acceptance; Eon Runtime enforces configured popup collisions.
   Venus owns viewer state, input, rendering, focus, and accessibility.
-- **Consumes:** Venus VEN-C20 and VEN-C5, current EONW v7 and Orbit terminals;
-  the original v5 installed proof remains scoped below.
+- **Consumes:** Venus VEN-C20 and VEN-C5, current EONW v7 and Orbit terminals.
 - **Boundary:** No Eon-rendered viewer, second shortcut catalog, EONW change,
   Orbit update, child-application bindings, rebinding UI, command palette,
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
-- **Header-spacing proof:** EON-C4's exact `0d02d4b` child-adoption source and
-  installed Eon artifact, consuming Venus VEN-C20 proof
-  `8af87bb0d07bc975413b05e3bdea9404ed6c1e57` through selected `c02e371`.
-  Native 1100×650 and 320×240 scale-1 captures show separate readable title,
-  subtitle and first heading. Scrolling preserves the header/footer; workspace
-  state and PTY input remain unchanged, and Escape restores terminal input.
-  The original broader viewer proof remains scoped below.
-- **Proof:** `eon-deliver-native-shortcut-viewer-rif`, exact working-tree
-  candidate over `7b69fb250723fab813446315396f2bf5b04466de` with corrected
-  VEN-C5 graph identity.
-  - **Environment:** x86_64 Linux, private Sway 1.12 headless/pixman / Mesa
-    26.1.2 lavapipe, scale 1; EONW v5, generation
-    `g1-584db38a02d9c93b630a6efe99a0802f`. Venus source
-    `2f05a408e499117c1ddb57f99255dcdb4a236bdf`, VEN-C5 proof
-    `3730201d6dd27e15fdcd1a8b0662aa476a587eb6`, codec source
-    `0cc8f477298681ae3945903e8fdb5852d487c5ab`, Orbit
-    `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`. Eon artifact
-    `/nix/store/c4cgyhpza8417gpll3qqx2pyg767gr72-eon-0.1.0`, Venus
-    `/nix/store/zjmfc4azyw6vlpky11x0sw7a3f3d10h6-yazelix-venus-0.1.0`.
-  - **Evidence:** Collision red/green, locked Rust/Nix, both packages and exact
-    profile equality; native Alt+/ from pending Project, terminal, chrome,
-    custom/rebound Agent popups and pending-tab focus. Enabled/disabled/rebound
-    rows, scroll/resize, dismissal/focus restoration, input/workspace isolation
-    and AT-SPI projection pass. Child proof owns maximal catalog/live refresh.
-    No EonTerm, fractional-scale, screen-reader workflow, wider compositor,
-    non-systemd, macOS or direct-distribution proof is added.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
+    Venus `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space`,
+    `shortcut_viewer_uses_live_rows_and_captures_its_local_sequence`,
+    `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog` and
+    `recognized_shortcuts_are_one_shot`. Installed checklist item 5.
+- **Open proof:** Pending re-proof in this repository: header spacing at
+  compact sizes, rebound and disabled popup rows, and AT-SPI projection on an
+  installed surface. No EonTerm, fractional-scale, screen-reader workflow,
+  wider compositor, non-systemd, macOS or direct-distribution proof is added.
 
 ## EON-C21 — Native workspace header
 
@@ -1963,113 +1239,31 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, current EONW v7 and Orbit terminals; distinct
-  header/quota refinements and original component identities are scoped below.
-- **Boundary:** C22 separately owns the optional quota projection. The core
+- **Consumes:** Venus VEN-C21, current EONW v7 and Orbit terminals.
+- **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion.
-- **Proof:** Initial Eon `1edb1ed47f2e42a265cc48ced59d8d97e83d9414`,
-  `eon-deliver-native-eon-bar-w4d`, and distinct VEN-C21 refinements.
-  - **Environment:** x86_64 Linux, private Sway 1.12 headless/pixman / Mesa
-    26.1.2 lavapipe at scale 1. Initial Venus
-    `2ce3594b9ca0f62a2723d5ce5a005ed3560aea64`, Orbit
-    `ea9fd28ce0908f218cf65d4e6df368f0a4e565f5`, EONW v5.
-  - **Evidence:** Locked Rust/Nix, exact installed
-    `/nix/store/fp80c2r8mqh2l9p7fsnn41qpizhbsja9-eon-0.1.0`; pointer,
-    keyboard and AT-SPI controls, exact actions, local viewer, drag exclusions,
-    real compositor movement and post-drag retirement; eight-tab overflow and
-    960/320/100-pixel layouts retain the active tab and all required controls.
-  - **Placement and accessibility:** Venus
-    `562cacf74e101ee9ea18460c21e47d86eec2376d`, EONW v6
-    `3103a00a904c347472899549ce611da765a71650`, Orbit ORBS v12
-    `f8ad14e5195109ba8cb421f30e5ae4a9619a1419`, composed artifact
-    `/nix/store/31mwvisf7s1aiyp42agslc2wjbz47lms-eon-0.1.0` proves pointer
-    CreateTab and those three widths. Accessibility correction at Venus
-    `6036430ffed1b84fd2995525e0a19f071809c588`, artifact
-    `/nix/store/mzdr9g0qb4z6k5kvrqmshas6i5dzf079-eon-0.1.0`, proves AT-SPI
-    order: tabs, New tab, quota, Shortcuts, Close tab, pane panel.
-  - **Quota gap:** Venus `6aa79f6405229cd64bd1d55e01c5b11b96657c71`, artifact
-    `/nix/store/0j919y26rigssy25w2mz96n9kpxiq7hv-eon-0.1.0`, passes the
-    geometry red/green, locked Venus and exact Nix routes; native 960px capture
-    and real drag from the restored blank region prove placement beside
-    Shortcuts without a broken drag span (`ven-place-new-tab-beside-tabs-pct`).
-  - **Limits:** AT-SPI tree/order is not a screen-reader workflow. Native proofs
-    retain their exact sources; macOS and wider platform coverage remain open.
-    C22 owns quota semantics; no generic widget or agent-status contract follows.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** Venus
+    `eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure`,
+    `eon_bar_controls_reuse_existing_actions_and_local_viewer`,
+    `eon_bar_buttons_share_scene_bounds_and_separate_focus_from_activation`,
+    `tab_text_fits_shaped_width_without_splitting_combining_clusters` and
+    `workspace_accessibility_order_matches_tabs_then_one_expanded_pane`.
+    Installed checklist items 3 and 6.
+- **Open proof:** Pending re-proof in this repository: real compositor window
+  dragging, eight-tab overflow, narrow widths and AT-SPI order on an installed
+  surface. AT-SPI tree order is not a screen-reader workflow; macOS and wider
+  platform coverage remain open.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
-The collection policy below records the accepted direct-collector implementation.
-Current collection uses the installed CodexBar replacement proved in EON-C27.
-
-- **Status:** Proven
-- **Consumer:** One full-Eon user with a compatible authenticated `codex`
-  executable on the inherited user `PATH`.
-- **Trigger:** A full-Eon supervisor starts and a quota refresh becomes due.
-- **Result:** Eon starts one dedicated `codex app-server --stdio` child and
-  reads `account/rateLimits/read` no faster than once per minute. EONW v8
-  carries an optional observation with fresh, stale, blocked, or unknown state
-  and at most the Codex bucket's primary and secondary windows. Each window
-  contains duration minutes, remaining percentage, and a provider reset time
-  when Codex supplies one. Venus presents the exact monochrome OpenAI Blossom
-  before the human quota label while hover and accessibility name Codex.
-- **Important failures:** A missing executable, auth failure, incompatible or
-  oversized response, invalid value, timeout, EOF, provider exit, or network
-  failure leaves quota absent or retains reset-bounded last-good windows.
-  Retained values say `old` only after a failure and when the last successful
-  quota observation is strictly more than one hour old. A younger failed
-  observation keeps its label; age alone does not mark a healthy observation
-  old. Eon clears failed windows at their reset. An account update clears prior
-  quota when authentication ends or becomes unsupported. An authenticated
-  ChatGPT update retains the recorded observation until the next scheduled
-  read without marking it old. Each verified read replaces the complete observation;
-  a response already in flight at an account update cannot republish prior
-  facts. Provider I/O stays off startup, workspace actions, and terminal
-  attachment; shutdown cleanup is bounded.
-- **Owner:** Eon Runtime owns provider process lifecycle, refresh/retry
-  enforcement, account-update handling, normalization, freshness and
-  the canonical EONW field. Codex owns authentication and rate-limit semantics.
-  Venus owns the native chip's layout, exact mark, text, tooltip and accessibility under
-  `VEN-C22`.
-- **Consumes:** Stable notification/read schemas generated by official installed
-  Codex CLI 0.160.1, EONW v8, EON-C21 and Venus VEN-C22.
-- **Boundary:** Eon requests no reset-credit details, declines Luna Reserve
-  support, and sends no provider mutation. Credentials, plan, credits, upsell,
-  transcripts, token history, raw JSON, and other provider-private fields are
-  never logged, persisted, or carried over EONW. The worker does not retain a
-  private account identifier or merge quota windows across observations.
-  This contract adds no bundled Codex, direct HTTP, tokenusage, daemon,
-  persistent cache, provider framework, configuration surface, other provider,
-  or v5 adapter.
-- **Proof:** `eon-codex-quota-chip-disappears-oiw`,
-  2026-10-06; Runtime `a57e105a5da87d9c65402c1c4c8ea8b5dc8adc45`, codec
-  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`, Venus
-  `bbf4cf41b289f441683eb7a3f225a26a4d3edacc`, Orbit
-  `b6cecf8f2ee35570b41cfdc578b095889d917fe2`; EONW7 / ORBF2 / ORBS13.
-  - **Mechanically verified:** Focused red/green proves failed data has no old
-    label at 3,600s and has it at 3,601s, retains failure evidence between
-    snapshots, and expires at reset. Age alone leaves healthy data fresh.
-    Worker lifecycle covers notifications, obsolete replies, verified
-    replacement, sign-out, young failures, retry and cleanup. Full Runtime
-    Rust and prepared Eon Rust checks, both Nix product builds, full flake and
-    package-selection checks pass; product builds cover 35 Eon and 38 Runtime
-    tests. The codec package and selected pin are unchanged.
-  - **Installed dogfood:** Eon
-    `/nix/store/y7gc7qmvfvmy6plvzgkjl4i51shfs179-eon-0.1.0`, generation
-    `g1-1f68a789ecc52c93f99fca7166b9b8b4`; x86_64 Linux, private native
-    Wayland Sway 1.12/pixman and DBus. At 960px the same client retains `75%`
-    without `old` after an authenticated notification and a failed second
-    quota read, spaced at least 60s from the first. Width 960→180→960 hides
-    and restores the chip; tabs and fixed controls remain intact. Rendered
-    values and accessibility agree. The one-hour boundary uses deterministic
-    owner proof, without waiting an hour or changing the host clock.
-  - **Delivery and limits:** Active profile elements resolve to the built
-    Eon artifact above and EonTerm
-    `/nix/store/1yml5hjg8krz03qqq3k33nj9qg2fjag3-eonterm-0.1.0`.
-    Private processes/directories were removed; live user terminals were not
-    restarted. The original recurring episodes remain uncorrelated; the
-    notification gap was reproduced and corrected at the owning worker.
+- **Status:** Retired 2026-10-14 by Lucca. EON-C27 owns Codex quota collection
+  through CodexBar and the chip policy; Venus `VEN-C22` owns the Codex chip.
+- **Reason:** The direct `codex app-server` collector this contract described no
+  longer exists, so it cannot be proved in this repository.
 
 ## EON-C23 — Independent Eon windows
 
@@ -2099,22 +1293,14 @@ Current collection uses the installed CodexBar replacement proved in EON-C27.
   have independent workspaces; no terminal, tab, pane, or focus state is shared.
   The eight-hex-digit ID is unique by atomic directory reservation, not a
   secret. This does not establish macOS or another distribution channel.
-- **Proof:** Eon `bdbe9b5436e4ff8a734210cd25c581983f6f2ed0`,
-  `eon-new-eon-window-vkwl`, Orbit
-  `b6cecf8f2ee35570b41cfdc578b095889d917fe2`, Venus
-  `a23f9eed95120ca4acea8789bf7d32d2472d84ce`, EONW v7.
-  - **Environment:** x86_64 Linux Nix and isolated native Sway 1.12 / Mesa
-    software Vulkan; installed
-    `/nix/store/c3fs2ssgkzzf94x2g8a76hs7y91ckwj1-eon-0.1.0` with exact
-    launcher action.
-  - **Evidence:** Focused batch-lifecycle red/green, locked Clippy and complete
-    flake/package routes; two native windows with two pre-supplied confirmations
-    stop the other window before the caller's, producing counts 1 → 2 → 0.
-    Earlier same-Venus packaged native proof exercises physical Alt+Shift+N,
-    distinct Orbit endpoints, detach/reattach and exact Stop. Evidence remains
-    in `eon-c23-batch-order-2026-09-25/` and `eon-c23-native-2026-09-25/` under
-    the owning issue's proof root. Failed earlier batch candidates are not
-    accepted; C4's source transfer changes no window or confirmation contract.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** `new_windows_keep_independent_supervisors_and_stop_by_window_id`
+    and Venus `new_window_shortcut_invokes_the_supplied_eon_command`. Installed
+    checklist item 10.
+- **Open proof:** Pending re-proof in this repository: the launcher's New Eon
+  Window action, and native `eon window stop all` with piped confirmations
+  stopping the caller's window last.
 
 ## EON-C24 — Bottom shortcut hints
 
@@ -2161,56 +1347,21 @@ Current collection uses the installed CodexBar replacement proved in EON-C27.
   interactive hints, durable preference, configuration option, dependency,
   wire change or platform expansion. Future real modes replace contents from
   their actual bindings at the same footer height.
-- **Proof:** Eon source `856a636a22b800a094bae00b0d18764345598dcb` consumes accepted Venus
-  `dc5a4fb7008ae612cdc6935267a39aec3441060b`, Runtime
-  `4c55a8528921637e5b7ffe6990080344392a6cae`, Orbit
-  `427cf2d074cd1db905a2cc2602a5475065d1c790` and unchanged canonical EONW7
-  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`.
-  - **Mechanically verified:** Existing consuming Scene bottom-alignment check
-    is red before the fix and green afterward across tiny-to-wide sizes and
-    scales 1/1.25/1.5/2. A separate minimum-font corner assertion is red/green. Full affected Venus fmt/check/tests, strict all-target
-    Clippy and debug build pass: 152 tests, five pre-existing native ignores.
-    Exact manifest/lock/source checks and both Nix builds pass; packaged Venus
-    passes 152 tests and each Eon/EonTerm package passes 38+43 tests.
-  - **Native frame and behavior:** Six private Sway 1.12 headless/pixman,
-    software-Vulkan captures on x86_64 Linux Wayland at widths
-    320/600/1100/3000 and scales 1/1.25 prove continuous aligned sides, one
-    straight separator row, matching lower corner geometry and the hidden main
-    frame's bottom inset. The row height is unchanged at normal typography;
-    minimum fonts reserve enough height for the corner radius. One additional
-    native size6/line-height1 workflow and consuming raster comparison reproduce
-    the former clipped-radius mismatch and pass with the same lower outline
-    as the hidden main frame. Initial configured terminal rows remain exact.
-    Hidden-footer bottom pixels match the previous accepted source exactly.
-    Whole-hint fitting, conditional/focused help, F6 context, full viewer,
-    read-only AT-SPI, 107×29→107×31→107×29 toggle geometry, zero shortcut
-    leakage and subsequent ordinary input pass. Native captures are inspected.
-  - **Installed adoption:** Refreshed profiles resolve exactly to Eon
-    `/nix/store/b1nc4w2nf5z1rfssp1yzpfcih54r8lw2-eon-0.1.0`,
-    EonTerm `/nix/store/nm93mzrfpppa70q48cdxbvzfckha6nly-eonterm-0.1.0` and contained Venus
-    `/nix/store/0x39y6kaay120jnsqqy53548s6a80yk7-yazelix-venus-0.1.0`.
-    One isolated outermost installed workflow passes normal/wide/picker,
-    narrow and fractional views. Five raster checks and visual inspection
-    verify aligned side borders, rounded lower corners, bottom inset and one
-    straight separator, including popup context. Normal and fractional hidden
-    corner traces agree within one physical pixel across differing antialiased
-    fills, and visibility restores the exact grid. Full help retains Alt+0,
-    Copy/Paste, Open link, F6 and Project;
-    complete accessible movement chords, F6 navigation, Alt+Z picker toggle,
-    stable workspace identities and ordinary terminal input pass.
-    Other profile elements are preserved; all private processes and native
-    Wayland/DBus state are cleaned. Ambient Eon is never stopped or restarted;
-    existing windows retain their running build.
-  - **Limits and records:** No performance, macOS or new screen-reader workflow
-    claim. The maintained Scene check covers sizing/alignment; the whole-frame
-    raster regression remains runnable in retained `check-frame.py` alongside
-    commands, captures, exact identities, preservation and cleanup records:
-    `~/.local/state/eon/proofs/eon-hints-rounded-bottom-2026-10-12/`.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
+    Venus `shortcut_hints_follow_bindings_catalog_and_native_focus`,
+    `shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers`,
+    `shortcut_hints_are_read_only_and_retire_hidden_help_actions` and
+    `workspace_shortcut_capture_starts_once_and_retains_release`. Installed
+    checklist item 5.
+- **Open proof:** Pending re-proof in this repository: frame alignment and
+  corner geometry across widths, fractional scales and minimum fonts on an
+  installed surface. No performance, macOS or screen-reader workflow claim.
 
 ## EON-C25 — Running Eon version badge
 
-- **Status:** Proven on the installed Nix x86_64 Linux Wayland product; restored
-  header order accepted 2026-10-13.
+- **Status:** Proven on x86_64 Linux Wayland.
 - **Consumer:** Full-Eon workspace users.
 - **Trigger:** A workspace window opens or reopens.
 - **Result:** The native top bar shows a read-only `EON <version>` label in regular terminal
@@ -2228,215 +1379,29 @@ Current collection uses the installed CodexBar replacement proved in EON-C27.
   owns native rendering, width fitting, hover and static accessibility.
 - **Boundary:** One badge and one boolean; no widget system, polling,
   EONW change, channel/build-ID promise, settings UI or platform expansion.
-- **Restored header-order proof:** Eon source
-  `8c75bd1d922eab5bd002a2f337c39325b491c428` consumes accepted Venus
-  `3b9f57820ec2cfcc1cab691a765ec6ff68e5111b` / VEN-C25. Version precedes
-  optional shortcut help, with close last and matching static accessibility.
-  Focused width/scale/tab/help and either/both-provider coverage is red before
-  and green after the change. Full Venus checks pass (154 passed, 5 existing
-  ignored), and both composed Nix packages build for that exact component graph.
-  - Installed observation uses the frozen concurrent quota-upgrade working tree
-    at Eon HEAD `8c75bd1d922eab5bd002a2f337c39325b491c428`, with descendant Venus
-    `59482a93ab78b29789fecb9a37b101152b5be8c2`, Runtime
-    `0de24d01a9022388282dd92d91f6ed1099771b57` and EONW v9
-    `d0a184bb4d45d3e50787f7c17606df652727fb9a`. Its exact source checksums and
-    evaluated derivations are retained under `current-graph/` in the evidence
-    root. This accepts the inherited header order only; quota adoption and its
-    source acceptance remain owned by `eon-codexbar-quota-backend-ioqy`.
-  - Both packages pass 39 Eon integration and 45 Runtime tests. Packaged Venus
-    passes 155 tests with 5 existing ignored. Current-tree evaluation matches
-    the built outputs before profile refresh. Installed Eon is
-    `/nix/store/a1b98waaaqcbjw098wf41fjxl56kl5v0-eon-0.1.0`, EonTerm is
-    `/nix/store/7mcbb29s6xp3lw5r7d88k2npkl9c7683-eonterm-0.1.0`, and embedded
-    Venus is `/nix/store/r5l9y3b90b9qxk67n299dd6v47ccfyvw-yazelix-venus-0.1.0`.
-    Both profile elements resolve to those artifacts; other elements survive.
-  - Private native Sway 1.12/software Vulkan at scales 1 and 1.25 verifies
-    visual/accessibility order, help pointer activation, hover, complete-footer
-    help omission, narrow hiding and false/true version preference on reopen.
-    Badge clicks/drags produce no action or input; ordinary input reaches the
-    same terminal. The fixture uses a private HOME/config/DBus, captures are
-    inspected, and owned processes are cleaned. All six ambient product process
-    identities survive. No ambient restart or provider task is issued.
-  - Evidence: `~/.local/state/eon/proofs/eon-version-order-restore-2026-10-13/`.
-    An initial private directory permission failure was corrected before native
-    acceptance. The superseded v8 packages completed but were not installed over
-    the concurrent v9 graph. No new platform, quota or identity-transport claim.
-- **Earlier header-order refinement proof:** Eon source `fa22b25430e2591dc91ac104b4466a15b72b3f1b` consumes Venus
-  `8df32d93e2bd7455ff9bbcea7571f36efda99da3` / VEN-C25. Shortcut help precedes the version badge and close
-  follows it, with matching static accessibility order and unchanged identity,
-  visibility and spare-space admission owners. Runtime, Orbit and EONW remain
-  at their prior accepted revisions.
-  - Full Venus fmt/check/test, strict all-target Clippy and debug build pass
-    (152 passed, 5 existing ignored). The consuming width/scale/quota/tab matrix
-    is red before the reorder and green afterward, covering visible/hidden help,
-    hit rectangles, tab/terminal preservation and AccessKit reading order.
-    Both Nix packages build; packaged Venus passes 152 tests and each package
-    passes 38 Eon integration and 43 Runtime tests.
-  - Private Sway 1.12/software Vulkan native x86_64 Linux Wayland observations
-    at scales 1 and 1.25 show help before the badge, close last and actual pointer
-    activation of the moved help button. The installed Eon workflow also checks
-    complete-footer help omission, narrow identity hiding, false/true preference
-    on presentation reopen, badge hover and no badge action/drag/input. Ordinary
-    input reaches the same surviving terminal; captures are visually inspected.
-  - Refreshed Eon profile `/nix/store/vfpb0aikd6a19q4m8p7p2ykkn0vnay5b-eon-0.1.0`,
-    EonTerm `/nix/store/i5v4c11f3d3gqpw5dydl0apabh8rdslm-eonterm-0.1.0` and embedded Venus
-    `/nix/store/fx51iisnf0zh3v22iplpd55qawxbnzsf-yazelix-venus-0.1.0` agree with evaluated and built outputs.
-    Other profile elements and pre-existing source/Beads changes are preserved.
-    Private Wayland/DBus state is cleaned;
-    no ambient supervisor restart occurs, so existing windows retain their build.
-  - Evidence: `~/.local/state/eon/proofs/eon-version-order-2026-10-12/`.
-    Disposable script checks were corrected for a naming collision and the
-    existing focused-help retention policy; no production change was needed. During the build, 33 of 34 baseline product process
-    identities remained; one pre-existing Orbit process exited before profile
-    refresh, outside the proof-owned process set. No action targeted it; full
-    ambient-process preservation is not claimed. No new platform, performance, screen-reader workflow,
-    direct-delivery or identity-transport proof is claimed.
-- **Presentation refinement proof:** Eon source `91a9b8f4ba5a0ef1147d7c98fcc830e934ccfef5` consumes
-  Venus `13c35c04dd0aa9511712d6cc6627bd4b03f19215` / VEN-C25, with all other component identities unchanged.
-  The badge uses uppercase `EON`, regular terminal monospace and #7CC4D8 cyan;
-  its placement, background, visibility and identity ownership remain unchanged.
-  - Full Venus fmt/check/test, strict all-target Clippy and debug build pass
-    (152 passed, 5 existing ignored). The emitted-glyph grid corpus includes
-    the ASCII identity; layout/AccessKit preserves tab/control/terminal bounds.
-    Both composed Nix packages pass 38 Eon integration and 43 Runtime tests;
-    packaged Venus passes 152 tests, with 5 existing ignored.
-  - Refreshed profile artifacts: Eon `/nix/store/k2c8r0lik2aa6p7v647jf8d1d49y8vj6-eon-0.1.0`,
-    EonTerm `/nix/store/c0326z12gn895a9kk7fxfd6wnylvh1n9-eonterm-0.1.0`,
-    Venus `/nix/store/rr2xrk79pdg5xvqqfnjxh4mv8nmxcdk5-yazelix-venus-0.1.0`.
-    Exact profile outputs and embedded Venus references agree; other profile
-    elements are preserved.
-  - Private Sway 1.12/software Vulkan native x86_64 Linux Wayland captures
-    show full identity and hover at scale 1/1.25. Installed Eon shows `EON 0.1.0`,
-    hides at 200 pixels, and honors false/true on presentation reopen while
-    retaining one supervisor, workspace and terminal. Label clicks/drags send
-    no action/input; ordinary `a` reaches that same terminal. Captures visually
-    inspected; private processes and DBus state cleaned. All 65 ambient process
-    tree identities retain executable/start time; no ambient restart issued.
-  - This style check reopens with the exact installed CLI. The prior controlled
-    different-version observation remains scoped to unchanged Runtime source;
-    it is not rerun or widened to a mismatched component graph. No new platform,
-    performance, screen-reader workflow or direct-delivery claim. Evidence:
-    `~/.local/state/eon/proofs/eon-version-badge-style-2026-10-12/`.
-- **Proof:** Source `10b4a26e71187fb8eced55d1b23c821e4e3d8bd6`, owned by
-  `eon-eon-version-bar-widget-5s62`, consumes Runtime
-  `4c55a8528921637e5b7ffe6990080344392a6cae` and Venus
-  `29199f67c79d8b43b0304df36fd64649b8d89fdc` / VEN-C25. Orbit remains
-  `427cf2d074cd1db905a2cc2602a5475065d1c790`; canonical EONW v7 codec remains
-  `b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa`.
-  - **Mechanical:** Runtime red/green launch/config checks, full locked tests
-    (43 Runtime, 13 codec), format/check and strict all-target Clippy pass.
-    Venus source and Nix tests pass (152, with 5 existing ignored), including
-    bounded launch validation and spare-space/static-accessibility coverage.
-    The production-prepared Eon composition passes format, locked workspace
-    check and strict all-target Clippy; 4 manifest tests pass. Both composed
-    Nix packages pass 38 Eon integration and 43 Runtime tests. The consuming
-    launch check observes Eon's supplied version; invalid bar configuration
-    fails before supervisor generation or child startup. No codec package or
-    build-input change, duplicate codec owner or EONW schema change.
-  - **Installed artifacts:** Eon `/nix/store/y4lcwl0hgz9v6lnk86vq2mlgkcq50n6f-eon-0.1.0`,
-    EonTerm `/nix/store/04miq432bw1nyly8ngk3jm8iy1rw4nqi-eonterm-0.1.0`,
-    embedded Venus `/nix/store/w8r0lzgfs39i9csznmnpccxywngvkzs8-yazelix-venus-0.1.0`.
-    Both active profile elements resolve to these exact outputs, with other
-    profile elements preserved against the immediate pre-refresh snapshot.
-  - **Native observation:** Private Sway 1.12 headless/pixman, software Vulkan,
-    x86_64 Linux Wayland. Actual installed Eon shows `Eon 0.1.0` and a static
-    full-version label/hover description at 1100 pixels; 200 pixels hides it
-    while preserving the active tab and controls. Configuration false omits
-    the launch input and complete badge on reopen; true restores both.
-    A controlled executable built from the prepared composition with only
-    `Inputs.version` changed to `9.8.7-proof` is first on PATH and invokes
-    attachment to the installed `0.1.0` supervisor. Reopened Venus still
-    receives and shows `0.1.0`. Source-native unequal `9.8.7-alpha.2+proof`
-    separately proves independence from Venus's own `0.1.0` Cargo version.
-    One supervisor, workspace and terminal identity survive both reopens;
-    label clicking/dragging sends no action/input and does not drag the window,
-    then ordinary `a` reaches that same terminal. Source-native scale 1.25 and
-    layout checks at scales 1/1.25/2 cover fractional fitting and quota coexistence.
-    Normal, hover, narrow, hidden and restored captures are visually inspected.
-  - **Preservation and limits:** Private processes and Wayland/DBus state are
-    cleaned. 52 of 52 ambient process identities retain executable/start time;
-    0 exited or changed outside proof-owned processes.
-    No ambient restart issued; live windows retain their running build. The
-    different-version executable is a controlled substitute, not a release
-    upgrade. No performance, macOS, new screen-reader workflow, Nix-free
-    delivery or unique development-build identification claim. Evidence:
-    `~/.local/state/eon/proofs/eon-version-bar-2026-10-12/`.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier; installed tier.
+  - **Evidence:** `version_badge_uses_supervising_product_and_visibility_at_each_launch`;
+    Venus `eon_version_is_bounded_workspace_identity` and
+    `version_label_uses_only_spare_space_and_has_no_actions`. Installed
+    checklist item 6 shows `EON 0.1.0`.
+- **Open proof:** Pending re-proof in this repository: `show_version`
+  false/true on reopen, narrow hiding, scale 1.25, header order with shortcut
+  help and close, and a supervisor whose version differs from its client. No
+  performance, macOS, screen-reader workflow or Nix-free delivery claim.
 
 ## EON-C26 — Passive Claude quota in the Eon Bar
 
-The collection policy below records the accepted status-line implementation.
-Current collection uses the installed CodexBar replacement proved in EON-C27.
-
-- **Status:** Proven on x86_64 Linux Wayland, 2026-10-13.
-- **Consumer and trigger:** A full-Eon user explicitly configures Claude Code's
-  status-line command to feed Eon. After an ordinary authenticated response,
-  the existing bar shows Claude's available five-hour and seven-day remaining
-  percentages, reset details on hover and accessible freshness labels.
-- **Display default:** Show both available windows. Narrow windows retain the
-  existing compact/hide fallback before required tabs, controls and drag space.
-- **Source:** Claude Code 2.1.159 on claude.ai Pro supplies documented optional
-  `rate_limits` fields. Startup absence is valid. The collector never launches
-  Claude, submits a prompt, reads token contents or requests a provider API.
-  Setup is reversible and preserves an existing status-line command/output.
-- **Ownership:** Runtime owns bounded collection, normalization, observation
-  age and authentication/source invalidation. Canonical EONW v8 carries only
-  typed presentation facts; historical revisions retain their types and bytes.
-  Venus owns the chip, responsive layout, hover and accessibility. Eon selects
-  exact accepted components. Orbit and Codex's existing policy are unchanged.
-- **Freshness and failure:** The first callback establishes a per-session API
-  duration baseline. Only a subsequent response advances observation time;
-  repeated cached callbacks do not. Changed or missing credential-file metadata
-  invalidates the selected account's observation without reading credentials.
-  Values older than 15 minutes say `old`; after one hour they disappear. Each
-  window expires at its reset. Missing, incompatible or malformed facts do not
-  become zero or fresh usage and never block workspace actions or shutdown.
-- **Boundary:** One selected local Claude configuration/account source on the
-  accepted Linux Wayland alpha. No account management, transcript scanning,
-  inference refresh, HTTP credential reader, provider framework, new bar row,
-  platform or distribution expansion. Optional chips yield before required
-  tabs, controls and dragging space.
-- **Accepted proof:** `eon-claude-quota-eon-bar-zm5f`, with evidence under
-  `~/.local/state/eon/proofs/eon-claude-delivery-2026-10-13-43q58bbf/`.
-  - **Source:** Eon `e3802169c43fca6592b8fdc55cc135779427dec6`, Runtime
-    `2a1d8a9b2de96c7b0952f6cb92012edd79a1a9ea`, canonical EONW v8
-    `2f9630723254ad7d9401ae40e459cef1fbfe8a17`, Venus
-    `0d2317fdae0d6fea7af48c43a5b525aa8d09b70f` and Orbit
-    `427cf2d074cd1db905a2cc2602a5475065d1c790`. Independent Runtime/codec
-    identities retain exact package equality; only these three component pins
-    change. Unrelated dirty work remains outside the source commit.
-  - **Mechanical checks:** Full affected Rust formatting, workspace checks,
-    tests and strict all-target Clippy pass, including 39 Eon integration
-    checks. Nix builds both products; full flake and package-selection checks
-    pass. The CLI integration check proves silent output, private normalized
-    storage and bounded incomplete-input withdrawal. Historical v2–v7
-    supervisor inspection/Stop remains covered without contacting live work.
-  - **Installed artifacts:** `eon`
-    `/nix/store/b7y4qhwihlg2bvw94cw2ckmc6fd3sznh-eon-0.1.0`, `eonterm`
-    `/nix/store/p7xl1lda3ak9qc5ldbidwhsnznwkl8b7-eonterm-0.1.0`, embedded Venus
-    `/nix/store/b49xm0ppz48v21b1sad1ln2x9z5pjdj3-yazelix-venus-0.1.0`.
-    Both active profile elements resolve to these outputs; all other profile
-    elements are preserved. Generation is `g1-6df01bdd8e50ae9fd843b10495c1866b`.
-  - **Real source and native observation:** Installed Eon receives a normal
-    Claude Code 2.1.159 Pro response through its actual collector. Provider
-    used values 10%/1% become 90%/99% remaining with identical reset times.
-    Private Sway 1.12 headless/pixman and Mesa 26.1.2 software Vulkan prove the
-    native chip beside a controlled Codex substitute, hover/reset descriptions,
-    accessible freshness, and full/compact/hidden layouts at 1100/500/180 pixels.
-    Controlled cache age (901/3601 seconds), malformed storage and missing
-    credential metadata produce stale or absent facts; restoring the same
-    source preserves the original observation time. Workspace and terminal
-    identities survive, and ordinary `a` reaches that same terminal. Captures
-    are visually inspected; raw provider payloads and credentials are not retained.
-  - **Preservation and limits:** All 74 observed ambient product identities
-    survive. Proof-owned processes and private Wayland/DBus state are removed;
-    no live workspace is restarted. Existing windows retain their running
-    build. Real source proof covers the named Claude version/account only;
-    controlled failures do not claim provider outages. No physical GPU,
-    screen-reader workflow, macOS or additional distribution proof.
+- **Status:** Retired 2026-10-14 by Lucca. EON-C27 owns Claude quota collection
+  through CodexBar and the chip policy; Venus `VEN-C26` owns the Claude chip.
+  `eon claude-statusline` remains a bounded silent sink under EON-C27.
+- **Reason:** The status-line collector this contract described no longer
+  exists, so it cannot be proved in this repository.
 
 ## EON-C27 — CodexBar quota collection
 
-- **Status:** Proven for the installed x86_64 Linux Wayland Nix slice, 2026-10-14.
+- **Status:** Proven on x86_64 Linux by the automated tier; installed quota
+  observation is pending re-proof in this repository.
 - **Consumer, trigger and result:** Full Eon starts independent, noninteractive
   CodexBar CLI reads for Codex (`--source cli`) and Claude (`--source oauth`).
   Reads are at least 60 seconds apart per provider and run off workspace I/O.
@@ -2464,53 +1429,27 @@ Current collection uses the installed CodexBar replacement proved in EON-C27.
   and resources are hash-pinned. This accepts its Swift binary size to remove
   Eon-owned provider mechanisms. Go/Grok delivery and possible Muse remain
   outside this first migration slice.
-- **Proof owner:** `eon-codexbar-quota-backend-ioqy`; earlier evaluation
+- **Decision record:** `eon-codexbar-quota-backend-ioqy`; earlier evaluation
   `eon-evaluate-codexbar-quota-backend-r2ks` supplies source evidence, not installed
   acceptance. User approval supersedes that evaluation's retain-current decision.
 
-- **Installed proof:** Runtime `0de24d01a9022388282dd92d91f6ed1099771b57`, independent
-  codec `d0a184bb4d45d3e50787f7c17606df652727fb9a`, Venus
-  `59482a93ab78b29789fecb9a37b101152b5be8c2`, unchanged Orbit
-  `427cf2d074cd1db905a2cc2602a5475065d1c790`. Full affected Rust checks pass;
-  composed Eon has 39 integration tests, Runtime 45 and codec 15. Nix builds of
-  Eon/EonTerm, package selection, managed-command path, shell environment and
-  EonTerm closure checks pass. The latter excludes the quota backend.
-  - Exact active profile: Eon
-    `/nix/store/a1b98waaaqcbjw098wf41fjxl56kl5v0-eon-0.1.0`, EonTerm
-    `/nix/store/7mcbb29s6xp3lw5r7d88k2npkl9c7683-eonterm-0.1.0`.
-    Prepared source `/nix/store/x27gm1nny721gwh4ccx84jdv573c1sgb-eon-source`
-    comes from the working checkout with unrelated dirty installer/policy/docs
-    state preserved. These immutable artifact identities define this proof.
-  - Private Sway 1.12/pixman, Mesa 26.1.2 lavapipe, native Wayland scale 1:
-    real Codex weekly remaining 86%; real Claude five-hour 100% without reset
-    and weekly 98%. Native hover/accessibility preserve the absent reset and
-    both supplied windows. Widths 1100/500/180 hide optional chips safely.
-    A subsequent controlled Codex source failure marks retained values `old`;
-    Claude and ordinary input to the same Orbit terminal remain usable.
-    Vendor binary SHA-256 and the existing status-line wrapper's exact stdin,
-    stdout and successful exit are preserved.
-  - First package check exposed a missing adjacent upstream `VERSION` file;
-    retaining it fixed the package. Old v8 test fixtures were updated to v9;
-    historical inspection/Stop covers v2–v8. Final unchanged checks pass.
-    All eight observed ambient Eon process identities and original credential
-    bytes survive. Private processes, credential copies, Wayland and DBus state
-    are removed. No inference, user settings edit or live restart occurred.
-  - Evidence: `~/.local/state/eon/proofs/eon-codexbar-delivery-2026-10-14-nwwclgck/`.
-    No hardware GPU, physical input, reader workflow or macOS proof is claimed.
-
-- **Claude icon refinement:** `eon-claude-quota-icon-2fw2` selects Claude's splat
-  in its original orange (`#D97757`) within the existing quota chip bounds.
-  Venus owns the immutable mask and tint; quota facts, layout, hover,
-  accessibility and provider mechanisms remain under their existing contracts.
-  Source `d0642ed9fc190539811168553c972107336fa213` passes the affected
-  Venus Rust checks and Eon/EonTerm Nix builds. Native private Sway 1.12/pixman,
-  Mesa 26.1.2 lavapipe at scales 1 and 1.25 proves original `#D97757` pixels,
-  readable wide/compact marks, safe hiding, hover/static accessibility and
-  ordinary input to the same surviving terminal. All ten ambient product
-  identities and original credential bytes survive; private proof state is
-  removed. The package consumes Venus-owned asset notices directly.
-  Active profiles select Eon
-  `/nix/store/bhmiis8irnlr4hx923q6sj613l185dm8-eon-0.1.0` and EonTerm
-  `/nix/store/nd2djg34kr8ngzgandrla1kvg6zi6zld-eonterm-0.1.0`.
-  Evidence: `~/.local/state/eon/proofs/eon-claude-icon-2026-10-14-kz3_jctj/`.
-  No hardware GPU, physical input, reader workflow or macOS proof is claimed.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+  - **Environment:** Automated tier.
+  - **Evidence:** CodexBar-backed workers
+    (`actual_periods_optional_resets_and_missing_quota_are_preserved`,
+    `retained_observations_age_and_expire_without_invented_resets`,
+    `invalid_source_values_and_timestamps_never_become_fresh_usage`,
+    `workers_isolate_failure_and_bound_output_timeout_and_shutdown`); EONW
+    `optional_resets_roundtrip_without_relaxing_historical_or_value_boundaries`;
+    Venus `quota_without_reset_retains_percent_and_accessible_freshness` and
+    `quota_icons_preserve_transparency_and_shape_across_scales`; the
+    `eonterm-closure` check keeps CodexBar out of EonTerm.
+- **Open proof:** Pending re-proof in this repository: real installed Codex and
+  Claude windows with reset details on hover; a controlled source
+  failure marking retained values `old` on an installed surface, and optional
+  chips hiding at narrow widths. No hardware GPU, reader workflow or macOS proof
+  is claimed.
+- **Claude icon:** Venus shows Claude's splat in its original orange
+  (`#D97757`) within the existing quota chip bounds and owns the immutable mask
+  and tint. Quota facts, layout, hover, accessibility and provider mechanisms
+  remain under their existing contracts.

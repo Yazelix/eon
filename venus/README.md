@@ -1,14 +1,14 @@
-# Eon Desktop
+# Venus
 
-Eon Desktop contains Venus, the native client that renders Orbit Sessions and
-sends user input back to their authoritative runtime. In an Eon workspace,
-Venus draws the tabs, pane stack, and popups from Eon's workspace state.
+Venus is Eon's native client: it renders Orbit Sessions and sends user input
+back to their authoritative runtime. In an Eon workspace, Venus draws the tabs,
+pane stack, and popups from Eon's workspace state.
 
 ## Demo
 
-[![Animated Venus demo rendering Eon's two-pane native Wayland workspace](https://raw.githubusercontent.com/Yazelix/eon/ffa06c6a414921a1a0570c3ea3c1e49b1a3210da/assets/demo/eon-demo.gif)](https://github.com/Yazelix/eon/blob/ffa06c6a414921a1a0570c3ea3c1e49b1a3210da/assets/demo/eon-demo.mp4)
+[![Animated Venus demo rendering Eon's two-pane native Wayland workspace](../assets/demo/eon-demo.gif)](../assets/demo/eon-demo.mp4)
 
-[Watch the MP4](https://github.com/Yazelix/eon/blob/ffa06c6a414921a1a0570c3ea3c1e49b1a3210da/assets/demo/eon-demo.mp4) of the composed Linux alpha.
+[Watch the MP4](../assets/demo/eon-demo.mp4) of the composed Linux alpha.
 
 ## Run locally
 
@@ -41,8 +41,8 @@ Workspace windows show a compact shortcut hints bar. **Alt+Shift+B** hides or
 shows it for that window; **Alt+/** opens the complete Shortcuts viewer.
 
 [Running Venus](docs/LAUNCH.md) covers fonts, window options, attachment, and
-supervised startup. Apple Silicon macOS has partial native proof and remains
-unsupported as a product target.
+supervised startup. Apple Silicon macOS native proof awaits re-proof in this
+repository, and macOS remains unsupported as a product target.
 
 ## Read more
 
@@ -71,12 +71,12 @@ benchmark CSV data, and disposable qualification patches.
 | Repository attributes and ignore rules | 7 |
 | License | 201 |
 | Third-party notices | 69 |
-| Contracts and references | 2,978 |
+| Contracts and references | 2,064 |
 | Guides | 473 |
 | Memory benchmark report | 158 |
 | Crate decisions | 335 |
-| Changelog | 388 |
+| Changelog | 12 |
 | Rust source, including unit tests | 23,272 |
 | Rust integration tests | 1,047 |
 | Cargo manifest | 37 |
-| **Total** | **29,267** |
+| **Total** | **27,977** |

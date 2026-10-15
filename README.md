@@ -15,18 +15,18 @@ terminal lifecycle.
 
 ## Why Eon
 
-- **Terminals outlive the window.** [Eon Sessions](https://github.com/Yazelix/eon-sessions)
+- **Terminals outlive the window.** [Orbit](orbit/README.md)
   keeps each terminal's PTY and terminal state apart from the window. Close Eon
   to detach, then `eon attach` to return to the same work.
   `eon stop GENERATION` ends terminals.
 - **Tabs remember directories.** Find a directory with Zoxide quick search or
   browse in Yazi. New panes start in that tab's directory; move tabs and stacked
   panes with the keyboard.
-- **A pinned tool set.** The current `edge` build pins Anima, Nushell, Helix,
+- **A pinned tool set.** Eon pins Anima, Nushell, Helix,
   Yazi, and LazyGit together.
   Git and Agent popups stay with their tab; the Agent popup uses your installed
   client.
-- **Native Vulkan graphics.** [Eon Desktop](https://github.com/Yazelix/eon-desktop)
+- **Native Vulkan graphics.** [Venus](venus/README.md)
   draws terminal text and workspace chrome with `wgpu` on Vulkan. A hardware
   adapter uses the GPU; Mesa lavapipe can render in software. Eon requests blur
   for its translucent Wayland window; compositor support determines whether the
@@ -38,10 +38,11 @@ The Nix-only alpha supports **x86_64 Linux on native Wayland**. You need Git,
 Nix with flakes enabled, and a Wayland session. [Platform details](docs/USAGE.md#supported-environment)
 cover the proved setup and current limits.
 
-**Mac:** Orbit passed native Apple Silicon tests. Venus rendered and handled
-input on M1, including our physical Scaleway Mac. Venus still has open Mac
-checks, and Eon's Nix package targets Linux only. This release has no Mac
-install path or ETA; Intel Macs are outside scope.
+**Mac:** Before Eon moved into one repository, Orbit passed native Apple Silicon
+tests and Venus rendered and handled input on M1, including our physical
+Scaleway Mac; both await re-proof here. Venus still has open Mac checks, and
+Eon's Nix package targets Linux only. This release has no Mac install path or
+ETA; Intel Macs are outside scope.
 
 We're looking for Apple Silicon Mac testers. If you'd like to help,
 [open an issue](https://github.com/Yazelix/eon/issues/new).
@@ -49,19 +50,18 @@ We're looking for Apple Silicon Mac testers. If you'd like to help,
 Install the tagged alpha with one command:
 
 ```sh
-nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-09-24
+nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-10-14
 ```
 
 The tag pins the release; `eon versions` reports the component graph.
 
-Run `eon` to start. The current `edge` build groups commands and examples
-in `eon --help` (or `eon -h`).
+Run `eon` to start. `eon --help` (or `eon -h`) groups commands and examples.
 
-A fresh tagged-alpha workspace asks for a directory. Press Enter for a Zoxide
+A fresh workspace asks for a directory. Press Enter for a Zoxide
 match, or Tab to browse with Yazi. Closing the window leaves terminals alive;
 `eon attach` returns to them. **Alt+/** opens the shortcut guide in the window.
 
-The current `edge` build shows bottom shortcut hints. **Alt+Shift+B** hides or
+Eon shows bottom shortcut hints. **Alt+Shift+B** hides or
 restores them for that window; **Alt+/** always opens the complete guide.
 Later tabs start in your home directory. **Esc** dismisses their directory
 picker into a terminal; **Alt+Shift+W** closes a tab you no longer want.
@@ -77,14 +77,16 @@ percentages appear by default, with reset details on hover. Failed readings say
 To end terminals explicitly, inspect `eon generations`, then run
 `eon stop GENERATION`, `eon stop previous`, or `eon stop all`.
 
-Linux Wayland is proved on COSMIC and private Sway. Bounded
+Linux Wayland was proved on COSMIC and private Sway before Eon moved into one
+repository. This repository's installed checks so far run on a private headless
+Sway, plus a brief COSMIC launch check; the full desktop proofs and the bounded Orca
 [reader qualification](docs/CONTRACTS.md#eon-c8--durable-tab-and-pane-workspace)
-records exact Eon and Orca revisions; the tagged alpha remains unqualified for readers.
+await re-proof in this repository.
 Other compositors, non-systemd hosts and recovery after a machine restart
 remain unproved. [Report a problem](https://github.com/Yazelix/eon/issues).
 
-The current `edge` build adds a short, dismissible Anima animation before the
-directory picker and opens independent workspaces with **Alt+Shift+N** or the
+Eon plays a short, dismissible Anima animation before the directory picker and
+opens independent workspaces with **Alt+Shift+N** or the
 launcher's **New Eon Window** action. `eon window new` prints an ID; `eon windows`
 lists windows for reattachment or exact Stop.
 In Eon's native terminal, `eon anima accelerando` shows the 8,192-glyph alien
@@ -115,8 +117,8 @@ cachix use eon-yazelix
 
 Follow the [installation-specific setup](docs/DISTRIBUTION.md#optional-binary-cache)
 for NixOS activation and multi-user permissions. The cache publishes selected
-`edge` builds of Eon and EonTerm; it does not promise binaries for the historical
-alpha tag or every revision.
+`edge` builds of Eon and EonTerm; it does not promise binaries for every tag or
+revision.
 
 ## Guides
 

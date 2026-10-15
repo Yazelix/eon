@@ -10,14 +10,16 @@ Before installing, you need:
 - Git and Nix with flakes enabled; and
 - a native Wayland session.
 
-The accepted runtime proof uses COSMIC with systemd, and installed checks also
-exercise isolated Sway. Eon does not require systemd or cgroup delegation, but
-non-systemd use remains unproved. The current graphics proof uses Mesa on Intel
-hardware; proprietary NVIDIA remains unproved.
+Before Eon moved into one repository, the accepted runtime proof used COSMIC
+with systemd and Mesa on Intel hardware. This repository's installed checks so
+far run on a private headless Sway, plus a brief COSMIC launch check; the full
+COSMIC desktop proof awaits re-proof here. Eon does not require systemd or cgroup delegation, but non-systemd use and
+proprietary NVIDIA remain unproved.
 
-Apple Silicon macOS is the active expansion. Orbit has native proof, and Venus
-has partial M1 proof, including physical Scaleway tests. Venus acceptance and
-full Eon Nix composition remain open, so this release has no Mac install path.
+Apple Silicon macOS is the active expansion. Orbit's native proof and Venus's
+partial M1 proof, including physical Scaleway tests, predate this repository and
+await re-proof here. Venus acceptance and full Eon Nix composition remain open,
+so this release has no Mac install path.
 X11, Xwayland, ARM Linux, Intel macOS, direct bundles, Home Manager installation,
 background updates, and release automation are unsupported. Restarting the
 machine ends live terminal process state.
@@ -27,17 +29,12 @@ machine ends live terminal process state.
 Install the public alpha:
 
 ```sh
-nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-09-24
+nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-10-14
 ```
 
-Run `eon` to start. `eon versions` shows the installed component revisions. On
-the current `edge` build, it shows the generation of the in-tree build and each
-exact external component revision; Orbit, Venus and Eon Runtime report
+Run `eon` to start. `eon versions` shows the generation of the in-tree build and
+each exact external component revision; Orbit, Venus and Eon Runtime report
 `workspace`.
-
-Bottom shortcut hints, Anima startup, its popup and CLI command, and the independent-window shortcut,
-launcher action, and `eon window` commands below require the current `edge`
-build; the tagged alpha does not include them.
 
 Fresh workspaces first show a three-second random Anima animation after the
 window is ready. Press any key other than the style-browsing keys to dismiss it;
@@ -161,7 +158,7 @@ you are. It appears in Eon's pane header or at the top right of EonTerm, updates
 as output continues, and disappears at live output. Click the whole pill to
 return there.
 
-In the current `edge` build, two clicks select a word, three select a
+Two clicks select a word, three select a
 space/tab-delimited span, and four or more select the logical line across soft
 wraps. Dragging extends that granularity; a delayed single click returns to
 cell selection. Release copies to both Wayland clipboard destinations, and
@@ -169,8 +166,8 @@ Ctrl+Shift+C copies the frozen selection even after output changes.
 
 The directory picker starts with Zoxide and fzf. Tab switches to Yazi, Shift+Z
 jumps through Zoxide history from the browser, `g h` goes home, `g /` goes to
-root, `g Space` accepts a folder path, and F1 opens browser help. In the current
-`edge` build, `a` uses Yazi's native **Create:** prompt: a plain name creates a
+root, `g Space` accepts a folder path, and F1 opens browser help. `a` uses
+Yazi's native **Create:** prompt: a plain name creates a
 file; a name ending in `/` creates a folder. Creation highlights the item;
 Enter selects a folder. Esc returns input to normal mode or closes it;
 in help, it clears a filter or closes help. Existing targets require
@@ -182,7 +179,7 @@ or last entry, `H`/`L` go back/forward, and `/`/`?` with `n`/`N` find entries.
 
 ## CLI commands
 
-The current `edge` build supports `eon -h` and `eon --help`: grouped commands,
+`eon -h` and `eon --help` show grouped commands,
 short descriptions, and examples without starting a workspace. Help uses color
 on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 `TERM=dumb` disables color. Invalid syntax points to `eon --help`.
@@ -216,7 +213,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 Workspace commands target the current-generation supervisor. Human and `--json`
 output describe the same result. A missing supervisor is not started implicitly;
 run `eon` first.
-The current `edge` build calls Orbit-backed instances terminals in human output.
+Eon calls Orbit-backed instances terminals in human output.
 JSON retains the technical `session` / `sessions` fields and `session-N` IDs;
 these refer to terminals.
 Commands run inside an independent window target that window; commands outside
@@ -250,8 +247,8 @@ composition.
 
 ## Troubleshooting and reporting
 
-- **Nix cannot fetch an input:** check access to GitHub and retry. The current
-  `edge` build fetches only external inputs; Orbit, Venus and Eon Runtime build
+- **Nix cannot fetch an input:** check access to GitHub and retry. Eon
+  fetches only external inputs; Orbit, Venus and Eon Runtime build
   from this repository.
 - **A workspace command reports a missing supervisor:** run `eon`, then retry.
 - **The window closed but commands remain:** this is detach behavior. Use

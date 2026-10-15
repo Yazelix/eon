@@ -303,7 +303,7 @@ cadence prove the route; a second cache or resolver is outside Venus ownership.
   test-harness ownership; the reference does not select another compositor or
   terminal dependency.
 - Eon's
-  [central terminal-product comparison route](https://github.com/Yazelix/eon/blob/edge/docs/REFERENCES.md#terminal-product-comparisons)
+  [central terminal-product comparison route](../../docs/REFERENCES.md#terminal-product-comparisons)
   owns Monstar's exact release identity, license, useful mechanisms, and product
   rejections. A Venus Bead follows that route only for a named native-host,
   terminal-interaction, or performance question, then records the exact source
@@ -377,8 +377,8 @@ adapter, or compatibility path is added.
 ## Required for read-only pane metadata
 
 `ven-render-live-pane-title-cwd-8c7` consumes canonical ORBS v5 from exact
-[Eon Sessions](https://github.com/Yazelix/eon-sessions/tree/69c402737799f03e615473956954a043647a4713)
-source `69c402737799f03e615473956954a043647a4713`. Orbit owns bounded title and
+Orbit source `69c402737799f03e615473956954a043647a4713` (pre-consolidation
+history). Orbit owns bounded title and
 working-directory values plus the read-only `ObserveMetadata` role; Venus sends
 that one request, rejects every other role or message order, and retains only
 the latest accepted update for each visible live endpoint.
@@ -436,8 +436,8 @@ primary-selection, search, and raw-display clipboard ownership.
 
 ## Canonical workspace protocol provider
 
-The current canonical package is
-[Eon Runtime's codec at `d0a184b`](https://github.com/Yazelix/eon-runtime/tree/d0a184bb4d45d3e50787f7c17606df652727fb9a/crates/eon-workspace-protocol).
+The current canonical package is the in-tree
+[`eon-workspace-protocol`](../../runtime/crates/eon-workspace-protocol) crate.
 Inspect its complete manifest and v2–v9 sources for bounded values, validation
 and framing. [Crate decisions](CRATES.md#eon-workspace-protocol-consumer) record
 exact package identity and independent codec selection. The historical routes
@@ -489,7 +489,7 @@ a generic popup or modal API.
 ## Required for shared popup presentation
 
 `ven-shared-popup-surface-ehk` consumes the exact Eon-owned EONW v5 seed at
-[`0cc8f477298681ae3945903e8fdb5852d487c5ab`](https://github.com/Yazelix/eon/tree/0cc8f477298681ae3945903e8fdb5852d487c5ab).
+`0cc8f477298681ae3945903e8fdb5852d487c5ab` (pre-consolidation history).
 The question is how Project and tools share one stack-covering surface without
 moving product or terminal policy into Venus. The dependency-free owner codec
 supplies the catalog, logical margins, per-tab instances/selection and guarded

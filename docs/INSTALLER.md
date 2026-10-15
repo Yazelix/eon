@@ -105,8 +105,8 @@ the installer refuses to adopt an unmarked directory.
 
 `eon-prove-thin-linux-bundle-installer-8r7n` records seven focused Rust checks,
 the static Nix build, signed TLS failures/interruption and native installation,
-upgrade, rollback, retained reattachment and removal. EON-C5/C6 bind exact
-archives and the unchanged component graph. Evidence lives under
+upgrade, rollback, retained reattachment and removal, and binds exact archives
+and the unchanged component graph. Evidence lives under
 `~/.local/state/eon/proofs/eon-installer-review-2026-10-11-08l4lm2k/`.
 The isolated same-host Wayland rerun preserves ordinary work and bundled Helix.
 The earlier `eon-installer-2026-10-10-2uahgczq/` proof retains exact idle

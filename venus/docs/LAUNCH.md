@@ -2,7 +2,7 @@
 
 ## Run a standalone client
 
-Pass the Eon Sessions Orbit Unix socket to the Venus client:
+Pass the Orbit Unix socket to the Venus client:
 
 ```sh
 cargo run --locked -- /path/to/orbit.sock

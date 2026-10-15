@@ -1,9 +1,7 @@
 # Configuration
 
 `eon config-path` prints the configuration root, normally
-`~/.config/eon`. Settings live in `config.toml`. This example describes the
-current `edge` build. The tagged alpha does not recognize `[anima]`, `[bar]` or
-`cursor_trail_duration`; omit them when using that release:
+`~/.config/eon`. Settings live in `config.toml`:
 
 ```toml
 [bar]
@@ -73,7 +71,7 @@ EonTerm do not play the startup animation.
 
 ## Agent quota
 
-The current `edge` build bundles pinned CodexBar CLI for Codex and Claude quota.
+Eon bundles pinned CodexBar CLI for Codex and Claude quota.
 Codex uses your authenticated `codex` executable on `PATH`; Claude uses its local
 OAuth credentials. Explicit sources avoid browser fallback and model prompts.
 Eon does not change provider settings or manage accounts. CodexBar owns credential

@@ -63,7 +63,7 @@ observations also become stale after 15 minutes and disappear after one hour.
 Windows disappear at a supplied reset; missing reset times remain unknown.
 Successful missing quota clears prior facts. Existing `claude-statusline` wrappers
 are drained silently with a two-second/64 KiB bound, without writing quota state.
-Eon's [EON-C27](https://github.com/Yazelix/eon/blob/edge/docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
+Eon's [EON-C27](../docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
 owns product policy and installed acceptance.
 
 EONW v9 permits genuinely absent provider resets, including stale observations.
@@ -73,20 +73,12 @@ presentation remains bound to the original exact executable.
 
 ## Package provenance
 
-The transfer source is Eon
-[`e431d75`](https://github.com/Yazelix/eon/commit/e431d7583c84ff574054d2edf556e9827114987e).
-The initial transfer at
-[`b8f18b4`](https://github.com/Yazelix/eon-runtime/commit/b8f18b4374ca0818a64d9cac6a3fcd02d9f2f2aa)
-copied both complete crate trees, including manifests and unit tests:
-
-| Package | Original Git subtree |
-|---|---|
-| `eon-runtime` | `3dcfef6bf31758233f2a33eb31d5184ebeae9843` |
-| `eon-workspace-protocol` | `8409c419a3496d6f01eeef65295f5d95b943313e` |
-
-The codec tree also equals Venus's historical Eon dependency at
-`f41a41c9aecc4c436edfa2f394b832aa6d8711ad`. Runtime depends on the in-tree
-Orbit protocol crate.
+The crates were transferred unchanged from Eon's pre-consolidation history at
+`e431d7583c84ff574054d2edf556e9827114987e` (runtime subtree
+`3dcfef6bf31758233f2a33eb31d5184ebeae9843`, EONW subtree
+`8409c419a3496d6f01eeef65295f5d95b943313e`), including manifests and unit
+tests. That history is kept in a private archive; [NOTICE](NOTICE) records the
+same source. Runtime depends on the in-tree Orbit protocol crate.
 
 Runtime and codec have separate package manifests and version owners.
 
@@ -131,7 +123,7 @@ artifacts.
 | Rust source and tests | 14,578 |
 | Cargo manifests | 24 |
 | Agent guidelines | 37 |
-| README | 137 |
+| README | 129 |
 | License and notice | 209 |
 | Repository ignore rules | 1 |
-| **Total** | **14,986** |
+| **Total** | **14,978** |

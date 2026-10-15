@@ -346,7 +346,7 @@ explicit user decision.
 
 Orbit would replace the process, PTY, and session-lifetime role that a
 conventional multiplexer such as Zellij would otherwise provide in Eon. Venus
-would provide graphical presentation through Eon Desktop, while Eon would own
+would provide graphical presentation, while Eon would own
 only product orchestration, policy, and configuration above both subsystems.
 
 Eon is not a migration of Nova and does not make Nova the compatibility path
@@ -357,22 +357,22 @@ user later chooses a specific shared child-repository contract.
 Venus consumes Orbit's structured presentation boundary, while the current Mars
 application owns its terminal state directly. The experiment includes the
 smallest Venus client needed to prove the one-authority design. Orbit owns the
-headless proof through `orb-bi4.3`. That convergence gate passed, and the
-private [`Yazelix/eon-desktop`](https://github.com/Yazelix/eon-desktop)
-repository now owns graphical implementation through Venus; `orb-bi4.4` tracks
-Orbit-side acceptance. Graphical Venus code does not live in Orbit; the proven
-presentation contract is the repository boundary.
+headless proof through `orb-bi4.3`. That convergence gate passed, and Venus
+in [`venus/`](../../venus/README.md) now owns graphical implementation;
+`orb-bi4.4` tracks Orbit-side acceptance. Graphical Venus code does not live in
+Orbit; the proven presentation contract is the crate boundary.
 
 ## Naming and eventual ownership
 
-The product is named **Eon**. The repositories are **Eon**, **Eon Desktop**, and
-**Eon Sessions**; Venus and Orbit remain their underlying client and session
-subsystems. `Saturn` remains reserved for possible future use; that reservation
-creates no product, repository, feature, or planning scope.
+The product is named **Eon**. Venus and Orbit are its client and session
+subsystems. They were first developed in the separate **Eon Desktop** and **Eon
+Sessions** repositories; since 2026-10-14 all three live in this one repository,
+so the graduation plan below is historical. `Saturn` remains reserved for
+possible future use; that reservation creates no product, repository, feature,
+or planning scope.
 
-Orbit retains the headless runtime and diagnostic client used by its proof. Eon
-Desktop owns the graphical client through Venus. If Venus and Orbit graduate,
-the intended product boundary becomes:
+Orbit retains the headless runtime and diagnostic client used by its proof.
+Venus owns the graphical client. The boundary planned for graduation was:
 
 ```text
 Eon

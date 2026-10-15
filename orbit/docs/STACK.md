@@ -1,8 +1,7 @@
 # Eon stack technology boundaries
 
-This document records the current cross-stack technology posture for Eon, Eon
-Sessions, and Eon Desktop. Orbit and Venus remain the underlying session and
-client subsystems. This document guides later decision beads; it does not
+This document records the current cross-stack technology posture for Eon and
+its Orbit session and Venus client subsystems. This document guides later decision beads; it does not
 authorize a feature, dependency, repository, plugin system, web client, mobile
 client, or Apple client. The initial Orbit experiment retains the narrower
 boundaries in `AGENTS.md` and `docs/CONTRACTS.md`.
@@ -14,14 +13,14 @@ where they have a concrete native advantage.
 
 | Surface | Default owner | Boundary |
 | --- | --- | --- |
-| Eon Sessions / Orbit runtime and terminal authority | Rust | No second application language or in-process plugin runtime |
+| Orbit runtime and terminal authority | Rust | No second application language or in-process plugin runtime |
 | Canonical Orbit protocol codec | Rust | May compile to WebAssembly for a browser consumer |
-| Eon Desktop / Venus shared state and native client | Rust | Renderer dependencies require the Venus crate gate |
-| Eon Desktop / Venus GPU shaders | WGSL when required | Shader code only, not application policy |
-| Eon composition and packaging | Nix | Reuse child-repository outputs instead of local wrappers |
+| Venus shared state and native client | Rust | Renderer dependencies require the Venus crate gate |
+| Venus GPU shaders | WGSL when required | Shader code only, not application policy |
+| Eon composition and packaging | Nix | Reuse component outputs instead of local wrappers |
 | Eon executable logic | Rust when Nix alone is insufficient | Add only for deterministic behavior that earns a typed, checked owner |
 | Future Eon Web shell | TypeScript | Browser lifecycle, transport, DOM, accessibility, and PWA integration |
-| Future Apple-native Eon Desktop shell | Swift and SwiftUI only if justified | Apple lifecycle, input, menus, and accessibility around a narrow Rust boundary |
+| Future Apple-native Venus shell | Swift and SwiftUI only if justified | Apple lifecycle, input, menus, and accessibility around a narrow Rust boundary |
 | Yazi extensions | Lua, owned by Yazi | Eon may pin or package them without making Lua an Eon-wide API |
 | Future cross-language extensions | WebAssembly Components described by WIT | Only after concrete extension cases establish a stable capability contract |
 
@@ -32,11 +31,10 @@ libghostty's use of Zig does not make Zig a directly owned Orbit language.
 
 Eon owns product composition: manifests, policy, component selection,
 launching, updates, distribution, and the mapping among repositories, agents,
-services, and terminal sessions. Eon Sessions contains Orbit, which owns
-generic terminal-session lifetime, PTYs, authoritative libghostty state,
-bounded terminal history, and the versioned client protocol. Eon Desktop
-contains Venus, which owns native rendering, input collection, and ephemeral
-view state over Orbit-authored presentation.
+services, and terminal sessions. Orbit owns generic terminal-session lifetime,
+PTYs, authoritative libghostty state, bounded terminal history, and the
+versioned client protocol. Venus owns native rendering, input collection, and
+ephemeral view state over Orbit-authored presentation.
 
 Raw PTY bytes and terminal-generated replies stay inside Orbit. Venus
 materializes ORBF complete frames and does not run a terminal parser. A later

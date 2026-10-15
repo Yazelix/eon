@@ -53,17 +53,16 @@ focus loss, occlusion, native resize, and GPU recovery reset the effect.
 ```text
 Eon                     -> product policy, composition, distribution
 Eon Runtime             -> workspace mechanisms, canonical EONW
-Eon Desktop / Venus     -> native presentation, interaction, client failure UX
-Eon Sessions / Orbit    -> PTYs, terminal state, session lifetime, wire authority
+Venus                   -> native presentation, interaction, client failure UX
+Orbit                   -> PTYs, terminal state, session lifetime, wire authority
 ```
 
-Venus consumes EONW v8 through `eon-workspace-protocol` 0.1.0 at exact Eon Runtime
-source `2f9630723254ad7d9401ae40e459cef1fbfe8a17`. Eon supplies popup definitions,
+Venus consumes EONW v9 through the in-tree `eon-workspace-protocol` 0.1.0
+crate. Eon supplies popup definitions,
 commands and geometry defaults. The runtime validates configuration and owns
 live workspace and popup state, Session mappings, and provider quota collection
 and normalization. Venus consumes
-`orbit-protocol` 0.1.0, ORBF v2, and ORBS v13 at exact Orbit proof
-`6bc269c40b18f08b95778939518f77556ba91c67`. One reducer turns complete canonical
+the in-tree `orbit-protocol` 0.1.0 crate with ORBF v2 and ORBS v13. One reducer turns complete canonical
 frames into immutable scene data used by drawing and accessibility. The native
 host owns the local socket, window, input mapping, and redraw lifecycle; it owns
 no terminal state.
@@ -77,8 +76,8 @@ Venus observer and remain alive independently.
 Terminal accessibility text and selection come from the same accepted Scene.
 Atomic units retain their terminal columns, and AccessKit projects their
 positions and widths through the rendered grid and visible clipping. Scoped
-Linux Orca line-review evidence is indexed under VEN-C1; complete composed
-screen-reader qualification and native reader-key delivery remain separate.
+Linux Orca line-review evidence predates this repository and awaits re-proof
+under VEN-C1; complete composed screen-reader qualification and native reader-key delivery remain separate.
 
 ## Platform and limits
 
@@ -90,6 +89,7 @@ Blur strength and live blur changes are also outside its scope.
 The proved Linux host uses winit, wgpu, glyphon, AccessKit, and wl-clipboard-rs
 with native Wayland and Vulkan. The unsupported Apple Silicon host reuses the
 same renderer/model path with AppKit, AccessKit, Metal, and target-only arboard.
-Its opaque foundation and a bounded clipboard/key slice have native M1 proof;
+Its opaque foundation and a bounded clipboard/key slice had native M1 proof
+before consolidation, awaiting re-proof here;
 held-key repeat, dead keys, other IMEs, physical trackpad gesture quality, a
 host-access failure notice, lifecycle acceptance, effects, and Eon composition remain open.

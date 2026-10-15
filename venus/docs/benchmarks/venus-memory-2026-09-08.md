@@ -19,7 +19,7 @@ reuses that allocation for one cell. The correction uses `Buffer::new_empty`
 and `lines.reserve_exact(1)` before the existing text and shaping calls.
 Additional lines can still grow normally. No cache policy or helper is added.
 
-The frozen [Eon benchmark](https://github.com/Yazelix/eon/blob/418c3889b7a79808c05e6b7ead9d27d30337f496/docs/benchmarks/eon-zlf-2026-09-08.md)
+The frozen [Eon benchmark](../../../docs/benchmarks/eon-zlf-2026-09-08.md)
 attributed 67.35 MiB idle and 78.05 MiB first-screen PSS to Venus in EonTerm.
 Its retained rollups further separate those medians:
 

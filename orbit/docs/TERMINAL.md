@@ -6,9 +6,10 @@ Orbit owns one real PTY and the authoritative libghostty terminal. A client can
 disconnect and later attach to the same live process. Orbit sends complete,
 structured frames; it does not ask clients to parse raw terminal output.
 
-The ordinary and managed server and diagnostic client are proved on x86_64 Linux
-and Apple Silicon macOS. Native macOS proof covers PTY spawn, input, resize,
-reconnect, socket permissions, EOF, bounded shutdown, and management Stop.
+The ordinary and managed server and diagnostic client are proved on x86_64
+Linux. Native macOS proof, which awaits re-proof in this repository, covered PTY
+spawn, input, resize, reconnect, socket permissions, EOF, bounded shutdown, and
+management Stop.
 Venus, Eon, Nix packaging, signing, and distribution have not adopted macOS.
 
 ### Scrollback and wire versions
