@@ -118,7 +118,7 @@ The focused Orbit terminal conformance corpus reuses eight authoritative unit
 and real-PTY tests under one filter:
 
 ```sh
-cargo test --locked conformance_
+nix develop -c eon-test -p yazelix-orbit conformance_
 ```
 
 It covers parser continuation and terminal replies, complete rich reattachment,

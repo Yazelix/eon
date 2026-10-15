@@ -196,6 +196,13 @@
         fetchAll = true;
         hash = "sha256-PnM+hZIlLyQwK8vJgd/Bhjt1lNIz06T8FahwliRmMrY=";
       };
+      # libghostty's build script compiles the pinned Ghostty source with Zig
+      # instead of cloning it; Orbit's package and the dev shell share this.
+      ghosttyBuildEnv = {
+        LIBGHOSTTY_VT_SYS_CPU = "baseline";
+        GHOSTTY_SOURCE_DIR = ghostty;
+        GHOSTTY_ZIG_SYSTEM_DIR = ghosttyDeps;
+      };
 
       orbitPackage =
         assert ghostty.rev == "a887df42c56f6de86c0fe6da9c4eeca37931e083";
@@ -219,9 +226,7 @@
             pkgs.ncurses
             pkgs.zig_0_15.hook
           ];
-          LIBGHOSTTY_VT_SYS_CPU = "baseline";
-          GHOSTTY_SOURCE_DIR = ghostty;
-          GHOSTTY_ZIG_SYSTEM_DIR = ghosttyDeps;
+          inherit (ghosttyBuildEnv) LIBGHOSTTY_VT_SYS_CPU GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
           dontUseZigBuild = true;
           dontUseZigCheck = true;
           dontUseZigInstall = true;
@@ -239,6 +244,23 @@
         pkgs.vulkan-loader
         pkgs.wayland
       ];
+      venusBuildInputs = [
+        pkgs.fontconfig
+        pkgs.freetype
+        pkgs.libx11
+        pkgs.libxcursor
+        pkgs.libxi
+        pkgs.libxrandr
+        pkgs.libxkbcommon
+        pkgs.wayland
+      ];
+      venusFontsConf = pkgs.makeFontsConf {
+        fontDirectories = [
+          pkgs.dejavu_fonts
+          pkgs.nerd-fonts.symbols-only
+          anima.packages.${system}.accelerando-font
+        ];
+      };
       venusPackage =
         pkgs.rustPlatform.buildRustPackage {
           pname = workspacePackages.venus;
@@ -257,23 +279,8 @@
             pkgs.makeWrapper
             pkgs.pkg-config
           ];
-          buildInputs = [
-            pkgs.fontconfig
-            pkgs.freetype
-            pkgs.libx11
-            pkgs.libxcursor
-            pkgs.libxi
-            pkgs.libxrandr
-            pkgs.libxkbcommon
-            pkgs.wayland
-          ];
-          FONTCONFIG_FILE = pkgs.makeFontsConf {
-            fontDirectories = [
-              pkgs.dejavu_fonts
-              pkgs.nerd-fonts.symbols-only
-              anima.packages.${system}.accelerando-font
-            ];
-          };
+          buildInputs = venusBuildInputs;
+          FONTCONFIG_FILE = venusFontsConf;
           postInstall = ''
             install -Dm444 ${./venus/LICENSE} "$out/share/licenses/venus/LICENSE"
             install -Dm444 ${./venus/THIRD_PARTY_NOTICES.md} "$out/share/licenses/venus/THIRD_PARTY_NOTICES.md"
@@ -639,9 +646,16 @@
           pkgs.clippy
           pkgs.rustfmt
           pkgs.git
+          pkgs.ncurses
+          pkgs.pkg-config
+          pkgs.zig_0_15
+          (import ./nix/test-sandbox.nix { inherit pkgs; })
           br
           bv
         ];
+        buildInputs = venusBuildInputs;
+        inherit (ghosttyBuildEnv) LIBGHOSTTY_VT_SYS_CPU GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
+        FONTCONFIG_FILE = venusFontsConf;
       };
     };
 }

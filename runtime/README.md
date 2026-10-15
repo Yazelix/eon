@@ -97,11 +97,12 @@ Use Rust 1.95 or later. From the repository root:
 ```sh
 cargo fmt --check -p eon-runtime -p eon-workspace-protocol
 cargo check --locked -p eon-runtime -p eon-workspace-protocol
-cargo test --locked -p eon-runtime -p eon-workspace-protocol
+nix develop -c eon-test -p eon-runtime -p eon-workspace-protocol
 cargo clippy --locked -p eon-runtime -p eon-workspace-protocol --all-targets -- -D warnings
 ```
 
-Run the tests only in the isolated sandbox that the root `AGENTS.md` describes.
+`eon-test` runs the tests in the isolated sandbox that `nix/test-sandbox.nix`
+defines.
 Tests use independent supplied inputs. Eon's actual executable integration
 tests stay with Eon in `eon/crates/eon/tests`.
 The composed product is proved on x86_64 Linux native Wayland; Apple Silicon

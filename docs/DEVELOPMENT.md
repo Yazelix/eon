@@ -6,18 +6,26 @@ owns native presentation and input. Yazelix Nova remains a separate
 product line.
 
 Enter the pinned x86_64-linux development environment with `nix develop`.
-It provides Rust and Cargo, formatting and lint tools, Git, `br` 0.7.2, and
-`bv` 0.25.2. The Beads binaries come from hash-verified release archives and
-retain their full upstream licenses under `share/licenses/<tool>/LICENSE`,
-including the OpenAI/Anthropic rider.
+It provides Rust and Cargo, formatting and lint tools, Git, `br` 0.7.2,
+`bv` 0.25.2, the pinned Ghostty source, Zig, native libraries and fonts that
+Orbit and Venus build and test with, and `eon-test`. The Beads binaries come
+from hash-verified release archives and retain their full upstream licenses
+under `share/licenses/<tool>/LICENSE`, including the OpenAI/Anthropic rider.
 
 One Cargo workspace holds Orbit (`orbit/`), Venus (`venus/`), Eon Runtime with
 EONW (`runtime/`) and Eon (`eon/`). `eon/crates/eon` owns executable assembly
 and defaults; `runtime/` owns the runtime mechanisms behind `run(Inputs)` and
 the canonical EONW package. `eon/crates/eon/tests/workspace_control.rs`
-exercises the real Eon binary, aliases and self-launches. Run `cargo test
---locked --workspace` only in the isolated sandbox that the root `AGENTS.md`
-describes.
+exercises the real Eon binary, aliases and self-launches.
+
+Run the test suites with `nix develop -c eon-test`. It fetches locked crates,
+then runs `cargo test --locked --offline` in the bubblewrap sandbox that
+`nix/test-sandbox.nix` defines, so it is safe from inside a live Eon terminal.
+Without arguments it runs the workspace suites, then the installer's, stopping
+at the first failing suite; with arguments it passes them to `cargo test`, for
+example `eon-test -p yazelix-venus`. It needs unprivileged user namespaces and supports
+x86_64 Linux only. It is proved on a non-NixOS host; on NixOS the hidden `/run`
+also hides `/run/current-system` and `/run/wrappers`.
 
 ## Sources of truth
 
@@ -57,8 +65,7 @@ relocation outside Nix's build sandbox.
 `nix build .#installer` builds the separate static Rust `installer/` workspace.
 Its seven focused tests exercise real archive boundaries, filesystem
 selection/removal, timeout child cleanup and CLI environment fallback;
-`cargo test --locked --manifest-path installer/Cargo.toml`
-runs them directly. `nix/installer.nix` builds/tests the native musl artifact
+`eon-test` runs them with the workspace suites. `nix/installer.nix` builds/tests the native musl artifact
 and rejects a dynamic bootstrap. Signed TLS delivery and native active-work
 proofs remain with `eon-prove-thin-linux-bundle-installer-8r7n`.
 The [installer contract](INSTALLER.md) records target tools and recovery.

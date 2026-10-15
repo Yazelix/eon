@@ -13,13 +13,14 @@
 ```sh
 cargo fmt --check
 cargo check --locked
-cargo test --locked
+nix develop -c eon-test -p yazelix-venus
 cargo clippy --locked --all-targets -- -D warnings
 ```
 
 The application regression also needs an isolated native Wayland display and
-Vulkan renderer. Point `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY` at that display,
-and `TMPDIR` at disposable proof storage, then run:
+Vulkan renderer, so it runs outside `eon-test`, which hides every display.
+Point `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY` at that display, and `TMPDIR` at
+disposable proof storage, then run:
 
 ```sh
 timeout 30s cargo test --locked --bin yazelix-venus live_output_keeps_application_input_admitted_before_repaint -- --ignored

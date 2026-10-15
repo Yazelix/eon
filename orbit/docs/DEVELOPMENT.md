@@ -13,9 +13,8 @@ git diff --check
 br ready
 ```
 
-`cargo test --locked --workspace` runs Orbit's suites with the rest of the
-workspace; run it only in the isolated sandbox that the root `AGENTS.md`
-describes.
+`nix develop -c eon-test` runs Orbit's suites with the rest of the workspace
+in the isolated sandbox that `nix/test-sandbox.nix` defines.
 
 Beads contain the dependency-ordered experiment plan.
 
@@ -103,7 +102,7 @@ that an agent read a reference, that evidence is truthful, or that a runtime
 contract actually passes. It deliberately does not parse `.agent-protocols.*`
 or generated `AGENTS.md`: Starcompass owns that interpretation.
 
-The tool's test, run by `cargo test --locked --workspace`, also enforces the
+The tool's test, run by `nix develop -c eon-test`, also enforces the
 workspace dependency direction in the root `AGENTS.md`, including that the
 protocol crates' manifests inherit no workspace settings. It reads
 `cargo metadata` and checks every kind of direct declared dependency, not code
