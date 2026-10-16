@@ -3,12 +3,15 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
-## Unreleased
+## v0.1.1
+
+The first numbered release. Eon behaves as in `linux-alpha-2026-10-14`;
+`eon --help`, `eon versions` and the window label now report 0.1.1.
 
 - Eon is now in beta, versioned by number. Every 0.x release is beta, and
-  1.0.0 marks the end of beta. Releases will bump Eon's version and carry
-  `vX.Y.Z` tags instead of date tags; `linux-alpha-2026-10-14` was version
-  0.1.0. Installing without Nix is a later 0.x milestone.
+  1.0.0 marks the end of beta. Releases bump Eon's version and carry `vX.Y.Z`
+  tags instead of date tags; `linux-alpha-2026-10-14` was version 0.1.0.
+  Installing without Nix is a later 0.x milestone.
 
 ## linux-alpha-2026-10-14
 

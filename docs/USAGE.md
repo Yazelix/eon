@@ -29,10 +29,10 @@ machine ends live terminal process state.
 
 ## Install and start
 
-Install the latest release, 0.1.0:
+Install the latest release, 0.1.1:
 
 ```sh
-nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-10-14
+nix profile add --refresh github:Yazelix/eon/v0.1.1
 ```
 
 Run `eon` to start. `eon versions` shows the generation of the in-tree build and
