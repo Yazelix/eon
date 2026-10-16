@@ -8,6 +8,14 @@
       "approved_by": "user",
       "approved_at": "2026-08-09",
       "review_condition": "Review only if the user explicitly reauthorizes isolated agent trials."
+    },
+    {
+      "protocol": "AP-PROOF-001",
+      "scope": "review loops in the Eon repository",
+      "reason": "Nits never block, and text-only fixes restart a review loop at most twice per slice.",
+      "approved_by": "user",
+      "approved_at": "2026-10-16",
+      "review_condition": "Review if a text-only slice ships a defect that another pass would have caught."
     }
   ]
 }

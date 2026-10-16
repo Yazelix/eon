@@ -109,10 +109,18 @@
       "reason": "The user requires the active agent to reuse its existing context instead of invoking another agent for validation.",
       "review_condition": "Review only if the user explicitly reauthorizes isolated agent trials.",
       "scope": "Agent-instruction, prompt, and skill changes in the Eon repository"
+    },
+    {
+      "approved_at": "2026-10-16",
+      "approved_by": "user",
+      "protocol": "AP-PROOF-001",
+      "reason": "Nits never block, and text-only fixes restart a review loop at most twice per slice.",
+      "review_condition": "Review if a text-only slice ships a defect that another pass would have caught.",
+      "scope": "review loops in the Eon repository"
     }
   ],
   "overlay": {
-    "sha256": "26de1c94df4cf69345abdb091e3bef8ecb9d32a0740262a8ddef425b76f8629a"
+    "sha256": "ba590eea974822b45c97b534085d3bee61d01fbb147b209300c6afe0d06762f8"
   },
   "nested": [
     {

@@ -38,6 +38,8 @@ or `.agent-protocols.exceptions.json`, then render from the pinned source.
 
 - `AP-TEST-001` in Agent-instruction, prompt, and skill changes in the Eon repository: The user requires the active agent to reuse its existing context instead of invoking another agent for validation.
   Approved by user on 2026-08-09; review condition: Review only if the user explicitly reauthorizes isolated agent trials.
+- `AP-PROOF-001` in review loops in the Eon repository: Nits never block, and text-only fixes restart a review loop at most twice per slice.
+  Approved by user on 2026-10-16; review condition: Review if a text-only slice ships a defect that another pass would have caught.
 
 ## Canonical protocols
 
@@ -382,20 +384,21 @@ and the artifact.
   when a contract, its checks, status, or gap changes. Existing indexed proofs
   stay valid as written.
 - **Review loop.** After each slice, run a fresh-eyes and simplification pass in
-  a fresh context and fix what it finds. Repeat until a full pass on the final
-  revision finds nothing actionable; any fix resets that. Simplification never
-  loses demonstrated regression coverage. Record one ledger line per slice in
-  its bead: pass count and findings.
+  a fresh context. Fix blocking findings (bugs, wrong claims, lost information
+  or coverage, broken links or checks, scope breaches); style is optional. Stop
+  when a full pass on the final revision finds nothing blocking. Code fixes
+  restart the loop; text-only fixes restart it at most twice per slice. Record
+  one ledger line per slice in its bead: pass count and findings.
 - **Autonomous review.** Run the loop in read-only review subagents without
   waiting for the user. Each reviewer reads the owning bead itself, not a
-  paraphrase, plus the diff, and reports concrete failures with `file:line` or
-  says that nothing is actionable. Keep briefs neutral: never mention earlier
-  passes or passing checks. Exclude only gaps the bead records as accepted with
-  a reason, and let a reviewer flag one anyway if it judges it more severe. The
-  implementing agent fixes or records each finding and asks the user only when
-  a finding needs a scope, contract, or other user-owned decision. Keep design
-  decisions in the main session; delegate reading-heavy review, search, and
-  investigation.
+  paraphrase, plus the diff, and reports blocking findings with `file:line`,
+  then optional nits, or says that nothing is blocking. Keep briefs neutral:
+  never mention earlier passes or passing checks. Exclude only gaps the bead
+  records as accepted with a reason, and let a reviewer flag one anyway if it
+  judges it more severe. The implementing agent fixes or records each finding
+  and asks the user only when a finding needs a scope, contract, or other
+  user-owned decision. Keep design decisions in the main session; delegate
+  reading-heavy review, search, and investigation.
 
 ## Composition and Distribution
 
