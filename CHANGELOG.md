@@ -3,6 +3,11 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
+## Unreleased
+
+- The Claude quota chip shows how far into each window you are, like the Codex
+  chip: for example `4h10m/5h 98% · 5d20h/7d 100%`.
+
 ## v0.1.1
 
 The first numbered release. Eon behaves as in `linux-alpha-2026-10-14`;

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- VEN-C26: the Claude quota chip shows each window's elapsed position, such as
+  `3d2h/7d 40%`, like the Codex chip. Hover and accessibility say how far into
+  each window the observation is (`eon-claude-chip-position-iubd`).
+
 ## Before this repository
 
 Venus was developed as Eon Desktop until 2026-10-14; that history is kept in a

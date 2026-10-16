@@ -1315,22 +1315,24 @@ mod tests {
                                 assert!(quota.rect.right() <= next.rect.left + 0.01);
                             }
                             if quota.provider == QuotaProvider::Claude {
-                                assert!(quota.description.contains("5h window: 98% remaining"));
-                                assert!(quota.description.contains("7d window: 100% remaining"));
                                 assert!(
-                                    quota
-                                        .description
-                                        .contains("reset in 0h 50m as of this observation")
+                                    quota.description.contains(
+                                        "5h window: 98% remaining; observed 4h10m into 5h."
+                                    )
                                 );
+                                assert!(quota.description.contains(
+                                    "7d window: 100% remaining; observed 5d20h into 7d."
+                                ));
                                 assert_eq!(
                                     quota.label.contains("old"),
                                     state == ClaudeQuotaState::Stale
                                 );
                                 if width == 1800 && scale == 1.0 {
-                                    assert!(
-                                        quota.label.contains("5h 98%")
-                                            && quota.label.contains("7d 100%")
-                                    );
+                                    assert!(quota.label.contains("4h10m/5h 98% · 5d20h/7d 100%"));
+                                }
+                                if width == 700 && scale == 1.0 && providers == 3 {
+                                    assert!(quota.label.contains("4h10m/5h 98%"));
+                                    assert!(!quota.label.contains("7d"));
                                 }
                             }
                         }

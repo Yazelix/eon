@@ -19,11 +19,12 @@ order, selection, and popups; Venus draws the visible scene.
   the lowest-remaining window, then disappears before tabs or controls lose
   space. Stale, blocked, and unknown states remain explicit; hover gives human
   time.
-- Claude facts show a C monogram with five-hour/seven-day remaining percentages.
-  Hover and accessibility name Claude and report reset intervals as of the
-  observation. Both chips condense, then trailing optional chips disappear
-  before tabs, controls or dragging lose space. `old` stays visible for stale
-  facts. Missing facts and transport loss remove the affected chips.
+- Claude facts show the Claude splat with elapsed/total window positions and
+  remaining percentages, like Codex; a window without a reset shows no
+  position. Hover and accessibility name Claude and say how far into each
+  window the observation is, or that its reset time is unavailable. Both chips
+  condense, then trailing optional chips disappear before tabs, controls or
+  dragging lose space. `old` stays visible for stale facts. Missing facts and transport loss remove the affected chips.
 
 ### Panes and popups
 

@@ -1129,10 +1129,13 @@ re-proved when that platform or feature is next touched.
   rendering is pending re-proof in this repository. Installed Eon composition
   remains Eon's responsibility.
 - **Trigger and result:** A complete canonical EONW v8 snapshot supplies an
-  optional Claude observation. Venus shows a read-only C monogram chip with
-  the available five-hour/seven-day remaining percentages. Hover and a static
-  accessible label name Claude, every window, freshness and reset interval as
-  of the observation. Stale text retains `old` even in compact presentation.
+  optional Claude observation. Venus shows a read-only Claude chip with
+  the available five-hour/seven-day remaining percentages, each led by its
+  elapsed position such as `3d2h/7d` when Claude reports a reset, as Codex's
+  chip does; a window without a reset shows no position. Hover and a static
+  accessible label name Claude, every window, freshness and how far into each
+  window the observation is, or that its reset time is unavailable. Stale text
+  retains `old` even in compact presentation.
 - **Ownership:** Runtime alone supplies source facts, age and invalidation.
   Venus uses its existing Scene, renderer, hover and AccessKit owners. Both
   provider chips remain in the existing row; full labels become compact, then
@@ -1154,7 +1157,9 @@ re-proved when that platform or feature is next touched.
     workspace suite.
 - **Open proof:** Pending re-proof in this repository: the installed Claude
   chip beside Codex, native stale,
-  Claude-only and transport-loss states, and AT-SPI provider labels.
+  Claude-only and transport-loss states, and AT-SPI provider labels. The
+  elapsed-position labels (`eon-claude-chip-position-iubd`) are proved by the
+  automated tier only; their installed view is pending.
 
 ### VEN-C22/VEN-C26 — Optional-reset consumer refinement
 

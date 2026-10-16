@@ -735,14 +735,11 @@ fn quota_window_position(window: &QuotaWindow, observed_at: u64) -> Option<Strin
     }
 }
 
-fn quota_window_text(provider: QuotaProvider, window: &QuotaWindow, observed_at: u64) -> String {
+fn quota_window_text(window: &QuotaWindow, observed_at: u64) -> String {
     let duration = quota_duration(window.duration_minutes);
-    let label = if provider == QuotaProvider::Codex
-        && let Some(position) = quota_window_position(window, observed_at)
-    {
-        format!("{position}/{duration}")
-    } else {
-        duration
+    let label = match quota_window_position(window, observed_at) {
+        Some(position) => format!("{position}/{duration}"),
+        None => duration,
     };
     format!("{label} {}%", window.remaining_percent)
 }
@@ -763,7 +760,7 @@ fn quota_text(
             "{}{suffix}",
             windows
                 .iter()
-                .map(|window| quota_window_text(provider, window, observed_at))
+                .map(|window| quota_window_text(window, observed_at))
                 .collect::<Vec<_>>()
                 .join(" · ")
         ),
@@ -776,10 +773,7 @@ fn quota_text(
                 .iter()
                 .min_by_key(|window| (window.remaining_percent, window.duration_minutes))
                 .expect("EONW requires quota windows for fresh and stale states");
-            format!(
-                "{}{suffix}",
-                quota_window_text(provider, window, observed_at)
-            )
+            format!("{}{suffix}", quota_window_text(window, observed_at))
         }
         CodexQuotaState::Blocked => "blocked".into(),
         CodexQuotaState::Unknown => "unknown".into(),
@@ -801,17 +795,7 @@ fn quota_text(
             " {duration} window: {}% remaining; ",
             window.remaining_percent
         );
-        if provider == QuotaProvider::Claude
-            && let Some(reset) = window.resets_at
-        {
-            let minutes = reset.saturating_sub(observed_at).div_ceil(60);
-            let _ = write!(
-                description,
-                "reset in {}h {}m as of this observation.",
-                minutes / 60,
-                minutes % 60
-            );
-        } else if let Some(position) = quota_window_position(window, observed_at) {
+        if let Some(position) = quota_window_position(window, observed_at) {
             let _ = write!(description, "observed {position} into {duration}.");
         } else {
             description.push_str("reset time unavailable.");
@@ -1900,9 +1884,13 @@ mod tests {
             };
             let (wide, compact, description) =
                 quota_text(QuotaProvider::Claude, state, 100, &[window]);
-            assert!(wide.contains("5h 100%"));
-            assert!(compact.contains("5h 100%"));
-            assert_eq!(wide.contains("old"), state == CodexQuotaState::Stale);
+            let suffix = if state == CodexQuotaState::Stale {
+                " old"
+            } else {
+                ""
+            };
+            assert_eq!(wide, format!("5h 100%{suffix}"));
+            assert_eq!(compact, format!("5h 100%{suffix}"));
             assert!(description.contains("reset time unavailable"));
             assert!(description.contains(if state == CodexQuotaState::Stale {
                 "stale"

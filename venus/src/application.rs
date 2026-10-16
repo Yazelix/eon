@@ -4010,14 +4010,14 @@ impl ApplicationHandler<UserEvent> for Application {
                             Some(AccessibilityTarget::Link { row, column, copy }) => {
                                 self.activate_accessible_link(row, column, copy);
                             }
-                            Some(AccessibilityTarget::ReturnToLive) => {
+                            Some(AccessibilityTarget::ReturnToLive)
                                 if self
                                     .scrollback_rect(self.workspace_scene().as_ref())
-                                    .is_some()
-                                {
-                                    self.send(ClientMessage::ReturnToLive);
-                                }
+                                    .is_some() =>
+                            {
+                                self.send(ClientMessage::ReturnToLive);
                             }
+                            Some(AccessibilityTarget::ReturnToLive) => {}
                             Some(AccessibilityTarget::HeaderControl { control, activate }) => {
                                 self.set_workspace_focus(WorkspaceFocus::Header(control));
                                 if activate {
