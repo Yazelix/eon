@@ -17,6 +17,9 @@ use std::{
 };
 
 const MAX_BYTES: usize = 64 * 1024;
+/// A reading older than this is rejected when read and shown `old` once retained.
+const STALE_AFTER: u64 = 3600;
+const EXPIRE_AFTER: u64 = 24 * 3600;
 
 fn timestamp(value: &Value) -> Result<u64, ()> {
     let value = value.as_str().ok_or(())?;
@@ -46,7 +49,7 @@ fn normalize(bytes: &[u8], provider: &str, now: u64) -> Result<Option<CodexQuota
         return Err(());
     }
     let observed_at = timestamp(&usage["updatedAt"])?;
-    if observed_at == 0 || observed_at > now || now - observed_at > 3600 {
+    if observed_at == 0 || observed_at > now || now - observed_at > STALE_AFTER {
         return Err(());
     }
     // The selected providers have at most two windows; silently dropping another is incorrect.
@@ -96,12 +99,13 @@ fn normalize(bytes: &[u8], provider: &str, now: u64) -> Result<Option<CodexQuota
     }))
 }
 
+/// Staleness depends only on the age of the last good reading (EON-C27).
 fn present_at(mut quota: CodexQuota, now: u64) -> Option<CodexQuota> {
     let age = now.checked_sub(quota.observed_at)?;
-    if age > 3600 {
+    if age > EXPIRE_AFTER {
         return None;
     }
-    if age > 900 {
+    if age > STALE_AFTER {
         quota.state = CodexQuotaState::Stale;
     }
     quota
@@ -144,15 +148,11 @@ impl Provider {
                             .and_then(|now| normalize(&bytes, provider, now)),
                         Err(()) => Err(()),
                     };
-                    if let Ok(mut current) = shared.lock() {
-                        match reading {
-                            Ok(reading) => *current = reading,
-                            Err(()) => {
-                                if let Some(quota) = current.as_mut() {
-                                    quota.state = CodexQuotaState::Stale;
-                                }
-                            }
-                        }
+                    // A failed read keeps the last good reading; its age alone marks it old.
+                    if let Ok(reading) = reading
+                        && let Ok(mut current) = shared.lock()
+                    {
+                        *current = reading;
                     }
                     if !matches!(
                         stopped.recv_timeout(interval),
@@ -415,11 +415,11 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        assert_eq!(
-            present_at(quota.clone(), NOW + 901).unwrap().state,
-            CodexQuotaState::Stale
-        );
-        assert!(present_at(quota.clone(), NOW + 3601).is_none());
+        let state = |at| present_at(quota.clone(), at).map(|quota| quota.state);
+        assert_eq!(state(NOW + 3600), Some(CodexQuotaState::Fresh));
+        assert_eq!(state(NOW + 3601), Some(CodexQuotaState::Stale));
+        assert_eq!(state(NOW + 86400), Some(CodexQuotaState::Stale));
+        assert_eq!(state(NOW + 86401), None);
         assert!(present_at(quota.clone(), NOW - 1).is_none());
         let mut expires = quota;
         expires.windows[0].resets_at = Some(NOW + 10);
@@ -486,13 +486,11 @@ mod tests {
             Duration::from_secs(1),
         );
         *provider.quota.lock().unwrap() = Some(quota);
-        let deadline = Instant::now() + Duration::from_secs(1);
-        while provider.snapshot().unwrap().state != CodexQuotaState::Stale
-            && Instant::now() < deadline
-        {
-            thread::sleep(Duration::from_millis(5));
-        }
-        assert_eq!(provider.snapshot().unwrap().state, CodexQuotaState::Stale);
+        // Several 20 ms intervals of failed reads leave a recent reading fresh.
+        thread::sleep(Duration::from_millis(200));
+        let retained = provider.snapshot().unwrap();
+        assert_eq!(retained.state, CodexQuotaState::Fresh);
+        assert_eq!(retained.windows[0].remaining_percent, 76);
         drop(provider);
         fs::write(
             &program,

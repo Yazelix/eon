@@ -7,6 +7,9 @@ installation, and proven contract changes.
 
 - The Claude quota chip shows how far into each window you are, like the Codex
   chip: for example `4h10m/5h 98% · 5d20h/7d 100%`.
+- Quota chips say `old` only when their last good reading is more than an hour
+  old; a failed or rate-limited read no longer marks them old. Old readings
+  stay visible for 24 hours instead of one.
 
 ## v0.1.1
 

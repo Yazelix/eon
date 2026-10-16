@@ -1425,14 +1425,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   v9 permits absent resets, preserving all historical validators; Venus consumes
   typed facts through its existing chip owners. Eon owns exact Nix composition.
 - **Failure policy:** Each read has a ten-second deadline and 64 KiB output cap.
-  A failed read marks retained data `old` immediately; age alone marks it old
-  after 15 minutes. Readings disappear after one hour and windows at their reset.
+  A failed read keeps retained data unchanged; age alone marks it old after one
+  hour. Readings disappear after 24 hours and windows at their reset.
   Successful missing quota clears prior facts. Invalid, future, estimated or
   unsupported facts never become zero usage. Provider failures are independent.
 - **Boundary:** One selected account per provider, Linux Wayland and Nix only.
   Explicit sources avoid browser fallback, interactive login and model turns.
   No credential, identity, raw output or billing data enters EONW or Eon logs.
-  Instant sign-out invalidation and blocked/unknown labels are not guaranteed.
+  Sign-out is not detected: CodexBar reports it as a failed read, so the last
+  reading ages like any other (Lucca, 2026-10-16). Blocked/unknown labels are
+  not guaranteed.
   CodexBar owns its local authentication/cache mechanisms. Eon does not rewrite
   provider configuration; `claude-statusline` remains a bounded silent sink for
   existing wrappers and no longer owns quota or persistent cache state.
@@ -1455,12 +1457,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `optional_resets_roundtrip_without_relaxing_historical_or_value_boundaries`;
     Venus `quota_without_reset_retains_percent_and_accessible_freshness` and
     `quota_icons_preserve_transparency_and_shape_across_scales`; the
-    `eonterm-closure` check keeps CodexBar out of EonTerm.
+    `eonterm-closure` check keeps CodexBar out of EonTerm. The failure-policy
+    change (`eon-quota-old-after-hour-knaq`) is proved by the updated
+    `retained_observations_age_and_expire_without_invented_resets` and
+    `workers_isolate_failure_and_bound_output_timeout_and_shutdown`; that
+    bead's commit is its revision.
 - **Open proof:** Pending re-proof in this repository: real installed Codex and
-  Claude windows with reset details on hover; a controlled source
-  failure marking retained values `old` on an installed surface, and optional
-  chips hiding at narrow widths. No hardware GPU, reader workflow or macOS proof
-  is claimed.
+  Claude windows with reset details on hover; on an installed surface, a
+  controlled source failure leaving a recent reading unchanged and a retained
+  reading turning `old` after one hour; and optional chips hiding at narrow
+  widths. No hardware GPU, reader workflow or macOS proof is claimed.
 - **Claude icon:** Venus shows Claude's splat in its original orange
   (`#D97757`) within the existing quota chip bounds and owns the immutable mask
   and tint. Quota facts, layout, hover, accessibility and provider mechanisms

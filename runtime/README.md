@@ -58,8 +58,8 @@ has a ten-second deadline, 64 KiB output cap and process-group cleanup; reads
 remain at least one minute apart. Raw provider JSON and identities are discarded.
 
 Runtime validates timestamps, actual periods and percentages, rounding remaining
-percentages down once. Failed reads mark last-good facts stale immediately;
-observations also become stale after 15 minutes and disappear after one hour.
+percentages down once. Failed reads keep last-good facts unchanged;
+observations become stale after one hour and disappear after 24 hours.
 Windows disappear at a supplied reset; missing reset times remain unknown.
 Successful missing quota clears prior facts. Existing `claude-statusline` wrappers
 are drained silently with a two-second/64 KiB bound, without writing quota state.

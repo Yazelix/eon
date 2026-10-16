@@ -125,9 +125,10 @@ Pinned CodexBar CLI supplies read-only Codex and Claude quota from their local
 authentication. Codex also needs a compatible `codex` executable on `PATH`.
 Codex chips show its white mark and Claude chips its orange splat.
 Both available five-hour/seven-day windows show remaining percentages, with reset
-and freshness details on hover. Missing resets stay unknown. Failed readings say
-`old` immediately; readings disappear after one hour. Chips yield before tabs
-and controls under width pressure, and unavailable quota leaves the bar unchanged.
+and freshness details on hover. Missing resets stay unknown. Readings say `old`
+once they are more than an hour old and disappear after 24 hours. Chips yield
+before tabs and controls under width pressure, and unavailable quota leaves the
+bar unchanged.
 See [quota behavior](CONFIGURATION.md#agent-quota).
 
 The bottom hints bar starts visible. Alt+Shift+B hides or restores it for this
