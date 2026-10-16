@@ -2,7 +2,7 @@
   "schema": 1,
   "source": {
     "repository": "https://github.com/Yazelix/starcompass",
-    "commit": "aa967647bc106ca22bbb165f7f9efd678036dbb2"
+    "commit": "d341463c678901e5630d8d310782da8c36586b27"
   },
   "profiles": [
     "greenfield",

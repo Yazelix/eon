@@ -9,7 +9,7 @@ edit generated files directly. Edit `.agent-protocols.local.md` or
 ## Protocol import record
 
 - Source: `https://github.com/Yazelix/starcompass`
-- Source commit: `aa967647bc106ca22bbb165f7f9efd678036dbb2`
+- Source commit: `d341463c678901e5630d8d310782da8c36586b27`
 - Profiles: `greenfield`, `orchestrator`, `terminal-engine`
 - Manifest: `.agent-protocols.json` (schema 1)
 - Directory rules: `orbit/`, `runtime/`, `venus/`; read a directory's `AGENTS.md` before changing files under it.
