@@ -259,7 +259,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   owned selectors. All payloads remain at their original paths to preserve
   live work; no automatic pruning or runtime-liveness owner is introduced.
 - **Boundary:** `eon-p93` approves one Linux bundle and installer development
-  sequence. Normal alpha installation remains Nix-based; public release trust,
+  sequence. Normal installation remains Nix-based; public release trust,
   qualification and publication retain separate gates and explicit approval.
 - **Proof:** Pending re-proof in this repository.
   - **Environment:** Not repeated after consolidation.
@@ -273,13 +273,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     passes the installer's extraction, checksum, selection, removal and locking
     tests; bundle delivery is not repeated.
 - **Open gates:** Publication, release trust, exact redistribution obligations
-  and wider public-beta qualification remain separate.
+  and qualification of the Nix-free install remain separate.
 
 ## EON-C6 — Shared graph across distribution channels
 
 - **Status:** Pending re-proof in this repository (proven before consolidation
   for the manual and installed Linux slices)
-- **Consumer:** Nix alpha and any later approved distribution channel.
+- **Consumer:** The Nix channel and any later approved distribution channel.
 - **Trigger:** A channel composes an Eon product artifact.
 - **Result:** Every channel consumes the same accepted EON-C2 component graph
   without changing runtime semantics.
@@ -287,7 +287,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   component substitution is rejected.
 - **Owner:** Eon distribution composition consuming EON-C2.
 - **Boundary:** The manual and installed candidates remain unpublished;
-  ordinary alpha installation uses Nix. Public-beta delivery retains its own proof.
+  ordinary installation uses Nix. Nix-free delivery retains its own proof.
 - **Proof:** Pending re-proof in this repository.
   - **Environment:** Not repeated after consolidation.
   - **Evidence:** Before consolidation, both EON-C5 archives carried the
@@ -305,7 +305,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Result:** Eon uses native Wayland on x86_64 Linux and the native macOS host
   on `aarch64-darwin`, without requiring a particular init or service manager.
   Both consume the same component graph, orchestration path, workspace
-  contracts, and Nix-only alpha channel while platform mechanics remain with
+  contracts, and Nix-only channel while platform mechanics remain with
   their existing owners. Each channel names its proved architectures and launch
   environments.
 - **Important failures:** Systemd-only lifecycle assumptions, X11 fallback, a
@@ -980,8 +980,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `round_trips_v2_bounds_and_rejects_invalid_inputs`; Venus
     `tab_directory_labels_use_current_position_and_bounded_path_context`.
     Installed checklist items 3 and 4.
-- **Open proof:** Current-alpha AT-SPI launch-path context remains unproved;
-  prior focused path-context checks are not a screen-reader workflow.
+- **Open proof:** AT-SPI launch-path context on the current build remains
+  unproved; prior focused path-context checks are not a screen-reader workflow.
 
 ## EON-C18 — Picker-first tab directories
 
@@ -1187,9 +1187,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Open proof:** Pending re-proof in this repository: configured fonts, grid
   and reopen on an installed surface; missing-font failure; initial scales
   1.25, 1.5 and 2; IME preedit and commit; AT-SPI text and bounds; generic UI
-  font fallback with ambient fonts hidden. Current-alpha screen-reader use, full
-  fractional/HiDPI coverage, stable-seat IME, broader compositors and installed
-  non-systemd support remain unproved.
+  font fallback with ambient fonts hidden. Screen-reader use on the current
+  build, full fractional/HiDPI coverage, stable-seat IME, broader compositors
+  and installed non-systemd support remain unproved.
 
 ## EON-C20 — Discoverable native shortcuts
 

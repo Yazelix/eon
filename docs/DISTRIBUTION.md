@@ -2,13 +2,13 @@
 
 ## Goals
 
-Eon alpha and early dogfood use Nix as the sole installation and composition
-channel. This phase spends project time on Orbit, Venus, and Eon contracts
-instead of portable archives and installer maintenance.
+Eon currently uses Nix as its sole published installation and composition
+channel. This keeps installer and archive maintenance off the published path
+until the user approves another channel.
 
 The current accepted channel targets x86_64 Linux on native Wayland. Apple
 Silicon macOS is the only approved expansion and remains within the same
-Nix-only alpha channel until native proof succeeds. Another Linux architecture,
+Nix-only channel until native proof succeeds. Another Linux architecture,
 X11, Xwayland, Intel macOS, signing, notarization, direct bundles, and public
 macOS distribution need separate scope and proof.
 
@@ -30,7 +30,23 @@ Every channel consumes the same component graph and preserves runtime semantics.
 
 ## Phase policy
 
-### Alpha and early dogfood
+### Versions and stages
+
+Eon's product version in `eon/crates/eon/Cargo.toml` is its one user-facing
+number; `eon --help`, `eon versions` and the window's `EON` label (when
+shown) report it. Every 0.x release is beta: commands, configuration and
+behavior may still change, and the changelog records what did. 1.0.0 marks the
+end of beta; its bar is a separate user decision. Orbit, Venus and Eon Runtime
+keep their own package versions, and EONW its protocol version, as
+compatibility identities.
+
+A release bumps the product version and tags that commit `vX.Y.Z`
+(`eon-versioning-beta-bfyf`, decided 2026-10-16). The earlier
+`linux-alpha-2026-10-14` tag is version 0.1.0, and the first numbered
+release is `v0.1.1`. Installing without Nix is a delivery milestone within
+0.x, not a stage.
+
+### Nix channel
 
 One Nix flake path builds, composes, and installs the accepted component set.
 Home Manager remains separate work and must consume the same package and product
@@ -41,14 +57,14 @@ package installs the `eon` command, an Eon desktop entry, and its icon. The
 runtime commands, configuration paths, and detach behavior live in the Eon
 binary rather than the Nix wrapper.
 
-The Nix alpha follows these boundaries:
+The Nix channel follows these boundaries:
 
 - Eon code accepts component paths and versions through explicit inputs.
 - Nix store paths remain opaque launch values rather than stable identity.
 - Product state and user configuration contain stable component identities.
 - Normal runtime operation invokes no Nix command or evaluator.
 - Direct distribution follows the separately approved graduation gates;
-  package matrices remain outside the alpha surface.
+  package matrices remain out of scope.
 
 ### Distribution graduation
 
@@ -64,19 +80,18 @@ Direct-distribution work requires a separate user decision after:
 
 `eon-p93` completed the graduation decision on 2026-10-10: Go to develop one
 manual Nix-free x86_64 Linux native-Wayland bundle, then its thin user-local
-installer, then qualify the public beta. The accepted decision candidate
+installer, then qualify that Nix-free install. The accepted decision candidate
 predates this repository; `eon-p93` records its exact revisions and artifact,
 the exact graph, and scoped proof reuse including reader and lifecycle evidence.
-Normal alpha installation remains Nix-only. The unpublished
+Normal installation remains Nix-only. The unpublished
 [manual bundle](MANUAL-BUNDLE.md) and [installer](INSTALLER.md) proved the
 unpublished direct-delivery lifecycle under EON-C5/C6 before consolidation;
-that proof awaits re-proof in this repository. Public-beta
+that proof awaits re-proof in this repository. Nix-free install
 qualification, release trust and redistribution clearance remain separate gates.
 
-Alpha development remains the active focus by user decision on 2026-10-11.
-`eon-qualify-nix-free-linux-public-beta-lm9p` is deferred until the user explicitly
-resumes beta qualification. Accepted bundle and installer proof does not
-change the alpha channel or authorize publication.
+On 2026-10-16 the user resumed `eon-qualify-nix-free-linux-public-beta-lm9p`,
+which qualifies the Nix-free Linux install. Accepted bundle and installer proof
+does not change the Nix channel or authorize publication.
 
 Lucca Huguet owns manual releases when he chooses, using existing local locked
 Nix builds and Rust manifest validation. No additional release framework,
@@ -93,7 +108,7 @@ bundle measurements. The manual bundle must measure actual costs and prove
 artifact verification and clean non-Nix execution. Material cost/capacity
 excess, paid services, added ownership, verification failure or portability
 failure reopens the decision; staying Nix-only is the fallback. Publication
-requires its separate approval and delivery/public-beta gates.
+requires separate approval plus its delivery and qualification gates.
 
 On 2026-10-10 the user accepted the demonstrated
 [Orca #757](https://gitlab.gnome.org/GNOME/orca/-/work_items/757) Say All
@@ -178,7 +193,7 @@ revisions, constraints, and rejections in the owning Bead.
 ## Cost-bounded CI and release execution
 
 Do not make hosted GitHub Actions consumption an implicit prerequisite for
-Eon alpha. Keep canonical build and verification commands runnable locally
+Eon releases. Keep canonical build and verification commands runnable locally
 and through Nix. Before adding hosted CI or release automation, record the
 expected run frequency, runner minutes, storage and artifact costs, cancellation
 policy, timeout, and the user's hard spending boundary.
@@ -270,7 +285,7 @@ does not prove upload or fresh-store substitution.
 A versioned component manifest records each component's project, source,
 abstract artifacts, platform, and compatibility contract. External components
 carry an exact revision; the repository revision identifies in-tree ones. Nix consumes this
-manifest during alpha and owns physical package paths. Release tooling extends
+manifest today and owns physical package paths. Release tooling extends
 the graph with consumed portable artifact locators, checksums, and provenance
 after distribution graduation.
 
@@ -280,9 +295,9 @@ assembles the product without copying subsystem behavior.
 
 ## Channel sequence
 
-### Nix alpha
+### Nix
 
-Nix supplies the first and sole alpha channel for reproducible composition,
+Nix supplies the first and sole published channel for reproducible composition,
 source builds, development, and dogfood. The flake consumes the canonical
 component manifest and owns no product behavior.
 
@@ -296,8 +311,8 @@ bundle and verification on an isolated non-Nix native-Wayland environment.
 `eon-prove-thin-linux-bundle-installer-8r7n` proves the static Rust installer
 over that artifact, with a versioned user prefix, atomic `current` link,
 verified dry-run, active-work-safe upgrade/rollback and owned removal. It
-retains every payload and edits no shell profile. Wider public-beta
-qualification and publication follow their separate gates.
+retains every payload and edits no shell profile. Qualification of the
+Nix-free install and its publication follow separate gates.
 
 A manual download and extraction path remains available beside the installer.
 
@@ -306,9 +321,9 @@ not need Nix, and Nix users receive the same accepted component set.
 
 ## Website
 
-During alpha, `yazelix.com` can explain Eon and label Nix as the required
-dogfood path. After accepted delivery proof and publication approval, the site
-can publish direct Linux installation instructions. GitHub
+Until a Nix-free install is published, `yazelix.com` can explain Eon and label
+Nix as the required path. After accepted delivery proof and publication
+approval, the site can publish direct Linux installation instructions. GitHub
 release assets or another immutable object store remain the authority for
 binaries, checksums, signatures, attestations, and historical versions.
 
@@ -325,7 +340,7 @@ canonical manifest can drive it without a parallel product definition.
 
 ## Release checks
 
-An alpha candidate should prove:
+A Nix release candidate should prove:
 
 - Nix consumes the reviewed component manifest;
 - the installed composition reports every exact external component revision and

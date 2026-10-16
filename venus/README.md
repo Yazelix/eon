@@ -8,7 +8,7 @@ pane stack, and popups from Eon's workspace state.
 
 [![Animated Venus demo rendering Eon's two-pane native Wayland workspace](../assets/demo/eon-demo.gif)](../assets/demo/eon-demo.mp4)
 
-[Watch the MP4](../assets/demo/eon-demo.mp4) of the composed Linux alpha.
+[Watch the MP4](../assets/demo/eon-demo.mp4) of Eon on Linux.
 
 ## Run locally
 

@@ -1,5 +1,5 @@
 {
-  description = "Eon Linux alpha";
+  description = "Eon";
 
   nixConfig = {
     extra-substituters = [ "https://eon-yazelix.cachix.org" ];

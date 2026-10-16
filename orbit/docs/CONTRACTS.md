@@ -406,7 +406,7 @@ repository. Each contract below states the current ORBS v13 behavior.
   real-PTY behavior checks rather than hidden by a fallback identity.
 - **Owner:** Orbit's platform PTY seam and
   [`terminfo/eon.terminfo`](../terminfo/eon.terminfo); Eon installs the entry.
-- **Boundary:** Other distribution formats remain outside the Nix alpha.
+- **Boundary:** Other distribution formats remain outside this contract's proof.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** x86_64 Linux; `nix build .#default`, installed
     `/nix/store/gg71kiz3k854f4xihasr1pwligypznl3-eon-0.1.0`

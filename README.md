@@ -34,7 +34,7 @@ Run `eon attach` and every tab, pane and terminal is where you left it.
 ## Get started
 
 You need **x86_64 Linux on native Wayland**, Git, and Nix with flakes enabled.
-Install the tagged alpha:
+Install the latest release, 0.1.0:
 
 ```sh
 nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-10-14
@@ -70,10 +70,11 @@ coverage.
 
 ## Status and limits
 
-Eon is a Nix-only alpha. It was proved on COSMIC and private Sway before the
-move to one repository. Here, installed checks so far run on a private
-headless Sway, plus a brief COSMIC launch check;
-the full desktop proofs and the bounded Orca
+Eon is in beta: commands, configuration and behavior may still change between
+0.x releases, and 1.0.0 marks the end of beta. It installs only through Nix for
+now. It was proved on COSMIC and private Sway before the move to one
+repository. Here, installed checks so far run on a private headless Sway, plus
+a brief COSMIC launch check; the full desktop proofs and the bounded Orca
 [reader qualification](docs/CONTRACTS.md#eon-c8--durable-tab-and-pane-workspace)
 await re-proof. Other compositors, non-systemd hosts and proprietary NVIDIA
 drivers are unproved. Restarting the machine ends live terminals.

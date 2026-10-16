@@ -8,8 +8,8 @@ Upstream project revisions keep their usual meaning.
 `nix build .#manual-bundle` produces the development archive
 `eon-0.1.0-x86_64-linux.tar.zst` and `SHA256SUMS`. Nix builds the artifact;
 the extracted entrypoint requires no installed Nix, store, daemon or evaluator.
-This unpublished candidate targets x86_64 Linux native Wayland. Normal alpha
-installation remains Nix-based; public-beta acceptance is separate.
+This unpublished candidate targets x86_64 Linux native Wayland. Normal
+installation remains Nix-based; Nix-free install qualification is separate.
 
 ## Execution and host boundary
 

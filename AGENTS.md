@@ -282,8 +282,9 @@ workspace:
 
 ## Status
 
-This repository ships the accepted Nix-only x86_64 Linux Wayland alpha. `eon-omq`
-owns its canonical component graph, and `eon-ax4` owns the first composed
+This repository ships Eon's Nix-only x86_64 Linux Wayland beta. Every 0.x
+release is beta and 1.0.0 leaves beta (`eon-versioning-beta-bfyf`). `eon-omq`
+owns Eon's canonical component graph, and `eon-ax4` owns the first composed
 runtime and package. On 2026-09-11 the user activated a Nix-only Apple Silicon
 macOS expansion under `EON-C7` and
 `eon-prove-full-eon-apple-silicon-macos-t8o`. The required order is Orbit
@@ -398,9 +399,10 @@ and the artifact.
 
 ## Composition and Distribution
 
-Use Nix as the sole installation and composition channel during Eon alpha and
-early dogfood. Keep the first path narrow enough to improve the product without
-maintaining installers, portable archives, signing, or a package matrix.
+Use Nix as the sole published installation and composition channel until the
+user approves publishing another. Keep the first path narrow enough to improve
+the product without maintaining installers, portable archives, signing, or a
+package matrix.
 
 Keep runtime ownership distribution-neutral. Nix may supply store paths as
 opaque component launch inputs, but Eon code must not construct store paths,
@@ -408,7 +410,7 @@ persist them as component identity, query the Nix store, or invoke a Nix
 evaluator during normal operation.
 
 Use a versioned component manifest as the canonical version and compatibility
-graph. Nix consumes that graph during alpha. Direct bundles and other channels
+graph. Nix consumes that graph today. Direct bundles and other channels
 must consume the same graph after the user approves distribution graduation.
 Do not implement a second composition graph for any channel.
 

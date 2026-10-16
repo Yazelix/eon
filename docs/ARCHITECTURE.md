@@ -70,10 +70,10 @@ test client before Venus exists. Venus can use recorded protocol fixtures and a
 reference Orbit server before Eon exists. Eon can use pinned component
 artifacts and command-line checks before it gains a polished installer.
 
-Eon alpha and early dogfood use Nix as the sole composition and installation
-channel. Direct distribution starts after sustained dogfood and a separate user
-decision. This sequence keeps installer, archive, signing, and package-matrix
-work outside the product-discovery loop.
+Eon currently uses Nix as its sole published composition and installation
+channel. Publishing a direct channel needs accepted delivery proof and a
+separate user decision, which keeps installer and archive maintenance off the
+published path.
 
 The Apple Silicon macOS expansion reuses the same frontier: Orbit proves
 `ORB-C14`, Venus extends `VEN-C16` against that exact revision, and Eon then
@@ -241,7 +241,7 @@ Paths below are relative to the repository root.
   Nix generates the selected tools' startup files
 - **Does not own:** Shell, prompt, editor, file-manager, or Git-TUI native behavior
 
-### Nix alpha composition
+### Nix composition
 
 - **Owning surfaces:** `flake.nix`
 - **Owns:** In-tree workspace builds, exact external source resolution, opaque launch-path injection, full Eon
@@ -382,12 +382,12 @@ Each composed build consumes:
 - declared abstract component artifacts;
 - available checksums and provenance.
 
-Nix resolves physical package paths during alpha. Eon code receives those paths
-as opaque launch inputs, owns launch and configuration policy, and does not
-invoke a Nix evaluator during normal use. It does not construct store paths or
-persist them as stable component identity.
+Nix resolves physical package paths in the Nix channel. Eon code receives those
+paths as opaque launch inputs, owns launch and configuration policy, and does
+not invoke a Nix evaluator during normal use. It does not construct store paths
+or persist them as stable component identity.
 
-The component manifest provides the canonical graph for the Nix alpha, direct
+The component manifest provides the canonical graph for the Nix channel, direct
 bundles, and later package-manager channels. Package definitions translate that
 graph instead of creating a second set of versions or policies. Relocatable
 artifact requirements activate with direct-distribution work.

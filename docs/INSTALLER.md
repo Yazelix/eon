@@ -3,7 +3,7 @@
 `nix build .#installer` builds the static `eon-install` development bootstrap.
 The installer consumes the [manual Linux bundle](MANUAL-BUNDLE.md); it neither
 composes packages nor runs Nix. No public installer or release signer is published.
-Normal alpha installation remains Nix-based.
+Normal installation remains Nix-based.
 
 The target is x86_64 Linux on native Wayland, with the bundle's documented
 unprivileged user/mount namespace requirements. Installation also requires host
@@ -112,8 +112,8 @@ The isolated same-host Wayland rerun preserves ordinary work and bundled Helix.
 The earlier `eon-installer-2026-10-10-2uahgczq/` proof retains exact idle
 authenticated Codex process evidence for the unchanged runtime and archives;
 the rerun's Codex bootstrap hit an account-routing timeout. No model turn,
-semantic resume, independent-machine, hardware-GPU, human-reader or wider
-public-beta qualification follows.
+semantic resume, independent-machine, hardware-GPU, human-reader or Nix-free
+install qualification follows.
 
 The parser correction for unused non-link header fields is checked with the
 static bootstrap and signed installation under
@@ -134,5 +134,6 @@ Upgrades and removal keep old payloads and live terminals. Manual download,
 verification and extraction remain available.
 
 `APPROVED_TAG` and `VERSION` are placeholders, not published releases.
-Public release signing, redistribution obligations and wider beta qualification
-retain their separate gates. The development proof uses a disposable signer.
+Public release signing, redistribution obligations and Nix-free install
+qualification retain their separate gates. The development proof uses a
+disposable signer.

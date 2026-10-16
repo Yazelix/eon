@@ -9,7 +9,7 @@ renders its frames; [Eon](../README.md) composes both.
 
 [![Animated Eon demo showing two Orbit Sessions in a native Wayland window](../assets/demo/eon-demo.gif)](../assets/demo/eon-demo.mp4)
 
-[Watch the MP4](../assets/demo/eon-demo.mp4) of the composed Linux alpha.
+[Watch the MP4](../assets/demo/eon-demo.mp4) of Eon on Linux.
 
 ## Run locally
 

@@ -2,8 +2,8 @@
 
 ## Supported environment
 
-Eon is a Nix-only alpha. The supported product target is **x86_64 Linux on
-native Wayland**.
+Eon is in beta (0.x) and installs only through Nix. The supported product
+target is **x86_64 Linux on native Wayland**.
 
 Before installing, you need:
 
@@ -29,7 +29,7 @@ machine ends live terminal process state.
 
 ## Install and start
 
-Install the public alpha:
+Install the latest release, 0.1.0:
 
 ```sh
 nix profile add --refresh github:Yazelix/eon/linux-alpha-2026-10-14
@@ -271,7 +271,7 @@ composition.
 - **A replacement window rejects configuration:** fix `config.toml` and run
   `eon attach`; the existing terminals remain alive.
 - **Graphics fail outside native Wayland or on unproved hardware:** that
-  environment is outside the supported alpha boundary.
+  environment is outside the supported boundary.
 
 Report reproducible failures in [GitHub Issues](https://github.com/Yazelix/eon/issues).
 Include `eon versions`, the relevant generation from `eon generations`, your

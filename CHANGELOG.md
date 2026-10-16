@@ -3,6 +3,13 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
+## Unreleased
+
+- Eon is now in beta, versioned by number. Every 0.x release is beta, and
+  1.0.0 marks the end of beta. Releases will bump Eon's version and carry
+  `vX.Y.Z` tags instead of date tags; `linux-alpha-2026-10-14` was version
+  0.1.0. Installing without Nix is a later 0.x milestone.
+
 ## linux-alpha-2026-10-14
 
 The first tag of this repository. It ships everything listed below and in the
