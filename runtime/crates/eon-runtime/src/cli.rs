@@ -14,7 +14,7 @@ use super::{
     windows,
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::v9::{
+use eon_workspace_protocol::v10::{
     Action, Direction, PopupTarget, Response, VERSION, WorkspaceAction,
 };
 use std::{

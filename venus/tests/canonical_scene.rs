@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v9::{Pane, Snapshot, Tab};
+use eon_workspace_protocol::v10::{Pane, Snapshot, Tab};
 use orbit_protocol::{
     Capabilities, Cell, CellStyle, CellWidth, Colors, Cursor, CursorShape, CursorViewport,
     Dimensions, Frame, Rgb, Row, Screen, StyleColor, Underline,
@@ -15,7 +15,7 @@ use yazelix_venus::{
 
 #[test]
 fn shared_popup_projection_keeps_hidden_work_and_one_input_surface() {
-    use eon_workspace_protocol::v9 as wire;
+    use eon_workspace_protocol::v10 as wire;
     use yazelix_venus::WorkspaceModel;
     let mut snapshot = wire::Snapshot {
         active_tab: "t1".into(),
@@ -37,7 +37,7 @@ fn shared_popup_projection_keeps_hidden_work_and_one_input_surface() {
             pending: false,
             selected_pane: None,
             selected_popup: Some("u1".into()),
-            panes: vec![],
+            columns: Vec::new(),
             popups: vec![wire::Popup {
                 id: "u1".into(),
                 entry: "agent".into(),
@@ -191,20 +191,23 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
                 id: "t1".into(),
                 directory: b"/tmp/eon".to_vec(),
                 selected_pane: Some("pane-2".into()),
-                panes: vec![
-                    Pane {
-                        id: "pane-1".into(),
-                        session: "session-1".into(),
-                        endpoint: b"/run/eon/orbit.sock".to_vec(),
-                        live: true,
-                    },
-                    Pane {
-                        id: "pane-2".into(),
-                        session: "session-2".into(),
-                        endpoint: b"/run/eon/session-2.sock".to_vec(),
-                        live: true,
-                    },
-                ],
+                columns: vec![eon_workspace_protocol::v10::Column {
+                    panes: vec![
+                        Pane {
+                            id: "pane-1".into(),
+                            session: "session-1".into(),
+                            endpoint: b"/run/eon/orbit.sock".to_vec(),
+                            live: true,
+                        },
+                        Pane {
+                            id: "pane-2".into(),
+                            session: "session-2".into(),
+                            endpoint: b"/run/eon/session-2.sock".to_vec(),
+                            live: true,
+                        },
+                    ],
+                    expanded: "pane-2".into(),
+                }],
             },
             Tab {
                 pending: false,
@@ -213,15 +216,18 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
                 id: "t2".into(),
                 directory: b"/tmp/nova".to_vec(),
                 selected_pane: Some("pane-3".into()),
-                panes: vec![Pane {
-                    id: "pane-3".into(),
-                    session: "session-3".into(),
-                    endpoint: b"/run/eon/session-3.sock".to_vec(),
-                    live: false,
+                columns: vec![eon_workspace_protocol::v10::Column {
+                    panes: vec![Pane {
+                        id: "pane-3".into(),
+                        session: "session-3".into(),
+                        endpoint: b"/run/eon/session-3.sock".to_vec(),
+                        live: false,
+                    }],
+                    expanded: "pane-3".into(),
                 }],
             },
         ],
-        geometry: eon_workspace_protocol::v9::PopupGeometry {
+        geometry: eon_workspace_protocol::v10::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -299,7 +305,7 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
     assert!(scene.pane_scroll_limit().is_finite());
 
     let mut fitting_snapshot = snapshot.clone();
-    fitting_snapshot.tabs[0].panes.push(Pane {
+    fitting_snapshot.tabs[0].columns[0].panes.push(Pane {
         id: "pane-4".into(),
         session: "session-4".into(),
         endpoint: b"/run/eon/session-4.sock".to_vec(),
@@ -319,7 +325,7 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
 
     let mut overflow_snapshot = fitting_snapshot;
     for number in 5..=32 {
-        overflow_snapshot.tabs[0].panes.push(Pane {
+        overflow_snapshot.tabs[0].columns[0].panes.push(Pane {
             id: format!("pane-{number}"),
             session: format!("session-{number}"),
             endpoint: format!("/run/eon/session-{number}.sock").into_bytes(),

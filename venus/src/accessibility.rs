@@ -774,7 +774,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 mod tests {
     use super::*;
     use crate::{Color, DrawCell, DrawRow, DrawStyle, PaneMetadata, ShortcutGroup, ShortcutRow};
-    use eon_workspace_protocol::v9::{
+    use eon_workspace_protocol::v10::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, CodexQuotaWindow, Pane, Popup,
         PopupEntry, PopupGeometry, Shortcut, Snapshot as WorkspaceSnapshot, Tab,
     };
@@ -788,15 +788,18 @@ mod tests {
             id: id.into(),
             directory: format!("/tmp/{id}").into_bytes(),
             selected_pane: Some(selected_pane.into()),
-            panes: panes
-                .iter()
-                .map(|id| Pane {
-                    id: (*id).into(),
-                    session: format!("session-{id}"),
-                    endpoint: format!("/run/eon/{id}.sock").into_bytes(),
-                    live: true,
-                })
-                .collect(),
+            columns: vec![eon_workspace_protocol::v10::Column {
+                panes: panes
+                    .iter()
+                    .map(|id| Pane {
+                        id: (*id).into(),
+                        session: format!("session-{id}"),
+                        endpoint: format!("/run/eon/{id}.sock").into_bytes(),
+                        live: true,
+                    })
+                    .collect(),
+                expanded: selected_pane.into(),
+            }],
         }
     }
 
@@ -805,7 +808,7 @@ mod tests {
             &WorkspaceSnapshot {
                 active_tab: active_tab.into(),
                 tabs,
-                geometry: eon_workspace_protocol::v9::PopupGeometry {
+                geometry: eon_workspace_protocol::v10::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
@@ -1201,7 +1204,7 @@ mod tests {
 
     #[test]
     fn two_provider_chips_share_layout_without_losing_identity_or_freshness() {
-        use eon_workspace_protocol::v9::{ClaudeQuota, ClaudeQuotaState};
+        use eon_workspace_protocol::v10::{ClaudeQuota, ClaudeQuotaState};
         for state in [ClaudeQuotaState::Fresh, ClaudeQuotaState::Stale] {
             for providers in 0..4 {
                 for scale in [1.0, 1.25, 2.0] {
@@ -1757,7 +1760,7 @@ mod tests {
                 workspace_tab("t2", &["pane-7"], "pane-7"),
                 workspace_tab("t3", &["pane-8"], "pane-8"),
             ],
-            geometry: eon_workspace_protocol::v9::PopupGeometry {
+            geometry: eon_workspace_protocol::v10::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -2007,20 +2010,23 @@ mod tests {
                         id: "t1".into(),
                         directory: b"/tmp/eon".to_vec(),
                         selected_pane: Some("p2".into()),
-                        panes: vec![
-                            Pane {
-                                id: "p1".into(),
-                                session: "session-1".into(),
-                                endpoint: b"/run/eon/one.sock".to_vec(),
-                                live: false,
-                            },
-                            Pane {
-                                id: "p2".into(),
-                                session: "session-2".into(),
-                                endpoint: b"/run/eon/two.sock".to_vec(),
-                                live: true,
-                            },
-                        ],
+                        columns: vec![eon_workspace_protocol::v10::Column {
+                            panes: vec![
+                                Pane {
+                                    id: "p1".into(),
+                                    session: "session-1".into(),
+                                    endpoint: b"/run/eon/one.sock".to_vec(),
+                                    live: false,
+                                },
+                                Pane {
+                                    id: "p2".into(),
+                                    session: "session-2".into(),
+                                    endpoint: b"/run/eon/two.sock".to_vec(),
+                                    live: true,
+                                },
+                            ],
+                            expanded: "p2".into(),
+                        }],
                     },
                     Tab {
                         pending: false,
@@ -2029,15 +2035,18 @@ mod tests {
                         id: "t2".into(),
                         directory: b"/tmp/nova".to_vec(),
                         selected_pane: Some("p3".into()),
-                        panes: vec![Pane {
-                            id: "p3".into(),
-                            session: "session-3".into(),
-                            endpoint: b"/run/eon/three.sock".to_vec(),
-                            live: false,
+                        columns: vec![eon_workspace_protocol::v10::Column {
+                            panes: vec![Pane {
+                                id: "p3".into(),
+                                session: "session-3".into(),
+                                endpoint: b"/run/eon/three.sock".to_vec(),
+                                live: false,
+                            }],
+                            expanded: "p3".into(),
                         }],
                     },
                 ],
-                geometry: eon_workspace_protocol::v9::PopupGeometry {
+                geometry: eon_workspace_protocol::v10::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
@@ -2113,7 +2122,7 @@ mod tests {
                 id: "project".into(),
                 label: "Project".into(),
                 shortcut: Shortcut {
-                    modifiers: eon_workspace_protocol::v9::ALT,
+                    modifiers: eon_workspace_protocol::v10::ALT,
                     key: "KeyZ".into(),
                 },
             }],
@@ -2122,7 +2131,7 @@ mod tests {
                 directory: b"/tmp/t1".to_vec(),
                 pending: true,
                 selected_pane: None,
-                panes: Vec::new(),
+                columns: Vec::new(),
                 selected_popup: Some("u1".into()),
                 popups: vec![Popup {
                     id: "u1".into(),

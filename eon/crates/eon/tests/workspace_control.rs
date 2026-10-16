@@ -1,8 +1,8 @@
 use eon_workspace_protocol::{
-    v2, v3, v4 as legacy, v5, v6, v7, v8,
-    v9::{
-        Action as ProtocolAction, Direction, HEADER_BYTES, InvokeIntent, MAX_SESSIONS, Pane, Popup,
-        PopupGeometry, PopupTarget, Request, Response, Snapshot, Tab, VERSION,
+    v2, v3, v4 as legacy, v5, v6, v7, v8, v9,
+    v10::{
+        Action as ProtocolAction, Column, Direction, HEADER_BYTES, InvokeIntent, MAX_SESSIONS,
+        Pane, Popup, PopupGeometry, PopupTarget, Request, Response, Snapshot, Tab, VERSION,
         WorkspaceAction as Action, declared_message_len, decode_request, decode_response,
         encode_request, encode_response,
     },
@@ -307,7 +307,7 @@ fn anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dis
         panic!("initial picker snapshot missing");
     };
     assert!(project_popup(&pending).is_some());
-    assert!(pending.tabs[0].panes.is_empty());
+    assert!(pending.tabs[0].columns.is_empty());
 
     fs::write(&picker_release, "cancel").unwrap();
     wait_for(&generation_runtime(&runtime).join("orbit.sock"));
@@ -1152,11 +1152,14 @@ printf '/selected-\377\n' > "$4"
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            panes: vec![Pane {
-                id: "p1".into(),
-                session: "session-1".into(),
-                endpoint: b"/test.sock".to_vec(),
-                live: true,
+            columns: vec![Column {
+                panes: vec![Pane {
+                    id: "p1".into(),
+                    session: "session-1".into(),
+                    endpoint: b"/test.sock".to_vec(),
+                    live: true,
+                }],
+                expanded: "p1".into(),
             }],
             popups: Vec::new(),
         }],
@@ -1415,7 +1418,7 @@ cat >/dev/null
     assert_eq!(picker_tab.id, "t1");
     let initial_picker = Path::new(OsStr::from_bytes(&picker.endpoint)).to_path_buf();
     assert_eq!(initial_picker.parent(), Some(generation.as_path()));
-    assert!(opened.tabs[0].panes.is_empty());
+    assert!(opened.tabs[0].columns.is_empty());
     assert!(opened.tabs[0].selected_pane.is_none());
     assert!(!generation.join("orbit.sock").exists());
     assert_eq!(
@@ -1472,14 +1475,14 @@ cat >/dev/null
 
     fs::write(&release, "").unwrap();
     let retargeted = wait_for_picker_close(&control, &selected);
-    assert_eq!(retargeted.tabs[0].panes.len(), 1);
+    assert_eq!(retargeted.tabs[0].panes().count(), 1);
     assert_eq!(retargeted.tabs[0].selected_pane.as_deref(), Some("p1"));
     assert!(!initial_picker.exists());
     assert!(!artifact_path(&initial_picker, ".record").exists());
 
     let created = workspace_action(&control, "pane-after-picker", Action::CreatePane);
     assert!(
-        matches!(&created, Response::Snapshot(snapshot) if snapshot.tabs[0].panes.len() == 2),
+        matches!(&created, Response::Snapshot(snapshot) if snapshot.tabs[0].panes().count() == 2),
         "pane creation after picker failed: {created:?}"
     );
     wait_for(&orbit_log);
@@ -1500,7 +1503,7 @@ cat >/dev/null
         workspace_action(&control, "new-tab-cancel", Action::CreateTab),
         Response::Snapshot(snapshot)
             if snapshot.active_tab == "t3"
-                && snapshot.tabs[1].panes.is_empty()
+                && snapshot.tabs[1].columns.is_empty()
                 && snapshot.tabs[1].selected_pane.is_none()
     ));
     let pending_picker = picker_endpoint(&control);
@@ -1519,7 +1522,7 @@ cat >/dev/null
     fs::write(&selection, selected.as_os_str().as_bytes()).unwrap();
     let traversed_picker = match workspace_action(&control, "new-tab-accept", Action::CreateTab) {
         Response::Snapshot(snapshot)
-            if snapshot.active_tab == "t4" && snapshot.tabs[1].panes.is_empty() =>
+            if snapshot.active_tab == "t4" && snapshot.tabs[1].columns.is_empty() =>
         {
             project_popup(&snapshot).unwrap().1.clone()
         }
@@ -1537,7 +1540,7 @@ cat >/dev/null
         Response::Snapshot(snapshot)
             if snapshot.active_tab == "t4"
                 && project_popup(&snapshot).is_some_and(|(_, popup)| popup == &traversed_picker)
-                && snapshot.tabs[1].panes.is_empty()
+                && snapshot.tabs[1].columns.is_empty()
                 && snapshot.tabs[1].selected_pane.is_none()
     ));
     fs::write(&release, "").unwrap();
@@ -1624,9 +1627,9 @@ cat >/dev/null
         workspace_action(&control, "close-partial-inspect", Action::Inspect),
         Response::Snapshot(snapshot)
             if snapshot.active_tab == "t1"
-                && snapshot.tabs[0].panes.len() == 1
-                && snapshot.tabs[0].panes[0].session == "session-2"
-                && snapshot.tabs[1].panes[0].session == "session-3"
+                && snapshot.tabs[0].panes().count() == 1
+                && snapshot.tabs[0].panes().next().unwrap().session == "session-2"
+                && snapshot.tabs[1].panes().next().unwrap().session == "session-3"
     ));
     let closed = invoke(
         &binary,
@@ -1658,7 +1661,7 @@ cat >/dev/null
     assert_eq!(cancelled.tabs.len(), 2);
     assert_eq!(cancelled.tabs[0], before_cancel.tabs[0]);
     assert!(!cancelled.tabs[1].pending);
-    assert_eq!(cancelled.tabs[1].panes.len(), 1);
+    assert_eq!(cancelled.tabs[1].panes().count(), 1);
     assert!(
         fs::read_to_string(&orbit_log)
             .unwrap()
@@ -1757,7 +1760,7 @@ fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
     assert!(matches!(
         workspace_action(&control, "picker", Action::Inspect),
         Response::Snapshot(snapshot)
-            if project_popup(&snapshot).is_some() && snapshot.tabs[0].panes.is_empty()
+            if project_popup(&snapshot).is_some() && snapshot.tabs[0].columns.is_empty()
     ));
     let picker = live_identity(&picker_endpoint(&control));
     fs::write(&fail_stop_once, "directory-picker-1").unwrap();
@@ -3340,7 +3343,7 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
     assert!(matches!(
         pending,
         Response::Snapshot(snapshot)
-            if project_popup(&snapshot).is_some() && snapshot.tabs[0].panes.is_empty()
+            if project_popup(&snapshot).is_some() && snapshot.tabs[0].columns.is_empty()
     ));
     let picker = live_identity(&picker_endpoint(&control));
     first.kill().unwrap();
@@ -3359,7 +3362,7 @@ fn replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it(
         Response::Snapshot(snapshot)
             if project_popup(&snapshot).is_none()
                 && snapshot.tabs[0].selected_pane.as_deref() == Some("p1")
-                && snapshot.tabs[0].panes.len() == 1
+                && snapshot.tabs[0].panes().count() == 1
     ));
     assert!(
         !Path::new("/proc")
@@ -4093,6 +4096,7 @@ fn previous_supervisor(
                     6 => v6::encode_response(&v6::Response::Failure(failure)),
                     7 => v7::encode_response(&v7::Response::Failure(failure)),
                     8 => v8::encode_response(&v8::Response::Failure(failure)),
+                    9 => v9::encode_response(&v9::Response::Failure(failure)),
                     _ => unreachable!(),
                 }
                 .unwrap()
@@ -4149,6 +4153,15 @@ fn previous_supervisor(
                         }
                         _ => "wrong",
                     },
+                    9 => match v9::decode_request(&request).unwrap().action {
+                        v9::Action::Workspace(v9::WorkspaceAction::InspectRuntime) => "inspect",
+                        v9::Action::Workspace(v9::WorkspaceAction::Stop { generation })
+                            if generation == server_id =>
+                        {
+                            "stop"
+                        }
+                        _ => "wrong",
+                    },
                     _ => unreachable!(),
                 };
                 assert_eq!(action, if step == 4 { "stop" } else { "inspect" });
@@ -4182,6 +4195,7 @@ fn previous_supervisor(
                     6 => v6::encode_lifecycle_response(&lifecycle),
                     7 => v7::encode_lifecycle_response(&lifecycle),
                     8 => v8::encode_lifecycle_response(&lifecycle),
+                    9 => v9::encode_lifecycle_response(&lifecycle),
                     _ => unreachable!(),
                 }
                 .unwrap()
@@ -4193,7 +4207,7 @@ fn previous_supervisor(
 
 #[test]
 fn current_cli_stops_known_previous_eonw_generations_through_their_supervisors() {
-    for version in 2..=8 {
+    for version in 2..=9 {
         let root = temporary_directory();
         let runtime = root.join("runtime");
         let config = root.join("config");
@@ -4394,7 +4408,7 @@ fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
     let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
     assert!(listed.status.success());
     assert!(stdout(&listed).contains("\"id\":\"legacy\",\"kind\":\"legacy\",\"state\":\"live\""));
-    assert!(stdout(&listed).contains("current Eon requires EONW v9"));
+    assert!(stdout(&listed).contains("current Eon requires EONW v10"));
     assert!(stdout(&listed).contains("legacy supervisor has no authoritative stop action"));
 
     let attached = eon_command(&binary)
@@ -4406,7 +4420,7 @@ fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
         .output()
         .unwrap();
     assert_eq!(attached.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&attached.stderr).contains("current Eon requires EONW v9"));
+    assert!(String::from_utf8_lossy(&attached.stderr).contains("current Eon requires EONW v10"));
     assert!(!venus_log.exists());
 
     let stopped = invoke(&binary, &runtime, &config, &["stop", "legacy", "--json"]);

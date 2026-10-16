@@ -2,13 +2,13 @@ use super::{
     supervisor::{LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id},
     workspace,
 };
-use eon_workspace_protocol::v9::{
+use eon_workspace_protocol::v10::{
     Action, Availability, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse,
     MAX_DETAIL_BYTES, Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
     encode_request, encode_response,
 };
-use eon_workspace_protocol::{v2, v3, v4, v5, v6, v7, v8};
+use eon_workspace_protocol::{v2, v3, v4, v5, v6, v7, v8, v9};
 use std::{
     fs,
     io::{Read, Write},
@@ -379,6 +379,10 @@ pub(super) fn send_generation_action_on(
             id,
             action: v8::Action::Workspace(action),
         }),
+        9 => v9::encode_request(&v9::Request {
+            id,
+            action: v9::Action::Workspace(action),
+        }),
         _ => {
             return Err(EndpointFailure::new(
                 EndpointFailureKind::Incompatible,
@@ -401,6 +405,7 @@ pub(super) fn send_generation_action_on(
         6 => v6::decode_lifecycle_response(&response),
         7 => v7::decode_lifecycle_response(&response),
         8 => v8::decode_lifecycle_response(&response),
+        9 => v9::decode_lifecycle_response(&response),
         _ => unreachable!(),
     };
     decoded
@@ -668,7 +673,7 @@ mod tests {
         socket_identity,
     };
     use crate::supervisor::temporary_directory;
-    use eon_workspace_protocol::v9::{
+    use eon_workspace_protocol::v10::{
         Action, Availability, Failure, LifecycleResponse, Response, Runtime, VERSION,
         WorkspaceAction, encode_lifecycle_response, encode_response,
     };

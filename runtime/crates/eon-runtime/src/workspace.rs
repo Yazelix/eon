@@ -1,8 +1,8 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v9::{
-    Action, Direction, Failure, InvokeIntent, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS,
-    Pane as SnapshotPane, Popup as SnapshotPopup, PopupEntry as SnapshotEntry, PopupTarget,
-    Snapshot, Tab as SnapshotTab, WorkspaceAction,
+use eon_workspace_protocol::v10::{
+    Action, Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS,
+    MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
+    PopupEntry as SnapshotEntry, PopupTarget, Snapshot, Tab as SnapshotTab, WorkspaceAction,
 };
 use std::{
     collections::VecDeque,
@@ -72,15 +72,38 @@ struct Popup {
     launch_directory: PathBuf,
 }
 
+/// One accordion of panes; `expanded` indexes the pane it shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Column {
+    panes: Vec<Pane>,
+    expanded: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Tab {
     id: String,
     directory: PathBuf,
     pending: bool,
-    panes: Vec<Pane>,
-    selected_pane: Option<usize>,
+    /// Side-by-side columns; `selected_column` is set exactly when this is nonempty.
+    columns: Vec<Column>,
+    selected_column: Option<usize>,
     popups: Vec<Popup>,
     selected_popup: Option<String>,
+}
+
+impl Tab {
+    fn panes(&self) -> impl Iterator<Item = &Pane> {
+        self.columns.iter().flat_map(|column| &column.panes)
+    }
+
+    fn find_pane(&self, matches: impl Fn(&Pane) -> bool) -> Option<(usize, usize)> {
+        self.columns.iter().enumerate().find_map(|(column, item)| {
+            item.panes
+                .iter()
+                .position(&matches)
+                .map(|pane| (column, pane))
+        })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -114,8 +137,8 @@ impl Workspace {
                 id: "t1".into(),
                 directory,
                 pending: true,
-                panes: Vec::new(),
-                selected_pane: None,
+                columns: Vec::new(),
+                selected_column: None,
                 popups: Vec::new(),
                 selected_popup: None,
             }],
@@ -164,8 +187,8 @@ impl Workspace {
                 id: "t1".into(),
                 directory,
                 pending: false,
-                selected_pane: Some(0),
-                panes,
+                columns: vec![Column { panes, expanded: 0 }],
+                selected_column: Some(0),
                 popups: Vec::new(),
                 selected_popup: None,
             }],
@@ -199,18 +222,26 @@ impl Workspace {
                     id: tab.id.clone(),
                     directory: tab.directory.as_os_str().as_bytes().to_vec(),
                     pending: tab.pending,
-                    selected_pane: tab
-                        .selected_pane
-                        .map(|selected| tab.panes[selected].id.clone()),
+                    selected_pane: tab.selected_column.map(|selected| {
+                        let column = &tab.columns[selected];
+                        column.panes[column.expanded].id.clone()
+                    }),
                     selected_popup: tab.selected_popup.clone(),
-                    panes: tab
-                        .panes
+                    columns: tab
+                        .columns
                         .iter()
-                        .map(|pane| SnapshotPane {
-                            id: pane.id.clone(),
-                            session: pane.session.id.clone(),
-                            endpoint: pane.session.endpoint.as_os_str().as_bytes().to_vec(),
-                            live: true,
+                        .map(|column| SnapshotColumn {
+                            panes: column
+                                .panes
+                                .iter()
+                                .map(|pane| SnapshotPane {
+                                    id: pane.id.clone(),
+                                    session: pane.session.id.clone(),
+                                    endpoint: pane.session.endpoint.as_os_str().as_bytes().to_vec(),
+                                    live: true,
+                                })
+                                .collect(),
+                            expanded: column.panes[column.expanded].id.clone(),
                         })
                         .collect(),
                     popups: tab
@@ -251,6 +282,22 @@ impl Workspace {
             Action::DismissPopup(target) => self.dismiss_popup(&target, &mut operate)?,
             Action::CommitDirectory { target, directory } => {
                 self.commit_directory(&target, directory, &mut operate)?
+            }
+            // A tab without columns gains its first one exactly as a new pane would.
+            Action::CreateColumn if self.tabs[self.active].columns.is_empty() => {
+                self.dispatch_workspace(WorkspaceAction::CreatePane, &mut prepare, &mut operate)?
+            }
+            Action::CreateColumn => {
+                self.require_established(self.active)?;
+                if self.tabs[self.active].columns.len() >= MAX_COLUMNS {
+                    return Err(action_error(
+                        "unavailable",
+                        format!("a tab holds at most {MAX_COLUMNS} columns"),
+                    ));
+                }
+                self.dismiss_for_pane_action(self.active, &mut operate)?;
+                self.start_column(self.active, &mut operate)
+                    .map_err(|detail| action_error("session-start", detail))?;
             }
         }
         self.remember(request_id);
@@ -321,8 +368,8 @@ impl Workspace {
             id,
             directory,
             pending: true,
-            panes: Vec::new(),
-            selected_pane: None,
+            columns: Vec::new(),
+            selected_column: None,
             popups: Vec::new(),
             selected_popup: None,
         });
@@ -611,15 +658,13 @@ impl Workspace {
             }
             return Ok(());
         }
-        let (tab_index, pane_index) = self
+        let (tab_index, (column_index, pane_index)) = self
             .tabs
             .iter()
             .enumerate()
             .find_map(|(tab, item)| {
-                item.panes
-                    .iter()
-                    .position(|pane| pane.session.id == session_id)
-                    .map(|pane| (tab, pane))
+                item.find_pane(|pane| pane.session.id == session_id)
+                    .map(|found| (tab, found))
             })
             .ok_or_else(|| {
                 action_error(
@@ -628,16 +673,23 @@ impl Workspace {
                 )
             })?;
         let tab = &mut self.tabs[tab_index];
-        tab.panes.remove(pane_index);
-        tab.selected_pane = if tab.panes.is_empty() {
-            None
+        let column = &mut tab.columns[column_index];
+        column.panes.remove(pane_index);
+        if column.panes.is_empty() {
+            tab.columns.remove(column_index);
+            tab.selected_column = if tab.columns.is_empty() {
+                None
+            } else {
+                Some(index_after_removal(
+                    tab.selected_column
+                        .expect("a tab with columns has a selected column"),
+                    column_index,
+                    tab.columns.len(),
+                ))
+            };
         } else {
-            Some(index_after_removal(
-                tab.selected_pane.expect("nonempty tab has a selected pane"),
-                pane_index,
-                tab.panes.len(),
-            ))
-        };
+            column.expanded = index_after_removal(column.expanded, pane_index, column.panes.len());
+        }
         self.remove_empty_tab(tab_index);
         Ok(())
     }
@@ -675,8 +727,7 @@ impl Workspace {
             ));
         }
         let sessions = self.tabs[index]
-            .panes
-            .iter()
+            .panes()
             .map(|pane| pane.session.id.clone())
             .chain(
                 self.tabs[index]
@@ -698,10 +749,30 @@ impl Workspace {
         self.start_pane_at(tab_index, &directory, operate)
     }
 
+    fn start_column(
+        &mut self,
+        tab_index: usize,
+        operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let directory = self.tabs[tab_index].directory.clone();
+        self.start_pane_in(tab_index, &directory, true, operate)
+    }
+
     fn start_pane_at(
         &mut self,
         tab_index: usize,
         directory: &Path,
+        operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
+    ) -> Result<(), String> {
+        self.start_pane_in(tab_index, directory, false, operate)
+    }
+
+    /// Starts a pane in the selected column, or in a new column right of it.
+    fn start_pane_in(
+        &mut self,
+        tab_index: usize,
+        directory: &Path,
+        new_column: bool,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
         self.check_session_capacity()?;
@@ -726,8 +797,25 @@ impl Workspace {
         })?;
         self.next_pane += 1;
         self.next_session += 1;
-        self.tabs[tab_index].panes.push(pane);
-        self.tabs[tab_index].selected_pane = Some(self.tabs[tab_index].panes.len() - 1);
+        let tab = &mut self.tabs[tab_index];
+        match tab.selected_column {
+            Some(selected) if !new_column => {
+                let column = &mut tab.columns[selected];
+                column.panes.push(pane);
+                column.expanded = column.panes.len() - 1;
+            }
+            selected => {
+                let index = selected.map_or(0, |selected| selected + 1);
+                tab.columns.insert(
+                    index,
+                    Column {
+                        panes: vec![pane],
+                        expanded: 0,
+                    },
+                );
+                tab.selected_column = Some(index);
+            }
+        }
         Ok(())
     }
 
@@ -771,14 +859,14 @@ impl Workspace {
             return Ok(());
         }
         for tab_index in 0..self.tabs.len() {
-            if let Some(pane_index) = self.tabs[tab_index]
-                .panes
-                .iter()
-                .position(|pane| pane.id == id)
+            if let Some((column_index, pane_index)) =
+                self.tabs[tab_index].find_pane(|pane| pane.id == id)
             {
                 self.dismiss_for_pane_action(tab_index, operate)?;
                 self.active = tab_index;
-                self.tabs[tab_index].selected_pane = Some(pane_index);
+                let tab = &mut self.tabs[tab_index];
+                tab.selected_column = Some(column_index);
+                tab.columns[column_index].expanded = pane_index;
                 return Ok(());
             }
         }
@@ -794,22 +882,55 @@ impl Workspace {
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         match direction {
-            Direction::Left => {
-                self.active = self.active.checked_sub(1).unwrap_or(self.tabs.len() - 1)
+            Direction::Left | Direction::Right => {
+                // Visible columns and tabs form one strip: the outer columns continue to
+                // the adjacent tab, entering at its nearest edge column.
+                let shows_columns = |tab: &Tab| !tab.pending && tab.selected_popup.is_none();
+                let tab = &mut self.tabs[self.active];
+                let neighbor =
+                    tab.selected_column
+                        .filter(|_| shows_columns(tab))
+                        .and_then(|selected| {
+                            if direction == Direction::Left {
+                                selected.checked_sub(1)
+                            } else {
+                                Some(selected + 1).filter(|next| *next < tab.columns.len())
+                            }
+                        });
+                if let Some(neighbor) = neighbor {
+                    tab.selected_column = Some(neighbor);
+                    return Ok(());
+                }
+                self.active = if direction == Direction::Left {
+                    self.active.checked_sub(1).unwrap_or(self.tabs.len() - 1)
+                } else {
+                    (self.active + 1) % self.tabs.len()
+                };
+                let tab = &mut self.tabs[self.active];
+                if !tab.columns.is_empty() && shows_columns(tab) {
+                    tab.selected_column = Some(if direction == Direction::Left {
+                        tab.columns.len() - 1
+                    } else {
+                        0
+                    });
+                }
             }
-            Direction::Right => self.active = (self.active + 1) % self.tabs.len(),
             Direction::Up | Direction::Down => {
                 self.require_established(self.active)?;
                 self.dismiss_for_pane_action(self.active, operate)?;
                 let tab = &mut self.tabs[self.active];
                 let selected = tab
-                    .selected_pane
+                    .selected_column
                     .ok_or_else(|| action_error("unavailable", "active tab has no pane"))?;
-                tab.selected_pane = Some(if direction == Direction::Up {
-                    selected.checked_sub(1).unwrap_or(tab.panes.len() - 1)
+                let column = &mut tab.columns[selected];
+                column.expanded = if direction == Direction::Up {
+                    column
+                        .expanded
+                        .checked_sub(1)
+                        .unwrap_or(column.panes.len() - 1)
                 } else {
-                    (selected + 1) % tab.panes.len()
-                });
+                    (column.expanded + 1) % column.panes.len()
+                };
             }
         }
         Ok(())
@@ -833,22 +954,24 @@ impl Workspace {
                 self.require_established(self.active)?;
                 self.dismiss_for_pane_action(self.active, operate)?;
                 let tab = &mut self.tabs[self.active];
-                let selected = tab
-                    .selected_pane
+                let column = tab
+                    .selected_column
                     .ok_or_else(|| action_error("unavailable", "active tab has no pane"))?;
+                let column = &mut tab.columns[column];
+                let selected = column.expanded;
                 let target = if direction == Direction::Up {
                     let Some(target) = selected.checked_sub(1) else {
                         return Ok(());
                     };
                     target
                 } else {
-                    if selected + 1 == tab.panes.len() {
+                    if selected + 1 == column.panes.len() {
                         return Ok(());
                     }
                     selected + 1
                 };
-                tab.panes.swap(selected, target);
-                tab.selected_pane = Some(target);
+                column.panes.swap(selected, target);
+                column.expanded = target;
             }
             Direction::Left | Direction::Right => {}
         }
@@ -906,7 +1029,7 @@ impl Workspace {
     }
 
     fn remove_empty_tab(&mut self, tab_index: usize) {
-        if self.tabs[tab_index].panes.is_empty()
+        if self.tabs[tab_index].columns.is_empty()
             && self.tabs[tab_index].popups.is_empty()
             && self.tabs.len() > 1
         {
@@ -937,7 +1060,7 @@ impl Workspace {
     fn session_count(&self) -> usize {
         self.tabs
             .iter()
-            .map(|tab| tab.panes.len() + tab.popups.len())
+            .map(|tab| tab.panes().count() + tab.popups.len())
             .sum()
     }
 
@@ -960,6 +1083,16 @@ impl Workspace {
     }
 }
 
+/// Each pane with its zero-based column and whether that column expands it.
+fn column_panes(tab: &SnapshotTab) -> impl Iterator<Item = (usize, bool, &SnapshotPane)> {
+    tab.columns.iter().enumerate().flat_map(|(index, column)| {
+        column
+            .panes
+            .iter()
+            .map(move |pane| (index, pane.id == column.expanded, pane))
+    })
+}
+
 pub(crate) fn human(snapshot: &Snapshot) -> String {
     let mut output = format!("active {}\n", snapshot.active_tab);
     for tab in &snapshot.tabs {
@@ -972,10 +1105,12 @@ pub(crate) fn human(snapshot: &Snapshot) -> String {
             tab.pending,
             tab.id == snapshot.active_tab,
         ));
-        for pane in &tab.panes {
+        for (column, expanded, pane) in column_panes(tab) {
             output.push_str(&format!(
-                "  pane {} terminal={} live={} endpoint={}\n",
+                "  pane {} column={} expanded={} terminal={} live={} endpoint={}\n",
                 pane.id,
+                column + 1,
+                expanded,
                 pane.session,
                 pane.live,
                 String::from_utf8_lossy(&pane.endpoint).escape_debug()
@@ -1034,13 +1169,15 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
         output.push_str(",\"selected_popup\":");
         json_option(&mut output, tab.selected_popup.as_deref());
         output.push_str(",\"panes\":[");
-        for (index, pane) in tab.panes.iter().enumerate() {
+        for (index, (column, expanded, pane)) in column_panes(tab).enumerate() {
             if index != 0 {
                 output.push(',');
             }
             output.push_str(&format!(
-                "{{\"id\":\"{}\",\"session\":\"{}\",\"endpoint\":[{}],\"live\":{}}}",
+                "{{\"id\":\"{}\",\"column\":{},\"expanded\":{},\"session\":\"{}\",\"endpoint\":[{}],\"live\":{}}}",
                 json_escape(&pane.id),
+                column + 1,
+                expanded,
                 json_escape(&pane.session),
                 json_bytes(&pane.endpoint),
                 pane.live
@@ -1143,13 +1280,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v9::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v10::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v9::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v9::ALT, "Alt"),
-        (eon_workspace_protocol::v9::SHIFT, "Shift"),
-        (eon_workspace_protocol::v9::SUPER, "Super"),
+        (eon_workspace_protocol::v10::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v10::ALT, "Alt"),
+        (eon_workspace_protocol::v10::SHIFT, "Shift"),
+        (eon_workspace_protocol::v10::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1202,7 +1339,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v9::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v10::{ALT, PopupGeometry, Shortcut};
 
     fn catalog() -> PopupCatalog {
         PopupCatalog {
@@ -1241,6 +1378,233 @@ mod tests {
             PopupCommand::Project => Ok(Vec::new()),
             PopupCommand::AgentAuto => unreachable!(),
         }
+    }
+
+    #[test]
+    fn create_column_in_a_popup_only_tab_never_overfills_a_neighbor() {
+        let root = std::env::temp_dir().join(format!("eon-column-limit-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut workspace = Workspace::with_recovered_sessions(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: root.join("orbit.sock"),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let ok = |_| Ok(());
+        let project = |tab: &str| Action::InvokePopup {
+            tab: tab.into(),
+            entry: "project".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        };
+        for id in ["c1", "c2", "c3"] {
+            workspace
+                .dispatch(id, Action::CreateColumn, prepared, ok)
+                .unwrap();
+        }
+        workspace
+            .dispatch(
+                "t2",
+                Action::Workspace(WorkspaceAction::CreateTab),
+                prepared,
+                ok,
+            )
+            .unwrap();
+        let picker = workspace.snapshot().tabs[1].popups[0].session.clone();
+        workspace
+            .session_ended(&picker, SessionEnd::Exited, ok)
+            .unwrap();
+        workspace
+            .dispatch("open", project("t2"), prepared, ok)
+            .unwrap();
+        let pane = workspace.snapshot().tabs[1].columns[0].panes[0]
+            .session
+            .clone();
+        workspace
+            .session_ended(&pane, SessionEnd::Exited, ok)
+            .unwrap();
+        let tab = &workspace.snapshot().tabs[1];
+        assert!(tab.columns.is_empty() && tab.selected_popup.is_some());
+
+        workspace
+            .dispatch("c4", Action::CreateColumn, prepared, ok)
+            .unwrap();
+        let after = workspace.snapshot();
+        assert_eq!(after.tabs.len(), 1);
+        assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
+        eon_workspace_protocol::v10::encode_response(
+            &eon_workspace_protocol::v10::Response::Snapshot(after),
+        )
+        .unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn columns_hold_accordions_traverse_into_tabs_and_collapse_on_exit() {
+        let root = std::env::temp_dir().join(format!("eon-columns-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut workspace = Workspace::with_recovered_sessions(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: root.join("orbit.sock"),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let ok = |_| Ok(());
+        let request = |workspace: &mut Workspace, id: &str, action| {
+            workspace.dispatch(id, action, prepared, ok)
+        };
+        let shape = |workspace: &Workspace| {
+            let tab = &workspace.snapshot().tabs[0];
+            let columns = tab
+                .columns
+                .iter()
+                .map(|column| {
+                    column
+                        .panes
+                        .iter()
+                        .map(|pane| pane.id.clone())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                        + "@"
+                        + &column.expanded
+                })
+                .collect::<Vec<_>>();
+            (columns, tab.selected_pane.clone().unwrap())
+        };
+        let single = workspace.snapshot();
+
+        // A new column opens right of the selected one and takes the selection.
+        request(&mut workspace, "c1", Action::CreateColumn).unwrap();
+        request(
+            &mut workspace,
+            "c2",
+            Action::Workspace(WorkspaceAction::CreatePane),
+        )
+        .unwrap();
+        assert_eq!(
+            shape(&workspace),
+            (vec!["p1@p1".into(), "p2,p3@p3".into()], "p3".into())
+        );
+        request(
+            &mut workspace,
+            "l1",
+            Action::Workspace(WorkspaceAction::Focus(Direction::Left)),
+        )
+        .unwrap();
+        request(&mut workspace, "c3", Action::CreateColumn).unwrap();
+        assert_eq!(
+            shape(&workspace),
+            (
+                vec!["p1@p1".into(), "p4@p4".into(), "p2,p3@p3".into()],
+                "p4".into()
+            )
+        );
+        request(&mut workspace, "c4", Action::CreateColumn).unwrap();
+        let full = workspace.snapshot();
+        let refused = request(&mut workspace, "c5", Action::CreateColumn).unwrap_err();
+        assert_eq!(refused.code, "unavailable");
+        assert_eq!(workspace.snapshot(), full);
+
+        // Up/down stay within the selected column; left/right cross columns, then tabs.
+        request(
+            &mut workspace,
+            "r1",
+            Action::Workspace(WorkspaceAction::Focus(Direction::Right)),
+        )
+        .unwrap();
+        request(
+            &mut workspace,
+            "u1",
+            Action::Workspace(WorkspaceAction::Focus(Direction::Up)),
+        )
+        .unwrap();
+        assert_eq!(shape(&workspace).1, "p2");
+        request(
+            &mut workspace,
+            "f1",
+            Action::Workspace(WorkspaceAction::FocusId("p1".into())),
+        )
+        .unwrap();
+        assert_eq!(shape(&workspace).1, "p1");
+        request(
+            &mut workspace,
+            "t2",
+            Action::Workspace(WorkspaceAction::CreateTab),
+        )
+        .unwrap();
+        assert_eq!(workspace.snapshot().active_tab, "t2");
+        request(
+            &mut workspace,
+            "l2",
+            Action::Workspace(WorkspaceAction::Focus(Direction::Left)),
+        )
+        .unwrap();
+        // Entering a tab by moving left lands on its rightmost column.
+        assert_eq!(workspace.snapshot().active_tab, "t1");
+        assert_eq!(shape(&workspace).1, "p2");
+        request(
+            &mut workspace,
+            "l3",
+            Action::Workspace(WorkspaceAction::Focus(Direction::Left)),
+        )
+        .unwrap();
+        assert_eq!(shape(&workspace).1, "p5");
+        // Holding one direction walks every column of every tab, entering at the edge.
+        let mut walk = Vec::new();
+        for id in ["r2", "r3", "r4"] {
+            request(
+                &mut workspace,
+                id,
+                Action::Workspace(WorkspaceAction::Focus(Direction::Right)),
+            )
+            .unwrap();
+            let snapshot = workspace.snapshot();
+            walk.push(if snapshot.active_tab == "t1" {
+                shape(&workspace).1
+            } else {
+                snapshot.active_tab
+            });
+        }
+        assert_eq!(walk, ["p2", "t2", "p1"]);
+
+        // Ending a column's last pane removes the column; selection moves on.
+        request(
+            &mut workspace,
+            "f2",
+            Action::Workspace(WorkspaceAction::FocusId("p5".into())),
+        )
+        .unwrap();
+        workspace
+            .session_ended("session-5", SessionEnd::Exited, ok)
+            .unwrap();
+        assert_eq!(shape(&workspace).1, "p2");
+        for session in ["session-4", "session-2", "session-3"] {
+            workspace
+                .session_ended(session, SessionEnd::Exited, ok)
+                .unwrap();
+        }
+        let mut collapsed = workspace.snapshot();
+        collapsed.tabs.truncate(1);
+        collapsed.active_tab = "t1".into();
+        assert_eq!(collapsed.tabs, single.tabs);
+
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1475,14 +1839,17 @@ mod tests {
             id: "t2".into(),
             directory: "/".into(),
             pending: false,
-            panes: vec![Pane {
-                id: "p99".into(),
-                session: Session {
-                    id: "session-99".into(),
-                    endpoint: "/runtime/session-99.sock".into(),
-                },
+            columns: vec![Column {
+                panes: vec![Pane {
+                    id: "p99".into(),
+                    session: Session {
+                        id: "session-99".into(),
+                        endpoint: "/runtime/session-99.sock".into(),
+                    },
+                }],
+                expanded: 0,
             }],
-            selected_pane: Some(0),
+            selected_column: Some(0),
             popups: Vec::new(),
             selected_popup: None,
         });
@@ -1548,7 +1915,7 @@ mod tests {
         let unchanged = workspace.snapshot();
         assert!(unchanged.tabs[0].pending);
         assert_eq!(unchanged.tabs[0].directory, root.as_os_str().as_bytes());
-        assert!(unchanged.tabs[0].panes.is_empty());
+        assert!(unchanged.tabs[0].columns.is_empty());
         workspace
             .dispatch("commit", commit(), prepared, |_| Ok(()))
             .unwrap();
@@ -1610,8 +1977,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v9::encode_response(
-            &eon_workspace_protocol::v9::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v10::encode_response(
+            &eon_workspace_protocol::v10::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 
@@ -1745,7 +2112,7 @@ mod tests {
             )
             .unwrap();
         assert!(!workspace.snapshot().tabs[0].pending);
-        assert_eq!(workspace.snapshot().tabs[0].panes.len(), 1);
+        assert_eq!(workspace.snapshot().tabs[0].panes().count(), 1);
     }
 
     #[test]
@@ -1785,6 +2152,6 @@ mod tests {
         );
         assert!(!snapshot.tabs[1].pending);
         assert!(snapshot.tabs[1].popups.is_empty());
-        assert_eq!(snapshot.tabs[1].panes.len(), 1);
+        assert_eq!(snapshot.tabs[1].panes().count(), 1);
     }
 }

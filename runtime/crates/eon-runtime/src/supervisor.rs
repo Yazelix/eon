@@ -14,7 +14,7 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, Workspace},
 };
-use eon_workspace_protocol::v9::{
+use eon_workspace_protocol::v10::{
     Action, Availability, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
     Stopped, VERSION, WorkspaceAction,
 };
@@ -462,7 +462,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v9::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v10::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -1540,8 +1540,8 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v9::{
-            Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
+        use eon_workspace_protocol::v10::{
+            Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::{
             process::Command,
@@ -1563,11 +1563,14 @@ mod tests {
                     pending: false,
                     selected_pane: Some(format!("p{number}")),
                     selected_popup: None,
-                    panes: vec![Pane {
-                        id: format!("p{number}"),
-                        session: format!("session-{number}"),
-                        endpoint: format!("/runtime/orbit-{number}.sock").into_bytes(),
-                        live: true,
+                    columns: vec![Column {
+                        panes: vec![Pane {
+                            id: format!("p{number}"),
+                            session: format!("session-{number}"),
+                            endpoint: format!("/runtime/orbit-{number}.sock").into_bytes(),
+                            live: true,
+                        }],
+                        expanded: format!("p{number}"),
                     }],
                     popups: Vec::new(),
                 })

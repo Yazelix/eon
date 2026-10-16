@@ -6,7 +6,7 @@ Both crates build and test without the Eon crates.
 | Package | Owns | Version |
 |---|---|---|
 | `eon-runtime` | Invocation, terminal lifecycle, workspace state, configuration parsing and generation identity | `0.1.0` |
-| `eon-workspace-protocol` | EONW v2–v9 types and bounded codecs | `0.1.0` |
+| `eon-workspace-protocol` | EONW v2–v10 types and bounded codecs | `0.1.0` |
 
 ## Consumer boundary
 
@@ -66,9 +66,10 @@ are drained silently with a two-second/64 KiB bound, without writing quota state
 Eon's [EON-C27](../docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
 owns product policy and installed acceptance.
 
-EONW v9 permits genuinely absent provider resets, including stale observations.
-Historical v2–v8 APIs and validators remain unchanged. The current CLI inspects
-and stops v2–v8 supervisors through their historical lifecycle codecs;
+EONW v10 arranges each tab's panes into up to four columns; v9 permits
+genuinely absent provider resets, including stale observations. Historical
+v2–v9 APIs and validators remain unchanged. The current CLI inspects and stops
+v2–v9 supervisors through their historical lifecycle codecs;
 presentation remains bound to the original exact executable.
 
 ## Package provenance
@@ -83,7 +84,7 @@ same source. Runtime depends on the in-tree Orbit protocol crate.
 Runtime and codec have separate package manifests and version owners.
 
 EONW's complete package is its Cargo manifest and `src/lib.rs`, `src/v2.rs`
-through `src/v9.rs`. It has no external dependencies, feature declarations,
+through `src/v10.rs`. It has no external dependencies, feature declarations,
 build script or workspace-inherited settings.
 
 Eon's `eon-runtime-producer-68hq` holds the accepted transfer revision and

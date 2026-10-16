@@ -1,5 +1,5 @@
 use super::{NATIVE_PLATFORM, NativePlatform};
-use eon_workspace_protocol::v9::{
+use eon_workspace_protocol::v10::{
     Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, Snapshot,
     WorkspaceAction as CommonAction,
 };
@@ -381,14 +381,14 @@ pub(super) fn native_pointer_shortcut_for(
 }
 
 pub(super) fn shortcut_groups(
-    entries: &[eon_workspace_protocol::v9::PopupEntry],
+    entries: &[eon_workspace_protocol::v10::PopupEntry],
 ) -> Vec<ShortcutGroup> {
     shortcut_groups_for(NATIVE_PLATFORM, entries)
 }
 
 pub(super) fn shortcut_groups_for(
     platform: NativePlatform,
-    entries: &[eon_workspace_protocol::v9::PopupEntry],
+    entries: &[eon_workspace_protocol::v10::PopupEntry],
 ) -> Vec<ShortcutGroup> {
     let mut groups = ["Navigate", "Tabs and panes", "Host"]
         .into_iter()
@@ -435,7 +435,7 @@ pub(super) fn shortcut_groups_for(
 pub(super) fn shortcut_hints_for(
     platform: NativePlatform,
     focus: WorkspaceFocus,
-    entries: &[eon_workspace_protocol::v9::PopupEntry],
+    entries: &[eon_workspace_protocol::v10::PopupEntry],
 ) -> Vec<ShortcutHint> {
     let mut hints: Vec<ShortcutHint> = Vec::new();
     for shortcut in FIXED_SHORTCUTS {
@@ -461,7 +461,7 @@ pub(super) fn shortcut_hints_for(
             NativeShortcutTrigger::Key(code, modifiers) => {
                 (wire_modifiers(modifiers), format!("{code:?}"))
             }
-            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v9::ALT, "1..9".into()),
+            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v10::ALT, "1..9".into()),
             _ => continue,
         };
         let modifiers = physical_modifiers_label_for(platform, modifiers, true);
@@ -532,7 +532,7 @@ fn physical_shortcut_label_for(platform: NativePlatform, modifiers: u8, key: &st
 }
 
 fn physical_modifiers_label_for(platform: NativePlatform, modifiers: u8, compact: bool) -> String {
-    use eon_workspace_protocol::v9 as wire;
+    use eon_workspace_protocol::v10 as wire;
 
     let mut parts = Vec::with_capacity(5);
     let labels = match (platform, compact) {
@@ -576,7 +576,7 @@ fn physical_key_label(key: &str) -> &str {
 }
 
 fn wire_modifiers(modifiers: session::Modifiers) -> u8 {
-    use eon_workspace_protocol::v9 as wire;
+    use eon_workspace_protocol::v10 as wire;
 
     [
         (session::Modifiers::SHIFT, wire::SHIFT),
@@ -668,7 +668,7 @@ pub(super) fn popup_shortcut(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v9::PopupEntry;
+    use eon_workspace_protocol::v10::PopupEntry;
 
     #[test]
     fn direct_workspace_shortcuts_use_stable_eon_actions() {
@@ -752,16 +752,16 @@ mod tests {
         let entry = PopupEntry {
             id: "agent".into(),
             label: "My agent".into(),
-            shortcut: eon_workspace_protocol::v9::Shortcut {
-                modifiers: eon_workspace_protocol::v9::SUPER,
+            shortcut: eon_workspace_protocol::v10::Shortcut {
+                modifiers: eon_workspace_protocol::v10::SUPER,
                 key: "KeyF".into(),
             },
         };
         let project = PopupEntry {
             id: "project".into(),
             label: "Folder chooser".into(),
-            shortcut: eon_workspace_protocol::v9::Shortcut {
-                modifiers: eon_workspace_protocol::v9::ALT,
+            shortcut: eon_workspace_protocol::v10::Shortcut {
+                modifiers: eon_workspace_protocol::v10::ALT,
                 key: "KeyZ".into(),
             },
         };

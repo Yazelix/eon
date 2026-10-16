@@ -1,6 +1,6 @@
 use crate::{Result, launch::LaunchArguments};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
-use eon_workspace_protocol::v9::{
+use eon_workspace_protocol::v10::{
     Action as WorkspaceAction, Direction as WorkspaceDirection, WorkspaceAction as CommonAction,
 };
 use orbit_protocol::{
@@ -38,7 +38,7 @@ use yazelix_venus::{
     MetadataEvent, MetadataTransport, ModelError, PaneMetadata, PresentOutcome, Renderer, Scene,
     SceneRect, SessionModel, ShortcutHintsScene, ShortcutViewerScene, Transport, TransportEvent,
     WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
-    WorkspaceScene, WorkspaceTransport, active_popup,
+    WorkspaceScene, WorkspaceTransport, active_popup, presented_panes,
 };
 
 mod scroll;
@@ -1201,7 +1201,7 @@ impl Application {
 
     fn handle_workspace(&mut self, event: WorkspaceEvent) {
         let (received_snapshot, snapshot_changed) = match &event {
-            WorkspaceEvent::Response(eon_workspace_protocol::v9::Response::Snapshot(snapshot)) => {
+            WorkspaceEvent::Response(eon_workspace_protocol::v10::Response::Snapshot(snapshot)) => {
                 (true, self.workspace_model.snapshot() != Some(snapshot))
             }
             _ => (false, false),
@@ -1450,7 +1450,7 @@ impl Application {
                 .tabs
                 .iter()
                 .find(|tab| tab.id == snapshot.active_tab)
-                .is_some_and(|tab| !tab.panes.is_empty());
+                .is_some_and(|tab| !tab.columns.is_empty());
         if self.input.consumes_shortcut(
             event.physical_key,
             event.state,
@@ -3334,7 +3334,7 @@ fn retry_is_allowed(
 }
 
 fn visible_metadata_endpoints(
-    snapshot: &eon_workspace_protocol::v9::Snapshot,
+    snapshot: &eon_workspace_protocol::v10::Snapshot,
     selected_endpoint: Option<&[u8]>,
     selected_attached: bool,
 ) -> HashSet<Vec<u8>> {
@@ -3346,7 +3346,7 @@ fn visible_metadata_endpoints(
         .iter()
         .find(|tab| tab.id == snapshot.active_tab)
         .into_iter()
-        .flat_map(|tab| &tab.panes)
+        .flat_map(presented_panes)
         .filter(|pane| pane.live)
         .map(|pane| pane.endpoint.clone())
         .collect::<HashSet<_>>();
@@ -3790,7 +3790,7 @@ fn initial_window_size(
     rows: Option<u16>,
     metrics: CellMetrics,
     scale: f64,
-    snapshot: Option<&eon_workspace_protocol::v9::Snapshot>,
+    snapshot: Option<&eon_workspace_protocol::v10::Snapshot>,
 ) -> Result<PhysicalSize<u32>> {
     let (horizontal, vertical) = snapshot.map_or((0.0, 0.0), |snapshot| {
         WorkspaceScene::initial_overhead(snapshot, metrics)
@@ -3898,7 +3898,7 @@ pub(super) fn run(arguments: LaunchArguments) -> Result {
     let mut application = Application::new(arguments, event_loop.create_proxy());
     if application.startup_admission && application.workspace_socket.is_some() {
         let response = yazelix_venus::read_workspace_response(&mut io::stdin().lock())?;
-        if !matches!(response, eon_workspace_protocol::v9::Response::Snapshot(_)) {
+        if !matches!(response, eon_workspace_protocol::v10::Response::Snapshot(_)) {
             return Err("Venus startup admission requires an Eon workspace snapshot".into());
         }
         application.workspace_model.apply(response);
@@ -3940,7 +3940,7 @@ mod tests {
     };
     use super::*;
     use crate::launch;
-    use eon_workspace_protocol::v9::{
+    use eon_workspace_protocol::v10::{
         InvokeIntent, Pane, Popup, PopupEntry, Shortcut, Snapshot, Tab,
     };
     use winit::event::TouchPhase;
@@ -3950,7 +3950,7 @@ mod tests {
             id: "project".into(),
             label: "Project".into(),
             shortcut: Shortcut {
-                modifiers: eon_workspace_protocol::v9::ALT,
+                modifiers: eon_workspace_protocol::v10::ALT,
                 key: "KeyZ".into(),
             },
         }];
@@ -3975,9 +3975,9 @@ mod tests {
                 assert!(self.0.window.is_none(), "wait for workspace geometry");
                 self.0
                     .workspace_model
-                    .apply(eon_workspace_protocol::v9::Response::Snapshot(Snapshot {
+                    .apply(eon_workspace_protocol::v10::Response::Snapshot(Snapshot {
                         active_tab: "t1".into(),
-                        geometry: eon_workspace_protocol::v9::PopupGeometry {
+                        geometry: eon_workspace_protocol::v10::PopupGeometry {
                             side_margin: 8.0,
                             vertical_margin: 4.0,
                         },
@@ -3989,11 +3989,14 @@ mod tests {
                             id: "t1".into(),
                             directory: b"/tmp".to_vec(),
                             selected_pane: Some("p1".into()),
-                            panes: vec![Pane {
-                                id: "p1".into(),
-                                session: "s1".into(),
-                                endpoint: b"/unused-orbit.sock".to_vec(),
-                                live: true,
+                            columns: vec![eon_workspace_protocol::v10::Column {
+                                panes: vec![Pane {
+                                    id: "p1".into(),
+                                    session: "s1".into(),
+                                    endpoint: b"/unused-orbit.sock".to_vec(),
+                                    live: true,
+                                }],
+                                expanded: "p1".into(),
                             }],
                         }],
                         codex_quota: None,
@@ -4155,7 +4158,7 @@ mod tests {
     fn initial_grid_includes_workspace_chrome_at_each_scale() {
         let mut snapshot = Snapshot {
             active_tab: "t1".into(),
-            geometry: eon_workspace_protocol::v9::PopupGeometry {
+            geometry: eon_workspace_protocol::v10::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -4167,14 +4170,17 @@ mod tests {
                 id: "t1".into(),
                 directory: b"/tmp".to_vec(),
                 selected_pane: Some("p1".into()),
-                panes: (1..=3)
-                    .map(|i| Pane {
-                        id: format!("p{i}"),
-                        session: format!("s{i}"),
-                        endpoint: format!("/tmp/{i}.sock").into_bytes(),
-                        live: true,
-                    })
-                    .collect(),
+                columns: vec![eon_workspace_protocol::v10::Column {
+                    panes: (1..=3)
+                        .map(|i| Pane {
+                            id: format!("p{i}"),
+                            session: format!("s{i}"),
+                            endpoint: format!("/tmp/{i}.sock").into_bytes(),
+                            live: true,
+                        })
+                        .collect(),
+                    expanded: "p1".into(),
+                }],
             }],
             codex_quota: None,
             claude_quota: None,
@@ -4217,7 +4223,7 @@ mod tests {
             }
         }
         let metrics = CellMetrics::for_scale(1.0);
-        snapshot.tabs[0].panes.clear();
+        snapshot.tabs[0].columns.clear();
         snapshot.tabs[0].selected_pane = None;
         snapshot.tabs[0].selected_popup = None;
         assert!(initial_window_size(Some(100), Some(30), metrics, 1.0, Some(&snapshot)).is_ok());
@@ -4229,7 +4235,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
     fn live_output_keeps_application_input_admitted_before_repaint() {
-        use eon_workspace_protocol::v9 as workspace;
+        use eon_workspace_protocol::v10 as workspace;
         use orbit_protocol::{
             Capabilities, Colors, Cursor, CursorShape, Dimensions, Frame, Rgb, Screen,
         };
@@ -4505,9 +4511,10 @@ mod tests {
                 // Extra headers must resize the retained attachment too.
                 let previous_size = app.terminal.last_resize.unwrap();
                 let mut snapshot = app.workspace_model.snapshot().unwrap().clone();
-                app.terminal.active_endpoint = Some(snapshot.tabs[0].panes[0].endpoint.clone());
+                app.terminal.active_endpoint =
+                    Some(snapshot.tabs[0].columns[0].panes[0].endpoint.clone());
                 app.terminal.active_endpoint_live = true;
-                snapshot.tabs[0].panes.push(Pane {
+                snapshot.tabs[0].columns[0].panes.push(Pane {
                     id: "p3".into(),
                     session: "s3".into(),
                     endpoint: b"/unused/p3.sock".to_vec(),
@@ -4979,7 +4986,7 @@ mod tests {
                     .map(|socket| UnixListener::bind(socket).unwrap());
                 let mut snapshot = app.workspace_model.snapshot().unwrap().clone();
                 for (tab, socket) in snapshot.tabs.iter_mut().zip(&sockets) {
-                    tab.panes[0].endpoint = socket.clone().into_os_string().into_vec();
+                    tab.columns[0].panes[0].endpoint = socket.clone().into_os_string().into_vec();
                 }
                 app.workspace_socket = Some(root.join("workspace.sock"));
                 app.terminal.active_endpoint_live = true;
@@ -5044,11 +5051,11 @@ mod tests {
                 // and cannot seed continuity into another attachment.
                 app.handle_transport(TransportEvent::Lost("cursor layout disconnect".into()));
                 app.render();
-                let mut header = snapshot.tabs[0].panes[0].clone();
+                let mut header = snapshot.tabs[0].columns[0].panes[0].clone();
                 header.id = "offline-header".into();
                 header.session = "offline-session".into();
                 header.live = false;
-                snapshot.tabs[0].panes.insert(0, header);
+                snapshot.tabs[0].columns[0].panes.insert(0, header);
                 app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
                     snapshot.clone(),
                 )));
@@ -5082,11 +5089,11 @@ mod tests {
                 let mut empty = app.workspace_model.snapshot().unwrap().clone();
                 empty.active_tab = empty.tabs[0].id.clone();
                 show_test_popup(&mut empty);
-                empty.tabs[0].panes.clear();
+                empty.tabs[0].columns.clear();
                 empty.tabs[0].selected_pane = None;
                 empty.tabs[0].selected_popup = None;
                 app.handle_workspace(WorkspaceEvent::Response(
-                    eon_workspace_protocol::v9::Response::Snapshot(empty),
+                    eon_workspace_protocol::v10::Response::Snapshot(empty),
                 ));
                 assert!(app.terminal.transport.is_none());
                 assert!(app.terminal.model.scene().is_none());
@@ -5111,7 +5118,7 @@ mod tests {
         let workspace_listener = UnixListener::bind(&workspace_socket).unwrap();
         let snapshot = Snapshot {
             active_tab: "t1".into(),
-            geometry: eon_workspace_protocol::v9::PopupGeometry {
+            geometry: eon_workspace_protocol::v10::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -5124,14 +5131,17 @@ mod tests {
                     id: format!("t{index}"),
                     directory: b"/tmp".to_vec(),
                     selected_pane: Some(format!("p{index}")),
-                    panes: vec![Pane {
-                        id: format!("p{index}"),
-                        session: format!("s{index}"),
-                        endpoint: root
-                            .join(format!("pane-{index}.sock"))
-                            .into_os_string()
-                            .into_vec(),
-                        live: true,
+                    columns: vec![eon_workspace_protocol::v10::Column {
+                        panes: vec![Pane {
+                            id: format!("p{index}"),
+                            session: format!("s{index}"),
+                            endpoint: root
+                                .join(format!("pane-{index}.sock"))
+                                .into_os_string()
+                                .into_vec(),
+                            live: true,
+                        }],
+                        expanded: format!("p{index}"),
                     }],
                 })
                 .collect(),
@@ -5222,20 +5232,23 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    panes: vec![
-                        Pane {
-                            id: "pane-1".into(),
-                            session: "session-1".into(),
-                            endpoint: b"one".to_vec(),
-                            live: true,
-                        },
-                        Pane {
-                            id: "pane-2".into(),
-                            session: "session-2".into(),
-                            endpoint: b"offline".to_vec(),
-                            live: false,
-                        },
-                    ],
+                    columns: vec![eon_workspace_protocol::v10::Column {
+                        panes: vec![
+                            Pane {
+                                id: "pane-1".into(),
+                                session: "session-1".into(),
+                                endpoint: b"one".to_vec(),
+                                live: true,
+                            },
+                            Pane {
+                                id: "pane-2".into(),
+                                session: "session-2".into(),
+                                endpoint: b"offline".to_vec(),
+                                live: false,
+                            },
+                        ],
+                        expanded: "pane-1".into(),
+                    }],
                 },
                 Tab {
                     pending: false,
@@ -5244,15 +5257,18 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-3".into()),
-                    panes: vec![Pane {
-                        id: "pane-3".into(),
-                        session: "session-3".into(),
-                        endpoint: b"hidden".to_vec(),
-                        live: true,
+                    columns: vec![eon_workspace_protocol::v10::Column {
+                        panes: vec![Pane {
+                            id: "pane-3".into(),
+                            session: "session-3".into(),
+                            endpoint: b"hidden".to_vec(),
+                            live: true,
+                        }],
+                        expanded: "pane-3".into(),
                     }],
                 },
             ],
-            geometry: eon_workspace_protocol::v9::PopupGeometry {
+            geometry: eon_workspace_protocol::v10::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -5920,7 +5936,7 @@ mod tests {
             id: "project".into(),
             label: "Money ops".into(),
             shortcut: Shortcut {
-                modifiers: eon_workspace_protocol::v9::ALT,
+                modifiers: eon_workspace_protocol::v10::ALT,
                 key: "KeyZ".into(),
             },
         }];
@@ -6152,7 +6168,7 @@ mod tests {
         ));
         let mut snapshot = Snapshot {
             active_tab: "t1".into(),
-            geometry: eon_workspace_protocol::v9::PopupGeometry {
+            geometry: eon_workspace_protocol::v10::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -6163,7 +6179,7 @@ mod tests {
                 pending: true,
                 selected_pane: None,
                 selected_popup: None,
-                panes: vec![],
+                columns: Vec::new(),
                 popups: vec![],
             }],
             codex_quota: None,

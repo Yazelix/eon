@@ -1,5 +1,8 @@
-use crate::{model::active_popup, render::CellMetrics};
-use eon_workspace_protocol::v9::{ClaudeQuotaState, CodexQuotaState, QuotaWindow, Snapshot};
+use crate::{
+    model::{active_popup, presented_panes},
+    render::CellMetrics,
+};
+use eon_workspace_protocol::v10::{ClaudeQuotaState, CodexQuotaState, QuotaWindow, Snapshot};
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, Rgb, Row, Screen, StyleColor, Underline,
     session::VerticalDirection,
@@ -858,8 +861,8 @@ impl WorkspaceScene {
                 0.0,
                 ShortcutHintsScene::reserved_height(metrics)
                     + tab_height
-                    + pane_height * tab.panes.len() as f32
-                    + if tab.panes.is_empty() {
+                    + pane_height * presented_panes(tab).len() as f32
+                    + if presented_panes(tab).is_empty() {
                         0.0
                     } else {
                         stack_inset(metrics)
@@ -1082,7 +1085,7 @@ impl WorkspaceScene {
             ..pane_viewport
         };
         let chrome = pane_chrome_rect(stack_viewport, metrics);
-        if popup.is_some() || active.panes.is_empty() {
+        if popup.is_some() || presented_panes(active).is_empty() {
             let horizontal_inset = (snapshot.geometry.side_margin * metrics.scale)
                 .min((pane_viewport.width - metrics.padding * 2.0 - metrics.width).max(0.0) / 2.0);
             let vertical_inset = (snapshot.geometry.vertical_margin * metrics.scale).min(
@@ -1150,15 +1153,14 @@ impl WorkspaceScene {
             .selected_pane
             .as_ref()
             .expect("EONW validates the selected pane");
-        let selected_pane = active
-            .panes
+        let selected_pane = presented_panes(active)
             .iter()
             .position(|pane| pane.id == *selected)
             .expect("EONW validates the selected pane");
         let maximum_terminal_height = (pane_viewport.height - pane_height).max(0.0);
         let minimum_terminal_height =
             (metrics.padding * 2.0 + metrics.height).min(maximum_terminal_height);
-        let pane_headers_height = active.panes.len() as f32 * pane_height;
+        let pane_headers_height = presented_panes(active).len() as f32 * pane_height;
         let terminal_height = (pane_viewport.height - pane_headers_height)
             .clamp(minimum_terminal_height, maximum_terminal_height);
         let pane_scroll_limit =
@@ -1168,8 +1170,7 @@ impl WorkspaceScene {
         } else {
             0.0
         };
-        let panes = active
-            .panes
+        let panes = presented_panes(active)
             .iter()
             .enumerate()
             .map(|(index, pane)| {
@@ -1902,7 +1903,7 @@ mod tests {
 
     #[test]
     fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
-        use eon_workspace_protocol::v9::{
+        use eon_workspace_protocol::v10::{
             ALT, Pane, Popup, PopupEntry, PopupGeometry, Shortcut, Tab,
         };
 
@@ -1926,11 +1927,14 @@ mod tests {
                 pending: false,
                 selected_pane: Some("p1".into()),
                 selected_popup: None,
-                panes: vec![Pane {
-                    id: "p1".into(),
-                    session: "session-1".into(),
-                    endpoint: b"/run/pane.sock".to_vec(),
-                    live: true,
+                columns: vec![eon_workspace_protocol::v10::Column {
+                    panes: vec![Pane {
+                        id: "p1".into(),
+                        session: "session-1".into(),
+                        endpoint: b"/run/pane.sock".to_vec(),
+                        live: true,
+                    }],
+                    expanded: "p1".into(),
                 }],
                 popups: vec![Popup {
                     id: "u1".into(),
@@ -2170,7 +2174,7 @@ mod tests {
 
     #[test]
     fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
-        use eon_workspace_protocol::v9::{Pane, PopupGeometry, Tab};
+        use eon_workspace_protocol::v10::{Pane, PopupGeometry, Tab};
 
         let snapshot = Snapshot {
             active_tab: "t2".into(),
@@ -2186,11 +2190,14 @@ mod tests {
                     pending: false,
                     selected_pane: Some(format!("p{index}")),
                     selected_popup: None,
-                    panes: vec![Pane {
-                        id: format!("p{index}"),
-                        session: format!("s{index}"),
-                        endpoint: format!("/tmp/p{index}.sock").into_bytes(),
-                        live: true,
+                    columns: vec![eon_workspace_protocol::v10::Column {
+                        panes: vec![Pane {
+                            id: format!("p{index}"),
+                            session: format!("s{index}"),
+                            endpoint: format!("/tmp/p{index}.sock").into_bytes(),
+                            live: true,
+                        }],
+                        expanded: format!("p{index}"),
                     }],
                     popups: Vec::new(),
                 })

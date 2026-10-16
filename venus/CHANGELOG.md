@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Venus consumes EONW v10, whose tabs hold up to four pane columns. It still
+  presents one accordion: the column holding the tab's selected pane
+  (`eon-splits-opwv` slice 2).
 - VEN-C26: the Claude quota chip shows each window's elapsed position, such as
   `3d2h/7d 40%`, like the Codex chip. Hover and accessibility say how far into
   each window the observation is (`eon-claude-chip-position-iubd`).

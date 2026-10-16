@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v9::{
+use eon_workspace_protocol::v10::{
     self as workspace, Action as WorkspaceAction, Request as WorkspaceRequest,
     Response as WorkspaceResponse,
 };
@@ -60,7 +60,7 @@ pub enum WorkspaceEvent {
     Unavailable(String),
 }
 
-/// Bounded semantic-action handle for EONW v9.
+/// Bounded semantic-action handle for EONW v10.
 pub struct WorkspaceTransport {
     actions: mpsc::SyncSender<WorkspaceAction>,
     events: Arc<WorkspaceEventQueue>,
@@ -705,7 +705,7 @@ fn protocol_loss(error: session::Error) -> TransportEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v9::{
+    use eon_workspace_protocol::v10::{
         InvokeIntent, Pane, Popup, PopupEntry, Shortcut, Snapshot, Tab,
     };
     use orbit_protocol::{
@@ -1351,14 +1351,17 @@ mod tests {
                 id: "t1".into(),
                 directory: b"/tmp/eon".to_vec(),
                 selected_pane: Some("pane-1".into()),
-                panes: vec![Pane {
-                    id: "pane-1".into(),
-                    session: "session-1".into(),
-                    endpoint: b"/run/eon/orbit.sock".to_vec(),
-                    live: true,
+                columns: vec![eon_workspace_protocol::v10::Column {
+                    panes: vec![Pane {
+                        id: "pane-1".into(),
+                        session: "session-1".into(),
+                        endpoint: b"/run/eon/orbit.sock".to_vec(),
+                        live: true,
+                    }],
+                    expanded: "pane-1".into(),
                 }],
             }],
-            geometry: eon_workspace_protocol::v9::PopupGeometry {
+            geometry: eon_workspace_protocol::v10::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1383,11 +1386,14 @@ mod tests {
             id: "t2".into(),
             directory: b"/tmp/nova".to_vec(),
             selected_pane: Some("pane-2".into()),
-            panes: vec![Pane {
-                id: "pane-2".into(),
-                session: "session-2".into(),
-                endpoint: b"/run/eon/session-2.sock".to_vec(),
-                live: true,
+            columns: vec![eon_workspace_protocol::v10::Column {
+                panes: vec![Pane {
+                    id: "pane-2".into(),
+                    session: "session-2".into(),
+                    endpoint: b"/run/eon/session-2.sock".to_vec(),
+                    live: true,
+                }],
+                expanded: "pane-2".into(),
             }],
         }
     }

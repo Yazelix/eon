@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon workspace` lists each pane's column and whether it is that column's
+  open pane (`column=` and `expanded=`, or `"column"` and `"expanded"` with
+  `--json`), and `eon versions` reports EONW 10. Tabs can hold up to four
+  pane columns internally; Venus still shows one column until splits land.
 - The Claude quota chip shows how far into each window you are, like the Codex
   chip: for example `4h10m/5h 98% · 5d20h/7d 100%`.
 - Quota chips say `old` only when their last good reading is more than an hour

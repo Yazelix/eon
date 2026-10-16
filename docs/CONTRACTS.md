@@ -342,13 +342,18 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Partially proved
 - **Consumer:** One local Eon workspace user.
-- **Trigger:** Launch, create or close a tab, create a pane, traverse focus,
-  reorder the active tab or selected pane, receive terminal exit, or recover
+- **Trigger:** Launch, create or close a tab, create a pane or column, traverse
+  focus, reorder the active tab or selected pane, receive terminal exit, or recover
   accepted same-boot runs.
 - **Result:**
-  - A workspace contains horizontal tabs with vertical accordion panes. Each
-    pane views an independent persistent terminal. When the pane stack is
-    visible, exactly one pane is expanded.
+  - A workspace contains horizontal tabs. Each established tab with panes
+    holds an ordered row of one to four columns (pending and popup-only tabs
+    hold none); each column is a vertical accordion of panes with exactly
+    one expanded pane. Each pane views an independent persistent terminal.
+    Every column's expanded pane is visible at once; exactly one of them is the
+    tab's selected pane and receives keyboard input. A one-column tab behaves
+    as a single accordion. Pending: until `eon-splits-opwv` slice 3, Venus
+    presents only the column holding the selected pane.
   - Tabs use stable `tN` identities. Each tab header shows its number plus the
     directory leaf or `/` derived from Eon's authoritative launch directory;
     actions retain `tN`, and accessibility includes full launch-path context. Venus
@@ -375,17 +380,29 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     stopping existing terminals. Eon supplies the default; Eon Runtime owns the
     strict boolean and launch projection; Venus owns geometry, rendering,
     input and accessibility.
-  - Left/right tab traversal and up/down pane traversal wrap at ordered edges
-    when the axis has at least two targets. Singleton traversal and selecting
+  - Left/right traversal treats the visible columns of all tabs as one ordered
+    strip: it moves between the active tab's columns, continues from the first
+    or last column to the previous or next tab, and enters that tab at its
+    nearest edge column (rightmost when moving left, leftmost when moving
+    right), wrapping at the strip's ends; with one tab it wraps between that
+    tab's columns. While a popup or picker covers a tab, traversal moves
+    between tabs directly. Tab focus by position or identity keeps the tab's
+    last selected column. Up/down
+    traversal moves within the selected column and wraps when it has at least
+    two panes. Singleton traversal and selecting
     the already-selected live identity succeed with an unchanged snapshot.
     Left/right remains available while a directory picker is open: the picker
     stays bound to its original live tab while another active tab presents its
     selected pane. Tab navigation by identity also remains available. Users can
     create panes in another tab and create additional pending tabs, each with
     its own picker under EONW v7.
+  - Creating a column adds a column immediately right of the selected column,
+    holding one new pane in the tab's launch directory, and selects it; in a
+    tab without columns it acts exactly as creating a pane. Pending: Venus maps
+    Alt+Shift+M in slice 3. Alt+M adds a pane to the selected column.
   - Moving left/right swaps the active tab with exactly one adjacent tab;
     moving up/down swaps the selected pane with exactly one adjacent pane in
-    the active tab. The moved stable identity remains selected. Movement stops
+    the selected column. The moved stable identity remains selected. Movement stops
     quietly at ordered edges and remains unavailable in the picker-bound active tab.
     Venus maps Ctrl+Alt+H/L and Ctrl+Alt+K/J directly to these actions without a
     mode.
@@ -404,13 +421,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - Ended terminals leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
     removed index, otherwise the preceding sibling; an empty workspace closes
-    Venus and the supervisor.
-  - Same-boot recovered runs project numerically into synthetic `t1` as `pN`
+    Venus and the supervisor. A column whose last pane ends disappears; if it
+    held the selection, selection moves to the following column, otherwise the
+    preceding one.
+  - Same-boot recovered runs project numerically into one column of synthetic
+    `t1` as `pN`
     without claiming restoration of prior topology or launch-directory policy.
   - New current-generation full Eon surfaces omit the redundant native title
     bar while retaining the selected terminal title for compositor semantics.
 - **Important failures:** Unknown or stale identity, a close target other than
-  the active tab, final-tab close, durable close in the picker-bound tab,
+  the active tab, final-tab close, creating a fifth column, durable close in the picker-bound tab,
   invalid transition, unavailable endpoint, duplicate identity, or partial
   recovery leaves accepted topology unchanged. A repeated request ID never
   repeats a stop, and a replay naming a removed tab cannot close its successor.
@@ -423,10 +443,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v7 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v10 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
-- **Boundary:** No arbitrary split tree, simultaneous expanded panes, arbitrary
-  reorder target or cross-tab pane movement, picker relocation, durable layout
+- **Boundary:** No arbitrary split tree, vertical splits, column resizing,
+  arbitrary reorder target, cross-column or cross-tab pane movement, picker relocation, durable layout
   restoration, a user-facing per-pane terminal stop/restart action, terminal
   content/history, provider state, plugin surface, remote access, or
   reconstructed terminal state.
@@ -447,7 +467,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `pane_metadata_label_is_bounded_safe_and_has_honest_fallbacks`,
     `workspace_accessibility_order_matches_tabs_then_one_expanded_pane`).
     Installed checklist items 3 and 4.
-- **Open proof:** Pending re-proof in this repository: bounded Linux reader
+- **Open proof:** Columns (`eon-splits-opwv`): runtime topology and EONW v10
+  are covered by `columns_hold_accordions_traverse_into_tabs_and_collapse_on_exit`,
+  `create_column_in_a_popup_only_tab_never_overfills_a_neighbor` and the v10
+  codec tests; Venus simultaneous presentation, the Alt+Shift+M mapping and
+  installed dogfood remain open. Pending re-proof in this repository: bounded Linux reader
   qualification with unmodified upstream Orca
   `d13f83dcf230fe1e66f1ed6dbfbf057840f55a6a`, which includes
   [the #757 correction](https://gitlab.gnome.org/GNOME/orca/-/commit/f0189cbf9e97208b7aceada7602bf00d2172aad3);
@@ -546,7 +570,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   content, or direct child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v2–v9 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v2–v10 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;

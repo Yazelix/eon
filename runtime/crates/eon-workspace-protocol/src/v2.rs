@@ -775,6 +775,10 @@ impl<'a> Decoder<'a> {
         Ok(value)
     }
 
+    pub(crate) fn rest(self) -> &'a [u8] {
+        &self.bytes[self.offset..]
+    }
+
     pub(crate) fn finish(self) -> Result<()> {
         if self.offset == self.bytes.len() {
             Ok(())

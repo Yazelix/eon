@@ -1,5 +1,5 @@
 use crate::scene::{DrawRow, Scene, ScenePreview};
-use eon_workspace_protocol::v9::{Popup, Response as WorkspaceResponse, Snapshot};
+use eon_workspace_protocol::v10::{Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab};
 use orbit_protocol::FrameReducer;
 use orbit_protocol::session::{
     ClipboardLocation, FailureCode, PreviewOutcome, ScrollOutcome, ServerMessage, WheelOutcome,
@@ -96,6 +96,16 @@ enum WorkspaceNotice {
     Unavailable(String),
 }
 
+/// The panes of the column Venus presents: the one holding the tab's selected pane.
+#[must_use]
+pub fn presented_panes(tab: &Tab) -> &[Pane] {
+    tab.columns
+        .iter()
+        .find(|column| tab.selected_pane.as_ref() == Some(&column.expanded))
+        .or(tab.columns.first())
+        .map_or(&[], |column| &column.panes)
+}
+
 #[must_use]
 pub fn active_popup(snapshot: &Snapshot) -> Option<&Popup> {
     let tab = snapshot
@@ -166,8 +176,7 @@ impl WorkspaceModel {
             .iter()
             .find(|tab| tab.id == snapshot.active_tab)?;
         let selected = tab.selected_pane.as_ref()?;
-        tab.panes
-            .iter()
+        tab.panes()
             .find(|pane| pane.id == *selected)
             .map(|pane| (pane.endpoint.as_slice(), pane.live))
     }
@@ -492,7 +501,7 @@ fn bounded(mut detail: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v9::{
+    use eon_workspace_protocol::v10::{
         self as workspace, CodexQuota, CodexQuotaState, Failure, Pane, PopupEntry, Shortcut, Tab,
     };
 
@@ -508,11 +517,14 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    panes: vec![Pane {
-                        id: "pane-1".into(),
-                        session: "session-1".into(),
-                        endpoint: b"/run/eon/orbit.sock".to_vec(),
-                        live: true,
+                    columns: vec![eon_workspace_protocol::v10::Column {
+                        panes: vec![Pane {
+                            id: "pane-1".into(),
+                            session: "session-1".into(),
+                            endpoint: b"/run/eon/orbit.sock".to_vec(),
+                            live: true,
+                        }],
+                        expanded: "pane-1".into(),
                     }],
                 },
                 Tab {
@@ -522,15 +534,18 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-2".into()),
-                    panes: vec![Pane {
-                        id: "pane-2".into(),
-                        session: "session-2".into(),
-                        endpoint: b"/run/eon/nova.sock".to_vec(),
-                        live: true,
+                    columns: vec![eon_workspace_protocol::v10::Column {
+                        panes: vec![Pane {
+                            id: "pane-2".into(),
+                            session: "session-2".into(),
+                            endpoint: b"/run/eon/nova.sock".to_vec(),
+                            live: true,
+                        }],
+                        expanded: "pane-2".into(),
                     }],
                 },
             ],
-            geometry: eon_workspace_protocol::v9::PopupGeometry {
+            geometry: eon_workspace_protocol::v10::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -629,7 +644,7 @@ mod tests {
         );
 
         let mut offline = snapshot.clone();
-        offline.tabs[0].panes[0].live = false;
+        offline.tabs[0].columns[0].panes[0].live = false;
         model.apply(WorkspaceResponse::Snapshot(offline));
         assert_eq!(
             model.active_attachment(),
@@ -645,7 +660,7 @@ mod tests {
             pending: true,
             selected_pane: None,
             selected_popup: Some(format!("u{number}")),
-            panes: vec![],
+            columns: Vec::new(),
             popups: vec![Popup {
                 id: format!("u{number}"),
                 entry: "project".into(),

@@ -3578,7 +3578,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
     fn long_workspace_labels_stay_on_the_visible_line() {
-        use eon_workspace_protocol::v9::{Pane, Snapshot, Tab};
+        use eon_workspace_protocol::v10::{Pane, Snapshot, Tab};
         use winit::{
             application::ApplicationHandler, event::WindowEvent, event_loop::EventLoop,
             platform::wayland::EventLoopBuilderExtWayland, window::WindowId,
@@ -3603,7 +3603,7 @@ mod tests {
                 .unwrap();
                 let snapshot = Snapshot {
                     active_tab: "t2".into(),
-                    geometry: eon_workspace_protocol::v9::PopupGeometry {
+                    geometry: eon_workspace_protocol::v10::PopupGeometry {
                         side_margin: 8.0,
                         vertical_margin: 4.0,
                     },
@@ -3618,11 +3618,15 @@ mod tests {
                             id: format!("t{}", index + 1),
                             directory: format!("/tmp/{directory}").into_bytes(),
                             selected_pane: Some(format!("p{}", index + 1)),
-                            panes: vec![Pane {
-                                id: format!("p{}", index + 1),
-                                session: format!("session-{}", index + 1),
-                                endpoint: format!("/tmp/session-{}.sock", index + 1).into_bytes(),
-                                live: true,
+                            columns: vec![eon_workspace_protocol::v10::Column {
+                                panes: vec![Pane {
+                                    id: format!("p{}", index + 1),
+                                    session: format!("session-{}", index + 1),
+                                    endpoint: format!("/tmp/session-{}.sock", index + 1)
+                                        .into_bytes(),
+                                    live: true,
+                                }],
+                                expanded: format!("p{}", index + 1),
                             }],
                         })
                         .collect(),
@@ -3688,13 +3692,13 @@ mod tests {
                     "Tab 2 of 2  /tmp/machines_vs_aliens"
                 );
                 let mut snapshot = snapshot;
-                snapshot.tabs[1].panes.push(Pane {
+                snapshot.tabs[1].columns[0].panes.push(Pane {
                     id: "p3".into(),
                     session: "s3".into(),
                     endpoint: b"/tmp/p3.sock".to_vec(),
                     live: false,
                 });
-                snapshot.tabs[1].panes[0].live = false;
+                snapshot.tabs[1].columns[0].panes[0].live = false;
                 let workspace = WorkspaceScene::from_snapshot(
                     &snapshot,
                     PhysicalSize::new(900, 600),
@@ -3743,7 +3747,7 @@ mod tests {
                     1,
                 );
                 assert!(renderer.text[1].buffer.layout_runs().count() > 1);
-                snapshot.tabs[1].panes[0].live = true;
+                snapshot.tabs[1].columns[0].panes[0].live = true;
                 let metadata = crate::scene::PaneMetadata::Available {
                     working_directory: format!("/{}mountain/leaf", "W".repeat(46)),
                 };
