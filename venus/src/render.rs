@@ -326,6 +326,17 @@ fn row_intersects_clip(top: f32, height: f32, clip: SceneRect) -> bool {
     top < clip.bottom() && top + height > clip.top
 }
 
+/// Draw state for the terminal this renderer presents: hovered link, scrollback pill and cursor trail.
+struct TerminalLayer {
+    hyperlink: Option<(u16, u16)>,
+    scrollback_label: Option<String>,
+    scrollback_rect: Option<SceneRect>,
+    presented_scrollback_rect: Option<SceneRect>,
+    cursor_animation: CursorAnimation,
+    cursor_handoff: bool,
+    last_cursor_frame: Option<Instant>,
+}
+
 /// One wgpu surface and one glyphon text owner for the native window.
 pub struct Renderer {
     instance: Instance,
@@ -350,18 +361,12 @@ pub struct Renderer {
     text_overlay: Option<(usize, TextBounds)>,
     text: Vec<PlacedText>,
     content_key: Option<ContentKey>,
-    hyperlink: Option<(u16, u16)>,
+    terminal: TerminalLayer,
     hovered_header: Option<(WorkspaceFocus, String)>,
     quota_hovered: Option<usize>,
     version_hovered: bool,
     pressed_header: Option<WorkspaceHeaderControl>,
-    scrollback_label: Option<String>,
-    scrollback_rect: Option<SceneRect>,
-    presented_scrollback_rect: Option<SceneRect>,
     cursor_tail: Option<(SceneColor, SceneColor, f32)>,
-    cursor_animation: CursorAnimation,
-    cursor_handoff: bool,
-    last_cursor_frame: Option<Instant>,
     clear: wgpu::Color,
     background_opacity: f32,
     pane_frames: bool,
@@ -372,11 +377,11 @@ pub struct Renderer {
 
 impl Renderer {
     pub fn set_scrollback_label(&mut self, label: Option<String>) {
-        self.scrollback_label = label;
+        self.terminal.scrollback_label = label;
     }
 
     pub fn presented_scrollback_rect(&self) -> Option<SceneRect> {
-        self.presented_scrollback_rect
+        self.terminal.presented_scrollback_rect
     }
 
     pub fn set_hovered_header(&mut self, header: Option<(WorkspaceFocus, String)>) {
@@ -417,15 +422,20 @@ impl Renderer {
     }
 
     pub fn set_hyperlink(&mut self, hyperlink: Option<(u16, u16)>) {
-        self.hyperlink = hyperlink;
+        self.terminal.hyperlink = hyperlink;
     }
 
     /// Notice placement shares the rendered link's geometry, keeping its target visible.
     #[must_use]
     pub fn notice_rect(&self, workspace: Option<&WorkspaceScene>) -> SceneRect {
-        let height = self.metrics.height * if self.hyperlink.is_some() { 3.0 } else { 1.5 };
+        let height = self.metrics.height
+            * if self.terminal.hyperlink.is_some() {
+                3.0
+            } else {
+                1.5
+            };
         let bottom = self.config.height as f32 - height - self.metrics.height * 0.5;
-        let link_bottom = self.hyperlink.map(|(row, _)| {
+        let link_bottom = self.terminal.hyperlink.map(|(row, _)| {
             workspace.map_or(0.0, |workspace| workspace.terminal.top)
                 + self.metrics.padding
                 + f32::from(row + 1) * self.metrics.height
@@ -609,19 +619,21 @@ impl Renderer {
             text_overlay: None,
             text: Vec::new(),
             content_key: None,
-            hyperlink: None,
+            terminal: TerminalLayer {
+                hyperlink: None,
+                scrollback_label: None,
+                scrollback_rect: None,
+                presented_scrollback_rect: None,
+                cursor_animation: CursorAnimation::default(),
+                cursor_handoff: false,
+                last_cursor_frame: None,
+            },
             hovered_header: None,
             quota_hovered: None,
             version_hovered: false,
             pressed_header: None,
-            scrollback_label: None,
-            scrollback_rect: None,
-            presented_scrollback_rect: None,
             cursor_tail: cursor_tail
                 .map(|(color, duration)| (color, cursor_outline(color), duration)),
-            cursor_animation: CursorAnimation::default(),
-            cursor_handoff: false,
-            last_cursor_frame: None,
             clear: clear_color(DEFAULT_BACKGROUND, background_opacity, srgb_target),
             background_opacity,
             pane_frames,
@@ -666,28 +678,28 @@ impl Renderer {
     }
 
     pub fn reset_cursor_animation(&mut self) {
-        self.cursor_animation.reset();
-        self.cursor_handoff = false;
-        self.last_cursor_frame = None;
+        self.terminal.cursor_animation.reset();
+        self.terminal.cursor_handoff = false;
+        self.terminal.last_cursor_frame = None;
         self.dynamic_vertex_count = 0;
     }
 
     pub fn suspend_cursor_animation(&mut self) {
         // Keep cosmetic position without drawing or ticking the old attachment.
-        self.cursor_handoff = self.cursor_animation.target.is_some();
-        self.last_cursor_frame = None;
+        self.terminal.cursor_handoff = self.terminal.cursor_animation.target.is_some();
+        self.terminal.last_cursor_frame = None;
         self.dynamic_vertex_count = 0;
     }
 
     pub fn attach_cursor_animation(&mut self) {
-        if !self.cursor_handoff {
+        if !self.terminal.cursor_handoff {
             self.reset_cursor_animation();
         }
     }
 
     #[must_use]
     pub fn cursor_animation_active(&self) -> bool {
-        !self.cursor_handoff && self.cursor_animation.is_active()
+        !self.terminal.cursor_handoff && self.terminal.cursor_animation.is_active()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -853,7 +865,7 @@ impl Renderer {
         self.queue.present(frame);
         ensure_device_available(&self.device_lost)?;
         self.atlas.trim();
-        self.presented_scrollback_rect = self.scrollback_rect;
+        self.terminal.presented_scrollback_rect = self.terminal.scrollback_rect;
         Ok(PresentOutcome::Presented)
     }
 
@@ -878,12 +890,12 @@ impl Renderer {
             blink_visible,
             preedit: preedit.to_owned(),
             status: status.to_owned(),
-            hyperlink: self.hyperlink,
+            hyperlink: self.terminal.hyperlink,
             hovered_header: self.hovered_header.clone(),
             quota_hovered: self.quota_hovered,
             version_hovered: self.version_hovered,
             pressed_header: self.pressed_header,
-            scrollback_label: self.scrollback_label.clone(),
+            scrollback_label: self.terminal.scrollback_label.clone(),
             shortcut_viewer_scroll: shortcut_viewer.map(|viewer| viewer.scroll),
         };
         if self.content_key.as_ref() == Some(&key) {
@@ -892,7 +904,7 @@ impl Renderer {
 
         self.text.clear();
         self.text_overlay = None;
-        self.scrollback_rect = None;
+        self.terminal.scrollback_rect = None;
         let viewport = workspace.map_or(
             SceneRect {
                 left: 0.0,
@@ -1173,12 +1185,13 @@ impl Renderer {
                 None,
             )
         };
-        if scene.is_none() && self.cursor_handoff {
+        if scene.is_none() && self.terminal.cursor_handoff {
             return;
         }
-        self.cursor_handoff = false;
+        self.terminal.cursor_handoff = false;
         let now = Instant::now();
         let delta = self
+            .terminal
             .last_cursor_frame
             .replace(now)
             .map_or(0.0, |last| now.duration_since(last).as_secs_f32());
@@ -1187,7 +1200,7 @@ impl Renderer {
         if let Some(scene) = scene {
             build_tail_cursor(
                 &mut rectangles,
-                &mut self.cursor_animation,
+                &mut self.terminal.cursor_animation,
                 scene,
                 blink_visible,
                 self.metrics,
@@ -1198,7 +1211,7 @@ impl Renderer {
                 delta,
             );
         } else {
-            self.cursor_animation.reset();
+            self.terminal.cursor_animation.reset();
         }
         self.upload_dynamic_vertices(&rectangles.bytes);
     }
@@ -1275,10 +1288,11 @@ impl Renderer {
             height,
         };
         if self
+            .terminal
             .scrollback_rect
             .is_some_and(|pill| pill.intersection(tooltip).is_some())
         {
-            self.scrollback_rect = None;
+            self.terminal.scrollback_rect = None;
         }
         text.left = left + padding;
         text.bound_left = text.left.floor() as i32;
@@ -1824,7 +1838,7 @@ impl Renderer {
         cursor: Option<SceneRect>,
         rectangles: &mut RectangleBatch,
     ) -> f32 {
-        let Some(label) = self.scrollback_label.clone() else {
+        let Some(label) = self.terminal.scrollback_label.clone() else {
             return 0.0;
         };
         let padding = self.metrics.padding;
@@ -1857,7 +1871,7 @@ impl Renderer {
         {
             return 0.0;
         }
-        self.scrollback_rect = Some(rect);
+        self.terminal.scrollback_rect = Some(rect);
         let first = self.text.len();
         self.push_text_clipped(
             &label,
@@ -1906,7 +1920,7 @@ impl Renderer {
     }
 
     fn build_hyperlink(&self, scene: &Scene, rectangles: &mut RectangleBatch, origin: SceneRect) {
-        if let Some((row, column)) = self.hyperlink
+        if let Some((row, column)) = self.terminal.hyperlink
             && let Some(link) = scene.hyperlink_at(row, column)
         {
             let rect = link.rect(origin, self.metrics);
@@ -1933,10 +1947,11 @@ impl Renderer {
     ) {
         let rect = self.notice_rect(workspace);
         if self
+            .terminal
             .scrollback_rect
             .is_some_and(|pill| pill.intersection(rect).is_some())
         {
-            self.scrollback_rect = None;
+            self.terminal.scrollback_rect = None;
         }
         // Text is drawn after rectangles; clip underlying rows out of this overlay.
         for text in &mut self.text {
@@ -1969,7 +1984,7 @@ impl Renderer {
                 g: 192,
                 b: 94,
             },
-            if self.hyperlink.is_some() {
+            if self.terminal.hyperlink.is_some() {
                 DrawStyleKind::Monospace
             } else {
                 DrawStyleKind::Status(Wrap::None)
@@ -3761,7 +3776,7 @@ mod tests {
                     .iter()
                     .find(|text| text.buffer.lines[0].text() == "↓ 240 rows")
                     .unwrap();
-                let pill = renderer.scrollback_rect.unwrap();
+                let pill = renderer.terminal.scrollback_rect.unwrap();
                 assert!(pill.contains(pill.left + 1.0, pill.top + 1.0));
                 let pane = workspace.panes.iter().find(|pane| pane.selected).unwrap();
                 assert!(
@@ -3807,7 +3822,7 @@ mod tests {
                         .iter()
                         .all(|text| !text.buffer.lines[0].text().starts_with('↓'))
                 );
-                assert!(renderer.scrollback_rect.is_none());
+                assert!(renderer.terminal.scrollback_rect.is_none());
                 renderer.set_scrollback_label(Some("↓ 18446744073709551615 rows".into()));
                 let viewport = SceneRect {
                     left: 0.0,
