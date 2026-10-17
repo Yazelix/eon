@@ -96,9 +96,9 @@ enum WorkspaceNotice {
     Unavailable(String),
 }
 
-/// The panes of the column Venus presents: the one holding the tab's selected pane.
+/// The selected column's panes, which size the initial window.
 #[must_use]
-pub fn presented_panes(tab: &Tab) -> &[Pane] {
+pub(crate) fn presented_panes(tab: &Tab) -> &[Pane] {
     tab.columns
         .iter()
         .find(|column| tab.selected_pane.as_ref() == Some(&column.expanded))

@@ -333,6 +333,7 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
         });
     }
     overflow_snapshot.tabs[0].selected_pane = Some("pane-32".into());
+    overflow_snapshot.tabs[0].columns[0].expanded = "pane-32".into();
     let unscrolled =
         WorkspaceScene::from_snapshot(&overflow_snapshot, size, metrics, 0.0, 0.0, |_, text| {
             (text.to_owned(), text.chars().count() as f32 * 10.0)
@@ -1050,4 +1051,128 @@ fn cell(text: &str, width: CellWidth, foreground: StyleColor, hyperlink: &str) -
         text: text.into(),
         hyperlink: hyperlink.into(),
     }
+}
+
+#[test]
+fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
+    let pane = |id: &str| Pane {
+        id: id.into(),
+        session: format!("session-{id}"),
+        endpoint: format!("/run/eon/{id}.sock").into_bytes(),
+        live: true,
+    };
+    let snapshot = Snapshot {
+        active_tab: "t1".into(),
+        tabs: vec![Tab {
+            pending: false,
+            selected_popup: None,
+            popups: Vec::new(),
+            id: "t1".into(),
+            directory: b"/tmp/eon".to_vec(),
+            selected_pane: Some("p3".into()),
+            columns: vec![
+                eon_workspace_protocol::v10::Column {
+                    panes: vec![pane("p1"), pane("p2")],
+                    expanded: "p2".into(),
+                },
+                eon_workspace_protocol::v10::Column {
+                    panes: vec![pane("p3")],
+                    expanded: "p3".into(),
+                },
+                eon_workspace_protocol::v10::Column {
+                    panes: vec![pane("p4")],
+                    expanded: "p4".into(),
+                },
+            ],
+        }],
+        geometry: eon_workspace_protocol::v10::PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 4.0,
+        },
+        entries: Vec::new(),
+        codex_quota: None,
+        claude_quota: None,
+    };
+    let size = PhysicalSize::new(901, 600);
+    let scene = WorkspaceScene::from_snapshot(
+        &snapshot,
+        size,
+        CellMetrics::for_scale(1.0),
+        0.0,
+        0.0,
+        |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+    );
+
+    // The selected column stays primary; the others keep their positions.
+    assert_eq!(scene.selected_column, 1);
+    assert_eq!(
+        scene
+            .panes
+            .iter()
+            .map(|pane| pane.id.as_str())
+            .collect::<Vec<_>>(),
+        ["p3"]
+    );
+    assert_eq!(
+        scene
+            .column_panes()
+            .map(|(panes, selected)| (
+                panes
+                    .iter()
+                    .map(|pane| pane.id.as_str())
+                    .collect::<Vec<_>>(),
+                selected
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (vec!["p1", "p2"], false),
+            (vec!["p3"], true),
+            (vec!["p4"], false)
+        ]
+    );
+
+    // Terminals tile the width left to right without overlapping.
+    let mut terminals = scene
+        .other_columns
+        .iter()
+        .map(|column| (column.index, column.terminal))
+        .chain([(scene.selected_column, scene.terminal)])
+        .collect::<Vec<_>>();
+    terminals.sort_by_key(|(index, _)| *index);
+    assert_eq!(terminals[0].1.left, 0.0);
+    for pair in terminals.windows(2) {
+        assert_eq!(pair[0].1.right(), pair[1].1.left);
+    }
+    assert_eq!(terminals[2].1.right(), size.width as f32);
+    // The last column takes the remainder, and headers share their column's span.
+    let widths: Vec<f32> = terminals.iter().map(|entry| entry.1.width).collect();
+    assert_eq!(widths, [300.0, 300.0, 301.0]);
+    for column in &scene.other_columns {
+        for pane in &column.panes {
+            assert_eq!(pane.rect.left, column.terminal.left);
+            assert_eq!(pane.rect.width, column.terminal.width);
+        }
+    }
+    for pane in &scene.panes {
+        assert_eq!(pane.rect.left, scene.terminal.left);
+        assert_eq!(pane.rect.width, scene.terminal.width);
+    }
+
+    // Each column shows its own expanded pane; clicking another column focuses it.
+    let first = &scene.other_columns[0];
+    assert!(
+        first
+            .panes
+            .iter()
+            .any(|pane| pane.id == "p2" && pane.selected)
+    );
+    let inside = first.terminal;
+    assert!(matches!(
+        scene.hit_test(inside.left + 5.0, inside.top + 5.0),
+        Some(WorkspaceHit::Pane("p2"))
+    ));
+    assert!(matches!(
+        scene.hit_test(scene.terminal.left + 5.0, scene.terminal.top + 5.0),
+        Some(WorkspaceHit::Terminal)
+    ));
 }

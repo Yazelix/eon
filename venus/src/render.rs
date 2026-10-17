@@ -981,9 +981,20 @@ impl Renderer {
                 ..workspace.chrome
             };
             rectangles.clip = Some(workspace.pane_viewport);
-            if self.pane_frames && !workspace.panes.is_empty() {
-                let frame = chrome;
-                for pane in workspace.panes.iter().skip(1) {
+            let frames = std::iter::once((chrome, workspace.panes.as_slice())).chain(
+                workspace.other_columns.iter().map(|column| {
+                    (
+                        SceneRect {
+                            height: chrome.height,
+                            ..column.chrome
+                        },
+                        column.panes.as_slice(),
+                    )
+                }),
+            );
+            for (frame, panes) in frames.filter(|(_, panes)| self.pane_frames && !panes.is_empty())
+            {
+                for pane in panes.iter().skip(1) {
                     rectangles.clip = Some(SceneRect {
                         top: pane.rect.top,
                         height: 1.0,
@@ -1752,81 +1763,92 @@ impl Renderer {
                 control.rect,
             );
         }
-        for pane in &workspace.panes {
-            let Some(rect) = pane.rect.intersection(workspace.pane_viewport) else {
-                continue;
-            };
-            rectangles.push(
-                rect.left,
-                rect.top,
-                rect.width,
-                rect.height,
-                DEFAULT_BACKGROUND,
-                1.0,
-            );
-            rectangles.clip = Some(rect);
-            if pane.selected || self.header_hovered(WorkspaceFocus::Panes, &pane.id) {
-                rectangles.push_rounded(
-                    pane_chrome_rect(workspace.pane_viewport, self.metrics),
-                    self.metrics.padding,
-                    if pane.selected { selected } else { idle },
+        for (panes, selected_column) in workspace.column_panes() {
+            for pane in panes {
+                // Only the selected column's expanded header shows selection and scrollback.
+                let current = pane.selected && selected_column;
+                let Some(rect) = pane.rect.intersection(workspace.pane_viewport) else {
+                    continue;
+                };
+                rectangles.push(
+                    rect.left,
+                    rect.top,
+                    rect.width,
+                    rect.height,
+                    DEFAULT_BACKGROUND,
+                    1.0,
+                );
+                rectangles.clip = Some(rect);
+                if pane.selected || self.header_hovered(WorkspaceFocus::Panes, &pane.id) {
+                    rectangles.push_rounded(
+                        pane_chrome_rect(
+                            SceneRect {
+                                left: pane.rect.left,
+                                width: pane.rect.width,
+                                ..workspace.pane_viewport
+                            },
+                            self.metrics,
+                        ),
+                        self.metrics.padding,
+                        if current { selected } else { idle },
+                    );
+                }
+                rectangles.clip = None;
+                let scrollback_width = if current {
+                    self.build_scrollback(
+                        SceneRect {
+                            left: pane.rect.left + self.metrics.width * 4.0,
+                            width: (pane.rect.width - self.metrics.width * 4.0).max(0.0),
+                            ..pane.rect
+                        },
+                        workspace.pane_viewport,
+                        true,
+                        None,
+                        rectangles,
+                    )
+                } else {
+                    0.0
+                };
+                let width = pane.rect.width - self.metrics.padding * 2.0 - scrollback_width;
+                let label = (scrollback_width > 0.0).then(|| {
+                    fit_header_text(
+                        &mut self.fonts.font_system,
+                        self.metrics,
+                        pane.label(),
+                        width,
+                    )
+                    .0
+                });
+                self.push_text_clipped(
+                    label.as_deref().unwrap_or(pane.label()),
+                    pane.rect.left + self.metrics.padding,
+                    pane.rect.top + (pane.rect.height - self.metrics.height) / 2.0,
+                    width,
+                    width,
+                    self.metrics.height,
+                    if current {
+                        SceneColor {
+                            r: 239,
+                            g: 244,
+                            b: 248,
+                        }
+                    } else if !pane.live {
+                        SceneColor {
+                            r: 221,
+                            g: 126,
+                            b: 126,
+                        }
+                    } else {
+                        SceneColor {
+                            r: 162,
+                            g: 174,
+                            b: 190,
+                        }
+                    },
+                    DrawStyleKind::Status(Wrap::None),
+                    workspace.pane_viewport,
                 );
             }
-            rectangles.clip = None;
-            let scrollback_width = if pane.selected {
-                self.build_scrollback(
-                    SceneRect {
-                        left: pane.rect.left + self.metrics.width * 4.0,
-                        width: (pane.rect.width - self.metrics.width * 4.0).max(0.0),
-                        ..pane.rect
-                    },
-                    workspace.pane_viewport,
-                    true,
-                    None,
-                    rectangles,
-                )
-            } else {
-                0.0
-            };
-            let width = pane.rect.width - self.metrics.padding * 2.0 - scrollback_width;
-            let label = (scrollback_width > 0.0).then(|| {
-                fit_header_text(
-                    &mut self.fonts.font_system,
-                    self.metrics,
-                    pane.label(),
-                    width,
-                )
-                .0
-            });
-            self.push_text_clipped(
-                label.as_deref().unwrap_or(pane.label()),
-                pane.rect.left + self.metrics.padding,
-                pane.rect.top + (pane.rect.height - self.metrics.height) / 2.0,
-                width,
-                width,
-                self.metrics.height,
-                if pane.selected {
-                    SceneColor {
-                        r: 239,
-                        g: 244,
-                        b: 248,
-                    }
-                } else if !pane.live {
-                    SceneColor {
-                        r: 221,
-                        g: 126,
-                        b: 126,
-                    }
-                } else {
-                    SceneColor {
-                        r: 162,
-                        g: 174,
-                        b: 190,
-                    }
-                },
-                DrawStyleKind::Status(Wrap::None),
-                workspace.pane_viewport,
-            );
         }
     }
 

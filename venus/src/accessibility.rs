@@ -100,13 +100,18 @@ impl Snapshot {
 
         self.tab_ids
             .retain(|id, _| workspace.tabs.iter().any(|tab| tab.id == *id));
-        self.pane_ids
-            .retain(|id, _| workspace.panes.iter().any(|pane| pane.id == *id));
+        self.pane_ids.retain(|id, _| {
+            workspace
+                .column_panes()
+                .any(|(panes, _)| panes.iter().any(|pane| pane.id == *id))
+        });
         for tab in &workspace.tabs {
             allocate_workspace_id(&mut self.tab_ids, &mut self.next_workspace_id, &tab.id);
         }
-        for pane in &workspace.panes {
-            allocate_workspace_id(&mut self.pane_ids, &mut self.next_workspace_id, &pane.id);
+        for (panes, _) in workspace.column_panes() {
+            for pane in panes {
+                allocate_workspace_id(&mut self.pane_ids, &mut self.next_workspace_id, &pane.id);
+            }
         }
         self.workspace = Some(workspace.clone());
     }
@@ -395,23 +400,34 @@ impl Snapshot {
             panel.set_orientation(Orientation::Vertical);
             panel.set_bounds(rect(workspace.pane_viewport));
             panel.set_clips_children();
-            let mut children = Vec::with_capacity(workspace.panes.len() + 1);
+            let mut children = Vec::with_capacity(
+                workspace
+                    .column_panes()
+                    .map(|(panes, _)| panes.len())
+                    .sum::<usize>()
+                    + 1,
+            );
             if workspace.panes.is_empty() && (visible_terminal.is_some() || !self.status.is_empty())
             {
                 children.push(CONTENT);
             }
-            for pane in &workspace.panes {
-                children.push(self.pane_ids[pane.id.as_str()]);
-                if pane.selected {
-                    children.push(CONTENT);
+            for (panes, selected_column) in workspace.column_panes() {
+                for pane in panes {
+                    children.push(self.pane_ids[pane.id.as_str()]);
+                    if pane.selected && selected_column {
+                        children.push(CONTENT);
+                    }
                 }
             }
             panel.set_children(children);
             nodes.push((PANE_PANEL, panel));
-            for pane in &workspace.panes {
+            for (pane, selected_column) in workspace
+                .column_panes()
+                .flat_map(|(panes, selected)| panes.iter().map(move |pane| (pane, selected)))
+            {
                 let mut node = Node::new(Role::Button);
                 node.set_label(pane.label());
-                node.set_selected(pane.selected);
+                node.set_selected(pane.selected && selected_column);
                 node.set_expanded(pane.selected);
                 if let Some(bounds) = pane.rect.intersection(workspace.pane_viewport) {
                     node.set_bounds(rect(bounds));

@@ -78,6 +78,16 @@ pub struct WorkspacePane {
     label: String,
 }
 
+/// A column other than the selected one: its accordion headers and terminal area.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorkspaceColumn {
+    /// Position among the tab's columns, left to right.
+    pub index: usize,
+    pub panes: Vec<WorkspacePane>,
+    pub terminal: SceneRect,
+    pub(crate) chrome: SceneRect,
+}
+
 impl WorkspacePane {
     pub(crate) fn label(&self) -> &str {
         &self.label
@@ -594,8 +604,11 @@ pub struct WorkspaceScene {
     pub(crate) version: Option<WorkspaceVersion>,
     pub(crate) controls: [WorkspaceControl; 3],
     pub hints: Option<ShortcutHintsScene>,
+    /// The selected column's headers and terminal; `other_columns` holds the rest.
     pub panes: Vec<WorkspacePane>,
     pub terminal: SceneRect,
+    pub selected_column: usize,
+    pub other_columns: Vec<WorkspaceColumn>,
     pub tab_viewport: SceneRect,
     pub pane_viewport: SceneRect,
     pub(crate) chrome: SceneRect,
@@ -1085,7 +1098,7 @@ impl WorkspaceScene {
             ..pane_viewport
         };
         let chrome = pane_chrome_rect(stack_viewport, metrics);
-        if popup.is_some() || presented_panes(active).is_empty() {
+        if popup.is_some() || active.columns.is_empty() {
             let horizontal_inset = (snapshot.geometry.side_margin * metrics.scale)
                 .min((pane_viewport.width - metrics.padding * 2.0 - metrics.width).max(0.0) / 2.0);
             let vertical_inset = (snapshot.geometry.vertical_margin * metrics.scale).min(
@@ -1111,6 +1124,8 @@ impl WorkspaceScene {
                 controls,
                 hints,
                 panes: Vec::new(),
+                selected_column: 0,
+                other_columns: Vec::new(),
                 terminal: SceneRect {
                     left: horizontal_inset,
                     top: pane_viewport.top + vertical_inset + title_gutter,
@@ -1153,58 +1168,109 @@ impl WorkspaceScene {
             .selected_pane
             .as_ref()
             .expect("EONW validates the selected pane");
-        let selected_pane = presented_panes(active)
+        let selected_column = active
+            .columns
             .iter()
-            .position(|pane| pane.id == *selected)
+            .position(|column| column.expanded == *selected)
             .expect("EONW validates the selected pane");
+        let count = active.columns.len();
+        let column_width = (width / count as f32).floor();
         let maximum_terminal_height = (pane_viewport.height - pane_height).max(0.0);
         let minimum_terminal_height =
             (metrics.padding * 2.0 + metrics.height).min(maximum_terminal_height);
-        let pane_headers_height = presented_panes(active).len() as f32 * pane_height;
-        let terminal_height = (pane_viewport.height - pane_headers_height)
-            .clamp(minimum_terminal_height, maximum_terminal_height);
-        let pane_scroll_limit =
-            (pane_headers_height + terminal_height - pane_viewport.height).max(0.0);
-        let pane_scroll = if pane_scroll.is_finite() {
-            pane_scroll.clamp(0.0, pane_scroll_limit)
-        } else {
-            0.0
-        };
-        let panes = presented_panes(active)
-            .iter()
-            .enumerate()
-            .map(|(index, pane)| {
-                let label = metadata(&pane.endpoint).map_or_else(
-                    || pane_label(&pane.id, pane.live, &PaneMetadata::Unavailable),
-                    |metadata| pane_label(&pane.id, pane.live, metadata),
-                );
-                WorkspacePane {
-                    id: pane.id.clone(),
-                    live: pane.live,
-                    selected: index == selected_pane,
-                    rect: SceneRect {
-                        left: 0.0,
-                        top: tab_height
-                            + index as f32 * pane_height
-                            + if index > selected_pane {
-                                terminal_height
-                            } else {
-                                0.0
-                            }
-                            - pane_scroll,
-                        width,
-                        height: pane_height,
-                    },
-                    label,
-                }
-            })
-            .collect();
-        let terminal = SceneRect {
-            left: 0.0,
-            top: tab_height + (selected_pane + 1) as f32 * pane_height - pane_scroll,
-            width,
-            height: terminal_height,
-        };
+        let mut selected_layout = None;
+        let mut other_columns = Vec::with_capacity(count - 1);
+        for (index, column) in active.columns.iter().enumerate() {
+            let left = index as f32 * column_width;
+            let column_width = if index + 1 == count {
+                width - left
+            } else {
+                column_width
+            };
+            let expanded = column
+                .panes
+                .iter()
+                .position(|pane| pane.id == column.expanded)
+                .expect("EONW validates the expanded pane");
+            let pane_headers_height = column.panes.len() as f32 * pane_height;
+            let terminal_height = (pane_viewport.height - pane_headers_height)
+                .clamp(minimum_terminal_height, maximum_terminal_height);
+            let pane_scroll_limit =
+                (pane_headers_height + terminal_height - pane_viewport.height).max(0.0);
+            let expanded_scroll = (expanded as f32 * pane_height).clamp(0.0, pane_scroll_limit);
+            // Only the selected column follows the user's header scroll; others reveal
+            // their expanded pane.
+            let column_scroll = if index != selected_column {
+                expanded_scroll
+            } else if pane_scroll.is_finite() {
+                pane_scroll.clamp(0.0, pane_scroll_limit)
+            } else {
+                0.0
+            };
+            let panes = column
+                .panes
+                .iter()
+                .enumerate()
+                .map(|(position, pane)| {
+                    let label = metadata(&pane.endpoint).map_or_else(
+                        || pane_label(&pane.id, pane.live, &PaneMetadata::Unavailable),
+                        |metadata| pane_label(&pane.id, pane.live, metadata),
+                    );
+                    WorkspacePane {
+                        id: pane.id.clone(),
+                        live: pane.live,
+                        selected: position == expanded,
+                        rect: SceneRect {
+                            left,
+                            top: tab_height
+                                + position as f32 * pane_height
+                                + if position > expanded {
+                                    terminal_height
+                                } else {
+                                    0.0
+                                }
+                                - column_scroll,
+                            width: column_width,
+                            height: pane_height,
+                        },
+                        label,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let terminal = SceneRect {
+                left,
+                top: tab_height + (expanded + 1) as f32 * pane_height - column_scroll,
+                width: column_width,
+                height: terminal_height,
+            };
+            let chrome = pane_chrome_rect(
+                SceneRect {
+                    left,
+                    width: column_width,
+                    ..stack_viewport
+                },
+                metrics,
+            );
+            if index == selected_column {
+                selected_layout = Some((
+                    panes,
+                    terminal,
+                    chrome,
+                    column_scroll,
+                    pane_scroll_limit,
+                    expanded_scroll,
+                ));
+            } else {
+                other_columns.push(WorkspaceColumn {
+                    index,
+                    panes,
+                    terminal,
+                    chrome,
+                });
+            }
+        }
+        let (panes, terminal, chrome, pane_scroll, pane_scroll_limit, selected_pane_scroll) =
+            selected_layout.expect("the selected column is laid out");
 
         Self {
             tabs,
@@ -1216,6 +1282,8 @@ impl WorkspaceScene {
             hints,
             panes,
             terminal,
+            selected_column,
+            other_columns,
             tab_viewport,
             pane_viewport,
             chrome,
@@ -1224,10 +1292,29 @@ impl WorkspaceScene {
             tab_scroll_limit,
             pane_scroll_limit,
             active_tab_scroll,
-            selected_pane_scroll: (selected_pane as f32 * pane_height)
-                .clamp(0.0, pane_scroll_limit),
+            selected_pane_scroll,
             popup_label: None,
         }
+    }
+
+    /// Every column's headers left to right, each flagged when it is the selected column.
+    pub fn column_panes(&self) -> impl Iterator<Item = (&[WorkspacePane], bool)> {
+        let selected = (!self.panes.is_empty()).then_some(self.selected_column);
+        let mut others = self.other_columns.iter();
+        (0..self.other_columns.len() + usize::from(selected.is_some())).map(move |index| {
+            if Some(index) == selected {
+                (self.panes.as_slice(), true)
+            } else {
+                (
+                    others
+                        .next()
+                        .expect("other columns fill every remaining position")
+                        .panes
+                        .as_slice(),
+                    false,
+                )
+            }
+        })
     }
 
     #[must_use]
@@ -1263,11 +1350,24 @@ impl WorkspaceScene {
         if self.drag_region.contains(x, y) {
             return Some(WorkspaceHit::Drag);
         }
-        for pane in &self.panes {
-            if pane
-                .rect
+        for (panes, _) in self.column_panes() {
+            for pane in panes {
+                if pane
+                    .rect
+                    .intersection(self.pane_viewport)
+                    .is_some_and(|rect| rect.contains(x, y))
+                {
+                    return Some(WorkspaceHit::Pane(&pane.id));
+                }
+            }
+        }
+        // Another column's terminal area focuses that column's expanded pane.
+        for column in &self.other_columns {
+            if column
+                .terminal
                 .intersection(self.pane_viewport)
                 .is_some_and(|rect| rect.contains(x, y))
+                && let Some(pane) = column.panes.iter().find(|pane| pane.selected)
             {
                 return Some(WorkspaceHit::Pane(&pane.id));
             }

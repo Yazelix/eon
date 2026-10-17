@@ -38,7 +38,7 @@ use yazelix_venus::{
     MetadataEvent, MetadataTransport, ModelError, PaneMetadata, PresentOutcome, Renderer, Scene,
     SceneRect, SessionModel, ShortcutHintsScene, ShortcutViewerScene, Transport, TransportEvent,
     WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
-    WorkspaceScene, WorkspaceTransport, active_popup, presented_panes,
+    WorkspaceScene, WorkspaceTransport, active_popup,
 };
 
 mod scroll;
@@ -3346,7 +3346,7 @@ fn visible_metadata_endpoints(
         .iter()
         .find(|tab| tab.id == snapshot.active_tab)
         .into_iter()
-        .flat_map(presented_panes)
+        .flat_map(|tab| tab.panes())
         .filter(|pane| pane.live)
         .map(|pane| pane.endpoint.clone())
         .collect::<HashSet<_>>();
@@ -5284,6 +5284,23 @@ mod tests {
         assert_eq!(
             visible_metadata_endpoints(&snapshot, Some(b"one"), true),
             [b"one".to_vec()].into()
+        );
+        // Every column of the active tab is visible, so each has an observer.
+        let mut columns = snapshot.clone();
+        columns.tabs[0]
+            .columns
+            .push(eon_workspace_protocol::v10::Column {
+                panes: vec![Pane {
+                    id: "pane-4".into(),
+                    session: "session-4".into(),
+                    endpoint: b"beside".to_vec(),
+                    live: true,
+                }],
+                expanded: "pane-4".into(),
+            });
+        assert_eq!(
+            visible_metadata_endpoints(&columns, Some(b"one"), true),
+            [b"one".to_vec(), b"beside".to_vec()].into()
         );
 
         let mut popup = snapshot;
