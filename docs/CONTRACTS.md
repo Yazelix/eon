@@ -370,12 +370,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     external paths remain absolute.
   - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
     `config.toml` defaults to `true` and requests one thin rounded workspace
-    sheet: its sides sit on the window's side edges, adjacent columns share one
-    straight seam that meets the sheet's top edge and the footer (or the sheet's
-    bottom edge when hints are hidden) in square T-junctions, and separators
-    spanning each column divide its visible pane stack, with a small bottom gap (4
-    logical pixels at default typography) using terminal background color/opacity
-    under the existing surface-wide blur request. Only the sheet's outer corners
+    sheet: its sides and bottom sit on the window's edges, adjacent columns
+    share one straight seam that meets the sheet's top edge and the footer (or
+    the sheet's bottom edge when hints are hidden) in square T-junctions, and
+    separators spanning each column divide its visible pane stack, with a small
+    bottom gap (4 logical pixels at default typography) using terminal
+    background color/opacity under the existing surface-wide blur request. Only the sheet's outer corners
     are rounded; selected and hovered headers follow them where they touch, with
     square edges at seams. `false` removes the sheet border, seams and separators
     while retaining headers, selection, hover and keyboard focus. Both modes
@@ -1368,12 +1368,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   have padded rounded backgrounds without braces; group bodies stay plain.
   Insets, badge padding and minimum gaps participate in whole-hint fitting.
   The footer shares the sheet's side edges and one continuous outer frame, with
-  matching upper/lower corner radii, the hidden-footer sheet's bottom inset and
+  matching upper/lower corner radii, its bottom on the window's bottom edge and
   a straight separator at the join; column seams end at that separator in square
-  T-junctions. The outer bottom gap is reserved in
-  addition to the compact hints row height. The row is at least the corner
-  radius tall, preserving the straight separator at small font sizes. The bar uses the inactive-tab
-  background, coral red modifier headers, mint keys and gray labels.
+  T-junctions. Below its compact row height, the footer also reserves the space
+  down to the window's bottom edge. The row is at least the corner radius tall,
+  preserving the straight separator at small font sizes. The bar uses the
+  inactive-tab background, coral red modifier headers, mint keys and gray labels.
   Copy, Paste and Open link retain their bindings and full-help
   entries, without footer hints. Compact headers use C/A/S aliases joined by
   hyphens, such as A-S; the compact tab range is 1..9, while full help retains

@@ -904,14 +904,13 @@ impl Renderer {
                 g: 75,
                 b: 91,
             };
+            // Above the footer separator when hints show, else through the sheet's bottom edge.
             let outline_clip = SceneRect {
                 height: workspace
                     .hints
                     .as_ref()
-                    .map_or(workspace.pane_viewport.height, |hints| {
-                        hints.rect.top - workspace.pane_viewport.top
-                    })
-                    + 1.0,
+                    .map_or(sheet.bottom(), |hints| hints.rect.top + 1.0)
+                    - workspace.pane_viewport.top,
                 ..workspace.pane_viewport
             };
             let columns = std::iter::once((workspace.chrome, workspace.panes.as_slice()))

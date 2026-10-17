@@ -12,7 +12,9 @@
 - VEN-C8, VEN-C18, VEN-C24: pane frames draw one workspace sheet flush with
   the window's side edges; adjacent columns share one straight seam ending in
   square T-junctions, only the sheet's outer corners are rounded, and popups
-  and the footer reuse its outer frame (`eon-flush-workspace-sheet-5779`).
+  and the footer reuse its outer frame (`eon-flush-workspace-sheet-5779`); the
+  sheet and footer also reach the window's bottom edge
+  (`eon-flush-sheet-bottom-f68t`).
 - VEN-C1: an omitted or `random` cursor-tail color is chosen once per live
   endpoint, from the device, inode and change time of the workspace or Orbit
   socket, instead of once per launch, so a reattached window keeps its color.

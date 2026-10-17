@@ -374,6 +374,11 @@ impl ShortcutHintsScene {
             height,
             ..chrome
         };
+        // The frame reaches the window's bottom edge, keeping the reserved height; hints center in it.
+        let frame = SceneRect {
+            height: (size.height as f32 - rect.top).max(0.0),
+            ..rect
+        };
         let count = hints.len();
         let mut groups: Vec<Vec<ShortcutHint>> = Vec::new();
         for hint in hints {
@@ -424,7 +429,7 @@ impl ShortcutHintsScene {
                         label_offset,
                         rect: SceneRect {
                             left,
-                            top: rect.top + (height - metrics.height).max(0.0) / 2.0,
+                            top: frame.top + (frame.height - metrics.height).max(0.0) / 2.0,
                             width: piece_width,
                             height: metrics.height.min(height),
                         },
@@ -467,7 +472,7 @@ impl ShortcutHintsScene {
         };
         let complete = count > 0 && pieces.len() == count;
         Self {
-            rect,
+            rect: frame,
             complete,
             pieces,
             keep_shortcuts: !complete
@@ -614,6 +619,7 @@ pub struct WorkspaceScene {
     pub tab_viewport: SceneRect,
     pub pane_viewport: SceneRect,
     pub(crate) chrome: SceneRect,
+    sheet: SceneRect,
     tab_scroll: f32,
     pane_scroll: f32,
     tab_scroll_limit: f32,
@@ -1137,6 +1143,11 @@ impl WorkspaceScene {
             ..pane_viewport
         };
         let chrome = pane_chrome_rect(stack_viewport, metrics);
+        let sheet = SceneRect {
+            top: chrome.top,
+            height: (height - chrome.top).max(0.0),
+            ..pane_viewport
+        };
         if popup.is_some() || active.columns.is_empty() {
             let horizontal_inset = (snapshot.geometry.side_margin * metrics.scale)
                 .min((pane_viewport.width - metrics.padding * 2.0 - metrics.width).max(0.0) / 2.0);
@@ -1182,6 +1193,7 @@ impl WorkspaceScene {
                 tab_viewport,
                 pane_viewport,
                 chrome,
+                sheet,
                 tab_scroll,
                 pane_scroll: 0.0,
                 tab_scroll_limit,
@@ -1326,6 +1338,7 @@ impl WorkspaceScene {
             tab_viewport,
             pane_viewport,
             chrome,
+            sheet,
             tab_scroll,
             pane_scroll,
             tab_scroll_limit,
@@ -1336,17 +1349,10 @@ impl WorkspaceScene {
         }
     }
 
-    /// The workspace sheet: the full width, from the stack chrome's top through the footer when
-    /// hints show.
+    /// The workspace sheet: the full width, from the stack chrome's top to the window's bottom
+    /// edge, through the footer when hints show.
     pub(crate) fn sheet(&self) -> SceneRect {
-        SceneRect {
-            left: self.pane_viewport.left,
-            width: self.pane_viewport.width,
-            height: self.hints.as_ref().map_or(self.chrome.height, |hints| {
-                (hints.rect.bottom() - self.chrome.top).max(0.0)
-            }),
-            ..self.chrome
-        }
+        self.sheet
     }
 
     /// Every column's headers left to right, each flagged when it is the selected column.
@@ -2157,7 +2163,10 @@ mod tests {
                 );
                 assert_eq!(footer_rect.left, with_hints.chrome.left);
                 assert_eq!(footer_rect.right(), with_hints.chrome.right());
-                assert_eq!(footer_rect.bottom(), baseline.chrome.bottom());
+                // The footer and the hidden-footer sheet both end on the window's bottom edge.
+                assert_eq!(footer_rect.bottom(), size.height as f32);
+                assert_eq!(baseline.sheet().bottom(), size.height as f32);
+                assert_eq!(with_hints.sheet().bottom(), size.height as f32);
                 assert!(with_hints.pane_viewport.bottom() <= footer_rect.top);
                 assert_eq!(with_hints.hit_test(20.0, footer_rect.top + 5.0), None);
                 assert_eq!(
@@ -2221,7 +2230,7 @@ mod tests {
                 );
                 assert_eq!(scene.rect.left, chrome.left);
                 assert_eq!(scene.rect.right(), chrome.right());
-                assert_eq!(scene.rect.bottom(), chrome.bottom() - stack_inset(metrics));
+                assert_eq!(scene.rect.bottom(), 600.0);
                 for piece in &scene.pieces {
                     assert!(piece.key_offset >= 0.0 && piece.key_offset < piece.label_offset);
                     assert!(piece.label_offset < piece.rect.width);

@@ -141,11 +141,9 @@ follow the current bindings, enabled popup catalog and native focus; narrow
 windows omit whole hints. Compact groups spread across the outlined bar with
 equal gaps and the outer groups near its edges; a lone group stays centered. Hint spacing stays compact.
 Only modifier headers have padded rounded backgrounds. The columns and footer
-share one frame that reaches the window's side edges: side-by-side columns are
-divided by single straight lines, which meet the footer's straight separator,
-and the footer matches the frame's lower corner radii and bottom inset. Hiding
-the footer
-returns the row and its bottom gap to terminal content.
+share one frame that reaches the window's side and bottom edges: side-by-side
+columns are divided by single straight lines, which meet the footer's straight
+separator. Hiding the footer returns its row to terminal content.
 Coral red modifier badges use plain aliases, such as A-S, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects the tenth tab.
 Copy/Paste and Open link stay in full help, without footer hints.

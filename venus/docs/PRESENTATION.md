@@ -30,11 +30,12 @@ order, selection, and popups; Venus draws the visible scene.
 
 A tab shows one to four equal-width columns side by side. In each column one
 pane expands in a vertical stack while every fitting pane header stays
-visible. All columns share one frame, the workspace sheet: its sides sit on
-the window edges, adjacent columns share one straight seam, and only its outer
-corners are rounded. The visible shortcut footer shares the sheet's side edges
-and outer frame, with matching upper/lower corner radii, the same bottom inset
-as the hidden-footer sheet, and a straight separator where the seams end.
+visible. All columns share one frame, the workspace sheet: its sides and
+bottom sit on the window edges, adjacent columns share one straight seam, and
+only its outer corners are rounded. The visible shortcut footer shares the sheet's side edges
+and outer frame, with matching upper/lower corner radii, its bottom on the
+window's bottom edge like the hidden-footer sheet, and a straight separator
+where the seams end.
 Selection, hover, and keyboard focus have distinct fills or outlines.
 Visible headers pair Eon's opaque pane
 identity with Orbit's working directory. Home displays `~`, and its descendants

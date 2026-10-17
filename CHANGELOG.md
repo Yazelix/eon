@@ -19,9 +19,10 @@ installation, and proven contract changes.
   the column. Eon refuses another column when one would be narrower than 40
   terminal columns. Alt+Shift+M no longer reaches terminal programs in a full
   Eon workspace, and popup keybindings can no longer use it.
-- Pane frames draw one workspace sheet: its sides reach the window edges and
-  side-by-side columns share one straight divider instead of two nearby
-  borders. Popups use the same outer frame; terminal sizes are unchanged.
+- Pane frames draw one workspace sheet: its sides and bottom, including the
+  shortcut footer, reach the window edges, and side-by-side columns share one
+  straight divider instead of two nearby borders. Popups use the same outer
+  frame; terminal sizes are unchanged.
 - `eon workspace` lists each pane's column and whether it is that column's
   open pane (`column=` and `expanded=`, or `"column"` and `"expanded"` with
   `--json`), and `eon versions` reports EONW 10.

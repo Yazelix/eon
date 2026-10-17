@@ -78,10 +78,11 @@ informs modifier grouping and background roles. Venus uses unbraced badge
 headers, such as A-S, measured with their padding through the existing shaper.
 Compact grouping and modifier-only background formatting inform the footer;
 equal inter-group distribution, badge padding and the continuous main/footer
-frame are Eon's product choices. The footer reuses the Scene-owned pane side
-and bottom insets; the renderer clips rounded footer fill/outline to retain a
-straight upper separator and the main frame's lower corner radius. The existing
-initial grid overhead includes the bottom gap. The row is at least the existing
+frame are Eon's product choices. The footer's frame sits flush with the
+window's side and bottom edges, with its hints centered in it; the renderer
+clips rounded footer fill/outline to retain a straight upper separator and the
+sheet's lower corner radius. The existing initial grid overhead includes the
+footer's whole reserved height. The row is at least the existing
 corner padding tall so lower curves fit below the separator at minimum fonts.
 Existing rounded outline/fill
 primitives suffice. Nova's #FF5252

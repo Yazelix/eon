@@ -483,8 +483,8 @@ re-proved when that platform or feature is next touched.
     than 40 terminal columns wide; with four, Eon's capacity refusal applies.
     Shrinking the window later narrows existing columns without removing
     them.
-  - Pane frames draw one thin workspace sheet whose sides sit on the window's
-    side edges. Adjacent columns share one straight 1-pixel seam meeting the
+  - Pane frames draw one thin workspace sheet whose sides and bottom sit on the
+    window's edges. Adjacent columns share one straight 1-pixel seam meeting the
     sheet's top edge and the footer separator (or the sheet's bottom edge when
     hints are hidden) in square T-junctions; only the sheet's outer corners are
     rounded. Horizontal separators reach each column's sides, and a small gap
@@ -1072,12 +1072,12 @@ re-proved when that platform or feature is next touched.
   have padded rounded backgrounds without braces; group bodies stay plain.
   Insets, badge padding and minimum gaps participate in whole-hint fitting.
   The footer shares the sheet's side edges and one continuous outer frame, with
-  matching upper/lower corner radii, the hidden-footer sheet's bottom inset and
+  matching upper/lower corner radii, its bottom on the window's bottom edge and
   a straight separator at the join; column seams end at that separator in square
-  T-junctions. The outer bottom gap is reserved in
-  addition to the compact hints row height. The row is at least the corner
-  radius tall, preserving the straight separator at small font sizes. The bar uses the inactive-tab
-  background, coral red modifier headers, mint keys and gray labels.
+  T-junctions. Below its compact row height, the footer also reserves the space
+  down to the window's bottom edge. The row is at least the corner radius tall,
+  preserving the straight separator at small font sizes. The bar uses the
+  inactive-tab background, coral red modifier headers, mint keys and gray labels.
   Copy, Paste and Open link stay in full help and dispatch, without footer hints.
   Compact modifier headers use C/A/S aliases joined by hyphens, such as A-S.
   The compact tab range is 1..9; full help retains the tenth-tab Alt+0 binding.
