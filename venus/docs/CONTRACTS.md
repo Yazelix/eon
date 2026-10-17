@@ -476,16 +476,19 @@ re-proved when that platform or feature is next touched.
     than 40 terminal columns wide; with four, Eon's capacity refusal applies.
     Shrinking the window later narrows existing columns without removing
     them.
-  - Pane frames connect each column's visible accordion within one thin
-    rounded outer border, with horizontal separators reaching its sides and a
-    small gap below the stack (4 logical pixels at default typography). The
+  - Pane frames draw one thin workspace sheet whose sides sit on the window's
+    side edges. Adjacent columns share one straight 1-pixel seam meeting the
+    sheet's top edge and the footer separator (or the sheet's bottom edge when
+    hints are hidden) in square T-junctions; only the sheet's outer corners are
+    rounded. Horizontal separators reach each column's sides, and a small gap
+    stays below the stack (4 logical pixels at default typography). The
     gap shares terminal background color/opacity and the surface-wide blur
-    request. Selected and hovered header fills follow the stack's corners,
-    with square internal edges. Separators follow the rounded corners during
-    scrolling;
-    the shared border stays fixed while overflowing headers scroll within it.
-    `--pane-frames true|false` defaults to `true`; `false` removes the shared
-    border and separators while retaining headers, a lighter selected fill,
+    request. Selected and hovered header fills follow the sheet's outer
+    corners, with square edges at seams and inside. Separators follow the outer
+    corners during scrolling; the sheet border and seams stay fixed while
+    overflowing headers scroll within each column.
+    `--pane-frames true|false` defaults to `true`; `false` removes the sheet
+    border, seams and separators while retaining headers, a lighter selected fill,
     hover feedback and a distinct rounded keyboard-focus outline. Both modes
     preserve the same terminal grid, header hit targets and AccessKit bounds.
     Initial requested grids include the bottom gap in their window overhead;
@@ -837,9 +840,9 @@ re-proved when that platform or feature is next touched.
   New tab and Alt+Shift+W retain the existing semantic CreateTab and
   exact-active-tab CloseTab actions. No local cancellation state or native
   picker is added.
-- **Geometry:** In a one-column tab, a selected popup reuses the pane stack's
-  exact outer rounded frame, so toggling preserves every chrome edge; over
-  several columns it covers them all in one full-width frame. Shared Eon-supplied logical
+- **Geometry:** A selected popup reuses the workspace sheet's exact outer frame
+  without seams, so toggling preserves every outer chrome edge at any column
+  count. Shared Eon-supplied logical
   margins inset the popup terminal content within that stable shell. A compact
   border label keeps a small top gutter before terminal padding. Scene owns
   both rectangles: chrome drives the outline, while terminal drives resize,
@@ -1061,11 +1064,10 @@ re-proved when that platform or feature is next touched.
   outer groups near its edges and a lone group centered. Modifier headers alone
   have padded rounded backgrounds without braces; group bodies stay plain.
   Insets, badge padding and minimum gaps participate in whole-hint fitting.
-  With one column, the main region and footer share side insets and one
-  continuous outer frame, with matching upper/lower corner radii, the hidden
-  main frame's bottom inset and a straight separator at the join; with several
-  columns, the footer keeps one full-width frame and each column's frame ends
-  at its straight separator. The outer bottom gap is reserved in
+  The footer shares the sheet's side edges and one continuous outer frame, with
+  matching upper/lower corner radii, the hidden-footer sheet's bottom inset and
+  a straight separator at the join; column seams end at that separator in square
+  T-junctions. The outer bottom gap is reserved in
   addition to the compact hints row height. The row is at least the corner
   radius tall, preserving the straight separator at small font sizes. The bar uses the inactive-tab
   background, coral red modifier headers, mint keys and gray labels.

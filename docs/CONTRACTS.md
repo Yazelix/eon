@@ -366,14 +366,18 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     directory label; home uses `~`, descendants use `~/`, and
     external paths remain absolute.
   - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
-    `config.toml` defaults to `true` and requests one rounded border around each
-    column's visible pane stack, with full-width separators and a small bottom gap (4
+    `config.toml` defaults to `true` and requests one thin rounded workspace
+    sheet: its sides sit on the window's side edges, adjacent columns share one
+    straight seam that meets the sheet's top edge and the footer (or the sheet's
+    bottom edge when hints are hidden) in square T-junctions, and separators
+    spanning each column divide its visible pane stack, with a small bottom gap (4
     logical pixels at default typography) using terminal background color/opacity
-    under the existing surface-wide blur request. Selected and hovered headers
-    follow the stack corners, with square internal edges. `false` removes
-    the border and separators while retaining headers, selection, hover and
-    keyboard focus. Both modes preserve terminal-grid and picker geometry. EonTerm
-    receives no workspace-frame override. Requested initial grids account for
+    under the existing surface-wide blur request. Only the sheet's outer corners
+    are rounded; selected and hovered headers follow them where they touch, with
+    square edges at seams. `false` removes the sheet border, seams and separators
+    while retaining headers, selection, hover and keyboard focus. Both modes
+    preserve terminal-grid and picker geometry. EonTerm receives no
+    workspace-frame override. Requested initial grids account for
     the small bottom margin. Live surfaces retain their settings;
     malformed or duplicate values reject a new launch or replacement without
     stopping existing terminals. Eon supplies the default; Eon Runtime owns the
@@ -1360,11 +1364,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   outer groups near its edges and a lone group centered. Modifier headers alone
   have padded rounded backgrounds without braces; group bodies stay plain.
   Insets, badge padding and minimum gaps participate in whole-hint fitting.
-  With one column, the main region and footer share side insets and one
-  continuous outer frame, with matching upper/lower corner radii, the hidden
-  main frame's bottom inset and a straight separator at the join; with several
-  columns, the footer keeps one full-width frame and each column's frame ends
-  at its straight separator. The outer bottom gap is reserved in
+  The footer shares the sheet's side edges and one continuous outer frame, with
+  matching upper/lower corner radii, the hidden-footer sheet's bottom inset and
+  a straight separator at the join; column seams end at that separator in square
+  T-junctions. The outer bottom gap is reserved in
   addition to the compact hints row height. The row is at least the corner
   radius tall, preserving the straight separator at small font sizes. The bar uses the inactive-tab
   background, coral red modifier headers, mint keys and gray labels.

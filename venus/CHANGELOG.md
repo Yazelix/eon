@@ -9,6 +9,10 @@
   column; a click on another column's terminal selects it. Alt+Shift+M sends
   EONW v10 `CreateColumn`; in a tab with one to three columns, Venus refuses it
   locally when a column would get fewer than 40 terminal columns (`eon-splits-opwv` slices 2–4).
+- VEN-C8, VEN-C18, VEN-C24: pane frames draw one workspace sheet flush with
+  the window's side edges; adjacent columns share one straight seam ending in
+  square T-junctions, only the sheet's outer corners are rounded, and popups
+  and the footer reuse its outer frame (`eon-flush-workspace-sheet-5779`).
 - VEN-C26: the Claude quota chip shows each window's elapsed position, such as
   `3d2h/7d 40%`, like the Codex chip. Hover and accessibility say how far into
   each window the observation is (`eon-claude-chip-position-iubd`).

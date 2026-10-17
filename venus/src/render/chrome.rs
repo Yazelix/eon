@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     SceneRect, ShortcutViewerScene, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
-    scene::{QuotaProvider, pane_chrome_rect},
+    scene::{QuotaProvider, inset_sides, pane_chrome_rect, seam_extended},
 };
 use glyphon::{
     Attrs, Buffer, Color, ContentType, CustomGlyph, Family, FontSystem, Metrics,
@@ -745,15 +745,34 @@ impl Renderer {
                 );
                 rectangles.clip = Some(rect);
                 if pane.selected || self.header.hovers(WorkspaceFocus::Panes, &pane.id) {
-                    rectangles.push_rounded(
-                        pane_chrome_rect(
+                    // Framed fills follow the sheet's outer corners and stay square at seams;
+                    // frameless fills keep their own rounded, inset shape.
+                    let shape = if self.pane_frames {
+                        let sheet = workspace.sheet();
+                        seam_extended(
                             SceneRect {
                                 left: pane.rect.left,
                                 width: pane.rect.width,
-                                ..workspace.pane_viewport
+                                ..sheet
                             },
+                            sheet,
+                            self.metrics.padding,
+                        )
+                    } else {
+                        inset_sides(
+                            pane_chrome_rect(
+                                SceneRect {
+                                    left: pane.rect.left,
+                                    width: pane.rect.width,
+                                    ..workspace.pane_viewport
+                                },
+                                self.metrics,
+                            ),
                             self.metrics,
-                        ),
+                        )
+                    };
+                    rectangles.push_rounded(
+                        shape,
                         self.metrics.padding,
                         if current { selected } else { idle },
                     );

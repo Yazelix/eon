@@ -1,6 +1,7 @@
 use crate::{
     Color as SceneColor, DrawRow, DrawStyle, Scene, ScenePreview, SceneRect, ShortcutViewerScene,
-    WorkspaceFocus, WorkspaceScene, scene::pane_chrome_rect,
+    WorkspaceFocus, WorkspaceScene,
+    scene::{inset_sides, pane_chrome_rect, seam_extended},
 };
 use glyphon::{
     Attrs, Buffer, Cache, Color, ColorMode, CustomGlyph, Family, Metrics, Resolution, Shaping,
@@ -896,37 +897,52 @@ impl Renderer {
                 self.build_hyperlink(scene, &mut rectangles, origin);
                 rectangles.clip = None;
             }
-            let chrome = SceneRect {
+            // One sheet spans every column; columns share straight seams instead of own borders.
+            let sheet = workspace.sheet();
+            let border = SceneColor {
+                r: 58,
+                g: 75,
+                b: 91,
+            };
+            let outline_clip = SceneRect {
                 height: workspace
                     .hints
                     .as_ref()
-                    .map_or(workspace.chrome.height, |hints| {
-                        (hints.rect.bottom() - workspace.chrome.top).max(0.0)
-                    }),
-                ..workspace.chrome
+                    .map_or(workspace.pane_viewport.height, |hints| {
+                        hints.rect.top - workspace.pane_viewport.top
+                    })
+                    + 1.0,
+                ..workspace.pane_viewport
             };
-            rectangles.clip = Some(workspace.pane_viewport);
-            let frames = std::iter::once((chrome, workspace.panes.as_slice())).chain(
-                workspace.other_columns.iter().map(|column| {
-                    (
-                        SceneRect {
-                            height: chrome.height,
-                            ..column.chrome
-                        },
-                        column.panes.as_slice(),
-                    )
-                }),
-            );
-            for (frame, panes) in frames.filter(|(_, panes)| self.pane_frames && !panes.is_empty())
-            {
+            let columns = std::iter::once((workspace.chrome, workspace.panes.as_slice()))
+                .chain(
+                    workspace
+                        .other_columns
+                        .iter()
+                        .map(|column| (column.chrome, column.panes.as_slice())),
+                )
+                .filter(|(_, panes)| self.pane_frames && !panes.is_empty());
+            let mut framed = false;
+            for (column, panes) in columns {
+                framed = true;
+                let column = SceneRect {
+                    top: sheet.top,
+                    height: sheet.height,
+                    ..column
+                };
+                let shape = seam_extended(column, sheet, self.metrics.padding);
                 for pane in panes.iter().skip(1) {
-                    rectangles.clip = Some(SceneRect {
+                    let row = SceneRect {
                         top: pane.rect.top,
                         height: 1.0,
-                        ..frame
-                    });
+                        ..column
+                    };
+                    let Some(row) = row.intersection(workspace.pane_viewport) else {
+                        continue;
+                    };
+                    rectangles.clip = Some(row);
                     rectangles.push_rounded(
-                        frame,
+                        shape,
                         self.metrics.padding,
                         SceneColor {
                             r: 43,
@@ -935,32 +951,33 @@ impl Renderer {
                         },
                     );
                 }
-                rectangles.clip = Some(SceneRect {
-                    height: workspace
-                        .hints
-                        .as_ref()
-                        .map_or(workspace.pane_viewport.height, |hints| {
-                            hints.rect.top - workspace.pane_viewport.top
-                        })
-                        + 1.0,
-                    ..workspace.pane_viewport
-                });
-                rectangles.push_rounded_outline(
-                    frame,
-                    self.metrics.padding,
-                    SceneColor {
-                        r: 58,
-                        g: 75,
-                        b: 91,
-                    },
-                );
+                if column.left > sheet.left {
+                    rectangles.clip = Some(outline_clip);
+                    rectangles.push(column.left, sheet.top, 1.0, sheet.height, border, 1.0);
+                }
+            }
+            if framed {
+                rectangles.clip = Some(outline_clip);
+                rectangles.push_rounded_outline(sheet, self.metrics.padding, border);
             }
             if workspace_focus == WorkspaceFocus::Panes
                 && let Some(pane) = workspace.panes.iter().find(|pane| pane.selected)
             {
+                let outline = pane_chrome_rect(pane.rect, self.metrics);
+                let outline = if !self.pane_frames {
+                    inset_sides(outline, self.metrics)
+                } else if outline.right() < sheet.right() {
+                    // Land the right stroke on the neighbouring column's seam pixel.
+                    SceneRect {
+                        width: outline.width + 1.0,
+                        ..outline
+                    }
+                } else {
+                    outline
+                };
                 rectangles.clip = Some(workspace.pane_viewport);
                 rectangles.push_rounded_outline(
-                    pane_chrome_rect(pane.rect, self.metrics),
+                    outline,
                     self.metrics.padding,
                     SceneColor {
                         r: 126,
@@ -974,7 +991,7 @@ impl Renderer {
                 && let Some(terminal) = workspace.visible_terminal()
             {
                 rectangles.push_rounded_outline(
-                    chrome,
+                    sheet,
                     self.metrics.padding,
                     SceneColor {
                         r: 82,

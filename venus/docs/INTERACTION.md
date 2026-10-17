@@ -82,11 +82,11 @@ popup labels, and follow native terminal, tab and pane focus. Shared modifiers
 appear once per group: C means Ctrl, A means Alt, and S means Shift.
 Compact groups spread across the outlined bar with equal gaps and the outer
 groups near its edges; a lone group stays centered. Hint spacing stays compact.
-Only modifier headers have padded rounded backgrounds. With one column, the
-main region and footer share side margins and one outer frame with a straight
-separator, matching lower corner radii and the main frame's bottom inset; with
-several columns, the footer keeps one full-width frame and each column's frame
-ends at its straight separator. Hiding the footer
+Only modifier headers have padded rounded backgrounds. The columns and footer
+share one frame that reaches the window's side edges: side-by-side columns are
+divided by single straight lines, which meet the footer's straight separator,
+and the footer matches the frame's lower corner radii and bottom inset. Hiding
+the footer
 returns the row and its bottom gap to terminal content.
 Coral red modifier badges use plain aliases, such as C-A, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects

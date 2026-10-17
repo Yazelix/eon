@@ -30,10 +30,11 @@ order, selection, and popups; Venus draws the visible scene.
 
 A tab shows one to four equal-width columns side by side. In each column one
 pane expands in a vertical stack while every fitting pane header stays
-visible. Each column draws its own frame. With one column, the stack and
-visible shortcut footer share aligned side edges and one outer frame, with
-matching upper/lower corner radii, the same bottom inset as the hidden-footer
-main frame, and a straight footer separator.
+visible. All columns share one frame, the workspace sheet: its sides sit on
+the window edges, adjacent columns share one straight seam, and only its outer
+corners are rounded. The visible shortcut footer shares the sheet's side edges
+and outer frame, with matching upper/lower corner radii, the same bottom inset
+as the hidden-footer sheet, and a straight separator where the seams end.
 Selection, hover, and keyboard focus have distinct fills or outlines.
 Visible headers pair Eon's opaque pane
 identity with Orbit's working directory. Home displays `~`, and its descendants
@@ -42,8 +43,8 @@ presents live; only the selected pane receives input. Alt+Shift+M adds
 another column unless one would get fewer than 40 terminal columns.
 
 A fresh workspace or tab can begin with a Project popup and no pane. Tool popups
-and the chooser cover every column in one rounded terminal surface with Eon's
-logical margins. Tabs remain available. A tab with only hidden popups has an
+and the chooser cover every column within the sheet's outer frame, with Eon's
+logical margins around their terminal. Tabs remain available. A tab with only hidden popups has an
 empty body and keeps focus on its tab until a catalog shortcut reopens work.
 Venus recovers retryable socket loss and detaches without ending Sessions.
 
