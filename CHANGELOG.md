@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The window waits up to six seconds, instead of two, for Eon to answer a
+  workspace action, matching Eon's own commands. Opening a popup or pane whose
+  terminal starts slowly on a busy machine, within Eon's five-second start
+  limit, no longer flashes Eon as unavailable. An action that waits behind
+  other slow work, or that stops a terminal before starting one, can still
+  exceed the six seconds.
 - A tab can show up to four columns side by side, each a pane stack with its
   own live terminal. Alt+Shift+M opens a column right of the selected one with
   a new pane in the tab's directory; Alt+M adds a pane to the selected column;

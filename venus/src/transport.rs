@@ -318,6 +318,13 @@ fn run_workspace(
     }
 }
 
+/// Eon answers an action that starts a terminal only after Orbit is Ready, within its shared
+/// five-second start deadline. Like Eon's own control clients, wait that deadline plus one second,
+/// so one slow but successful terminal start does not read as workspace loss; an action queued
+/// behind other slow work, or one that stops a terminal before starting another, can still exceed
+/// it.
+const WORKSPACE_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(6);
+
 fn workspace_exchange(
     socket: &Path,
     nonce: u128,
@@ -336,7 +343,7 @@ fn workspace_exchange(
             socket.display()
         )
     })?;
-    let timeout = Some(Duration::from_secs(2));
+    let timeout = Some(WORKSPACE_EXCHANGE_TIMEOUT);
     stream
         .set_read_timeout(timeout)
         .and_then(|()| stream.set_write_timeout(timeout))
@@ -1308,6 +1315,30 @@ mod tests {
         .unwrap_err();
 
         assert!(error.contains("unsupported EONW version"));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn slow_successful_workspace_action_is_not_reported_as_loss() {
+        let socket = TestSocket::new();
+        let listener = UnixListener::bind(&socket.path).unwrap();
+        let snapshot = WorkspaceResponse::Snapshot(workspace_snapshot());
+        let response = workspace::encode_response(&snapshot).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = accept_workspace_action(&listener);
+            // Slower than the old two-second bound, inside Eon's terminal-start deadline.
+            thread::sleep(Duration::from_millis(2500));
+            stream.write_all(&response).unwrap();
+        });
+
+        let result = workspace_exchange(
+            &socket.path,
+            1,
+            0,
+            WorkspaceAction::Workspace(workspace::WorkspaceAction::CreatePane),
+        );
+
+        assert_eq!(result, Ok(snapshot));
         server.join().unwrap();
     }
 
