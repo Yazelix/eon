@@ -287,6 +287,8 @@ pub enum WorkspaceHit<'a> {
     Control(WorkspaceHeaderControl),
     Drag,
     Pane(&'a str),
+    /// Another column's terminal area, named by that column's expanded pane.
+    ColumnTerminal(&'a str),
     Terminal,
 }
 
@@ -1361,7 +1363,6 @@ impl WorkspaceScene {
                 }
             }
         }
-        // Another column's terminal area focuses that column's expanded pane.
         for column in &self.other_columns {
             if column
                 .terminal
@@ -1369,7 +1370,7 @@ impl WorkspaceScene {
                 .is_some_and(|rect| rect.contains(x, y))
                 && let Some(pane) = column.panes.iter().find(|pane| pane.selected)
             {
-                return Some(WorkspaceHit::Pane(&pane.id));
+                return Some(WorkspaceHit::ColumnTerminal(&pane.id));
             }
         }
         self.visible_terminal()

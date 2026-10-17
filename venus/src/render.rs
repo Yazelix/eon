@@ -222,6 +222,8 @@ fn rasterize_quota_icon(request: RasterizeCustomGlyphRequest) -> Option<Rasteriz
 #[derive(Debug, PartialEq)]
 struct ContentKey {
     generation: u64,
+    /// Other columns' frame revisions, which repaint without touching the selected terminal.
+    column_revisions: Vec<Option<u64>>,
     scroll_offset: f32,
     workspace_focus: WorkspaceFocus,
     blink_visible: bool,
@@ -709,6 +711,7 @@ impl Renderer {
         scroll_preview: Option<&ScenePreview>,
         scroll_offset: f32,
         workspace: Option<&WorkspaceScene>,
+        columns: &[Option<&Scene>],
         shortcut_viewer: Option<&ShortcutViewerScene>,
         workspace_focus: WorkspaceFocus,
         status: &str,
@@ -722,6 +725,7 @@ impl Renderer {
             scroll_preview,
             scroll_offset,
             workspace,
+            columns,
             shortcut_viewer,
             workspace_focus,
             status,
@@ -876,6 +880,7 @@ impl Renderer {
         scroll_preview: Option<&ScenePreview>,
         scroll_offset: f32,
         workspace: Option<&WorkspaceScene>,
+        columns: &[Option<&Scene>],
         shortcut_viewer: Option<&ShortcutViewerScene>,
         workspace_focus: WorkspaceFocus,
         status: &str,
@@ -885,6 +890,10 @@ impl Renderer {
     ) -> bool {
         let key = ContentKey {
             generation,
+            column_revisions: columns
+                .iter()
+                .map(|scene| scene.map(|scene| scene.revision))
+                .collect(),
             scroll_offset,
             workspace_focus,
             blink_visible,
@@ -931,16 +940,53 @@ impl Renderer {
         let mut cursor_vertex_boundary = 0;
         if let Some(workspace) = workspace {
             self.clear = wgpu::Color::TRANSPARENT;
-            let background = scene.map_or(DEFAULT_BACKGROUND, |scene| scene.background);
-            rectangles.push(
-                0.0,
-                workspace.tab_viewport.bottom(),
-                self.config.width as f32,
-                self.config.height as f32 - workspace.tab_viewport.bottom(),
-                background,
-                self.background_opacity,
+            // Each column's strip takes its own terminal's background.
+            let selected_strip = if workspace.other_columns.is_empty() {
+                (0.0, self.config.width as f32)
+            } else {
+                (workspace.terminal.left, workspace.terminal.width)
+            };
+            let strips = std::iter::once((selected_strip, scene)).chain(
+                workspace
+                    .other_columns
+                    .iter()
+                    .zip(columns)
+                    .map(|(column, scene)| ((column.terminal.left, column.terminal.width), *scene)),
             );
+            for ((left, width), scene) in strips {
+                rectangles.push(
+                    left,
+                    workspace.tab_viewport.bottom(),
+                    width,
+                    self.config.height as f32 - workspace.tab_viewport.bottom(),
+                    scene.map_or(DEFAULT_BACKGROUND, |scene| scene.background),
+                    self.background_opacity,
+                );
+            }
             self.build_workspace(workspace, workspace_focus, &mut rectangles);
+            for (column, scene) in workspace.other_columns.iter().zip(columns) {
+                let Some(scene) = scene else {
+                    continue;
+                };
+                let Some(terminal) = column.terminal.intersection(workspace.pane_viewport) else {
+                    continue;
+                };
+                let clip = scene_grid(scene, column.terminal, self.metrics)
+                    .intersection(terminal)
+                    .unwrap_or(terminal);
+                rectangles.clip = Some(clip);
+                self.build_scene_text(scene, blink_visible, column.terminal, clip);
+                // The cursor trail follows the selected column; other columns draw a static cursor.
+                build_scene_rectangles(
+                    &mut rectangles,
+                    scene,
+                    blink_visible,
+                    self.metrics,
+                    column.terminal,
+                    true,
+                );
+                rectangles.clip = None;
+            }
             if let Some(terminal) = workspace.visible_terminal()
                 && let Some(scene) = scene
             {
@@ -3736,6 +3782,7 @@ mod tests {
                     None,
                     0.0,
                     Some(&workspace),
+                    &[],
                     None,
                     WorkspaceFocus::Terminal,
                     "",
@@ -3761,6 +3808,7 @@ mod tests {
                     None,
                     0.0,
                     None,
+                    &[],
                     None,
                     WorkspaceFocus::Terminal,
                     &"Sessions unavailable. ".repeat(32),
@@ -3790,6 +3838,7 @@ mod tests {
                     None,
                     0.0,
                     Some(&workspace),
+                    &[],
                     None,
                     WorkspaceFocus::Terminal,
                     "",
@@ -3835,6 +3884,7 @@ mod tests {
                     None,
                     0.0,
                     Some(&workspace),
+                    &[],
                     None,
                     WorkspaceFocus::Terminal,
                     "",
@@ -3950,6 +4000,7 @@ mod tests {
     fn content_cache_separates_generations_and_viewer_state() {
         let key = |generation, shortcut_viewer_scroll| ContentKey {
             generation,
+            column_revisions: vec![Some(4), None],
             scroll_offset: 0.0,
             workspace_focus: WorkspaceFocus::Terminal,
             blink_visible: true,
@@ -3967,6 +4018,14 @@ mod tests {
         assert_ne!(key(1, None), key(2, None));
         assert_ne!(key(1, None), key(1, Some(0.0)));
         assert_ne!(key(1, Some(0.0)), key(1, Some(1.0)));
+        // Another column's frame repaints without a new selected-terminal generation.
+        assert_ne!(
+            key(1, None),
+            ContentKey {
+                column_revisions: vec![Some(5), None],
+                ..key(1, None)
+            }
+        );
     }
 
     #[test]

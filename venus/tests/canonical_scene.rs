@@ -1158,7 +1158,7 @@ fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
         assert_eq!(pane.rect.width, scene.terminal.width);
     }
 
-    // Each column shows its own expanded pane; clicking another column focuses it.
+    // Each column shows its own expanded pane; its terminal area names that pane.
     let first = &scene.other_columns[0];
     assert!(
         first
@@ -1169,7 +1169,7 @@ fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
     let inside = first.terminal;
     assert!(matches!(
         scene.hit_test(inside.left + 5.0, inside.top + 5.0),
-        Some(WorkspaceHit::Pane("p2"))
+        Some(WorkspaceHit::ColumnTerminal("p2"))
     ));
     assert!(matches!(
         scene.hit_test(scene.terminal.left + 5.0, scene.terminal.top + 5.0),

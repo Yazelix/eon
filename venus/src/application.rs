@@ -449,7 +449,7 @@ enum ShortcutViewerCommand {
     End,
 }
 
-/// The Orbit terminal this window presents: its attachment, model, presentation and viewport state.
+/// One Orbit terminal this window presents: its attachment, model and viewport state.
 struct TerminalView {
     orbit_socket: Option<PathBuf>,
     transport: Option<Transport>,
@@ -457,8 +457,6 @@ struct TerminalView {
     deferred_selection: VecDeque<ClientMessage>,
     selection_gate: SelectionGate,
     last_resize: Option<SurfaceSize>,
-    presentation: PresentationState,
-    links: LinkInteraction,
     active_endpoint: Option<Vec<u8>>,
     active_endpoint_live: bool,
     orbit_retry: OrbitRetry,
@@ -468,6 +466,28 @@ struct TerminalView {
     selection_scroll: SelectionAutoscroll,
     pending_viewport: Option<PendingViewportRequest>,
     pending_return_to_live: bool,
+}
+
+impl TerminalView {
+    fn new(orbit_socket: Option<PathBuf>) -> Self {
+        Self {
+            orbit_socket,
+            transport: None,
+            model: SessionModel::new(),
+            deferred_selection: VecDeque::new(),
+            selection_gate: SelectionGate::default(),
+            last_resize: None,
+            active_endpoint: None,
+            active_endpoint_live: false,
+            orbit_retry: OrbitRetry::default(),
+            retry_suppressed: false,
+            scrollback_press: None,
+            terminal_scroll: TerminalScroll::default(),
+            selection_scroll: SelectionAutoscroll::default(),
+            pending_viewport: None,
+            pending_return_to_live: false,
+        }
+    }
 }
 
 struct Application {
@@ -493,7 +513,15 @@ struct Application {
     initial_scale_pending: bool,
     proxy: EventLoopProxy<UserEvent>,
     window: Option<WindowState>,
+    /// The terminal that receives keyboard and pointer input: the selected column's,
+    /// a popup's, or the standalone session's.
     terminal: TerminalView,
+    /// Display-only terminals of the active tab's other columns, one per expanded live pane.
+    column_views: Vec<TerminalView>,
+    /// The selected terminal's presented identity, which pairs its input; column output
+    /// repaints without changing it.
+    presentation: PresentationState,
+    links: LinkInteraction,
     workspace_transport: Option<WorkspaceTransport>,
     metadata_observers: HashMap<Vec<u8>, MetadataObserver>,
     workspace_model: WorkspaceModel,
@@ -542,25 +570,10 @@ impl Application {
             || fonts != FontSettings::default();
         Self {
             application_id,
-            terminal: TerminalView {
-                orbit_socket,
-                transport: None,
-                model: SessionModel::new(),
-                deferred_selection: VecDeque::new(),
-                selection_gate: SelectionGate::default(),
-                last_resize: None,
-                presentation: PresentationState::default(),
-                links: LinkInteraction::default(),
-                active_endpoint: None,
-                active_endpoint_live: false,
-                orbit_retry: OrbitRetry::default(),
-                retry_suppressed: false,
-                scrollback_press: None,
-                terminal_scroll: TerminalScroll::default(),
-                selection_scroll: SelectionAutoscroll::default(),
-                pending_viewport: None,
-                pending_return_to_live: false,
-            },
+            terminal: TerminalView::new(orbit_socket),
+            column_views: Vec::new(),
+            presentation: PresentationState::default(),
+            links: LinkInteraction::default(),
             workspace_socket,
             new_window_executable: std::env::var_os("EON_NEW_WINDOW_EXECUTABLE")
                 .map(PathBuf::from)
@@ -677,6 +690,7 @@ impl Application {
         if self.workspace_socket.is_some() {
             if let Some((endpoint, live)) = self.workspace_model.active_attachment() {
                 self.set_orbit_attachment(Some(endpoint.to_vec()), live);
+                self.reconcile_column_views();
             } else if self.workspace_model.snapshot().is_some() {
                 self.set_workspace_focus(WorkspaceFocus::Tabs);
             }
@@ -698,11 +712,8 @@ impl Application {
     }
 
     fn start_orbit(&mut self, socket: PathBuf) {
-        let proxy = self.proxy.clone();
         self.terminal.orbit_socket = Some(socket.clone());
-        self.terminal.transport = Some(Transport::start(socket, move || {
-            let _ = proxy.send_event(UserEvent::Transport);
-        }));
+        self.terminal.transport = Some(orbit_transport(&self.proxy, socket));
     }
 
     fn reset_cursor_animation(&mut self) {
@@ -794,7 +805,7 @@ impl Application {
             && self.terminal.deferred_selection.is_empty()
             && matches!(self.terminal.selection_gate, SelectionGate::Ready)
             && self.terminal.pending_viewport.is_none()
-            && self.terminal.presentation.presented_revision()
+            && self.presentation.presented_revision()
                 == self.terminal.model.scene().map(|scene| scene.revision))
         .then(|| {
             self.window.as_ref().and_then(|state| {
@@ -987,7 +998,7 @@ impl Application {
         self.scrollback_label(workspace).filter(|_| {
             workspace.is_some_and(|workspace| workspace.popup_label().is_none())
                 || (!self.input.pointer_busy()
-                    && self.terminal.links.focus.is_none()
+                    && self.links.focus.is_none()
                     && !self
                         .terminal
                         .model
@@ -999,7 +1010,6 @@ impl Application {
     fn scrollback_rect(&self, workspace: Option<&WorkspaceScene>) -> Option<SceneRect> {
         self.visible_scrollback_label(workspace)?;
         if !self
-            .terminal
             .presentation
             .is_current(self.presentation_candidate(workspace))
         {
@@ -1021,7 +1031,7 @@ impl Application {
                 let screen = terminal_screen(workspace, state.renderer.size());
                 surface_size(screen, state.renderer.metrics()).map(|_| scene.revision)
             });
-        self.terminal.presentation.candidate(revision)
+        self.presentation.candidate(revision)
     }
 
     fn rebuild_workspace_measurements(
@@ -1093,7 +1103,7 @@ impl Application {
         self.workspace_focus = focus;
         self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
         // Focus changes hints and controls, not the terminal's presented geometry.
-        self.terminal.presentation.content_changed();
+        self.presentation.content_changed();
         let is_focused = terminal_focused(self.window_focused, self.workspace_focus)
             && !self.shortcut_viewer.open;
         if was_focused != is_focused {
@@ -1111,12 +1121,38 @@ impl Application {
         self.cancel_pointer_sequence();
         self.hints_visible = !self.hints_visible;
         self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
-        self.terminal.presentation.invalidate();
+        self.presentation.invalidate();
         self.send_resize();
         self.refresh_client_view();
     }
 
     fn set_orbit_attachment(&mut self, endpoint: Option<Vec<u8>>, live: bool) {
+        let same_endpoint = self.terminal.active_endpoint == endpoint;
+        // A terminal that stays visible in another column keeps its view; one that Orbit
+        // still owes an ordered viewport response reattaches after the retry delay, giving
+        // Orbit time to release this attachment first.
+        let owes_viewport = self.terminal.pending_viewport.is_some();
+        let keep_outgoing = !same_endpoint
+            && self.terminal.transport.is_some()
+            && self
+                .terminal
+                .active_endpoint
+                .as_deref()
+                .is_some_and(|outgoing| {
+                    self.workspace_model
+                        .column_attachments()
+                        .iter()
+                        .any(|&(_, column, live)| live && column == outgoing)
+                });
+        if keep_outgoing
+            && pointer_sequence_needs_cancel(
+                &self.terminal.selection_gate,
+                self.input.is_selecting(),
+                &self.terminal.deferred_selection,
+            )
+        {
+            self.send(ClientMessage::Selection(SelectionAction::Cancel));
+        }
         self.terminal.terminal_scroll.reset();
         self.terminal.selection_scroll.reset();
         self.terminal.pending_viewport = None;
@@ -1126,7 +1162,6 @@ impl Application {
         if let Some(message) = self.input.retire_orbit_generation() {
             self.send(message);
         }
-        let same_endpoint = self.terminal.active_endpoint == endpoint;
         if !same_endpoint
             && self.workspace_socket.is_some()
             && self.terminal.active_endpoint_live
@@ -1142,6 +1177,40 @@ impl Application {
             }
         } else {
             self.reset_cursor_animation();
+        }
+        if !same_endpoint {
+            let incoming = endpoint.as_deref().filter(|_| live).and_then(|endpoint| {
+                let index = self.column_views.iter().position(|view| {
+                    view.transport.is_some() && view.active_endpoint.as_deref() == Some(endpoint)
+                })?;
+                Some(self.column_views.swap_remove(index))
+            });
+            let swapped = incoming.is_some();
+            let mut outgoing = std::mem::replace(
+                &mut self.terminal,
+                incoming.unwrap_or_else(|| TerminalView::new(None)),
+            );
+            if keep_outgoing {
+                outgoing.model.clear_viewport_preview();
+                outgoing.scrollback_press = None;
+                if owes_viewport {
+                    outgoing.transport = None;
+                    outgoing.model.prepare_reconnect();
+                    outgoing.last_resize = None;
+                    outgoing.orbit_retry.schedule(Instant::now());
+                }
+                self.column_views.push(outgoing);
+            }
+            if swapped {
+                self.terminal.model.clear_viewport_preview();
+                self.presentation.invalidate();
+                if self.terminal.model.is_attached()
+                    && let Some(message) = self.input.latest_focus()
+                {
+                    self.send(message);
+                }
+                return;
+            }
         }
         self.terminal.active_endpoint = endpoint.clone();
         self.terminal.active_endpoint_live = live;
@@ -1159,7 +1228,7 @@ impl Application {
                 .mark_lost("The selected Eon pane is offline");
         }
         self.terminal.last_resize = None;
-        self.terminal.presentation.invalidate();
+        self.presentation.invalidate();
         if let Some(endpoint) = endpoint.filter(|_| live) {
             self.start_orbit(PathBuf::from(OsString::from_vec(endpoint)));
         } else if self.terminal.active_endpoint.is_none() {
@@ -1189,7 +1258,7 @@ impl Application {
         self.reset_cursor_animation();
         self.terminal.retry_suppressed = false;
         self.terminal.last_resize = None;
-        self.terminal.presentation.invalidate();
+        self.presentation.invalidate();
         self.start_orbit(
             self.terminal
                 .orbit_socket
@@ -1197,6 +1266,180 @@ impl Application {
                 .expect("Orbit retry has an attachment socket"),
         );
         self.refresh_client_view();
+    }
+
+    /// Attach each other visible column's live expanded pane and release views no column shows.
+    fn reconcile_column_views(&mut self) {
+        let selected = self.terminal.active_endpoint.as_deref();
+        let wanted = self
+            .workspace_model
+            .column_attachments()
+            .into_iter()
+            .filter(|&(_, endpoint, live)| live && Some(endpoint) != selected)
+            .map(|(_, endpoint, _)| endpoint.to_vec())
+            .collect::<Vec<_>>();
+        let before = self.column_views.len();
+        self.column_views.retain(|view| {
+            view.active_endpoint
+                .as_ref()
+                .is_some_and(|endpoint| wanted.contains(endpoint))
+        });
+        let mut changed = before != self.column_views.len();
+        for endpoint in wanted {
+            if self
+                .column_views
+                .iter()
+                .any(|view| view.active_endpoint.as_ref() == Some(&endpoint))
+            {
+                continue;
+            }
+            let socket = PathBuf::from(OsString::from_vec(endpoint.clone()));
+            let mut view = TerminalView::new(Some(socket.clone()));
+            view.transport = Some(orbit_transport(&self.proxy, socket));
+            view.active_endpoint = Some(endpoint);
+            view.active_endpoint_live = true;
+            self.column_views.push(view);
+            changed = true;
+        }
+        if changed {
+            self.presentation.invalidate();
+        }
+    }
+
+    fn handle_column_transport(&mut self, index: usize, event: TransportEvent) {
+        let retryable_busy = managed_busy_is_retryable(self.supervised, &event);
+        let retryable_event = retryable_busy || matches!(&event, TransportEvent::RetryableLoss(_));
+        let view = &mut self.column_views[index];
+        let was_attached = view.model.is_attached();
+        let mut schedule_retry = false;
+        match event {
+            TransportEvent::Server(ServerMessage::Busy) if retryable_busy => {
+                schedule_retry = apply_retryable_loss(
+                    &mut view.model,
+                    "Orbit already has a departing presentation client; retrying".into(),
+                    view.retry_suppressed,
+                );
+            }
+            TransportEvent::Server(message) => {
+                if server_failure_suppresses_retry(&message) {
+                    view.retry_suppressed = true;
+                }
+                match view.model.apply(message) {
+                    Ok(Some(effect)) => write_clipboard_effect(&mut view.model, effect),
+                    Ok(None) => {}
+                    Err(error) => view.model.mark_lost(error.to_string()),
+                }
+            }
+            TransportEvent::Incompatible { version } => view.model.mark_incompatible(version),
+            TransportEvent::InvalidInput(detail) => view.model.set_venus_notice(
+                LocalNoticeSource::Input,
+                format!("Venus could not encode input: {detail}"),
+            ),
+            TransportEvent::RetryableLoss(detail) => {
+                schedule_retry =
+                    apply_retryable_loss(&mut view.model, detail, view.retry_suppressed);
+            }
+            TransportEvent::Lost(detail) => view.model.mark_lost(detail),
+        }
+        if retryable_event || view.model.is_terminal() {
+            view.transport = None;
+            if schedule_retry {
+                view.orbit_retry.schedule(Instant::now());
+            } else {
+                view.orbit_retry.reset();
+            }
+        }
+        let attached = !was_attached && view.model.is_attached();
+        if attached {
+            view.orbit_retry.reset();
+            view.last_resize = None;
+            // Orbit forwards focus to applications that request it; this column is unfocused.
+            if let Some(transport) = &view.transport
+                && let Err(error) = transport.send(ClientMessage::Focus(session::FocusEvent::Lost))
+            {
+                view.model
+                    .set_venus_notice(LocalNoticeSource::Queue, error.to_string());
+            }
+        }
+        // Column frames repaint through the renderer's per-column revisions; the selected
+        // terminal's presentation identity, which pairs its input, stays unchanged.
+        if attached {
+            self.send_resize();
+            self.reconcile_metadata_observers();
+        }
+        if let Some(state) = &self.window {
+            state.window.request_redraw();
+        }
+    }
+
+    fn retry_column_views(&mut self, now: Instant) {
+        for view in &mut self.column_views {
+            if !view.orbit_retry.take_due(now) {
+                continue;
+            }
+            if view.transport.is_some() {
+                view.orbit_retry.reset();
+                continue;
+            }
+            view.model.prepare_reconnect();
+            view.retry_suppressed = false;
+            view.last_resize = None;
+            view.transport = Some(orbit_transport(
+                &self.proxy,
+                view.orbit_socket
+                    .clone()
+                    .expect("a column view has an attachment socket"),
+            ));
+        }
+    }
+
+    /// Size every other column's attached terminal to its own column.
+    fn send_column_resizes(&mut self) {
+        let Some(metrics) = self.window.as_ref().map(|state| state.renderer.metrics()) else {
+            return;
+        };
+        let Some(workspace) = self.workspace_scene() else {
+            return;
+        };
+        let attachments = self.workspace_model.column_attachments();
+        for column in &workspace.other_columns {
+            let Some(view) = attachments
+                .iter()
+                .find(|&&(index, _, _)| index == column.index)
+                .and_then(|&(_, endpoint, _)| {
+                    self.column_views
+                        .iter_mut()
+                        .find(|view| view.active_endpoint.as_deref() == Some(endpoint))
+                })
+            else {
+                continue;
+            };
+            let Some(size) = surface_size(rect_screen(column.terminal), metrics) else {
+                view.model.set_venus_notice(
+                    LocalNoticeSource::Resize,
+                    "Window dimensions are outside Orbit's accepted surface range",
+                );
+                continue;
+            };
+            if view.last_resize == Some(size) {
+                view.model.clear_venus_notice(LocalNoticeSource::Resize);
+                continue;
+            }
+            let Some(transport) = view.transport.as_ref().filter(|_| view.model.is_attached())
+            else {
+                continue;
+            };
+            match transport.send(ClientMessage::Resize(size)) {
+                Ok(()) => {
+                    view.last_resize = Some(size);
+                    view.model.clear_venus_notice(LocalNoticeSource::Resize);
+                    view.model.clear_venus_notice(LocalNoticeSource::Queue);
+                }
+                Err(error) => view
+                    .model
+                    .set_venus_notice(LocalNoticeSource::Queue, error.to_string()),
+            }
+        }
     }
 
     fn handle_workspace(&mut self, event: WorkspaceEvent) {
@@ -1227,13 +1470,13 @@ impl Application {
             let metadata_changed = !self.metadata_observers.is_empty();
             self.metadata_observers.clear();
             if quota_expired || metadata_changed {
-                self.terminal.presentation.invalidate();
+                self.presentation.invalidate();
             }
         }
         if workspace_changed {
             self.cancel_terminal_scroll();
             self.reveal_workspace_selection();
-            self.terminal.presentation.invalidate();
+            self.presentation.invalidate();
             let attachment = self.workspace_model.active_attachment();
             let popup_visible = self
                 .workspace_model
@@ -1255,6 +1498,7 @@ impl Application {
                     self.set_workspace_focus(WorkspaceFocus::Terminal);
                 }
             }
+            self.reconcile_column_views();
             self.send_resize();
         } else if snapshot_changed {
             let Some(scene) =
@@ -1264,7 +1508,7 @@ impl Application {
             };
             self.tab_scroll = scene.tab_scroll();
             self.pane_scroll = scene.pane_scroll();
-            self.terminal.presentation.invalidate();
+            self.presentation.invalidate();
         }
         if self.workspace_model.snapshot().is_some()
             && self.workspace_model.active_attachment().is_none()
@@ -1284,11 +1528,12 @@ impl Application {
             .workspace_model
             .snapshot()
             .map_or_else(HashSet::new, |snapshot| {
-                visible_metadata_endpoints(
-                    snapshot,
-                    self.terminal.active_endpoint.as_deref(),
-                    self.terminal.model.is_attached(),
-                )
+                let unattached = std::iter::once(&self.terminal)
+                    .chain(&self.column_views)
+                    .filter(|view| !view.model.is_attached())
+                    .filter_map(|view| view.active_endpoint.as_deref())
+                    .collect::<Vec<_>>();
+                visible_metadata_endpoints(snapshot, &unattached)
             });
         let before = self.metadata_observers.len();
         self.metadata_observers
@@ -1307,7 +1552,7 @@ impl Application {
                 });
         }
         if before != retained || retained != self.metadata_observers.len() {
-            self.terminal.presentation.invalidate();
+            self.presentation.invalidate();
         }
     }
 
@@ -1329,13 +1574,13 @@ impl Application {
             }
         }
         if changed {
-            self.terminal.presentation.invalidate();
+            self.presentation.invalidate();
             self.refresh_client_view();
         }
     }
 
     fn send_workspace(&mut self, action: CommonAction) -> bool {
-        self.terminal.presentation.has_presented_geometry()
+        self.presentation.has_presented_geometry()
             && self.queue_workspace(WorkspaceAction::Workspace(action))
     }
 
@@ -1372,7 +1617,7 @@ impl Application {
                     .mark_unavailable(format!("Cannot queue Eon workspace action: {error}"))
                 {
                     if quota_expired {
-                        self.terminal.presentation.invalidate();
+                        self.presentation.invalidate();
                     }
                     self.refresh_client_view();
                 }
@@ -1477,7 +1722,7 @@ impl Application {
                     self.set_workspace_focus(WorkspaceFocus::Terminal);
                 } else if let Some(action) = action
                     .filter(|action| sends_workspace_shortcut(action, event.state, event.repeat))
-                    && self.terminal.presentation.has_presented_geometry()
+                    && self.presentation.has_presented_geometry()
                 {
                     let popup = matches!(action, WorkspaceAction::InvokePopup { .. });
                     if self.queue_workspace(action) && popup {
@@ -1566,7 +1811,7 @@ impl Application {
             changed
         };
         if changed {
-            self.terminal.presentation.invalidate();
+            self.presentation.invalidate();
             self.refresh_client_view();
         }
     }
@@ -1729,9 +1974,9 @@ impl Application {
                         .map(|scene| (scene.columns, scene.rows, scene.screen));
                     if plain_frame && geometry == previous_geometry {
                         // Output dirties the renderer, not the last presented input geometry.
-                        self.terminal.presentation.content_changed();
+                        self.presentation.content_changed();
                     } else {
-                        self.terminal.presentation.invalidate();
+                        self.presentation.invalidate();
                     }
                 }
                 if !was_attached && self.terminal.model.is_attached() {
@@ -1784,7 +2029,7 @@ impl Application {
             self.input.retire_orbit_generation();
             self.reset_cursor_animation();
             self.terminal.transport = None;
-            self.terminal.presentation.invalidate();
+            self.presentation.invalidate();
             if schedule_retry && self.retry_allowed() {
                 self.terminal.orbit_retry.schedule(Instant::now());
             } else {
@@ -1805,8 +2050,8 @@ impl Application {
     fn link_scene(&self) -> Option<(&Scene, PresentationIdentity)> {
         let workspace = self.workspace_scene();
         let identity = self.presentation_candidate(workspace.as_ref());
-        (self.link_surface_available(self.terminal.links.unshifted)
-            && self.terminal.presentation.is_current(identity))
+        (self.link_surface_available(self.links.unshifted)
+            && self.presentation.is_current(identity))
         .then(|| {
             (
                 self.terminal
@@ -1832,7 +2077,7 @@ impl Application {
     }
 
     fn focused_link(&self) -> Option<Hyperlink<'_>> {
-        let focus = self.terminal.links.focus?;
+        let focus = self.links.focus?;
         let (scene, identity) = self.link_scene()?;
         (focus.identity == identity)
             .then(|| scene.hyperlink_at(focus.row, focus.column))
@@ -1854,7 +2099,7 @@ impl Application {
     }
 
     fn pointer_link(&self) -> Option<LinkFocus> {
-        if !self.terminal.links.pointer_inside || self.input.pointer_busy() {
+        if !self.links.pointer_inside || self.input.pointer_busy() {
             return None;
         }
         let (scene, identity) = self.link_scene()?;
@@ -1893,19 +2138,19 @@ impl Application {
     }
 
     fn inspect_pointer_link(&mut self) {
-        if self.terminal.links.pressed.is_some() {
+        if self.links.pressed.is_some() {
             return;
         }
         let focus = self.pointer_link();
-        if self.terminal.links.focus != focus {
-            self.terminal.links.focus = focus;
-            self.terminal.links.notice = None;
+        if self.links.focus != focus {
+            self.links.focus = focus;
+            self.links.notice = None;
             self.refresh_client_view();
         }
     }
 
     fn link_status(&self) -> Option<String> {
-        if let Some(notice) = &self.terminal.links.notice {
+        if let Some(notice) = &self.links.notice {
             return Some(notice.clone());
         }
         let link = self.focused_link()?;
@@ -1970,7 +2215,7 @@ impl Application {
                 "Opening link…"
             })
         };
-        self.terminal.links.notice = Some(result.unwrap_or_else(|error| error).into());
+        self.links.notice = Some(result.unwrap_or_else(|error| error).into());
     }
 
     fn handle_link_button(&mut self, state: ElementState, button: MouseButton) -> bool {
@@ -1980,24 +2225,24 @@ impl Application {
             return false;
         }
         if state == ElementState::Released
-            && let Some(pressed) = self.terminal.links.pressed.take()
+            && let Some(pressed) = self.links.pressed.take()
         {
             let released = self.pointer_link();
             if released == Some(pressed) && opens_link {
-                self.terminal.links.focus = Some(pressed);
+                self.links.focus = Some(pressed);
                 self.activate_link(false);
             } else {
-                self.terminal.links.focus = released;
-                self.terminal.links.notice = None;
+                self.links.focus = released;
+                self.links.notice = None;
             }
             self.refresh_client_view();
             return true;
         }
         if state == ElementState::Pressed {
-            self.terminal.links.pressed = None;
+            self.links.pressed = None;
             if opens_link && let Some(focus) = self.pointer_link() {
-                self.terminal.links.focus = Some(focus);
-                self.terminal.links.pressed = Some(focus);
+                self.links.focus = Some(focus);
+                self.links.pressed = Some(focus);
                 self.refresh_client_view();
                 return true;
             }
@@ -2006,11 +2251,11 @@ impl Application {
     }
 
     fn refresh_client_view(&mut self) {
-        if !self.link_surface_available(self.terminal.links.unshifted) {
-            self.terminal.links.pressed = None;
+        if !self.link_surface_available(self.links.unshifted) {
+            self.links.pressed = None;
         }
-        if self.terminal.links.focus.is_some() && self.focused_link().is_none() {
-            self.terminal.links.focus = None;
+        if self.links.focus.is_some() && self.focused_link().is_none() {
+            self.links.focus = None;
         }
         let link_generation = self.link_scene().map(|(_, identity)| identity.generation);
         let status = self.status();
@@ -2053,9 +2298,9 @@ impl Application {
         state.window.set_ime_allowed(ime_allowed);
         state.window.set_cursor(
             if shortcut_viewer.is_none()
-                && (self.terminal.links.focus.is_some()
+                && (self.links.focus.is_some()
                     || scrollback_rect.is_some_and(|rect| {
-                        self.terminal.links.pointer_inside
+                        self.links.pointer_inside
                             && rect.contains(self.cursor.x as f32, self.cursor.y as f32)
                     }))
             {
@@ -2263,20 +2508,11 @@ impl Application {
     }
 
     fn presented_revision(&self) -> Option<u64> {
-        self.terminal.presentation.presented_revision()
+        self.presentation.presented_revision()
     }
 
     fn write_clipboard(&mut self, effect: ClipboardEffect) {
-        let clipboard = native_clipboard(&effect);
-        let text = match effect {
-            ClipboardEffect::SelectionCopy { text, .. }
-            | ClipboardEffect::TerminalWrite { text, .. } => text,
-        };
-        let result = write_native_clipboard(clipboard, text);
-        self.terminal.model.set_venus_notice(
-            LocalNoticeSource::Clipboard,
-            clipboard_notice(clipboard, result),
-        );
+        write_clipboard_effect(&mut self.terminal.model, effect);
     }
 
     fn paste_clipboard(&mut self) {
@@ -2298,6 +2534,7 @@ impl Application {
     }
 
     fn send_resize(&mut self) {
+        self.send_column_resizes();
         let Some(state) = &self.window else {
             return;
         };
@@ -2332,7 +2569,7 @@ impl Application {
         if let Some(notice) = status_notice(
             self.terminal.model.notice(),
             links_available
-                .then_some(self.terminal.links.notice.as_deref())
+                .then_some(self.links.notice.as_deref())
                 .flatten(),
         ) {
             return notice.to_owned();
@@ -2419,7 +2656,7 @@ impl Application {
         let highlighted_link = self.focused_link().map(|link| (link.row, link.column));
         let hovered_hit = (shortcut_viewer.is_none()
             && self.window_focused
-            && self.terminal.links.pointer_inside
+            && self.links.pointer_inside
             && !self.input.pointer_busy())
         .then(|| {
             workspace
@@ -2462,6 +2699,11 @@ impl Application {
             self.terminal.model.scroll_preview(),
             scroll_offset,
             workspace.as_ref(),
+            &column_scenes(
+                &self.workspace_model,
+                &self.column_views,
+                workspace.as_ref(),
+            ),
             shortcut_viewer.as_ref(),
             workspace_focus,
             status,
@@ -2473,7 +2715,7 @@ impl Application {
                 presented = true;
                 refresh = self.render_notice.take().is_some()
                     || state.renderer.presented_scrollback_rect() != prior_scrollback_target;
-                self.terminal.presentation.publish(candidate);
+                self.presentation.publish(candidate);
                 if let Some(revision) = candidate.revision {
                     self.terminal.selection_scroll.presented(
                         revision,
@@ -2481,7 +2723,7 @@ impl Application {
                         self.terminal.pending_viewport,
                     );
                 }
-                self.terminal.links.unshifted = scroll_offset == 0.0;
+                self.links.unshifted = scroll_offset == 0.0;
                 state.accessibility.present_links(
                     &mut state.adapter,
                     self.terminal.model.scene(),
@@ -2499,11 +2741,11 @@ impl Application {
                 self.terminal
                     .terminal_scroll
                     .cancel(&mut self.terminal.pending_viewport);
-                self.terminal.links.unshifted = false;
+                self.links.unshifted = false;
             }
             Ok(PresentOutcome::Recovered) => {
-                self.terminal.links.unshifted = false;
-                self.terminal.presentation.invalidate();
+                self.links.unshifted = false;
+                self.presentation.invalidate();
                 state.window.request_redraw();
             }
             Err(error) => {
@@ -2512,7 +2754,7 @@ impl Application {
                     .cancel(&mut self.terminal.pending_viewport);
                 if let Some(notice) = record_render_failure(
                     &mut self.render_notice,
-                    &mut self.terminal.presentation,
+                    &mut self.presentation,
                     error,
                     |title| state.window.set_title(title),
                     |message| report(message),
@@ -2585,8 +2827,8 @@ impl ApplicationHandler<UserEvent> for Application {
         let workspace = self.workspace_scene();
         let workspace_focus = self.workspace_focus;
         let candidate = self.presentation_candidate(workspace.as_ref());
-        let presentation_current = self.terminal.presentation.has_presented_geometry();
-        let presented_revision = self.terminal.presentation.presented_revision();
+        let presentation_current = self.presentation.has_presented_geometry();
+        let presented_revision = self.presentation.presented_revision();
         let scrollback_rect = self.scrollback_rect(workspace.as_ref());
         let Some(state) = &mut self.window else {
             return;
@@ -2607,7 +2849,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 state.renderer.resize(size, state.scale_factor);
                 self.cancel_pointer_sequence();
                 self.reveal_workspace_selection();
-                self.terminal.presentation.invalidate();
+                self.presentation.invalidate();
                 self.send_resize();
                 self.refresh_client_view();
             }
@@ -2640,7 +2882,7 @@ impl ApplicationHandler<UserEvent> for Application {
                     .terminal_scroll
                     .cancel(&mut self.terminal.pending_viewport);
                 state.scale_factor = scale_factor;
-                self.terminal.presentation.invalidate();
+                self.presentation.invalidate();
                 self.cancel_pointer_sequence();
             }
             WindowEvent::Occluded(occluded) => {
@@ -2651,7 +2893,7 @@ impl ApplicationHandler<UserEvent> for Application {
                     .cancel(&mut self.terminal.pending_viewport);
                 state.renderer.reset_cursor_animation();
                 if occluded {
-                    self.terminal.presentation.invalidate();
+                    self.presentation.invalidate();
                     self.cancel_pointer_sequence();
                 } else {
                     state.window.request_redraw();
@@ -2730,7 +2972,7 @@ impl ApplicationHandler<UserEvent> for Application {
                     .cancel(&mut self.terminal.pending_viewport);
                 state.renderer.reset_cursor_animation();
                 if !focused {
-                    self.terminal.links.focus = None;
+                    self.links.focus = None;
                     self.cancel_pointer_sequence();
                 }
                 let message = self.input.native_focus(
@@ -2744,7 +2986,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 if self.shortcut_viewer.open {
                     self.terminal.selection_scroll.cancel();
                     self.cursor = position;
-                    self.terminal.links.pointer_inside = true;
+                    self.links.pointer_inside = true;
                     return;
                 }
                 let header_at = |position: PhysicalPosition<f64>| {
@@ -2762,7 +3004,7 @@ impl ApplicationHandler<UserEvent> for Application {
                     })
                 };
                 if header_at(self.cursor) != header_at(position)
-                    || (!self.terminal.links.pointer_inside && header_at(position).is_some())
+                    || (!self.links.pointer_inside && header_at(position).is_some())
                 {
                     state.window.request_redraw();
                 }
@@ -2771,20 +3013,20 @@ impl ApplicationHandler<UserEvent> for Application {
                 let over_scrollback = scrollback_rect
                     .is_some_and(|rect| rect.contains(position.x as f32, position.y as f32));
                 self.cursor = position;
-                self.terminal.links.pointer_inside = true;
+                self.links.pointer_inside = true;
                 if over_scrollback {
                     self.terminal.selection_scroll.edge(
                         false,
                         Instant::now(),
                         self.terminal.pending_viewport,
                     );
-                    self.terminal.links.focus = None;
+                    self.links.focus = None;
                     if was_scrollback != over_scrollback {
                         self.refresh_client_view();
                     }
                     return;
                 }
-                if self.terminal.links.pressed.is_some()
+                if self.links.pressed.is_some()
                     || self.header_press.is_some()
                     || self.terminal.scrollback_press.is_some()
                 {
@@ -2841,12 +3083,12 @@ impl ApplicationHandler<UserEvent> for Application {
                 }
             }
             WindowEvent::CursorLeft { .. } => {
-                self.terminal.links.pointer_inside = false;
+                self.links.pointer_inside = false;
                 self.terminal.scrollback_press = None;
                 state.window.request_redraw();
                 self.cancel_terminal_scroll();
                 self.cancel_pointer_sequence();
-                self.terminal.links.focus = None;
+                self.links.focus = None;
                 self.refresh_client_view();
             }
             WindowEvent::MouseInput {
@@ -2869,7 +3111,10 @@ impl ApplicationHandler<UserEvent> for Application {
                             scene.hit_test(self.cursor.x as f32, self.cursor.y as f32)
                         }),
                         Some(
-                            WorkspaceHit::Tab(_) | WorkspaceHit::Pane(_) | WorkspaceHit::Control(_)
+                            WorkspaceHit::Tab(_)
+                                | WorkspaceHit::Pane(_)
+                                | WorkspaceHit::ColumnTerminal(_)
+                                | WorkspaceHit::Control(_)
                         )
                     );
                     if !navigation {
@@ -2885,7 +3130,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 }
                 let scrollback_target = scrollback_rect
                     .filter(|rect| {
-                        self.terminal.links.pointer_inside
+                        self.links.pointer_inside
                             && rect.contains(self.cursor.x as f32, self.cursor.y as f32)
                     })
                     .map(|_| candidate);
@@ -2898,7 +3143,7 @@ impl ApplicationHandler<UserEvent> for Application {
                     if activate {
                         self.send(ClientMessage::ReturnToLive);
                     } else if button_state == ElementState::Pressed {
-                        self.terminal.links.pressed = None;
+                        self.links.pressed = None;
                     }
                     self.refresh_client_view();
                     return;
@@ -2907,8 +3152,8 @@ impl ApplicationHandler<UserEvent> for Application {
                     return;
                 }
                 if button_state == ElementState::Pressed {
-                    self.terminal.links.focus = None;
-                    self.terminal.links.notice = None;
+                    self.links.focus = None;
+                    self.links.notice = None;
                     self.refresh_client_view();
                 }
                 let hit = workspace.as_ref().and_then(|workspace| {
@@ -2941,6 +3186,9 @@ impl ApplicationHandler<UserEvent> for Application {
                         Some(WorkspaceHit::Tab(id)) => Some((WorkspaceFocus::Tabs, id.to_owned())),
                         Some(WorkspaceHit::Pane(id)) => {
                             Some((WorkspaceFocus::Panes, id.to_owned()))
+                        }
+                        Some(WorkspaceHit::ColumnTerminal(id)) => {
+                            Some((WorkspaceFocus::Terminal, id.to_owned()))
                         }
                         Some(WorkspaceHit::Terminal) => {
                             self.set_workspace_focus(WorkspaceFocus::Terminal);
@@ -3015,7 +3263,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 if self.input.is_selecting() {
                     return;
                 }
-                self.terminal.links.pressed = None;
+                self.links.pressed = None;
                 self.header_press = None;
                 self.terminal.scrollback_press = None;
                 let metrics = state.renderer.metrics();
@@ -3045,7 +3293,10 @@ impl ApplicationHandler<UserEvent> for Application {
                     }
                     return;
                 }
-                if matches!(hit, Some(WorkspaceHit::Pane(_))) {
+                // Header scrolling belongs to the selected column; other columns' headers ignore the wheel.
+                if let (Some(WorkspaceHit::Pane(id)), Some(scene)) = (hit, workspace.as_ref())
+                    && scene.panes.iter().any(|pane| pane.id == id)
+                {
                     if presentation_current {
                         self.scroll_workspace(delta, false, metrics);
                     }
@@ -3121,6 +3372,15 @@ impl ApplicationHandler<UserEvent> for Application {
                     .map_or_else(Vec::new, Transport::drain_events);
                 for event in events {
                     self.handle_transport(event);
+                }
+                for index in 0..self.column_views.len() {
+                    let events = self.column_views[index]
+                        .transport
+                        .as_ref()
+                        .map_or_else(Vec::new, Transport::drain_events);
+                    for event in events {
+                        self.handle_column_transport(index, event);
+                    }
                 }
                 self.drive_terminal_scroll();
             }
@@ -3235,16 +3495,16 @@ impl ApplicationHandler<UserEvent> for Application {
             .and_then(|opener| opener.poll(now))
         {
             self.link_opener = None;
-            self.terminal.links.notice = Some(notice.into());
+            self.links.notice = Some(notice.into());
             self.refresh_client_view();
         }
         self.retry_orbit(now);
+        self.retry_column_views(now);
         self.drive_selection_autoscroll(now);
-        let blinking = self
-            .terminal
-            .model
-            .scene()
-            .is_some_and(|scene| scene.has_blinking_content());
+        let blinking = std::iter::once(&self.terminal)
+            .chain(&self.column_views)
+            .filter_map(|view| view.model.scene())
+            .any(Scene::has_blinking_content);
         if update_blink(blinking, &mut self.blink_visible, &mut self.next_blink, now)
             && let Some(state) = &self.window
         {
@@ -3269,6 +3529,10 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.next_animation,
                 self.terminal.selection_scroll.next,
                 self.terminal.orbit_retry.deadline,
+                self.column_views
+                    .iter()
+                    .filter_map(|view| view.orbit_retry.deadline)
+                    .min(),
                 // winit may suppress output-enter wakeups. Poll only until
                 // this window completes its initial native size admission.
                 (self.initial_scale_pending && self.window.is_some())
@@ -3333,27 +3597,24 @@ fn retry_is_allowed(
     !workspace || selected.is_some_and(|(endpoint, live)| live && active == Some(endpoint))
 }
 
+/// Live panes of the active tab, except endpoints whose presentation attachment is not
+/// established; none while a popup covers the tab.
 fn visible_metadata_endpoints(
     snapshot: &eon_workspace_protocol::v10::Snapshot,
-    selected_endpoint: Option<&[u8]>,
-    selected_attached: bool,
+    unattached: &[&[u8]],
 ) -> HashSet<Vec<u8>> {
     if active_popup(snapshot).is_some() {
         return HashSet::new();
     }
-    let mut endpoints = snapshot
+    snapshot
         .tabs
         .iter()
         .find(|tab| tab.id == snapshot.active_tab)
         .into_iter()
         .flat_map(|tab| tab.panes())
-        .filter(|pane| pane.live)
+        .filter(|pane| pane.live && !unattached.contains(&pane.endpoint.as_slice()))
         .map(|pane| pane.endpoint.clone())
-        .collect::<HashSet<_>>();
-    if !selected_attached && let Some(endpoint) = selected_endpoint {
-        endpoints.remove(endpoint);
-    }
-    endpoints
+        .collect()
 }
 
 fn server_failure_suppresses_retry(message: &ServerMessage) -> bool {
@@ -3401,6 +3662,52 @@ fn record_render_failure<'a>(
     Some(render_notice.insert(notice).as_str())
 }
 
+/// Each other column's latest scene, aligned with the workspace scene's `other_columns`.
+fn column_scenes<'a>(
+    workspace_model: &'a WorkspaceModel,
+    views: &'a [TerminalView],
+    workspace: Option<&WorkspaceScene>,
+) -> Vec<Option<&'a Scene>> {
+    let attachments = workspace_model.column_attachments();
+    workspace.map_or_else(Vec::new, |workspace| {
+        workspace
+            .other_columns
+            .iter()
+            .map(|column| {
+                let &(_, endpoint, _) = attachments
+                    .iter()
+                    .find(|&&(index, _, _)| index == column.index)?;
+                views
+                    .iter()
+                    .find(|view| view.active_endpoint.as_deref() == Some(endpoint))?
+                    .model
+                    .scene()
+            })
+            .collect()
+    })
+}
+
+fn orbit_transport(proxy: &EventLoopProxy<UserEvent>, socket: PathBuf) -> Transport {
+    let proxy = proxy.clone();
+    Transport::start(socket, move || {
+        let _ = proxy.send_event(UserEvent::Transport);
+    })
+}
+
+/// Write a terminal's clipboard effect natively and report the result on that terminal.
+fn write_clipboard_effect(model: &mut SessionModel, effect: ClipboardEffect) {
+    let clipboard = native_clipboard(&effect);
+    let text = match effect {
+        ClipboardEffect::SelectionCopy { text, .. }
+        | ClipboardEffect::TerminalWrite { text, .. } => text,
+    };
+    let result = write_native_clipboard(clipboard, text);
+    model.set_venus_notice(
+        LocalNoticeSource::Clipboard,
+        clipboard_notice(clipboard, result),
+    );
+}
+
 fn can_follow_implicit_resize(message: &ClientMessage) -> bool {
     matches!(message, ClientMessage::Mouse(_))
 }
@@ -3436,12 +3743,14 @@ fn terminal_screen(
     workspace: Option<&WorkspaceScene>,
     fallback: PhysicalSize<u32>,
 ) -> PhysicalSize<u32> {
-    workspace.map_or(fallback, |workspace| {
-        PhysicalSize::new(
-            workspace.terminal.width.max(0.0).round() as u32,
-            workspace.terminal.height.max(0.0).round() as u32,
-        )
-    })
+    workspace.map_or(fallback, |workspace| rect_screen(workspace.terminal))
+}
+
+fn rect_screen(rect: SceneRect) -> PhysicalSize<u32> {
+    PhysicalSize::new(
+        rect.width.max(0.0).round() as u32,
+        rect.height.max(0.0).round() as u32,
+    )
 }
 
 fn move_terminal_pointer(
@@ -4365,7 +4674,7 @@ mod tests {
                         position: terminal,
                     },
                 );
-                let generation = app.terminal.presentation.generation;
+                let generation = app.presentation.generation;
                 app.handle_transport(frame(2, Screen::Primary));
                 // Exercise the actual handlers in the output-to-presentation gap.
                 app.window_event(
@@ -4472,7 +4781,7 @@ mod tests {
                 );
                 assert_eq!(app.terminal.selection_gate, SelectionGate::AwaitingFinish);
                 assert!(
-                    app.terminal.presentation.generation > generation,
+                    app.presentation.generation > generation,
                     "renderer cache must refresh"
                 );
                 assert_eq!(
@@ -4601,7 +4910,7 @@ mod tests {
                 assert_eq!(app.presented_revision(), None);
                 app.render();
                 app.window_focused = true;
-                app.terminal.links.pointer_inside = true;
+                app.links.pointer_inside = true;
                 app.handle_transport(linked_frame(6, "https://example.com/6"));
                 let workspace = app.workspace_scene().unwrap();
                 let metrics = app.window.as_ref().unwrap().renderer.metrics();
@@ -4613,7 +4922,7 @@ mod tests {
                 app.render();
                 assert_eq!(app.focused_link().unwrap().uri, "https://example.com/6");
                 app.render();
-                app.terminal.links.pressed = app.terminal.links.focus;
+                app.links.pressed = app.links.focus;
                 app.handle_transport(linked_frame(7, "https://example.com/7"));
                 assert!(app.focused_link().is_none());
                 app.render();
@@ -4627,16 +4936,16 @@ mod tests {
                 assert_eq!(app.focused_link().unwrap().uri, "https://example.com/7");
                 app.handle_transport(linked_frame(8, "file:///modifier-mismatch"));
                 app.render();
-                let link = app.terminal.links.focus;
+                let link = app.links.focus;
                 app.input
                     .set_modifiers(winit::keyboard::ModifiersState::empty());
-                app.terminal.links.pressed = link;
+                app.links.pressed = link;
                 assert!(app.handle_link_button(ElementState::Released, MouseButton::Left));
                 assert!(
-                    app.terminal.links.notice.is_none(),
+                    app.links.notice.is_none(),
                     "a link release without Ctrl must not activate its target"
                 );
-                app.terminal.links.pressed = link;
+                app.links.pressed = link;
                 app.window_event(
                     event_loop,
                     id,
@@ -4647,20 +4956,20 @@ mod tests {
                     },
                 );
                 assert!(
-                    app.terminal.links.pressed.is_none(),
+                    app.links.pressed.is_none(),
                     "scroll input must retire a captured link press immediately"
                 );
-                app.terminal.links.pressed = link;
+                app.links.pressed = link;
                 app.cursor = PhysicalPosition::new(0.0, 0.0);
                 assert!(!app.handle_link_button(ElementState::Pressed, MouseButton::Left));
                 assert!(
-                    app.terminal.links.pressed.is_none(),
+                    app.links.pressed.is_none(),
                     "a fresh ordinary press must retire a missed link release"
                 );
-                app.terminal.links.pressed = link;
+                app.links.pressed = link;
                 app.set_workspace_focus(WorkspaceFocus::Panes);
                 assert!(
-                    app.terminal.links.pressed.is_none(),
+                    app.links.pressed.is_none(),
                     "leaving terminal focus must retire a captured link press"
                 );
                 app.set_workspace_focus(WorkspaceFocus::Terminal);
@@ -4914,11 +5223,11 @@ mod tests {
                 }
                 app.terminal.transport = Some(original_transport);
                 let snapshot = app.workspace_model.snapshot().unwrap().clone();
-                app.terminal.links.pressed = link;
+                app.links.pressed = link;
                 app.handle_workspace(WorkspaceEvent::Unavailable("offline".into()));
                 assert_eq!(app.presented_revision(), None);
                 assert!(
-                    app.terminal.links.pressed.is_none(),
+                    app.links.pressed.is_none(),
                     "an unavailable link surface must retire its captured press"
                 );
                 app.workspace_model
@@ -4940,7 +5249,7 @@ mod tests {
                     ),
                 ] {
                     app.tab_scroll = 0.0;
-                    app.terminal.presentation.invalidate();
+                    app.presentation.invalidate();
                     app.render();
                     app.cursor = position;
                     assert_eq!(
@@ -5278,11 +5587,11 @@ mod tests {
         };
 
         assert_eq!(
-            visible_metadata_endpoints(&snapshot, Some(b"one"), false),
+            visible_metadata_endpoints(&snapshot, &[b"one"]),
             HashSet::new()
         );
         assert_eq!(
-            visible_metadata_endpoints(&snapshot, Some(b"one"), true),
+            visible_metadata_endpoints(&snapshot, &[]),
             [b"one".to_vec()].into()
         );
         // Every column of the active tab is visible, so each has an observer.
@@ -5299,23 +5608,25 @@ mod tests {
                 expanded: "pane-4".into(),
             });
         assert_eq!(
-            visible_metadata_endpoints(&columns, Some(b"one"), true),
+            visible_metadata_endpoints(&columns, &[]),
             [b"one".to_vec(), b"beside".to_vec()].into()
+        );
+        // A column still attaching waits for its observer like the selected pane.
+        assert_eq!(
+            visible_metadata_endpoints(&columns, &[b"beside"]),
+            [b"one".to_vec()].into()
         );
 
         let mut popup = snapshot;
         show_test_popup(&mut popup);
-        assert_eq!(
-            visible_metadata_endpoints(&popup, Some(b"popup"), true),
-            HashSet::new()
-        );
+        assert_eq!(visible_metadata_endpoints(&popup, &[]), HashSet::new());
 
         let inactive_popup = Snapshot {
             active_tab: "t2".into(),
             ..popup
         };
         assert_eq!(
-            visible_metadata_endpoints(&inactive_popup, Some(b"hidden"), true),
+            visible_metadata_endpoints(&inactive_popup, &[]),
             [b"hidden".to_vec()].into()
         );
     }

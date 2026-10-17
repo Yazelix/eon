@@ -181,6 +181,37 @@ impl WorkspaceModel {
             .map(|pane| (pane.endpoint.as_slice(), pane.live))
     }
 
+    /// The expanded pane of each visible column other than the selected one, as
+    /// `(column index, endpoint, live)`; none while a popup covers the tab.
+    #[must_use]
+    pub fn column_attachments(&self) -> Vec<(usize, &[u8], bool)> {
+        let Some(snapshot) = self.snapshot.as_ref() else {
+            return Vec::new();
+        };
+        if active_popup(snapshot).is_some() {
+            return Vec::new();
+        }
+        let Some(tab) = snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == snapshot.active_tab)
+        else {
+            return Vec::new();
+        };
+        tab.columns
+            .iter()
+            .enumerate()
+            .filter(|(_, column)| tab.selected_pane.as_ref() != Some(&column.expanded))
+            .filter_map(|(index, column)| {
+                column
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == column.expanded)
+                    .map(|pane| (index, pane.endpoint.as_slice(), pane.live))
+            })
+            .collect()
+    }
+
     fn set_notice(&mut self, notice: WorkspaceNotice) -> bool {
         let changed = self.notice.as_ref() != Some(&notice);
         self.notice = Some(notice);
@@ -709,5 +740,65 @@ mod tests {
             model.active_attachment(),
             Some((&b"/run/eon/k2.sock"[..], true))
         );
+    }
+
+    #[test]
+    fn other_columns_attach_their_expanded_panes_until_a_popup_covers_the_tab() {
+        let pane = |id: &str, live| Pane {
+            id: id.into(),
+            session: format!("session-{id}"),
+            endpoint: format!("/run/eon/{id}.sock").into_bytes(),
+            live,
+        };
+        let column = |panes: Vec<Pane>, expanded: &str| workspace::Column {
+            panes,
+            expanded: expanded.into(),
+        };
+        let mut snapshot = Snapshot {
+            active_tab: "t1".into(),
+            geometry: workspace::PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/tmp".to_vec(),
+                pending: false,
+                selected_pane: Some("x".into()),
+                selected_popup: None,
+                columns: vec![
+                    column(vec![pane("a", true)], "a"),
+                    column(vec![pane("x", true), pane("y", true)], "x"),
+                    column(vec![pane("c", true), pane("d", false)], "d"),
+                ],
+                popups: Vec::new(),
+            }],
+            codex_quota: None,
+            claude_quota: None,
+        };
+        let mut model = WorkspaceModel::default();
+        model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
+        assert_eq!(
+            model.column_attachments(),
+            [
+                (0, &b"/run/eon/a.sock"[..], true),
+                (2, &b"/run/eon/d.sock"[..], false),
+            ]
+        );
+        assert_eq!(
+            model.active_attachment(),
+            Some((&b"/run/eon/x.sock"[..], true))
+        );
+
+        snapshot.tabs[0].popups = vec![Popup {
+            id: "u1".into(),
+            entry: "project".into(),
+            session: "popup".into(),
+            endpoint: b"/run/eon/popup.sock".to_vec(),
+        }];
+        snapshot.tabs[0].selected_popup = Some("u1".into());
+        model.apply(WorkspaceResponse::Snapshot(snapshot));
+        assert!(model.column_attachments().is_empty());
     }
 }
