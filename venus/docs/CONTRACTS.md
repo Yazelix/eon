@@ -155,8 +155,12 @@ re-proved when that platform or feature is next touched.
 - **Result:**
   - Venus validates and materializes one coherent Orbit-authored structured
     frame into native draw inputs without terminal authority.
-  - An omitted color choice selects one of eight Venus presets once per launch
-    and uses it for that process at internal fallback duration `1.0`. Eon owns
+  - An omitted or `random` color choice selects one of eight Venus presets once
+    per live endpoint: the device, inode and change time of the workspace or
+    Orbit socket Venus attaches to pick it, so every launch against that live
+    socket shows the same preset and a recreated socket picks afresh. A socket
+    absent at launch falls back to one choice for that process. The internal
+    fallback duration is `1.0`. Eon owns
     product defaults and user configuration. One selector accepts
     `random`, `preset:<name>`, or `custom:#RRGGBB`; `none` is static, and the
     duration flag can override the default for any color choice. Durations must
@@ -213,7 +217,10 @@ re-proved when that platform or feature is next touched.
   [#757](https://gitlab.gnome.org/GNOME/orca/-/work_items/757) correction limit
   Say All),
   and half-block and cell-buffer performance measurements. Fractional scale and
-  broader Linux compositor coverage remain outside the proof.
+  broader Linux compositor coverage remain outside the proof. The per-endpoint
+  preset (`eon-cursor-color-after-attach-lbbo`) is covered by
+  `random_cursor_preset_is_stable_per_live_endpoint` and that bead's installed
+  full-Eon reattach dogfood; EonTerm reopens are not dogfooded.
 
 ## VEN-C2 — Native semantic interaction
 

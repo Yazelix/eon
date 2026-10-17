@@ -21,6 +21,10 @@ installation, and proven contract changes.
   `--json`), and `eon versions` reports EONW 10.
 - The Claude quota chip shows how far into each window you are, like the Codex
   chip: for example `4h10m/5h 98% · 5d20h/7d 100%`.
+- `eon attach` reopens with the same random cursor color the window had before
+  it closed, instead of picking a new one each time. This applies when
+  `cursor_trail_color` is omitted or `random`; a new workspace still picks
+  again, and `preset:` and `custom:` colors are unchanged.
 - Quota chips say `old` only when their last good reading is more than an hour
   old; a failed or rate-limited read no longer marks them old. Old readings
   stay visible for 24 hours instead of one.

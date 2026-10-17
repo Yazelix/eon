@@ -37,7 +37,10 @@ The full-Eon top bar shows `EON <version>` by default. Set
 opens or reopens. The version belongs to its running supervisor; updating the
 installation does not change it. Narrow windows hide the label automatically.
 
-Omitting `cursor_trail_color` chooses a random color for each surface. Explicit
+Omitting `cursor_trail_color` chooses a random color that lasts as long as the
+running workspace, so `eon attach` reopens with the same color; a new workspace
+picks again. EonTerm keeps one color across reopens, though its first window
+may differ. Explicit
 values are `random`, `preset:<name>`, or `custom:#RRGGBB`. The presets are
 `magma`, `solar`, `lime`, `forest`, `ice`, `ocean`, `nebula`, and `bubblegum`;
 the terminal adds a contrasting cursor outline automatically. The cursor body

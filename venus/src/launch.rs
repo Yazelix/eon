@@ -2,10 +2,14 @@ use crate::Result;
 #[cfg(target_os = "macos")]
 use std::process::Command;
 use std::{
-    collections::hash_map::RandomState, env, ffi::OsString, hash::BuildHasher, path::PathBuf,
+    collections::hash_map::{DefaultHasher, RandomState},
+    env,
+    ffi::OsString,
+    fs,
+    hash::{BuildHasher, Hash, Hasher},
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
 };
-#[cfg(target_os = "linux")]
-use std::{fs, os::unix::fs::MetadataExt};
 use yazelix_venus::{Color, FontSettings};
 
 const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
@@ -190,6 +194,13 @@ pub(super) fn launch_arguments(
     if eon_version.is_some() && workspace_socket.is_none() {
         return Err(USAGE.into());
     }
+    if orbit_socket.is_none() && workspace_socket.is_none() {
+        orbit_socket = Some(default_socket_path()?);
+    }
+    let endpoint = workspace_socket
+        .as_deref()
+        .or(orbit_socket.as_deref())
+        .expect("launch resolves one endpoint");
 
     let cursor_tail = match (
         cursor_color_choice,
@@ -198,7 +209,9 @@ pub(super) fn launch_arguments(
         cursor_trail_duration,
     ) {
         (color, None, None, duration) => Some((
-            color.unwrap_or_else(random_cursor_color),
+            color
+                .flatten()
+                .unwrap_or_else(|| endpoint_cursor_color(endpoint)),
             duration.unwrap_or(1.0),
         )),
         (None, Some(false), None, None) => None,
@@ -223,9 +236,6 @@ pub(super) fn launch_arguments(
             "initial terminal columns/rows must be positive and fit Orbit's 100,000-cell limit"
                 .into(),
         );
-    }
-    if orbit_socket.is_none() && workspace_socket.is_none() {
-        orbit_socket = Some(default_socket_path()?);
     }
 
     let startup_admission = presentation_control.as_deref() == Some("stdin-ready-v1".as_ref());
@@ -284,23 +294,42 @@ const fn rgb(value: u32) -> Color {
     }
 }
 
-fn parse_cursor_color_choice(value: &str) -> Option<Color> {
-    match value {
-        "random" => Some(random_cursor_color()),
-        _ => value
-            .strip_prefix("preset:")
-            .and_then(|name| {
-                CURSOR_COLOR_PRESETS
-                    .iter()
-                    .find(|(preset, _)| *preset == name)
-                    .map(|(_, color)| *color)
-            })
-            .or_else(|| value.strip_prefix("custom:").and_then(parse_cursor_color)),
+/// `Some(None)` is `random`, which resolves like an omitted choice.
+fn parse_cursor_color_choice(value: &str) -> Option<Option<Color>> {
+    if value == "random" {
+        return Some(None);
     }
+    value
+        .strip_prefix("preset:")
+        .and_then(|name| {
+            CURSOR_COLOR_PRESETS
+                .iter()
+                .find(|(preset, _)| *preset == name)
+                .map(|(_, color)| *color)
+        })
+        .or_else(|| value.strip_prefix("custom:").and_then(parse_cursor_color))
+        .map(Some)
 }
 
-fn random_cursor_color() -> Color {
-    cursor_preset_from_entropy(RandomState::new().hash_one("venus cursor"))
+/// Every launch against one live endpoint reuses its preset, so a reattached window keeps
+/// its cursor color; a recreated socket picks afresh. A socket that does not exist yet
+/// falls back to one choice for this process.
+fn endpoint_cursor_color(endpoint: &Path) -> Color {
+    let entropy = fs::metadata(endpoint).map_or_else(
+        |_| RandomState::new().hash_one("venus cursor"),
+        |metadata| {
+            let mut hasher = DefaultHasher::new();
+            (
+                metadata.dev(),
+                metadata.ino(),
+                metadata.ctime(),
+                metadata.ctime_nsec(),
+            )
+                .hash(&mut hasher);
+            hasher.finish()
+        },
+    );
+    cursor_preset_from_entropy(entropy)
 }
 
 fn cursor_preset_from_entropy(entropy: u64) -> Color {
@@ -399,6 +428,32 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn random_cursor_preset_is_stable_per_live_endpoint() {
+        let root = env::temp_dir().join(format!("venus-cursor-endpoint-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        let socket = root.join("eon.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+        let socket = socket.to_str().unwrap();
+        let color = |arguments: &[&str]| {
+            launch_arguments(arguments.iter().map(OsString::from), None)
+                .unwrap()
+                .cursor_tail
+                .unwrap()
+                .0
+        };
+        let first = color(&["--workspace", socket]);
+        for _ in 0..8 {
+            assert_eq!(color(&["--workspace", socket]), first);
+            assert_eq!(
+                color(&["--cursor-trail-color", "random", "--workspace", socket]),
+                first
+            );
+            assert_eq!(color(&[socket]), first);
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

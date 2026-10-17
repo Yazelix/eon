@@ -138,8 +138,11 @@ COSMIC owns the blur algorithm and strength. Unsupported or policy-disabled
 Wayland compositors may ignore the best-effort request without failing launch.
 Venus does not configure blur strength.
 
-Venus chooses one random built-in cursor-tail color per launch by default and
-keeps it for that process, with an internal fallback multiplier of `1.0`.
+By default, or with `random`, Venus chooses one built-in cursor-tail color per
+live endpoint: the device, inode and change time of the workspace or Orbit
+socket pick it, so relaunching against the same live socket keeps the color.
+A socket that does not exist yet at launch gets one random choice for that
+process. The internal fallback multiplier is `1.0`.
 Eon owns product defaults and configuration in its `config.toml`; the parameters
 below are the component launch interface. Choose `random`,
 a named preset, or a custom color:

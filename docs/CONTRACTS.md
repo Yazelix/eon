@@ -91,8 +91,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     The direct command uses the caller's terminal and returns the child's
     exit result without starting or attaching a workspace.
   - Optional `[terminal] cursor_trail_color` is forwarded unchanged on new or
-    reopened surfaces. Omission emits no override; Venus chooses one random
-    preset per surface. Venus owns `random`, `preset:<name>` and
+    reopened surfaces. Omission emits no override; Venus keeps one random
+    preset per live supervisor endpoint, so a full-Eon window reopened by
+    `eon attach` keeps its cursor color. EonTerm's first window opens before
+    its terminal endpoint exists, so it may differ from later reopens, which
+    share one preset. Venus owns `random`, `preset:<name>` and
     `custom:#RRGGBB` parsing, colors and rendering; Orbit cursor authority remains.
     Native admission rejects an invalid choice before a new terminal starts;
     rejected reopen preserves the existing terminal and command.

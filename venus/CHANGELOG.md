@@ -13,6 +13,11 @@
   the window's side edges; adjacent columns share one straight seam ending in
   square T-junctions, only the sheet's outer corners are rounded, and popups
   and the footer reuse its outer frame (`eon-flush-workspace-sheet-5779`).
+- VEN-C1: an omitted or `random` cursor-tail color is chosen once per live
+  endpoint, from the device, inode and change time of the workspace or Orbit
+  socket, instead of once per launch, so a reattached window keeps its color.
+  A socket absent at launch still gets a per-process choice
+  (`eon-cursor-color-after-attach-lbbo`).
 - VEN-C26: the Claude quota chip shows each window's elapsed position, such as
   `3d2h/7d 40%`, like the Codex chip. Hover and accessibility say how far into
   each window the observation is (`eon-claude-chip-position-iubd`).
