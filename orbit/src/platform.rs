@@ -792,7 +792,18 @@ mod tests {
         contested?;
         assert!(fs::read(&record_path)?.is_empty());
         let record = RecordGuard::publish(&record_path, b"live")?;
-        claim.try_lock()?;
+        // A concurrent test that spawns a PTY child can fork while publication holds the
+        // claim; the child shares that locked description until exec closes it.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match claim.try_lock() {
+                Ok(()) => break,
+                Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
         let live_path = record.path.clone();
         assert_eq!(fs::read(&live_path)?, b"live");
         drop(record);
