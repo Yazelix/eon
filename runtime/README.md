@@ -18,7 +18,8 @@ The private CLI prints grouped Eon help for standalone `-h` and `--help`,
 with terminal-only color and concise usage errors; child options remain forwarded.
 
 Popup configuration rejects Alt+Shift+B, reserved for the native window's
-shortcut-hints visibility toggle, before creating workspace state.
+shortcut-hints visibility toggle, and Alt+Shift+M, reserved for creating a
+column, before creating workspace state.
 
 The optional native version label uses the supervising product version. Runtime
 parses `[bar] show_version` against the assembly-supplied default when opening

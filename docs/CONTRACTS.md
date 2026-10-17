@@ -352,8 +352,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     one expanded pane. Each pane views an independent persistent terminal.
     Every column's expanded pane is visible at once; exactly one of them is the
     tab's selected pane and receives keyboard input. A one-column tab behaves
-    as a single accordion. Pending: until `eon-splits-opwv` slice 3, Venus
-    presents only the column holding the selected pane.
+    as a single accordion.
   - Tabs use stable `tN` identities. Each tab header shows its number plus the
     directory leaf or `/` derived from Eon's authoritative launch directory;
     actions retain `tN`, and accessibility includes full launch-path context. Venus
@@ -367,8 +366,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     directory label; home uses `~`, descendants use `~/`, and
     external paths remain absolute.
   - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
-    `config.toml` defaults to `true` and requests one rounded border around the
-    visible pane stack, with full-width separators and a small bottom gap (4
+    `config.toml` defaults to `true` and requests one rounded border around each
+    column's visible pane stack, with full-width separators and a small bottom gap (4
     logical pixels at default typography) using terminal background color/opacity
     under the existing surface-wide blur request. Selected and hovered headers
     follow the stack corners, with square internal edges. `false` removes
@@ -398,8 +397,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     its own picker under EONW v7.
   - Creating a column adds a column immediately right of the selected column,
     holding one new pane in the tab's launch directory, and selects it; in a
-    tab without columns it acts exactly as creating a pane. Pending: Venus maps
-    Alt+Shift+M in slice 3. Alt+M adds a pane to the selected column.
+    tab without columns it acts exactly as creating a pane. Venus maps
+    Alt+Shift+M to it and, in a tab with columns, refuses it with a notice
+    when a column would get fewer than 40 terminal columns. Alt+M adds a pane to the selected column.
   - Moving left/right swaps the active tab with exactly one adjacent tab;
     moving up/down swaps the selected pane with exactly one adjacent pane in
     the selected column. The moved stable identity remains selected. Movement stops
@@ -469,9 +469,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Installed checklist items 3 and 4.
 - **Open proof:** Columns (`eon-splits-opwv`): runtime topology and EONW v10
   are covered by `columns_hold_accordions_traverse_into_tabs_and_collapse_on_exit`,
-  `create_column_in_a_popup_only_tab_never_overfills_a_neighbor` and the v10
-  codec tests; Venus simultaneous presentation, the Alt+Shift+M mapping and
-  installed dogfood remain open. Pending re-proof in this repository: bounded Linux reader
+  `create_column_in_a_popup_only_tab_never_overfills_a_neighbor`,
+  `column_moves_stay_in_their_column_popups_skip_columns_and_the_cli_reports_positions`
+  and the v10 codec tests; Venus layout, the Alt+Shift+M mapping and the 40-column
+  threshold by `columns_sit_side_by_side_and_keep_the_selected_column_primary`,
+  `direct_workspace_shortcuts_use_stable_eon_actions` and
+  `each_column_keeps_forty_terminal_columns`; live columns, the refusal notice
+  and installed dogfood remain open. Pending re-proof in this repository: bounded Linux reader
   qualification with unmodified upstream Orca
   `d13f83dcf230fe1e66f1ed6dbfbf057840f55a6a`, which includes
   [the #757 correction](https://gitlab.gnome.org/GNOME/orca/-/commit/f0189cbf9e97208b7aceada7602bf00d2172aad3);
@@ -1352,9 +1356,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   outer groups near its edges and a lone group centered. Modifier headers alone
   have padded rounded backgrounds without braces; group bodies stay plain.
   Insets, badge padding and minimum gaps participate in whole-hint fitting.
-  The main region and footer share side insets and one continuous outer frame,
-  with matching upper/lower corner radii, the hidden main frame's bottom inset
-  and a straight separator at the join. The outer bottom gap is reserved in
+  With one column, the main region and footer share side insets and one
+  continuous outer frame, with matching upper/lower corner radii, the hidden
+  main frame's bottom inset and a straight separator at the join; with several
+  columns, the footer keeps one full-width frame and each column's frame ends
+  at its straight separator. The outer bottom gap is reserved in
   addition to the compact hints row height. The row is at least the corner
   radius tall, preserving the straight separator at small font sizes. The bar uses the inactive-tab
   background, coral red modifier headers, mint keys and gray labels.

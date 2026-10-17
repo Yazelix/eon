@@ -5,10 +5,17 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A tab can show up to four columns side by side, each a pane stack with its
+  own live terminal. Alt+Shift+M opens a column right of the selected one with
+  a new pane in the tab's directory; Alt+M adds a pane to the selected column;
+  Alt+H/L move between columns and on into the previous or next tab; clicking
+  another column's terminal selects it; closing a column's last pane removes
+  the column. Eon refuses another column when one would be narrower than 40
+  terminal columns. Alt+Shift+M no longer reaches terminal programs in a full
+  Eon workspace, and popup keybindings can no longer use it.
 - `eon workspace` lists each pane's column and whether it is that column's
   open pane (`column=` and `expanded=`, or `"column"` and `"expanded"` with
-  `--json`), and `eon versions` reports EONW 10. Tabs can hold up to four
-  pane columns internally; Venus still shows one column until splits land.
+  `--json`), and `eon versions` reports EONW 10.
 - The Claude quota chip shows how far into each window you are, like the Codex
   chip: for example `4h10m/5h 98% · 5d20h/7d 100%`.
 - Quota chips say `old` only when their last good reading is more than an hour

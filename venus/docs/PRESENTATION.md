@@ -28,25 +28,29 @@ order, selection, and popups; Venus draws the visible scene.
 
 ### Panes and popups
 
-One pane expands in a vertical stack while every fitting pane header stays
-visible. The stack and visible shortcut footer share aligned side edges and
-one outer frame, with matching upper/lower corner radii, the same bottom inset
-as the hidden-footer main frame, and a straight footer separator.
+A tab shows one to four equal-width columns side by side. In each column one
+pane expands in a vertical stack while every fitting pane header stays
+visible. Each column draws its own frame. With one column, the stack and
+visible shortcut footer share aligned side edges and one outer frame, with
+matching upper/lower corner radii, the same bottom inset as the hidden-footer
+main frame, and a straight footer separator.
 Selection, hover, and keyboard focus have distinct fills or outlines.
 Visible headers pair Eon's opaque pane
 identity with Orbit's working directory. Home displays `~`, and its descendants
-use `~/`; without `HOME`, paths stay absolute. Only the selected endpoint receives
-terminal presentation and input.
+use `~/`; without `HOME`, paths stay absolute. Every column's expanded pane
+presents live; only the selected pane receives input. Alt+Shift+M adds
+another column unless one would get fewer than 40 terminal columns.
 
 A fresh workspace or tab can begin with a Project popup and no pane. Tool popups
-and the chooser cover the stack in one rounded terminal surface with Eon's
+and the chooser cover every column in one rounded terminal surface with Eon's
 logical margins. Tabs remain available. A tab with only hidden popups has an
 empty body and keeps focus on its tab until a catalog shortcut reopens work.
 Venus recovers retryable socket loss and detaches without ending Sessions.
 
-The cursor tail follows pane and tab switches and workspace layout changes
-within the window. During attachment it waits without drawing the old pane;
-motion resumes toward the new pane's fresh cursor. Failures, hidden cursors,
+The cursor tail follows pane, column and tab switches and workspace layout
+changes within the window; only the selected column draws it. During
+attachment it waits without drawing the old pane; motion resumes toward the
+new pane's fresh cursor. Failures, hidden cursors,
 focus loss, occlusion, native resize, and GPU recovery reset the effect.
 
 ## Ownership
@@ -70,7 +74,8 @@ no terminal state.
 
 Each Eon workspace pane references an independent Orbit Session. Venus keeps
 the EONW connection for workspace state
-and actions, one presentation connection to the selected popup or pane, and one read-only
+and actions, one presentation connection to the selected popup or to each
+column's expanded pane, and one read-only
 metadata observer for each visible live pane. Hidden and offline Sessions have no
 Venus observer and remain alive independently.
 
@@ -82,7 +87,7 @@ under VEN-C1; complete composed screen-reader qualification and native reader-ke
 
 ## Platform and limits
 
-This slice excludes arbitrary split trees, simultaneous expanded panes,
+This slice excludes arbitrary split trees, vertical splits, column resizing,
 sidebars, popup command/lifetime policy, persistent Venus configuration,
 background images, plugins, remote or web access, packaging, and distribution.
 Blur strength and live blur changes are also outside its scope.

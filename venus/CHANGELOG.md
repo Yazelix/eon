@@ -2,9 +2,13 @@
 
 ## Unreleased
 
-- Venus consumes EONW v10, whose tabs hold up to four pane columns. It still
-  presents one accordion: the column holding the tab's selected pane
-  (`eon-splits-opwv` slice 2).
+- Venus consumes EONW v10, whose tabs hold up to four pane columns.
+- VEN-C8: Venus lays out the active tab's columns side by side, each with its
+  own headers and a live Orbit attachment sized to that column. Keyboard
+  input, the cursor trail, selection, links and status follow the selected
+  column; a click on another column's terminal selects it. Alt+Shift+M sends
+  EONW v10 `CreateColumn`; in a tab with columns, Venus refuses it locally when
+  a column would get fewer than 40 terminal columns (`eon-splits-opwv` slices 2–3).
 - VEN-C26: the Claude quota chip shows each window's elapsed position, such as
   `3d2h/7d 40%`, like the Codex chip. Hover and accessibility say how far into
   each window the observation is (`eon-claude-chip-position-iubd`).

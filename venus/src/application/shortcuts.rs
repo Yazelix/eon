@@ -29,6 +29,7 @@ pub(super) enum NativeShortcutAction {
     Focus(WorkspaceDirection),
     Move(WorkspaceDirection),
     CreatePane,
+    CreateColumn,
     CreateTab,
     CloseTab,
     CycleFocus,
@@ -105,14 +106,14 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
     },
     NativeShortcut::key(
         "Navigate",
-        "Focus previous tab",
+        "Focus left column or previous tab",
         KeyCode::KeyH,
         session::Modifiers::ALT,
         NativeShortcutAction::Focus(WorkspaceDirection::Left),
     ),
     NativeShortcut::key(
         "Navigate",
-        "Focus next tab",
+        "Focus right column or next tab",
         KeyCode::KeyL,
         session::Modifiers::ALT,
         NativeShortcutAction::Focus(WorkspaceDirection::Right),
@@ -147,14 +148,14 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
     ),
     NativeShortcut::key(
         "Navigate",
-        "Previous tab while tabs are focused",
+        "Left column or previous tab while tabs are focused",
         KeyCode::ArrowLeft,
         session::Modifiers::empty(),
         NativeShortcutAction::TraverseChrome(WorkspaceDirection::Left),
     ),
     NativeShortcut::key(
         "Navigate",
-        "Next tab while tabs are focused",
+        "Right column or next tab while tabs are focused",
         KeyCode::ArrowRight,
         session::Modifiers::empty(),
         NativeShortcutAction::TraverseChrome(WorkspaceDirection::Right),
@@ -179,6 +180,13 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         KeyCode::KeyM,
         session::Modifiers::ALT,
         NativeShortcutAction::CreatePane,
+    ),
+    NativeShortcut::key(
+        "Tabs and panes",
+        "Create column",
+        KeyCode::KeyM,
+        ALT_SHIFT,
+        NativeShortcutAction::CreateColumn,
     ),
     NativeShortcut::key(
         "Tabs and panes",
@@ -447,6 +455,7 @@ pub(super) fn shortcut_hints_for(
             Action::Focus(Left | Right) => ("tabs", 1),
             Action::Focus(Up | Down) => ("panes", 1),
             Action::CreatePane => ("new pane", 1),
+            Action::CreateColumn => ("new column", 3),
             Action::CreateTab => ("new tab", 1),
             Action::FocusTabPosition => ("tab", 3),
             Action::CloseTab => ("close tab", 3),
@@ -598,17 +607,19 @@ pub(super) fn workspace_shortcut(
     code: KeyCode,
     modifiers: orbit_protocol::session::Modifiers,
     active_tab: &str,
-) -> Option<CommonAction> {
-    match native_key_shortcut(PhysicalKey::Code(code), modifiers)?.action {
-        NativeShortcutAction::Focus(direction) => Some(CommonAction::Focus(direction)),
-        NativeShortcutAction::Move(direction) => Some(CommonAction::Move(direction)),
-        NativeShortcutAction::CreatePane => Some(CommonAction::CreatePane),
-        NativeShortcutAction::CreateTab => Some(CommonAction::CreateTab),
-        NativeShortcutAction::CloseTab => Some(CommonAction::CloseTab {
+) -> Option<WorkspaceAction> {
+    let action = match native_key_shortcut(PhysicalKey::Code(code), modifiers)?.action {
+        NativeShortcutAction::Focus(direction) => CommonAction::Focus(direction),
+        NativeShortcutAction::Move(direction) => CommonAction::Move(direction),
+        NativeShortcutAction::CreatePane => CommonAction::CreatePane,
+        NativeShortcutAction::CreateColumn => return Some(WorkspaceAction::CreateColumn),
+        NativeShortcutAction::CreateTab => CommonAction::CreateTab,
+        NativeShortcutAction::CloseTab => CommonAction::CloseTab {
             tab: active_tab.into(),
-        }),
-        _ => None,
-    }
+        },
+        _ => return None,
+    };
+    Some(WorkspaceAction::Workspace(action))
 }
 
 pub(super) fn tab_shortcut_index(
@@ -727,8 +738,15 @@ mod tests {
                 CommonAction::CloseTab { tab: "t2".into() },
             ),
         ] {
-            assert_eq!(workspace_shortcut(key, modifiers, "t2"), Some(action));
+            assert_eq!(
+                workspace_shortcut(key, modifiers, "t2"),
+                Some(WorkspaceAction::Workspace(action))
+            );
         }
+        assert_eq!(
+            workspace_shortcut(KeyCode::KeyM, Modifiers::ALT.union(Modifiers::SHIFT), "t2"),
+            Some(WorkspaceAction::CreateColumn)
+        );
         for key in [KeyCode::KeyT, KeyCode::KeyW] {
             for modifiers in [
                 Modifiers::CTRL,

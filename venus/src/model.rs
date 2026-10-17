@@ -156,6 +156,11 @@ impl WorkspaceModel {
         }
     }
 
+    /// Refuse an action locally with the same lifetime as an Eon rejection.
+    pub fn reject_action(&mut self, detail: impl Into<String>) -> bool {
+        self.set_notice(WorkspaceNotice::Action(bounded(detail.into())))
+    }
+
     pub fn mark_unavailable(&mut self, detail: impl Into<String>) -> bool {
         let expired_quota = self.snapshot.as_mut().is_some_and(|snapshot| {
             let codex = snapshot.codex_quota.take().is_some();

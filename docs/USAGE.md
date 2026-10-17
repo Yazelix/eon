@@ -94,20 +94,24 @@ and is reported as unavailable.
 ## Workspace and picker
 
 A **workspace** is the whole collection of tabs and panes. A **tab** groups
-panes around its launch directory. A **pane** is a view of a persistent
-**terminal**, whose process, PTY and terminal state outlive the window.
+panes around its launch directory and shows them in one to four side-by-side
+**columns**. Each column stacks its panes and expands one. A **pane** is a view
+of a persistent **terminal**, whose process, PTY and terminal state outlive the
+window. Every column's expanded terminal stays live; keys go to the selected
+one, and clicking another column's terminal selects it.
 
 | Shortcut | Action |
 |---|---|
 | Alt+/ | Open or close shortcut help |
 | Alt+Shift+B | Show or hide the bottom shortcut hints |
 | Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
-| Alt+H / Alt+L | Select the previous or next tab |
-| Alt+K / Alt+J | Select the previous or next pane |
+| Alt+H / Alt+L | Select the column to the left or right, continuing into the previous or next tab |
+| Alt+K / Alt+J | Select the previous or next pane in the column |
 | Ctrl+Alt+H / Ctrl+Alt+L | Move the active tab |
 | Ctrl+Alt+K / Ctrl+Alt+J | Move the selected pane |
 | Alt+Shift+T | Create a tab through the directory picker |
-| Alt+M | Create a pane in the active tab |
+| Alt+M | Create a pane in the selected column |
+| Alt+Shift+M | Create a column right of the selected one, up to four per tab |
 | Alt+Shift+W | Close the active non-final tab |
 | Alt+Shift+N | Open an independent Eon window (also the desktop launcher's **New Eon Window** action) |
 | Alt+Z | Open the tab's Project directory picker |
@@ -136,9 +140,11 @@ window, returning or reserving its space without restarting terminals. Hints
 follow the current bindings, enabled popup catalog and native focus; narrow
 windows omit whole hints. Compact groups spread across the outlined bar with
 equal gaps and the outer groups near its edges; a lone group stays centered. Hint spacing stays compact.
-Only modifier headers have padded rounded backgrounds. The main region and
-footer share side margins and one outer frame with a straight separator,
-matching lower corner radii and the main frame's bottom inset. Hiding the footer
+Only modifier headers have padded rounded backgrounds. With one column, the
+main region and footer share side margins and one outer frame with a straight
+separator, matching lower corner radii and the main frame's bottom inset; with
+several columns, the footer keeps one full-width frame and each column's frame
+ends at its straight separator. Hiding the footer
 returns the row and its bottom gap to terminal content.
 Coral red modifier badges use plain aliases, such as A-S, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects the tenth tab.
@@ -209,8 +215,8 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon tab close TAB [--json]` | Close the expected active non-final tab |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |
 | `eon tab move left\|right [--json]` | Move the active tab one position |
-| `eon pane create [--json]` | Create a pane in the active tab |
-| `eon pane move up\|down [--json]` | Move the selected pane one position |
+| `eon pane create [--json]` | Create a pane in the active tab's selected column |
+| `eon pane move up\|down [--json]` | Move the selected pane one position within its column |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon config-path` | Create and print the configuration root |

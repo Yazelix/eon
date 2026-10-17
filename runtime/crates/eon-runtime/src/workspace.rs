@@ -1608,6 +1608,101 @@ mod tests {
     }
 
     #[test]
+    fn column_moves_stay_in_their_column_popups_skip_columns_and_the_cli_reports_positions() {
+        let root = std::env::temp_dir().join(format!("eon-column-moves-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut workspace = Workspace::with_recovered_sessions(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: root.join("orbit.sock"),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let ok = |_| Ok(());
+        let request = |workspace: &mut Workspace, id: &str, action| {
+            workspace.dispatch(id, action, prepared, ok)
+        };
+        let workspace_action = |workspace: &mut Workspace, id: &str, action| {
+            request(workspace, id, Action::Workspace(action))
+        };
+        let panes = |workspace: &Workspace| {
+            workspace.snapshot().tabs[0]
+                .columns
+                .iter()
+                .map(|column| {
+                    column
+                        .panes
+                        .iter()
+                        .map(|pane| pane.id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>()
+        };
+        request(&mut workspace, "c1", Action::CreateColumn).unwrap();
+        workspace_action(&mut workspace, "p", WorkspaceAction::CreatePane).unwrap();
+
+        // Moving a pane in the second column reorders only that column.
+        workspace_action(&mut workspace, "m1", WorkspaceAction::Move(Direction::Up)).unwrap();
+        assert_eq!(panes(&workspace), [vec!["p1"], vec!["p3", "p2"]]);
+        assert_eq!(
+            workspace.snapshot().tabs[0].selected_pane.as_deref(),
+            Some("p3")
+        );
+        let moved = workspace.snapshot();
+        workspace_action(&mut workspace, "m2", WorkspaceAction::Move(Direction::Up)).unwrap();
+        assert_eq!(workspace.snapshot(), moved);
+
+        let text = human(&moved);
+        for line in [
+            "  pane p1 column=1 expanded=true ",
+            "  pane p3 column=2 expanded=true ",
+            "  pane p2 column=2 expanded=false ",
+        ] {
+            assert!(text.contains(line), "{line:?} missing from {text}");
+        }
+        assert!(json(&moved).contains("{\"id\":\"p2\",\"column\":2,\"expanded\":false,"));
+
+        // While a popup covers a tab, left/right leave it instead of crossing its columns.
+        workspace_action(&mut workspace, "t2", WorkspaceAction::CreateTab).unwrap();
+        workspace_action(
+            &mut workspace,
+            "l1",
+            WorkspaceAction::Focus(Direction::Left),
+        )
+        .unwrap();
+        workspace_action(&mut workspace, "f1", WorkspaceAction::FocusId("p1".into())).unwrap();
+        request(
+            &mut workspace,
+            "open",
+            Action::InvokePopup {
+                tab: "t1".into(),
+                entry: "agent".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Toggle,
+            },
+        )
+        .unwrap();
+        workspace_action(
+            &mut workspace,
+            "r1",
+            WorkspaceAction::Focus(Direction::Right),
+        )
+        .unwrap();
+        let snapshot = workspace.snapshot();
+        assert_eq!(snapshot.active_tab, "t2");
+        assert_eq!(snapshot.tabs[0].selected_pane.as_deref(), Some("p1"));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn popup_identity_reuses_hides_and_replaces_only_after_retarget() {
         let root = std::env::temp_dir().join(format!("eon-workspace-{}", std::process::id()));
         let old = root.join("old");

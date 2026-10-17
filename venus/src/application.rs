@@ -38,7 +38,7 @@ use yazelix_venus::{
     MetadataEvent, MetadataTransport, ModelError, PaneMetadata, PresentOutcome, Renderer, Scene,
     SceneRect, SessionModel, ShortcutHintsScene, ShortcutViewerScene, Transport, TransportEvent,
     WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
-    WorkspaceScene, WorkspaceTransport, active_popup,
+    WorkspaceScene, WorkspaceTransport, active_popup, workspace_column_width,
 };
 
 mod scroll;
@@ -57,6 +57,8 @@ const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
 const MAX_DEFERRED_SELECTION_MESSAGES: usize = 256;
+/// Narrowest terminal grid a new workspace column may leave.
+const MIN_COLUMN_CELLS: u16 = 40;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum NativePlatform {
@@ -1602,6 +1604,27 @@ impl Application {
         }
     }
 
+    /// Whether another column in the active tab leaves each column at least
+    /// `MIN_COLUMN_CELLS` terminal columns wide. A tab without columns always
+    /// fits: Eon treats its first column as a new pane.
+    fn fits_another_column(&self) -> bool {
+        let (Some(state), Some(snapshot)) = (&self.window, self.workspace_model.snapshot()) else {
+            return false;
+        };
+        snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == snapshot.active_tab)
+            .is_some_and(|tab| {
+                tab.columns.is_empty()
+                    || column_fits(
+                        state.renderer.size(),
+                        tab.columns.len() + 1,
+                        state.renderer.metrics(),
+                    )
+            })
+    }
+
     fn queue_workspace(&mut self, action: WorkspaceAction) -> bool {
         let Some(transport) = &self.workspace_transport else {
             return false;
@@ -1685,10 +1708,7 @@ impl Application {
                 snapshot,
                 has_terminal && terminal_focused(self.window_focused, focus),
             )
-            .or_else(|| {
-                workspace_shortcut(code, modifiers, &snapshot.active_tab)
-                    .map(WorkspaceAction::Workspace)
-            }),
+            .or_else(|| workspace_shortcut(code, modifiers, &snapshot.active_tab)),
         };
         let has_panes = active_popup(snapshot).is_none()
             && snapshot
@@ -1724,6 +1744,15 @@ impl Application {
                     .filter(|action| sends_workspace_shortcut(action, event.state, event.repeat))
                     && self.presentation.has_presented_geometry()
                 {
+                    if action == WorkspaceAction::CreateColumn && !self.fits_another_column() {
+                        if self.workspace_model.reject_action(format!(
+                            "No room for another column: each needs at least \
+                             {MIN_COLUMN_CELLS} terminal columns."
+                        )) {
+                            self.refresh_client_view();
+                        }
+                        return true;
+                    }
                     let popup = matches!(action, WorkspaceAction::InvokePopup { .. });
                     if self.queue_workspace(action) && popup {
                         self.set_workspace_focus(WorkspaceFocus::Terminal);
@@ -4164,6 +4193,14 @@ fn initial_window_size(
     Ok(size)
 }
 
+/// Whether `columns` equal columns across `window` each keep `MIN_COLUMN_CELLS`
+/// terminal columns.
+fn column_fits(window: PhysicalSize<u32>, columns: usize, metrics: CellMetrics) -> bool {
+    let width = workspace_column_width(window.width as f32, columns);
+    surface_size(PhysicalSize::new(width as u32, window.height), metrics)
+        .is_some_and(|size| size.cols >= MIN_COLUMN_CELLS)
+}
+
 fn surface_size(screen: PhysicalSize<u32>, metrics: CellMetrics) -> Option<SurfaceSize> {
     if screen.width == 0
         || screen.height == 0
@@ -5766,6 +5803,26 @@ mod tests {
     }
 
     #[test]
+    fn each_column_keeps_forty_terminal_columns() {
+        let metrics = CellMetrics::for_scale(1.0);
+        let column = u32::from(MIN_COLUMN_CELLS) * metrics.width.round() as u32
+            + 2 * metrics.padding.round() as u32;
+        for columns in 1..=4 {
+            let count = columns as u32;
+            assert!(column_fits(
+                PhysicalSize::new(column * count, 600),
+                columns,
+                metrics
+            ));
+            assert!(!column_fits(
+                PhysicalSize::new(column * count - 1, 600),
+                columns,
+                metrics
+            ));
+        }
+    }
+
+    #[test]
     fn presentation_control_emits_complete_commands_then_exit() {
         let mut events = Vec::new();
 
@@ -6470,9 +6527,9 @@ mod tests {
             CommonAction::CreatePane,
             CommonAction::Move(WorkspaceDirection::Left),
             CommonAction::CloseTab { tab: "t1".into() },
-        ];
-        for action in actions {
-            let action = WorkspaceAction::Workspace(action);
+        ]
+        .map(WorkspaceAction::Workspace);
+        for action in actions.into_iter().chain([WorkspaceAction::CreateColumn]) {
             assert!(sends_workspace_shortcut(
                 &action,
                 ElementState::Pressed,

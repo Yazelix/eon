@@ -623,6 +623,12 @@ pub struct WorkspaceScene {
     popup_label: Option<String>,
 }
 
+/// Width of each of `count` equal columns across `width`; the last column also
+/// takes the remainder, so this is the narrowest.
+pub fn workspace_column_width(width: f32, count: usize) -> f32 {
+    (width / count as f32).floor()
+}
+
 fn header_heights(metrics: CellMetrics) -> (f32, f32) {
     (
         (metrics.height * 1.75).round().max(1.0),
@@ -1176,7 +1182,7 @@ impl WorkspaceScene {
             .position(|column| column.expanded == *selected)
             .expect("EONW validates the selected pane");
         let count = active.columns.len();
-        let column_width = (width / count as f32).floor();
+        let column_width = workspace_column_width(width, count);
         let maximum_terminal_height = (pane_viewport.height - pane_height).max(0.0);
         let minimum_terminal_height =
             (metrics.padding * 2.0 + metrics.height).min(maximum_terminal_height);

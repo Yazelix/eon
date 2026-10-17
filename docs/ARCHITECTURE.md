@@ -36,7 +36,9 @@ other at runtime.
 Public documentation presents the full composition as **Eon** and its reusable
 terminal product as **EonTerm**. Their only command spellings are `eon` and
 `eonterm`. A **workspace** contains **tabs** and **panes**. Each tab groups
-panes around a launch directory; a pane is a view of a persistent **terminal**.
+panes around a launch directory and arranges them in up to four side-by-side
+**columns**, each a vertical stack with one expanded pane; a pane is a view of
+a persistent **terminal**.
 Orbit owns that terminal's process, PTY and terminal state. Closing its window
 detaches the view; explicitly stopping it ends the terminal.
 

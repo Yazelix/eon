@@ -2,7 +2,7 @@
 
 Venus is Eon's native client: it renders Orbit Sessions and sends user input
 back to their authoritative runtime. In an Eon workspace, Venus draws the tabs,
-pane stack, and popups from Eon's workspace state.
+side-by-side pane columns, and popups from Eon's workspace state.
 
 ## Demo
 

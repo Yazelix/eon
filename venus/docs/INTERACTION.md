@@ -26,8 +26,9 @@ fractional-scale proof remain open.
 
 ## Workspace and terminal interaction
 
-The accepted Eon snapshot supplies the authoritative terminal endpoint: the
-active tab's selected popup, otherwise its selected Orbit pane. An empty body
+The accepted Eon snapshot supplies the authoritative terminal endpoints: the
+active tab's selected popup, otherwise the expanded Orbit pane of each of its
+columns. Input goes to the popup or the selected pane. An empty body
 detaches the presentation without stopping hidden Sessions.
 While the window is open, Venus re-inspects Eon every 250 ms so accepted
 workspace changes from another client appear without a click or restart.
@@ -37,19 +38,21 @@ state.
 
 ### Workspace controls
 
-Click a tab or pane header to select it. The fixed controls in the Eon Bar are
+Click a tab or pane header to select it, or click another column's terminal
+to select that column's expanded pane. The fixed controls in the Eon Bar are
 `+` for a tab, `?` for Shortcuts when needed, and `×` to close the exact active tab. Only
 the empty region between tabs and controls drags an undecorated window.
 
 | Keys | Action |
 |---|---|
 | Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
-| Alt+H / Alt+L | Walk tabs |
-| Alt+K / Alt+J | Walk panes |
+| Alt+H / Alt+L | Walk columns, continuing into the previous or next tab |
+| Alt+K / Alt+J | Walk the selected column's panes |
 | Ctrl+Alt+H / Ctrl+Alt+L | Move the active tab |
 | Ctrl+Alt+K / Ctrl+Alt+J | Move the selected pane |
 | Alt+Shift+T | Request a pending tab |
-| Alt+M | Create a pane |
+| Alt+M | Create a pane in the selected column |
+| Alt+Shift+M | Create a column right of the selected one |
 | Alt+Shift+W | Close the active non-final tab |
 | Alt+Shift+N | Open an independent Eon window when supervised by Eon |
 | Alt+Z | Open Project; Eon supplies other popup shortcuts |
@@ -59,7 +62,8 @@ the empty region between tabs and controls drags an undecorated window.
 Eon decides which actions are available and owns popup lifetime and directory
 changes. A repeated press does not duplicate a structural action. Switching
 tabs retains each tab's popup selection. F6 cycles terminal, tabs, and visible
-panes. Arrow keys traverse focused tabs or panes; Tab and Shift+Tab traverse
+panes. Arrow keys traverse focused tabs or panes, and Left/Right with tabs
+focused walks columns before tabs like Alt+H/L; Tab and Shift+Tab traverse
 header controls; Enter or Space activates one. Escape returns chrome focus to
 the terminal. With terminal focus, Escape, Ctrl+C, Tab, and Enter reach Orbit as
 ordinary input.
@@ -78,9 +82,11 @@ popup labels, and follow native terminal, tab and pane focus. Shared modifiers
 appear once per group: C means Ctrl, A means Alt, and S means Shift.
 Compact groups spread across the outlined bar with equal gaps and the outer
 groups near its edges; a lone group stays centered. Hint spacing stays compact.
-Only modifier headers have padded rounded backgrounds. The main region and
-footer share side margins and one outer frame with a straight separator,
-matching lower corner radii and the main frame's bottom inset. Hiding the footer
+Only modifier headers have padded rounded backgrounds. With one column, the
+main region and footer share side margins and one outer frame with a straight
+separator, matching lower corner radii and the main frame's bottom inset; with
+several columns, the footer keeps one full-width frame and each column's frame
+ends at its straight separator. Hiding the footer
 returns the row and its bottom gap to terminal content.
 Coral red modifier badges use plain aliases, such as C-A, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects
@@ -107,8 +113,8 @@ show pane identity and a home-relative or absolute working directory, keeping
 rightmost path components when space is short. The selected terminal title
 stays in the native window.
 
-Wheel over the tab strip or pane headers scrolls clipped headers without
-scrolling the terminal. In standalone mode these keys remain Orbit input.
+Wheel over the tab strip or the selected column's pane headers scrolls clipped
+headers without scrolling the terminal; over another column it does nothing. In standalone mode these keys remain Orbit input.
 
 ### Scrolling and selection
 

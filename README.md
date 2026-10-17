@@ -47,8 +47,9 @@ Enter for a Zoxide match or Tab to browse with Yazi. A terminal opens there.
 |---|---|
 | Alt+/ | Show every shortcut |
 | Alt+Shift+T | New tab |
-| Alt+M | New pane in this tab |
-| Alt+H / Alt+L | Previous or next tab |
+| Alt+M | New pane in this column |
+| Alt+Shift+M | New column side by side |
+| Alt+H / Alt+L | Column or tab to the left or right |
 | Alt+K / Alt+J | Previous or next pane |
 | Alt+Shift+L | Agent popup |
 | Alt+Shift+J | Git popup |

@@ -443,10 +443,12 @@ re-proved when that platform or feature is next touched.
   durable topology or a workspace action changes tab, pane, focus, order,
   lifetime, liveness, endpoint, or metadata.
 - **Result:**
-  - Venus materializes ordered horizontal tabs and every fitting header for the
-    active tab around exactly one expanded pane. Each tab shows its current
-    one-based position plus the directory leaf or `/` derived from Eon's
-    authoritative launch directory; positions update when Eon reorders tabs.
+  - Venus materializes ordered horizontal tabs and lays the active tab's one to
+    four columns side by side at equal widths, the last taking the remainder.
+    Each column shows every fitting header around its one expanded pane. Each
+    tab shows its current one-based position plus the directory leaf or `/`
+    derived from Eon's authoritative launch directory; positions update when
+    Eon reorders tabs.
   - Tabs have pill-shaped corners and separated hit targets. Width follows shaped
     label text plus padding, capped near 280 logical pixels at default
     typography. Long labels use a cluster-safe middle ellipsis; when even that
@@ -459,12 +461,27 @@ re-proved when that platform or feature is next touched.
     an underline; keyboard focus adds a rounded outline. Pane shell navigation
     does not rename or resize tabs.
   - Every visible live pane endpoint has one bounded read-only metadata observer.
-  - Pane frames connect the visible accordion within one thin rounded outer
-    border, with horizontal separators reaching its sides and a small gap below
-    the stack (4 logical pixels at default typography). The gap shares terminal
-    background color/opacity and the surface-wide blur request. Selected and
-    hovered header fills follow the stack's corners, with square internal edges.
-    Separators follow the rounded corners during scrolling;
+  - While no popup covers the tab, each column's live expanded pane is an Orbit
+    attachment resized to its own column. Keyboard input, IME, the cursor
+    trail, selection, links, the scrollback pill and status notices belong to
+    the selected column; other columns draw a static cursor over their own
+    terminal background. A left press on another column's terminal sends
+    `FocusId` for its expanded pane and focuses the terminal without
+    forwarding the click; the wheel over another column does nothing.
+    Accessibility lists each column's panes left to right and exposes
+    terminal text only for the selected column.
+  - Alt+Shift+M sends one non-repeating `CreateColumn`. In a tab with columns,
+    Venus refuses it locally with a rejected-action notice when one more
+    column, at the current window width, would leave a column fewer than 40
+    terminal columns wide. Shrinking the window later narrows existing columns
+    without removing them.
+  - Pane frames connect each column's visible accordion within one thin
+    rounded outer border, with horizontal separators reaching its sides and a
+    small gap below the stack (4 logical pixels at default typography). The
+    gap shares terminal background color/opacity and the surface-wide blur
+    request. Selected and hovered header fills follow the stack's corners,
+    with square internal edges. Separators follow the rounded corners during
+    scrolling;
     the shared border stays fixed while overflowing headers scroll within it.
     `--pane-frames true|false` defaults to `true`; `false` removes the shared
     border and separators while retaining headers, a lighter selected fill,
@@ -487,8 +504,8 @@ re-proved when that platform or feature is next touched.
   - Hidden tabs have no observers, obsolete observations retire, and a 250 ms
     reinspection exposes accepted external workspace changes without native
     input.
-  - Pointer input, Alt+H/L tab traversal, Alt+K/J pane traversal, Alt+M pane
-    creation, Alt+Shift+T tab requests, focused arrow traversal, and
+  - Pointer input, Alt+H/L column and tab traversal, Alt+K/J pane traversal,
+    Alt+M pane creation, Alt+Shift+T tab requests, focused arrow traversal, and
     selected-terminal attachment retain their existing owners. Alt+H/L remains
     admitted while a popup is visible; inactive popup selections do not replace
     the active tab's projection. Popup-only tabs may have no pane or selected
@@ -548,7 +565,15 @@ re-proved when that platform or feature is next touched.
     `incompatible_workspace_response_is_rejected_before_model_state`, and
     `quota_refresh_and_workspace_failures_preserve_structure` in the workspace
     suite; dogfood checklist items 3, 4 and 10.
-- **Open proof:** Fractional native scale remains to be dogfooded. Pending
+- **Open proof:** Columns (`eon-splits-opwv`): layout, column attachments and
+  the 40-column threshold are covered by
+  `columns_sit_side_by_side_and_keep_the_selected_column_primary`,
+  `other_columns_attach_their_expanded_panes_until_a_popup_covers_the_tab`,
+  `direct_workspace_shortcuts_use_stable_eon_actions`,
+  `structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit` and
+  `each_column_keeps_forty_terminal_columns`; live columns (attachment swap,
+  reconcile, per-column resize), the refusal notice and fractional native
+  scale remain to be dogfooded. Pending
   re-proof in this repository: `--pane-frames false` and pane-stack pixel
   checks, the ignored native long-label header regression, and reader
   announcement of a workspace failure notice.
@@ -810,8 +835,9 @@ re-proved when that platform or feature is next touched.
   New tab and Alt+Shift+W retain the existing semantic CreateTab and
   exact-active-tab CloseTab actions. No local cancellation state or native
   picker is added.
-- **Geometry:** A selected popup reuses the pane stack's exact outer rounded
-  frame, so toggling preserves every chrome edge. Shared Eon-supplied logical
+- **Geometry:** In a one-column tab, a selected popup reuses the pane stack's
+  exact outer rounded frame, so toggling preserves every chrome edge; over
+  several columns it covers them all in one full-width frame. Shared Eon-supplied logical
   margins inset the popup terminal content within that stable shell. A compact
   border label keeps a small top gutter before terminal padding. Scene owns
   both rectangles: chrome drives the outline, while terminal drives resize,
@@ -1033,9 +1059,11 @@ re-proved when that platform or feature is next touched.
   outer groups near its edges and a lone group centered. Modifier headers alone
   have padded rounded backgrounds without braces; group bodies stay plain.
   Insets, badge padding and minimum gaps participate in whole-hint fitting.
-  The main region and footer share side insets and one continuous outer frame,
-  with matching upper/lower corner radii, the hidden main frame's bottom inset
-  and a straight separator at the join. The outer bottom gap is reserved in
+  With one column, the main region and footer share side insets and one
+  continuous outer frame, with matching upper/lower corner radii, the hidden
+  main frame's bottom inset and a straight separator at the join; with several
+  columns, the footer keeps one full-width frame and each column's frame ends
+  at its straight separator. The outer bottom gap is reserved in
   addition to the compact hints row height. The row is at least the corner
   radius tall, preserving the straight separator at small font sizes. The bar uses the inactive-tab
   background, coral red modifier headers, mint keys and gray labels.
@@ -1044,7 +1072,7 @@ re-proved when that platform or feature is next touched.
   The compact tab range is 1..9; full help retains the tenth-tab Alt+0 binding.
   Short labels use keys and hints; one move hint groups horizontal and vertical keys.
   Full help and accessible labels retain complete chords and action names.
-  Creation labels name the tab, pane or window explicitly.
+  Creation labels name the tab, pane, column or window explicitly.
   Width pressure drops low-priority hints before help and the visibility
   toggle. Native focus-specific keys appear only in their applicable context.
   F6 stays in full help and keyboard navigation, without a footer hint.

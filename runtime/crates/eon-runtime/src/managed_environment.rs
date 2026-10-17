@@ -581,7 +581,7 @@ fn workspace_shortcut(shortcut: &Shortcut) -> bool {
                 | "Digit9"
                 | "Slash"
         ))
-        || (shortcut.modifiers == (ALT | SHIFT) && matches!(key, "KeyT" | "KeyW" | "KeyB"))
+        || (shortcut.modifiers == (ALT | SHIFT) && matches!(key, "KeyT" | "KeyW" | "KeyB" | "KeyM"))
         || (shortcut.modifiers == (CTRL | ALT) && matches!(key, "KeyH" | "KeyJ" | "KeyK" | "KeyL"))
         || (shortcut.modifiers == (CTRL | SHIFT) && matches!(key, "KeyC" | "KeyV"))
 }
@@ -1182,6 +1182,7 @@ keep_alive = false
         for keybinding in [
             "Alt+Slash",
             "Alt+Shift+B",
+            "Alt+Shift+M",
             "Alt+0",
             "Alt+1",
             "Alt+2",
