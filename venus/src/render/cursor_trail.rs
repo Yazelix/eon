@@ -1,6 +1,7 @@
 use super::{
-    CellMetrics, CursorPoint, RectangleBatch, SceneColor, cursor_bounds, push_cursor, rect_corners,
-    valid_rect,
+    CellMetrics, CursorPoint, RectangleBatch, SceneColor,
+    cells::{cursor_bounds, push_cursor},
+    rect_corners, valid_rect,
 };
 use crate::{DrawCursor, Scene, SceneRect};
 

@@ -243,7 +243,7 @@ impl FontSetup {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{NERD_FONT_FAMILY, shaping};
+    use super::super::{cells::NERD_FONT_FAMILY, shaping};
     use super::*;
 
     #[test]
