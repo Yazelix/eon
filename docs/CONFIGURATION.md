@@ -82,8 +82,8 @@ windows appear; an idle Claude window can lack a reset time. Hover and accessibl
 labels report that absence. Narrow windows may condense to the lower remaining
 percentage or hide optional chips before tabs and controls.
 
-Each provider refreshes at least 60 seconds apart. A failed read keeps the last
-good values; they become `old` once they are more than an hour old and
+Codex refreshes at least one minute apart and Claude at least five minutes
+apart, also after a failed read. A failed read keeps the last good values; they become `old` once they are more than an hour old and
 disappear after 24 hours. Each supplied reset expires its own window. Missing
 facts do not mean zero usage. Sign-out is not detected; the last reading ages
 like any other and disappears after 24 hours.

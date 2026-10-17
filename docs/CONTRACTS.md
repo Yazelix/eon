@@ -1453,7 +1453,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   observation is pending re-proof in this repository.
 - **Consumer, trigger and result:** Full Eon starts independent, noninteractive
   CodexBar CLI reads for Codex (`--source cli`) and Claude (`--source oauth`).
-  Reads are at least 60 seconds apart per provider and run off workspace I/O.
+  Codex reads start at least one minute apart and Claude reads at least five
+  minutes apart, including after a failed read; reads run off workspace I/O.
   The existing native chips show every supplied supported window and remaining
   percentage, with provider periods, optional resets and observation time.
   Claude needs no status-line setup. No reset is invented for an idle window.
@@ -1498,12 +1499,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     change (`eon-quota-old-after-hour-knaq`) is proved by the updated
     `retained_observations_age_and_expire_without_invented_resets` and
     `workers_isolate_failure_and_bound_output_timeout_and_shutdown`; that
-    bead's commit is its revision.
+    bead's commit is its revision. The Claude cadence change (`eon-flf4`) is
+    proved by `claude_waits_300_units_after_a_failed_read_while_codex_reads_every_60`;
+    that bead's commit is its revision.
 - **Open proof:** Pending re-proof in this repository: real installed Codex and
   Claude windows with reset details on hover; on an installed surface, a
   controlled source failure leaving a recent reading unchanged and a retained
-  reading turning `old` after one hour; and optional chips hiding at narrow
-  widths. No hardware GPU, reader workflow or macOS proof is claimed.
+  reading turning `old` after one hour; installed Claude reads at least five
+  minutes apart; and optional chips hiding at narrow widths. No hardware GPU,
+  reader workflow or macOS proof is claimed.
 - **Claude icon:** Venus shows Claude's splat in its original orange
   (`#D97757`) within the existing quota chip bounds and owns the immutable mask
   and tint. Quota facts, layout, hover, accessibility and provider mechanisms

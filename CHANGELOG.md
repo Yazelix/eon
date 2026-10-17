@@ -24,6 +24,9 @@ installation, and proven contract changes.
 - Quota chips say `old` only when their last good reading is more than an hour
   old; a failed or rate-limited read no longer marks them old. Old readings
   stay visible for 24 hours instead of one.
+- Eon reads Claude quota every five minutes instead of every minute, also
+  after a failed read, to reduce rate-limit pressure. Codex quota is still read
+  every minute.
 
 ## v0.1.1
 

@@ -537,9 +537,9 @@ fn features(r: &mut Recorder) -> Result<()> {
         &work.join("eon.log"),
         Some(stop),
     )?;
-    // The first quota read lands during the tab setup. Each provider reads again a minute after
-    // its last read, and Claude's endpoint rate-limits often enough that a failed refresh can
-    // mark the chip old mid-run. Workspace JSON omits quota, so check the stills and re-record.
+    // The first quota read lands during the tab setup. Codex reads again a minute after its last
+    // read and Claude five minutes after. Workspace JSON omits quota, so check the stills and
+    // re-record.
     r.sleep(Duration::from_secs(4))?;
 
     let out = work.join("features");

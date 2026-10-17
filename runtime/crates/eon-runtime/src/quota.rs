@@ -191,17 +191,22 @@ pub(crate) struct Quotas {
 
 impl Quotas {
     pub(crate) fn start(program: &Path) -> Self {
-        let start = |provider| {
+        Self::start_every(program, Duration::from_secs(1))
+    }
+
+    /// Reads Codex every 60 units and Claude every 300, whatever the outcome (EON-C27).
+    fn start_every(program: &Path, unit: Duration) -> Self {
+        let start = |provider, units| {
             Provider::start(
                 program.to_path_buf(),
                 provider,
-                Duration::from_secs(60),
+                unit * units,
                 Duration::from_secs(10),
             )
         };
         Self {
-            codex: start("codex"),
-            claude: start("claude"),
+            codex: start("codex", 60),
+            claude: start("claude", 300),
         }
     }
 
@@ -498,6 +503,69 @@ mod tests {
         )
         .unwrap();
         assert!(fetch(&program, "codex", Duration::from_secs(1), &stopped).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn claude_waits_300_units_after_a_failed_read_while_codex_reads_every_60() {
+        use std::{env, fs, os::unix::fs::PermissionsExt};
+        let root = super::super::supervisor::temporary_directory();
+        let sh = env::split_paths(&env::var_os("PATH").unwrap())
+            .map(|p| p.join("sh"))
+            .find(|p| p.is_file())
+            .unwrap();
+        let program = root.join("backend");
+        let log = root.join("reads");
+        fs::create_dir(&log).unwrap();
+        // Each read leaves a file whose kernel mtime marks its start; every Claude read fails, as
+        // a rate-limited OAuth read does.
+        fs::write(
+            &program,
+            format!(
+                "#!{}\n: > '{}'/\"$3.$$\"\n[ \"$3\" = codex ]\n",
+                sh.display(),
+                log.display()
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o700)).unwrap();
+        let gaps = |provider: &str| {
+            let mut starts = fs::read_dir(&log)
+                .unwrap()
+                .map(|entry| entry.unwrap())
+                .filter(|entry| {
+                    let name = entry.file_name();
+                    name.to_string_lossy().split('.').next() == Some(provider)
+                })
+                .map(|entry| entry.metadata().unwrap().modified().unwrap())
+                .collect::<Vec<_>>();
+            starts.sort();
+            starts
+                .windows(2)
+                .map(|pair| pair[1].duration_since(pair[0]).unwrap())
+                .collect::<Vec<_>>()
+        };
+        let unit = Duration::from_millis(20);
+        let quotas = Quotas::start_every(&program, unit);
+        let deadline = Instant::now() + unit * 1000;
+        while gaps("claude").is_empty() && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        drop(quotas);
+        let claude = gaps("claude");
+        assert!(
+            claude.len() == 1 && claude[0] >= unit * 300,
+            "Claude read gaps {claude:?}"
+        );
+        // The upper bound leaves 60 units of slack for process startup under load.
+        let codex = gaps("codex");
+        assert!(
+            codex.len() >= 3
+                && codex
+                    .iter()
+                    .all(|gap| *gap >= unit * 60 && *gap < unit * 120),
+            "Codex read gaps {codex:?}"
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -55,8 +55,9 @@ a registry. Eon owns product composition and distribution.
 CodexBar CLI owns Codex and Claude quota collection and credential access.
 Eon supplies its opaque executable path. Independent workers use explicit Codex
 CLI and Claude OAuth sources, with no browser fallback or inference. Each read
-has a ten-second deadline, 64 KiB output cap and process-group cleanup; reads
-remain at least one minute apart. Raw provider JSON and identities are discarded.
+has a ten-second deadline, 64 KiB output cap and process-group cleanup; Codex
+reads start at least one minute apart and Claude reads at least five minutes
+apart. Raw provider JSON and identities are discarded.
 
 Runtime validates timestamps, actual periods and percentages, rounding remaining
 percentages down once. Failed reads keep last-good facts unchanged;
