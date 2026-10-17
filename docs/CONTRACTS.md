@@ -398,8 +398,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - Creating a column adds a column immediately right of the selected column,
     holding one new pane in the tab's launch directory, and selects it; in a
     tab without columns it acts exactly as creating a pane. Venus maps
-    Alt+Shift+M to it and, in a tab with columns, refuses it with a notice
-    when a column would get fewer than 40 terminal columns. Alt+M adds a pane to the selected column.
+    Alt+Shift+M to it and, in a tab with one to three columns, refuses it with
+    a notice when a column would get fewer than 40 terminal columns. Alt+M adds
+    a pane to the selected column.
   - Moving left/right swaps the active tab with exactly one adjacent tab;
     moving up/down swaps the selected pane with exactly one adjacent pane in
     the selected column. The moved stable identity remains selected. Movement stops
@@ -474,8 +475,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   and the v10 codec tests; Venus layout, the Alt+Shift+M mapping and the 40-column
   threshold by `columns_sit_side_by_side_and_keep_the_selected_column_primary`,
   `direct_workspace_shortcuts_use_stable_eon_actions` and
-  `each_column_keeps_forty_terminal_columns`; live columns, the refusal notice
-  and installed dogfood remain open. Pending re-proof in this repository: bounded Linux reader
+  `each_column_keeps_forty_terminal_columns`; isolated installed dogfood on a
+  private headless Sway (`eon-splits-opwv` slice 4) observed live columns,
+  traversal into tabs, click selection, per-column resize, column removal,
+  detach and reattach, popups over columns, and both refusal notices.
+  Pending re-proof in this repository: bounded Linux reader
   qualification with unmodified upstream Orca
   `d13f83dcf230fe1e66f1ed6dbfbf057840f55a6a`, which includes
   [the #757 correction](https://gitlab.gnome.org/GNOME/orca/-/commit/f0189cbf9e97208b7aceada7602bf00d2172aad3);

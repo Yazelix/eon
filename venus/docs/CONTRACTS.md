@@ -470,11 +470,12 @@ re-proved when that platform or feature is next touched.
     forwarding the click; the wheel over another column does nothing.
     Accessibility lists each column's panes left to right and exposes
     terminal text only for the selected column.
-  - Alt+Shift+M sends one non-repeating `CreateColumn`. In a tab with columns,
-    Venus refuses it locally with a rejected-action notice when one more
-    column, at the current window width, would leave a column fewer than 40
-    terminal columns wide. Shrinking the window later narrows existing columns
-    without removing them.
+  - Alt+Shift+M sends one non-repeating `CreateColumn`. In a tab with one to
+    three columns, Venus refuses it locally with a rejected-action notice when
+    one more column, at the current window width, would leave a column fewer
+    than 40 terminal columns wide; with four, Eon's capacity refusal applies.
+    Shrinking the window later narrows existing columns without removing
+    them.
   - Pane frames connect each column's visible accordion within one thin
     rounded outer border, with horizontal separators reaching its sides and a
     small gap below the stack (4 logical pixels at default typography). The
@@ -571,9 +572,10 @@ re-proved when that platform or feature is next touched.
   `other_columns_attach_their_expanded_panes_until_a_popup_covers_the_tab`,
   `direct_workspace_shortcuts_use_stable_eon_actions`,
   `structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit` and
-  `each_column_keeps_forty_terminal_columns`; live columns (attachment swap,
-  reconcile, per-column resize), the refusal notice and fractional native
-  scale remain to be dogfooded. Pending
+  `each_column_keeps_forty_terminal_columns`. Isolated installed dogfood on a
+  private headless Sway (`eon-splits-opwv` slice 4) observed live columns,
+  attachment swap and reconcile, per-column resize and both refusal notices.
+  Fractional native scale remains to be dogfooded. Pending
   re-proof in this repository: `--pane-frames false` and pane-stack pixel
   checks, the ignored native long-label header regression, and reader
   announcement of a workspace failure notice.

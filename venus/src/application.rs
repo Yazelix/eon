@@ -1,7 +1,8 @@
 use crate::{Result, launch::LaunchArguments};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
 use eon_workspace_protocol::v10::{
-    Action as WorkspaceAction, Direction as WorkspaceDirection, WorkspaceAction as CommonAction,
+    Action as WorkspaceAction, Direction as WorkspaceDirection, MAX_COLUMNS,
+    WorkspaceAction as CommonAction,
 };
 use orbit_protocol::{
     MAX_CELLS,
@@ -1604,9 +1605,7 @@ impl Application {
         }
     }
 
-    /// Whether another column in the active tab leaves each column at least
-    /// `MIN_COLUMN_CELLS` terminal columns wide. A tab without columns always
-    /// fits: Eon treats its first column as a new pane.
+    /// Whether Venus lets a column request for the active tab reach Eon.
     fn fits_another_column(&self) -> bool {
         let (Some(state), Some(snapshot)) = (&self.window, self.workspace_model.snapshot()) else {
             return false;
@@ -1616,12 +1615,11 @@ impl Application {
             .iter()
             .find(|tab| tab.id == snapshot.active_tab)
             .is_some_and(|tab| {
-                tab.columns.is_empty()
-                    || column_fits(
-                        state.renderer.size(),
-                        tab.columns.len() + 1,
-                        state.renderer.metrics(),
-                    )
+                admits_column(
+                    state.renderer.size(),
+                    tab.columns.len(),
+                    state.renderer.metrics(),
+                )
             })
     }
 
@@ -4193,10 +4191,15 @@ fn initial_window_size(
     Ok(size)
 }
 
-/// Whether `columns` equal columns across `window` each keep `MIN_COLUMN_CELLS`
-/// terminal columns.
-fn column_fits(window: PhysicalSize<u32>, columns: usize, metrics: CellMetrics) -> bool {
-    let width = workspace_column_width(window.width as f32, columns);
+/// Whether a column request beside `columns` existing columns may reach Eon. A
+/// tab without columns gets a pane and a full tab gets Eon's capacity refusal;
+/// otherwise one more column must leave each `MIN_COLUMN_CELLS` terminal
+/// columns wide.
+fn admits_column(window: PhysicalSize<u32>, columns: usize, metrics: CellMetrics) -> bool {
+    if columns == 0 || columns >= MAX_COLUMNS {
+        return true;
+    }
+    let width = workspace_column_width(window.width as f32, columns + 1);
     surface_size(PhysicalSize::new(width as u32, window.height), metrics)
         .is_some_and(|size| size.cols >= MIN_COLUMN_CELLS)
 }
@@ -5807,19 +5810,23 @@ mod tests {
         let metrics = CellMetrics::for_scale(1.0);
         let column = u32::from(MIN_COLUMN_CELLS) * metrics.width.round() as u32
             + 2 * metrics.padding.round() as u32;
-        for columns in 1..=4 {
-            let count = columns as u32;
-            assert!(column_fits(
+        for existing in 1..MAX_COLUMNS {
+            let count = existing as u32 + 1;
+            assert!(admits_column(
                 PhysicalSize::new(column * count, 600),
-                columns,
+                existing,
                 metrics
             ));
-            assert!(!column_fits(
+            assert!(!admits_column(
                 PhysicalSize::new(column * count - 1, 600),
-                columns,
+                existing,
                 metrics
             ));
         }
+        // An empty tab gets a pane and a full tab gets Eon's capacity refusal.
+        let narrow = PhysicalSize::new(column - 1, 600);
+        assert!(admits_column(narrow, 0, metrics));
+        assert!(admits_column(narrow, MAX_COLUMNS, metrics));
     }
 
     #[test]
