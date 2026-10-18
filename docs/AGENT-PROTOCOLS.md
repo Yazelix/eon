@@ -119,8 +119,9 @@ subsumes lower checks only for the identity/behavior exercised.
 Run a complete suite once per unchanged candidate/environment. Metadata/docs/
 planning follow-ups reuse it; commands are evidence, not a checklist. Keep logs
 only when reproduction is costly, disputed, performance-sensitive, or lossily
-summarized; temporary paths are not proof. Unattended runs close unused stdin,
-have timeouts, and get early progress checks; stalls fail.
+summarized; temporary paths are not proof. Unattended runs and waits close
+unused stdin, time out, check progress early, and never match themselves as the
+target; stalls fail.
 
 Performance claims need a measured bottleneck, fixed workload/environment,
 baseline, oracle, and distribution/bound; retain constraining negatives. Review
@@ -148,17 +149,26 @@ Keep fields current; append only needed contracts, decisions, dependencies,
 acceptance, material failures/negatives, constraining rejections, and approvals.
 Baseline/reference comments record only changed identities, dirty state,
 mechanism/stop decisions, and first check. Keep status/prerequisites honest; use
-the issue tool, never its storage.
+the issue tool (beads_rust `br` when available), never its storage.
 
 ## AP-SESSION-001 — Session continuity across compaction
 
-Treat context compaction as lossy. Write each user decision to its durable
-owner when it is made, and reread the active issue after any compaction. Once
-a session has compacted, start the next issue in a fresh session; within an
-issue, a second compaction or any sign of lost context triggers a handoff
-comment (state, next step, open decisions) and a new session. Prefer a
-clean-break restart to compaction, and start a large issue fresh when most of
-the context is already used.
+Compaction is lossy; avoid it. Write each user decision to its durable owner
+when it is made. Budget absolute context tokens, not window share; if the host
+reports none, estimate high:
+
+- From 100k, delegate exploration, logs, and long checks to fresh subagents;
+  avoid broad reads.
+- From 180k, add no scope or new steps: close the issue if it can close by
+  250k, else bring work in progress to a verified state and hand off.
+- Past 250k, continue only to reach an imminent verified state or keep live
+  state that cannot be written down; record why on the issue.
+- At 400k or after any compaction, reread the issue and hand off.
+
+A handoff is an issue comment: state, next step, and open decisions with
+reasons. The next session primes, e.g. "prime, then continue <issue> from its
+handoff". Start each issue fresh unless the session is uncompacted and under
+100k.
 
 ## AP-CI-001 — Bounded continuous integration
 
