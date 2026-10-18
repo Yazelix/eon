@@ -36,8 +36,8 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 ### Platform-specific PTY and local-runtime mechanics
 
 - **Selected shape:** One concrete `src/platform.rs` seam around direct `libc` 0.2.189 calls
-- **Status:** Selected and proved for ordinary and managed x86_64 Linux Sessions;
-  Apple Silicon macOS proof awaits re-proof in this repository
+- **Status:** Selected and proved for ordinary and managed Sessions on x86_64
+  Linux and Apple Silicon macOS
 - **Credible alternatives:** Handwritten C ABI with no crate; `pty-process` 0.5.3; `nix`
   0.31.3 with narrow `fs`, `poll`, `process`, `signal`, and `term` features; `portable-pty`
   0.9.0; `rustix` 1.1.4 with `rustix-openpty` 0.2.0
@@ -61,7 +61,7 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 - **Evidence:** Retroactive crate gate in `orb-bi4.2`; exact Apple, Ghostty, portable-pty,
   and libc sources plus the portability disposition are recorded in `orb-pmp`;
   post-candidate `pty-process` evidence is recorded there for a future decision. The
-  native ORB-C14 proofs are pending re-proof in this repository.
+  native ORB-C14 run is recorded in `eon-orb-c14-mac-reproof-l8rz`.
 
 ### Linux PTY Session shutdown
 

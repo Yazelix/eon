@@ -56,13 +56,16 @@ repository. Each contract below states the current ORBS v13 behavior.
   lifecycle.
 - **Boundary:** Persistence across Orbit or machine restart is excluded.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`;
+    Apple M2 macOS 26.7.1 native `cargo test --locked -p yazelix-orbit -p
+    orbit-protocol` at `4910b81e9d68942a65ad96ad21e03385de7144f5`
+    (`eon-orb-c14-mac-reproof-l8rz`)
   - **Evidence:**
     - [`transient_pty_eio_recovers_when_the_live_child_reopens_the_terminal`](../tests/lifecycle.rs)
     - [`simultaneous_stale_socket_claim_has_one_reachable_owner`](../tests/lifecycle.rs)
     - Workspace suite
-- **Open proof:** Pending re-proof in this repository: the native Apple Silicon
-  run of these checks.
+    - On macOS the stale-socket check passes; the transient PTY EIO check is
+      Linux-only.
 
 ## ORB-C2 — Sole terminal-state authority
 
@@ -272,8 +275,9 @@ repository. Each contract below states the current ORBS v13 behavior.
 - **Boundary:** Arbitrary line-count guarantees, gesture cadence, downward
   selection autoscroll, velocity, kinetic effects, graphics, and restart
   persistence are excluded; physical wheels retain their existing typed
-  terminal-routed or one-row behavior. This does not accept Eonova or native
-  Apple Silicon use of ORBS v13.
+  terminal-routed or one-row behavior. This does not accept Eonova, or any
+  ORBS v13 client on Apple Silicon (Venus, Eon, the diagnostic client or
+  bend-orbit); ORB-C14 covers Orbit's own native ORBS v13 behavior.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
   - **Evidence:**
@@ -477,13 +481,16 @@ repository. Each contract below states the current ORBS v13 behavior.
     group, and SIGHUP-ignoring foreground jobs whose shell exits during grace may
     survive.
   - Orbit scans no process names, ancestry, session IDs, or procfs and claims no
-    whole-descendant cleanup. Native macOS proof of direct-child HUP and
-    reaping is pending re-proof in this repository; the special detached and
-    foreground-group topology remains Linux-proved only.
+    whole-descendant cleanup. Direct-child HUP and reaping are also proved
+    natively on Apple Silicon macOS; the special detached and foreground-group
+    topology remains Linux-proved only.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`;
     installed `/nix/store/gg71kiz3k854f4xihasr1pwligypznl3-eon-0.1.0` driven
-    headlessly by a Kinestra recipe on a private headless Sway (wlroots, pixman)
+    headlessly by a Kinestra recipe on a private headless Sway (wlroots, pixman);
+    Apple M2 macOS 26.7.1 native `cargo test --locked -p yazelix-orbit -p
+    orbit-protocol` at `4910b81e9d68942a65ad96ad21e03385de7144f5`
+    (`eon-orb-c14-mac-reproof-l8rz`)
   - **Evidence:**
     - [`shutdown_hups_the_unreaped_direct_child`](../tests/lifecycle.rs)
     - [`shutdown_escalates_foreground_and_permits_a_detached_process`](../tests/lifecycle.rs)
@@ -492,9 +499,8 @@ repository. Each contract below states the current ORBS v13 behavior.
     - Workspace suite
     - Eon consumes this shutdown boundary; `eon-monorepo-2oko.6` dogfood
       checklist item 12 stops the installed generation.
-- **Open proof:** Pending re-proof in this repository: the native Apple Silicon
-  direct-child HUP/reap, bounded signal shutdown, and authorized management
-  Stop run.
+    - On macOS the direct-child HUP, safe signal shutdown and management Stop
+      checks pass; the escalation and writing-descendant checks are Linux-only.
 
 ## ORB-C13 — Same-boot management ownership
 
@@ -557,18 +563,21 @@ repository. Each contract below states the current ORBS v13 behavior.
     endpoint, permission, record, and polling mechanics with isolated Linux and
     Darwin peer-credential and process-start identity mechanisms.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
+  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`;
+    Apple M2 macOS 26.7.1 native `cargo test --locked -p yazelix-orbit -p
+    orbit-protocol` at `4910b81e9d68942a65ad96ad21e03385de7144f5`
+    (`eon-orb-c14-mac-reproof-l8rz`)
   - **Evidence:**
     - [`managed_run_survives_launcher_loss_and_has_one_replacement_owner`](../tests/lifecycle.rs)
     - [`management_authority_negatives_fail_closed_without_stopping_session`](../tests/lifecycle.rs)
     - Workspace suite
     - Eon consumes management v1 in this repository.
-- **Open proof:** Pending re-proof in this repository: the native Apple Silicon
-  management run.
+    - Both checks pass on macOS; the managed run's `/proc` check that the PTY
+      child inherits no Orbit listener is Linux-only.
 
 ## ORB-C14 — Apple Silicon macOS platform
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** A native Orbit user on `aarch64-darwin`.
 - **Trigger:** The Orbit server launches one ordinary or managed PTY Session
   with local Unix endpoints on Apple Silicon macOS.
@@ -589,18 +598,36 @@ repository. Each contract below states the current ORBS v13 behavior.
   including bounded direct-child shutdown. Venus and Eon integration, Nix
   packaging, `x86_64-darwin`, signing, notarization, direct distribution,
   remote transport, and restart persistence remain unsupported.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
-  - **Evidence:** On x86_64 Linux, the lifecycle suite in
-    [`tests/lifecycle.rs`](../tests/lifecycle.rs) exercises the shared Unix
-    seam: attachment negotiation, real PTY input and resize, detach/reconnect,
-    bounded pressure, metadata, owner-only endpoint permissions, EOF,
-    stale-socket ownership, direct-child HUP/reaping, signal cleanup, and
-    management launch, replacement, Busy, status, Stop, tombstones, and
-    fail-closed identity and permission checks. It does not run the isolated
-    Darwin peer and process-start identity calls.
-- **Open proof:** Pending re-proof in this repository: the native Apple Silicon
-  run of the Orbit unit and lifecycle tests on `aarch64-darwin`.
+- **Proof:** `4910b81e9d68942a65ad96ad21e03385de7144f5`
+  - **Environment:** Apple M2 (16 GiB), macOS 26.7.1 (25G241),
+    `aarch64-apple-darwin`; native `cargo build --locked -p yazelix-orbit`,
+    `cargo test --locked -p yazelix-orbit -p orbit-protocol` and
+    `cargo test --locked -p yazelix-orbit conformance_`
+    with Rust 1.96.0, Zig 0.15.2 against the macOS 15.4 Command Line Tools
+    SDK, and Ghostty `a887df42c56f6de86c0fe6da9c4eeca37931e083`. The run and
+    toolchain are recorded in `eon-orb-c14-mac-reproof-l8rz`. The shared Unix
+    seam was first re-proved on x86_64 Linux at
+    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`.
+  - **Evidence:**
+    - All 74 protocol, management, unit and lifecycle tests pass natively,
+      including the `conformance_` corpus; the two opt-in history measurements
+      stay ignored, as everywhere.
+    - [`management_artifacts_and_kernel_identity_fail_closed`](../src/platform.rs)
+      runs the Darwin `getpeereid` peer identity.
+    - [`managed_run_survives_launcher_loss_and_has_one_replacement_owner`](../tests/lifecycle.rs)
+      checks a managed run's Darwin `proc_pidinfo` process-start identity
+      against an independent read, then ends it with management Stop.
+    - [`tests/lifecycle.rs`](../tests/lifecycle.rs) also covers attachment
+      negotiation, real PTY input and resize, detach/reconnect, bounded
+      pressure, metadata, owner-only endpoint permissions, EOF, stale-socket
+      ownership, direct-child HUP/reaping, signal cleanup, and management
+      launch, replacement, Busy, status, Stop, tombstones, and fail-closed
+      identity and permission checks.
+    - Linux-gated checks do not run on macOS: the lifecycle tests for transient
+      PTY EIO, a writing descendant, and the detached and foreground-group
+      shutdown topology; the unit test
+      `exited_child_output_is_drained_into_authoritative_state`; and the managed
+      run's `/proc` assertion that the PTY child inherits no Orbit listener.
 
 ## Focused terminal conformance corpus
 
@@ -683,4 +710,5 @@ and native, web, or mobile clients. Eon owns product workspace topology and
 policy. Multiple sessions, windows, tabs, splits, restart recovery, remote
 transport, web, mobile, and multiplayer are not initial Orbit contracts and
 receive no IDs until the user authorizes their implementation scope. ORB-C14 is
-the sole authorized platform expansion and remains partially proved.
+the sole authorized platform expansion; it proves Orbit alone, and Venus and
+Eon have not adopted macOS.

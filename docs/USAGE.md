@@ -19,10 +19,10 @@ far run on a private headless Sway, plus a brief COSMIC launch check; the full
 COSMIC desktop proof awaits re-proof here. Eon does not require systemd or cgroup delegation, but non-systemd use and
 proprietary NVIDIA remain unproved.
 
-Apple Silicon macOS is the active expansion. Orbit's native proof and Venus's
-partial M1 proof, including physical Scaleway tests, predate this repository and
-await re-proof here. Venus acceptance and full Eon Nix composition remain open,
-so this release has no Mac install path.
+Apple Silicon macOS is the active expansion. Orbit's native proof passes in this
+repository. Venus's partial M1 proof, including physical Scaleway tests,
+predates this repository and awaits re-proof here. Venus acceptance and full
+Eon Nix composition remain open, so this release has no Mac install path.
 X11, Xwayland, ARM Linux, Intel macOS, direct bundles, Home Manager installation,
 background updates, and release automation are unsupported. Restarting the
 machine ends live terminal process state.

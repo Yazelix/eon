@@ -79,8 +79,8 @@ detached process, a non-foreground group outside the initial group, or a
 SIGHUP-ignoring foreground job whose shell exits during the grace period may
 survive. Orbit does not scan process names, ancestry, session IDs, or procfs to
 find it. Client disconnection remains non-destructive and separate from
-explicit Session stop. Native macOS proof of direct-child HUP and reaping awaits
-re-proof in this repository; the special detached and foreground-group topology remains Linux-proved only.
+explicit Session stop. Direct-child HUP and reaping are also proved natively on
+Apple Silicon macOS; the special detached and foreground-group topology remains Linux-proved only.
 
 ### Platform seam and checks
 
@@ -117,8 +117,8 @@ on typed responses, frames, and PTY state. With bounded timeouts they cover:
 
 ## Initial boundaries
 
-- ordinary and managed Orbit PTY Sessions are proved on x86_64 Linux; their
-  Apple Silicon macOS proof awaits re-proof in this repository; Venus/Eon composition, packaging, and distribution remain
+- ordinary and managed Orbit PTY Sessions are proved on x86_64 Linux and
+  Apple Silicon macOS; Venus/Eon composition, packaging, and distribution remain
   unsupported on macOS as separate downstream scope
 - local Unix socket transport
 - one terminal session, one input-capable client, and one read-only metadata

@@ -80,10 +80,10 @@ a brief COSMIC launch check; the full desktop proofs and the bounded Orca
 await re-proof. Other compositors, non-systemd hosts and proprietary NVIDIA
 drivers are unproved. Restarting the machine ends live terminals.
 
-**Mac:** Orbit passed native Apple Silicon tests, and Venus rendered and handled
-input on M1, before the move to one repository; both await re-proof here. Eon has
-no Mac install path or ETA yet, and Intel Macs are out of scope. We're looking for
-Apple Silicon testers: [open an issue](https://github.com/Yazelix/eon/issues/new).
+**Mac:** Orbit passes its native Apple Silicon tests in this repository. Venus
+rendered and handled input on M1 before the move to one repository and awaits
+re-proof here. Eon has no Mac install path or ETA yet, and Intel Macs are out
+of scope. We're looking for Apple Silicon testers: [open an issue](https://github.com/Yazelix/eon/issues/new).
 
 [Report a problem](https://github.com/Yazelix/eon/issues).
 

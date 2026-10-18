@@ -13,9 +13,9 @@ renders its frames; [Eon](../README.md) composes both.
 
 ## Run locally
 
-Orbit's server and diagnostic client are proved on x86_64 Linux; their Apple
-Silicon macOS proof awaits re-proof in this repository. The composed Eon
-product remains Linux-only.
+Orbit's server is proved on x86_64 Linux and natively on Apple Silicon macOS.
+Its diagnostic client is proved on Linux; its macOS proof awaits re-proof in
+this repository. The composed Eon product remains Linux-only.
 
 ```sh
 tic -x terminfo/eon.terminfo
