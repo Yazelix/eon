@@ -4170,7 +4170,6 @@ mod tests {
     use eon_workspace_protocol::v11::{
         InvokeIntent, Pane, Popup, PopupEntry, Shortcut, Snapshot, Tab,
     };
-    use winit::event::TouchPhase;
 
     pub(super) fn show_test_popup(snapshot: &mut Snapshot) {
         snapshot.entries = vec![PopupEntry {
@@ -4393,7 +4392,10 @@ mod tests {
             os::unix::net::{UnixListener, UnixStream},
             sync::{Barrier, mpsc},
         };
-        use winit::{event::DeviceId, platform::wayland::EventLoopBuilderExtWayland};
+        use winit::{
+            event::{DeviceId, TouchPhase},
+            platform::wayland::EventLoopBuilderExtWayland,
+        };
 
         fn frame(revision: u64, screen: Screen) -> TransportEvent {
             TransportEvent::Server(ServerMessage::Frame(Box::new(Frame {
