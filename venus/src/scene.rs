@@ -368,7 +368,7 @@ impl ShortcutHintsScene {
             metrics,
         );
         let bottom = chrome.bottom().min(size.height as f32);
-        let height = Self::height(metrics).min((bottom - header_heights(metrics).0).max(0.0));
+        let height = Self::height(metrics).min((bottom - pill_row(metrics)).max(0.0));
         let rect = SceneRect {
             top: bottom - height,
             height,
@@ -637,14 +637,49 @@ pub fn workspace_column_width(width: f32, count: usize, metrics: CellMetrics) ->
 }
 
 fn header_heights(metrics: CellMetrics) -> (f32, f32) {
+    // The header grows around the pill row until the pills keep one card gap above and below,
+    // as cards do from the window's sides.
+    let row = pill_row(metrics);
     (
-        (metrics.height * 1.75).round().max(1.0),
+        row + (card_gap(metrics) - tab_gap(metrics, row)).max(0.0) * 2.0,
         (metrics.height * 1.5).round().max(1.0),
     )
 }
 
+/// The row of tab pills and header buttons: the pills plus one tab gap above and below them.
+fn pill_row(metrics: CellMetrics) -> f32 {
+    (metrics.height * 1.75).round().max(1.0)
+}
+
+/// The pill row inside a header `tab_height` tall, which yields only after the header's inset.
+fn tab_row(metrics: CellMetrics, tab_height: f32) -> f32 {
+    pill_row(metrics).min(tab_height)
+}
+
+/// The header's height in a window `height` tall whose content above any hints ends at
+/// `content_height`: the header's extra inset yields first, keeping `minimum_height` for the
+/// cards, and the pill row only when the window itself is shorter.
+fn header_height(
+    metrics: CellMetrics,
+    height: f32,
+    content_height: f32,
+    minimum_height: f32,
+) -> f32 {
+    header_heights(metrics)
+        .0
+        .min((content_height - minimum_height).max(pill_row(metrics)))
+        .min(height)
+}
+
+/// The space between neighbouring tab pills.
 fn tab_gap(metrics: CellMetrics, tab_height: f32) -> f32 {
-    (metrics.padding / 3.0).min(tab_height / 4.0)
+    (metrics.padding / 3.0).min(tab_row(metrics, tab_height) / 4.0)
+}
+
+/// The tab pills' distance from the window's top and left edges: one card gap at full header
+/// height, so the first pill lines up with the first card.
+fn tab_inset(metrics: CellMetrics, tab_height: f32) -> f32 {
+    tab_gap(metrics, tab_height) + (tab_height - tab_row(metrics, tab_height)) / 2.0
 }
 
 /// The even gap around and between pane cards, which is also their corner radius: 8 logical
@@ -683,8 +718,8 @@ fn card_area(
     let mut spare = (content_height - tab_height - minimum_height).max(0.0);
     let below = if hints { 0.0 } else { gap.min(spare) };
     spare -= below;
-    let top =
-        (tab_height + (gap - tab_gap(metrics, tab_height)).max(0.0).min(spare)).min(content_height);
+    let top = (tab_height + (gap - tab_inset(metrics, tab_height)).max(0.0).min(spare))
+        .min(content_height);
     SceneRect {
         left: side,
         top,
@@ -695,6 +730,7 @@ fn card_area(
 
 fn workspace_header_geometry(
     size: PhysicalSize<u32>,
+    tab_height: f32,
     metrics: CellMetrics,
     requested_quota_width: Option<f32>,
     show_shortcuts: bool,
@@ -706,14 +742,14 @@ fn workspace_header_geometry(
     [WorkspaceControl; 3],
 ) {
     let width = size.width as f32;
-    let tab_height = header_heights(metrics).0.min(size.height as f32);
     let identity_width =
         metrics.width + metrics.padding * 2.0 + tab_gap(metrics, tab_height) * 2.0 + 1.0;
     let minimum_tabs = (width * 0.4)
         .min(metrics.font_size * 4.0)
         .max(identity_width.min((width - metrics.width * 3.0).max(0.0)));
     let control_count = if show_shortcuts { 3.0 } else { 2.0 };
-    let control_width = tab_height.min(((width - minimum_tabs) / control_count).max(0.0));
+    let control_width =
+        tab_row(metrics, tab_height).min(((width - minimum_tabs) / control_count).max(0.0));
     let controls_width = control_width * control_count;
     let drag_width =
         (metrics.font_size * 4.0).min((width - controls_width - minimum_tabs).max(0.0));
@@ -918,7 +954,10 @@ impl WorkspaceScene {
     /// Maximum shaped label width inside this surface's tab viewport.
     #[must_use]
     pub(crate) fn tab_text_width(size: PhysicalSize<u32>, metrics: CellMetrics) -> f32 {
-        let (_, tab_viewport, _, _, _) = workspace_header_geometry(size, metrics, None, true);
+        // Header widths depend only on the pill row, never on the header's extra inset.
+        let tab_height = header_heights(metrics).0.min(size.height as f32);
+        let (_, tab_viewport, _, _, _) =
+            workspace_header_geometry(size, tab_height, metrics, None, true);
         (tab_max_width(metrics, tab_viewport.width) - metrics.padding * 2.0)
             .max(0.0)
             .floor()
@@ -934,7 +973,7 @@ impl WorkspaceScene {
         let sides = gap * 2.0;
         let above = ShortcutHintsScene::reserved_height(metrics)
             + tab_height
-            + (gap - tab_gap(metrics, tab_height)).max(0.0);
+            + (gap - tab_inset(metrics, tab_height)).max(0.0);
         if active_popup(snapshot).is_some() {
             (
                 snapshot.geometry.side_margin * metrics.scale * 2.0 + sides,
@@ -991,11 +1030,24 @@ impl WorkspaceScene {
     ) -> Self {
         let width = size.width as f32;
         let height = size.height as f32;
-        let (tab_height, pane_height) = header_heights(metrics);
-        let tab_height = tab_height.min(height);
+        let pane_height = header_heights(metrics).1;
         let show_shortcuts = hints.as_ref().is_none_or(|hints| hints.keep_shortcuts);
         let content_height = hints.as_ref().map_or(height, |hints| hints.rect.top);
+        let active = &snapshot.tabs[snapshot
+            .tabs
+            .iter()
+            .position(|tab| tab.id == snapshot.active_tab)
+            .expect("EONW validates the active tab")];
+        // Each column needs one padded cell below its first header.
+        let minimum_height = minimum_terminal(metrics, metrics.height)
+            + if active.columns.is_empty() {
+                0.0
+            } else {
+                pane_height
+            };
+        let tab_height = header_height(metrics, height, content_height, minimum_height);
         let gap = tab_gap(metrics, tab_height);
+        let inset = tab_inset(metrics, tab_height);
         let quota_texts = snapshot
             .codex_quota
             .as_ref()
@@ -1051,7 +1103,8 @@ impl WorkspaceScene {
         let geometry = loop {
             let requested =
                 (!quotas.is_empty()).then(|| quotas.iter().map(|quota| quota.rect.width).sum());
-            let geometry = workspace_header_geometry(size, metrics, requested, show_shortcuts);
+            let geometry =
+                workspace_header_geometry(size, tab_height, metrics, requested, show_shortcuts);
             if geometry.3.is_some() || quotas.is_empty() {
                 break geometry;
             }
@@ -1081,7 +1134,7 @@ impl WorkspaceScene {
             .iter()
             .position(|tab| tab.id == snapshot.active_tab)
             .expect("EONW validates the active tab");
-        let mut tab_end = gap;
+        let mut tab_end = inset;
         let mut tabs: Vec<_> = snapshot
             .tabs
             .iter()
@@ -1099,9 +1152,9 @@ impl WorkspaceScene {
                     selected: index == active_tab,
                     rect: SceneRect {
                         left,
-                        top: gap,
+                        top: inset,
                         width: tab_width,
-                        height: (tab_height - gap * 2.0).max(0.0),
+                        height: (tab_height - inset * 2.0).max(0.0),
                     },
                     label,
                     accessible_label,
@@ -1172,12 +1225,7 @@ impl WorkspaceScene {
             tab_height,
             content_height,
             hints.is_some(),
-            minimum_terminal(metrics, metrics.height)
-                + if active.columns.is_empty() {
-                    0.0
-                } else {
-                    pane_height
-                },
+            minimum_height,
             metrics,
         );
         let card_radius = card_gap(metrics);
@@ -2157,6 +2205,24 @@ mod tests {
             (gap, 960.0 - gap)
         );
         assert_ne!(popup.terminal, popup.chrome);
+        // At default and small typography the first tab pill keeps the card gap from the
+        // window's top and left edges and above the cards, so it lines up with the first card.
+        let small = CellMetrics {
+            width: 5.0,
+            height: 9.0,
+            font_size: 8.0,
+            ..metrics
+        };
+        for metrics in [metrics, small] {
+            let scene =
+                WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
+                    (text.into(), text.len() as f32 * 10.0)
+                });
+            let gap = card_gap(metrics);
+            let pill = scene.tabs[0].rect;
+            assert_eq!((pill.left, pill.top), (gap, gap), "{metrics:?}");
+            assert_eq!(scene.chrome.top - pill.bottom(), gap, "{metrics:?}");
+        }
         // Toggling the popup keeps the shared card area, even where gaps yield on narrow or
         // short windows with several columns.
         let mut columns = snapshot.clone();

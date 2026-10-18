@@ -488,7 +488,11 @@ re-proved when that platform or feature is next touched.
     owns one card gap (8 logical pixels at default typography), which is also
     the corner radius: cards keep it from the window's sides, from each other
     and from the tab pills above, and below them the footer's band is the
-    margin, or one gap when hints are hidden. On a window too small for the
+    margin, or one gap when hints are hidden. In both modes the tab pills keep
+    the gap from the window's top and left edges, so the first pill lines up
+    with the first card. Pill size, the gap between pills and header button
+    width stay as before; on a short window the extra inset yields before the
+    pills do. On a window too small for the
     gaps they yield before a terminal cell does. Horizontal separators span
     each card and stop at its corner curves. Each card fills with its
     terminal's background color/opacity under the surface-wide blur request.
@@ -599,7 +603,11 @@ re-proved when that platform or feature is next touched.
   private headless Sway at scale 1 in both frame modes. The header-colored
   frame outside the cards (`eon-tubj`, whose commit is the revision) is covered
   by `frame_fills_everything_outside_the_cards`,
-  `framed_card_corners_stay_opaque` and the same captures. Pending
+  `framed_card_corners_stay_opaque` and the same captures. The tab inset
+  (`eon-gv1r`, whose commit is the revision) is covered by
+  `popup_outer_chrome_reuses_the_pane_stack_rectangle` at default and small
+  typography, the original tiny-window cases in the scene tests above, and
+  isolated captures. Pending
   re-proof in this repository: the ignored native long-label header regression and reader
   announcement of a workspace failure notice.
 

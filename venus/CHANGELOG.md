@@ -15,7 +15,8 @@
   pills; popups draw as one card, and the footer's hints sit bare in the
   margin below the cards. Everything outside the cards takes the header's
   opaque color, and each card fills with its terminal's background
-  (`eon-tubj`). Column width and the 40-column admission check use
+  (`eon-tubj`). Tab pills keep the card gap from the window's top and left
+  edges, so the header grows by 8 pixels (`eon-gv1r`). Column width and the 40-column admission check use
   the card geometry, and initial grids include the gaps
   (`eon-gapped-rounded-cards-txco`; it replaces the unreleased flush workspace
   sheet of `eon-flush-workspace-sheet-5779` and its follow-ups).

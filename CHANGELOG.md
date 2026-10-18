@@ -31,7 +31,9 @@ installation, and proven contract changes.
   card. The shortcut hints sit bare in the margin below the cards. Everything
   outside the cards takes the top bar's color, so the bar, the gaps and the
   hints read as one frame; with `background_opacity` below 1, only the cards
-  stay see-through. Terminals lose the few pixels the gaps take.
+  stay see-through. The tabs sit the same 8 pixels from the window's top and
+  left edges, so the first tab lines up with the first column. Terminals lose
+  the few pixels the gaps take.
 - `eon workspace` lists each pane's column and whether it is that column's
   open pane (`column=` and `expanded=`, or `"column"` and `"expanded"` with
   `--json`), and `eon versions` reports EONW 10.

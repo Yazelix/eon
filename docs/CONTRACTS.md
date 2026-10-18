@@ -379,7 +379,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     panes. Cards keep one even gap (8 logical pixels at default typography,
     also their corner radius) from the window's sides, from each other and
     from the tab pills above; below them the footer's band is the margin, or
-    one gap when hints are hidden. Cards use terminal background
+    one gap when hints are hidden. The tab pills keep the same gap from the
+    window's top and left edges, in both modes. Cards use terminal background
     color/opacity under the existing surface-wide blur request. Everything
     below the tab bar outside the cards, the gaps and footer band included, is
     the top bar's opaque color, so the bar, gaps and hints read as one frame.
@@ -514,7 +515,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `frame_fills_everything_outside_the_cards` and
   `framed_card_corners_stay_opaque`; the same isolated captures
   sampled the top bar, gaps, outside the corner curves and the footer band at
-  `#0a0d14`, the cards darker, and `false` unchanged.
+  `#0a0d14`, the cards darker, and `false` unchanged. The tab inset
+  (`eon-gv1r`, whose commit is the revision): Venus
+  `popup_outer_chrome_reuses_the_pane_stack_rectangle` at default and small
+  typography plus the original tiny-window cases; captures put the first pill
+  and first card both 8 pixels from the left edge, the pill 8 from the top and
+  8 above the cards.
   Installed AT-SPI labels and broader reader use remain open. These checks do not establish uninterrupted picker rendering,
   fractional-scale, wider compositor or non-systemd coverage.
 
