@@ -152,8 +152,9 @@ and full-width separators connect the stack without filling the terminal interio
 one-pixel clips of the existing rounded fill keep separators inside its corners.
 Scene owns the card gap and includes it in initial grid overhead.
 Selected and hovered header bands clip their card's rounded shape, avoiding
-pill ends inside the stack. The gap uses the existing terminal background and
-opacity. Pinned winit `7c209ec5bebbd2963f75a39f79b320af6b03f72c`, Wayland
+pill ends inside the stack. The gap used the existing terminal background and
+opacity until `eon-tubj` gave everything outside the cards the header's opaque
+color and filled each card with its terminal background. Pinned winit `7c209ec5bebbd2963f75a39f79b320af6b03f72c`, Wayland
 `window/state.rs::set_blur`, already requests blur over the entire surface; its
 `types/bgr_effects.rs` routes compositor support. An alpha-zero gap on a black
 proof background hid the missing paint, so the regression uses a colored underlay.

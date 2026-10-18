@@ -379,12 +379,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     panes. Cards keep one even gap (8 logical pixels at default typography,
     also their corner radius) from the window's sides, from each other and
     from the tab pills above; below them the footer's band is the margin, or
-    one gap when hints are hidden. Gaps and cards use terminal background
-    color/opacity under the existing surface-wide blur request, and on a
-    window too small for them the gaps yield before a terminal cell does.
+    one gap when hints are hidden. Cards use terminal background
+    color/opacity under the existing surface-wide blur request. Everything
+    below the tab bar outside the cards, the gaps and footer band included, is
+    the top bar's opaque color, so the bar, gaps and hints read as one frame.
+    On a window too small for them the gaps yield before a terminal cell does.
     Selected and hovered header fills follow their card's corners. A selected
     popup or picker draws as one card over the same area. `false` removes the
-    card borders and separators while retaining headers, selection, hover and
+    card borders, separators and frame (a popup keeps its outline over
+    terminal background) while retaining headers, selection, hover and
     keyboard focus. Both modes
     preserve terminal-grid and picker geometry. eonbase receives no
     workspace-frame override. Requested initial grids account for
@@ -507,6 +510,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   package on a private headless Sway (1920x1080, scale 1) observed one, two,
   stacked and four columns, hidden hints, a popup and `false`, with painted
   gaps and no corner meeting a window edge, tab pill, label or the footer.
+  The bar-colored frame (`eon-tubj`, whose commit is the revision): Venus
+  `frame_fills_everything_outside_the_cards` and
+  `framed_card_corners_stay_opaque`; the same isolated captures
+  sampled the top bar, gaps, outside the corner curves and the footer band at
+  `#0a0d14`, the cards darker, and `false` unchanged.
   Installed AT-SPI labels and broader reader use remain open. These checks do not establish uninterrupted picker rendering,
   fractional-scale, wider compositor or non-systemd coverage.
 

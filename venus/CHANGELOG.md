@@ -13,7 +13,9 @@
   card, with one even gap (8 logical pixels at default typography, also the
   corner radius) from the window's sides, between cards and below the tab
   pills; popups draw as one card, and the footer's hints sit bare in the
-  margin below the cards. Column width and the 40-column admission check use
+  margin below the cards. Everything outside the cards takes the header's
+  opaque color, and each card fills with its terminal's background
+  (`eon-tubj`). Column width and the 40-column admission check use
   the card geometry, and initial grids include the gaps
   (`eon-gapped-rounded-cards-txco`; it replaces the unreleased flush workspace
   sheet of `eon-flush-workspace-sheet-5779` and its follow-ups).

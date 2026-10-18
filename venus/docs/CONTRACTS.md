@@ -490,8 +490,11 @@ re-proved when that platform or feature is next touched.
     and from the tab pills above, and below them the footer's band is the
     margin, or one gap when hints are hidden. On a window too small for the
     gaps they yield before a terminal cell does. Horizontal separators span
-    each card and stop at its corner curves. The gaps share terminal background
-    color/opacity and the surface-wide blur request. Selected and hovered
+    each card and stop at its corner curves. Each card fills with its
+    terminal's background color/opacity under the surface-wide blur request.
+    Everything below the tab bar outside the cards, including the gaps, the
+    space beyond the corner curves and the footer band, takes the header's
+    opaque color, so header, gaps and footer form one frame. Selected and hovered
     header fills follow their card's corners, as does the framed keyboard-focus
     outline. Separators stay straight during scrolling; card borders stay fixed
     while overflowing headers scroll within each card.
@@ -503,7 +506,9 @@ re-proved when that platform or feature is next touched.
     the gaps accept no pane or terminal input. Column width and the 40-column
     admission check both come from the card geometry.
     Changed pane lists resize the terminal even when the endpoint stays selected.
-    The option has no visual effect in standalone or popup presentation.
+    The option has no visual effect in standalone presentation. A popup
+    draws its outlined card in both modes; only its surroundings differ, the
+    opaque frame with `true` and terminal background with `false`.
     Missing, duplicate or invalid values fail before window creation. Eon owns
     persistent configuration and composed-launch policy.
   - Headers and AccessKit names show the opaque `pN` identity, two ASCII spaces,
@@ -591,8 +596,11 @@ re-proved when that platform or feature is next touched.
   (`eon-gapped-rounded-cards-txco`, whose commit is the revision) are covered by
   `column_backgrounds_cover_the_gaps_between_cards` and the card geometry in
   the scene tests above, and by isolated captures of the built package on a
-  private headless Sway at scale 1 in both frame modes. Pending re-proof in
-  this repository: the ignored native long-label header regression and reader
+  private headless Sway at scale 1 in both frame modes. The header-colored
+  frame outside the cards (`eon-tubj`, whose commit is the revision) is covered
+  by `frame_fills_everything_outside_the_cards`,
+  `framed_card_corners_stay_opaque` and the same captures. Pending
+  re-proof in this repository: the ignored native long-label header regression and reader
   announcement of a workspace failure notice.
 
 ## VEN-C9 — Optional native decorations

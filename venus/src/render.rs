@@ -223,6 +223,45 @@ fn scene_grid(scene: &Scene, viewport: SceneRect, metrics: CellMetrics) -> Scene
     }
 }
 
+/// The parts of `area` that no card covers, as rectangles in horizontal bands. Cards never
+/// overlap; their rounded corners are the caller's to fill.
+fn uncovered(area: SceneRect, cards: &[SceneRect]) -> Vec<SceneRect> {
+    let cards = cards
+        .iter()
+        .filter_map(|card| card.intersection(area))
+        .collect::<Vec<_>>();
+    let mut edges = cards
+        .iter()
+        .flat_map(|card| [card.top, card.bottom()])
+        .chain([area.top, area.bottom()])
+        .collect::<Vec<_>>();
+    edges.sort_by(f32::total_cmp);
+    edges.dedup();
+    let mut free = Vec::new();
+    for band in edges.windows(2) {
+        let (top, bottom) = (band[0], band[1]);
+        let mut spans = cards
+            .iter()
+            .filter(|card| card.top <= top && bottom <= card.bottom())
+            .map(|card| (card.left, card.right()))
+            .collect::<Vec<_>>();
+        spans.sort_by(|left, right| left.0.total_cmp(&right.0));
+        let mut left = area.left;
+        for (start, end) in spans.into_iter().chain([(area.right(), area.right())]) {
+            if start > left {
+                free.push(SceneRect {
+                    left,
+                    top,
+                    width: start - left,
+                    height: bottom - top,
+                });
+            }
+            left = left.max(end);
+        }
+    }
+    free
+}
+
 /// Left and right edges of each column's background strip, for terminals ordered left to right:
 /// neighbouring strips meet in the middle of the gap between them, and the outer strips reach the
 /// window's sides.
@@ -841,34 +880,81 @@ impl Renderer {
         let mut cursor_vertex_boundary = 0;
         if let Some(workspace) = workspace {
             self.clear = wgpu::Color::TRANSPARENT;
-            // Each column's strip takes its own terminal's background; strips meet in the middle
-            // of the gaps between cards and reach the window's sides, so the gaps share it.
-            let mut strips = std::iter::once((workspace.terminal, scene))
+            if self.pane_frames {
+                // Below the tab bar, everything no card covers is opaque bar color, so the bar,
+                // the gaps and the hints read as one frame; each card takes its own terminal's
+                // background.
+                let cards = std::iter::once((
+                    workspace.chrome,
+                    !workspace.panes.is_empty() || workspace.popup_label().is_some(),
+                    scene,
+                ))
                 .chain(
                     workspace
                         .other_columns
                         .iter()
                         .zip(columns)
-                        .map(|(column, scene)| (column.terminal, *scene)),
+                        .map(|(column, scene)| (column.chrome, !column.panes.is_empty(), *scene)),
                 )
+                .filter_map(|(card, shown, scene)| shown.then_some((card, scene)))
                 .collect::<Vec<_>>();
-            strips.sort_by(|left, right| left.0.left.total_cmp(&right.0.left));
-            let spans = background_spans(
-                &strips
-                    .iter()
-                    .map(|(terminal, _)| *terminal)
-                    .collect::<Vec<_>>(),
-                self.config.width as f32,
-            );
-            for ((left, right), (_, scene)) in spans.into_iter().zip(&strips) {
-                rectangles.push(
-                    left,
-                    workspace.tab_viewport.bottom(),
-                    right - left,
-                    self.config.height as f32 - workspace.tab_viewport.bottom(),
-                    scene.map_or(DEFAULT_BACKGROUND, |scene| scene.background),
-                    self.background_opacity,
+                let frame = SceneRect {
+                    left: 0.0,
+                    top: workspace.tab_viewport.bottom(),
+                    width: self.config.width as f32,
+                    height: self.config.height as f32 - workspace.tab_viewport.bottom(),
+                };
+                let rects = cards.iter().map(|(card, _)| *card).collect::<Vec<_>>();
+                for rect in uncovered(frame, &rects) {
+                    rectangles.push(
+                        rect.left,
+                        rect.top,
+                        rect.width,
+                        rect.height,
+                        DEFAULT_BACKGROUND,
+                        1.0,
+                    );
+                }
+                let radius = workspace.card_radius();
+                for (card, scene) in cards {
+                    rectangles.push_framed_rounded(
+                        card,
+                        radius,
+                        scene.map_or(DEFAULT_BACKGROUND, |scene| scene.background),
+                        self.background_opacity,
+                        DEFAULT_BACKGROUND,
+                    );
+                }
+            } else {
+                // Each column's strip takes its own terminal's background; strips meet in the
+                // middle of the gaps between columns and reach the window's sides.
+                let mut strips = std::iter::once((workspace.terminal, scene))
+                    .chain(
+                        workspace
+                            .other_columns
+                            .iter()
+                            .zip(columns)
+                            .map(|(column, scene)| (column.terminal, *scene)),
+                    )
+                    .collect::<Vec<_>>();
+                strips.sort_by(|left, right| left.0.left.total_cmp(&right.0.left));
+                let spans = background_spans(
+                    &strips
+                        .iter()
+                        .map(|(terminal, _)| *terminal)
+                        .collect::<Vec<_>>(),
+                    self.config.width as f32,
                 );
+                for ((left, right), (_, scene)) in spans.into_iter().zip(&strips) {
+                    rectangles.push(
+                        left,
+                        workspace.tab_viewport.bottom(),
+                        right - left,
+                        self.config.height as f32 - workspace.tab_viewport.bottom(),
+                        scene.map_or(DEFAULT_BACKGROUND, |scene| scene.background),
+                        self.background_opacity,
+                    );
+                }
             }
             self.build_workspace(workspace, workspace_focus, &mut rectangles);
             for (column, scene) in workspace.other_columns.iter().zip(columns) {
@@ -1818,6 +1904,28 @@ fn text_areas(
     })
 }
 
+/// A rounded rectangle's corner radius in whole pixels, at most half its shorter side.
+fn rounded_radius(rect: SceneRect, radius: f32) -> f32 {
+    radius
+        .min(rect.width / 2.0)
+        .min(rect.height / 2.0)
+        .max(0.0)
+        .floor()
+}
+
+/// Each pixel row of a rounded rectangle's top and bottom corner bands, with how far the curve
+/// sits in from the sides at that row.
+fn corner_rows(rect: SceneRect, radius: f32) -> impl Iterator<Item = (f32, f32)> {
+    (0..radius as u32).flat_map(move |row| {
+        let dy = radius - row as f32 - 0.5;
+        let inset = radius - (radius * radius - dy * dy).sqrt();
+        [
+            (rect.top + row as f32, inset),
+            (rect.bottom() - row as f32 - 1.0, inset),
+        ]
+    })
+}
+
 struct RectangleBatch {
     bytes: Vec<u8>,
     width: u32,
@@ -1890,11 +1998,7 @@ impl RectangleBatch {
     }
 
     fn push_rounded(&mut self, rect: SceneRect, radius: f32, color: SceneColor) {
-        let radius = radius
-            .min(rect.width / 2.0)
-            .min(rect.height / 2.0)
-            .max(0.0)
-            .floor();
+        let radius = rounded_radius(rect, radius);
         self.push(
             rect.left,
             rect.top + radius,
@@ -1905,13 +2009,41 @@ impl RectangleBatch {
         );
         // Pixel-height bands reuse the existing clipped pipeline; fractional edge
         // coverage softens the curve without widening every terminal vertex.
-        for row in 0..radius as u32 {
-            let dy = radius - row as f32 - 0.5;
-            let inset = radius - (radius * radius - dy * dy).sqrt();
+        for (top, inset) in corner_rows(rect, radius) {
+            self.push_span(rect.left + inset, rect.right() - inset, top, color);
+        }
+    }
+
+    /// Fills a pixel-aligned rounded `rect` with `fill` at `alpha` and its corners outside the
+    /// curve with opaque `frame`. Each curve pixel is opaque frame under `fill` at its coverage, so
+    /// the GPU mixes them in the target's color space and the edge never turns translucent.
+    fn push_framed_rounded(
+        &mut self,
+        rect: SceneRect,
+        radius: f32,
+        fill: SceneColor,
+        alpha: f32,
+        frame: SceneColor,
+    ) {
+        let radius = rounded_radius(rect, radius);
+        self.push(
+            rect.left,
+            rect.top + radius,
+            rect.width,
+            rect.height - radius * 2.0,
+            fill,
+            alpha,
+        );
+        for (top, inset) in corner_rows(rect, radius) {
             let left = rect.left + inset;
             let right = rect.right() - inset;
-            for top in [rect.top + row as f32, rect.bottom() - row as f32 - 1.0] {
-                self.push_span(left, right, top, color);
+            let (first, last) = (left.floor(), right.floor());
+            self.push(rect.left, top, first - rect.left, 1.0, frame, 1.0);
+            self.push(first + 1.0, top, last - first - 1.0, 1.0, fill, alpha);
+            self.push(last + 1.0, top, rect.right() - last - 1.0, 1.0, frame, 1.0);
+            for (pixel, coverage) in [(first, first + 1.0 - left), (last, right - last)] {
+                self.push(pixel, top, 1.0, 1.0, frame, 1.0);
+                self.push(pixel, top, 1.0, 1.0, fill, coverage * alpha);
             }
         }
     }
@@ -2590,6 +2722,80 @@ mod tests {
             assert!(pair[0].0 <= terminal.left && terminal.right() <= pair[0].1);
         }
         assert_eq!(background_spans(&terminals[..1], 901.0), [(0.0, 901.0)]);
+    }
+
+    #[test]
+    fn frame_fills_everything_outside_the_cards() {
+        let frame = SceneRect {
+            left: 0.0,
+            top: 32.0,
+            width: 901.0,
+            height: 568.0,
+        };
+        let card = |left: f32, top: f32| SceneRect {
+            left,
+            top,
+            width: 289.0,
+            height: 500.0,
+        };
+        // A popup card can sit at another height than the columns beside it.
+        let cards = [card(8.0, 40.0), card(305.0, 48.0), card(602.0, 40.0)];
+        let free = uncovered(frame, &cards);
+        assert!(
+            free.iter()
+                .all(|rect| cards.iter().all(|card| rect.intersection(*card).is_none()))
+        );
+        let area = |rect: &SceneRect| rect.width * rect.height;
+        let covered = free.iter().chain(&cards).map(area).sum::<f32>();
+        assert_eq!(covered, area(&frame));
+        assert_eq!(uncovered(frame, &[]), [frame]);
+    }
+
+    #[test]
+    fn framed_card_corners_stay_opaque() {
+        let (width, height) = (40_u32, 40_u32);
+        let mut rectangles = RectangleBatch::new(width, height);
+        let card = SceneRect {
+            left: 4.0,
+            top: 4.0,
+            width: 32.0,
+            height: 32.0,
+        };
+        let color = SceneColor { r: 0, g: 0, b: 0 };
+        rectangles.push_framed_rounded(card, 8.0, color, 1.0, DEFAULT_BACKGROUND);
+        // Composite every quad's straight alpha over a transparent surface, pixel by pixel.
+        let mut alpha = vec![0.0_f32; (width * height) as usize];
+        let values = rectangles
+            .bytes
+            .chunks_exact(4)
+            .map(|bytes| f32::from_ne_bytes(bytes.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        for quad in values.chunks_exact(36) {
+            let xs = quad
+                .chunks_exact(6)
+                .map(|vertex| (vertex[0] + 1.0) / 2.0 * width as f32);
+            let ys = quad
+                .chunks_exact(6)
+                .map(|vertex| (1.0 - vertex[1]) / 2.0 * height as f32);
+            let (left, right) = xs.fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
+            let (top, bottom) = ys.fold((f32::MAX, f32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y)));
+            let source = quad[5];
+            for y in top.round() as u32..bottom.round() as u32 {
+                for x in left.round() as u32..right.round() as u32 {
+                    let pixel = &mut alpha[(y * width + x) as usize];
+                    *pixel = source + *pixel * (1.0 - source);
+                }
+            }
+        }
+        for y in 4..36 {
+            for x in 4..36 {
+                let pixel = alpha[(y * width + x) as usize];
+                assert!(
+                    (pixel - 1.0).abs() < 1e-4,
+                    "pixel {x},{y} has alpha {pixel}"
+                );
+            }
+        }
     }
 
     #[test]

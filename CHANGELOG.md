@@ -28,8 +28,10 @@ installation, and proven contract changes.
   Eon workspace, and popup keybindings can no longer use it.
 - Pane frames draw each column as its own rounded card, with an even 8-pixel
   gap around and between the cards; popups and the Project picker draw as one
-  card. The shortcut hints sit bare in the margin below the cards. Terminals
-  lose the few pixels the gaps take.
+  card. The shortcut hints sit bare in the margin below the cards. Everything
+  outside the cards takes the top bar's color, so the bar, the gaps and the
+  hints read as one frame; with `background_opacity` below 1, only the cards
+  stay see-through. Terminals lose the few pixels the gaps take.
 - `eon workspace` lists each pane's column and whether it is that column's
   open pane (`column=` and `expanded=`, or `"column"` and `"expanded"` with
   `--json`), and `eon versions` reports EONW 10.
