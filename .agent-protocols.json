@@ -2,7 +2,7 @@
   "schema": 1,
   "source": {
     "repository": "https://github.com/Yazelix/starcompass",
-    "commit": "47c20b1701b4e2eae8be853d22f6a407104791e6"
+    "commit": "2af5afb2922c003e91b73dff18187142cb49c73a"
   },
   "profiles": [
     "greenfield",
@@ -42,13 +42,13 @@
     },
     {
       "id": "AP-TEST-001",
-      "version": 3,
-      "sha256": "58b5837cb679e958192b366bb15d6e34649f5a91ff9f4accdc7edb4ef5cdb873"
+      "version": 4,
+      "sha256": "1c1c5eafa1f611fd7575ecf00b32a2068a477614c8be78ac4efa41630ec8b5ad"
     },
     {
       "id": "AP-PROOF-001",
-      "version": 8,
-      "sha256": "a953744b74e4ac3b7d9ec71009939494e271395b39f7a55f371e7e4b32a909f3"
+      "version": 9,
+      "sha256": "fc5961c27a4847b866de60b0c31d12e64f7f1580694813f75d718f5055ab9f1c"
     },
     {
       "id": "AP-PLAN-001",
@@ -101,24 +101,7 @@
       "sha256": "450e48b4e1532ff50a9a1da7faa49e3539450e0676f3c530f888d33b4b752e80"
     }
   ],
-  "exceptions": [
-    {
-      "approved_at": "2026-08-09",
-      "approved_by": "user",
-      "protocol": "AP-TEST-001",
-      "reason": "The user requires the active agent to reuse its existing context instead of invoking another agent for validation.",
-      "review_condition": "Review only if the user explicitly reauthorizes isolated agent trials.",
-      "scope": "Agent-instruction, prompt, and skill changes in the Eon repository"
-    },
-    {
-      "approved_at": "2026-10-16",
-      "approved_by": "user",
-      "protocol": "AP-PROOF-001",
-      "reason": "Nits never block, and text-only fixes restart a review loop at most twice per slice.",
-      "review_condition": "Review if a text-only slice ships a defect that another pass would have caught.",
-      "scope": "review loops in the Eon repository"
-    }
-  ],
+  "exceptions": [],
   "overlay": {
     "sha256": "393867b57f2cb64109fae59ec49c3232b3628209242bf3c3a8f076cdf909955f"
   },

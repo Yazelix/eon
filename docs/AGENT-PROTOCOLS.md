@@ -99,11 +99,12 @@ and regressions whose expected behavior is known first; use contract-first
 integration checks for layout, runtime, architecture, forks, and dogfood.
 
 For consequential agent-instruction, prompt, or skill changes, run isolated
-representative tasks without supplying the expected conclusion. Structural
-checks prove structure, not agent behavior. Test observable effects; delete
-duplicate proof, implementation trivia, and scaffolding. Guard absence only
-when absence is a security, licensing, size, ownership, or known-regression
-contract.
+representative tasks without supplying the expected conclusion when the user
+authorizes a separate agent; otherwise validate in the active context and
+report agent behavior as unproven. Structural checks prove structure, not
+agent behavior. Test observable effects; delete duplicate proof,
+implementation trivia, and scaffolding. Guard absence only when absence is a
+security, licensing, size, ownership, or known-regression contract.
 
 ## AP-PROOF-001 — Explicit proof lifecycle
 
@@ -125,7 +126,8 @@ target; stalls fail.
 
 Performance claims need a measured bottleneck, fixed workload/environment,
 baseline, oracle, and distribution/bound; retain constraining negatives. Review
-changes require another pass; convergence needs a full clean pass.
+changes require another pass; convergence needs a full clean pass. Nits never
+block it, and text-only fixes restart a review at most twice per slice.
 
 ## AP-PLAN-001 — Durable planning state
 
