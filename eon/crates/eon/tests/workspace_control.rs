@@ -76,8 +76,21 @@ fn temporary_directory() -> PathBuf {
 }
 
 fn executable(path: &Path, source: &str) {
-    fs::write(path, source).unwrap();
-    fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    // A concurrent test's forked child keeps this process's descriptors until it execs, and
+    // exec fails with ETXTBSY while any writer is open, so a child process writes the script.
+    let mut writer = Command::new("sh")
+        .args(["-c", "cat > \"$1\" && chmod 700 \"$1\"", "sh"])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    writer
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(source.as_bytes())
+        .unwrap();
+    assert!(writer.wait().unwrap().success());
 }
 
 fn configure_mock_desktop(config: &Path) {
