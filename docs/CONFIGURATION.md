@@ -39,7 +39,7 @@ installation does not change it. Narrow windows hide the label automatically.
 
 Omitting `cursor_trail_color` chooses a random color that lasts as long as the
 running workspace, so `eon attach` reopens with the same color; a new workspace
-picks again. EonTerm keeps one color across reopens, though its first window
+picks again. eonbase keeps one color across reopens, though its first window
 may differ. Explicit
 values are `random`, `preset:<name>`, or `custom:#RRGGBB`. The presets are
 `magma`, `solar`, `lime`, `forest`, `ice`, `ocean`, `nebula`, and `bubblegum`;
@@ -70,7 +70,7 @@ keys to dismiss it immediately. `enabled = false` skips startup playback;
 `style` is passed to the pinned Anima executable, and `duration_seconds` accepts
 1–30. Anima owns its style names; run `eon anima --help` to see them. A failed
 animation continues to the picker. Attachment, recovery, later tabs, and
-EonTerm do not play the startup animation.
+eonbase do not play the startup animation.
 
 ## Agent quota
 

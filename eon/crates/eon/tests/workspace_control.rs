@@ -2076,8 +2076,8 @@ fn rejected_native_startup_creates_no_session_in_either_product() {
     .unwrap();
     managed_orbit_executable(&orbit);
     let eon = Path::new(env!("CARGO_BIN_EXE_eon"));
-    let eonterm = root.join("eonterm");
-    symlink(eon, &eonterm).unwrap();
+    let eonbase = root.join("eonbase");
+    symlink(eon, &eonbase).unwrap();
     for response in ["exit 1", "printf wrong-v1", "exec cat >/dev/null"] {
         executable(
             &venus,
@@ -2085,7 +2085,7 @@ fn rejected_native_startup_creates_no_session_in_either_product() {
         );
         for (binary, args) in [
             (eon, vec!["run", "--", "/bin/false"]),
-            (eonterm.as_path(), vec!["--", "/bin/false"]),
+            (eonbase.as_path(), vec!["--", "/bin/false"]),
         ] {
             let started = Instant::now();
             let output = eon_command(binary)
@@ -2274,9 +2274,9 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
 }
 
 #[test]
-fn eonterm_reopens_without_workspace_or_a_second_session() {
+fn eonbase_reopens_without_workspace_or_a_second_session() {
     let root = temporary_directory();
-    let runtime = root.join("eonterm");
+    let runtime = root.join("eonbase");
     let config = root.join("config");
     let child_exit = root.join("child-exit");
     let child_pid = root.join("child.pid");
@@ -2315,10 +2315,10 @@ cat >/dev/null
     .unwrap();
 
     let eon = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    let binary = root.join("bin/eonterm");
+    let binary = root.join("bin/eonbase");
     fs::create_dir(root.join("bin")).unwrap();
     symlink(&eon, &binary).unwrap();
-    let eonterm = |configuration: &Path| {
+    let eonbase = |configuration: &Path| {
         let mut process = eon_command(&binary);
         process
             .env_remove("EON_RUNTIME_DIR")
@@ -2334,7 +2334,7 @@ cat >/dev/null
             .env("EON_TEST_PRESENTATION_LOG", &presentation_log);
         process
     };
-    let invalid = eonterm(&config)
+    let invalid = eonbase(&config)
         .args(["--application-id", "bad/id", "--"])
         .arg(&command)
         .output()
@@ -2343,7 +2343,7 @@ cat >/dev/null
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("invalid Eon application identity"));
     assert!(!runtime.join("generations").exists());
 
-    let child = eonterm(&config)
+    let child = eonbase(&config)
         .args(["--no-decorations", "--application-id", "eonova", "--"])
         .arg(&command)
         .stdout(Stdio::null())
@@ -2380,7 +2380,7 @@ cat >/dev/null
         "[terminal]\nbackground_opacity = 0.0\ncursor_trail_duration = 3.0\nfont_size = 24\nline_height = 1.5\nrows = 24\n",
     )
     .unwrap();
-    let mut repeated = eonterm(&command)
+    let mut repeated = eonbase(&command)
         .args(["--", "/bin/false"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -2403,7 +2403,7 @@ cat >/dev/null
         fs::read_to_string(&supervisor_log)
             .unwrap()
             .contains(&format!(
-                "Run `eonterm attach {generation_id}` to reconnect"
+                "Run `eonbase attach {generation_id}` to reconnect"
             ))
     );
 
@@ -2412,7 +2412,7 @@ cat >/dev/null
         "[terminal]\nbackground_blur = \"yes\"\n",
     )
     .unwrap();
-    let rejected = eonterm(&config)
+    let rejected = eonbase(&config)
         .args(["attach", generation_id])
         .output()
         .unwrap();
@@ -2426,7 +2426,7 @@ cat >/dev/null
         "[terminal]\nfont_family = 'EonMissingProofFont'\n",
     )
     .unwrap();
-    let rejected = eonterm(&config)
+    let rejected = eonbase(&config)
         .args(["attach", generation_id])
         .output()
         .unwrap();
@@ -2449,17 +2449,17 @@ cat >/dev/null
         "[terminal]\nbackground_opacity = 0.0\ncursor_trail_duration = 3.0\nfont_size = 24\nline_height = 1.5\nrows = 24\n",
     )
     .unwrap();
-    let reopened = eonterm(&config)
+    let reopened = eonbase(&config)
         .args(["attach", generation_id])
         .output()
         .unwrap();
     assert!(reopened.status.success());
     let deadline = Instant::now() + Duration::from_secs(5);
     while fs::read_to_string(&venus_log).unwrap().lines().count() != 2 {
-        assert!(Instant::now() < deadline, "EonTerm did not reopen");
+        assert!(Instant::now() < deadline, "eonbase did not reopen");
         thread::sleep(Duration::from_millis(10));
     }
-    let refocused = eonterm(&config)
+    let refocused = eonbase(&config)
         .args(["attach", generation_id])
         .output()
         .unwrap();
@@ -2473,7 +2473,7 @@ cat >/dev/null
     {
         assert!(
             Instant::now() < deadline,
-            "reopened EonTerm was not presented"
+            "reopened eonbase was not presented"
         );
         thread::sleep(Duration::from_millis(10));
     }
@@ -2514,7 +2514,13 @@ cat >/dev/null
     assert!(stdout(&workspace).contains("\"code\":\"workspace-unavailable\""));
     let wrong_mode = invoke(&binary, &runtime, &config, &[]);
     assert!(!wrong_mode.status.success());
-    assert!(String::from_utf8_lossy(&wrong_mode.stderr).contains("usage: eonterm"));
+    assert!(String::from_utf8_lossy(&wrong_mode.stderr).contains("usage: eonbase"));
+    let retired = root.join("bin/eonterm");
+    symlink(&eon, &retired).unwrap();
+    let retired = invoke(&retired, &runtime, &config, &["--help"]);
+    assert!(!retired.status.success());
+    assert!(stdout(&retired).is_empty());
+    assert!(String::from_utf8_lossy(&retired.stderr).contains("usage: eonbase"));
     let removed = invoke(
         &eon,
         &root.join("removed-runtime"),
@@ -2542,7 +2548,7 @@ cat >/dev/null
 }
 
 #[test]
-fn eonterm_replaces_exact_residue_after_its_supervisor_and_session_die() {
+fn eonbase_replaces_exact_residue_after_its_supervisor_and_session_die() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
@@ -2556,7 +2562,7 @@ fn eonterm_replaces_exact_residue_after_its_supervisor_and_session_die() {
     executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
 
     let eon = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    let binary = root.join("eonterm");
+    let binary = root.join("eonbase");
     symlink(&eon, &binary).unwrap();
     let launch = |stop: &Path| {
         eon_command(&binary)
@@ -3484,12 +3490,12 @@ fn replacement_eon_adopts_exact_runs_and_projects_numeric_workspace() {
     assert_recovery_failure(&binary, &["run"], "wrong presentation identity");
     fs::rename(&wrong_record, &first_record).unwrap();
 
-    let eonterm = root.join("eonterm");
-    symlink(&binary, &eonterm).unwrap();
+    let eonbase = root.join("eonbase");
+    symlink(&binary, &eonbase).unwrap();
     assert_recovery_failure(
-        &eonterm,
+        &eonbase,
         &["--", "/bin/false"],
-        "EonTerm cannot recover more than one live terminal",
+        "eonbase cannot recover more than one live terminal",
     );
 
     fs::set_permissions(&first_record, fs::Permissions::from_mode(0o640)).unwrap();

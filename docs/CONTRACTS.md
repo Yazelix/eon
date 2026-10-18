@@ -34,6 +34,10 @@ and `/nix/store/hk9v6q6c42x4sagpzrk20q32znw9sal1-eonterm-0.1.0`, driven
 headlessly by a Kinestra recipe on a private headless Sway (wlroots, pixman) on
 x86_64 Linux, following that bead's numbered checklist and recorded results.
 
+`eon-rename-eonterm-eonbase-jpbm` renamed EonTerm to eonbase, with its command,
+package, closure check and tests; contracts below use the new names. Records of
+earlier revisions keep the artifacts and check names they ran.
+
 ## Rules
 
 Product vocabulary follows the [naming boundary](ARCHITECTURE.md#naming-boundary):
@@ -65,7 +69,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C1 — Exact compatible component launch
 
 - **Status:** Proven
-- **Consumer:** A user launching Eon or EonTerm from one accepted product
+- **Consumer:** A user launching Eon or eonbase from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
 - **Result:**
@@ -93,7 +97,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - Optional `[terminal] cursor_trail_color` is forwarded unchanged on new or
     reopened surfaces. Omission emits no override; Venus keeps one random
     preset per live supervisor endpoint, so a full-Eon window reopened by
-    `eon attach` keeps its cursor color. EonTerm's first window opens before
+    `eon attach` keeps its cursor color. eonbase's first window opens before
     its terminal endpoint exists, so it may differ from later reopens, which
     share one preset. Venus owns `random`, `preset:<name>` and
     `custom:#RRGGBB` parsing, colors and rendering; Orbit cursor authority remains.
@@ -107,7 +111,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Child arguments, including Anima help, retain their existing forwarding.
   - Eon owns the cursor-tail duration default `1.5` and the optional
     `[terminal] cursor_trail_duration` multiplier in the same config file.
-    Finite values from `0.25` through `4.0` apply on new/reopened Eon and EonTerm
+    Finite values from `0.25` through `4.0` apply on new/reopened Eon and eonbase
     surfaces. Invalid duration fails before children; live surfaces retain their
     startup snapshot. Venus consumes the launch value and owns bounded motion,
     including healthy pane/tab/layout continuity. No separate child configuration.
@@ -134,7 +138,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     forwarding (`anima_command_preserves_child_arguments_status_and_avoids_workspace`);
     cursor-tail launch values (`configured_cursor_tail_reaches_both_product_launches`);
     failed native admission (`rejected_native_startup_creates_no_session_in_either_product`);
-    the `default` and `eonterm-closure` Nix checks. Installed checklist items
+    the `default` and `eonbase-closure` Nix checks. Installed checklist items
     1 (Anima welcome, picker, first terminal) and 7 (terminal text including
     box drawing, Braille and CJK); Lucca opened the installed build from the
     `Open Eon` desktop entry on COSMIC (recorded in `eon-monorepo-2oko.6`).
@@ -183,7 +187,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Result:** Eon receives explicit component paths, treats Nix store paths as
   opaque inputs, and invokes no Nix evaluator during normal runtime. The Nix
   full-Eon launcher supplies the pinned Anima executable as an opaque input.
-  Nix builds Orbit, Venus, Eon and EonTerm from the in-tree crates. Generation
+  Nix builds Orbit, Venus, Eon and eonbase from the in-tree crates. Generation
   identity covers every regular file in the Eon build's source tree outside dot
   entries and `target` directories; in Nix, that is the in-tree workspace
   source set.
@@ -201,7 +205,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Environment:** Automated tier on x86_64 Linux.
   - **Evidence:** `generation_identity_is_stable_bounded_and_namespaced` and
     `current_generation_consumes_supplied_assembly`; the `default` and
-    `eonterm-closure` Nix checks build Orbit, Venus, Eon and EonTerm from the
+    `eonbase-closure` Nix checks build Orbit, Venus, Eon and eonbase from the
     in-tree crates.
 
 ## EON-C4 — Thin orchestrator ownership
@@ -235,8 +239,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Evidence:** The workspace suites run with in-tree Orbit, Venus, Eon
     Runtime and EONW; `orbit-governance`'s
     `workspace_crates_keep_their_dependency_direction` enforces the crate
-    ownership edges; the `eonterm-closure` check keeps Eon-only tools out of
-    EonTerm. Installed checklist items 1, 4 and 11 exercise Eon policy over
+    ownership edges; the `eonbase-closure` check keeps Eon-only tools out of
+    eonbase. Installed checklist items 1, 4 and 11 exercise Eon policy over
     child-owned terminals, popups and tools.
 - **Open proof:** Pending re-proof in this repository: portable-CPU Orbit under
   QEMU `qemu64`, Cachix publication and signed substitution from an empty
@@ -327,7 +331,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Installed checklist items 1 through 5 and 10 through 12 cover
     native launch, picker, tabs and panes, popups, shortcuts and hints, detach
-    and attach, generations, independent windows, EonTerm and exact-generation
+    and attach, generations, independent windows, eonbase and exact-generation
     Stop on headless Sway; items 6 through 8 pass for the Eon Bar and version
     label, terminal text and opacity. Lucca opened the build from the desktop
     entry on COSMIC and reported a general visual pass.
@@ -381,7 +385,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     fills are square. `false` removes the sheet border, seams and separators
     while retaining headers, selection, hover and keyboard focus; the popup and
     footer outlines stay square. Both modes
-    preserve terminal-grid and picker geometry. EonTerm receives no
+    preserve terminal-grid and picker geometry. eonbase receives no
     workspace-frame override. Requested initial grids account for
     the small bottom margin. Live surfaces retain their settings;
     malformed or duplicate values reject a new launch or replacement without
@@ -651,12 +655,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C11 — Runtime generations and presentation
 
 - **Status:** Proven on x86_64 Linux native Wayland
-- **Consumer:** Eon and EonTerm users launching or targeting a product generation.
+- **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
   present a compatible existing surface, stop one generation, or stop a selected
   set of generations.
 - **Result:**
-  - Eon and EonTerm use separate runtime namespaces and default to their exact
+  - Eon and eonbase use separate runtime namespaces and default to their exact
     current generation.
   - Generation identity combines immutable runtime/EONW source and build
     inputs with Eon assembly/default/validator/graph/Cargo/Nix-generated inputs;
@@ -743,12 +747,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Status:** Proven
 - **Consumer:** A local user or approved composition needing one native terminal
   surface without Eon workspace actions.
-- **Trigger:** EonTerm launches one exact command after `--`.
+- **Trigger:** eonbase launches one exact command after `--`.
 - **Result:**
-  - `eonterm -- COMMAND...` launches one exact nonempty argv in one Orbit terminal
+  - `eonbase -- COMMAND...` launches one exact nonempty argv in one Orbit terminal
     and one Venus surface without workspace topology. Optional
     `--no-decorations` is fixed for the supervisor lifetime.
-  - `eonterm generations`, `attach`, and `stop` expose EON-C11 within EonTerm's
+  - `eonbase generations`, `attach`, and `stop` expose EON-C11 within eonbase's
     separate namespace.
   - Repeated launch presents an attached surface; after detachment it opens one
     replacement against the same live terminal with the original decoration
@@ -757,36 +761,47 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     topology.
 - **Important failures:** Missing command, invalid identity, incompatible
   component, startup failure, supervisor loss, or explicit Stop follows the same
-  bounded ownership and cleanup rules without creating workspace state.
+  bounded ownership and cleanup rules without creating workspace state. The
+  shared executable invoked as the retired `eonterm` selects neither product
+  and fails with eonbase usage.
 - **Owner:** Eon defines and packages the standalone product; Eon Runtime
   implements exact-command launch/generation mechanisms. Orbit owns the terminal and
   Venus owns the surface.
 - **Consumes:** EON-C1 through EON-C4, EON-C11, Orbit, and Venus.
-- **Boundary:** EonTerm consumes no EON-C9 managed environment and adds no tabs,
+- **Boundary:** eonbase consumes no EON-C9 managed environment and adds no tabs,
   panes, key remapping, preset, wrapper, persisted mode marker, workspace,
   managed-tool/default-shell command, remote access, focus guarantee, or Zellij
   policy. Bare `eon` and `eon run` retain workspace meanings.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
-  - **Evidence:** `eonterm_reopens_without_workspace_or_a_second_session`,
-    `eonterm_replaces_exact_residue_after_its_supervisor_and_session_die` and
+  - **Evidence:** `eonbase_reopens_without_workspace_or_a_second_session`,
+    `eonbase_replaces_exact_residue_after_its_supervisor_and_session_die` and
     `rejected_native_startup_creates_no_session_in_either_product`; the
-    `eonterm-closure` Nix check. Installed checklist item 11: launch, detach,
-    `eonterm attach` and exact Stop; `--no-decorations` started.
+    `eonbase-closure` Nix check. Installed checklist item 11: launch, detach,
+    `eonbase attach` and exact Stop; `--no-decorations` started.
+- **Rename proof:** `eon-rename-eonterm-eonbase-jpbm`; that bead's commit is its
+  revision.
+  - **Environment:** Automated tier; isolated installed eonbase on a private
+    headless Sway 1.12 on x86_64 Linux.
+  - **Evidence:** the renamed tests and `eonbase-closure` check;
+    `eonbase_reopens_without_workspace_or_a_second_session` also rejects the
+    retired `eonterm` name. Installed: launch, detach, `eonbase attach`, exact
+    Stop, `--no-decorations` launch and Stop, and `eon window new` through the
+    Nix wrapper.
 - **Open proof:** Pending re-proof in this repository: native supervisor-loss
-  recovery of the same EonTerm terminal, and `--no-decorations` rendering
+  recovery of the same eonbase terminal, and `--no-decorations` rendering
   under a decorating compositor.
 
 ## EON-C13 — Terminal-background opacity policy
 
 - **Status:** Proven
-- **Consumer:** Every Eon or EonTerm Venus surface.
+- **Consumer:** Every Eon or eonbase Venus surface.
 - **Trigger:** Eon creates or reopens a surface while
   `$EON_CONFIG_HOME/config.toml` contains optional
   `terminal.background_opacity`.
 - **Result:** Eon accepts one finite `f32` in `0.0..=1.0`, defaults absence to
   `0.80`, and passes the exact value as `--background-opacity` before Venus
-  endpoints. Eon and EonTerm share it. A live Venus is unchanged; replacement
+  endpoints. Eon and eonbase share it. A live Venus is unchanged; replacement
   reads one current configuration snapshot while Orbit and its PTY remain live.
 - **Important failures:** Invalid initial configuration names the field and
   starts no supervisor, Orbit, or Venus. Invalid replacement configuration
@@ -802,7 +817,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `bare_eon_attaches_only_to_the_live_current_generation` checks
     the default `--background-opacity 0.8`;
-    `eonterm_reopens_without_workspace_or_a_second_session` rereads an explicit
+    `eonbase_reopens_without_workspace_or_a_second_session` rereads an explicit
     value on reopen;
     `invalid_presentation_configuration_precedes_supervisor_generation_and_children`
     rejects invalid values; Venus `background_opacity_selects_only_proved_surface_modes`,
@@ -814,12 +829,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Proven by the automated tier; the installed backdrop is pending
   re-proof in this repository.
-- **Consumer:** Every Eon or EonTerm Venus surface.
+- **Consumer:** Every Eon or eonbase Venus surface.
 - **Trigger:** Eon creates or reopens a surface while
   `$EON_CONFIG_HOME/config.toml` contains optional strict boolean
   `terminal.background_blur`.
 - **Result:** Absence defaults to `true`; true passes exactly one
-  `--background-blur` before Venus endpoints and false omits it. Eon and EonTerm
+  `--background-blur` before Venus endpoints and false omits it. Eon and eonbase
   share the setting. A live Venus is unchanged; replacement uses one current
   configuration snapshot while Orbit and its PTY remain live. Blur remains
   independent from opacity.
@@ -836,7 +851,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier.
   - **Evidence:** `bare_eon_attaches_only_to_the_live_current_generation` checks
-    one default `--background-blur`; `eonterm_reopens_without_workspace_or_a_second_session`
+    one default `--background-blur`; `eonbase_reopens_without_workspace_or_a_second_session`
     omits blur under `background_blur = false`, then rereads the configuration
     on reopen and restores the default blur once the setting is removed;
     `invalid_presentation_configuration_precedes_supervisor_generation_and_children`
@@ -849,7 +864,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Proven on x86_64 Linux by the automated tier; installed
   supervisor-loss adoption is pending re-proof in this repository.
-- **Consumer:** One local Eon or EonTerm user on the same boot and login.
+- **Consumer:** One local Eon or eonbase user on the same boot and login.
 - **Trigger:** An Eon-launched Orbit crosses Ready, its supervisor disappears,
   its acquired owner dies, a replacement targets the same exact generation,
   or the user requests Stop.
@@ -858,7 +873,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     generation ID as component generation, then validates complete live identity
     and acquires the sole management lease within one shared five-second
     operation.
-  - Replacement EonTerm recovers exactly one live run; replacement full Eon
+  - Replacement eonbase recovers exactly one live run; replacement full Eon
     acquires at most 256 valid runs, sorts positive canonical N numerically, and
     projects them into synthetic `t1` as `pN` with the lowest selected. That tab
     receives the replacement supervisor's launch directory as fresh policy.
@@ -926,7 +941,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     (`replacement_eon_adopts_exact_runs_and_projects_numeric_workspace`,
     `replacement_reconciles_exact_tombstone_endpoints_without_deleting_replacements`,
     `replacement_with_only_a_stale_initial_picker_falls_back_without_reopening_it`,
-    `eonterm_replaces_exact_residue_after_its_supervisor_and_session_die`);
+    `eonbase_replaces_exact_residue_after_its_supervisor_and_session_die`);
     Stop and cleanup
     (`stop_accounts_for_late_ready_picker_and_retains_partial_cleanup_owner`,
     `stop_result_covers_queued_operation_and_managed_cleanup`,
@@ -950,17 +965,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C16 — Caller-owned application identity
 
 - **Status:** Proven
-- **Consumer:** Full Eon, standalone EonTerm, or one approved EonTerm composition.
+- **Consumer:** Full Eon, standalone eonbase, or one approved eonbase composition.
 - **Trigger:** The caller launches a new Venus surface with its selected validated
   desktop application ID.
-- **Result:** Full Eon supplies `eon`, standalone EonTerm supplies `eonterm`, and
+- **Result:** Full Eon supplies `eon`, standalone eonbase supplies `eonbase`, and
   an approved composition passes its value unchanged to `VEN-C17` before window
   creation; identity never enters PTY argv/environment and remains independent
   from terminal-authored titles.
 - **Important failures:** Empty, non-UTF-8, oversized, or non-token identities
   fail before Orbit or Venus starts; profile refresh does not mutate a live
   surface's selected identity.
-- **Owner:** Eon supplies defaults; Eon Runtime validates and projects EonTerm
+- **Owner:** Eon supplies defaults; Eon Runtime validates and projects eonbase
   CLI input; the embedding composition owns its identifier/desktop metadata;
   Venus owns native mapping only.
 - **Consumes:** Venus `VEN-C17`.
@@ -970,10 +985,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `venus_receives_workspace_endpoint_only_in_workspace_mode`
     checks the projected `--application-id` for both products. Installed
-    checklist items 1 and 11 launch Eon and EonTerm; item 1's launch waited for
+    checklist items 1 and 11 launch Eon and eonbase; item 1's launch waited for
     the Sway tree to show the native app ID `eon`.
 - **Open proof:** Pending re-proof in this repository: installed rejection of
-  invalid EonTerm identities, distinct launcher grouping, and an approved
+  invalid eonbase identities, distinct launcher grouping, and an approved
   embedding's caller-owned identity.
 
 ## EON-C17 — Tab launch directory
@@ -1039,7 +1054,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     a random native style, and three seconds; `[anima].enabled = false` skips it.
     Any key other than Anima's style-browsing keys dismisses playback without
     becoming picker input. This step does not run for later tabs, attachment,
-    reconnection, same-boot recovery, or EonTerm.
+    reconnection, same-boot recovery, or eonbase.
   - A fresh workspace and every later new tab begin as one active pending tab
     with no durable pane. Eon starts one transient Orbit terminal running the
     exact packaged ranked-directory picker at that tab's starting directory
@@ -1146,7 +1161,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   copied Nova plugin, normal-pane identity, client-supplied command,
   simultaneous terminal composition, native Venus picker,
   placeholder shell, pane replacement, current-process `cd`, persisted pending
-  tab, EonTerm action, or additional platform.
+  tab, eonbase action, or additional platform.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Picker lifecycle
@@ -1177,7 +1192,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Proven by the automated tier; installed configured typography and
   geometry are pending re-proof in this repository.
-- **Consumer:** Eon and EonTerm users opening a native surface.
+- **Consumer:** Eon and eonbase users opening a native surface.
 - **Trigger:** Create or reopen Venus using one `$EON_CONFIG_HOME/config.toml`
   snapshot.
 - **Result:**
@@ -1206,7 +1221,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Consumes:** Exact accepted Venus VEN-C19 startup admission.
 - **Packaged fonts:** The Venus font configuration includes DejaVu, Symbols
   Nerd Font Mono and Anima's font-only Accelerando Terminal artifact. Eon and
-  EonTerm share that configuration; EonTerm does not consume the Anima executable.
+  eonbase share that configuration; eonbase does not consume the Anima executable.
   The exact Anima component pin owns the font revision. Its U+100000–U+101FFF
   mapping preserves Venus's Nerd Font ranges and the primary text family.
 - **Boundary:** Native Linux Wayland; no system-wide font installation, live
@@ -1264,7 +1279,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `recognized_shortcuts_are_one_shot`. Installed checklist item 5.
 - **Open proof:** Pending re-proof in this repository: header spacing at
   compact sizes, rebound and disabled popup rows, and AT-SPI projection on an
-  installed surface. No EonTerm, fractional-scale, screen-reader workflow,
+  installed surface. No eonbase, fractional-scale, screen-reader workflow,
   wider compositor, non-systemd, macOS or direct-distribution proof is added.
 
 ## EON-C21 — Native workspace header
@@ -1500,7 +1515,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `optional_resets_roundtrip_without_relaxing_historical_or_value_boundaries`;
     Venus `quota_without_reset_retains_percent_and_accessible_freshness` and
     `quota_icons_preserve_transparency_and_shape_across_scales`; the
-    `eonterm-closure` check keeps CodexBar out of EonTerm. The failure-policy
+    `eonbase-closure` check keeps CodexBar out of eonbase. The failure-policy
     change (`eon-quota-old-after-hour-knaq`) is proved by the updated
     `retained_observations_age_and_expire_without_invented_resets` and
     `workers_isolate_failure_and_bound_output_timeout_and_shutdown`; that

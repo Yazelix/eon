@@ -132,7 +132,7 @@ impl LaunchMode {
     fn name(self) -> &'static str {
         match self {
             Self::Workspace => "workspace",
-            Self::Terminal => "EonTerm",
+            Self::Terminal => "eonbase",
         }
     }
 }
@@ -147,7 +147,7 @@ pub(super) fn launch_current(
 ) -> Result<i32, String> {
     let generation = current_generation(inputs)?;
     let root = runtime_directory(if mode == LaunchMode::Terminal {
-        "eonterm"
+        "eonbase"
     } else {
         "eon"
     });
@@ -827,7 +827,7 @@ fn supervise(
                         "Eon Desktop exited; terminals remain active. Run `eon attach {generation}` to reconnect."
                     ),
                     LaunchMode::Terminal => eprintln!(
-                        "Eon Desktop exited; terminal remains active. Run `eonterm attach {generation}` to reconnect."
+                        "Eon Desktop exited; terminal remains active. Run `eonbase attach {generation}` to reconnect."
                     ),
                 }
             }
@@ -956,7 +956,7 @@ fn close_workspace_tab(
     let sessions = state
         .workspace
         .as_mut()
-        .ok_or_else(|| failure("workspace-unavailable", "EonTerm has no Eon workspace"))?
+        .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?
         .prepare_close_tab(request_id, tab)?;
 
     for id in sessions {
@@ -1332,7 +1332,7 @@ fn dispatch_control_request(
                     state
                         .sessions
                         .first()
-                        .ok_or("EonTerm has no live terminal")?
+                        .ok_or("eonbase has no live terminal")?
                         .endpoint
                         .clone()
                 };
@@ -1427,7 +1427,7 @@ fn dispatch_control_request(
                 return (
                     ControlResponse::Workspace(Response::Failure(failure(
                         "workspace-unavailable",
-                        "EonTerm has no Eon workspace",
+                        "eonbase has no Eon workspace",
                     ))),
                     false,
                 );
@@ -1503,7 +1503,7 @@ fn runtime_status(
             available: true,
             reason: match mode {
                 LaunchMode::Workspace => "supervisor accepts EONW v8 presentation requests",
-                LaunchMode::Terminal => "supervisor owns one EonTerm terminal",
+                LaunchMode::Terminal => "supervisor owns one eonbase terminal",
             }
             .into(),
         },
@@ -1922,7 +1922,7 @@ rows = 30
             Path::new("/runtime/orbit.sock"),
             LaunchMode::Terminal,
             &terminal_presentation(1.0, false),
-            "eonterm",
+            "eonbase",
             true,
         )
         .unwrap();
@@ -1937,7 +1937,7 @@ rows = 30
             terminal.get_args().map(OsString::from).collect::<Vec<_>>(),
             [
                 "--application-id",
-                "eonterm",
+                "eonbase",
                 "--background-opacity",
                 "1",
                 "/runtime/orbit.sock",

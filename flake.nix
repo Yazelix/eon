@@ -518,20 +518,20 @@
             platforms = [ system ];
           };
         };
-      eontermPackage =
+      eonbasePackage =
         assert manifest.composition.services == [ orbitIdentity.id ];
         assert manifest.composition.clients == [ venusIdentity.id ];
         eonPackage.overrideAttrs (_: {
-          pname = "eonterm";
+          pname = "eonbase";
           desktopItems = [ ];
           postInstall = ''
-            mv "$out/bin/eon" "$out/bin/eonterm"
-            install -Dm444 ${./LICENSE} "$out/share/licenses/eonterm/LICENSE"
-            install -Dm444 ${./runtime/LICENSE} "$out/share/licenses/eonterm/eon-runtime/LICENSE"
-            install -Dm444 ${./runtime/NOTICE} "$out/share/licenses/eonterm/eon-runtime/NOTICE"
+            mv "$out/bin/eon" "$out/bin/eonbase"
+            install -Dm444 ${./LICENSE} "$out/share/licenses/eonbase/LICENSE"
+            install -Dm444 ${./runtime/LICENSE} "$out/share/licenses/eonbase/eon-runtime/LICENSE"
+            install -Dm444 ${./runtime/NOTICE} "$out/share/licenses/eonbase/eon-runtime/NOTICE"
           '';
           postFixup = ''
-            wrapProgram "$out/bin/eonterm" \
+            wrapProgram "$out/bin/eonbase" \
               --set EON_ORBIT "${orbitPackage}/bin/yazelix-orbit" \
               --set EON_VENUS "${venusPackage}/bin/yazelix-venus" \
               --unset EON_SESSION_BIN \
@@ -540,20 +540,20 @@
           meta = {
             description = "Reusable Eon terminal product";
             license = lib.licenses.asl20;
-            mainProgram = "eonterm";
+            mainProgram = "eonbase";
             platforms = [ system ];
           };
         });
-      eontermClosure = pkgs.closureInfo { rootPaths = [ eontermPackage ]; };
+      eonbaseClosure = pkgs.closureInfo { rootPaths = [ eonbasePackage ]; };
       coinstalledProducts = pkgs.buildEnv {
         name = "eon-products-profile-check";
-        paths = [ eonPackage eontermPackage ];
+        paths = [ eonPackage eonbasePackage ];
       };
-      eontermClosureCheck = pkgs.runCommand "eonterm-closure-check" { } ''
+      eonbaseClosureCheck = pkgs.runCommand "eonbase-closure-check" { } ''
         test -x ${coinstalledProducts}/bin/eon
-        test -x ${coinstalledProducts}/bin/eonterm
+        test -x ${coinstalledProducts}/bin/eonbase
         for required in ${orbitPackage} ${venusPackage}; do
-          ${pkgs.gnugrep}/bin/grep -Fx "$required" ${eontermClosure}/store-paths
+          ${pkgs.gnugrep}/bin/grep -Fx "$required" ${eonbaseClosure}/store-paths
         done
         for forbidden in \
           ${eonPackage} \
@@ -562,11 +562,11 @@
           ${nushellPackage} ${bashPackage} ${zshPackage} ${fishPackage} \
           ${starshipPackage} ${zoxidePackage} ${atuinPackage} ${carapacePackage} \
           ${fzfPackage} ${helixPackage} ${yaziPackage} ${lazygitPackage}; do
-          ! ${pkgs.gnugrep}/bin/grep -Fx "$forbidden" ${eontermClosure}/store-paths
+          ! ${pkgs.gnugrep}/bin/grep -Fx "$forbidden" ${eonbaseClosure}/store-paths
         done
-        test ! -e ${eontermPackage}/libexec/eon
-        ${pkgs.gnugrep}/bin/grep -F 'unset EON_SESSION_BIN' ${eontermPackage}/bin/eonterm
-        ! ${pkgs.gnugrep}/bin/grep -F '/libexec/eon/bin' ${eontermPackage}/bin/eonterm
+        test ! -e ${eonbasePackage}/libexec/eon
+        ${pkgs.gnugrep}/bin/grep -F 'unset EON_SESSION_BIN' ${eonbasePackage}/bin/eonbase
+        ! ${pkgs.gnugrep}/bin/grep -F '/libexec/eon/bin' ${eonbasePackage}/bin/eonbase
         ${pkgs.coreutils}/bin/touch "$out"
       '';
       managedCommandPathCheck = pkgs.runCommand "eon-managed-command-path-check" { } ''
@@ -586,7 +586,7 @@
         runtimeInputs = [ pkgs.swaybg ];
         environment = {
           EON_BIN = "${eonPackage}/bin/eon";
-          EONTERM_BIN = "${eontermPackage}/bin/eonterm";
+          EONBASE_BIN = "${eonbasePackage}/bin/eonbase";
           ZOXIDE_BIN = "${zoxidePackage}/bin/zoxide";
           EON_DEMO_PATH = lib.makeBinPath [ pkgs.coreutils pkgs.bash pkgs.git ];
         };
@@ -611,7 +611,7 @@
     {
       packages.${system} = {
         default = eonPackage;
-        eonterm = eontermPackage;
+        eonbase = eonbasePackage;
         installer = import ./nix/installer.nix { inherit pkgs; };
         manual-bundle = import ./nix/linux-bundle.nix {
           inherit pkgs eonPackage;
@@ -624,9 +624,9 @@
           type = "app";
           program = "${eonPackage}/bin/eon";
         };
-        eonterm = {
+        eonbase = {
           type = "app";
-          program = "${eontermPackage}/bin/eonterm";
+          program = "${eonbasePackage}/bin/eonbase";
         };
         record-demo = {
           type = "app";
@@ -636,7 +636,7 @@
       checks.${system} = {
         default = eonPackage;
         helix-grammars = helix.checks.${system}.codeberg_grammars;
-        eonterm-closure = eontermClosureCheck;
+        eonbase-closure = eonbaseClosureCheck;
         managed-command-path = managedCommandPathCheck;
         shell-environment = shellEnvironment.check;
       };

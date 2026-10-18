@@ -75,8 +75,10 @@ confirmation. Closing a window is therefore detach; stopping a generation ends
 its terminals. Previous generations using EONW v2 through v7 can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
 The runtime extraction changes the component graph and selects a new generation.
-Reattach earlier work with its retained exact Eon or EonTerm executable; the
+Reattach earlier work with its retained exact Eon or eonbase executable; the
 new installed client can inspect and stop that work through its owner.
+Terminals started by the retired `eonterm` stay in its own namespace: reach
+them only through that pinned `eonterm` executable.
 `previous` attempts every non-dead generation except the installed build's exact
 current generation, including when current has not started.
 `all` includes current and stops it last. Each generation gets its own
@@ -163,7 +165,7 @@ closing its popup stops playback and returns to the tab.
 ### Scrolling and directory picker
 
 When you scroll above live output, `↓ N rows` shows how many display rows back
-you are. It appears in Eon's pane header or at the top right of EonTerm, updates
+you are. It appears in Eon's pane header or at the top right of eonbase, updates
 as output continues, and disappears at live output. Click the whole pill to
 return there.
 
@@ -242,26 +244,26 @@ their cells. Random playback includes Accelerando. Eon bundles Regular and Bold
 Accelerando Terminal faces; other terminals need these fonts for native-size
 playback. There is no substitute alphabet.
 
-## EonTerm
+## eonbase
 
-Install EonTerm when one exact command needs a native terminal surface without
+Install eonbase when one exact command needs a native terminal surface without
 Eon's workspace or managed environment:
 
 ```sh
-nix profile add .#eonterm
-eonterm -- COMMAND...
-eonterm --no-decorations -- COMMAND...
+nix profile add .#eonbase
+eonbase -- COMMAND...
+eonbase --no-decorations -- COMMAND...
 ```
 
 Its lifecycle commands mirror Eon's:
 
 ```sh
-eonterm generations
-eonterm attach [GENERATION]
-eonterm stop GENERATION
+eonbase generations
+eonbase attach [GENERATION]
+eonbase stop GENERATION
 ```
 
-Eon and EonTerm use separate runtime namespaces. EonTerm keeps native window
+Eon and eonbase use separate runtime namespaces. eonbase keeps native window
 decorations by default and accepts `--application-id ID` for an approved
 composition.
 

@@ -757,7 +757,7 @@ pub(super) fn acquire_generation_sessions(
     }
     candidates.sort_by_key(|candidate| candidate.number);
     if mode == LaunchMode::Terminal && candidates.len() > 1 {
-        return Err("EonTerm cannot recover more than one live terminal".into());
+        return Err("eonbase cannot recover more than one live terminal".into());
     }
 
     candidates

@@ -33,7 +33,7 @@ use std::{
 };
 
 const EON_USAGE: &str = "invalid command or arguments\nusage: eon [COMMAND]\nRun `eon --help` for commands and examples.";
-const EONTERM_USAGE: &str = "usage: eonterm [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
+const EONBASE_USAGE: &str = "usage: eonbase [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
 pub struct Inputs {
     pub version: &'static str,
@@ -71,17 +71,16 @@ pub fn run(inputs: Inputs) -> (&'static str, Result<i32, String>) {
         arguments.remove(0);
         return ("eon-directory-picker", startup_anima(&inputs, arguments));
     }
-    let eonterm = Path::new(&invocation).file_name() == Some(OsStr::new("eonterm"));
-    let product = if eonterm { "eonterm" } else { "eon" };
-    let result = if eonterm {
-        execute_eonterm(&inputs, arguments)
-    } else {
-        match managed_environment::tool(&invocation) {
-            Some(tool) => launch_managed(&inputs, tool, arguments),
-            None => execute(&inputs, arguments),
-        }
-    };
-    (product, result)
+    match Path::new(&invocation).file_name().and_then(OsStr::to_str) {
+        Some("eonbase") => ("eonbase", execute_eonbase(&inputs, arguments)),
+        // The retired name selects neither product. Other names stay Eon: Nix's wrapped
+        // executable relaunches itself under its own file name for independent windows.
+        Some("eonterm") => ("eonbase", Err(EONBASE_USAGE.into())),
+        _ => match managed_environment::tool(&invocation) {
+            Some(tool) => ("eon", launch_managed(&inputs, tool, arguments)),
+            None => ("eon", execute(&inputs, arguments)),
+        },
+    }
 }
 
 fn startup_anima(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
@@ -474,18 +473,18 @@ Where shown, {command}--json{reset} prints JSON and skips Stop confirmation.
     Ok(0)
 }
 
-fn execute_eonterm(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
-    if let Some(code) = lifecycle_command(inputs, &arguments, "eonterm")? {
+fn execute_eonbase(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
+    if let Some(code) = lifecycle_command(inputs, &arguments, "eonbase")? {
         return Ok(code);
     }
     match arguments.as_slice() {
         [separator, child @ ..] if separator == "--" && !child.is_empty() => {
-            launch_current(inputs, LaunchMode::Terminal, child, true, true, "eonterm")
+            launch_current(inputs, LaunchMode::Terminal, child, true, true, "eonbase")
         }
         [flag, separator, child @ ..]
             if flag == "--no-decorations" && separator == "--" && !child.is_empty() =>
         {
-            launch_current(inputs, LaunchMode::Terminal, child, true, false, "eonterm")
+            launch_current(inputs, LaunchMode::Terminal, child, true, false, "eonbase")
         }
         [flag, application_id, separator, child @ ..]
             if flag == "--application-id" && separator == "--" && !child.is_empty() =>
@@ -514,7 +513,7 @@ fn execute_eonterm(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Str
                 application_id_argument(application_id)?,
             )
         }
-        _ => Err(EONTERM_USAGE.into()),
+        _ => Err(EONBASE_USAGE.into()),
     }
 }
 

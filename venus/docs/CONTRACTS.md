@@ -220,7 +220,7 @@ re-proved when that platform or feature is next touched.
   broader Linux compositor coverage remain outside the proof. The per-endpoint
   preset (`eon-cursor-color-after-attach-lbbo`) is covered by
   `random_cursor_preset_is_stable_per_live_endpoint` and that bead's installed
-  full-Eon reattach dogfood; EonTerm reopens are not dogfooded.
+  full-Eon reattach dogfood; eonbase reopens are not dogfooded.
 
 ## VEN-C2 — Native semantic interaction
 
@@ -786,7 +786,7 @@ re-proved when that platform or feature is next touched.
   - **Environment:** Automated and installed.
   - **Evidence:** The workspace suite with exact dependency features from the
     locked graph; dogfood checklist items 1 and 11 launch the native Wayland
-    and Vulkan event loop through installed Eon and EonTerm.
+    and Vulkan event loop through installed Eon and eonbase.
 - **Open proof:** Pending re-proof in this repository: the no-Wayland failure
   observation, and every Apple Silicon proof (the opaque AppKit/AccessKit/Metal
   foundation, the native interaction partial proof, and Kotoeri composition).
@@ -799,7 +799,7 @@ re-proved when that platform or feature is next touched.
 ## VEN-C17 — Caller-owned native application identity
 
 - **Status:** Proved
-- **Consumer:** Eon, EonTerm, or one approved EonTerm composition.
+- **Consumer:** Eon, eonbase, or one approved eonbase composition.
 - **Trigger:** The caller supplies one optional validated application ID before
   Venus creates its window.
 - **Result:** The accepted value becomes winit's Wayland general name and native

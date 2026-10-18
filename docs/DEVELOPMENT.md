@@ -35,7 +35,7 @@ also hides `/run/current-system` and `/run/wrappers`.
 - [`docs/REFERENCES.md`](REFERENCES.md) — routed primary and comparable sources;
 - [`docs/VISUAL-REFERENCES.md`](VISUAL-REFERENCES.md) — discovery-only visual references;
 - [terminal memory benchmark](benchmarks/eon-zlf-2026-09-08.md) — the measured
-  Eon, EonTerm, Foot, and Ghostty comparison; and
+  Eon, eonbase, Foot, and Ghostty comparison; and
 - [`CHANGELOG.md`](../CHANGELOG.md) — accepted user-visible chronology.
 
 ## Checks
@@ -47,7 +47,7 @@ distribution-neutral component graph. Validate it with:
 cargo run --locked -p eon-manifest -- components/eon-alpha-v3.json
 ```
 
-Nix builds Orbit, Venus, Eon and EonTerm from the in-tree crates with the root
+Nix builds Orbit, Venus, Eon and eonbase from the in-tree crates with the root
 `Cargo.lock`. A workspace component's path must hold the expected Cargo package
 at its manifest version. Any in-tree change selects a new generation through
 Eon's [source-tree digest](ARCHITECTURE.md#in-tree-package-selection); a Cargo
@@ -70,7 +70,7 @@ and rejects a dynamic bootstrap. Signed TLS delivery and native active-work
 proofs remain with `eon-prove-thin-linux-bundle-installer-8r7n`.
 The [installer contract](INSTALLER.md) records target tools and recovery.
 
-Build both installed products with `nix build --no-link .#default .#eonterm`.
+Build both installed products with `nix build --no-link .#default .#eonbase`.
 
 Linux package checks use the sandbox's executable `/dev/shm` for ephemeral test
 state, keeping lifecycle records and sockets off the builder's disk journal.

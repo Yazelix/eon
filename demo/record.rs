@@ -381,7 +381,7 @@ fn has_app(node: &Value, app_id: &str) -> bool {
         })
 }
 
-/// Runs an Eon command the way a user does and waits for its window. Plain `eon` and `eonterm`
+/// Runs an Eon command the way a user does and waits for its window. Plain `eon` and `eonbase`
 /// run the supervisor itself, which outlives its window. Kinestra's `launch` would signal that
 /// process group, and with it the terminals, before presenting the reattach, and would report
 /// `eon attach`, which asks the running supervisor for a window and exits, as a crash. A supervisor's `stop` is registered as soon as it
@@ -487,7 +487,7 @@ fn features(r: &mut Recorder) -> Result<()> {
         home,
         demo,
     } = prepare(r)?;
-    let eonterm = env::var_os("EONTERM_BIN").expect("Nix supplies EONTERM_BIN");
+    let eonbase = env::var_os("EONBASE_BIN").expect("Nix supplies EONBASE_BIN");
     let claude_config = env::var_os("CLAUDE_CONFIG_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -733,9 +733,9 @@ fn features(r: &mut Recorder) -> Result<()> {
     assets.push(shortcuts);
 
     close_window(r, "eon")?;
-    let still = file("eonterm.png");
-    // EonTerm stops by generation, so name the one its terminal will start in.
-    let mut generations = isolated(&eonterm, &home);
+    let still = file("eonbase.png");
+    // eonbase stops by generation, so name the one its terminal will start in.
+    let mut generations = isolated(&eonbase, &home);
     generations.args(["generations", "--json"]);
     let listing = serde_json::from_str::<Value>(&r.output(&mut generations)?)
         .map_err(|error| Error::Invalid(error.to_string()))?;
@@ -743,25 +743,25 @@ fn features(r: &mut Recorder) -> Result<()> {
         .as_array()
         .and_then(|records| records.iter().find(|record| record["kind"] == "current"))
         .and_then(|record| record["id"].as_str())
-        .ok_or_else(|| Error::Invalid("EonTerm reported no current generation".into()))?;
-    let mut terminal = isolated(&eonterm, &home);
+        .ok_or_else(|| Error::Invalid("eonbase reported no current generation".into()))?;
+    let mut terminal = isolated(&eonbase, &home);
     terminal
         .current_dir(&demo)
         .arg("--")
         .arg(&eon)
         .args(["anima", "accelerando", "--big"]);
-    let mut stop = isolated(&eonterm, &home);
+    let mut stop = isolated(&eonbase, &home);
     stop.args(["stop", generation, "--json"]);
     present(
         r,
         terminal,
-        "eonterm",
-        &work.join("eonterm.log"),
+        "eonbase",
+        &work.join("eonbase.log"),
         Some(stop),
     )?;
     r.sleep(Duration::from_secs(3))?;
-    shoot(r, "eonterm", &still)?;
-    close_window(r, "eonterm")?;
+    shoot(r, "eonbase", &still)?;
+    close_window(r, "eonbase")?;
     assets.push(still);
 
     // Capture stays near-lossless; the published clips and stills are encoded once for the web.

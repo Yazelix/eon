@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- EonTerm is now eonbase: the command is `eonbase`, with the same arguments,
+  and the flake package and app are `.#eonbase`. There is no `eonterm` alias.
+  To switch, remove the `eonterm` profile element and run
+  `nix profile add github:Yazelix/eon/<tag>#eonbase`. eonbase keeps its
+  generations under a new runtime directory, so terminals started by `eonterm`
+  stay reachable only through that `eonterm` executable until stopped. Its
+  default window application ID is `eonbase`.
 - The window waits up to six seconds, instead of two, for Eon to answer a
   workspace action, matching Eon's own commands. Opening a popup or pane whose
   terminal starts slowly on a busy machine, within Eon's five-second start

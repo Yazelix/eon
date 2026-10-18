@@ -89,7 +89,7 @@ Apple Silicon testers: [open an issue](https://github.com/Yazelix/eon/issues/new
 
 ## Guides
 
-- [Using Eon](docs/USAGE.md): workspace controls, commands, Anima, EonTerm and troubleshooting.
+- [Using Eon](docs/USAGE.md): workspace controls, commands, Anima, eonbase and troubleshooting.
 - [Configuration](docs/CONFIGURATION.md): terminal, shell, popups, agent quota and managed tools.
 - [Distribution](docs/DISTRIBUTION.md): Nix composition, the binary cache and release policy.
 - [Manual Linux bundle](docs/MANUAL-BUNDLE.md) and [Linux installer](docs/INSTALLER.md): unpublished Nix-free candidates.

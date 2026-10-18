@@ -266,10 +266,10 @@ instead of duplicating product pins. Implementing Beads record exact inspected r
   transient popup terminal for on-demand playback. Do not copy style lists,
   rendering, terminal-mode handling, or Nova's Zellij mechanism.
   Anima's `accelerando-font` output owns its font and permission notice; compose
-  it into the existing Venus font configuration for Eon and EonTerm. Preserve
+  it into the existing Venus font configuration for Eon and eonbase. Preserve
   Venus's Nerd Font mappings and primary family; no local glyph fallback.
   Prove alien-only and `--symbols` playback, font selection and the standalone
-  EonTerm closure at this same pin.
+  eonbase closure at this same pin.
 
 
 ## Managed shell environment

@@ -3,7 +3,7 @@
 ## Product boundary
 
 Eon owns product composition and distribution. It ships
-Eon as the full managed product and EonTerm as the reusable terminal product
+Eon as the full managed product and eonbase as the reusable terminal product
 while preserving the boundaries of the projects it composes.
 
 This repository holds Orbit, Venus, Eon Runtime with EONW, and Eon as one Cargo
@@ -24,7 +24,7 @@ seam.
 | Yazi | Yazi | File management and navigation | A relocatable file-manager artifact and launch contract |
 | LazyGit | LazyGit | Git TUI behavior and configuration | A pinned executable and native configuration inputs |
 | Ratconfig | Ratconfig | User-facing configuration editing | A schema-aware configuration artifact and output contract |
-| Eon | Eon orchestrator | Eon and EonTerm assembly, version, defaults, component selection, updates, integration checks, distribution | In-tree subsystems, exact external revisions, and their declared artifacts |
+| Eon | Eon orchestrator | Eon and eonbase assembly, version, defaults, component selection, updates, integration checks, distribution | In-tree subsystems, exact external revisions, and their declared artifacts |
 | Eon (`runtime/`) | Runtime library and EONW | Invocation, terminal lifecycle, workspace topology, strict configuration parsing, generation identity and canonical EONW codecs | In-tree runtime and canonical codec packages |
 
 Nova stays independent. Eon may reuse proven ideas from Nova through explicit
@@ -34,8 +34,8 @@ other at runtime.
 ## Naming boundary
 
 Public documentation presents the full composition as **Eon** and its reusable
-terminal product as **EonTerm**. Their only command spellings are `eon` and
-`eonterm`. A **workspace** contains **tabs** and **panes**. Each tab groups
+terminal product as **eonbase**. Their only command spellings are `eon` and
+`eonbase`. A **workspace** contains **tabs** and **panes**. Each tab groups
 panes around a launch directory and arranges them in up to four side-by-side
 **columns**, each a vertical stack with one expanded pane; a pane is a view of
 a persistent **terminal**.
@@ -112,7 +112,7 @@ after detachment with the supervisor's original native-decoration choice. Venus
 alone translates that signal into a native presentation request.
 A side-effect-free presentation-capability inspection leaves existing runtime
 reports unchanged. Supervisors with runtime inspection but no presentation
-actions remain discoverable but not presentable. In EonTerm mode the same
+actions remain discoverable but not presentable. In eonbase mode the same
 private EONW endpoint retains lifecycle authority but returns
 `workspace-unavailable` to topology actions, while Venus receives only Orbit's
 endpoint. EONW carries opaque Orbit endpoint bytes but no terminal content.
@@ -250,7 +250,7 @@ Paths below are relative to the repository root.
 
 - **Owning surfaces:** `flake.nix`
 - **Owns:** In-tree workspace builds, exact external source resolution, opaque launch-path injection, full Eon
-  desktop packaging, and the slim EonTerm package
+  desktop packaging, and the slim eonbase package
 - **Does not own:** Runtime product semantics or a second component graph
 
 The supervisor is the composition root for runtime policy. An opaque source-
@@ -267,12 +267,12 @@ reconciles invariants that cross these boundaries.
 ## Runtime library boundary
 
 **Status: in-tree composition on x86_64 Linux native Wayland.** Eon and
-EonTerm build Eon Runtime, EONW, Orbit and Venus from this workspace.
+eonbase build Eon Runtime, EONW, Orbit and Venus from this workspace.
 `eon-runtime-cutover-y1wy` and `eon-runtime-extraction-l4wh` record the earlier
 external composition.
 
 Eon's actual executable and Nix packager consume the in-tree runtime library and
-codec. Invocation must preserve existing Eon/EonTerm commands,
+codec. Invocation must preserve existing Eon/eonbase commands,
 errors, configuration, terminal authority and generation isolation. Invalid
 graph or package inputs fail at their existing required boundary. The extraction
 adds an in-process Rust library, with no additional daemon or IPC boundary.
