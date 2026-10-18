@@ -14,7 +14,7 @@ use super::{
     windows,
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::v10::{
+use eon_workspace_protocol::v11::{
     Action, Direction, PopupTarget, Response, VERSION, WorkspaceAction,
 };
 use std::{
@@ -450,6 +450,7 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
   {command}tab directory TAB [--json] -- DIRECTORY{reset}     Set the tab's launch directory
   {command}tab move left|right [--json]{reset}                Move the active tab
   {command}pane create [--json]{reset}                        Add a pane to the active tab
+  {command}pane close PANE [--json]{reset}                    Close a pane of the active tab
   {command}pane move up|down [--json]{reset}                  Move the selected pane
   {command}focus ID|left|right|up|down [--json]{reset}        Focus by ID or navigate
 
@@ -649,6 +650,9 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Str
         ["tab", "move", "left"] => Action::Workspace(WorkspaceAction::Move(Direction::Left)),
         ["tab", "move", "right"] => Action::Workspace(WorkspaceAction::Move(Direction::Right)),
         ["pane", "create"] => Action::Workspace(WorkspaceAction::CreatePane),
+        ["pane", "close", pane] => Action::ClosePane {
+            pane: (*pane).into(),
+        },
         ["pane", "move", "up"] => Action::Workspace(WorkspaceAction::Move(Direction::Up)),
         ["pane", "move", "down"] => Action::Workspace(WorkspaceAction::Move(Direction::Down)),
         ["focus", "left"] => Action::Workspace(WorkspaceAction::Focus(Direction::Left)),
@@ -754,7 +758,7 @@ mod tests {
     }
 
     #[test]
-    fn tab_close_parser_requires_one_stable_identity() {
+    fn close_parsers_require_one_stable_identity() {
         assert_eq!(
             parse_control_arguments(&["tab", "close", "t2", "--json"].map(Into::into)).unwrap(),
             (
@@ -763,5 +767,10 @@ mod tests {
             )
         );
         assert!(parse_control_arguments(&["tab", "close"].map(Into::into)).is_err());
+        assert_eq!(
+            parse_control_arguments(&["pane", "close", "p3"].map(Into::into)).unwrap(),
+            (Action::ClosePane { pane: "p3".into() }, false)
+        );
+        assert!(parse_control_arguments(&["pane", "close"].map(Into::into)).is_err());
     }
 }

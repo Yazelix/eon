@@ -1,6 +1,6 @@
 use eon_workspace_protocol::{
-    v2, v3, v4 as legacy, v5, v6, v7, v8, v9,
-    v10::{
+    v2, v3, v4 as legacy, v5, v6, v7, v8, v9, v10,
+    v11::{
         Action as ProtocolAction, Column, Direction, HEADER_BYTES, InvokeIntent, MAX_SESSIONS,
         Pane, Popup, PopupGeometry, PopupTarget, Request, Response, Snapshot, Tab, VERSION,
         WorkspaceAction as Action, declared_message_len, decode_request, decode_response,
@@ -2719,6 +2719,42 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
     }
 
+    // Closing a pane stops exactly its terminal and prunes it like an exit.
+    let second = live_identity(&generation.join("session-2.sock")).process_id;
+    let closed = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["pane", "close", "p2", "--json"],
+    );
+    assert!(
+        closed.status.success(),
+        "stdout={} stderr={}",
+        stdout(&closed),
+        String::from_utf8_lossy(&closed.stderr)
+    );
+    assert!(!stdout(&closed).contains("\"id\":\"p2\""));
+    assert_eq!(stdout(&closed).matches("\"session\":").count(), 2);
+    wait_for_process_removal(second, "a closed pane's terminal kept running");
+    let close_third = || {
+        protocol_action(
+            &control,
+            "close-p3",
+            ProtocolAction::ClosePane { pane: "p3".into() },
+        )
+    };
+    assert!(matches!(
+        close_third(),
+        Response::Snapshot(snapshot) if snapshot.tabs[0].panes().count() == 1
+    ));
+    assert!(matches!(
+        close_third(),
+        Response::Failure(failure) if failure.code == "duplicate-request"
+    ));
+    let final_pane = invoke(&binary, &runtime, &config, &["pane", "close", "p1"]);
+    assert!(!final_pane.status.success());
+    assert!(String::from_utf8_lossy(&final_pane.stderr).contains("final pane"));
+
     fs::write(&stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!control.exists());
@@ -4116,6 +4152,7 @@ fn previous_supervisor(
                     7 => v7::encode_response(&v7::Response::Failure(failure)),
                     8 => v8::encode_response(&v8::Response::Failure(failure)),
                     9 => v9::encode_response(&v9::Response::Failure(failure)),
+                    10 => v10::encode_response(&v10::Response::Failure(failure)),
                     _ => unreachable!(),
                 }
                 .unwrap()
@@ -4181,6 +4218,15 @@ fn previous_supervisor(
                         }
                         _ => "wrong",
                     },
+                    10 => match v10::decode_request(&request).unwrap().action {
+                        v10::Action::Workspace(v10::WorkspaceAction::InspectRuntime) => "inspect",
+                        v10::Action::Workspace(v10::WorkspaceAction::Stop { generation })
+                            if generation == server_id =>
+                        {
+                            "stop"
+                        }
+                        _ => "wrong",
+                    },
                     _ => unreachable!(),
                 };
                 assert_eq!(action, if step == 4 { "stop" } else { "inspect" });
@@ -4215,6 +4261,7 @@ fn previous_supervisor(
                     7 => v7::encode_lifecycle_response(&lifecycle),
                     8 => v8::encode_lifecycle_response(&lifecycle),
                     9 => v9::encode_lifecycle_response(&lifecycle),
+                    10 => v10::encode_lifecycle_response(&lifecycle),
                     _ => unreachable!(),
                 }
                 .unwrap()
@@ -4226,7 +4273,7 @@ fn previous_supervisor(
 
 #[test]
 fn current_cli_stops_known_previous_eonw_generations_through_their_supervisors() {
-    for version in 2..=9 {
+    for version in 2..=10 {
         let root = temporary_directory();
         let runtime = root.join("runtime");
         let config = root.join("config");
@@ -4427,7 +4474,7 @@ fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
     let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
     assert!(listed.status.success());
     assert!(stdout(&listed).contains("\"id\":\"legacy\",\"kind\":\"legacy\",\"state\":\"live\""));
-    assert!(stdout(&listed).contains("current Eon requires EONW v10"));
+    assert!(stdout(&listed).contains("current Eon requires EONW v11"));
     assert!(stdout(&listed).contains("legacy supervisor has no authoritative stop action"));
 
     let attached = eon_command(&binary)
@@ -4439,7 +4486,7 @@ fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
         .output()
         .unwrap();
     assert_eq!(attached.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&attached.stderr).contains("current Eon requires EONW v10"));
+    assert!(String::from_utf8_lossy(&attached.stderr).contains("current Eon requires EONW v11"));
     assert!(!venus_log.exists());
 
     let stopped = invoke(&binary, &runtime, &config, &["stop", "legacy", "--json"]);

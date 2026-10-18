@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Alt+W closes the selected pane and stops its terminal, with no prompt, the
+  same way Alt+Shift+W closes a tab. A column whose last pane closes goes away,
+  and so does a tab left with no panes or popups. The final tab's last pane
+  stays, and closing is refused while a popup or picker covers the tab.
+  `eon pane close PANE` does the same from the command line, and
+  `eon versions` reports EONW 11. Alt+W no longer reaches terminal programs in
+  a full Eon workspace, and popup keybindings can no longer use it.
 - EonTerm is now eonbase: the command is `eonbase`, with the same arguments,
   and the flake package and app are `.#eonbase`. There is no `eonterm` alias.
   To switch, remove the `eonterm` profile element and run
@@ -36,7 +43,7 @@ installation, and proven contract changes.
   the few pixels the gaps take.
 - `eon workspace` lists each pane's column and whether it is that column's
   open pane (`column=` and `expanded=`, or `"column"` and `"expanded"` with
-  `--json`), and `eon versions` reports EONW 10.
+  `--json`).
 - The Claude quota chip shows how far into each window you are, like the Codex
   chip: for example `4h10m/5h 98% · 5d20h/7d 100%`.
 - `eon attach` reopens with the same random cursor color the window had before

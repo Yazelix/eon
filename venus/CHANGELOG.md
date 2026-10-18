@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Venus consumes EONW v11. VEN-C8: Alt+W sends one non-repeating `ClosePane`
+  naming the active tab's selected pane and is consumed without an action when
+  the tab has none (`eon-close-pane-onwi`).
 - Venus consumes EONW v10, whose tabs hold up to four pane columns.
 - VEN-C8: Venus lays out the active tab's columns side by side, each with its
   own headers and a live Orbit attachment sized to that column. Keyboard

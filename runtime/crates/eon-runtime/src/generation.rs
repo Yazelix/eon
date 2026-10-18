@@ -9,7 +9,7 @@ use super::supervisor::{
     supervisor_lock_path, try_lock_supervisor_lifecycle, validate_private_directory,
 };
 use super::workspace::json_escape;
-use eon_workspace_protocol::v10::{
+use eon_workspace_protocol::v11::{
     Availability, LifecycleResponse, Stopped, VERSION, WorkspaceAction,
 };
 use std::{
@@ -46,6 +46,7 @@ pub(super) fn current_generation(inputs: &Inputs) -> Result<String, String> {
         include_bytes!("../../eon-workspace-protocol/src/v8.rs"),
         include_bytes!("../../eon-workspace-protocol/src/v9.rs"),
         include_bytes!("../../eon-workspace-protocol/src/v10.rs"),
+        include_bytes!("../../eon-workspace-protocol/src/v11.rs"),
         include_bytes!("../../eon-workspace-protocol/Cargo.toml"),
     ];
     sources.extend_from_slice(inputs.assembly);

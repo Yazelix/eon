@@ -1,8 +1,9 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v10::{
+use eon_workspace_protocol::v11::{
     Action, Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS,
     MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
     PopupEntry as SnapshotEntry, PopupTarget, Snapshot, Tab as SnapshotTab, WorkspaceAction,
+    check_popup_action,
 };
 use std::{
     collections::VecDeque,
@@ -45,7 +46,8 @@ pub(crate) enum LaunchCommand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SessionEnd {
     Exited,
-    TabClosed,
+    /// Stopped by a tab or pane close request.
+    Closed,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -269,12 +271,17 @@ impl Workspace {
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         self.reject_duplicate(request_id)?;
-        self.snapshot()
-            .check_popup_action(&action)
+        check_popup_action(&self.snapshot(), &action)
             .map_err(|error| action_error("stale-popup", error.to_string()))?;
         match action {
             Action::Workspace(action) => {
                 self.dispatch_workspace(action, &mut prepare, &mut operate)?
+            }
+            Action::ClosePane { .. } => {
+                return Err(action_error(
+                    "unavailable",
+                    "the supervisor stops a closed pane's terminal before pruning it",
+                ));
             }
             Action::InvokePopup {
                 tab, entry, intent, ..
@@ -738,6 +745,44 @@ impl Workspace {
             .collect();
         self.remember(request_id);
         Ok(sessions)
+    }
+
+    /// Validates closing one pane of the active tab and names its terminal.
+    pub(crate) fn prepare_close_pane(
+        &mut self,
+        request_id: &str,
+        id: &str,
+    ) -> Result<String, Failure> {
+        self.reject_duplicate(request_id)?;
+        let tab = &self.tabs[self.active];
+        let Some((column, pane)) = tab.find_pane(|pane| pane.id == id) else {
+            return Err(
+                if self
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.find_pane(|pane| pane.id == id).is_some())
+                {
+                    action_error("not-active", format!("pane {id} is not in the active tab"))
+                } else {
+                    action_error("unknown-pane", format!("pane {id} is not live"))
+                },
+            );
+        };
+        if tab.selected_popup.is_some() {
+            return Err(action_error(
+                "unavailable",
+                "close the popup before closing a pane",
+            ));
+        }
+        if self.tabs.len() == 1 && tab.panes().count() == 1 {
+            return Err(action_error(
+                "unavailable",
+                "the final pane cannot be closed",
+            ));
+        }
+        let session = tab.columns[column].panes[pane].session.id.clone();
+        self.remember(request_id);
+        Ok(session)
     }
 
     fn start_pane(
@@ -1280,13 +1325,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v10::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v11::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v10::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v10::ALT, "Alt"),
-        (eon_workspace_protocol::v10::SHIFT, "Shift"),
-        (eon_workspace_protocol::v10::SUPER, "Super"),
+        (eon_workspace_protocol::v11::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v11::ALT, "Alt"),
+        (eon_workspace_protocol::v11::SHIFT, "Shift"),
+        (eon_workspace_protocol::v11::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1339,7 +1384,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v10::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v11::{ALT, PopupGeometry, Shortcut};
 
     fn catalog() -> PopupCatalog {
         PopupCatalog {
@@ -1440,8 +1485,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v10::encode_response(
-            &eon_workspace_protocol::v10::Response::Snapshot(after),
+        eon_workspace_protocol::v11::encode_response(
+            &eon_workspace_protocol::v11::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -1605,6 +1650,107 @@ mod tests {
         assert_eq!(collapsed.tabs, single.tabs);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pane_close_targets_the_active_tab_and_prunes_like_an_exit() {
+        let mut workspace = Workspace::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let ok = |_| Ok(());
+        let request = |workspace: &mut Workspace, id: &str, action| {
+            workspace.dispatch(id, action, prepared, ok).unwrap()
+        };
+        let close = |workspace: &mut Workspace, id: &str, pane: &str| {
+            let session = workspace.prepare_close_pane(id, pane)?;
+            workspace.session_ended(&session, SessionEnd::Closed, ok)?;
+            Ok::<_, Failure>(session)
+        };
+        let refused = |workspace: &mut Workspace, id: &str, pane: &str| {
+            let before = workspace.snapshot();
+            let failure = close(workspace, id, pane).unwrap_err();
+            assert_eq!(workspace.snapshot(), before);
+            failure
+        };
+
+        assert_eq!(
+            refused(&mut workspace, "x1", "p1").detail,
+            "the final pane cannot be closed"
+        );
+        request(&mut workspace, "c1", Action::CreateColumn);
+        request(
+            &mut workspace,
+            "c2",
+            Action::Workspace(WorkspaceAction::CreatePane),
+        );
+        assert_eq!(close(&mut workspace, "x2", "p3").unwrap(), "session-3");
+        assert_eq!(
+            refused(&mut workspace, "x2", "p2").code,
+            "duplicate-request"
+        );
+        assert_eq!(refused(&mut workspace, "x3", "p3").code, "unknown-pane");
+        let tab = &workspace.snapshot().tabs[0];
+        assert_eq!(tab.columns.len(), 2);
+        assert_eq!(tab.selected_pane.as_deref(), Some("p2"));
+
+        // A column's last pane takes the column with it.
+        close(&mut workspace, "x4", "p2").unwrap();
+        let tab = &workspace.snapshot().tabs[0];
+        assert_eq!(tab.columns.len(), 1);
+        assert_eq!(tab.selected_pane.as_deref(), Some("p1"));
+
+        // A covering popup and an inactive tab refuse; a non-final tab's last pane removes it.
+        request(
+            &mut workspace,
+            "a1",
+            Action::InvokePopup {
+                tab: "t1".into(),
+                entry: "agent".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Toggle,
+            },
+        );
+        assert_eq!(
+            refused(&mut workspace, "x5", "p1").detail,
+            "close the popup before closing a pane"
+        );
+        request(
+            &mut workspace,
+            "t2",
+            Action::Workspace(WorkspaceAction::CreateTab),
+        );
+        assert_eq!(refused(&mut workspace, "x6", "p1").code, "not-active");
+        let picker = workspace.snapshot().tabs[1].popups[0].clone();
+        request(
+            &mut workspace,
+            "t2-dir",
+            Action::CommitDirectory {
+                target: PopupTarget {
+                    tab: "t2".into(),
+                    instance: picker.id,
+                },
+                directory: b"/".to_vec(),
+            },
+        );
+        workspace
+            .session_ended(&picker.session, SessionEnd::Exited, ok)
+            .unwrap();
+        let pane = workspace.snapshot().tabs[1].selected_pane.clone().unwrap();
+        close(&mut workspace, "x7", &pane).unwrap();
+        let snapshot = workspace.snapshot();
+        assert_eq!(snapshot.tabs.len(), 1);
+        assert_eq!(snapshot.active_tab, "t1");
     }
 
     #[test]
@@ -2072,8 +2218,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v10::encode_response(
-            &eon_workspace_protocol::v10::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v11::encode_response(
+            &eon_workspace_protocol::v11::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 
@@ -2138,7 +2284,7 @@ mod tests {
             std::slice::from_ref(&first.session)
         );
         workspace
-            .session_ended(&first.session, SessionEnd::TabClosed, |_| Ok(()))
+            .session_ended(&first.session, SessionEnd::Closed, |_| Ok(()))
             .unwrap();
         assert_eq!(workspace.snapshot().active_tab, "t2");
         assert_eq!(workspace.snapshot().tabs[0].popups[0], second);
@@ -2188,7 +2334,7 @@ mod tests {
             std::slice::from_ref(&third.session)
         );
         workspace
-            .session_ended(&third.session, SessionEnd::TabClosed, |_| Ok(()))
+            .session_ended(&third.session, SessionEnd::Closed, |_| Ok(()))
             .unwrap();
         assert_eq!(workspace.snapshot(), before_failed_launch);
 

@@ -14,7 +14,7 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, Workspace},
 };
-use eon_workspace_protocol::v10::{
+use eon_workspace_protocol::v11::{
     Action, Availability, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
     Stopped, VERSION, WorkspaceAction,
 };
@@ -462,7 +462,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v10::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v11::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -966,7 +966,7 @@ fn close_workspace_tab(
             .workspace
             .as_mut()
             .expect("workspace close retains its owner")
-            .session_ended(&id, SessionEnd::TabClosed, |_| {
+            .session_ended(&id, SessionEnd::Closed, |_| {
                 Err("closing a tab cannot start a replacement terminal".into())
             })?;
         if id == "session-1" && natural_status.is_some() {
@@ -977,6 +977,37 @@ fn close_workspace_tab(
     Ok(state
         .workspace_snapshot()
         .expect("tab close retains a non-final workspace"))
+}
+
+fn close_workspace_pane(
+    request_id: &str,
+    pane: &str,
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    config: &Path,
+) -> Result<Snapshot, Failure> {
+    reap_finished_sessions(state, inputs, config)
+        .map_err(|detail| failure("pane-close-failed", detail))?;
+    let workspace = state
+        .workspace
+        .as_mut()
+        .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
+    let id = workspace.prepare_close_pane(request_id, pane)?;
+    let natural_status = stop_owned_session(&mut state.sessions, &id)
+        .map_err(|detail| failure("pane-close-failed", format!("{id}: {detail}")))?;
+    state
+        .workspace
+        .as_mut()
+        .expect("pane close retains its owner")
+        .session_ended(&id, SessionEnd::Closed, |_| {
+            Err("closing a pane cannot start a replacement terminal".into())
+        })?;
+    if id == "session-1" && natural_status.is_some() {
+        state.initial_status = natural_status;
+    }
+    Ok(state
+        .workspace_snapshot()
+        .expect("pane close retains a nonempty workspace"))
 }
 
 fn directory_picker_command(
@@ -1422,6 +1453,16 @@ fn dispatch_control_request(
             ),
             Err(error) => (ControlResponse::Workspace(Response::Failure(error)), false),
         },
+        Request {
+            id,
+            action: Action::ClosePane { pane },
+        } => match close_workspace_pane(&id, &pane, state, inputs, config) {
+            Ok(snapshot) => (
+                ControlResponse::Workspace(Response::Snapshot(snapshot)),
+                false,
+            ),
+            Err(error) => (ControlResponse::Workspace(Response::Failure(error)), false),
+        },
         request => {
             let Some(workspace) = &mut state.workspace else {
                 return (
@@ -1540,7 +1581,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v10::{
+        use eon_workspace_protocol::v11::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::{

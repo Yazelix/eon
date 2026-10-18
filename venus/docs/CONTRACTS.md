@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v2 / ORBS v13 through the
-in-tree `orbit-protocol` crate and canonical EONW v10 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v11 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version.
@@ -540,7 +540,9 @@ re-proved when that platform or feature is next touched.
     the traversal path for tabs after position 10.
   - Ctrl+Alt+H/L sends one non-repeating semantic move for the active tab;
     Ctrl+Alt+K/J does the same for its selected pane. Alt+Shift+W sends one
-    non-repeating close naming the snapshot's active stable `tN`. Venus consumes
+    non-repeating close naming the snapshot's active stable `tN`; Alt+W sends
+    one EONW v11 close naming the active tab's selected `pN` and is consumed
+    without an action when the tab has none. Venus consumes
     each exact press and matching release without forwarding either to the
     selected terminal. Ctrl+T, Ctrl+Shift+W, and lowercase Ctrl+W remain terminal
     input, and none of these shortcuts enters a mode.

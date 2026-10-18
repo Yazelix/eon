@@ -1,5 +1,5 @@
 use super::{NATIVE_PLATFORM, NativePlatform};
-use eon_workspace_protocol::v10::{
+use eon_workspace_protocol::v11::{
     Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, Snapshot,
     WorkspaceAction as CommonAction,
 };
@@ -32,6 +32,7 @@ pub(super) enum NativeShortcutAction {
     CreateColumn,
     CreateTab,
     CloseTab,
+    ClosePane,
     CycleFocus,
     ReturnToTerminal,
     TraverseChrome(WorkspaceDirection),
@@ -201,6 +202,13 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         KeyCode::KeyW,
         ALT_SHIFT,
         NativeShortcutAction::CloseTab,
+    ),
+    NativeShortcut::key(
+        "Tabs and panes",
+        "Close selected pane",
+        KeyCode::KeyW,
+        session::Modifiers::ALT,
+        NativeShortcutAction::ClosePane,
     ),
     NativeShortcut::key(
         "Tabs and panes",
@@ -389,14 +397,14 @@ pub(super) fn native_pointer_shortcut_for(
 }
 
 pub(super) fn shortcut_groups(
-    entries: &[eon_workspace_protocol::v10::PopupEntry],
+    entries: &[eon_workspace_protocol::v11::PopupEntry],
 ) -> Vec<ShortcutGroup> {
     shortcut_groups_for(NATIVE_PLATFORM, entries)
 }
 
 pub(super) fn shortcut_groups_for(
     platform: NativePlatform,
-    entries: &[eon_workspace_protocol::v10::PopupEntry],
+    entries: &[eon_workspace_protocol::v11::PopupEntry],
 ) -> Vec<ShortcutGroup> {
     let mut groups = ["Navigate", "Tabs and panes", "Host"]
         .into_iter()
@@ -443,7 +451,7 @@ pub(super) fn shortcut_groups_for(
 pub(super) fn shortcut_hints_for(
     platform: NativePlatform,
     focus: WorkspaceFocus,
-    entries: &[eon_workspace_protocol::v10::PopupEntry],
+    entries: &[eon_workspace_protocol::v11::PopupEntry],
 ) -> Vec<ShortcutHint> {
     let mut hints: Vec<ShortcutHint> = Vec::new();
     for shortcut in FIXED_SHORTCUTS {
@@ -459,6 +467,7 @@ pub(super) fn shortcut_hints_for(
             Action::CreateTab => ("new tab", 1),
             Action::FocusTabPosition => ("tab", 3),
             Action::CloseTab => ("close tab", 3),
+            Action::ClosePane => ("close pane", 3),
             Action::Move(_) => ("move", 3),
             Action::NewWindow => ("new window", 3),
             Action::ReturnToTerminal if focus != WorkspaceFocus::Terminal => ("terminal", 0),
@@ -470,7 +479,7 @@ pub(super) fn shortcut_hints_for(
             NativeShortcutTrigger::Key(code, modifiers) => {
                 (wire_modifiers(modifiers), format!("{code:?}"))
             }
-            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v10::ALT, "1..9".into()),
+            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v11::ALT, "1..9".into()),
             _ => continue,
         };
         let modifiers = physical_modifiers_label_for(platform, modifiers, true);
@@ -541,7 +550,7 @@ fn physical_shortcut_label_for(platform: NativePlatform, modifiers: u8, key: &st
 }
 
 fn physical_modifiers_label_for(platform: NativePlatform, modifiers: u8, compact: bool) -> String {
-    use eon_workspace_protocol::v10 as wire;
+    use eon_workspace_protocol::v11 as wire;
 
     let mut parts = Vec::with_capacity(5);
     let labels = match (platform, compact) {
@@ -585,7 +594,7 @@ fn physical_key_label(key: &str) -> &str {
 }
 
 fn wire_modifiers(modifiers: session::Modifiers) -> u8 {
-    use eon_workspace_protocol::v10 as wire;
+    use eon_workspace_protocol::v11 as wire;
 
     [
         (session::Modifiers::SHIFT, wire::SHIFT),
@@ -607,6 +616,7 @@ pub(super) fn workspace_shortcut(
     code: KeyCode,
     modifiers: orbit_protocol::session::Modifiers,
     active_tab: &str,
+    selected_pane: Option<&str>,
 ) -> Option<WorkspaceAction> {
     let action = match native_key_shortcut(PhysicalKey::Code(code), modifiers)?.action {
         NativeShortcutAction::Focus(direction) => CommonAction::Focus(direction),
@@ -617,6 +627,9 @@ pub(super) fn workspace_shortcut(
         NativeShortcutAction::CloseTab => CommonAction::CloseTab {
             tab: active_tab.into(),
         },
+        NativeShortcutAction::ClosePane => {
+            return selected_pane.map(|pane| WorkspaceAction::ClosePane { pane: pane.into() });
+        }
         _ => return None,
     };
     Some(WorkspaceAction::Workspace(action))
@@ -679,7 +692,7 @@ pub(super) fn popup_shortcut(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v10::PopupEntry;
+    use eon_workspace_protocol::v11::PopupEntry;
 
     #[test]
     fn direct_workspace_shortcuts_use_stable_eon_actions() {
@@ -739,28 +752,51 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                workspace_shortcut(key, modifiers, "t2"),
+                workspace_shortcut(key, modifiers, "t2", Some("p3")),
                 Some(WorkspaceAction::Workspace(action))
             );
         }
         assert_eq!(
-            workspace_shortcut(KeyCode::KeyM, Modifiers::ALT.union(Modifiers::SHIFT), "t2"),
+            workspace_shortcut(
+                KeyCode::KeyM,
+                Modifiers::ALT.union(Modifiers::SHIFT),
+                "t2",
+                Some("p3"),
+            ),
             Some(WorkspaceAction::CreateColumn)
         );
-        for key in [KeyCode::KeyT, KeyCode::KeyW] {
-            for modifiers in [
-                Modifiers::CTRL,
-                Modifiers::ALT,
-                Modifiers::CTRL.union(Modifiers::SHIFT),
-                Modifiers::CTRL
-                    .union(Modifiers::ALT)
-                    .union(Modifiers::SHIFT),
-            ] {
-                assert_eq!(workspace_shortcut(key, modifiers, "t2"), None);
-            }
+        assert_eq!(
+            workspace_shortcut(KeyCode::KeyW, Modifiers::ALT, "t2", Some("p3")),
+            Some(WorkspaceAction::ClosePane { pane: "p3".into() })
+        );
+        assert_eq!(
+            workspace_shortcut(KeyCode::KeyW, Modifiers::ALT, "t2", None),
+            None
+        );
+        for (key, modifiers) in [KeyCode::KeyT, KeyCode::KeyW]
+            .into_iter()
+            .flat_map(|key| {
+                [
+                    Modifiers::CTRL,
+                    Modifiers::ALT,
+                    Modifiers::CTRL.union(Modifiers::SHIFT),
+                    Modifiers::CTRL
+                        .union(Modifiers::ALT)
+                        .union(Modifiers::SHIFT),
+                ]
+                .map(|modifiers| (key, modifiers))
+            })
+            .filter(|&(key, modifiers)| (key, modifiers) != (KeyCode::KeyW, Modifiers::ALT))
+        {
+            assert_eq!(workspace_shortcut(key, modifiers, "t2", Some("p3")), None);
         }
         assert_eq!(
-            workspace_shortcut(KeyCode::KeyH, Modifiers::ALT.union(Modifiers::SHIFT), "t2"),
+            workspace_shortcut(
+                KeyCode::KeyH,
+                Modifiers::ALT.union(Modifiers::SHIFT),
+                "t2",
+                Some("p3"),
+            ),
             None
         );
     }
@@ -770,16 +806,16 @@ mod tests {
         let entry = PopupEntry {
             id: "agent".into(),
             label: "My agent".into(),
-            shortcut: eon_workspace_protocol::v10::Shortcut {
-                modifiers: eon_workspace_protocol::v10::SUPER,
+            shortcut: eon_workspace_protocol::v11::Shortcut {
+                modifiers: eon_workspace_protocol::v11::SUPER,
                 key: "KeyF".into(),
             },
         };
         let project = PopupEntry {
             id: "project".into(),
             label: "Folder chooser".into(),
-            shortcut: eon_workspace_protocol::v10::Shortcut {
-                modifiers: eon_workspace_protocol::v10::ALT,
+            shortcut: eon_workspace_protocol::v11::Shortcut {
+                modifiers: eon_workspace_protocol::v11::ALT,
                 key: "KeyZ".into(),
             },
         };

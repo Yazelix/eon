@@ -96,7 +96,7 @@ shims require an explicit user decision, a removal condition, and a bead.
 EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
 snapshots, supervisor lifecycle results, structured failures, and bounded
-framing. EONW v10 carries Eon-owned raw tab launch directories, each tab's
+framing. EONW v11 carries Eon-owned raw tab launch directories, each tab's
 zero to four pane columns, the popup catalog,
 tab-scoped popup terminals, explicit retarget and chooser-completion actions, and
 an optional pending tab's absent pane selection without interpreting Orbit
@@ -117,19 +117,21 @@ private EONW endpoint retains lifecycle authority but returns
 `workspace-unavailable` to topology actions, while Venus receives only Orbit's
 endpoint. EONW carries opaque Orbit endpoint bytes but no terminal content.
 
-EONW v10 is the current Eon source boundary. It arranges each tab's panes into
-up to four columns, each with one expanded pane, ahead of the unchanged v9
-snapshot of the flattened panes. It retains v6's optional, bounded Codex
-quota field with fresh, stale, blocked, or unknown state and up to two
+EONW v11 is the current Eon source boundary. It adds one request that closes
+a pane by its stable identity and keeps v10's bytes for everything else. v10
+arranges each tab's panes into up to four columns, each with one expanded
+pane, ahead of the unchanged v9 snapshot of the flattened panes. The current
+snapshot retains v6's optional, bounded Codex quota field with fresh, stale,
+blocked, or unknown state and up to two
 normalized windows. Pinned CodexBar CLI owns Codex and Claude collection; Runtime validates and ages
 its readings, while Venus alone presents the optional chips. v9 permits absent
-provider resets; historical v2–v9 validators remain unchanged.
+provider resets; historical v2–v10 validators remain unchanged.
 Credentials, account identity, provider payloads, and provider lifecycle stay
 out of EONW and Venus. v7 also permits distinct pending Project pickers in
 separate tabs while preserving the v6 single-pending validator. Eon provides no
 version negotiation layer. Existing live supervisors retain their generation
 until explicitly stopped; the updated executable starts a separate generation.
-Composed activation requires an exact v10 Venus consumer.
+Composed activation requires an exact v11 Venus consumer.
 
 The optional Claude observation adds only bounded presentation facts. Under
 EON-C27, pinned CodexBar collects it; Runtime owns bounded subprocesses,
@@ -283,7 +285,7 @@ adds an in-process Rust library, with no additional daemon or IPC boundary.
 |---|---|
 | Eon | Product contracts/version/default values, actual executable and exit/error mapping, canonical component graph and `eon-manifest`, assets, component selection, Nix translation and distribution |
 | `eon-runtime` | Existing `cli`, `quota`, `control`, `generation`, `managed_environment`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
-| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codecs v2–v10 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
+| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codecs v2–v11 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
 | Orbit and Venus | Their existing terminal and native-client authority |
 
 Eon calls one concrete library entry point. Runtime handles invocation selection,
@@ -404,7 +406,7 @@ the user activates an implementation bead and its prerequisite proofs exist. The
 active Eon slice launches one accepted Venus and Orbit pair, supplies the
 accepted managed environment, preserves Eon component and native shell
 configuration boundaries, reports component identity through one Nix-managed
-path, and exposes its live workspace through EONW v10. Venus consumes a new EONW
+path, and exposes its live workspace through EONW v11. Venus consumes a new EONW
 version only after Eon Runtime's producer proof; the graph's interface versions
 change only after Venus's consumer proof exists. Later slices earn their scope
 through dogfooding. Direct distribution has its own activation gate.

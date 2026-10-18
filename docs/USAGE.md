@@ -72,7 +72,7 @@ eon stop all
 
 `eon stop` shows the generation's live terminal identities and asks for
 confirmation. Closing a window is therefore detach; stopping a generation ends
-its terminals. Previous generations using EONW v2 through v7 can be stopped
+its terminals. Previous generations using EONW v2 through v10 can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
 The runtime extraction changes the component graph and selects a new generation.
 Reattach earlier work with its retained exact Eon or eonbase executable; the
@@ -114,6 +114,7 @@ one, and clicking another column's terminal selects it.
 | Alt+Shift+T | Create a tab through the directory picker |
 | Alt+M | Create a pane in the selected column |
 | Alt+Shift+M | Create a column right of the selected one, up to four per tab |
+| Alt+W | Close the selected pane, stopping its terminal; not the final tab's last pane |
 | Alt+Shift+W | Close the active non-final tab |
 | Alt+Shift+N | Open an independent Eon window (also the desktop launcher's **New Eon Window** action) |
 | Alt+Z | Open the tab's Project directory picker |
@@ -215,6 +216,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |
 | `eon tab move left\|right [--json]` | Move the active tab one position |
 | `eon pane create [--json]` | Create a pane in the active tab's selected column |
+| `eon pane close PANE [--json]` | Close a pane of the active tab, stopping its terminal |
 | `eon pane move up\|down [--json]` | Move the selected pane one position within its column |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |

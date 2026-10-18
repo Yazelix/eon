@@ -349,9 +349,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Partially proved
 - **Consumer:** One local Eon workspace user.
-- **Trigger:** Launch, create or close a tab, create a pane or column, traverse
-  focus, reorder the active tab or selected pane, receive terminal exit, or recover
-  accepted same-boot runs.
+- **Trigger:** Launch, create or close a tab, create or close a pane, create a
+  column, traverse focus, reorder the active tab or selected pane, receive
+  terminal exit, or recover accepted same-boot runs.
 - **Result:**
   - A workspace contains horizontal tabs. Each established tab with panes
     holds an ordered row of one to four columns (pending and popup-only tabs
@@ -437,6 +437,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     reconciled and pruned as an exit rather than reported as a successful Stop.
     Venus maps Alt+Shift+W directly to this stable-target action; lowercase
     Ctrl+W remains terminal input.
+  - Closing a pane names a `pN` in the active tab. Eon stops that pane's
+    terminal and prunes the confirmed end through the normal terminal-exit
+    owner, so its column, its tab and focus follow the ended-terminal rules
+    below. The final tab's last pane cannot be closed, and closing is
+    unavailable while a popup or picker covers the tab. A failed stop reports
+    failure and keeps the pane; a terminal that ended naturally during the
+    request is reconciled as an exit. Venus maps Alt+W directly to the
+    selected pane without a mode; `eon pane close PANE` sends the same EONW
+    v11 action.
   - Ended terminals leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
     removed index, otherwise the preceding sibling; an empty workspace closes
@@ -449,7 +458,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - New current-generation full Eon surfaces omit the redundant native title
     bar while retaining the selected terminal title for compositor semantics.
 - **Important failures:** Unknown or stale identity, a close target other than
-  the active tab, final-tab close, creating a fifth column, durable close in the picker-bound tab,
+  the active tab, final-tab close, a pane outside the active tab, the final
+  tab's last pane, pane close under a popup or picker, creating a fifth column,
+  durable close in the picker-bound tab,
   invalid transition, unavailable endpoint, duplicate identity, or partial
   recovery leaves accepted topology unchanged. A repeated request ID never
   repeats a stop, and a replay naming a removed tab cannot close its successor.
@@ -462,11 +473,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v10 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v11 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-column or cross-tab pane movement, picker relocation, durable layout
-  restoration, a user-facing per-pane terminal stop/restart action, terminal
+  restoration, a per-pane terminal restart action, closing panes outside the
+  active tab, terminal
   content/history, provider state, plugin surface, remote access, or
   reconstructed terminal state.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
@@ -479,7 +491,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     movement and close (`round_trips_v4_movement_without_widening_v3`,
     `round_trips_v4_tab_close_without_widening_v3`,
     `reorder_parser_accepts_only_each_workspace_axis`,
-    `tab_close_parser_requires_one_stable_identity`); pane frames
+    `close_parsers_require_one_stable_identity`); pane frames
     (`configured_pane_frames_reach_only_workspace_launches`,
     `pane_frame_option_is_a_strict_single_boolean`); Venus labels and
     accessibility order (`tab_directory_labels_use_current_position_and_bounded_path_context`,
@@ -521,6 +533,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   typography plus the original tiny-window cases; captures put the first pill
   and first card both 8 pixels from the left edge, the pill 8 from the top and
   8 above the cards.
+  Pane close (`eon-close-pane-onwi`): runtime
+  `pane_close_targets_the_active_tab_and_prunes_like_an_exit`, the real-binary
+  Stop, deduplication and final-pane refusal in
+  `delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`,
+  `close_pane_is_a_v11_request_and_older_traffic_keeps_v10_bytes`,
+  `close_parsers_require_one_stable_identity` and Venus
+  `direct_workspace_shortcuts_use_stable_eon_actions`; installed dogfood is
+  pending.
   Installed AT-SPI labels and broader reader use remain open. These checks do not establish uninterrupted picker rendering,
   fractional-scale, wider compositor or non-systemd coverage.
 
@@ -615,7 +635,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   content, or direct child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v2–v10 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v2–v11 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;

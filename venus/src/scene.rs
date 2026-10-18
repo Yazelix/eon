@@ -2,7 +2,7 @@ use crate::{
     model::{active_popup, presented_panes},
     render::CellMetrics,
 };
-use eon_workspace_protocol::v10::{ClaudeQuotaState, CodexQuotaState, QuotaWindow, Snapshot};
+use eon_workspace_protocol::v11::{ClaudeQuotaState, CodexQuotaState, QuotaWindow, Snapshot};
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, Rgb, Row, Screen, StyleColor, Underline,
     session::VerticalDirection,
@@ -2138,7 +2138,7 @@ mod tests {
 
     #[test]
     fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
-        use eon_workspace_protocol::v10::{
+        use eon_workspace_protocol::v11::{
             ALT, Pane, Popup, PopupEntry, PopupGeometry, Shortcut, Tab,
         };
 
@@ -2162,7 +2162,7 @@ mod tests {
                 pending: false,
                 selected_pane: Some("p1".into()),
                 selected_popup: None,
-                columns: vec![eon_workspace_protocol::v10::Column {
+                columns: vec![eon_workspace_protocol::v11::Column {
                     panes: vec![Pane {
                         id: "p1".into(),
                         session: "session-1".into(),
@@ -2229,7 +2229,7 @@ mod tests {
         for index in 2..=3 {
             columns.tabs[0]
                 .columns
-                .push(eon_workspace_protocol::v10::Column {
+                .push(eon_workspace_protocol::v11::Column {
                     panes: vec![Pane {
                         id: format!("p{index}"),
                         session: format!("session-{}", index + 1),
@@ -2456,7 +2456,7 @@ mod tests {
 
     #[test]
     fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
-        use eon_workspace_protocol::v10::{Pane, PopupGeometry, Tab};
+        use eon_workspace_protocol::v11::{Pane, PopupGeometry, Tab};
 
         let snapshot = Snapshot {
             active_tab: "t2".into(),
@@ -2472,7 +2472,7 @@ mod tests {
                     pending: false,
                     selected_pane: Some(format!("p{index}")),
                     selected_popup: None,
-                    columns: vec![eon_workspace_protocol::v10::Column {
+                    columns: vec![eon_workspace_protocol::v11::Column {
                         panes: vec![Pane {
                             id: format!("p{index}"),
                             session: format!("s{index}"),

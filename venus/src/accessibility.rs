@@ -790,7 +790,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 mod tests {
     use super::*;
     use crate::{Color, DrawCell, DrawRow, DrawStyle, PaneMetadata, ShortcutGroup, ShortcutRow};
-    use eon_workspace_protocol::v10::{
+    use eon_workspace_protocol::v11::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, CodexQuotaWindow, Pane, Popup,
         PopupEntry, PopupGeometry, Shortcut, Snapshot as WorkspaceSnapshot, Tab,
     };
@@ -804,7 +804,7 @@ mod tests {
             id: id.into(),
             directory: format!("/tmp/{id}").into_bytes(),
             selected_pane: Some(selected_pane.into()),
-            columns: vec![eon_workspace_protocol::v10::Column {
+            columns: vec![eon_workspace_protocol::v11::Column {
                 panes: panes
                     .iter()
                     .map(|id| Pane {
@@ -824,7 +824,7 @@ mod tests {
             &WorkspaceSnapshot {
                 active_tab: active_tab.into(),
                 tabs,
-                geometry: eon_workspace_protocol::v10::PopupGeometry {
+                geometry: eon_workspace_protocol::v11::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
@@ -1220,7 +1220,7 @@ mod tests {
 
     #[test]
     fn two_provider_chips_share_layout_without_losing_identity_or_freshness() {
-        use eon_workspace_protocol::v10::{ClaudeQuota, ClaudeQuotaState};
+        use eon_workspace_protocol::v11::{ClaudeQuota, ClaudeQuotaState};
         for state in [ClaudeQuotaState::Fresh, ClaudeQuotaState::Stale] {
             for providers in 0..4 {
                 for scale in [1.0, 1.25, 2.0] {
@@ -1776,7 +1776,7 @@ mod tests {
                 workspace_tab("t2", &["pane-7"], "pane-7"),
                 workspace_tab("t3", &["pane-8"], "pane-8"),
             ],
-            geometry: eon_workspace_protocol::v10::PopupGeometry {
+            geometry: eon_workspace_protocol::v11::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -2026,7 +2026,7 @@ mod tests {
                         id: "t1".into(),
                         directory: b"/tmp/eon".to_vec(),
                         selected_pane: Some("p2".into()),
-                        columns: vec![eon_workspace_protocol::v10::Column {
+                        columns: vec![eon_workspace_protocol::v11::Column {
                             panes: vec![
                                 Pane {
                                     id: "p1".into(),
@@ -2051,7 +2051,7 @@ mod tests {
                         id: "t2".into(),
                         directory: b"/tmp/nova".to_vec(),
                         selected_pane: Some("p3".into()),
-                        columns: vec![eon_workspace_protocol::v10::Column {
+                        columns: vec![eon_workspace_protocol::v11::Column {
                             panes: vec![Pane {
                                 id: "p3".into(),
                                 session: "session-3".into(),
@@ -2062,7 +2062,7 @@ mod tests {
                         }],
                     },
                 ],
-                geometry: eon_workspace_protocol::v10::PopupGeometry {
+                geometry: eon_workspace_protocol::v11::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
@@ -2138,7 +2138,7 @@ mod tests {
                 id: "project".into(),
                 label: "Project".into(),
                 shortcut: Shortcut {
-                    modifiers: eon_workspace_protocol::v10::ALT,
+                    modifiers: eon_workspace_protocol::v11::ALT,
                     key: "KeyZ".into(),
                 },
             }],
