@@ -82,8 +82,8 @@ frame are Eon's product choices. The footer's frame sits flush with the
 window's side and bottom edges, with its hints centered in it; the renderer
 clips rounded footer fill/outline to retain a straight upper separator and the
 sheet's lower corner radius. The existing initial grid overhead includes the
-footer's whole reserved height. The row is at least the existing
-corner padding tall so lower curves fit below the separator at minimum fonts.
+footer's whole reserved height. The row is at least the sheet's corner radius
+tall so lower curves fit below the separator at minimum fonts.
 Existing rounded outline/fill
 primitives suffice. Nova's #FF5252
 modifier color informs Eon's softer #FF6B6B coral beside mint keys and gray labels.

@@ -75,7 +75,8 @@ when there is insufficient spare header space.
 
 Pass `--pane-frames false` to hide decorative pane borders. The default is
 `true`; both modes keep the same terminal grid, pane headers, click targets and
-accessible bounds. Keyboard focus and hover remain visible with frames off.
+accessible bounds, except that with frames the scrollback pill shifts clear of a
+rounded outer corner. Keyboard focus and hover remain visible with frames off.
 Missing, duplicate or invalid boolean values fail before window creation.
 Standalone and popup presentation have no pane frames; popups retain their own
 rounded outline. This is a startup option; Eon owns persistent product configuration.

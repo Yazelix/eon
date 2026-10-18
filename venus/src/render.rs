@@ -1,7 +1,7 @@
 use crate::{
     Color as SceneColor, DrawRow, DrawStyle, Scene, ScenePreview, SceneRect, ShortcutViewerScene,
     WorkspaceFocus, WorkspaceScene,
-    scene::{inset_sides, pane_chrome_rect, seam_extended},
+    scene::{corner_clearance, inset_sides, pane_chrome_rect, seam_extended},
 };
 use glyphon::{
     Attrs, Buffer, Cache, Color, ColorMode, CustomGlyph, Family, Metrics, Resolution, Shaping,
@@ -899,6 +899,7 @@ impl Renderer {
             }
             // One sheet spans every column; columns share straight seams instead of own borders.
             let sheet = workspace.sheet();
+            let radius = workspace.corner_radius();
             let border = SceneColor {
                 r: 58,
                 g: 75,
@@ -929,7 +930,7 @@ impl Renderer {
                     height: sheet.height,
                     ..column
                 };
-                let shape = seam_extended(column, sheet, self.metrics.padding);
+                let shape = seam_extended(column, sheet, radius);
                 for pane in panes.iter().skip(1) {
                     let row = SceneRect {
                         top: pane.rect.top,
@@ -942,7 +943,7 @@ impl Renderer {
                     rectangles.clip = Some(row);
                     rectangles.push_rounded(
                         shape,
-                        self.metrics.padding,
+                        radius,
                         SceneColor {
                             r: 43,
                             g: 53,
@@ -957,33 +958,83 @@ impl Renderer {
             }
             if framed {
                 rectangles.clip = Some(outline_clip);
-                rectangles.push_rounded_outline(sheet, self.metrics.padding, border);
+                rectangles.push_rounded_outline(sheet, radius, border);
             }
             if workspace_focus == WorkspaceFocus::Panes
                 && let Some(pane) = workspace.panes.iter().find(|pane| pane.selected)
             {
-                let outline = pane_chrome_rect(pane.rect, self.metrics);
-                let outline = if !self.pane_frames {
-                    inset_sides(outline, self.metrics)
-                } else if outline.right() < sheet.right() {
-                    // Land the right stroke on the neighbouring column's seam pixel.
-                    SceneRect {
-                        width: outline.width + 1.0,
-                        ..outline
-                    }
-                } else {
-                    outline
+                let accent = SceneColor {
+                    r: 126,
+                    g: 231,
+                    b: 185,
                 };
-                rectangles.clip = Some(workspace.pane_viewport);
-                rectangles.push_rounded_outline(
-                    outline,
-                    self.metrics.padding,
-                    SceneColor {
-                        r: 126,
-                        g: 231,
-                        b: 185,
-                    },
-                );
+                let outline = pane_chrome_rect(pane.rect, self.metrics);
+                if !self.pane_frames {
+                    rectangles.clip = Some(workspace.pane_viewport);
+                    rectangles.push_rounded_outline(
+                        inset_sides(outline, self.metrics),
+                        self.metrics.padding,
+                        accent,
+                    );
+                } else {
+                    // Land the right stroke on the neighbouring column's seam pixel.
+                    let outline = if outline.right() < sheet.right() {
+                        SceneRect {
+                            width: outline.width + 1.0,
+                            ..outline
+                        }
+                    } else {
+                        outline
+                    };
+                    if let Some(clip) = outline.intersection(workspace.pane_viewport) {
+                        // Outer edges follow the sheet's corners; seam sides stay straight, and
+                        // the top and bottom strokes are the column's sheet shape cut to one row,
+                        // so they also stop at the corner curves.
+                        let shape = seam_extended(
+                            SceneRect {
+                                top: sheet.top,
+                                height: sheet.height,
+                                ..outline
+                            },
+                            sheet,
+                            radius,
+                        );
+                        rectangles.clip = Some(clip);
+                        rectangles.push_rounded_outline(shape, radius, accent);
+                        for (needed, top) in [
+                            (outline.top > sheet.top, outline.top),
+                            (outline.bottom() < sheet.bottom(), outline.bottom() - 1.0),
+                        ] {
+                            if needed
+                                && let Some(row) = (SceneRect {
+                                    top,
+                                    height: 1.0,
+                                    ..outline
+                                })
+                                .intersection(clip)
+                            {
+                                rectangles.clip = Some(row);
+                                rectangles.push_rounded(shape, radius, accent);
+                            }
+                        }
+                        rectangles.clip = Some(clip);
+                        for (seam, left) in [
+                            (outline.left > sheet.left, outline.left),
+                            (outline.right() < sheet.right(), outline.right() - 1.0),
+                        ] {
+                            if seam {
+                                rectangles.push(
+                                    left,
+                                    outline.top,
+                                    1.0,
+                                    outline.height,
+                                    accent,
+                                    1.0,
+                                );
+                            }
+                        }
+                    }
+                }
             }
             rectangles.clip = None;
             if let Some(label) = workspace.popup_label()
@@ -991,7 +1042,7 @@ impl Renderer {
             {
                 rectangles.push_rounded_outline(
                     sheet,
-                    self.metrics.padding,
+                    radius,
                     SceneColor {
                         r: 82,
                         g: 104,
@@ -1000,17 +1051,27 @@ impl Renderer {
                 );
                 let label_height = 12.0 * self.metrics.scale;
                 let label_top = workspace.chrome.top;
+                // The label keeps clear of the sheet's rounded top corners, measured at its
+                // vertical middle.
+                let clearance =
+                    corner_clearance(radius, label_top + label_height / 2.0 - sheet.top)
+                        + self.metrics.padding / 2.0;
+                let label_left = (terminal.left + self.metrics.padding).max(sheet.left + clearance);
+                let label_width = (terminal.right() - self.metrics.padding)
+                    .min(sheet.right() - clearance)
+                    - label_left;
                 if terminal.top + self.metrics.padding
                     >= label_top + label_height + self.metrics.scale * 2.0
                     && terminal.height >= self.metrics.padding * 2.0 + self.metrics.height
                     && terminal.width >= self.metrics.padding * 2.0 + self.metrics.width * 4.0
+                    && label_width > 0.0
                 {
                     self.push_text_clipped(
                         label,
-                        terminal.left + self.metrics.padding,
+                        label_left,
                         label_top,
-                        terminal.width - self.metrics.padding * 2.0,
-                        terminal.width - self.metrics.padding * 2.0,
+                        label_width,
+                        label_width,
                         label_height,
                         SceneColor {
                             r: 162,

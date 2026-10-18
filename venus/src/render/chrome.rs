@@ -499,17 +499,19 @@ impl Renderer {
             1.0,
         );
         if let Some(hints) = &workspace.hints {
-            // Clip the upper curves to keep the shared separator straight.
+            // The lower corners share the sheet radius; clip the upper curves to keep the shared
+            // separator straight.
+            let radius = workspace.corner_radius();
             let bar = SceneRect {
-                top: hints.rect.top - self.metrics.padding,
-                height: hints.rect.height + self.metrics.padding,
+                top: hints.rect.top - radius * 2.0,
+                height: hints.rect.height + radius * 2.0,
                 ..hints.rect
             };
             rectangles.clip = Some(hints.rect);
-            rectangles.push_rounded(bar, self.metrics.padding, idle);
+            rectangles.push_rounded(bar, radius, idle);
             rectangles.push_rounded_outline(
                 bar,
-                self.metrics.padding,
+                radius,
                 SceneColor {
                     r: 58,
                     g: 75,
@@ -756,7 +758,7 @@ impl Renderer {
                                 ..sheet
                             },
                             sheet,
-                            self.metrics.padding,
+                            workspace.corner_radius(),
                         )
                     } else {
                         inset_sides(
@@ -773,16 +775,37 @@ impl Renderer {
                     };
                     rectangles.push_rounded(
                         shape,
-                        self.metrics.padding,
+                        if self.pane_frames {
+                            workspace.corner_radius()
+                        } else {
+                            self.metrics.padding
+                        },
                         if current { selected } else { idle },
                     );
                 }
                 rectangles.clip = None;
+                // Labels and the filled scrollback pill keep clear of the sheet's rounded outer
+                // corners.
+                let ((corner_left, corner_right), pill_right) = if self.pane_frames {
+                    (
+                        workspace.header_corner_insets(pane.rect, self.metrics, 0.0),
+                        workspace
+                            .header_corner_insets(
+                                pane.rect,
+                                self.metrics,
+                                self.metrics.height / 2.0,
+                            )
+                            .1,
+                    )
+                } else {
+                    ((0.0, 0.0), 0.0)
+                };
                 let scrollback_width = if current {
                     self.build_scrollback(
                         SceneRect {
                             left: pane.rect.left + self.metrics.width * 4.0,
-                            width: (pane.rect.width - self.metrics.width * 4.0).max(0.0),
+                            width: (pane.rect.width - self.metrics.width * 4.0 - pill_right)
+                                .max(0.0),
                             ..pane.rect
                         },
                         workspace.pane_viewport,
@@ -793,7 +816,16 @@ impl Renderer {
                 } else {
                     0.0
                 };
-                let width = pane.rect.width - self.metrics.padding * 2.0 - scrollback_width;
+                // A visible pill sits further from the right corner than the text needs.
+                let width = pane.rect.width
+                    - self.metrics.padding * 2.0
+                    - scrollback_width
+                    - corner_left
+                    - if scrollback_width > 0.0 {
+                        pill_right.max(corner_right)
+                    } else {
+                        corner_right
+                    };
                 let label = (scrollback_width > 0.0).then(|| {
                     fit_header_text(
                         &mut self.fonts.font_system,
@@ -805,7 +837,7 @@ impl Renderer {
                 });
                 self.push_text_clipped(
                     label.as_deref().unwrap_or(pane.label()),
-                    pane.rect.left + self.metrics.padding,
+                    pane.rect.left + self.metrics.padding + corner_left,
                     pane.rect.top + (pane.rect.height - self.metrics.height) / 2.0,
                     width,
                     width,

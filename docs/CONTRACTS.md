@@ -375,10 +375,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     the sheet's bottom edge when hints are hidden) in square T-junctions, and
     separators spanning each column divide its visible pane stack, with a small
     bottom gap (4 logical pixels at default typography) using terminal
-    background color/opacity under the existing surface-wide blur request. Only the sheet's outer corners
-    are rounded; selected and hovered headers follow them where they touch, with
-    square edges at seams. `false` removes the sheet border, seams and separators
-    while retaining headers, selection, hover and keyboard focus. Both modes
+    background color/opacity under the existing surface-wide blur request. Only
+    the sheet's outer corners are rounded, about one pane header high, so the
+    top curves meet the window's sides at the first pane header's bottom; the
+    first tab pill's arc is centered over the top-left curve when the tab strip
+    has room and the corner exceeds the pill by at least the tab gap. Selected
+    and
+    hovered headers follow the corners where they touch, with square edges at
+    seams, and labels and footer hints keep clear of the curves. `false`
+    removes the sheet border, seams and separators while retaining headers,
+    selection, hover and keyboard focus; the footer and popup outlines keep the
+    sheet's corner radius. Both modes
     preserve terminal-grid and picker geometry. EonTerm receives no
     workspace-frame override. Requested initial grids account for
     the small bottom margin. Live surfaces retain their settings;
