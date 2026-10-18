@@ -369,7 +369,7 @@ The runtime library and its cutover were accepted through these boundaries.
 
 Cutover refreshes the named profile elements without restarting live work.
 Old generations remain discoverable and owner-stoppable through retained
-v2–v7 lifecycle codecs. New-client Present still requires exact current EONW
+v2–v10 lifecycle codecs. New-client Present still requires exact current EONW
 and component-report equality; added package records can make old presentation
 incompatible. Retain the exact prior executable/artifact to reattach old work.
 A new bare launch selects the new generation; extraction promises no automatic

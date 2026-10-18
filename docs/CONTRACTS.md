@@ -539,8 +539,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`,
   `close_pane_is_a_v11_request_and_older_traffic_keeps_v10_bytes`,
   `close_parsers_require_one_stable_identity` and Venus
-  `direct_workspace_shortcuts_use_stable_eon_actions`; installed dogfood is
-  pending.
+  `direct_workspace_shortcuts_use_stable_eon_actions`; isolated dogfood of the
+  built package on a private headless Sway (1280x720) closed a column's only
+  pane, a stacked pane and a non-final tab's only pane with Alt+W, each pruned
+  as a natural exit, and refused the final pane with the rejected-action
+  notice.
   Installed AT-SPI labels and broader reader use remain open. These checks do not establish uninterrupted picker rendering,
   fractional-scale, wider compositor or non-systemd coverage.
 
@@ -712,7 +715,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     configuration, PIDs and live state do not define identity.
   - Older live generations remain discoverable, explicitly presentable when
     compatible, and explicitly stoppable through their own supervisor. Generation
-    inspection and Stop use the supervisor's known EONW v2 through v7 lifecycle
+    inspection and Stop use the supervisor's known EONW v2 through v10 lifecycle
     codec; presentation still requires the exact current EONW and component graph.
   - `eon stop previous` attempts every non-dead generation except the exact
     current one, whether current is live or not. Fixed-namespace legacy work

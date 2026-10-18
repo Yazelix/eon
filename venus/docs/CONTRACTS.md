@@ -598,6 +598,12 @@ re-proved when that platform or feature is next touched.
   `each_column_keeps_forty_terminal_columns`. Isolated installed dogfood on a
   private headless Sway (`eon-splits-opwv` slice 4) observed live columns,
   attachment swap and reconcile, per-column resize and both refusal notices.
+  Pane close (`eon-close-pane-onwi`): the Alt+W mapping and its non-repeat by
+  `direct_workspace_shortcuts_use_stable_eon_actions` and
+  `structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit`; isolated
+  dogfood of the built package on a private headless Sway
+  (`eon-close-pane-onwi` slice B, 1280x720) showed the `close pane` hint and
+  the refusal notice.
   Fractional native scale remains to be dogfooded. Cards
   (`eon-gapped-rounded-cards-txco`, whose commit is the revision) are covered by
   `column_backgrounds_cover_the_gaps_between_cards` and the card geometry in
