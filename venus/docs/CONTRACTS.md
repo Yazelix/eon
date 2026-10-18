@@ -486,10 +486,12 @@ re-proved when that platform or feature is next touched.
   - Pane frames draw one thin workspace sheet whose sides and bottom sit on the
     window's edges. Adjacent columns share one straight 1-pixel seam meeting the
     sheet's top edge and the footer separator (or the sheet's bottom edge when
-    hints are hidden) in square T-junctions; only the sheet's outer corners are
+    hints are hidden) in square T-junctions; only the sheet's top corners are
     rounded, about one pane header high, so the top curves meet the window's
-    sides at the first pane header's bottom and the footer's lower corners
-    match them. The first tab pill's arc is centered over the top-left curve
+    sides at the first pane header's bottom, and the top edge and its curves
+    are 2 pixels thick. The bottom corners, the footer's or the sheet's own
+    when hints are hidden, stay square on the window's bottom corners. The
+    first tab pill's arc is centered over the top-left curve
     when the first tab still fits the tab strip beside that inset and the
     corner exceeds the pill's radius by at least the tab gap; revealing the
     first tab never scrolls it.
@@ -498,13 +500,14 @@ re-proved when that platform or feature is next touched.
     gap shares terminal background color/opacity and the surface-wide blur
     request. Selected and hovered header fills follow the sheet's outer
     corners, with square edges at seams and inside; header labels, the
-    scrollback pill, footer hints and popup labels keep clear of the curves.
+    scrollback pill and popup labels keep clear of the curves.
     Separators follow the outer corners during scrolling; the sheet border and seams stay fixed while
     overflowing headers scroll within each column.
     `--pane-frames true|false` defaults to `true`; `false` removes the sheet
     border, seams and separators while retaining headers, a lighter selected fill,
-    hover feedback and a distinct rounded keyboard-focus outline; the footer
-    and popup outlines keep the sheet's corner radius. Both modes
+    hover feedback and a distinct rounded keyboard-focus outline; the popup
+    outline keeps the sheet's rounded top corners and the footer stays square.
+    Both modes
     preserve the same terminal grid, header hit targets and AccessKit bounds,
     except that with pane frames the scrollback pill, and its AccessKit
     bounds, shift clear of a rounded outer corner.
@@ -1082,10 +1085,10 @@ re-proved when that platform or feature is next touched.
   have padded rounded backgrounds without braces; group bodies stay plain.
   Insets, badge padding and minimum gaps participate in whole-hint fitting.
   The footer shares the sheet's side edges and one continuous outer frame, with
-  matching upper/lower corner radii, its bottom on the window's bottom edge and
-  a straight separator at the join; column seams end at that separator in square
+  square lower corners on the window's bottom corners and a straight separator
+  at the join; column seams end at that separator in square
   T-junctions. Below its compact row height, the footer also reserves the space
-  down to the window's bottom edge. The row is at least the corner radius tall,
+  down to the window's bottom edge. The row is at least the edge padding tall,
   preserving the straight separator at small font sizes. The bar uses the
   inactive-tab background, coral red modifier headers, mint keys and gray labels.
   Copy, Paste and Open link stay in full help and dispatch, without footer hints.
@@ -1124,7 +1127,7 @@ re-proved when that platform or feature is next touched.
     `shortcut_hints_are_read_only_and_retire_hidden_help_actions` in the
     workspace suite; dogfood checklist item 5.
 - **Open proof:** Pending re-proof in this repository: native raster checks of
-  the rounded footer frame across widths and fractional scale, and read-only
+  the square-cornered footer frame across widths and fractional scale, and read-only
   AT-SPI footer lifecycle.
 
 ## Rules

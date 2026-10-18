@@ -376,16 +376,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     separators spanning each column divide its visible pane stack, with a small
     bottom gap (4 logical pixels at default typography) using terminal
     background color/opacity under the existing surface-wide blur request. Only
-    the sheet's outer corners are rounded, about one pane header high, so the
+    the sheet's top corners are rounded, about one pane header high, so the
     top curves meet the window's sides at the first pane header's bottom; the
-    first tab pill's arc is centered over the top-left curve when the tab strip
-    has room and the corner exceeds the pill by at least the tab gap. Selected
-    and
-    hovered headers follow the corners where they touch, with square edges at
-    seams, and labels and footer hints keep clear of the curves. `false`
+    top edge and its curves are 2 pixels thick, and the bottom corners stay
+    square on the window's bottom corners. The first tab pill's arc is
+    centered over the top-left curve when the tab strip has room and the
+    corner exceeds the pill by at least the tab gap. Selected and hovered
+    headers follow the corners where they touch, with square edges at seams,
+    and labels keep clear of the curves. `false`
     removes the sheet border, seams and separators while retaining headers,
-    selection, hover and keyboard focus; the footer and popup outlines keep the
-    sheet's corner radius. Both modes
+    selection, hover and keyboard focus; the popup outline keeps the sheet's
+    rounded top corners and the footer stays square. Both modes
     preserve terminal-grid and picker geometry. EonTerm receives no
     workspace-frame override. Requested initial grids account for
     the small bottom margin. Live surfaces retain their settings;
@@ -1375,10 +1376,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   have padded rounded backgrounds without braces; group bodies stay plain.
   Insets, badge padding and minimum gaps participate in whole-hint fitting.
   The footer shares the sheet's side edges and one continuous outer frame, with
-  matching upper/lower corner radii, its bottom on the window's bottom edge and
-  a straight separator at the join; column seams end at that separator in square
+  square lower corners on the window's bottom corners and a straight separator
+  at the join; column seams end at that separator in square
   T-junctions. Below its compact row height, the footer also reserves the space
-  down to the window's bottom edge. The row is at least the corner radius tall,
+  down to the window's bottom edge. The row is at least the edge padding tall,
   preserving the straight separator at small font sizes. The bar uses the
   inactive-tab background, coral red modifier headers, mint keys and gray labels.
   Copy, Paste and Open link retain their bindings and full-help

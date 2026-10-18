@@ -379,13 +379,6 @@ impl ShortcutHintsScene {
             height: (size.height as f32 - rect.top).max(0.0),
             ..rect
         };
-        // Hints keep clear of the footer's rounded lower corners.
-        let side = metrics.padding.max(
-            corner_clearance(
-                sheet_radius(metrics),
-                (frame.height - metrics.height).max(0.0) / 2.0,
-            ) + metrics.padding / 2.0,
-        );
         let count = hints.len();
         let mut groups: Vec<Vec<ShortcutHint>> = Vec::new();
         for hint in hints {
@@ -405,7 +398,7 @@ impl ShortcutHintsScene {
                 .or_insert_with(|| measure(text))
         };
         let pieces = loop {
-            let mut left = rect.left + side;
+            let mut left = rect.left + metrics.padding;
             let mut pieces = Vec::new();
             for (group_index, group) in groups.iter().enumerate() {
                 if group_index > 0 {
@@ -444,8 +437,10 @@ impl ShortcutHintsScene {
                     left += piece_width;
                 }
             }
-            if groups.is_empty() || height >= metrics.height && left <= rect.right() - side {
-                let spare = rect.right() - side - left;
+            if groups.is_empty()
+                || height >= metrics.height && left <= rect.right() - metrics.padding
+            {
+                let spare = rect.right() - metrics.padding - left;
                 let mut retained = pieces.iter_mut();
                 for (index, group) in groups.iter().enumerate() {
                     let offset = if groups.len() == 1 {
@@ -870,8 +865,8 @@ fn pane_inset(metrics: CellMetrics) -> f32 {
     stack_inset(metrics).min(metrics.height / 4.0)
 }
 
-/// The workspace sheet's outer corner radius: its top curve meets the window's side edge at the
-/// first pane header's bottom, and the footer's lower corners share it.
+/// The workspace sheet's top corner radius: its curve meets the window's side edge at the first
+/// pane header's bottom. The bottom corners stay square.
 pub(crate) fn sheet_radius(metrics: CellMetrics) -> f32 {
     (header_heights(metrics).1 - pane_inset(metrics) / 2.0).max(0.0)
 }
@@ -1434,6 +1429,15 @@ impl WorkspaceScene {
         self.sheet
     }
 
+    /// The sheet's rounded shape: the sheet extended below the window, so only its top corners
+    /// round and its bottom corners stay square on the window's corners.
+    pub(crate) fn sheet_shape(&self) -> SceneRect {
+        SceneRect {
+            height: self.sheet.height + self.corner_radius * 2.0,
+            ..self.sheet
+        }
+    }
+
     /// The sheet's drawn corner radius: `sheet_radius`, clamped to half the sheet's size, the
     /// narrowest column and the space above the footer.
     pub(crate) fn corner_radius(&self) -> f32 {
@@ -1452,9 +1456,8 @@ impl WorkspaceScene {
     ) -> (f32, f32) {
         let radius = self.corner_radius;
         let middle = header.top + header.height / 2.0;
-        let clearance = corner_clearance(radius, middle - extent - self.sheet.top).max(
-            corner_clearance(radius, self.sheet.bottom() - middle - extent),
-        );
+        // Only the top corners are rounded.
+        let clearance = corner_clearance(radius, middle - extent - self.sheet.top);
         let extra = (clearance + metrics.padding / 2.0 - metrics.padding).max(0.0);
         (
             if header.left <= self.sheet.left {
@@ -2378,15 +2381,7 @@ mod tests {
                         .count()
                         > 1
                     {
-                        // Spread groups sit exactly at the edge inset that clears the rounded
-                        // corners.
-                        let side = metrics.padding.max(
-                            corner_clearance(
-                                sheet_radius(metrics),
-                                scene.rect.bottom() - first.rect.bottom(),
-                            ) + metrics.padding / 2.0,
-                        );
-                        assert!((left - side).abs() < 0.01);
+                        assert!((left - metrics.padding).abs() < 0.01);
                     }
                 }
                 let mut group_gap: Option<f32> = None;
@@ -2438,7 +2433,7 @@ mod tests {
         );
         assert!(
             small.rect.height >= small_metrics.padding,
-            "lower corners must fit below the separator"
+            "the hints row keeps at least the edge padding height"
         );
         for height in [0, 1, 10, 40] {
             let scene = ShortcutHintsScene::new(

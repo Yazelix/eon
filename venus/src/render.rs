@@ -930,7 +930,14 @@ impl Renderer {
                     height: sheet.height,
                     ..column
                 };
-                let shape = seam_extended(column, sheet, radius);
+                let shape = seam_extended(
+                    SceneRect {
+                        height: workspace.sheet_shape().height,
+                        ..column
+                    },
+                    sheet,
+                    radius,
+                );
                 for pane in panes.iter().skip(1) {
                     let row = SceneRect {
                         top: pane.rect.top,
@@ -957,8 +964,12 @@ impl Renderer {
                 }
             }
             if framed {
-                rectangles.clip = Some(outline_clip);
-                rectangles.push_rounded_outline(sheet, radius, border);
+                rectangles.push_sheet_border(
+                    workspace,
+                    outline_clip,
+                    workspace.hints.is_none(),
+                    border,
+                );
             }
             if workspace_focus == WorkspaceFocus::Panes
                 && let Some(pane) = workspace.panes.iter().find(|pane| pane.selected)
@@ -993,7 +1004,7 @@ impl Renderer {
                         let shape = seam_extended(
                             SceneRect {
                                 top: sheet.top,
-                                height: sheet.height,
+                                height: workspace.sheet_shape().height,
                                 ..outline
                             },
                             sheet,
@@ -1040,15 +1051,17 @@ impl Renderer {
             if let Some(label) = workspace.popup_label()
                 && let Some(terminal) = workspace.visible_terminal()
             {
-                rectangles.push_rounded_outline(
+                rectangles.push_sheet_border(
+                    workspace,
                     sheet,
-                    radius,
+                    true,
                     SceneColor {
                         r: 82,
                         g: 104,
                         b: 124,
                     },
                 );
+                rectangles.clip = None;
                 let label_height = 12.0 * self.metrics.scale;
                 let label_top = workspace.chrome.top;
                 // The label keeps clear of the sheet's rounded top corners, measured at its
@@ -1865,6 +1878,52 @@ struct RectangleBatch {
 }
 
 impl RectangleBatch {
+    /// The workspace sheet's border inside `clip`: rounded top corners under a 2 px top edge,
+    /// 1 px sides and, when `bottom` is set, a square 1 px bottom edge on the window's bottom.
+    fn push_sheet_border(
+        &mut self,
+        workspace: &WorkspaceScene,
+        clip: SceneRect,
+        bottom: bool,
+        color: SceneColor,
+    ) {
+        let sheet = workspace.sheet();
+        let shape = workspace.sheet_shape();
+        let radius = workspace.corner_radius();
+        self.clip = Some(clip);
+        self.push_rounded_outline(shape, radius, color);
+        // A second stroke just inside thickens the top edge and its corner curves.
+        if let Some(band) = (SceneRect {
+            height: radius.max(2.0),
+            ..sheet
+        })
+        .intersection(clip)
+        {
+            self.clip = Some(band);
+            self.push_rounded_outline(
+                SceneRect {
+                    left: shape.left + 1.0,
+                    top: shape.top + 1.0,
+                    width: (shape.width - 2.0).max(0.0),
+                    height: (shape.height - 2.0).max(0.0),
+                },
+                (radius - 1.0).max(0.0),
+                color,
+            );
+        }
+        if bottom {
+            self.clip = Some(clip);
+            self.push(
+                sheet.left,
+                sheet.bottom() - 1.0,
+                sheet.width,
+                1.0,
+                color,
+                1.0,
+            );
+        }
+    }
+
     /// A one-physical-pixel stroke, leaving the translucent interior untouched.
     fn push_rounded_outline(&mut self, rect: SceneRect, radius: f32, color: SceneColor) {
         if self

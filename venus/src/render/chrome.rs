@@ -499,19 +499,13 @@ impl Renderer {
             1.0,
         );
         if let Some(hints) = &workspace.hints {
-            // The lower corners share the sheet radius; clip the upper curves to keep the shared
-            // separator straight.
-            let radius = workspace.corner_radius();
-            let bar = SceneRect {
-                top: hints.rect.top - radius * 2.0,
-                height: hints.rect.height + radius * 2.0,
-                ..hints.rect
-            };
+            // Square corners: the footer sits flush on the window's bottom corners.
+            let bar = hints.rect;
             rectangles.clip = Some(hints.rect);
-            rectangles.push_rounded(bar, radius, idle);
+            rectangles.push_rounded(bar, 0.0, idle);
             rectangles.push_rounded_outline(
                 bar,
-                radius,
+                0.0,
                 SceneColor {
                     r: 58,
                     g: 75,
@@ -755,7 +749,7 @@ impl Renderer {
                             SceneRect {
                                 left: pane.rect.left,
                                 width: pane.rect.width,
-                                ..sheet
+                                ..workspace.sheet_shape()
                             },
                             sheet,
                             workspace.corner_radius(),

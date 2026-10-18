@@ -14,10 +14,11 @@
   square T-junctions, only the sheet's outer corners are rounded, and popups
   and the footer reuse its outer frame (`eon-flush-workspace-sheet-5779`); the
   sheet and footer also reach the window's bottom edge
-  (`eon-flush-sheet-bottom-f68t`). Its outer corners are about one pane header
+  (`eon-flush-sheet-bottom-f68t`). Its top corners are about one pane header
   high, the first tab pill's arc is centered over the top-left curve, and
-  labels and footer hints keep clear of the curves
-  (`eon-sheet-round-corners-ab92`).
+  labels keep clear of the curves (`eon-sheet-round-corners-ab92`); the top
+  edge and curves are 2 px and the bottom corners square on the window's
+  corners (`eon-sheet-bottom-square-top-thick-5iy8`).
 - VEN-C1: an omitted or `random` cursor-tail color is chosen once per live
   endpoint, from the device, inode and change time of the workspace or Orbit
   socket, instead of once per launch, so a reattached window keeps its color.
