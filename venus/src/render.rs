@@ -1,7 +1,7 @@
 use crate::{
     Color as SceneColor, DrawRow, DrawStyle, Scene, ScenePreview, SceneRect, ShortcutViewerScene,
     WorkspaceFocus, WorkspaceScene,
-    scene::{corner_clearance, inset_sides, pane_chrome_rect, seam_extended},
+    scene::{inset_sides, pane_chrome_rect},
 };
 use glyphon::{
     Attrs, Buffer, Cache, Color, ColorMode, CustomGlyph, Family, Metrics, Resolution, Shaping,
@@ -221,6 +221,27 @@ fn scene_grid(scene: &Scene, viewport: SceneRect, metrics: CellMetrics) -> Scene
         width: f32::from(scene.columns) * metrics.width,
         height: f32::from(scene.rows) * metrics.height,
     }
+}
+
+/// Left and right edges of each column's background strip, for terminals ordered left to right:
+/// neighbouring strips meet in the middle of the gap between them, and the outer strips reach the
+/// window's sides.
+fn background_spans(terminals: &[SceneRect], width: f32) -> Vec<(f32, f32)> {
+    terminals
+        .iter()
+        .enumerate()
+        .map(|(index, terminal)| {
+            let left = if index == 0 {
+                0.0
+            } else {
+                (terminals[index - 1].right() + terminal.left) / 2.0
+            };
+            let right = terminals
+                .get(index + 1)
+                .map_or(width, |next| (terminal.right() + next.left) / 2.0);
+            (left, right)
+        })
+        .collect()
 }
 
 fn preview_rows(preview: Option<&ScenePreview>) -> Option<(VerticalDirection, &[DrawRow])> {
@@ -820,24 +841,30 @@ impl Renderer {
         let mut cursor_vertex_boundary = 0;
         if let Some(workspace) = workspace {
             self.clear = wgpu::Color::TRANSPARENT;
-            // Each column's strip takes its own terminal's background.
-            let selected_strip = if workspace.other_columns.is_empty() {
-                (0.0, self.config.width as f32)
-            } else {
-                (workspace.terminal.left, workspace.terminal.width)
-            };
-            let strips = std::iter::once((selected_strip, scene)).chain(
-                workspace
-                    .other_columns
+            // Each column's strip takes its own terminal's background; strips meet in the middle
+            // of the gaps between cards and reach the window's sides, so the gaps share it.
+            let mut strips = std::iter::once((workspace.terminal, scene))
+                .chain(
+                    workspace
+                        .other_columns
+                        .iter()
+                        .zip(columns)
+                        .map(|(column, scene)| (column.terminal, *scene)),
+                )
+                .collect::<Vec<_>>();
+            strips.sort_by(|left, right| left.0.left.total_cmp(&right.0.left));
+            let spans = background_spans(
+                &strips
                     .iter()
-                    .zip(columns)
-                    .map(|(column, scene)| ((column.terminal.left, column.terminal.width), *scene)),
+                    .map(|(terminal, _)| *terminal)
+                    .collect::<Vec<_>>(),
+                self.config.width as f32,
             );
-            for ((left, width), scene) in strips {
+            for ((left, right), (_, scene)) in spans.into_iter().zip(&strips) {
                 rectangles.push(
                     left,
                     workspace.tab_viewport.bottom(),
-                    width,
+                    right - left,
                     self.config.height as f32 - workspace.tab_viewport.bottom(),
                     scene.map_or(DEFAULT_BACKGROUND, |scene| scene.background),
                     self.background_opacity,
@@ -897,23 +924,8 @@ impl Renderer {
                 self.build_hyperlink(scene, &mut rectangles, origin);
                 rectangles.clip = None;
             }
-            // One sheet spans every column; columns share straight seams instead of own borders.
-            let sheet = workspace.sheet();
-            let radius = workspace.corner_radius();
-            let border = SceneColor {
-                r: 58,
-                g: 75,
-                b: 91,
-            };
-            // Above the footer separator when hints show, else through the sheet's bottom edge.
-            let outline_clip = SceneRect {
-                height: workspace
-                    .hints
-                    .as_ref()
-                    .map_or(sheet.bottom(), |hints| hints.rect.top + 1.0)
-                    - workspace.pane_viewport.top,
-                ..workspace.pane_viewport
-            };
+            // Each column is its own rounded card; separators divide its visible pane stack.
+            let radius = workspace.card_radius();
             let columns = std::iter::once((workspace.chrome, workspace.panes.as_slice()))
                 .chain(
                     workspace
@@ -922,34 +934,19 @@ impl Renderer {
                         .map(|column| (column.chrome, column.panes.as_slice())),
                 )
                 .filter(|(_, panes)| self.pane_frames && !panes.is_empty());
-            let mut framed = false;
-            for (column, panes) in columns {
-                framed = true;
-                let column = SceneRect {
-                    top: sheet.top,
-                    height: sheet.height,
-                    ..column
-                };
-                let shape = seam_extended(
-                    SceneRect {
-                        height: workspace.sheet_shape().height,
-                        ..column
-                    },
-                    sheet,
-                    radius,
-                );
+            for (card, panes) in columns {
                 for pane in panes.iter().skip(1) {
-                    let row = SceneRect {
+                    let Some(row) = (SceneRect {
                         top: pane.rect.top,
                         height: 1.0,
-                        ..column
-                    };
-                    let Some(row) = row.intersection(workspace.pane_viewport) else {
+                        ..card
+                    })
+                    .intersection(workspace.pane_viewport) else {
                         continue;
                     };
                     rectangles.clip = Some(row);
                     rectangles.push_rounded(
-                        shape,
+                        card,
                         radius,
                         SceneColor {
                             r: 43,
@@ -958,17 +955,15 @@ impl Renderer {
                         },
                     );
                 }
-                if column.left > sheet.left {
-                    rectangles.clip = Some(outline_clip);
-                    rectangles.push(column.left, sheet.top, 1.0, sheet.height, border, 1.0);
-                }
-            }
-            if framed {
-                rectangles.push_sheet_border(
-                    workspace,
-                    outline_clip,
-                    workspace.hints.is_none(),
-                    border,
+                rectangles.clip = None;
+                rectangles.push_rounded_outline(
+                    card,
+                    radius,
+                    SceneColor {
+                        r: 58,
+                        g: 75,
+                        b: 91,
+                    },
                 );
             }
             if workspace_focus == WorkspaceFocus::Panes
@@ -979,70 +974,34 @@ impl Renderer {
                     g: 231,
                     b: 185,
                 };
-                let outline = pane_chrome_rect(pane.rect, self.metrics);
                 if !self.pane_frames {
                     rectangles.clip = Some(workspace.pane_viewport);
                     rectangles.push_rounded_outline(
-                        inset_sides(outline, self.metrics),
+                        inset_sides(pane_chrome_rect(pane.rect, self.metrics), self.metrics),
                         self.metrics.padding,
                         accent,
                     );
-                } else {
-                    // Land the right stroke on the neighbouring column's seam pixel.
-                    let outline = if outline.right() < sheet.right() {
-                        SceneRect {
-                            width: outline.width + 1.0,
-                            ..outline
-                        }
-                    } else {
-                        outline
-                    };
-                    if let Some(clip) = outline.intersection(workspace.pane_viewport) {
-                        // Outer edges follow the sheet's corners; seam sides stay straight, and
-                        // the top and bottom strokes are the column's sheet shape cut to one row,
-                        // so they also stop at the corner curves.
-                        let shape = seam_extended(
-                            SceneRect {
-                                top: sheet.top,
-                                height: workspace.sheet_shape().height,
-                                ..outline
-                            },
-                            sheet,
-                            radius,
-                        );
-                        rectangles.clip = Some(clip);
-                        rectangles.push_rounded_outline(shape, radius, accent);
-                        for (needed, top) in [
-                            (outline.top > sheet.top, outline.top),
-                            (outline.bottom() < sheet.bottom(), outline.bottom() - 1.0),
-                        ] {
-                            if needed
-                                && let Some(row) = (SceneRect {
-                                    top,
-                                    height: 1.0,
-                                    ..outline
-                                })
-                                .intersection(clip)
-                            {
-                                rectangles.clip = Some(row);
-                                rectangles.push_rounded(shape, radius, accent);
-                            }
-                        }
-                        rectangles.clip = Some(clip);
-                        for (seam, left) in [
-                            (outline.left > sheet.left, outline.left),
-                            (outline.right() < sheet.right(), outline.right() - 1.0),
-                        ] {
-                            if seam {
-                                rectangles.push(
-                                    left,
-                                    outline.top,
-                                    1.0,
-                                    outline.height,
-                                    accent,
-                                    1.0,
-                                );
-                            }
+                } else if let Some(clip) = pane.rect.intersection(workspace.pane_viewport) {
+                    // The header's outline follows its card: the card's sides and corner curves
+                    // within the header, plus the card's shape cut to the header's top and bottom
+                    // rows where those lie inside the card.
+                    let card = workspace.chrome;
+                    rectangles.clip = Some(clip);
+                    rectangles.push_rounded_outline(card, radius, accent);
+                    for (needed, top) in [
+                        (pane.rect.top > card.top, pane.rect.top),
+                        (pane.rect.bottom() < card.bottom(), pane.rect.bottom() - 1.0),
+                    ] {
+                        if needed
+                            && let Some(row) = (SceneRect {
+                                top,
+                                height: 1.0,
+                                ..pane.rect
+                            })
+                            .intersection(clip)
+                        {
+                            rectangles.clip = Some(row);
+                            rectangles.push_rounded(card, radius, accent);
                         }
                     }
                 }
@@ -1051,37 +1010,26 @@ impl Renderer {
             if let Some(label) = workspace.popup_label()
                 && let Some(terminal) = workspace.visible_terminal()
             {
-                rectangles.push_sheet_border(
-                    workspace,
-                    sheet,
-                    true,
+                rectangles.push_rounded_outline(
+                    workspace.chrome,
+                    radius,
                     SceneColor {
                         r: 82,
                         g: 104,
                         b: 124,
                     },
                 );
-                rectangles.clip = None;
                 let label_height = 12.0 * self.metrics.scale;
                 let label_top = workspace.chrome.top;
-                // The label keeps clear of the sheet's rounded top corners, measured at its
-                // vertical middle.
-                let clearance =
-                    corner_clearance(radius, label_top + label_height / 2.0 - sheet.top)
-                        + self.metrics.padding / 2.0;
-                let label_left = (terminal.left + self.metrics.padding).max(sheet.left + clearance);
-                let label_width = (terminal.right() - self.metrics.padding)
-                    .min(sheet.right() - clearance)
-                    - label_left;
+                let label_width = terminal.width - self.metrics.padding * 2.0;
                 if terminal.top + self.metrics.padding
                     >= label_top + label_height + self.metrics.scale * 2.0
                     && terminal.height >= self.metrics.padding * 2.0 + self.metrics.height
                     && terminal.width >= self.metrics.padding * 2.0 + self.metrics.width * 4.0
-                    && label_width > 0.0
                 {
                     self.push_text_clipped(
                         label,
-                        label_left,
+                        terminal.left + self.metrics.padding,
                         label_top,
                         label_width,
                         label_width,
@@ -1878,53 +1826,6 @@ struct RectangleBatch {
 }
 
 impl RectangleBatch {
-    /// The workspace sheet's border inside `clip`: a 2 px top edge over the sheet's top corners
-    /// (square while the corner radius is zero), 1 px sides and, when `bottom` is set, a square
-    /// 1 px bottom edge on the window's bottom.
-    fn push_sheet_border(
-        &mut self,
-        workspace: &WorkspaceScene,
-        clip: SceneRect,
-        bottom: bool,
-        color: SceneColor,
-    ) {
-        let sheet = workspace.sheet();
-        let shape = workspace.sheet_shape();
-        let radius = workspace.corner_radius();
-        self.clip = Some(clip);
-        self.push_rounded_outline(shape, radius, color);
-        // A second stroke just inside thickens the top edge and its corner curves.
-        if let Some(band) = (SceneRect {
-            height: radius.max(2.0),
-            ..sheet
-        })
-        .intersection(clip)
-        {
-            self.clip = Some(band);
-            self.push_rounded_outline(
-                SceneRect {
-                    left: shape.left + 1.0,
-                    top: shape.top + 1.0,
-                    width: (shape.width - 2.0).max(0.0),
-                    height: (shape.height - 2.0).max(0.0),
-                },
-                (radius - 1.0).max(0.0),
-                color,
-            );
-        }
-        if bottom {
-            self.clip = Some(clip);
-            self.push(
-                sheet.left,
-                sheet.bottom() - 1.0,
-                sheet.width,
-                1.0,
-                color,
-                1.0,
-            );
-        }
-    }
-
     /// A one-physical-pixel stroke, leaving the translucent interior untouched.
     fn push_rounded_outline(&mut self, rect: SceneRect, radius: f32, color: SceneColor) {
         if self
@@ -2669,6 +2570,26 @@ mod tests {
         );
         assert_eq!(&rectangles.bytes[..4], &(-1.0_f32).to_ne_bytes());
         assert_eq!(&rectangles.bytes[4..8], &1.0_f32.to_ne_bytes());
+    }
+
+    #[test]
+    fn column_backgrounds_cover_the_gaps_between_cards() {
+        let column = |left: f32| SceneRect {
+            left,
+            top: 40.0,
+            width: 289.0,
+            height: 500.0,
+        };
+        let terminals = [column(8.0), column(305.0), column(602.0)];
+        let spans = background_spans(&terminals, 901.0);
+        // The strips tile the window's width, so no gap stays unpainted.
+        assert_eq!(spans.first().map(|span| span.0), Some(0.0));
+        assert_eq!(spans.last().map(|span| span.1), Some(901.0));
+        for (pair, terminal) in spans.windows(2).zip(&terminals) {
+            assert_eq!(pair[0].1, pair[1].0);
+            assert!(pair[0].0 <= terminal.left && terminal.right() <= pair[0].1);
+        }
+        assert_eq!(background_spans(&terminals[..1], 901.0), [(0.0, 901.0)]);
     }
 
     #[test]

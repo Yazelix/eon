@@ -483,25 +483,25 @@ re-proved when that platform or feature is next touched.
     than 40 terminal columns wide; with four, Eon's capacity refusal applies.
     Shrinking the window later narrows existing columns without removing
     them.
-  - Pane frames draw one thin workspace sheet whose sides and bottom sit on the
-    window's edges. Adjacent columns share one straight 1-pixel seam meeting the
-    sheet's top edge and the footer separator (or the sheet's bottom edge when
-    hints are hidden) in square T-junctions. The sheet's corners are square,
-    its top edge is 2 pixels thick, and its bottom corners, the footer's or the
-    sheet's own when hints are hidden, sit on the window's bottom corners.
-    Horizontal separators reach each column's sides, and a small gap
-    stays below the stack (4 logical pixels at default typography). The
-    gap shares terminal background color/opacity and the surface-wide blur
-    request. Selected and hovered header fills are square. Separators stay
-    straight during scrolling; the sheet border and seams stay fixed while
-    overflowing headers scroll within each column.
-    `--pane-frames true|false` defaults to `true`; `false` removes the sheet
-    border, seams and separators while retaining headers, a lighter selected fill,
-    hover feedback and a distinct rounded keyboard-focus outline; the popup and
-    footer outlines stay square. Both modes
+  - Pane frames draw each column's pane stack as its own card: a 1-pixel
+    rounded border around the column's headers and expanded terminal. Scene
+    owns one card gap (8 logical pixels at default typography), which is also
+    the corner radius: cards keep it from the window's sides, from each other
+    and from the tab pills above, and below them the footer's band is the
+    margin, or one gap when hints are hidden. On a window too small for the
+    gaps they yield before a terminal cell does. Horizontal separators span
+    each card and stop at its corner curves. The gaps share terminal background
+    color/opacity and the surface-wide blur request. Selected and hovered
+    header fills follow their card's corners, as does the framed keyboard-focus
+    outline. Separators stay straight during scrolling; card borders stay fixed
+    while overflowing headers scroll within each card.
+    `--pane-frames true|false` defaults to `true`; `false` removes the card
+    borders and separators while retaining headers, a lighter selected fill,
+    hover feedback and a distinct rounded keyboard-focus outline. Both modes
     preserve the same terminal grid, header hit targets and AccessKit bounds.
-    Initial requested grids include the bottom gap in their window overhead;
-    the gap accepts no pane or terminal input.
+    Initial requested grids include the card gaps in their window overhead;
+    the gaps accept no pane or terminal input. Column width and the 40-column
+    admission check both come from the card geometry.
     Changed pane lists resize the terminal even when the endpoint stays selected.
     The option has no visual effect in standalone or popup presentation.
     Missing, duplicate or invalid values fail before window creation. Eon owns
@@ -587,9 +587,12 @@ re-proved when that platform or feature is next touched.
   `each_column_keeps_forty_terminal_columns`. Isolated installed dogfood on a
   private headless Sway (`eon-splits-opwv` slice 4) observed live columns,
   attachment swap and reconcile, per-column resize and both refusal notices.
-  Fractional native scale remains to be dogfooded. Pending
-  re-proof in this repository: `--pane-frames false` and pane-stack pixel
-  checks, the ignored native long-label header regression, and reader
+  Fractional native scale remains to be dogfooded. Cards
+  (`eon-gapped-rounded-cards-txco`, whose commit is the revision) are covered by
+  `column_backgrounds_cover_the_gaps_between_cards` and the card geometry in
+  the scene tests above, and by isolated captures of the built package on a
+  private headless Sway at scale 1 in both frame modes. Pending re-proof in
+  this repository: the ignored native long-label header regression and reader
   announcement of a workspace failure notice.
 
 ## VEN-C9 — Optional native decorations
@@ -849,8 +852,8 @@ re-proved when that platform or feature is next touched.
   New tab and Alt+Shift+W retain the existing semantic CreateTab and
   exact-active-tab CloseTab actions. No local cancellation state or native
   picker is added.
-- **Geometry:** A selected popup reuses the workspace sheet's exact outer frame
-  without seams, so toggling preserves every outer chrome edge at any column
+- **Geometry:** A selected popup draws as one rounded card over the area the
+  column cards share, so toggling preserves the outer card edges at any column
   count. Shared Eon-supplied logical
   margins inset the popup terminal content within that stable shell. A compact
   border label keeps a small top gutter before terminal padding. Scene owns
@@ -1073,13 +1076,10 @@ re-proved when that platform or feature is next touched.
   outer groups near its edges and a lone group centered. Modifier headers alone
   have padded rounded backgrounds without braces; group bodies stay plain.
   Insets, badge padding and minimum gaps participate in whole-hint fitting.
-  The footer shares the sheet's side edges and one continuous outer frame, with
-  square lower corners on the window's bottom corners and a straight separator
-  at the join; column seams end at that separator in square
-  T-junctions. Below its compact row height, the footer also reserves the space
-  down to the window's bottom edge. The row is at least the edge padding tall,
-  preserving the straight separator at small font sizes. The bar uses the
-  inactive-tab background, coral red modifier headers, mint keys and gray labels.
+  The footer is the margin below the pane cards: its hints sit on the window
+  background without a frame, fill or separator, across the window's width,
+  and its band reaches the window's bottom edge. The row is at least the edge
+  padding tall. Hints use coral red modifier headers, mint keys and gray labels.
   Copy, Paste and Open link stay in full help and dispatch, without footer hints.
   Compact modifier headers use C/A/S aliases joined by hyphens, such as A-S.
   The compact tab range is 1..9; full help retains the tenth-tab Alt+0 binding.
@@ -1116,7 +1116,7 @@ re-proved when that platform or feature is next touched.
     `shortcut_hints_are_read_only_and_retire_hidden_help_actions` in the
     workspace suite; dogfood checklist item 5.
 - **Open proof:** Pending re-proof in this repository: native raster checks of
-  the square-cornered footer frame across widths and fractional scale, and read-only
+  the footer below the cards across widths and fractional scale, and read-only
   AT-SPI footer lifecycle.
 
 ## Rules

@@ -9,14 +9,14 @@
   column; a click on another column's terminal selects it. Alt+Shift+M sends
   EONW v10 `CreateColumn`; in a tab with one to three columns, Venus refuses it
   locally when a column would get fewer than 40 terminal columns (`eon-splits-opwv` slices 2–4).
-- VEN-C8, VEN-C18, VEN-C24: pane frames draw one workspace sheet flush with
-  the window's side edges; adjacent columns share one straight seam ending in
-  square T-junctions, and popups and the footer reuse its outer frame
-  (`eon-flush-workspace-sheet-5779`); the sheet and footer also reach the
-  window's bottom edge (`eon-flush-sheet-bottom-f68t`). Its corners are square
-  under a 2 px top edge, with the bottom corners on the window's corners
-  (`eon-sheet-bottom-square-top-thick-5iy8`, `eon-sheet-square-top-corners-e8pp`;
-  the rounded top corners of `eon-sheet-round-corners-ab92` were withdrawn).
+- VEN-C8, VEN-C18, VEN-C24: pane frames draw each column as its own rounded
+  card, with one even gap (8 logical pixels at default typography, also the
+  corner radius) from the window's sides, between cards and below the tab
+  pills; popups draw as one card, and the footer's hints sit bare in the
+  margin below the cards. Column width and the 40-column admission check use
+  the card geometry, and initial grids include the gaps
+  (`eon-gapped-rounded-cards-txco`; it replaces the unreleased flush workspace
+  sheet of `eon-flush-workspace-sheet-5779` and its follow-ups).
 - VEN-C1: an omitted or `random` cursor-tail color is chosen once per live
   endpoint, from the device, inode and change time of the workspace or Orbit
   socket, instead of once per launch, so a reattached window keeps its color.

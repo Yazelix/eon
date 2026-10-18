@@ -373,21 +373,22 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     directory label; home uses `~`, descendants use `~/`, and
     external paths remain absolute.
   - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
-    `config.toml` defaults to `true` and requests one thin square workspace
-    sheet: its sides and bottom sit on the window's edges, adjacent columns
-    share one straight seam that meets the sheet's top edge and the footer (or
-    the sheet's bottom edge when hints are hidden) in square T-junctions, and
-    separators spanning each column divide its visible pane stack, with a small
-    bottom gap (4 logical pixels at default typography) using terminal
-    background color/opacity under the existing surface-wide blur request. The
-    sheet's corners are square, its top edge is 2 pixels thick, and its bottom
-    corners sit on the window's bottom corners. Selected and hovered header
-    fills are square. `false` removes the sheet border, seams and separators
-    while retaining headers, selection, hover and keyboard focus; the popup and
-    footer outlines stay square. Both modes
+    `config.toml` defaults to `true` and draws each column's pane stack as its
+    own card: a thin 1-pixel rounded border around the column's headers and
+    expanded terminal, with separators spanning the card between stacked
+    panes. Cards keep one even gap (8 logical pixels at default typography,
+    also their corner radius) from the window's sides, from each other and
+    from the tab pills above; below them the footer's band is the margin, or
+    one gap when hints are hidden. Gaps and cards use terminal background
+    color/opacity under the existing surface-wide blur request, and on a
+    window too small for them the gaps yield before a terminal cell does.
+    Selected and hovered header fills follow their card's corners. A selected
+    popup or picker draws as one card over the same area. `false` removes the
+    card borders and separators while retaining headers, selection, hover and
+    keyboard focus. Both modes
     preserve terminal-grid and picker geometry. eonbase receives no
     workspace-frame override. Requested initial grids account for
-    the small bottom margin. Live surfaces retain their settings;
+    the card gaps. Live surfaces retain their settings;
     malformed or duplicate values reject a new launch or replacement without
     stopping existing terminals. Eon supplies the default; Eon Runtime owns the
     strict boolean and launch projection; Venus owns geometry, rendering,
@@ -496,8 +497,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   qualification with unmodified upstream Orca
   `d13f83dcf230fe1e66f1ed6dbfbf057840f55a6a`, which includes
   [the #757 correction](https://gitlab.gnome.org/GNOME/orca/-/commit/f0189cbf9e97208b7aceada7602bf00d2172aad3);
-  native selected-Orbit crash continuation and the rejected-action notice; pixel
-  checks of pane frames. Installed AT-SPI labels and broader reader use remain open. These checks do not establish uninterrupted picker rendering,
+  native selected-Orbit crash continuation and the rejected-action notice.
+  Cards (`eon-gapped-rounded-cards-txco`, whose commit is the revision): Venus
+  `column_backgrounds_cover_the_gaps_between_cards` and the card geometry in
+  `columns_sit_side_by_side_and_keep_the_selected_column_primary`,
+  `eon_workspace_becomes_one_bounded_native_accordion`,
+  `shared_popup_projection_keeps_hidden_work_and_one_input_surface` and
+  `each_column_keeps_forty_terminal_columns`; isolated captures of the built
+  package on a private headless Sway (1920x1080, scale 1) observed one, two,
+  stacked and four columns, hidden hints, a popup and `false`, with painted
+  gaps and no corner meeting a window edge, tab pill, label or the footer.
+  Installed AT-SPI labels and broader reader use remain open. These checks do not establish uninterrupted picker rendering,
   fractional-scale, wider compositor or non-systemd coverage.
 
 ## EON-C9 — Managed shell environment
@@ -1384,13 +1394,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   outer groups near its edges and a lone group centered. Modifier headers alone
   have padded rounded backgrounds without braces; group bodies stay plain.
   Insets, badge padding and minimum gaps participate in whole-hint fitting.
-  The footer shares the sheet's side edges and one continuous outer frame, with
-  square lower corners on the window's bottom corners and a straight separator
-  at the join; column seams end at that separator in square
-  T-junctions. Below its compact row height, the footer also reserves the space
-  down to the window's bottom edge. The row is at least the edge padding tall,
-  preserving the straight separator at small font sizes. The bar uses the
-  inactive-tab background, coral red modifier headers, mint keys and gray labels.
+  The footer is the margin below the pane cards: its hints sit on the window
+  background without a frame, fill or separator, across the window's width,
+  and its band reaches the window's bottom edge. The row is at least the edge
+  padding tall. Hints use coral red modifier headers, mint keys and gray labels.
   Copy, Paste and Open link retain their bindings and full-help
   entries, without footer hints. Compact headers use C/A/S aliases joined by
   hyphens, such as A-S; the compact tab range is 1..9, while full help retains
@@ -1424,9 +1431,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `shortcut_hints_are_read_only_and_retire_hidden_help_actions` and
     `workspace_shortcut_capture_starts_once_and_retains_release`. Installed
     checklist item 5.
-- **Open proof:** Pending re-proof in this repository: frame alignment and
-  corner geometry across widths, fractional scales and minimum fonts on an
-  installed surface. No performance, macOS or screen-reader workflow claim.
+- **Open proof:** Pending re-proof in this repository: footer placement below
+  the cards across widths, fractional scales and minimum fonts on an installed
+  surface. No performance, macOS or screen-reader workflow claim.
 
 ## EON-C25 — Running Eon version badge
 

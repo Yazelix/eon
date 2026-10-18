@@ -78,7 +78,7 @@ Pass `--pane-frames false` to hide decorative pane borders. The default is
 accessible bounds. Keyboard focus and hover remain visible with frames off.
 Missing, duplicate or invalid boolean values fail before window creation.
 Standalone and popup presentation have no pane frames; popups retain their own
-square outline. This is a startup option; Eon owns persistent product configuration.
+rounded card outline. This is a startup option; Eon owns persistent product configuration.
 
 Workspace mode opens the EONW transport first and waits for its accepted
 snapshot before attaching its terminal endpoint. The first snapshot may select

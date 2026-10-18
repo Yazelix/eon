@@ -77,11 +77,9 @@ Nova `85db9eefdbeae48fe29938ed23e28111ea5629d6` modifier formatting also
 informs modifier grouping and background roles. Venus uses unbraced badge
 headers, such as A-S, measured with their padding through the existing shaper.
 Compact grouping and modifier-only background formatting inform the footer;
-equal inter-group distribution, badge padding and the continuous main/footer
-frame are Eon's product choices. The footer's frame sits flush with the
-window's side and bottom edges, with its hints centered in it; the renderer
-draws the footer with square corners so it sits flush on the window's bottom
-corners below a straight upper separator. The existing initial grid overhead includes the
+equal inter-group distribution and badge padding are Eon's product choices.
+The footer is the bare margin below the pane cards, with its hints centered in
+a band that reaches the window's bottom edge. The existing initial grid overhead includes the
 footer's whole reserved height. The row keeps at least the edge padding height
 at minimum fonts.
 Existing rounded outline/fill
@@ -141,15 +139,19 @@ Provider collection and freshness remain Runtime responsibilities.
 stacked panes and separate frame visibility/rounded-corner settings. Apache-2.0
 inspection only; no source, Zellij configuration or live-update mechanism is
 reused. Eon's selected outcome was rounded frames enabled by default, with one
-startup boolean; radius remains presentation detail, and the current workspace
-sheet uses square corners (`eon-sheet-square-top-corners-e8pp`).
+startup boolean; radius remains presentation detail. After a flush workspace
+sheet whose rounded corners collided with the window corners, tab pills and
+footer, `eon-gapped-rounded-cards-txco` draws each column as its own card with
+an even gap, after Superlogical Rex's per-pane cards (macOS screenshot in
+Bitdoze's article, https://www.bitdoze.com/superlogical-rex/, checked
+2026-10-18; look only, no source).
 
 The existing Scene viewport/header/body bounds, 1.5-cell header height and padding
 retain grid sizing, hit targets and AccessKit ownership. A shared rounded outline
 and full-width separators connect the stack without filling the terminal interior;
 one-pixel clips of the existing rounded fill keep separators inside its corners.
-Scene reserves a small bottom margin and includes it in initial grid overhead.
-Selected and hovered header bands clip the same shared rounded shape, avoiding
+Scene owns the card gap and includes it in initial grid overhead.
+Selected and hovered header bands clip their card's rounded shape, avoiding
 pill ends inside the stack. The gap uses the existing terminal background and
 opacity. Pinned winit `7c209ec5bebbd2963f75a39f79b320af6b03f72c`, Wayland
 `window/state.rs::set_blur`, already requests blur over the entire surface; its

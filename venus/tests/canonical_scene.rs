@@ -70,9 +70,10 @@ fn shared_popup_projection_keeps_hidden_work_and_one_input_surface() {
     };
     let scene = project(&snapshot, PhysicalSize::new(960, 600));
     assert!(scene.panes.is_empty());
-    assert_eq!(scene.terminal.left, 8.0);
+    // The popup card keeps an 8-pixel gap; its terminal keeps the popup margins inside it.
+    assert_eq!(scene.terminal.left, 16.0);
     assert!(scene.terminal.top > scene.tab_viewport.bottom() + 4.0);
-    assert_eq!(scene.terminal.bottom(), 596.0);
+    assert_eq!(scene.terminal.bottom(), 588.0);
     assert_eq!(scene.hit_test(0.0, 50.0), None);
     assert_eq!(scene.hit_test(40.0, 60.0), Some(WorkspaceHit::Terminal));
     assert_eq!(
@@ -87,8 +88,10 @@ fn shared_popup_projection_keeps_hidden_work_and_one_input_surface() {
     assert_eq!(hidden.hit_test(40.0, 60.0), None);
     assert_eq!(model.snapshot().unwrap().tabs[0].popups.len(), 1);
     snapshot.tabs[0].selected_popup = Some("u1".into());
+    // The card gaps yield before the popup loses its one padded cell.
     let narrow = project(&snapshot, PhysicalSize::new(34, 74));
     assert_eq!(narrow.terminal.width, 34.0);
+    assert_eq!(narrow.terminal.height, 42.0);
     assert!(narrow.terminal.top >= narrow.tab_viewport.bottom());
     assert!(narrow.terminal.bottom() <= 74.0);
 }
@@ -276,8 +279,21 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
     );
     assert_eq!(scene.panes.iter().filter(|pane| pane.selected).count(), 1);
     assert_eq!(scene.pane_scroll_limit(), 0.0);
-    let bottom_margin = size.height as f32 - scene.pane_viewport.bottom();
-    assert!(bottom_margin > 0.0 && bottom_margin <= metrics.padding / 2.0);
+    // The card keeps one 8-pixel gap above the window's bottom edge.
+    assert_eq!(size.height as f32 - scene.pane_viewport.bottom(), 8.0);
+    // On a short window the gaps yield before the terminal loses its one padded row.
+    let short = WorkspaceScene::from_snapshot(
+        &snapshot,
+        PhysicalSize::new(800, 105),
+        metrics,
+        0.0,
+        0.0,
+        |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+    );
+    assert_eq!(
+        short.terminal.height,
+        metrics.padding * 2.0 + metrics.height
+    );
     assert_eq!(
         scene.hit_test(10.0, size.height as f32 - 1.0),
         None,
@@ -1131,7 +1147,7 @@ fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
         ]
     );
 
-    // Terminals tile the width left to right without overlapping.
+    // Column cards keep one 8-pixel gap from the window's sides and between each other.
     let mut terminals = scene
         .other_columns
         .iter()
@@ -1139,14 +1155,14 @@ fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
         .chain([(scene.selected_column, scene.terminal)])
         .collect::<Vec<_>>();
     terminals.sort_by_key(|(index, _)| *index);
-    assert_eq!(terminals[0].1.left, 0.0);
+    assert_eq!(terminals[0].1.left, 8.0);
     for pair in terminals.windows(2) {
-        assert_eq!(pair[0].1.right(), pair[1].1.left);
+        assert_eq!(pair[1].1.left - pair[0].1.right(), 8.0);
     }
-    assert_eq!(terminals[2].1.right(), size.width as f32);
+    assert_eq!(terminals[2].1.right(), size.width as f32 - 8.0);
     // The last column takes the remainder, and headers share their column's span.
     let widths: Vec<f32> = terminals.iter().map(|entry| entry.1.width).collect();
-    assert_eq!(widths, [300.0, 300.0, 301.0]);
+    assert_eq!(widths, [289.0, 289.0, 291.0]);
     for column in &scene.other_columns {
         for pane in &column.panes {
             assert_eq!(pane.rect.left, column.terminal.left);
@@ -1175,4 +1191,19 @@ fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
         scene.hit_test(scene.terminal.left + 5.0, scene.terminal.top + 5.0),
         Some(WorkspaceHit::Terminal)
     ));
+
+    // Gaps yield before any column loses its one padded terminal cell.
+    let narrow = WorkspaceScene::from_snapshot(
+        &snapshot,
+        PhysicalSize::new(102, 600),
+        CellMetrics::for_scale(1.0),
+        0.0,
+        0.0,
+        |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+    );
+    assert!(
+        std::iter::once(narrow.terminal)
+            .chain(narrow.other_columns.iter().map(|column| column.terminal))
+            .all(|terminal| terminal.width >= 34.0)
+    );
 }

@@ -80,12 +80,11 @@ changing the selected tab, pane, popup or focus. The choice lasts for that
 window, including across resize. Hints use the current bindings and enabled
 popup labels, and follow native terminal, tab and pane focus. Shared modifiers
 appear once per group: C means Ctrl, A means Alt, and S means Shift.
-Compact groups spread across the outlined bar with equal gaps and the outer
+Compact groups spread across the bar with equal gaps and the outer
 groups near its edges; a lone group stays centered. Hint spacing stays compact.
-Only modifier headers have padded rounded backgrounds. The columns and footer
-share one frame that reaches the window's side and bottom edges: side-by-side
-columns are divided by single straight lines, which meet the footer's straight
-separator. Hiding the footer returns its row to terminal content.
+Only modifier headers have padded rounded backgrounds. Each column is its own
+rounded card with an even gap around it, and the hints sit bare in the margin
+below the cards. Hiding the footer returns its row to terminal content.
 Coral red modifier badges use plain aliases, such as C-A, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects
 the tenth tab. The move hint groups H/L for tabs and K/J for panes.

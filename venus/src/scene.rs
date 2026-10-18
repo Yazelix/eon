@@ -618,9 +618,9 @@ pub struct WorkspaceScene {
     pub other_columns: Vec<WorkspaceColumn>,
     pub tab_viewport: SceneRect,
     pub pane_viewport: SceneRect,
+    /// The selected column's card, or the popup's; `other_columns` hold their own.
     pub(crate) chrome: SceneRect,
-    sheet: SceneRect,
-    corner_radius: f32,
+    card_radius: f32,
     tab_scroll: f32,
     pane_scroll: f32,
     tab_scroll_limit: f32,
@@ -630,10 +630,10 @@ pub struct WorkspaceScene {
     popup_label: Option<String>,
 }
 
-/// Width of each of `count` equal columns across `width`; the last column also
-/// takes the remainder, so this is the narrowest.
-pub fn workspace_column_width(width: f32, count: usize) -> f32 {
-    (width / count as f32).floor()
+/// Width of each of `count` equal column cards in a window `width` wide, after the card gap
+/// beside and between them; the last column also takes the remainder, so this is the narrowest.
+pub fn workspace_column_width(width: f32, count: usize, metrics: CellMetrics) -> f32 {
+    ((width - side_gap(width, count, metrics) * (count + 1) as f32).max(0.0) / count as f32).floor()
 }
 
 fn header_heights(metrics: CellMetrics) -> (f32, f32) {
@@ -647,21 +647,49 @@ fn tab_gap(metrics: CellMetrics, tab_height: f32) -> f32 {
     (metrics.padding / 3.0).min(tab_height / 4.0)
 }
 
-/// Left inset of the first tab: its pill's drawn arc, of `pill_radius`, is centered over the
-/// sheet's top-left corner arc of `corner_radius` when the tab of `tab_width` still fits the strip
-/// beside that inset, else the ordinary gap.
-fn tab_lead(
-    gap: f32,
-    viewport_width: f32,
-    corner_radius: f32,
-    pill_radius: f32,
-    tab_width: f32,
-) -> f32 {
-    let aligned = (corner_radius - pill_radius).max(gap);
-    if viewport_width >= aligned + tab_width + gap {
-        aligned
-    } else {
-        gap
+/// The even gap around and between pane cards, which is also their corner radius: 8 logical
+/// pixels at default typography, always less than the label padding so no label meets a curve.
+fn card_gap(metrics: CellMetrics) -> f32 {
+    (metrics.padding * 2.0 / 3.0).round()
+}
+
+/// The width or height a terminal needs for one padded cell.
+fn minimum_terminal(metrics: CellMetrics, cell: f32) -> f32 {
+    metrics.padding * 2.0 + cell
+}
+
+/// The card gap beside and between `count` columns, which yields before any column loses its last
+/// padded terminal cell.
+fn side_gap(width: f32, count: usize, metrics: CellMetrics) -> f32 {
+    let spare = width - minimum_terminal(metrics, metrics.width) * count as f32;
+    card_gap(metrics).min((spare / (count + 1) as f32).max(0.0))
+}
+
+/// The area `count` cards share: inset from the window's sides by the card gap, starting one gap
+/// below the tab pills and ending one gap above the window's bottom, or at the footer, whose
+/// band is the bottom margin when hints show. Gaps yield before a card loses the `minimum_height`
+/// its last padded terminal row needs.
+fn card_area(
+    width: f32,
+    count: usize,
+    tab_height: f32,
+    content_height: f32,
+    hints: bool,
+    minimum_height: f32,
+    metrics: CellMetrics,
+) -> SceneRect {
+    let gap = card_gap(metrics);
+    let side = side_gap(width, count, metrics);
+    let mut spare = (content_height - tab_height - minimum_height).max(0.0);
+    let below = if hints { 0.0 } else { gap.min(spare) };
+    spare -= below;
+    let top =
+        (tab_height + (gap - tab_gap(metrics, tab_height)).max(0.0).min(spare)).min(content_height);
+    SceneRect {
+        left: side,
+        top,
+        width: (width - side * 2.0).max(0.0),
+        height: (content_height - below - top).max(0.0),
     }
 }
 
@@ -865,18 +893,7 @@ fn pane_inset(metrics: CellMetrics) -> f32 {
     stack_inset(metrics).min(metrics.height / 4.0)
 }
 
-/// Horizontal distance from a rounded corner's straight edge to its curve, `depth` pixels in from
-/// the perpendicular edge.
-pub(crate) fn corner_clearance(radius: f32, depth: f32) -> f32 {
-    let depth = depth.max(0.0);
-    if depth >= radius {
-        0.0
-    } else {
-        radius - (radius * radius - (radius - depth).powi(2)).sqrt()
-    }
-}
-
-/// Insets chrome vertically only, so frames sit flush with the window's and columns' sides.
+/// Insets chrome vertically only, keeping a frameless header fill off its neighbours.
 pub(crate) fn pane_chrome_rect(rect: SceneRect, metrics: CellMetrics) -> SceneRect {
     let inset = pane_inset(metrics);
     SceneRect {
@@ -897,27 +914,6 @@ pub(crate) fn inset_sides(rect: SceneRect, metrics: CellMetrics) -> SceneRect {
     }
 }
 
-/// Widens a column's chrome past each interior seam by twice `radius`, so a rounded shape clipped
-/// to the column keeps rounded corners only at the sheet's outer edges and is never too narrow to
-/// hold the full radius.
-pub(crate) fn seam_extended(column: SceneRect, sheet: SceneRect, radius: f32) -> SceneRect {
-    let left = if column.left > sheet.left {
-        column.left - radius * 2.0
-    } else {
-        column.left
-    };
-    let right = if column.right() < sheet.right() {
-        column.right() + radius * 2.0
-    } else {
-        column.right()
-    };
-    SceneRect {
-        left,
-        width: right - left,
-        ..column
-    }
-}
-
 impl WorkspaceScene {
     /// Maximum shaped label width inside this surface's tab viewport.
     #[must_use]
@@ -932,11 +928,17 @@ impl WorkspaceScene {
     #[must_use]
     pub fn initial_overhead(snapshot: &Snapshot, metrics: CellMetrics) -> (f32, f32) {
         let (tab_height, pane_height) = header_heights(metrics);
+        // Cards sit inside the side gaps and one gap below the tab pills; the footer is their
+        // bottom margin.
+        let gap = card_gap(metrics);
+        let sides = gap * 2.0;
+        let above = ShortcutHintsScene::reserved_height(metrics)
+            + tab_height
+            + (gap - tab_gap(metrics, tab_height)).max(0.0);
         if active_popup(snapshot).is_some() {
             (
-                snapshot.geometry.side_margin * metrics.scale * 2.0,
-                ShortcutHintsScene::reserved_height(metrics)
-                    + tab_height
+                snapshot.geometry.side_margin * metrics.scale * 2.0 + sides,
+                above
                     + snapshot.geometry.vertical_margin * metrics.scale * 2.0
                     + popup_title_gutter(metrics),
             )
@@ -947,15 +949,8 @@ impl WorkspaceScene {
                 .find(|tab| tab.id == snapshot.active_tab)
                 .expect("EONW validates the active tab");
             (
-                0.0,
-                ShortcutHintsScene::reserved_height(metrics)
-                    + tab_height
-                    + pane_height * presented_panes(tab).len() as f32
-                    + if presented_panes(tab).is_empty() {
-                        0.0
-                    } else {
-                        stack_inset(metrics)
-                    },
+                sides,
+                above + pane_height * presented_panes(tab).len() as f32,
             )
         }
     }
@@ -1081,21 +1076,11 @@ impl WorkspaceScene {
             left = quota.rect.right();
         }
         let max_tab_width = tab_max_width(metrics, tab_viewport.width);
-        let pane_viewport = SceneRect {
-            left: 0.0,
-            top: tab_height,
-            width,
-            height: (content_height - tab_height).max(0.0),
-        };
         let active_tab = snapshot
             .tabs
             .iter()
             .position(|tab| tab.id == snapshot.active_tab)
             .expect("EONW validates the active tab");
-        // The sheet's corners are square for now (Lucca, 2026-10-17: the rounded top corners
-        // looked bad); the drawing, clearance and first-tab paths still follow this one radius.
-        let corner_radius = 0.0;
-        let pill_height = (tab_height - gap * 2.0).max(0.0);
         let mut tab_end = gap;
         let mut tabs: Vec<_> = snapshot
             .tabs
@@ -1107,19 +1092,7 @@ impl WorkspaceScene {
                 let (label, text_width) = header_text(Some(&tab.id), &label);
                 let tab_width = (text_width.ceil() + metrics.padding * 2.0)
                     .clamp((metrics.font_size * 4.0).min(max_tab_width), max_tab_width);
-                // The first pill's drawn arc is centered over the sheet's top-left corner arc; with
-                // square corners this is the ordinary gap.
-                let left = if index == 0 {
-                    tab_lead(
-                        gap,
-                        tab_viewport.width,
-                        corner_radius,
-                        (pill_height.min(tab_width) / 2.0).floor(),
-                        tab_width,
-                    )
-                } else {
-                    tab_end
-                };
+                let left = tab_end;
                 tab_end = left + tab_width + gap;
                 WorkspaceTab {
                     id: tab.id.clone(),
@@ -1173,7 +1146,7 @@ impl WorkspaceScene {
         });
         let tab_scroll_limit = (tab_end - tab_viewport.width).max(0.0);
         let active = tabs[active_tab].rect;
-        // Revealing the first tab never scrolls, which keeps its pill aligned over the corner.
+        // Revealing the first tab never scrolls.
         let active_tab_scroll = if active_tab == 0 {
             0.0
         } else {
@@ -1190,21 +1163,30 @@ impl WorkspaceScene {
         }
         let active = &snapshot.tabs[active_tab];
         let popup = active_popup(snapshot);
-        let stack_viewport = SceneRect {
-            height: (pane_viewport.height - stack_inset(metrics)).max(0.0),
-            ..pane_viewport
-        };
-        let chrome = pane_chrome_rect(stack_viewport, metrics);
-        let sheet = SceneRect {
-            top: chrome.top,
-            height: (height - chrome.top).max(0.0),
-            ..pane_viewport
-        };
+        // Every card shares this area; a popup or an empty tab uses all of it as one card. The
+        // area follows the tab's columns whether or not a popup covers them, so toggling a popup
+        // keeps the outer card edges: each column needs one padded cell below its first header.
+        let pane_viewport = card_area(
+            width,
+            active.columns.len().max(1),
+            tab_height,
+            content_height,
+            hints.is_some(),
+            minimum_terminal(metrics, metrics.height)
+                + if active.columns.is_empty() {
+                    0.0
+                } else {
+                    pane_height
+                },
+            metrics,
+        );
+        let card_radius = card_gap(metrics);
         if popup.is_some() || active.columns.is_empty() {
-            let horizontal_inset = (snapshot.geometry.side_margin * metrics.scale)
-                .min((pane_viewport.width - metrics.padding * 2.0 - metrics.width).max(0.0) / 2.0);
+            let horizontal_inset = (snapshot.geometry.side_margin * metrics.scale).min(
+                (pane_viewport.width - minimum_terminal(metrics, metrics.width)).max(0.0) / 2.0,
+            );
             let vertical_inset = (snapshot.geometry.vertical_margin * metrics.scale).min(
-                (pane_viewport.height - metrics.padding * 2.0 - metrics.height).max(0.0) / 2.0,
+                (pane_viewport.height - minimum_terminal(metrics, metrics.height)).max(0.0) / 2.0,
             );
             let title_gutter = if popup.is_some() {
                 popup_title_gutter(metrics).min(
@@ -1229,7 +1211,7 @@ impl WorkspaceScene {
                 selected_column: 0,
                 other_columns: Vec::new(),
                 terminal: SceneRect {
-                    left: horizontal_inset,
+                    left: pane_viewport.left + horizontal_inset,
                     top: pane_viewport.top + vertical_inset + title_gutter,
                     width: if popup.is_some() {
                         (pane_viewport.width - horizontal_inset * 2.0).max(0.0)
@@ -1244,9 +1226,8 @@ impl WorkspaceScene {
                 },
                 tab_viewport,
                 pane_viewport,
-                chrome,
-                sheet,
-                corner_radius,
+                chrome: pane_viewport,
+                card_radius,
                 tab_scroll,
                 pane_scroll: 0.0,
                 tab_scroll_limit,
@@ -1265,7 +1246,6 @@ impl WorkspaceScene {
             };
         }
 
-        let pane_viewport = stack_viewport;
         let active = &snapshot.tabs[active_tab];
         let pane_height = pane_height.min(pane_viewport.height);
         let selected = active
@@ -1278,16 +1258,17 @@ impl WorkspaceScene {
             .position(|column| column.expanded == *selected)
             .expect("EONW validates the selected pane");
         let count = active.columns.len();
-        let column_width = workspace_column_width(width, count);
+        let column_gap = side_gap(width, count, metrics);
+        let column_width = workspace_column_width(width, count, metrics);
         let maximum_terminal_height = (pane_viewport.height - pane_height).max(0.0);
         let minimum_terminal_height =
-            (metrics.padding * 2.0 + metrics.height).min(maximum_terminal_height);
+            minimum_terminal(metrics, metrics.height).min(maximum_terminal_height);
         let mut selected_layout = None;
         let mut other_columns = Vec::with_capacity(count - 1);
         for (index, column) in active.columns.iter().enumerate() {
-            let left = index as f32 * column_width;
+            let left = pane_viewport.left + index as f32 * (column_width + column_gap);
             let column_width = if index + 1 == count {
-                width - left
+                (pane_viewport.right() - left).max(0.0)
             } else {
                 column_width
             };
@@ -1326,7 +1307,7 @@ impl WorkspaceScene {
                         selected: position == expanded,
                         rect: SceneRect {
                             left,
-                            top: tab_height
+                            top: pane_viewport.top
                                 + position as f32 * pane_height
                                 + if position > expanded {
                                     terminal_height
@@ -1343,18 +1324,15 @@ impl WorkspaceScene {
                 .collect::<Vec<_>>();
             let terminal = SceneRect {
                 left,
-                top: tab_height + (expanded + 1) as f32 * pane_height - column_scroll,
+                top: pane_viewport.top + (expanded + 1) as f32 * pane_height - column_scroll,
                 width: column_width,
                 height: terminal_height,
             };
-            let chrome = pane_chrome_rect(
-                SceneRect {
-                    left,
-                    width: column_width,
-                    ..stack_viewport
-                },
-                metrics,
-            );
+            let chrome = SceneRect {
+                left,
+                width: column_width,
+                ..pane_viewport
+            };
             if index == selected_column {
                 selected_layout = Some((
                     panes,
@@ -1391,8 +1369,7 @@ impl WorkspaceScene {
             tab_viewport,
             pane_viewport,
             chrome,
-            sheet,
-            corner_radius,
+            card_radius,
             tab_scroll,
             pane_scroll,
             tab_scroll_limit,
@@ -1403,53 +1380,9 @@ impl WorkspaceScene {
         }
     }
 
-    /// The workspace sheet: the full width, from the stack chrome's top to the window's bottom
-    /// edge, through the footer when hints show.
-    pub(crate) fn sheet(&self) -> SceneRect {
-        self.sheet
-    }
-
-    /// The sheet's rounded shape: the sheet extended below the window, so only its top corners
-    /// round and its bottom corners stay square on the window's corners.
-    pub(crate) fn sheet_shape(&self) -> SceneRect {
-        SceneRect {
-            height: self.sheet.height + self.corner_radius * 2.0,
-            ..self.sheet
-        }
-    }
-
-    /// The sheet's drawn top corner radius; zero while its corners are square.
-    pub(crate) fn corner_radius(&self) -> f32 {
-        self.corner_radius
-    }
-
-    /// Extra left and right insets that keep header content clear of the sheet's rounded outer
-    /// corners. `extent` is the content's half height around the header's middle: zero for text,
-    /// whose ascender space may overlap the curve while the glyphs clear it, and the box's own
-    /// half height for a filled box such as the scrollback pill.
-    pub(crate) fn header_corner_insets(
-        &self,
-        header: SceneRect,
-        metrics: CellMetrics,
-        extent: f32,
-    ) -> (f32, f32) {
-        let radius = self.corner_radius;
-        let middle = header.top + header.height / 2.0;
-        // Only the top corners are rounded.
-        let clearance = corner_clearance(radius, middle - extent - self.sheet.top);
-        let extra = (clearance + metrics.padding / 2.0 - metrics.padding).max(0.0);
-        (
-            if header.left <= self.sheet.left {
-                extra
-            } else {
-                0.0
-            },
-            if header.right() >= self.sheet.right() {
-                extra
-            } else {
-                0.0
-            },
-        )
+    /// Corner radius of every pane and popup card.
+    pub(crate) fn card_radius(&self) -> f32 {
+        self.card_radius
     }
 
     /// Every column's headers left to right, each flagged when it is the selected column.
@@ -2215,11 +2148,41 @@ mod tests {
         let popup = project(&snapshot);
 
         assert_eq!(popup.chrome, stack.chrome);
-        // The sheet's sides sit on the window's side edges.
-        assert_eq!((stack.chrome.left, stack.chrome.right()), (0.0, 960.0));
-        assert_ne!(popup.terminal, popup.chrome);
         let size = PhysicalSize::new(960, 600);
         let metrics = CellMetrics::for_scale(1.0);
+        let gap = card_gap(metrics);
+        // The card keeps one gap from the window's sides.
+        assert_eq!(
+            (stack.chrome.left, stack.chrome.right()),
+            (gap, 960.0 - gap)
+        );
+        assert_ne!(popup.terminal, popup.chrome);
+        // Toggling the popup keeps the shared card area, even where gaps yield on narrow or
+        // short windows with several columns.
+        let mut columns = snapshot.clone();
+        for index in 2..=3 {
+            columns.tabs[0]
+                .columns
+                .push(eon_workspace_protocol::v10::Column {
+                    panes: vec![Pane {
+                        id: format!("p{index}"),
+                        session: format!("session-{}", index + 1),
+                        endpoint: format!("/run/pane-{index}.sock").into_bytes(),
+                        live: true,
+                    }],
+                    expanded: format!("p{index}"),
+                });
+        }
+        for size in [PhysicalSize::new(120, 600), PhysicalSize::new(800, 105)] {
+            let areas = [None, Some("u1".into())].map(|selected_popup| {
+                columns.tabs[0].selected_popup = selected_popup;
+                WorkspaceScene::from_snapshot(&columns, size, metrics, 0.0, 0.0, |_, text| {
+                    (text.into(), text.len() as f32 * 10.0)
+                })
+                .pane_viewport
+            });
+            assert_eq!(areas[0], areas[1], "{size:?}");
+        }
         for selected_popup in [None, Some("u1".into())] {
             snapshot.tabs[0].selected_popup = selected_popup;
             let baseline = project(&snapshot);
@@ -2250,21 +2213,15 @@ mod tests {
                     |_, text| (text.into(), text.len() as f32 * 10.0),
                     Some(footer),
                 );
+                // The footer's band replaces the bottom gap as the cards' bottom margin.
                 assert_eq!(
                     baseline.terminal.height - with_hints.terminal.height,
-                    footer_rect.height + size.height as f32 - footer_rect.bottom()
+                    footer_rect.height - gap
                 );
-                assert_eq!(
-                    baseline.pane_viewport.bottom() - with_hints.pane_viewport.bottom(),
-                    footer_rect.height + size.height as f32 - footer_rect.bottom()
-                );
-                assert_eq!(footer_rect.left, with_hints.chrome.left);
-                assert_eq!(footer_rect.right(), with_hints.chrome.right());
-                // The footer and the hidden-footer sheet both end on the window's bottom edge.
+                assert_eq!(baseline.pane_viewport.bottom(), size.height as f32 - gap);
+                assert_eq!(with_hints.pane_viewport.bottom(), footer_rect.top);
                 assert_eq!(footer_rect.bottom(), size.height as f32);
-                assert_eq!(baseline.sheet().bottom(), size.height as f32);
-                assert_eq!(with_hints.sheet().bottom(), size.height as f32);
-                assert!(with_hints.pane_viewport.bottom() <= footer_rect.top);
+                assert_eq!(with_hints.chrome.left, gap);
                 assert_eq!(with_hints.hit_test(20.0, footer_rect.top + 5.0), None);
                 assert_eq!(
                     with_hints.has_control(WorkspaceHeaderControl::Shortcuts),

@@ -37,7 +37,7 @@ pub(super) fn initial_window_size(
     let (horizontal, vertical) = snapshot.map_or((0.0, 0.0), |snapshot| {
         WorkspaceScene::initial_overhead(snapshot, metrics)
     });
-    let size = PhysicalSize::new(
+    let mut size = PhysicalSize::new(
         columns.map_or((960.0 * scale).round() as u32, |columns| {
             (f32::from(columns) * metrics.width + metrics.padding * 2.0 + horizontal).ceil() as u32
         }),
@@ -47,38 +47,74 @@ pub(super) fn initial_window_size(
     );
     let limit = wgpu::Limits::default().max_texture_dimension_2d;
     // Grid admission depends on header heights, not tab text fitting.
-    let workspace = snapshot.map(|snapshot| {
-        WorkspaceScene::from_snapshot_with_metadata(
-            snapshot,
-            None,
-            size,
-            metrics,
-            0.0,
-            0.0,
-            |_| None,
-            |_, _| (String::new(), 0.0),
-            Some(ShortcutHintsScene::new(
-                Vec::new(),
+    let measure = |size: PhysicalSize<u32>| {
+        let workspace = snapshot.map(|snapshot| {
+            WorkspaceScene::from_snapshot_with_metadata(
+                snapshot,
+                None,
                 size,
                 metrics,
-                WorkspaceFocus::Terminal,
-                |_| 0.0,
-            )),
-        )
-    });
-    let terminal = workspace
-        .as_ref()
-        .filter(|workspace| workspace.panes.is_empty() && workspace.popup_label().is_none())
-        .map_or_else(
-            || terminal_screen(workspace.as_ref(), size),
-            |workspace| {
-                // Admit space for later work without creating or attaching a placeholder.
-                PhysicalSize::new(
-                    workspace.pane_viewport.width as u32,
-                    workspace.pane_viewport.height as u32,
-                )
-            },
+                0.0,
+                0.0,
+                |_| None,
+                |_, _| (String::new(), 0.0),
+                Some(ShortcutHintsScene::new(
+                    Vec::new(),
+                    size,
+                    metrics,
+                    WorkspaceFocus::Terminal,
+                    |_| 0.0,
+                )),
+            )
+        });
+        workspace
+            .as_ref()
+            .filter(|workspace| workspace.panes.is_empty() && workspace.popup_label().is_none())
+            .map_or_else(
+                || terminal_screen(workspace.as_ref(), size),
+                |workspace| {
+                    // Admit space for later work without creating or attaching a placeholder.
+                    PhysicalSize::new(
+                        workspace.pane_viewport.width as u32,
+                        workspace.pane_viewport.height as u32,
+                    )
+                },
+            )
+    };
+    let mut terminal = measure(size);
+    // Card gaps yield on tiny windows, so the overhead estimate can miss a tiny requested grid;
+    // the window then grows or shrinks by each axis's shortfall until the layout gives the grid.
+    for _ in 0..8 {
+        let actual = surface_size(terminal, metrics);
+        let shortfall = |cells: Option<u16>, actual: Option<u16>, cell: f32, pixels: u32| {
+            cells
+                .filter(|cells| Some(*cells) != actual)
+                .map_or(0, |cells| {
+                    (f32::from(cells) * cell + metrics.padding * 2.0).ceil() as i64
+                        - i64::from(pixels)
+                })
+        };
+        let width = shortfall(
+            columns,
+            actual.map(|actual| actual.cols),
+            metrics.width,
+            terminal.width,
         );
+        let height = shortfall(
+            rows,
+            actual.map(|actual| actual.rows),
+            metrics.height,
+            terminal.height,
+        );
+        if width == 0 && height == 0 {
+            break;
+        }
+        size = PhysicalSize::new(
+            (i64::from(size.width) + width).max(1) as u32,
+            (i64::from(size.height) + height).max(1) as u32,
+        );
+        terminal = measure(size);
+    }
     let admitted = surface_size(terminal, metrics);
     if size.width > limit
         || size.height > limit
@@ -109,7 +145,7 @@ pub(super) fn admits_column(
     if columns == 0 || columns >= MAX_COLUMNS {
         return true;
     }
-    let width = workspace_column_width(window.width as f32, columns + 1);
+    let width = workspace_column_width(window.width as f32, columns + 1, metrics);
     surface_size(PhysicalSize::new(width as u32, window.height), metrics)
         .is_some_and(|size| size.cols >= MIN_COLUMN_CELLS)
 }
@@ -225,6 +261,34 @@ mod tests {
                 }
             }
         }
+        // Card gaps yield on tiny windows; the window still gives a tiny requested grid, here for
+        // a popup over two columns.
+        snapshot.tabs[0]
+            .columns
+            .push(eon_workspace_protocol::v10::Column {
+                panes: vec![Pane {
+                    id: "p4".into(),
+                    session: "s4".into(),
+                    endpoint: b"/tmp/4.sock".to_vec(),
+                    live: true,
+                }],
+                expanded: "p4".into(),
+            });
+        for (columns, rows) in [(1, 1), (1, 30), (100, 1)] {
+            for scale in [1.0, 1.25, 2.0] {
+                assert!(
+                    initial_window_size(
+                        Some(columns),
+                        Some(rows),
+                        CellMetrics::for_scale(scale),
+                        scale,
+                        Some(&snapshot)
+                    )
+                    .is_ok(),
+                    "{columns}x{rows} at {scale}"
+                );
+            }
+        }
         let metrics = CellMetrics::for_scale(1.0);
         snapshot.tabs[0].columns.clear();
         snapshot.tabs[0].selected_pane = None;
@@ -264,15 +328,19 @@ mod tests {
         let metrics = CellMetrics::for_scale(1.0);
         let column = u32::from(MIN_COLUMN_CELLS) * metrics.width.round() as u32
             + 2 * metrics.padding.round() as u32;
+        // The card gap at default typography.
+        let gap = 8;
         for existing in 1..MAX_COLUMNS {
             let count = existing as u32 + 1;
+            // Cards keep one gap beside and between them.
+            let window = column * count + gap * (count + 1);
             assert!(admits_column(
-                PhysicalSize::new(column * count, 600),
+                PhysicalSize::new(window, 600),
                 existing,
                 metrics
             ));
             assert!(!admits_column(
-                PhysicalSize::new(column * count - 1, 600),
+                PhysicalSize::new(window - 1, 600),
                 existing,
                 metrics
             ));
