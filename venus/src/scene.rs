@@ -865,12 +865,6 @@ fn pane_inset(metrics: CellMetrics) -> f32 {
     stack_inset(metrics).min(metrics.height / 4.0)
 }
 
-/// The workspace sheet's top corner radius: its curve meets the window's side edge at the first
-/// pane header's bottom. The bottom corners stay square.
-pub(crate) fn sheet_radius(metrics: CellMetrics) -> f32 {
-    (header_heights(metrics).1 - pane_inset(metrics) / 2.0).max(0.0)
-}
-
 /// Horizontal distance from a rounded corner's straight edge to its curve, `depth` pixels in from
 /// the perpendicular edge.
 pub(crate) fn corner_clearance(radius: f32, depth: f32) -> f32 {
@@ -1098,24 +1092,9 @@ impl WorkspaceScene {
             .iter()
             .position(|tab| tab.id == snapshot.active_tab)
             .expect("EONW validates the active tab");
-        // One drawn corner radius for the whole sheet, clamped to half its size, to the narrowest
-        // column's width so each curve stays inside its outer column, and above the footer so the
-        // top curves end before it.
-        // Popups reuse the tab's sheet, so its columns clamp the radius under a popup too.
-        let columns = snapshot.tabs[active_tab].columns.len();
-        let corner_radius = sheet_radius(metrics)
-            .min(width / 2.0)
-            .min((height - tab_height - pane_inset(metrics) / 2.0).max(0.0) / 2.0)
-            .min(hints.as_ref().map_or(f32::INFINITY, |hints| {
-                (hints.rect.top - tab_height - pane_inset(metrics) / 2.0).max(0.0)
-            }))
-            .min(if columns == 0 {
-                f32::INFINITY
-            } else {
-                workspace_column_width(width, columns)
-            })
-            .max(0.0)
-            .floor();
+        // The sheet's corners are square for now (Lucca, 2026-10-17: the rounded top corners
+        // looked bad); the drawing, clearance and first-tab paths still follow this one radius.
+        let corner_radius = 0.0;
         let pill_height = (tab_height - gap * 2.0).max(0.0);
         let mut tab_end = gap;
         let mut tabs: Vec<_> = snapshot
@@ -1128,7 +1107,8 @@ impl WorkspaceScene {
                 let (label, text_width) = header_text(Some(&tab.id), &label);
                 let tab_width = (text_width.ceil() + metrics.padding * 2.0)
                     .clamp((metrics.font_size * 4.0).min(max_tab_width), max_tab_width);
-                // The first pill's drawn arc is centered over the sheet's top-left corner arc.
+                // The first pill's drawn arc is centered over the sheet's top-left corner arc; with
+                // square corners this is the ordinary gap.
                 let left = if index == 0 {
                     tab_lead(
                         gap,
@@ -1438,8 +1418,7 @@ impl WorkspaceScene {
         }
     }
 
-    /// The sheet's drawn corner radius: `sheet_radius`, clamped to half the sheet's size, the
-    /// narrowest column and the space above the footer.
+    /// The sheet's drawn top corner radius; zero while its corners are square.
     pub(crate) fn corner_radius(&self) -> f32 {
         self.corner_radius
     }
@@ -2236,15 +2215,8 @@ mod tests {
         let popup = project(&snapshot);
 
         assert_eq!(popup.chrome, stack.chrome);
-        assert_eq!(popup.corner_radius(), stack.corner_radius());
         // The sheet's sides sit on the window's side edges.
         assert_eq!((stack.chrome.left, stack.chrome.right()), (0.0, 960.0));
-        // The first tab pill's drawn arc is centered over the sheet's drawn top-left corner arc.
-        let first_tab = stack.tabs[0].rect;
-        assert_eq!(
-            first_tab.left + (first_tab.height.min(first_tab.width) / 2.0).floor(),
-            stack.corner_radius()
-        );
         assert_ne!(popup.terminal, popup.chrome);
         let size = PhysicalSize::new(960, 600);
         let metrics = CellMetrics::for_scale(1.0);

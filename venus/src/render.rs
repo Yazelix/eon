@@ -1878,8 +1878,9 @@ struct RectangleBatch {
 }
 
 impl RectangleBatch {
-    /// The workspace sheet's border inside `clip`: rounded top corners under a 2 px top edge,
-    /// 1 px sides and, when `bottom` is set, a square 1 px bottom edge on the window's bottom.
+    /// The workspace sheet's border inside `clip`: a 2 px top edge over the sheet's top corners
+    /// (square while the corner radius is zero), 1 px sides and, when `bottom` is set, a square
+    /// 1 px bottom edge on the window's bottom.
     fn push_sheet_border(
         &mut self,
         workspace: &WorkspaceScene,

@@ -140,8 +140,9 @@ Provider collection and freshness remain Runtime responsibilities.
 `layout.swap.kdl`, and the `yzx-config` catalog/model show full pane frames,
 stacked panes and separate frame visibility/rounded-corner settings. Apache-2.0
 inspection only; no source, Zellij configuration or live-update mechanism is
-reused. Eon's selected outcome is rounded frames enabled by default, with one
-startup boolean; radius remains presentation detail.
+reused. Eon's selected outcome was rounded frames enabled by default, with one
+startup boolean; radius remains presentation detail, and the current workspace
+sheet uses square corners (`eon-sheet-square-top-corners-e8pp`).
 
 The existing Scene viewport/header/body bounds, 1.5-cell header height and padding
 retain grid sizing, hit targets and AccessKit ownership. A shared rounded outline

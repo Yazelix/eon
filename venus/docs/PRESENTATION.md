@@ -32,13 +32,10 @@ A tab shows one to four equal-width columns side by side. In each column one
 pane expands in a vertical stack while every fitting pane header stays
 visible. All columns share one frame, the workspace sheet: its sides and
 bottom sit on the window edges, adjacent columns share one straight seam, and
-only its top corners are rounded, about one pane header high, with the first
-tab pill's arc centered over the top-left curve when the tab strip has room and
-the corner exceeds the pill by at least the tab gap.
-The visible shortcut footer
+its corners are square under a 2-pixel top edge. The visible shortcut footer
 shares the sheet's side edges and outer frame, with square lower corners on the
 window's bottom corners like the hidden-footer sheet, and a straight separator
-where the seams end. The sheet's top edge and its curves are 2 pixels thick.
+where the seams end.
 Selection, hover, and keyboard focus have distinct fills or outlines.
 Visible headers pair Eon's opaque pane
 identity with Orbit's working directory. Home displays `~`, and its descendants

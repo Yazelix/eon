@@ -486,31 +486,20 @@ re-proved when that platform or feature is next touched.
   - Pane frames draw one thin workspace sheet whose sides and bottom sit on the
     window's edges. Adjacent columns share one straight 1-pixel seam meeting the
     sheet's top edge and the footer separator (or the sheet's bottom edge when
-    hints are hidden) in square T-junctions; only the sheet's top corners are
-    rounded, about one pane header high, so the top curves meet the window's
-    sides at the first pane header's bottom, and the top edge and its curves
-    are 2 pixels thick. The bottom corners, the footer's or the sheet's own
-    when hints are hidden, stay square on the window's bottom corners. The
-    first tab pill's arc is centered over the top-left curve
-    when the first tab still fits the tab strip beside that inset and the
-    corner exceeds the pill's radius by at least the tab gap; revealing the
-    first tab never scrolls it.
+    hints are hidden) in square T-junctions. The sheet's corners are square,
+    its top edge is 2 pixels thick, and its bottom corners, the footer's or the
+    sheet's own when hints are hidden, sit on the window's bottom corners.
     Horizontal separators reach each column's sides, and a small gap
     stays below the stack (4 logical pixels at default typography). The
     gap shares terminal background color/opacity and the surface-wide blur
-    request. Selected and hovered header fills follow the sheet's outer
-    corners, with square edges at seams and inside; header labels, the
-    scrollback pill and popup labels keep clear of the curves.
-    Separators follow the outer corners during scrolling; the sheet border and seams stay fixed while
+    request. Selected and hovered header fills are square. Separators stay
+    straight during scrolling; the sheet border and seams stay fixed while
     overflowing headers scroll within each column.
     `--pane-frames true|false` defaults to `true`; `false` removes the sheet
     border, seams and separators while retaining headers, a lighter selected fill,
-    hover feedback and a distinct rounded keyboard-focus outline; the popup
-    outline keeps the sheet's rounded top corners and the footer stays square.
-    Both modes
-    preserve the same terminal grid, header hit targets and AccessKit bounds,
-    except that with pane frames the scrollback pill, and its AccessKit
-    bounds, shift clear of a rounded outer corner.
+    hover feedback and a distinct rounded keyboard-focus outline; the popup and
+    footer outlines stay square. Both modes
+    preserve the same terminal grid, header hit targets and AccessKit bounds.
     Initial requested grids include the bottom gap in their window overhead;
     the gap accepts no pane or terminal input.
     Changed pane lists resize the terminal even when the endpoint stays selected.

@@ -21,11 +21,9 @@ installation, and proven contract changes.
   Eon workspace, and popup keybindings can no longer use it.
 - Pane frames draw one workspace sheet: its sides and bottom, including the
   shortcut footer, reach the window edges, and side-by-side columns share one
-  straight divider instead of two nearby borders. Its top corners are rounded
-  about one pane header high under a 2-pixel top edge, with the first tab
-  pill's curve centered over the top-left corner, and its bottom corners stay
-  square on the window's corners. Popups use the same outer frame; terminal
-  sizes are unchanged.
+  straight divider instead of two nearby borders. Its corners are square
+  under a 2-pixel top edge, and its bottom corners sit on the window's
+  corners. Popups use the same outer frame; terminal sizes are unchanged.
 - `eon workspace` lists each pane's column and whether it is that column's
   open pane (`column=` and `expanded=`, or `"column"` and `"expanded"` with
   `--json`), and `eon versions` reports EONW 10.
