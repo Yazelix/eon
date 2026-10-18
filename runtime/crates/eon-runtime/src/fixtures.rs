@@ -87,16 +87,12 @@ pub(crate) fn inputs() -> Inputs {
         managed: ManagedPrograms {
             nu: "fixture-nu".into(),
             bash: "fixture-bash".into(),
-            zsh: "fixture-zsh".into(),
-            fish: "fixture-fish".into(),
             helix: "fixture-editor".into(),
             yazi: "fixture-files".into(),
             ya: "fixture-file-helper".into(),
             lazygit: "fixture-git".into(),
             nu_vendor_autoload: None,
             bash_rc: None,
-            zsh_config: None,
-            fish_init: None,
             shell_bin: None,
         },
     }

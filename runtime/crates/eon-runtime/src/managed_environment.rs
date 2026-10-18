@@ -181,16 +181,12 @@ impl TerminalConfig {
 pub struct ManagedPrograms {
     pub nu: PathBuf,
     pub bash: PathBuf,
-    pub zsh: PathBuf,
-    pub fish: PathBuf,
     pub helix: PathBuf,
     pub yazi: PathBuf,
     pub ya: PathBuf,
     pub lazygit: PathBuf,
     pub nu_vendor_autoload: Option<PathBuf>,
     pub bash_rc: Option<PathBuf>,
-    pub zsh_config: Option<PathBuf>,
-    pub fish_init: Option<PathBuf>,
     pub shell_bin: Option<PathBuf>,
 }
 
@@ -198,8 +194,6 @@ pub struct ManagedPrograms {
 pub(crate) enum Tool {
     Nu,
     Bash,
-    Zsh,
-    Fish,
     Helix,
     Yazi,
     Ya,
@@ -211,8 +205,6 @@ pub(crate) fn tool(invocation: &OsStr) -> Option<Tool> {
     match name {
         "eon-nu" | "nu" => Some(Tool::Nu),
         "eon-bash" | "bash" => Some(Tool::Bash),
-        "eon-zsh" | "zsh" => Some(Tool::Zsh),
-        "eon-fish" | "fish" => Some(Tool::Fish),
         "eon-hx" | "hx" => Some(Tool::Helix),
         "eon-yazi" | "yazi" => Some(Tool::Yazi),
         "eon-ya" | "ya" => Some(Tool::Ya),
@@ -661,16 +653,12 @@ pub(crate) fn command(
     defaults: &Defaults,
 ) -> Result<Command, String> {
     let shell = match tool {
-        Tool::Nu | Tool::Bash | Tool::Zsh | Tool::Fish => {
-            Some(read_shell_config(config, defaults)?)
-        }
+        Tool::Nu | Tool::Bash => Some(read_shell_config(config, defaults)?),
         _ => None,
     };
     let program = match tool {
         Tool::Nu => &programs.nu,
         Tool::Bash => &programs.bash,
-        Tool::Zsh => &programs.zsh,
-        Tool::Fish => &programs.fish,
         Tool::Helix => &programs.helix,
         Tool::Yazi => &programs.yazi,
         Tool::Ya => &programs.ya,
@@ -696,24 +684,6 @@ pub(crate) fn command(
         Tool::Bash => {
             if let Some(path) = &programs.bash_rc {
                 command.args([OsStr::new("--rcfile"), path.as_os_str()]);
-            }
-        }
-        Tool::Zsh => {
-            if let Some(path) = &programs.zsh_config {
-                command.env("ZDOTDIR", path);
-                if let Some(user) = env::var_os("EON_USER_ZDOTDIR")
-                    .or_else(|| env::var_os("ZDOTDIR"))
-                    .or_else(|| env::var_os("HOME"))
-                {
-                    command.env("EON_USER_ZDOTDIR", user);
-                }
-            }
-        }
-        Tool::Fish => {
-            if let Some(path) = &programs.fish_init {
-                command
-                    .env("EON_FISH_INIT", path)
-                    .args(["-C", "source \"$EON_FISH_INIT\""]);
             }
         }
         Tool::Yazi | Tool::Ya => {
@@ -934,11 +904,11 @@ mod tests {
 
         fs::write(
             root.join("config.toml"),
-            "[shell]\ncommand = [\"eon-fish\", \"--no-config\"]\nstarship = false\nzoxide = false\natuin = false\ncarapace = false\n",
+            "[shell]\ncommand = [\"eon-bash\", \"--norc\"]\nstarship = false\nzoxide = false\natuin = false\ncarapace = false\n",
         )
         .unwrap();
         let configured = read_shell_config(&root, &inputs.defaults).unwrap();
-        assert_eq!(configured.command, ["eon-fish", "--no-config"]);
+        assert_eq!(configured.command, ["eon-bash", "--norc"]);
         assert!(
             !configured.starship && !configured.zoxide && !configured.atuin && !configured.carapace
         );
@@ -1313,17 +1283,17 @@ keep_alive = false
 
     #[test]
     fn managed_invocation_names_are_bounded() {
-        use Tool::{Bash, Fish, Helix, LazyGit, Nu, Ya, Yazi, Zsh};
+        use Tool::{Bash, Helix, LazyGit, Nu, Ya, Yazi};
 
         for (name, expected) in [
             ("eon-nu", Some(Nu)),
             ("nu", Some(Nu)),
             ("eon-bash", Some(Bash)),
             ("bash", Some(Bash)),
-            ("eon-zsh", Some(Zsh)),
-            ("zsh", Some(Zsh)),
-            ("eon-fish", Some(Fish)),
-            ("fish", Some(Fish)),
+            ("eon-zsh", None),
+            ("zsh", None),
+            ("eon-fish", None),
+            ("fish", None),
             ("eon-hx", Some(Helix)),
             ("hx", Some(Helix)),
             ("eon-yazi", Some(Yazi)),
@@ -1349,21 +1319,17 @@ keep_alive = false
     #[test]
     fn managed_commands_use_exact_programs_and_private_configuration() {
         let inputs = crate::fixtures::inputs();
-        use Tool::{Bash, Fish, Helix, LazyGit, Nu, Ya, Yazi, Zsh};
+        use Tool::{Bash, Helix, LazyGit, Nu, Ya, Yazi};
 
         let programs = ManagedPrograms {
             nu: "/managed/nu".into(),
             bash: "/managed/bash".into(),
-            zsh: "/managed/zsh".into(),
-            fish: "/managed/fish".into(),
             helix: "/managed/hx".into(),
             yazi: "/managed/yazi".into(),
             ya: "/managed/ya".into(),
             lazygit: "/managed/lazygit".into(),
             nu_vendor_autoload: Some("/managed/autoload".into()),
             bash_rc: Some("/managed/bashrc".into()),
-            zsh_config: Some("/managed/zsh-config".into()),
-            fish_init: Some("/managed/fish-init".into()),
             shell_bin: Some("/managed/bin".into()),
         };
         let config = Path::new("/private/eon");
@@ -1435,56 +1401,25 @@ keep_alive = false
         assert_eq!(command_environment(&command, "XDG_CONFIG_HOME"), None);
         assert_eq!(command_environment(&command, "STARSHIP_CONFIG"), None);
 
-        for (tool, program, arguments) in [
-            (
-                Bash,
-                "/managed/bash",
-                vec!["--rcfile", "/managed/bashrc", "--version"],
-            ),
-            (Zsh, "/managed/zsh", vec!["--version"]),
-            (
-                Fish,
-                "/managed/fish",
-                vec!["-C", "source \"$EON_FISH_INIT\"", "--version"],
-            ),
-        ] {
-            let command = managed_command(
-                tool,
-                &programs,
-                config,
-                &["--version".into()],
-                &inputs.defaults,
-            )
-            .unwrap();
-            assert_eq!(command.get_program(), program);
+        let command = managed_command(
+            Bash,
+            &programs,
+            config,
+            &["--version".into()],
+            &inputs.defaults,
+        )
+        .unwrap();
+        assert_eq!(command.get_program(), "/managed/bash");
+        assert_eq!(
+            command.get_args().map(OsString::from).collect::<Vec<_>>(),
+            ["--rcfile", "/managed/bashrc", "--version"].map(OsString::from)
+        );
+        for integration in ["STARSHIP", "ZOXIDE", "ATUIN", "CARAPACE"] {
             assert_eq!(
-                command.get_args().map(OsString::from).collect::<Vec<_>>(),
-                arguments
-                    .into_iter()
-                    .map(OsString::from)
-                    .collect::<Vec<_>>()
+                command_environment(&command, &format!("EON_SHELL_{integration}")),
+                Some(Some(OsStr::new("1")))
             );
-            for integration in ["STARSHIP", "ZOXIDE", "ATUIN", "CARAPACE"] {
-                assert_eq!(
-                    command_environment(&command, &format!("EON_SHELL_{integration}")),
-                    Some(Some(OsStr::new("1")))
-                );
-            }
         }
-        assert_eq!(
-            command_environment(
-                &managed_command(Zsh, &programs, config, &[], &inputs.defaults).unwrap(),
-                "ZDOTDIR"
-            ),
-            Some(Some(OsStr::new("/managed/zsh-config")))
-        );
-        assert_eq!(
-            command_environment(
-                &managed_command(Fish, &programs, config, &[], &inputs.defaults).unwrap(),
-                "EON_FISH_INIT"
-            ),
-            Some(Some(OsStr::new("/managed/fish-init")))
-        );
     }
 
     #[test]

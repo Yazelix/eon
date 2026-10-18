@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Eon no longer ships Zsh or Fish. The `eon-zsh` and `eon-fish` commands and
+  the managed `zsh` and `fish` names inside terminals are gone, and
+  `eon versions` lists neither. Nushell and Bash remain the managed shells. A
+  configuration with `command = ["eon-zsh"]` or `["eon-fish"]` now fails to
+  start the terminal; use `["zsh"]` or `["fish"]` to run the host shell
+  unmanaged, without Eon's Starship, Zoxide, Atuin, or Carapace integration.
 - Alt+W closes the selected pane and stops its terminal, with no prompt, the
   same way Alt+Shift+W closes a tab. A column whose last pane closes goes away,
   and so does a tab left with no panes or popups. The final tab's last pane

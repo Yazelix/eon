@@ -274,15 +274,12 @@ instead of duplicating product pins. Implementing Beads record exact inspected r
 
 ## Managed shell environment
 
-### How should Eon activate a consistent optional tool set after native Nushell, Bash, Zsh, and Fish configuration?
+### How should Eon activate a consistent optional tool set after native Nushell and Bash configuration?
 
 - **Owner:** Eon managed-environment adapter; each child owns its native semantics
 - **Read first:** The affected exact upstream: [Nushell
   0.113.1](https://github.com/nushell/nushell/tree/7b7df4aa68e957cf38b9d8157c35fa7523f44a6d),
-  [Bash 5.3](https://git.savannah.gnu.org/cgit/bash.git/tag/?h=bash-5.3), [Zsh
-  5.9.1](https://github.com/zsh-users/zsh/tree/0e0d4ea11731c47f57bad042fbe75e3979d8a1d2),
-  [Fish
-  4.7.1](https://github.com/fish-shell/fish-shell/tree/efb0223da10367031b7c887a3e40eccdf9bf7b06),
+  [Bash 5.3](https://git.savannah.gnu.org/cgit/bash.git/tag/?h=bash-5.3),
   [Starship
   1.25.1](https://github.com/starship/starship/tree/8758daa7767d4e73874330b1e262fca66a7ffd30),
   [Zoxide

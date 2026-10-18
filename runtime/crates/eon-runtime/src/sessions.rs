@@ -1751,7 +1751,7 @@ mod tests {
         let socket = Path::new("/runtime/orbit.sock");
         fs::write(
             root.join("config.toml"),
-            "[shell]\ncommand = [\"eon-fish\", \"--no-config\"]\n",
+            "[shell]\ncommand = [\"eon-bash\", \"--norc\"]\n",
         )
         .unwrap();
 
@@ -1778,8 +1778,8 @@ mod tests {
                 "--ansi-palette-v1",
                 inputs.defaults.ansi_palette,
                 "--",
-                "eon-fish",
-                "--no-config",
+                "eon-bash",
+                "--norc",
             ]
             .map(OsString::from)
         );

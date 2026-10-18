@@ -7,7 +7,7 @@
   "composition": {
     "services": ["orbit"],
     "clients": ["venus"],
-    "tools": ["anima", "nushell", "bash", "zsh", "fish", "starship", "zoxide", "fzf", "atuin", "carapace", "helix", "yazi", "lazygit", "codexbar"],
+    "tools": ["anima", "nushell", "bash", "starship", "zoxide", "fzf", "atuin", "carapace", "helix", "yazi", "lazygit", "codexbar"],
     "libraries": ["ratconfig", "eon-runtime", "eon-workspace-protocol"]
   },
   "activation": {
@@ -183,40 +183,6 @@
       "source": {
         "kind": "git",
         "url": "https://git.savannah.gnu.org/git/bash.git"
-      },
-      "artifacts": [
-        { "id": "executable", "kind": "file" }
-      ],
-      "contracts": [],
-      "interfaces": [],
-      "requires": []
-    },
-    {
-      "id": "zsh",
-      "project": "Zsh",
-      "version": "5.9.1",
-      "revision": "0e0d4ea11731c47f57bad042fbe75e3979d8a1d2",
-      "target": "x86_64-linux",
-      "source": {
-        "kind": "git",
-        "url": "https://github.com/zsh-users/zsh.git"
-      },
-      "artifacts": [
-        { "id": "executable", "kind": "file" }
-      ],
-      "contracts": [],
-      "interfaces": [],
-      "requires": []
-    },
-    {
-      "id": "fish",
-      "project": "Fish",
-      "version": "4.7.1",
-      "revision": "efb0223da10367031b7c887a3e40eccdf9bf7b06",
-      "target": "x86_64-linux",
-      "source": {
-        "kind": "git",
-        "url": "https://github.com/fish-shell/fish-shell.git"
       },
       "artifacts": [
         { "id": "executable", "kind": "file" }

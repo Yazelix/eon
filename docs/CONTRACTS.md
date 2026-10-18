@@ -550,11 +550,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C9 — Managed shell environment
 
 - **Status:** Proven
-- **Consumer:** Eon terminals launched under Nushell, Bash, Zsh, or Fish.
+- **Consumer:** Eon terminals launched under Nushell or Bash.
 - **Trigger:** Eon constructs a child launch environment.
 - **Result:**
-  - Eon selects exact Nushell, Bash, Zsh, Fish, Starship, Zoxide, fzf, Atuin,
-    Carapace, Helix, Yazi, and LazyGit artifacts.
+  - Eon selects exact Nushell, Bash, Starship, Zoxide, fzf, Atuin, Carapace,
+    Helix, Yazi, and LazyGit artifacts.
   - Stable `eon-*` commands expose managed shells and tools outside Eon; one
     child-private PATH exposes accepted unprefixed names inside terminals.
   - Configuration accepts one direct argv command and independent Starship,
@@ -593,6 +593,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `session_path_contains_one_managed_prefix`,
     `shell_configuration_is_strict_and_defaults_without_a_file` and
     `managed_invocation_names_are_bounded`.
+  - **Note:** `eon-8olu` removed the managed Zsh and Fish shells. The
+    `shell-environment` check went with them; its Zsh and Fish evidence above
+    no longer applies. The remaining checks cover Nushell and Bash launch
+    and versions.
 - **Open proof:** Pending re-proof in this repository: interactive managed
   startup of each shell, and a native Wayland clipboard round trip through
   `clip copy`, the aliases and `wl-paste`.

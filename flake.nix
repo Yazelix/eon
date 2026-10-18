@@ -127,8 +127,6 @@
       animaIdentity = component "anima";
       nushellIdentity = component "nushell";
       bashIdentity = component "bash";
-      zshIdentity = component "zsh";
-      fishIdentity = component "fish";
       starshipIdentity = component "starship";
       zoxideIdentity = component "zoxide";
       fzfIdentity = component "fzf";
@@ -314,11 +312,6 @@
         assert bashIdentity.revision == "b8c60bc9ca365f8261fa97900b6fa939f6ebc303";
         assert pkgs.bashInteractive.version == bashIdentity.version;
         pkgs.bashInteractive;
-      zshPackage =
-        assert zshIdentity.revision == "0e0d4ea11731c47f57bad042fbe75e3979d8a1d2";
-        assert pkgs.zsh.version == zshIdentity.version;
-        pkgs.zsh;
-      fishPackage = managedPackage fishIdentity pkgs.fish;
       starshipPackage = managedPackage starshipIdentity pkgs.starship;
       zoxidePackage = managedPackage zoxideIdentity pkgs.zoxide;
       fzfPackage = managedPackage fzfIdentity pkgs.fzf;
@@ -333,22 +326,15 @@
           zoxidePackage
           atuinPackage
           carapacePackage
-          zshPackage
-          fishPackage
           ;
       };
       inherit (shellEnvironment)
         nuVendorAutoload
         bashRc
-        zshConfig
-        fishInit
         ;
 
       bashLicense = pkgs.runCommand "bash-license" { } ''
         ${pkgs.gnutar}/bin/tar -xOf ${bashPackage.src} bash-5.3/COPYING > "$out"
-      '';
-      zshLicense = pkgs.runCommand "zsh-license" { } ''
-        ${pkgs.gnutar}/bin/tar -xOf ${zshPackage.src} zsh-5.9.1/LICENCE > "$out"
       '';
 
       desktopItem = pkgs.makeDesktopItem {
@@ -453,14 +439,14 @@
               ${pkgs.imagemagick}/bin/magick ${./assets/eon.png} \
                 -filter Box -resize "''${size}x''${size}" "$icon_dir/eon.png"
             done
-            for command in nu bash zsh fish hx yazi ya lazygit lg; do
+            for command in nu bash hx yazi ya lazygit lg; do
               ln -s eon "$out/bin/eon-$command"
             done
             mkdir -p "$out/libexec/eon/bin"
-            for command in nu bash zsh fish hx yazi ya lazygit; do
+            for command in nu bash hx yazi ya lazygit; do
               ln -s "../../../bin/eon-$command" "$out/libexec/eon/bin/$command"
             done
-            for command in nu bash zsh fish lazygit; do
+            for command in nu bash lazygit; do
               ln -s "../../../bin/eon-$command" "$out/libexec/eon/bin/eon-$command"
             done
             ln -s ${starshipPackage}/bin/starship "$out/libexec/eon/bin/starship"
@@ -476,8 +462,6 @@
             install -Dm444 ${anima}/LICENSE "$out/share/licenses/eon/anima/LICENSE"
             install -Dm444 ${nushellPackage.src}/LICENSE "$out/share/licenses/eon/nushell/LICENSE"
             install -Dm444 ${bashLicense} "$out/share/licenses/eon/bash/COPYING"
-            install -Dm444 ${zshLicense} "$out/share/licenses/eon/zsh/LICENCE"
-            install -Dm444 ${fishPackage.src}/COPYING "$out/share/licenses/eon/fish/COPYING"
             install -Dm444 ${starshipPackage.src}/LICENSE "$out/share/licenses/eon/starship/LICENSE"
             install -Dm444 ${zoxidePackage.src}/LICENSE "$out/share/licenses/eon/zoxide/LICENSE"
             install -Dm444 ${fzfPackage.src}/LICENSE "$out/share/licenses/eon/fzf/LICENSE"
@@ -497,8 +481,6 @@
               --set EON_ANIMA "${animaPackage}/bin/anima" \
               --set EON_NU "${nushellPackage}/bin/nu" \
               --set EON_BASH "${bashPackage}/bin/bash" \
-              --set EON_ZSH "${zshPackage}/bin/zsh" \
-              --set EON_FISH "${fishPackage}/bin/fish" \
               --set EON_HX "${helixPackage}/bin/hx" \
               --set EON_YAZI "${yaziPackage}/bin/yazi" \
               --set EON_DIRECTORY_PICKER_CONFIG "${directoryPickerConfig}" \
@@ -506,8 +488,6 @@
               --set EON_LAZYGIT "${lazygitPackage}/bin/lazygit" \
               --set EON_NU_VENDOR_AUTOLOAD "${nuVendorAutoload}" \
               --set EON_BASH_RC "${bashRc}" \
-              --set EON_ZSH_CONFIG "${zshConfig}" \
-              --set EON_FISH_INIT "${fishInit}" \
               --set EON_SESSION_BIN "$out/libexec/eon/bin" \
               --prefix TERMINFO_DIRS : "${orbitPackage}/share/terminfo"
           '';
@@ -559,7 +539,7 @@
           ${eonPackage} \
           ${codexbarPackage} \
           ${animaPackage} \
-          ${nushellPackage} ${bashPackage} ${zshPackage} ${fishPackage} \
+          ${nushellPackage} ${bashPackage} \
           ${starshipPackage} ${zoxidePackage} ${atuinPackage} ${carapacePackage} \
           ${fzfPackage} ${helixPackage} ${yaziPackage} ${lazygitPackage}; do
           ! ${pkgs.gnugrep}/bin/grep -Fx "$forbidden" ${eonbaseClosure}/store-paths
@@ -571,7 +551,7 @@
       '';
       managedCommandPathCheck = pkgs.runCommand "eon-managed-command-path-check" { } ''
         export HOME="$TMPDIR" EON_CONFIG_HOME="$TMPDIR/config" PATH=${eonPackage}/libexec/eon/bin
-        for command in nu bash zsh fish; do
+        for command in nu bash; do
           version_output=$("$command" --version)
           test -n "$version_output" && test "$("eon-$command" --version)" = "$version_output"
         done
@@ -638,7 +618,6 @@
         helix-grammars = helix.checks.${system}.codeberg_grammars;
         eonbase-closure = eonbaseClosureCheck;
         managed-command-path = managedCommandPathCheck;
-        shell-environment = shellEnvironment.check;
       };
       devShells.${system}.default = pkgs.mkShell {
         packages = [

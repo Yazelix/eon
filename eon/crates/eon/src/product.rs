@@ -112,16 +112,12 @@ pub(crate) fn inputs() -> Inputs {
         managed: ManagedPrograms {
             nu: configured_program("EON_NU", "nu"),
             bash: configured_program("EON_BASH", "bash"),
-            zsh: configured_program("EON_ZSH", "zsh"),
-            fish: configured_program("EON_FISH", "fish"),
             helix: configured_program("EON_HX", "hx"),
             yazi: configured_program("EON_YAZI", "yazi"),
             ya: configured_program("EON_YA", "ya"),
             lazygit: configured_program("EON_LAZYGIT", "lazygit"),
             nu_vendor_autoload: nonempty_environment_path("EON_NU_VENDOR_AUTOLOAD"),
             bash_rc: nonempty_environment_path("EON_BASH_RC"),
-            zsh_config: nonempty_environment_path("EON_ZSH_CONFIG"),
-            fish_init: nonempty_environment_path("EON_FISH_INIT"),
             shell_bin: nonempty_environment_path("EON_SESSION_BIN"),
         },
     }

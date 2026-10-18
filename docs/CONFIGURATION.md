@@ -130,8 +130,9 @@ private per-user fallbacks.
 
 ## Managed tools
 
-A terminal without an explicit command starts pinned Nushell. Select a different
-managed shell with `eon-bash`, `eon-zsh`, or `eon-fish` in `[shell].command`.
+A terminal without an explicit command starts pinned Nushell. Select managed
+Bash with `eon-bash` in `[shell].command`. Any other shell, such as a host
+`zsh` or `fish`, runs as an unmanaged command without Eon's integrations.
 Native user shell configuration loads before Eon's guarded Starship, Zoxide,
 Atuin, and Carapace integrations.
 
