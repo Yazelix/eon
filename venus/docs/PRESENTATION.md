@@ -94,7 +94,9 @@ Blur strength and live blur changes are also outside its scope.
 The proved Linux host uses winit, wgpu, glyphon, AccessKit, and wl-clipboard-rs
 with native Wayland and Vulkan. The unsupported Apple Silicon host reuses the
 same renderer/model path with AppKit, AccessKit, Metal, and target-only arboard.
-Its opaque foundation and a bounded clipboard/key slice had native M1 proof
-before consolidation, awaiting re-proof here;
-held-key repeat, dead keys, other IMEs, physical trackpad gesture quality, a
-host-access failure notice, lifecycle acceptance, effects, and Eon composition remain open.
+Its opaque foundation and a bounded clipboard/key slice are partially
+re-proved natively in this repository (`VEN-C16`). Retina-scale redraw,
+renderer recovery, Kotoeri and other IMEs, dead keys, held-key repeat, focus
+loss, physical trackpad gesture quality, the PNG-only and oversize-pasteboard
+notices, the OSC 52 write, a host-access failure notice, lifecycle acceptance,
+effects, and Eon composition remain open.

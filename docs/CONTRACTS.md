@@ -321,8 +321,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon platform and distribution policy; child-owned kernel
   capabilities remain explicit child contracts.
 - **Boundary:** Current accepted support remains x86_64 Linux native Wayland.
-  Orbit `ORB-C14` is proved natively on Apple Silicon; Venus `VEN-C16` is
-  pending re-proof in this repository. Apple Silicon macOS remains
+  Orbit `ORB-C14` is proved natively on Apple Silicon; Venus `VEN-C16` has a
+  partial native proof in this repository. Apple Silicon macOS remains
   unsupported until Venus and full-Eon native proofs pass. X11, Xwayland,
   Intel macOS, signing, notarization, direct bundles, and public macOS
   distribution remain outside this contract.

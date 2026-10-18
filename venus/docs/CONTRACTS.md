@@ -102,9 +102,9 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C5 — Explicit native hyperlinks
 
-- **Status:** Proved on x86_64 Linux by the automated tier; native hyperlink
-  interaction and Apple Silicon macOS proof are pending re-proof in this
-  repository.
+- **Status:** Proved on x86_64 Linux by the automated tier; native Linux
+  hyperlink interaction is pending re-proof in this repository. Apple Silicon
+  hover, Command+C, and Command+click are observed natively under `VEN-C16`.
 - **Consumer/trigger:** A Venus user hovers an Orbit-authored OSC 8 link or
   explicitly activates one.
 - **Result:** The hovered link is highlighted and its escaped target is shown
@@ -142,8 +142,8 @@ re-proved when that platform or feature is next touched.
     `macos_uses_command_for_standard_host_actions_only` in the workspace suite.
 - **Open proof:** Pending re-proof in this repository: installed hyperlink open
   and copy (dogfood item 9 was not exercised), AT-SPI Open/Copy
-  activation, native missing-handler failure, and the Apple Silicon Command+C copy and
-  Command+click open. Fractional scale and other compositors remain unproved.
+  activation, and native missing-handler failure. Fractional scale and other
+  compositors remain unproved.
 
 ## VEN-C1 — Authoritative native presentation
 
@@ -224,8 +224,9 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C2 — Native semantic interaction
 
-- **Status:** Proved on x86_64 Linux; Apple Silicon macOS proof is pending
-  re-proof in this repository.
+- **Status:** Proved on x86_64 Linux; Apple Silicon ordinary typing and
+  selection are observed natively under `VEN-C16`, and the rest of its macOS
+  proof is pending re-proof in this repository.
 - **Consumer:** One focused Venus terminal surface.
 - **Trigger:** Native key, mouse, focus, paste, input-method, or resize activity.
 - **Result:** Venus maps native activity to canonical Orbit semantic input and
@@ -255,8 +256,9 @@ re-proved when that platform or feature is next touched.
 - **Open proof:** Pending re-proof in this repository: installed pointer
   input, selection and paste (dogfood item 9), the ignored native
   input-between-frames regression, native IME preedit/commit, Orca reader focus
-  after return to live, and the Apple Silicon key, focus, selection and Kotoeri
-  observations.
+  after return to live, and the Apple Silicon Option/Control modifier mapping,
+  focus, and Kotoeri observations (ordinary typing and selection are observed
+  under `VEN-C16`).
 
 ## VEN-C3 — Transient client recovery
 
@@ -331,9 +333,10 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C7 — Authoritative history and selection interaction
 
-- **Status:** Proved on x86_64 Linux by the automated tier; native pointer
-  interaction and Apple Silicon macOS proof are pending re-proof in this
-  repository.
+- **Status:** Proved on x86_64 Linux by the automated tier; native Linux
+  pointer interaction is pending re-proof in this repository. Apple Silicon
+  drag selection, Command+C copy, and wheel history are observed natively under
+  `VEN-C16`.
 - **Consumer:** One presented Venus terminal surface.
 - **Trigger:** Native wheel or touchpad movement, one left-pointer sequence
   including a held drag in the top visible row, explicit copy, or activation of
@@ -439,8 +442,8 @@ re-proved when that platform or feature is next touched.
 - **Open proof:** Pending re-proof in this repository: installed scrollback,
   ReturnToLive, click-selection ladder and copy (dogfood item 9), held-drag
   selection across real history, primary-selection delivery, kinetic flings under
-  continuous output, and the Apple Silicon drag selection and pasteboard copy.
-  Screen-reader acceptance remains separate. Apple Silicon trackpad gesture quality stays open.
+  continuous output. Screen-reader acceptance remains separate. Apple Silicon
+  trackpad gesture quality stays open.
 
 ## VEN-C8 — Eon workspace presentation
 
@@ -667,9 +670,9 @@ re-proved when that platform or feature is next touched.
     `macos_uses_command_for_standard_host_actions_only` in the workspace suite.
 - **Open proof:** Manual Zellij, Helix, and Yazi acceptance remains assigned to
   the user. Pending re-proof in this repository: installed paste (dogfood item
-  9), native bracketed-mode and
-  overlapping-shortcut observation, and the Apple Silicon Command+V, paste
-  failure-notice and empty-pasteboard observations.
+  9), native bracketed-mode and overlapping-shortcut observation, and the
+  Apple Silicon PNG-only and oversize-pasteboard notices (Command+V and the
+  empty or non-text pasteboard notice are observed under `VEN-C16`).
 
 ## VEN-C11 — Terminal-background opacity
 
@@ -783,8 +786,9 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C16 — Native Linux Wayland and Apple Silicon macOS platforms
 
-- **Status:** Proved for x86_64 Linux native Wayland; Apple Silicon macOS proofs
-  are pending re-proof in this repository, and macOS remains unsupported.
+- **Status:** Proved for x86_64 Linux native Wayland; the Apple Silicon macOS
+  foundation and interaction slices are partially re-proved natively in this
+  repository, and macOS remains unsupported.
 - **Consumer:** Every packaged Venus application launch.
 - **Trigger:** Build or launch the native application on an approved target.
 - **Result:** Venus uses native Wayland with Vulkan on Linux and the native
@@ -814,14 +818,45 @@ re-proved when that platform or feature is next touched.
   - **Evidence:** The workspace suite with exact dependency features from the
     locked graph; dogfood checklist items 1 and 11 launch the native Wayland
     and Vulkan event loop through installed Eon and eonbase.
+- **Proof:** `e0aa47e7186dc3e2a88f826d3ed0feb171a1b0cb` (Apple Silicon, partial)
+  - **Environment:** Apple M2, macOS 26.7.1 (25G241), one 1920x1080 scale-1
+    display, `aarch64-apple-darwin`; native
+    `cargo build --locked -p yazelix-venus -p yazelix-orbit --all-targets` and
+    `cargo test --locked -p yazelix-venus --no-fail-fast` with Rust 1.96.0,
+    Zig 0.15.2 against the macOS 15.4 Command Line Tools SDK, Ghostty
+    `a887df42c56f6de86c0fe6da9c4eeca37931e083`, and
+    `LIBGHOSTTY_VT_SYS_CPU=baseline`. The debug `yazelix-orbit serve` and
+    `yazelix-venus` binaries from that build ran in a logged-in session over
+    VNC. Every observation is recorded in `eon-z4n6`.
+  - **Evidence:**
+    - The binary and `tests/canonical_scene.rs` tests pass, and the library
+      tests pass once the Nix-pinned DejaVu, Symbols Nerd Font, and Accelerando
+      fixture fonts are installed for the user; stock macOS lacks them and
+      fails only the six library tests that need them.
+    - Clippy with `-D warnings` reports one macOS-only lint: an unused
+      `TouchPhase` import in the binary's tests.
+    - An AppKit window with opaque Metal presentation shows the bounded Orbit
+      connection notice, then attaches when Orbit appears.
+    - Window zoom resizes the Orbit PTY. Latin accents, kana, Hangul, colour
+      emoji, box drawing, braille, and combining accents render.
+    - Typing, drag selection, Command copy and paste, the empty or non-text
+      pasteboard notice, OSC 8 hover, Command+C on a hovered link, and
+      Command+click, which opened Safari with the desktop-handler notice,
+      work.
+    - Wheel scrolling through history works.
+    - Command+Q exits Venus while Orbit and its shell survive, and a relaunched
+      Venus reattaches.
 - **Open proof:** Pending re-proof in this repository: the no-Wayland failure
-  observation, and every Apple Silicon proof (the opaque AppKit/AccessKit/Metal
-  foundation, the native interaction partial proof, and Kotoeri composition).
-  `ven-prove-venus-apple-silicon-macos-nm7` owns the macOS proof: exact
-  hardware, OS, toolchain, artifacts, automated checks, interactive
-  observations, failures, and limitations. The remaining native interactions,
-  accessibility acceptance, lifecycle identity, transparency/blur, exact Orbit
-  dogfood, and support claim stay open.
+  observation. Not observed natively at the revision above: Kotoeri
+  composition, Retina-scale redraw, renderer recovery, the PNG-only and
+  oversize-pasteboard notices, Option/Control modifier mapping, held-key
+  repeat, physical trackpad gestures, focus loss, and AccessKit beyond window
+  creation. With stock macOS fonts at that revision, Han ideographs render
+  blank, stacked combining marks are dropped, emoji modifier and flag sequences
+  don't compose, and a long notice truncates at the window edge; the cause is
+  not diagnosed. `ven-prove-venus-apple-silicon-macos-nm7` owns these and the
+  rest of the macOS proof: accessibility acceptance, lifecycle identity,
+  transparency/blur, exact Orbit dogfood, and the support claim.
 
 ## VEN-C17 — Caller-owned native application identity
 

@@ -167,7 +167,7 @@ owns the decision and scoped delivery proof.
 - **Selected shape:** wl-clipboard-rs 0.9.3 on Linux and target-only arboard
   3.6.1 on macOS, both with default features disabled
 - **Status:** Active on native Linux Wayland; implemented on unsupported Apple
-  Silicon macOS, whose partial native proof awaits re-proof in this repository
+  Silicon macOS, with a partial native proof in this repository (`VEN-C16`)
 - **Owner consequence:** The host reads ordinary clipboard text once after an explicit paste
   shortcut and writes canonical bounded `CopiedText` and `ClipboardWrite` effects through
   Wayland data-control or the general macOS pasteboard. All macOS destinations collapse to
@@ -299,8 +299,9 @@ M1 run 34832511106 at Venus source
 clipboard write through arboard and one Unicode Command+V paste into exact
 Orbit input. M1 run 34831678536 displayed distinct failure notices for PNG-only
 and oversized values without sending PTY bytes. Deterministic checks cover
-empty, non-text, oversized, and invalid UTF-8 admission. Native empty-paste and
-host-access failure notices remain open.
+empty, non-text, oversized, and invalid UTF-8 admission. Native Command+V and
+the empty or non-text notice are re-proved in this repository (`VEN-C16`); the
+host-access failure notice remains open.
 
 ## Eon workspace protocol decision
 

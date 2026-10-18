@@ -834,9 +834,9 @@ link feedback. Run 34832511106 exposed a proof-harness defect: Bash did not fail
 on negated `cmp`, and its failure screenshots retained that stale feedback. The
 corrected workflow failed before runner allocation in run 34833225890 because
 the account reached its payment or spending limit. That hosted evidence left
-native empty-paste and host-access failure notices open; VEN-C16's later
-physical proof, which predates this repository and awaits re-proof here,
-accepted empty-paste only.
+native empty-paste and host-access failure notices open. VEN-C16's native
+proof in this repository observes the empty or non-text paste notice; the
+host-access failure notice remains open.
 
 ## Watchlist
 

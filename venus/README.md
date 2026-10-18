@@ -41,8 +41,10 @@ Workspace windows show a compact shortcut hints bar. **Alt+Shift+B** hides or
 shows it for that window; **Alt+/** opens the complete Shortcuts viewer.
 
 [Running Venus](docs/LAUNCH.md) covers fonts, window options, attachment, and
-supervised startup. Apple Silicon macOS native proof awaits re-proof in this
-repository, and macOS remains unsupported as a product target.
+supervised startup. On Apple Silicon macOS, Venus renders, takes input, and
+reattaches to native Orbit in this repository, though Han ideographs render
+blank with stock macOS fonts (cause not diagnosed). macOS remains unsupported
+as a product target.
 
 ## Read more
 
