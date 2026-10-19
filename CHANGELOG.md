@@ -7,7 +7,7 @@ installation, and proven contract changes.
 
 - The unpublished manual Linux bundle no longer uses Bubblewrap or a user
   namespace, so stock Ubuntu 26.04 can run it without an AppArmor change. It
-  ships Eon's closure relinked for the host glibc and now needs glibc 2.42 or
+  ships Eon's closure relinked for the host glibc and now needs glibc 2.39 or
   newer and a host Vulkan driver. Its terminals no longer inherit the
   namespace and no-new-privileges flag that blocked `sudo` and setuid
   programs. `eon-install` accepts only this layout.

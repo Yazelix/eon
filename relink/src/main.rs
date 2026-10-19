@@ -3,10 +3,12 @@
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    env, fs,
+    env,
+    ffi::OsString,
+    fs,
     io::{self, Read},
     os::unix::{
-        ffi::OsStrExt,
+        ffi::{OsStrExt, OsStringExt},
         fs::{PermissionsExt, symlink},
     },
     path::{Component, Path, PathBuf},
@@ -17,14 +19,33 @@ const STORE: &str = "/nix/store/";
 /// The x86-64 psABI program interpreter every glibc distribution ships.
 const INTERPRETER: &str = "/lib64/ld-linux-x86-64.so.2";
 const HELP: &str = "Usage: eon-relink --registration FILE --root PATH [--exclude PATH]...
-       --glibc-floor VERSION [--host-library SONAME]... [--host-runtime FILE]... OUT
+       --glibc-floor VERSION [--host-library SONAME]... [--host-runtime FILE]...
+       [--substitute ORIGINAL=REPLACEMENT]... OUT
 
 Copies every store path reachable from ROOT without passing through an excluded path
 into OUT/nix/store, relinks it for the host glibc and checks the result. Each host-runtime
-ELF FILE loses its RUNPATH, so it takes every library it needs from the host.";
+ELF FILE loses its RUNPATH, so it takes every library it needs from the host. Each
+substitute ships REPLACEMENT, a rebuild with the same name, as ORIGINAL, with its own
+store name in file contents and symlink targets renamed to ORIGINAL's.";
 
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::other(message.into())
+}
+
+/// Replaces each occurrence of `from` in `bytes` with `to`, which has the same length.
+fn rename(bytes: &mut [u8], from: &[u8], to: &[u8]) -> bool {
+    let mut renamed = false;
+    let mut start = 0;
+    while let Some(offset) = bytes[start..]
+        .windows(from.len())
+        .position(|window| window == from)
+    {
+        start += offset;
+        bytes[start..start + from.len()].copy_from_slice(to);
+        start += from.len();
+        renamed = true;
+    }
+    renamed
 }
 
 /// Splits a closureInfo registration into the paths that ship (reachable from `root`
@@ -163,6 +184,8 @@ struct Relink<'a> {
     excluded: HashSet<&'a str>,
     /// Host-runtime ELF files not yet copied.
     host_runtime: HashSet<PathBuf>,
+    /// While a substitute is copied, its store name and the name it ships under.
+    rename: Option<(&'a str, &'a str)>,
     elves: Vec<PathBuf>,
     links: Vec<PathBuf>,
     relative: usize,
@@ -193,7 +216,11 @@ impl Relink<'_> {
                 self.copy(&entry.path(), &to.join(entry.file_name()), depth + 1)?;
             }
         } else if metadata.is_symlink() {
-            let target = fs::read_link(from)?;
+            let mut target = fs::read_link(from)?.into_os_string().into_vec();
+            if let Some((replacement, original)) = self.rename {
+                rename(&mut target, replacement.as_bytes(), original.as_bytes());
+            }
+            let target = PathBuf::from(OsString::from_vec(target));
             if target.as_os_str().as_bytes().starts_with(STORE.as_bytes()) {
                 let relative = target
                     .to_str()
@@ -208,10 +235,17 @@ impl Relink<'_> {
             self.links.push(to.into());
         } else {
             fs::copy(from, to)?;
+            let writable = metadata.permissions().mode() | 0o200;
+            if let Some((replacement, original)) = self.rename {
+                let mut bytes = fs::read(to)?;
+                if rename(&mut bytes, replacement.as_bytes(), original.as_bytes()) {
+                    fs::set_permissions(to, fs::Permissions::from_mode(writable))?;
+                    fs::write(to, bytes)?;
+                }
+            }
             let mut magic = [0; 4];
             if fs::File::open(to)?.read(&mut magic)? == 4 && magic == *b"\x7fELF" {
-                let mode = metadata.permissions().mode() | 0o200;
-                fs::set_permissions(to, fs::Permissions::from_mode(mode))?;
+                fs::set_permissions(to, fs::Permissions::from_mode(writable))?;
                 let host_runtime = self.host_runtime.remove(from);
                 self.patch(to, depth, host_runtime)
                     .map_err(|error| invalid(format!("{}: {error}", from.display())))?;
@@ -422,6 +456,7 @@ struct Options {
     root: String,
     exclude: Vec<String>,
     host_runtime: HashSet<PathBuf>,
+    substitute: HashMap<String, String>,
     gates: Gates,
     out: PathBuf,
 }
@@ -429,6 +464,7 @@ struct Options {
 fn options(mut arguments: impl Iterator<Item = String>) -> io::Result<Options> {
     let (mut registration, mut root, mut floor, mut out) = (None, None, None, None);
     let (mut exclude, mut host, mut host_runtime) = (Vec::new(), HashSet::new(), HashSet::new());
+    let mut substitute = HashMap::new();
     while let Some(argument) = arguments.next() {
         let mut value = || arguments.next().ok_or_else(|| invalid(HELP));
         match argument.as_str() {
@@ -442,6 +478,24 @@ fn options(mut arguments: impl Iterator<Item = String>) -> io::Result<Options> {
             "--host-runtime" => {
                 host_runtime.insert(value()?.into());
             }
+            "--substitute" => {
+                let value = value()?;
+                let (original, replacement) = value.split_once('=').ok_or_else(|| invalid(HELP))?;
+                let same_name = match (store_name(original), store_name(replacement)) {
+                    (Some((original, "")), Some((replacement, ""))) => {
+                        original.split_once('-').map(|(_, name)| name)
+                            == replacement.split_once('-').map(|(_, name)| name)
+                            && original.len() == replacement.len()
+                    }
+                    _ => false,
+                };
+                if !same_name {
+                    return Err(invalid(format!(
+                        "substitute is not a store path with the same name: {value}"
+                    )));
+                }
+                substitute.insert(original.into(), replacement.into());
+            }
             _ if !argument.starts_with('-') && out.is_none() => out = Some(argument.into()),
             _ => return Err(invalid(HELP)),
         }
@@ -453,6 +507,7 @@ fn options(mut arguments: impl Iterator<Item = String>) -> io::Result<Options> {
             root,
             exclude,
             host_runtime,
+            substitute,
             gates: Gates { floor, host },
             out,
         }),
@@ -464,7 +519,7 @@ fn run() -> io::Result<bool> {
     let options = options(env::args().skip(1))?;
     let registration = fs::read_to_string(&options.registration)?;
     let (kept, pruned) = closure(&registration, &options.root, &options.exclude)?;
-    // Registered and excluded paths are store paths, so each has a name.
+    // Registered, excluded and substitute paths are store paths, so each has a name.
     let name = |path| store_name(path).unwrap().0;
     let mut relink = Relink {
         kept: kept.iter().map(|path| name(path)).collect(),
@@ -472,10 +527,22 @@ fn run() -> io::Result<bool> {
         host_runtime: options.host_runtime,
         ..Relink::default()
     };
+    if let Some(original) = options
+        .substitute
+        .keys()
+        .find(|original| !kept.contains(&original.as_str()))
+    {
+        return Err(invalid(format!(
+            "substituted path is not shipped: {original}"
+        )));
+    }
     let store = options.out.join("nix/store");
     fs::create_dir_all(&store)?;
     for path in &kept {
-        relink.copy(Path::new(path), &store.join(name(path)), 0)?;
+        let replacement = options.substitute.get(*path);
+        relink.rename = replacement.map(|replacement| (name(replacement), name(path)));
+        let from = replacement.map_or(*path, String::as_str);
+        relink.copy(Path::new(from), &store.join(name(path)), 0)?;
     }
     if let Some(file) = relink.host_runtime.iter().next() {
         return Err(invalid(format!(

@@ -35,21 +35,20 @@ holds those exact paths, Helix, for example, reads its runtime from there. PID
 identities, networking, arguments and working directory retain their existing
 meaning. No second component graph is maintained.
 
-The host supplies glibc 2.42 or newer, with its loader at the psABI path, its
+The host supplies glibc 2.39 or newer, with its loader at the psABI path, its
 NSS modules and locales; `libgcc_s`; `libwayland-client` for Venus; and a
 Vulkan driver, which Venus loads through its bundled Vulkan loader. It must also
 provide `/proc`, `/dev`, Unix sockets, writable user storage and native Wayland.
 The build fails if a shipped program needs a newer glibc symbol version or a
 library found neither in the payload nor among these host libraries. Nothing
 checks the floor at install or launch: on an older glibc, `eon versions` and the
-installer's check can pass while a program that needs a newer symbol, such as
-Bash through ncurses, fails when it starts. The bundle
-needs no root, user namespace or security-policy change, and changes no host
-policy. Orbit terminals are ordinary host processes, without a namespace or the
-no-new-privileges flag. Other external tools, the resolver, users, timezone,
-certificate store and desktop services remain host inputs. CodexBar's
-`SSL_CERT_FILE` and `CURL_CA_BUNDLE` each default to the bundled CA
-certificates, as in the Nix channel.
+installer's check can pass while a program that needs a newer symbol fails when
+it starts. The bundle needs no root, user namespace or security-policy change,
+and changes no host policy. Orbit terminals are ordinary host processes,
+without a namespace or the no-new-privileges flag. Other external tools, the
+resolver, users, timezone, certificate store and desktop services remain host
+inputs. CodexBar's `SSL_CERT_FILE` and `CURL_CA_BUNDLE` each default to the
+bundled CA certificates, as in the Nix channel.
 Orbit's existing CLI requires UTF-8 child arguments in both delivery modes.
 
 The payload carries every other library its components link, plus their fonts,
@@ -78,14 +77,16 @@ Lucca's approved release trust anchor remains a publication prerequisite.
 
 Inside the archive, `component-manifest.json` and `flake.lock` are exact
 producer inputs. `provenance.json` schema 2 binds their SHA-256 values, the
-composed package and the target. Its `relink` entry records the glibc floor and
-the excluded glibc, Mesa and Wayland store paths. The composed package path
-binds the in-tree Orbit, Venus, runtime and Eon sources. `closure-paths.txt`
-lists the store paths the payload ships; the rest of the package's closure is
-what the exclusions removed. Relinking patches the shipped files, so these paths
-name each file's origin, not its bytes. The payload holds no absolute symlink.
-These receipts consume the canonical graph rather than selecting components
-independently.
+composed package and the target. Its `relink` entry records the glibc floor,
+the excluded glibc, Mesa and Wayland store paths, and each substituted path with
+the rebuild whose files ship under its name. ncurses is the one substitute: the
+same source rebuilt with a header that replaces glibc 2.42's `cfgetospeed`, so
+it runs on older glibc. The composed package path binds the in-tree Orbit,
+Venus, runtime and Eon sources. `closure-paths.txt` lists the store paths the
+payload ships; the rest of the package's closure is what the exclusions
+removed. Relinking patches the shipped files, so these paths name each file's
+origin, not its bytes. The payload holds no absolute symlink. These receipts
+consume the canonical graph rather than selecting components independently.
 
 ## Retained development proof
 
@@ -139,7 +140,7 @@ clearance.
 Draft manual-download copy for a separately approved release: Download the
 immutable Linux archive, signed checksums and source receipt from the approved
 release. Verify them with the trusted release signer before extracting. Run
-the extracted `eon` on native Wayland with glibc 2.42 or newer and a Vulkan
+the extracted `eon` on native Wayland with glibc 2.39 or newer and a Vulkan
 driver; Nix, root and user namespaces are unnecessary. Keep the selected payload
 while its terminals are running.
 No website, release asset or installer is published by this development slice.

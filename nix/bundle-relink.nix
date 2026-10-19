@@ -13,11 +13,23 @@
 # `hostRuntime`, when its program loads host drivers and so must take the
 # libraries it links from the host. Each fallback is a link where a program
 # looks when its compiled-in store path, the target, is missing.
+#
+# Each substitute ships a rebuild of a closure path under that path's name, for a
+# library the floor would otherwise reject.
 { pkgs, eonPackage, wrappers, wrapperArgs, fallbacks }:
 let
   inherit (pkgs) lib;
   excluded = [ pkgs.glibc pkgs.mesa pkgs.wayland ];
-  glibcFloor = "2.42";
+  glibcFloor = "2.39";
+  substitutes = [
+    {
+      # ncurses built on glibc 2.42 calls that release's cfgetospeed.
+      original = pkgs.ncurses;
+      replacement = pkgs.ncurses.overrideAttrs {
+        NIX_CFLAGS_COMPILE = "-include ${./ncurses-termios-speed.h}";
+      };
+    }
+  ];
   shipped = path: !lib.any (package: lib.hasPrefix "${package}/" path) excluded;
   # Prefix entries in excluded paths leave with them; the tree gate requires every other value.
   bundleEnvironment =
@@ -119,6 +131,7 @@ let
       ${lib.concatMapStrings (wrapper: "--host-runtime ${wrapper.target} ") (
         lib.filter (wrapper: wrapper.hostRuntime or false) bundleWrappers
       )} \
+      ${lib.concatMapStrings ({ original, replacement }: "--substitute ${original}=${replacement} ") substitutes} \
       --glibc-floor ${glibcFloor} "''${hostLibraries[@]}" "$out"
     ${lib.concatMapStrings ({ link, target }: ''
       ln -s "$(realpath -s -m --relative-to="$out${dirOf link}" "$out${target}")" "$out${link}"
@@ -179,6 +192,7 @@ in
 {
   inherit tree glibcFloor;
   excluded = map toString excluded;
+  substituted = map (lib.mapAttrs (_: toString)) substitutes;
   launch = pkgs.runCommand "eon-bundle-launch" {
     nativeBuildInputs = [ pkgs.bubblewrap pkgs.makeWrapper ];
   } ''

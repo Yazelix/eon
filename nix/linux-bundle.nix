@@ -9,10 +9,10 @@ let
     lock_sha256 = builtins.hashFile "sha256" lockFile;
     # The payload is the package's closure relinked for the host glibc, so its store paths
     # name their origins, not their bytes. The excluded paths and what only they reach
-    # stay out of it.
+    # stay out of it, and each substituted path ships its replacement's files.
     relink = {
       glibc_floor = relink.glibcFloor;
-      inherit (relink) excluded;
+      inherit (relink) excluded substituted;
     };
   });
 in

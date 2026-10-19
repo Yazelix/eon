@@ -60,8 +60,8 @@ contract](MANUAL-BUNDLE.md) records verification, host prerequisites, native
 proof and publication limits.
 `nix/linux-bundle.nix` owns archive assembly: the tree, an `eon` entrypoint
 linked to the tree's launcher, and the receipts. `provenance.json` names the
-glibc floor and the excluded store paths, and `closure-paths.txt` lists the
-store paths the tree ships.
+glibc floor, the excluded store paths and the substitutes, and
+`closure-paths.txt` lists the store paths the tree ships.
 
 `nix build .#installer` builds the separate static Rust `installer/` workspace.
 Its seven focused tests exercise real archive boundaries, filesystem
@@ -78,7 +78,9 @@ Mesa and Wayland, points program interpreters at the x86-64 psABI path, makes
 store RUNPATH entries `$ORIGIN`-relative and store symlinks relative, and drops
 Venus's RUNPATH so the host GPU driver shares the host's gcc runtime. It then
 checks that layout and gates every ELF on the glibc floor and on finding each
-NEEDED library in the tree or among the declared host libraries.
+NEEDED library in the tree or among the declared host libraries. A substitute
+ships a rebuild under a closure path's name: ncurses, built with
+`nix/ncurses-termios-speed.h` so it needs no glibc 2.42 symbol.
 `nix/bundle-relink.nix` owns that policy. The crate's tests run in that build
 and with `eon-test --manifest-path relink/Cargo.toml`.
 

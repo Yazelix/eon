@@ -148,14 +148,7 @@ fn gates_reject_seeded_violations() {
     // An object built against a newer glibc: rename the GLIBC_2.34 need every glibc 2.34+
     // program has. patchelf leaves the old string table in place, so rename each copy.
     let mut bytes = fs::read(&demo).unwrap();
-    let mut renamed = 0;
-    for at in 0..bytes.len() - 10 {
-        if &bytes[at..at + 11] == b"GLIBC_2.34\0" {
-            bytes[at..at + 10].copy_from_slice(b"GLIBC_2.43");
-            renamed += 1;
-        }
-    }
-    assert!(renamed > 0);
+    assert!(rename(&mut bytes, b"GLIBC_2.34\0", b"GLIBC_2.43\0"));
     let newer = package.join("bin/newer");
     fs::write(&newer, bytes).unwrap();
     assert_eq!(kinds(&[&newer, &provider]), ["glibc-floor"]);
@@ -188,5 +181,32 @@ fn gates_reject_seeded_violations() {
     patchelf(&["--set-rpath", "$ORIGIN"], &elsewhere);
     assert_eq!(kinds(&[&demo, &elsewhere]), ["needed"]);
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn substitutes_ship_under_the_original_name() {
+    let root = scratch("substitute");
+    let replacement = root.join("r-lib");
+    fs::create_dir_all(replacement.join("share")).unwrap();
+    let data = "/nix/store/r-lib/share:/nix/store/r-lib/terminfo";
+    fs::write(replacement.join("share/data"), data).unwrap();
+    symlink("/nix/store/r-lib/share/data", replacement.join("link")).unwrap();
+    fs::create_dir(root.join("store")).unwrap();
+    let mut relink = Relink {
+        kept: HashSet::from(["o-lib"]),
+        rename: Some(("r-lib", "o-lib")),
+        ..Relink::default()
+    };
+    let original = root.join("store/o-lib");
+    relink.copy(&replacement, &original, 0).unwrap();
+    assert_eq!(
+        fs::read_to_string(original.join("share/data")).unwrap(),
+        "/nix/store/o-lib/share:/nix/store/o-lib/terminfo"
+    );
+    assert_eq!(
+        fs::read_link(original.join("link")).unwrap(),
+        Path::new("../o-lib/share/data")
+    );
     fs::remove_dir_all(root).unwrap();
 }
