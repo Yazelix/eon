@@ -83,11 +83,11 @@ and review retained contents before manually reclaiming the prefix.
 
 Signature/hash, download, archive-boundary and preselection checks fail without
 changing the prior `current` selector. Extraction uses a new private staging
-directory, validates entry paths and actual link targets, and rejects duplicate
-entries and special files. The tar extractor prevents writes outside that
-staging directory.
-Private Nix-store symlinks retain their bundle meaning. The trusted
-publisher still controls executable contents; this is not a sandbox for
+directory, validates entry paths and actual link targets, and rejects absolute
+symlinks, duplicate entries and special files. The tar extractor prevents writes
+outside that staging directory.
+Selection requires the payload's `eon` to be a symlink to an executable file.
+The trusted publisher still controls executable contents; this is not a sandbox for
 running hostile code or protection against another hostile process under your UID.
 
 One exclusive prefix lock serializes mutations. An interrupted install may

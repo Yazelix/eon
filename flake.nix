@@ -675,6 +675,7 @@
         installer = import ./nix/installer.nix { inherit pkgs; };
         manual-bundle = import ./nix/linux-bundle.nix {
           inherit pkgs eonPackage;
+          relink = bundleRelink;
           manifestFile = ./components/eon-alpha-v3.json;
           lockFile = ./flake.lock;
         };

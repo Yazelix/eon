@@ -17,6 +17,7 @@
 let
   inherit (pkgs) lib;
   excluded = [ pkgs.glibc pkgs.mesa pkgs.wayland ];
+  glibcFloor = "2.42";
   shipped = path: !lib.any (package: lib.hasPrefix "${package}/" path) excluded;
   # Prefix entries in excluded paths leave with them; the tree gate requires every other value.
   bundleEnvironment =
@@ -118,7 +119,7 @@ let
       ${lib.concatMapStrings (wrapper: "--host-runtime ${wrapper.target} ") (
         lib.filter (wrapper: wrapper.hostRuntime or false) bundleWrappers
       )} \
-      --glibc-floor 2.42 "''${hostLibraries[@]}" "$out"
+      --glibc-floor ${glibcFloor} "''${hostLibraries[@]}" "$out"
     ${lib.concatMapStrings ({ link, target }: ''
       ln -s "$(realpath -s -m --relative-to="$out${dirOf link}" "$out${target}")" "$out${link}"
       test -d "$out${link}/"
@@ -176,7 +177,8 @@ let
     ];
 in
 {
-  inherit tree;
+  inherit tree glibcFloor;
+  excluded = map toString excluded;
   launch = pkgs.runCommand "eon-bundle-launch" {
     nativeBuildInputs = [ pkgs.bubblewrap pkgs.makeWrapper ];
   } ''

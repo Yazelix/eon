@@ -55,12 +55,13 @@ checkout also hashes its docs and assets. Cargo needs every workspace member,
 so Nix rebuilds Orbit and Venus after edits under `eon/` or `runtime/` too.
 
 `nix build .#manual-bundle` assembles the unpublished Linux direct candidate
-from the same package. Its [manual delivery contract](MANUAL-BUNDLE.md) records
-verification, host prerequisites, native proof and publication limits.
-`bundle/` is a separate dependency-free Rust workspace for the static Linux
-entrypoint; `nix/linux-bundle.nix` owns archive assembly. Package builds check
-static bootstraps; the retained assert-based native probe covers namespace
-relocation outside Nix's build sandbox.
+from the relinked tree described below. Its [manual delivery
+contract](MANUAL-BUNDLE.md) records verification, host prerequisites, native
+proof and publication limits.
+`nix/linux-bundle.nix` owns archive assembly: the tree, an `eon` entrypoint
+linked to the tree's launcher, and the receipts. `provenance.json` names the
+glibc floor and the excluded store paths, and `closure-paths.txt` lists the
+store paths the tree ships.
 
 `nix build .#installer` builds the separate static Rust `installer/` workspace.
 Its seven focused tests exercise real archive boundaries, filesystem
@@ -71,7 +72,7 @@ proofs remain with `eon-prove-thin-linux-bundle-installer-8r7n`.
 The [installer contract](INSTALLER.md) records target tools and recovery.
 
 `nix build --no-link .#checks.x86_64-linux.bundle-relink` builds the
-namespace-free layout that the direct candidate has yet to adopt. The separate
+namespace-free tree the direct candidate ships. The separate
 dependency-free Rust `relink/` workspace copies what Eon reaches without glibc,
 Mesa and Wayland, points program interpreters at the x86-64 psABI path, makes
 store RUNPATH entries `$ORIGIN`-relative and store symlinks relative, and drops

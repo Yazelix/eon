@@ -34,6 +34,7 @@ fn extraction_rejects_escapes_and_special_files() {
         vec![("root/pipe", T::Fifo, "")],
         vec![("root/link", T::Link, "../outside/keep")],
         vec![("root/link", T::Symlink, "../../outside")],
+        vec![("root/nix/store/a/link", T::Symlink, "/nix/store/b/file")],
         vec![("root", T::Symlink, "file")],
         vec![
             ("root/duplicate", T::Regular, ""),
@@ -72,9 +73,9 @@ fn fixture_version(prefix: &Path, hash: &str) -> PathBuf {
     let root = prefix.join("versions").join(hash);
     fs::create_dir(&root).unwrap();
     fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
-    fs::create_dir(root.join("libexec")).unwrap();
-    fs::copy(env::current_exe().unwrap(), root.join("eon")).unwrap();
-    fs::copy(env::current_exe().unwrap(), root.join("libexec/bwrap")).unwrap();
+    fs::create_dir(root.join("nix")).unwrap();
+    fs::copy(env::current_exe().unwrap(), root.join("nix/eon")).unwrap();
+    symlink("nix/eon", root.join("eon")).unwrap();
     fs::write(
         root.join(".eon-source"),
         format!("{MARKER}{hash}\nhttps://proof.invalid/exact\n"),
@@ -129,6 +130,10 @@ fn failed_selection_and_locking_leave_current_usable() {
     select(&prefix, &a).unwrap();
     fs::write(bad.join("eon"), "invalid executable").unwrap();
     assert!(select(&prefix, &b).is_err());
+    // A working executable is not an entrypoint unless it is the link into the tree.
+    fs::remove_file(bad.join("eon")).unwrap();
+    fs::copy(env::current_exe().unwrap(), bad.join("eon")).unwrap();
+    assert!(select(&prefix, &b).is_err());
     assert_eq!(selected(&prefix).unwrap().as_deref(), Some(a.as_str()));
     fs::remove_file(prefix.join("bin/eon")).unwrap();
     fs::write(prefix.join("bin/eon"), "user command").unwrap();
@@ -167,25 +172,26 @@ fn checksums_reject_ambiguous_bindings_and_arguments_reject_invalid_requests() {
 }
 
 #[test]
-fn extraction_preserves_private_store_links_and_hardlinks() {
+fn extraction_preserves_relative_links_and_hardlinks() {
     use tar::EntryType as T;
     let temp = tempfile::tempdir().unwrap();
     let entries = [
         ("root", T::Directory, "ignored-link-name"),
         ("root/file", T::Regular, "../../ignored-link-name"),
         ("root/hard", T::Link, "root/file"),
-        (
-            "root/nix/store/component/link",
-            T::Symlink,
-            "/nix/store/other/file",
-        ),
+        ("root/eon", T::Symlink, "nix/store/component/bin/eon"),
+        ("root/nix/store/component/link", T::Symlink, "../other/file"),
     ];
     extract(archive(&entries).as_slice(), temp.path(), "root").unwrap();
     assert!(temp.path().join("root/file").is_file());
     assert!(temp.path().join("root/hard").is_file());
     assert_eq!(
+        fs::read_link(temp.path().join("root/eon")).unwrap(),
+        Path::new("nix/store/component/bin/eon")
+    );
+    assert_eq!(
         fs::read_link(temp.path().join("root/nix/store/component/link")).unwrap(),
-        Path::new("/nix/store/other/file")
+        Path::new("../other/file")
     );
 }
 

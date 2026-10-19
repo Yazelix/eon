@@ -60,14 +60,6 @@ fn extract(reader: impl Read, destination: &Path, root: &str) -> io::Result<()> 
                 if !normal(&link) || !link.starts_with(root) {
                     return Err(invalid("hard link escapes archive root"));
                 }
-            } else if link.is_absolute() {
-                // Nix closure links resolve through the bundle's private /nix at execution.
-                if !path.starts_with(Path::new(root).join("nix/store"))
-                    || !link.starts_with("/nix/store")
-                    || !normal(link.strip_prefix("/nix/store").unwrap())
-                {
-                    return Err(invalid("absolute symlink outside private store"));
-                }
             } else {
                 let mut depth = path.components().count() - 2;
                 for component in link.components() {
@@ -173,11 +165,16 @@ fn bin_owned(prefix: &Path) -> io::Result<bool> {
     }
 }
 
-fn executable(path: &Path) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_file() || metadata.permissions().mode() & 0o111 == 0 {
+/// The payload's eon links to the launcher in its relinked tree, which finds the tree from
+/// its own path.
+fn entrypoint(root: &Path) -> io::Result<()> {
+    let path = root.join("eon");
+    if !fs::symlink_metadata(&path)?.is_symlink()
+        || !fs::metadata(&path)
+            .is_ok_and(|target| target.is_file() && target.permissions().mode() & 0o111 != 0)
+    {
         return Err(invalid(format!(
-            "expected packaged executable: {}",
+            "expected packaged entrypoint link: {}",
             path.display()
         )));
     }
@@ -196,8 +193,7 @@ fn version(prefix: &Path, hash: &str) -> io::Result<PathBuf> {
     {
         return Err(invalid("version lacks its installer receipt"));
     }
-    executable(&path.join("eon"))?;
-    executable(&path.join("libexec/bwrap"))?;
+    entrypoint(&path)?;
     Ok(path)
 }
 
@@ -384,8 +380,7 @@ fn install(prefix: &Path, url: &str, signers: &Path, dry_run: bool) -> io::Resul
             root,
         )?;
         let payload = staging.path().join(root);
-        executable(&payload.join("eon"))?;
-        executable(&payload.join("libexec/bwrap"))?;
+        entrypoint(&payload)?;
         smoke(&payload)?;
         let mut receipt = OpenOptions::new()
             .write(true)
