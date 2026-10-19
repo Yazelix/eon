@@ -295,6 +295,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon distribution composition consuming EON-C2.
 - **Boundary:** The manual and installed candidates remain unpublished;
   ordinary installation uses Nix. Nix-free delivery retains its own proof.
+- **Host inputs:** The direct Linux bundle takes glibc (its loader,
+  libraries, NSS modules and locales), `libgcc_s`, Venus's
+  `libwayland-client` and the Vulkan driver from the host as declared
+  inputs; the Nix channel pins them. Component identities and the graph
+  are unchanged: the bundle ships the same store paths, relinked for the
+  host glibc, with the canonical manifest and lock bytes. The
+  [manual bundle](MANUAL-BUNDLE.md#execution-and-host-boundary) declares
+  the glibc floor.
 - **Proof:** Pending re-proof in this repository.
   - **Environment:** Not repeated after consolidation.
   - **Evidence:** Before consolidation, both EON-C5 archives carried the

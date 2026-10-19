@@ -306,13 +306,15 @@ through a separate decision without changing the package or runtime contract.
 
 ### Linux direct bundle
 
-`eon-prove-manual-nix-free-linux-bundle-216b` proves the compressed relocatable
-bundle and verification on an isolated non-Nix native-Wayland environment.
-`eon-prove-thin-linux-bundle-installer-8r7n` proves the static Rust installer
+`eon-prove-manual-nix-free-linux-bundle-216b` proved the compressed relocatable
+bundle of the earlier Bubblewrap mechanism and its verification on an isolated
+non-Nix native-Wayland environment.
+`eon-prove-thin-linux-bundle-installer-8r7n` proved the static Rust installer
 over that artifact, with a versioned user prefix, atomic `current` link,
 verified dry-run, active-work-safe upgrade/rollback and owned removal. It
-retains every payload and edits no shell profile. Qualification of the
-Nix-free install and its publication follow separate gates.
+retains every payload and edits no shell profile. Both await re-proof with the
+relinked payload. Qualification of the Nix-free install and its publication
+follow separate gates.
 
 A manual download and extraction path remains available beside the installer.
 

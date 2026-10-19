@@ -6,8 +6,9 @@ composes packages nor runs Nix. No public installer or release signer is publish
 Normal installation remains Nix-based.
 
 The target is x86_64 Linux on native Wayland, with the bundle's documented
-unprivileged user/mount namespace requirements. Installation also requires host
-`curl` with HTTPS and OpenSSH `ssh-keygen` supporting `-Y verify`.
+[host prerequisites](MANUAL-BUNDLE.md#execution-and-host-boundary).
+Installation also requires host `curl` with HTTPS and OpenSSH `ssh-keygen`
+supporting `-Y verify`.
 Install and rollback use host GNU coreutils `timeout` to bound the packaged
 check and kill its entire process group if it hangs. Rust, Nix, tar and zstd
 commands are unnecessary on the target machine.
@@ -103,6 +104,8 @@ the installer refuses to adopt an unmarked directory.
 
 ## Retained development proof
 
+This proof used archives of the bundle's earlier Bubblewrap mechanism, which the
+installer no longer accepts; it awaits re-proof with the relinked payload.
 `eon-prove-thin-linux-bundle-installer-8r7n` records seven focused Rust checks,
 the static Nix build, signed TLS failures/interruption and native installation,
 upgrade, rollback, retained reattachment and removal, and binds exact archives
