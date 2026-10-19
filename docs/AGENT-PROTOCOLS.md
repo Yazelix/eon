@@ -10,13 +10,12 @@ The user owns scope. Inspection, audit, diagnosis, explanation, and advice
 authorize no implementation, external-state, or durable-planning write.
 Implement only a chosen outcome.
 
-Never silently add features, compatibility promises, public surfaces,
-migrations, repositories, or planning items. Preserve user inputs and
-artifacts; replace or delete an exact target only when required, else write a
-distinct result. State consequential assumptions; stop when a missing scope
-choice would materially change the result. Recommend and justify an answer to
-every choice. “Finish” adds persistence, not authority. Report out-of-scope
-findings unless the user chose a durable home.
+Never silently add features, migrations, repositories, or planning items.
+Preserve user inputs and artifacts; replace or delete an exact target only when
+required, else write a distinct result. State consequential assumptions; stop
+when a missing scope choice would materially change the result. Recommend and
+justify an answer to every choice. “Finish” adds persistence, not authority.
+Report out-of-scope findings unless the user chose a durable home.
 
 ## AP-CONTRACT-001 — Contract-driven changes
 
@@ -24,14 +23,12 @@ Before code shape, state the smallest observable contract: consumer, trigger,
 result, and important failures. Of the contracts consistent with the request
 and evidence, choose the fewest unsupported guarantees or restrictions; leave
 reasonable future behavior unspecified. Give it a stable ID only when later
-consumers need one.
+consumers need one. Choose the cheapest check that would falsify it.
 
 Keep docs, help, examples, and configuration aligned with current commands,
 paths, flags, defaults, and availability; label planned, partial, or gated
-behavior. Choose one source-of-truth owner, the cheapest falsifying check, and
-the smallest complete vertical slice. Update the contract first for an
-intentional behavior change. Implementation details are not contracts unless a
-component must rely on them.
+behavior. Update the contract first for an intentional behavior change.
+Implementation details are not contracts unless a component must rely on them.
 
 ## AP-REFERENCE-001 — Evidence before code shape
 
@@ -45,20 +42,22 @@ material shape change. Memory, summaries, and reputation are discovery only.
 After identifying the contract, evidence, owner, flow, and boundaries, take the
 first sufficient option: no change; existing owner, helper, or pattern;
 standard library or native platform; accepted dependency that owns the
-behavior; minimum correct local code.
+behavior; minimum correct local code. Build only for current callers, not
+forecasts; abstract only for a second caller: speculation costs every reader.
 
-Judge the whole lifecycle, including duplicate truth, coordination, coupling,
-migration and removal, portability, operations, proof, and agent context. Scope
-instructions narrowly; retain non-obvious constraints and reusable
-behavior-changing workflows, not generic or duplicated policy. Load details
-only when needed.
+Judge the whole lifecycle, including coordination, coupling, migration and
+removal, portability, operations, proof, and agent context. Scope instructions
+narrowly; retain non-obvious constraints and reusable behavior-changing
+workflows, not generic or duplicated policy. Load details only when needed.
 
-A patch is not minimal if it preserves a wrong or duplicate owner, treats a
-symptom below its shared cause, bypasses a boundary, or raises downstream cost.
-Prefer deletion, direct ownership, and fewer files; use patch size only between
-equally correct system shapes. Never remove required behavior, trust-boundary
-validation, data-loss protection, security, accessibility, or the cheapest
-runnable check for non-trivial logic.
+A patch is not minimal if it treats a symptom below its shared cause, bypasses
+a boundary, or raises downstream cost. Leftovers are a change's commonest
+defect: update every caller, test, fixture, config, and export it breaks and
+delete what it orphans. Prefer fewer files; report unrelated dead code as out of
+scope; use patch size only between equally correct system shapes. Handle empty,
+malformed, and boundary input; real callers send it. Never remove required
+behavior, trust-boundary validation, data-loss protection, security,
+accessibility, or the cheapest runnable check for non-trivial logic.
 
 ## AP-DEPENDENCY-001 — Dependency gate
 
@@ -162,15 +161,6 @@ A handoff is an issue comment: state, next step, and open decisions with
 reasons. The next session primes, e.g. "prime, then continue <issue> from its
 handoff".
 
-## AP-CI-001 — Bounded continuous integration
-
-Before hosted automation, name its contract and why local proof is
-insufficient. Bound triggers, jobs, timeouts, permissions, artifacts, cache,
-concurrency; specify fork and secret behavior. Prefer one cheap deterministic
-job. Record when to expand, reduce, or remove. Confidence must justify its
-financial, latency, security, and maintenance costs, including private minutes
-and storage.
-
 ## AP-EXCEPTION-001 — Explicit local exceptions
 
 Only an exception approved by the user or named authority may narrow, replace,
@@ -190,6 +180,15 @@ release, or pin), commit corrections separately. Never reset, discard,
 force-push, rewrite published history, or create a branch without authority.
 Verify intended diff before commit and remote state after push. Roll back with a
 reviewed revert unless local policy says otherwise.
+
+## AP-CI-001 — Bounded continuous integration
+
+Before hosted automation, name its contract and why local proof is
+insufficient. Bound triggers, jobs, timeouts, permissions, artifacts, cache,
+concurrency; specify fork and secret behavior. Prefer one cheap deterministic
+job. Record when to expand, reduce, or remove. Confidence must justify its
+financial, latency, security, and maintenance costs, including private minutes
+and storage.
 
 ## AP-ORCHESTRATOR-001 — Thin orchestrator ownership
 
