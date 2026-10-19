@@ -1,36 +1,54 @@
 # The eon closure relinked to run on the host glibc without a namespace: every
 # program interpreter becomes the x86-64 psABI path, store RUNPATH entries
 # become $ORIGIN-relative, and absolute store symlinks become relative. The host
-# supplies glibc and the Vulkan driver, so glibc, Mesa and what only they
-# reference stay out of the tree. The gates hold every ELF to the glibc floor
-# and resolve each NEEDED library inside the tree or on the declared host
-# libraries. A copy of the static launcher replaces each makeWrapper script and
-# applies the same environment relative to wherever the tree is.
-{ pkgs, eonPackage, wrappers, wrapperArgs }:
+# supplies glibc, the Vulkan driver and Venus's Wayland client library, so glibc,
+# Mesa, Wayland and what only they reference stay out of the tree. The gates hold
+# every ELF to the glibc floor and resolve each NEEDED library inside the tree or
+# on the declared host libraries. A copy of the static launcher replaces each
+# makeWrapper script and applies the same environment relative to wherever the
+# tree is.
+#
+# Each wrapper may add `relocated`, environment for the bundle only that names
+# data roots its programs otherwise find through compiled-in store paths, and
+# `hostRuntime`, when its program loads host drivers and so must take the
+# libraries it links from the host. Each fallback is a link where a program
+# looks when its compiled-in store path, the target, is missing.
+{ pkgs, eonPackage, wrappers, wrapperArgs, fallbacks }:
 let
   inherit (pkgs) lib;
-  excluded = [ pkgs.glibc pkgs.mesa ];
+  excluded = [ pkgs.glibc pkgs.mesa pkgs.wayland ];
   shipped = path: !lib.any (package: lib.hasPrefix "${package}/" path) excluded;
   # Prefix entries in excluded paths leave with them; the tree gate requires every other value.
-  bundleEnvironment = environment: {
-    set = environment.set or { };
-    setDefault = environment.setDefault or { };
-    prefix = lib.filterAttrs (_: paths: paths != [ ]) (
-      lib.mapAttrs (_: lib.filter shipped) (environment.prefix or { })
-    );
-  };
+  bundleEnvironment =
+    { environment, relocated ? { }, ... }:
+    {
+      set = environment.set or { } // relocated.set or { };
+      setDefault = environment.setDefault or { } // relocated.setDefault or { };
+      prefix = lib.filterAttrs (_: paths: paths != [ ]) (
+        lib.mapAttrs (_: lib.filter shipped) (
+          lib.zipAttrsWith (_: lib.concatLists) [
+            (environment.prefix or { })
+            (relocated.prefix or { })
+          ]
+        )
+      );
+    };
   bundleWrappers = map (
     wrapper:
     wrapper
     // {
-      environment = bundleEnvironment wrapper.environment;
+      environment = bundleEnvironment wrapper;
       target = "${dirOf wrapper.program}/.${baseNameOf wrapper.program}-wrapped";
     }
   ) wrappers;
   paths =
-    wrapper:
-    lib.attrValues (wrapper.environment.set // wrapper.environment.setDefault)
-    ++ lib.concatLists (lib.attrValues wrapper.environment.prefix);
+    environment:
+    lib.attrValues (environment.set or { } // environment.setDefault or { })
+    ++ lib.concatLists (lib.attrValues (environment.prefix or { }));
+  # The compiled-in store paths the tree stands in for, which programs may still probe.
+  replaced =
+    map (fallback: fallback.target) fallbacks
+    ++ lib.concatMap (wrapper: paths (wrapper.relocated or { })) wrappers;
 
   # The launcher prefixes each store path with the tree root, so a value must be a store
   # path that needs no escaping in Rust and holds no separator.
@@ -97,7 +115,14 @@ let
     done
     eon-relink --registration ${closure}/registration --root ${eonPackage} \
       ${lib.concatMapStringsSep " " (package: "--exclude ${package}") excluded} \
+      ${lib.concatMapStrings (wrapper: "--host-runtime ${wrapper.target} ") (
+        lib.filter (wrapper: wrapper.hostRuntime or false) bundleWrappers
+      )} \
       --glibc-floor 2.42 "''${hostLibraries[@]}" "$out"
+    ${lib.concatMapStrings ({ link, target }: ''
+      ln -s "$(realpath -s -m --relative-to="$out${dirOf link}" "$out${target}")" "$out${link}"
+      test -d "$out${link}/"
+    '') fallbacks}
 
     if [[ "$(readelf -l ${launcher}/bin/eon-launcher)" == *INTERP* ]]; then
       echo "the launcher must be static" >&2
@@ -113,7 +138,7 @@ let
     elif test $? != 1; then
       exit 1
     fi
-    for path in ${lib.escapeShellArgs (lib.concatMap paths bundleWrappers)}; do
+    for path in ${lib.escapeShellArgs (lib.concatMap (wrapper: paths wrapper.environment) bundleWrappers)}; do
       if [[ ! -e "$out$path" ]]; then
         echo "launcher value is not in the tree: $path" >&2
         exit 1
@@ -157,18 +182,24 @@ in
   } ''
     mkdir home
     # Runs COMMAND with the tree at ROOT into the file actual, and fails on any store path
-    # the trace touches outside the stand-in host glibc.
+    # the trace touches outside the stand-in host glibc and the replaced compiled-in paths.
     run() {
       local root=$1
       shift
       bwrap ${host} --ro-bind ${tree} "$root" --bind "$PWD/home" /home/eon \
         --setenv HOME /home/eon --setenv PATH "$root${eonPackage}/libexec/eon/bin" \
         -- /strace -f -qq -s 4096 -e trace=%file -o /home/eon/trace "$@" > actual
-      if grep -F '"${builtins.storeDir}/' home/trace | grep -vF '"${pkgs.glibc}/'; then
+      if grep -F '"${builtins.storeDir}/' home/trace |
+        grep -vF ${lib.concatMapStringsSep " " (path: "-e '\"${path}'") ([ "${pkgs.glibc}/" ] ++ replaced)}; then
         echo "the tree looked up a store path" >&2
         exit 1
       fi
     }
+    # Runs the managed COMMAND from the Nix product into the file expected.
+    reference() {
+      HOME="$PWD/home" ${eonPackage}/libexec/eon/bin/"$@" > expected
+    }
+    terminfo='for term in eon xterm-256color; do "$0" -T $term colors; done'
     for root in /opt/eon /srv/moved/eon; do
       for arguments in versions --help; do
         run "$root" "$root${eonPackage}/bin/eon" $arguments
@@ -176,8 +207,19 @@ in
       done
       for command in nu bash eon-nu eon-bash; do
         run "$root" "$command" --version
-        HOME="$PWD/home" ${eonPackage}/libexec/eon/bin/$command --version | cmp - actual
+        reference "$command" --version
+        cmp expected actual
       done
+      # Helix loads a grammar and its highlight queries from its runtime.
+      run "$root" hx --health bash
+      test "$(grep -cE '^(Tree-sitter parser|Highlight queries): .*✓' actual)" = 2
+      # ncurses finds Orbit's terminal type and its own.
+      run "$root" eon-bash -c "$terminfo" "$root${pkgs.ncurses}/bin/tput"
+      reference eon-bash -c "$terminfo" ${pkgs.ncurses}/bin/tput
+      cmp expected actual
+      # zoxide runs fzf from the PATH; the filter keeps fzf off the terminal.
+      run "$root" eon-bash -c "zoxide add $root && _ZO_FZF_OPTS=--filter=$root zoxide query --interactive"
+      test "$(cat actual)" = "$root"
     done
 
     # Each launcher must hand its target the environment makeWrapper builds from the same

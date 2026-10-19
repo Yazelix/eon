@@ -72,11 +72,12 @@ The [installer contract](INSTALLER.md) records target tools and recovery.
 
 `nix build --no-link .#checks.x86_64-linux.bundle-relink` builds the
 namespace-free layout that the direct candidate has yet to adopt. The separate
-dependency-free Rust `relink/` workspace copies what Eon reaches without glibc
-and Mesa, points program interpreters at the x86-64 psABI path, makes store
-RUNPATH entries `$ORIGIN`-relative and store symlinks relative. It then checks
-that layout and gates every ELF on the glibc floor and on finding each NEEDED
-library in the tree or among the declared host libraries.
+dependency-free Rust `relink/` workspace copies what Eon reaches without glibc,
+Mesa and Wayland, points program interpreters at the x86-64 psABI path, makes
+store RUNPATH entries `$ORIGIN`-relative and store symlinks relative, and drops
+Venus's RUNPATH so the host GPU driver shares the host's gcc runtime. It then
+checks that layout and gates every ELF on the glibc floor and on finding each
+NEEDED library in the tree or among the declared host libraries.
 `nix/bundle-relink.nix` owns that policy. The crate's tests run in that build
 and with `eon-test --manifest-path relink/Cargo.toml`.
 
@@ -87,8 +88,9 @@ launcher compiles it in and applies it relative to the tree's location.
 `nix build --no-link .#checks.x86_64-linux.bundle-launch` runs the tree from two
 locations under bwrap, which stands in for a host without Nix. The stand-in host
 glibc is the only store path visible, and the check fails if the tree looks up
-any other. It also compares each launcher's environment with makeWrapper's. It
-needs unprivileged user namespaces inside the Nix build sandbox.
+any other besides the compiled-in data paths the tree stands in for. It also
+compares each launcher's environment with makeWrapper's. It needs unprivileged
+user namespaces inside the Nix build sandbox.
 
 Build both installed products with `nix build --no-link .#default .#eonbase`.
 

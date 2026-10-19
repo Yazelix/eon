@@ -269,13 +269,23 @@
         pkgs.libxkbcommon
         pkgs.wayland
       ];
-      venusFontsConf = pkgs.makeFontsConf {
-        fontDirectories = [
-          pkgs.dejavu_fonts
-          pkgs.nerd-fonts.symbols-only
-          anima.packages.${system}.accelerando-font
-        ];
-      };
+      # Font directories are relative to this file, so the relocated bundle finds them too.
+      venusFontsConf = pkgs.runCommand "fonts.conf" { } ''
+        sed 's|<dir>${builtins.storeDir}/|<dir prefix="relative">|' ${
+          pkgs.makeFontsConf {
+            fontDirectories = [
+              pkgs.dejavu_fonts
+              pkgs.nerd-fonts.symbols-only
+              anima.packages.${system}.accelerando-font
+            ];
+          }
+        } > "$out"
+        if grep -F '${builtins.storeDir}/' "$out"; then
+          exit 1
+        elif test $? != 1; then
+          exit 1
+        fi
+      '';
       venusEnvironment = {
         set.FONTCONFIG_FILE = "${venusFontsConf}";
         prefix = {
@@ -334,7 +344,9 @@
         assert pkgs.bashInteractive.version == bashIdentity.version;
         pkgs.bashInteractive;
       starshipPackage = managedPackage starshipIdentity pkgs.starship;
-      zoxidePackage = managedPackage zoxideIdentity pkgs.zoxide;
+      # zoxide runs the fzf that Eon puts first on the terminal PATH, not a compiled-in store
+      # path that the relocated bundle cannot reach.
+      zoxidePackage = managedPackage zoxideIdentity (pkgs.zoxide.override { withFzf = false; });
       fzfPackage = managedPackage fzfIdentity pkgs.fzf;
       atuinPackage = managedPackage atuinIdentity pkgs.atuin;
       carapacePackage = managedPackage carapaceIdentity pkgs.carapace;
@@ -613,14 +625,29 @@
           {
             program = "${eonPackage}/bin/eon";
             environment = eonEnvironment "${eonPackage}";
+            # Bash's ncurses for terminal types other than Orbit's.
+            relocated.prefix.TERMINFO_DIRS = [ "${pkgs.ncurses}/share/terminfo" ];
           }
           {
             program = "${venusPackage}/bin/yazelix-venus";
             environment = venusEnvironment;
+            # libxkbcommon's keymap and Compose data.
+            relocated.setDefault = {
+              XKB_CONFIG_ROOT = "${pkgs.xkeyboard_config}/etc/X11/xkb";
+              XLOCALEDIR = "${pkgs.libx11}/share/X11/locale";
+            };
+            # The host's GPU driver shares Venus's gcc runtime, so both come from the host.
+            hostRuntime = true;
           }
           {
             program = "${codexbarPackage}/bin/CodexBarCLI";
             environment = codexbarEnvironment;
+          }
+        ];
+        fallbacks = [
+          {
+            link = "${helixPackage}/bin/runtime";
+            target = helixPackage.HELIX_DEFAULT_RUNTIME;
           }
         ];
       };

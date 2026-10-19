@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Zoxide's `zi` runs the `fzf` found on the terminal's PATH, which is Eon's
+  managed fzf unless the shell puts another first, instead of a second fzf
+  build compiled into Zoxide.
 - Eon no longer ships Zsh or Fish. The `eon-zsh` and `eon-fish` commands and
   the managed `zsh` and `fish` names inside terminals are gone, and
   `eon versions` lists neither. Nushell and Bash remain the managed shells. A

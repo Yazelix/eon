@@ -17,10 +17,11 @@ const STORE: &str = "/nix/store/";
 /// The x86-64 psABI program interpreter every glibc distribution ships.
 const INTERPRETER: &str = "/lib64/ld-linux-x86-64.so.2";
 const HELP: &str = "Usage: eon-relink --registration FILE --root PATH [--exclude PATH]...
-       --glibc-floor VERSION [--host-library SONAME]... OUT
+       --glibc-floor VERSION [--host-library SONAME]... [--host-runtime FILE]... OUT
 
 Copies every store path reachable from ROOT without passing through an excluded path
-into OUT/nix/store, relinks it for the host glibc and checks the result.";
+into OUT/nix/store, relinks it for the host glibc and checks the result. Each host-runtime
+ELF FILE loses its RUNPATH, so it takes every library it needs from the host.";
 
 fn invalid(message: impl Into<String>) -> io::Error {
     io::Error::other(message.into())
@@ -160,6 +161,8 @@ fn store_name(reference: &str) -> Option<(&str, &str)> {
 struct Relink<'a> {
     kept: HashSet<&'a str>,
     excluded: HashSet<&'a str>,
+    /// Host-runtime ELF files not yet copied.
+    host_runtime: HashSet<PathBuf>,
     elves: Vec<PathBuf>,
     links: Vec<PathBuf>,
     relative: usize,
@@ -209,7 +212,8 @@ impl Relink<'_> {
             if fs::File::open(to)?.read(&mut magic)? == 4 && magic == *b"\x7fELF" {
                 let mode = metadata.permissions().mode() | 0o200;
                 fs::set_permissions(to, fs::Permissions::from_mode(mode))?;
-                self.patch(to, depth)
+                let host_runtime = self.host_runtime.remove(from);
+                self.patch(to, depth, host_runtime)
                     .map_err(|error| invalid(format!("{}: {error}", from.display())))?;
                 self.elves.push(to.into());
             }
@@ -217,7 +221,7 @@ impl Relink<'_> {
         Ok(())
     }
 
-    fn patch(&mut self, file: &Path, depth: usize) -> io::Result<()> {
+    fn patch(&mut self, file: &Path, depth: usize, host_runtime: bool) -> io::Result<()> {
         let elf = Elf::read(file)?;
         let mut arguments = Vec::new();
         // The host's loader replaces one from an excluded path; any other interpreter
@@ -227,7 +231,13 @@ impl Relink<'_> {
             arguments.extend(["--set-interpreter".into(), INTERPRETER.into()]);
             self.interpreters += 1;
         }
-        if elf.runpath.iter().any(|entry| entry.starts_with(STORE)) {
+        if host_runtime {
+            // The gate then requires every library it needs to be a host library.
+            if !elf.runpath.is_empty() {
+                arguments.push("--remove-rpath".into());
+                self.runpaths += 1;
+            }
+        } else if elf.runpath.iter().any(|entry| entry.starts_with(STORE)) {
             let mut runpath = Vec::new();
             for entry in elf.runpath {
                 if !entry.starts_with(STORE) {
@@ -411,13 +421,14 @@ struct Options {
     registration: PathBuf,
     root: String,
     exclude: Vec<String>,
+    host_runtime: HashSet<PathBuf>,
     gates: Gates,
     out: PathBuf,
 }
 
 fn options(mut arguments: impl Iterator<Item = String>) -> io::Result<Options> {
     let (mut registration, mut root, mut floor, mut out) = (None, None, None, None);
-    let (mut exclude, mut host) = (Vec::new(), HashSet::new());
+    let (mut exclude, mut host, mut host_runtime) = (Vec::new(), HashSet::new(), HashSet::new());
     while let Some(argument) = arguments.next() {
         let mut value = || arguments.next().ok_or_else(|| invalid(HELP));
         match argument.as_str() {
@@ -427,6 +438,9 @@ fn options(mut arguments: impl Iterator<Item = String>) -> io::Result<Options> {
             "--glibc-floor" => floor = Some(value()?),
             "--host-library" => {
                 host.insert(value()?);
+            }
+            "--host-runtime" => {
+                host_runtime.insert(value()?.into());
             }
             _ if !argument.starts_with('-') && out.is_none() => out = Some(argument.into()),
             _ => return Err(invalid(HELP)),
@@ -438,6 +452,7 @@ fn options(mut arguments: impl Iterator<Item = String>) -> io::Result<Options> {
             registration,
             root,
             exclude,
+            host_runtime,
             gates: Gates { floor, host },
             out,
         }),
@@ -454,12 +469,19 @@ fn run() -> io::Result<bool> {
     let mut relink = Relink {
         kept: kept.iter().map(|path| name(path)).collect(),
         excluded: options.exclude.iter().map(|path| name(path)).collect(),
+        host_runtime: options.host_runtime,
         ..Relink::default()
     };
     let store = options.out.join("nix/store");
     fs::create_dir_all(&store)?;
     for path in &kept {
         relink.copy(Path::new(path), &store.join(name(path)), 0)?;
+    }
+    if let Some(file) = relink.host_runtime.iter().next() {
+        return Err(invalid(format!(
+            "host-runtime file is not a shipped ELF file: {}",
+            file.display()
+        )));
     }
     let report = check(&options.out, &relink.elves, &relink.links, &options.gates)?;
     let mut kinds = BTreeMap::new();
