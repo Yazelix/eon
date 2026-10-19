@@ -539,11 +539,19 @@
           ${nushellPackage} ${bashPackage} \
           ${starshipPackage} ${zoxidePackage} ${atuinPackage} ${carapacePackage} \
           ${fzfPackage} ${helixPackage} ${yaziPackage} ${lazygitPackage}; do
-          ! ${pkgs.gnugrep}/bin/grep -Fx "$forbidden" ${eonbaseClosure}/store-paths
+          if ${pkgs.gnugrep}/bin/grep -Fx "$forbidden" ${eonbaseClosure}/store-paths; then
+            exit 1
+          elif test $? != 1; then
+            exit 1
+          fi
         done
         test ! -e ${eonbasePackage}/libexec/eon
         ${pkgs.gnugrep}/bin/grep -F 'unset EON_SESSION_BIN' ${eonbasePackage}/bin/eonbase
-        ! ${pkgs.gnugrep}/bin/grep -F '/libexec/eon/bin' ${eonbasePackage}/bin/eonbase
+        if ${pkgs.gnugrep}/bin/grep -F '/libexec/eon/bin' ${eonbasePackage}/bin/eonbase; then
+          exit 1
+        elif test $? != 1; then
+          exit 1
+        fi
         ${pkgs.coreutils}/bin/touch "$out"
       '';
       managedCommandPathCheck = pkgs.runCommand "eon-managed-command-path-check" { } ''
