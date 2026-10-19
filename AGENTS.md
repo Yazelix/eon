@@ -9,7 +9,7 @@ edit generated files directly. Edit `.agent-protocols.local.md` or
 ## Protocol import record
 
 - Source: `https://github.com/Yazelix/starcompass`
-- Source commit: `2af5afb2922c003e91b73dff18187142cb49c73a`
+- Source commit: `a65f9149d79c1eec47705ccdedef75a9e57d2bc0`
 - Profiles: `greenfield`, `orchestrator`, `terminal-engine`
 - Manifest: `.agent-protocols.json` (schema 1)
 - Directory rules: `orbit/`, `runtime/`, `venus/`; read a directory's `AGENTS.md` before changing files under it.
@@ -18,20 +18,21 @@ edit generated files directly. Edit `.agent-protocols.local.md` or
 | --- | ---: | --- |
 | `AP-SCOPE-001` | 4 | `8d84dc6fca6097b2055eb3ca8467565709e4c474a18c3030ae3064cc612bdfab` |
 | `AP-CONTRACT-001` | 4 | `cdf2e5d69cefd34ceeeaa6b7511b21f921e2be50c17d3c01b85120b20234cff7` |
-| `AP-REFERENCE-001` | 3 | `186fa74aa530c9c76ae507685461dff2b1506ecb5087230ded51f02cecb9231a` |
-| `AP-MINIMAL-001` | 4 | `612bc9c62a20adf7332724d4663af0a0e591d624de2a76b1c257a9ed428db1f6` |
+| `AP-REFERENCE-001` | 4 | `906bcda869549979647d20e957ff48909fa5f36024f584be6657bdc058d58e72` |
+| `AP-MINIMAL-001` | 5 | `a707f9f27a4ca42c4e78738830fdafd51d1c66acf80541590b9e32e016ddbe37` |
 | `AP-DEPENDENCY-001` | 2 | `ded49add538b82de0a9c522bc8a34720f4ebbb47f39fc2f7ddb25e7aad1700d3` |
 | `AP-OWNERSHIP-001` | 2 | `d218a4e0625b659ec366284110bdfce02bd66cb229ab6ba07f2317092ea13053` |
 | `AP-TEST-001` | 4 | `1c1c5eafa1f611fd7575ecf00b32a2068a477614c8be78ac4efa41630ec8b5ad` |
-| `AP-PROOF-001` | 9 | `fc5961c27a4847b866de60b0c31d12e64f7f1580694813f75d718f5055ab9f1c` |
+| `AP-PROOF-001` | 11 | `310e1f798c3334e08402f9e42f447ae9352d171fc92888afb141c6b228f84e56` |
 | `AP-PLAN-001` | 12 | `5ee8deccb4b3c61ddd4a52b8ed6f69ebd30e24b65ace867871a89c75ef02a984` |
-| `AP-SESSION-001` | 2 | `b901ad980f05bd52164e31b4745e87e0fa2f2e9cc0a616716670135df3d9fc82` |
+| `AP-SESSION-001` | 4 | `51c15e878070caaf372721c2eb083354f5f63492f5c4e694cf31aaefcefa53a7` |
 | `AP-CI-001` | 3 | `c7cb65a81ce8434d02f2d19306bf93358f3624d0b77886bc91d4de93f7a779ba` |
 | `AP-EXCEPTION-001` | 2 | `2c4f00299922edac83286821af07ad485e5a630bca6acbbce918d87614abb395` |
 | `AP-GIT-001` | 5 | `f2c3254311de57a23a13aa382fe3285e65bb34e535ecd813d1be783ca79d4bf9` |
 | `AP-ORCHESTRATOR-001` | 2 | `f78ebc0db6db525aac1d3226703af7e84cba9953c579470763831241a7d0c2ad` |
 | `AP-FRONTIER-001` | 2 | `0777c74645955a26dc3829812ff26fa1a00a017c3b4cc1ac6740284f2664566c` |
 | `AP-PORTABILITY-001` | 2 | `a2f5025bc7a10436b5c2f8f42c6002ccf1e361f05abbff3dea6507a3426394c0` |
+| `AP-PERF-001` | 1 | `500ddfc56c1293e74ba1e8e19dddca0129fbbec49e9a00735e975ee2e8a8790d` |
 | `AP-TERMINAL-001` | 2 | `c1805e12ca5c41d3ed2a6b24739fcded2ad986758fda01fdfa3132c9f8351d9c` |
 | `AP-FAILURE-001` | 4 | `450e48b4e1532ff50a9a1da7faa49e3539450e0676f3c530f888d33b4b752e80` |
 

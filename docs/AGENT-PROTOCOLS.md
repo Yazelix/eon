@@ -40,15 +40,6 @@ tests, and required subsystem references. Record the adopted, rejected, or
 unresolved mechanism; separate evidence from inference and revisit it after a
 material shape change. Memory, summaries, and reputation are discovery only.
 
-Apply source-license terms to their exact actors, uses, conditions,
-beneficiaries, and direction. Choosing a provider does not make a user act for
-it; an “including” example remains scoped by its condition. Inspection is
-distinct from copying, adaptation, redistribution, dependency selection, and
-incorporation, so a restriction on one does not spread to another. If an
-interpretation would block required evidence, identify the exact clause and
-roles and resolve material ambiguity with the user. Review does not require
-reuse.
-
 ## AP-MINIMAL-001 — Minimum sufficient implementation
 
 After identifying the contract, evidence, owner, flow, and boundaries, take the
@@ -68,11 +59,6 @@ Prefer deletion, direct ownership, and fewer files; use patch size only between
 equally correct system shapes. Never remove required behavior, trust-boundary
 validation, data-loss protection, security, accessibility, or the cheapest
 runnable check for non-trivial logic.
-
-When available, use upstream
-[Ponytail](https://github.com/DietrichGebert/ponytail/tree/16f29800fd2681bdf24f3eb4ccffe38be3baec6b)
-as a fallible code-shape bias after these constraints. Its absence does not
-suspend them, and its hooks do not prove compliance.
 
 ## AP-DEPENDENCY-001 — Dependency gate
 
@@ -108,26 +94,27 @@ security, licensing, size, ownership, or known-regression contract.
 
 ## AP-PROOF-001 — Explicit proof lifecycle
 
-Proof records revision, command/observation, environment, result/surface,
-and phase: proposed, implemented, mechanically verified, dogfooded, accepted,
-or promoted. Never widen/reuse after material change.
+Proof records the revision, command or observation, environment, and result
+with its surface. Never widen or reuse proof after a material change.
 
-Use the highest boundary exercising the changed contract. Add broader/lower
-suites only for changed owner, failure, trust, distinct delivery, or
-promotion—not availability, issue text, or prior phase. Exact downstream proof
-subsumes lower checks only for the identity/behavior exercised.
+Use the highest boundary that exercises the changed contract. Add broader or
+lower suites only for a changed owner, failure, trust boundary, distinct
+delivery, or promotion, not because a suite exists, an issue lists it, or it
+ran before. Exact downstream proof covers lower checks only for the identity
+and behavior it exercised.
 
-Run a complete suite once per unchanged candidate/environment. Metadata/docs/
-planning follow-ups reuse it; commands are evidence, not a checklist. Keep logs
-only when reproduction is costly, disputed, performance-sensitive, or lossily
-summarized; temporary paths are not proof. Unattended runs and waits close
-unused stdin, time out, check progress early, and never match themselves as the
-target; stalls fail.
+Run a complete suite once per unchanged candidate and environment; metadata,
+docs, and planning follow-ups reuse it. Commands are evidence, not a checklist.
+Keep logs only when reproduction is costly, disputed, or performance-sensitive,
+or a summary loses detail; a temporary path is not proof. Unattended runs and
+waits close unused stdin, time out, check progress early, and never match
+themselves as the target; stalls fail.
 
-Performance claims need a measured bottleneck, fixed workload/environment,
-baseline, oracle, and distribution/bound; retain constraining negatives. Review
-changes require another pass; convergence needs a full clean pass. Nits never
-block it, and text-only fixes restart a review at most twice per slice.
+Finish every change to code, tests, or scripts with review by a fresh agent
+that did not write it, since authors miss their own leftovers; in Claude Code,
+use the converge skill. Docs-only and planning-only work skips it. A pass that
+changes anything requires another; convergence needs a full clean pass. Nits
+never block it, and text-only fixes restart a review at most twice per slice.
 
 ## AP-PLAN-001 — Durable planning state
 
@@ -156,21 +143,24 @@ the issue tool (beads_rust `br` when available), never its storage.
 ## AP-SESSION-001 — Session continuity across compaction
 
 Compaction is lossy; avoid it. Write each user decision to its durable owner
-when it is made. Budget absolute context tokens, not window share; if the host
-reports none, estimate high:
+when it is made. Delegate work whose raw output matters only as a conclusion,
+such as broad searches, long logs and checks, or research, to a fresh
+subagent; subagents are authorized unless the user or local rules say
+otherwise.
 
-- From 100k, delegate exploration, logs, and long checks to fresh subagents;
-  avoid broad reads.
-- From 180k, add no scope or new steps: close the issue if it can close by
-  250k, else bring work in progress to a verified state and hand off.
-- Past 250k, continue only to reach an imminent verified state or keep live
+Budget absolute context tokens, not window share; if the host reports none,
+estimate high:
+
+- From 400k, add no scope or new steps: close the issue if it can close by
+  600k, else bring work in progress to a verified state and hand off.
+- Past 600k, continue only to reach an imminent verified state or keep live
   state that cannot be written down; record why on the issue.
-- At 400k or after any compaction, reread the issue and hand off.
+- Hand off before the host would compact. After any compaction, reread the
+  issue and hand off.
 
 A handoff is an issue comment: state, next step, and open decisions with
 reasons. The next session primes, e.g. "prime, then continue <issue> from its
-handoff". Start each issue fresh unless the session is uncompacted and under
-100k.
+handoff".
 
 ## AP-CI-001 — Bounded continuous integration
 
@@ -224,6 +214,12 @@ Keep multi-OS contracts and state neutral; isolate system APIs, processes,
 paths, packaging, and events. Evaluate targets before foundational runtime,
 graphics, filesystem, or transport choices. Prove behavior on each platform,
 not by compilation; name unsupported targets.
+
+## AP-PERF-001 — Measured performance claims
+
+Performance claims need a measured bottleneck, a fixed workload and
+environment, a baseline, a correctness oracle, and a distribution or bound.
+Keep negative results that constrain them.
 
 ## AP-TERMINAL-001 — Terminal state authority
 
