@@ -629,6 +629,7 @@
         helix-grammars = helix.checks.${system}.codeberg_grammars;
         eonbase-closure = eonbaseClosureCheck;
         managed-command-path = managedCommandPathCheck;
+        bundle-relink = import ./nix/bundle-relink.nix { inherit pkgs eonPackage; };
       };
       devShells.${system}.default = pkgs.mkShell {
         packages = [

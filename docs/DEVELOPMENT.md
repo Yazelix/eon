@@ -70,6 +70,16 @@ and rejects a dynamic bootstrap. Signed TLS delivery and native active-work
 proofs remain with `eon-prove-thin-linux-bundle-installer-8r7n`.
 The [installer contract](INSTALLER.md) records target tools and recovery.
 
+`nix build --no-link .#checks.x86_64-linux.bundle-relink` builds the
+namespace-free layout that the direct candidate has yet to adopt. The separate
+dependency-free Rust `relink/` workspace copies what Eon reaches without glibc
+and Mesa, points program interpreters at the x86-64 psABI path, makes store
+RUNPATH entries `$ORIGIN`-relative and store symlinks relative. It then checks
+that layout and gates every ELF on the glibc floor and on finding each NEEDED
+library in the tree or among the declared host libraries.
+`nix/bundle-relink.nix` owns that policy. The crate's tests run in that build
+and with `eon-test --manifest-path relink/Cargo.toml`.
+
 Build both installed products with `nix build --no-link .#default .#eonbase`.
 
 Linux package checks use the sandbox's executable `/dev/shm` for ephemeral test
