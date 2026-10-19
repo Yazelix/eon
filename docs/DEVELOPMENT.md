@@ -80,6 +80,16 @@ library in the tree or among the declared host libraries.
 `nix/bundle-relink.nix` owns that policy. The crate's tests run in that build
 and with `eon-test --manifest-path relink/Cargo.toml`.
 
+That build also replaces each makeWrapper script in the tree with a copy of the
+static launcher from the separate `launcher/` workspace. `flake.nix` defines each
+wrapper environment once: makeWrapper renders it for the Nix packages, and the
+launcher compiles it in and applies it relative to the tree's location.
+`nix build --no-link .#checks.x86_64-linux.bundle-launch` runs the tree from two
+locations under bwrap, which stands in for a host without Nix. The stand-in host
+glibc is the only store path visible, and the check fails if the tree looks up
+any other. It also compares each launcher's environment with makeWrapper's. It
+needs unprivileged user namespaces inside the Nix build sandbox.
+
 Build both installed products with `nix build --no-link .#default .#eonbase`.
 
 Linux package checks use the sandbox's executable `/dev/shm` for ephemeral test

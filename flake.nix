@@ -151,6 +151,21 @@
           rev = identity.revision;
           inherit hash;
         };
+      # Each wrapper environment has one definition. makeWrapper renders it here, and
+      # nix/bundle-relink.nix renders the same attrset into the bundle launcher's table.
+      wrapperArgs =
+        {
+          set ? { },
+          setDefault ? { },
+          prefix ? { },
+        }:
+        lib.escapeShellArgs (
+          lib.concatLists (
+            lib.mapAttrsToList (name: value: [ "--set" name value ]) set
+            ++ lib.mapAttrsToList (name: value: [ "--set-default" name value ]) setDefault
+            ++ lib.mapAttrsToList (name: paths: [ "--prefix" name ":" (lib.concatStringsSep ":" paths) ]) prefix
+          )
+        );
       managedPackage =
         identity: package:
         assert package.version == identity.version;
@@ -158,6 +173,10 @@
           src = githubSource identity package.src.outputHash;
         });
 
+      codexbarEnvironment.setDefault = {
+        SSL_CERT_FILE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+        CURL_CA_BUNDLE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+      };
       codexbarPackage =
         assert codexbarIdentity.revision == "7c08c0ae783b72040b728757eb85a6cfe4fc2443";
         pkgs.stdenvNoCC.mkDerivation {
@@ -178,9 +197,7 @@
             cp CodexBarCLI VERSION "$out/bin/"
             cp -R CodexBar_CodexBarCore.bundle "$out/bin/"
             install -Dm444 ${./licenses/codexbar-MIT} "$out/share/licenses/codexbar/LICENSE"
-            wrapProgram "$out/bin/CodexBarCLI" \
-              --set-default SSL_CERT_FILE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt" \
-              --set-default CURL_CA_BUNDLE "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+            wrapProgram "$out/bin/CodexBarCLI" ${wrapperArgs codexbarEnvironment}
             "$out/bin/CodexBarCLI" --version | grep -F "$version"
             runHook postInstall
           '';
@@ -259,6 +276,13 @@
           anima.packages.${system}.accelerando-font
         ];
       };
+      venusEnvironment = {
+        set.FONTCONFIG_FILE = "${venusFontsConf}";
+        prefix = {
+          LD_LIBRARY_PATH = map (package: "${lib.getLib package}/lib") venusRuntimeLibraries;
+          XDG_DATA_DIRS = [ "${pkgs.mesa}/share" ];
+        };
+      };
       venusPackage =
         pkgs.rustPlatform.buildRustPackage {
           pname = workspacePackages.venus;
@@ -284,10 +308,7 @@
             install -Dm444 ${./venus/THIRD_PARTY_NOTICES.md} "$out/share/licenses/venus/THIRD_PARTY_NOTICES.md"
           '';
           postFixup = ''
-            wrapProgram "$out/bin/yazelix-venus" \
-              --set FONTCONFIG_FILE "$FONTCONFIG_FILE" \
-              --prefix LD_LIBRARY_PATH : "${lib.makeLibraryPath venusRuntimeLibraries}" \
-              --prefix XDG_DATA_DIRS : "${pkgs.mesa}/share"
+            wrapProgram "$out/bin/yazelix-venus" ${wrapperArgs venusEnvironment}
           '';
         };
 
@@ -388,6 +409,25 @@
         EOF
       '';
 
+      eonEnvironment = out: {
+        set = {
+          EON_ORBIT = "${orbitPackage}/bin/yazelix-orbit";
+          EON_VENUS = "${venusPackage}/bin/yazelix-venus";
+          EON_CODEXBAR = "${codexbarPackage}/bin/CodexBarCLI";
+          EON_ANIMA = "${animaPackage}/bin/anima";
+          EON_NU = "${nushellPackage}/bin/nu";
+          EON_BASH = "${bashPackage}/bin/bash";
+          EON_HX = "${helixPackage}/bin/hx";
+          EON_YAZI = "${yaziPackage}/bin/yazi";
+          EON_DIRECTORY_PICKER_CONFIG = "${directoryPickerConfig}";
+          EON_YA = "${yaziPackage}/bin/ya";
+          EON_LAZYGIT = "${lazygitPackage}/bin/lazygit";
+          EON_NU_VENDOR_AUTOLOAD = "${out}/libexec/eon/shell/nu";
+          EON_BASH_RC = "${out}/libexec/eon/shell/eon.bashrc";
+          EON_SESSION_BIN = "${out}/libexec/eon/bin";
+        };
+        prefix.TERMINFO_DIRS = [ "${orbitPackage}/share/terminfo" ];
+      };
       eonPackage =
         assert workspaceVersions;
         assert nixpkgs.rev == "567a49d1913ce81ac6e9582e3553dd90a955875f";
@@ -471,22 +511,7 @@
           postFixup = ''
             substituteInPlace "$out/share/applications/eon.desktop" \
               --replace-fail 'Exec=eon' "Exec=$out/bin/eon"
-            wrapProgram "$out/bin/eon" \
-              --set EON_ORBIT "${orbitPackage}/bin/yazelix-orbit" \
-              --set EON_VENUS "${venusPackage}/bin/yazelix-venus" \
-              --set EON_CODEXBAR "${codexbarPackage}/bin/CodexBarCLI" \
-              --set EON_ANIMA "${animaPackage}/bin/anima" \
-              --set EON_NU "${nushellPackage}/bin/nu" \
-              --set EON_BASH "${bashPackage}/bin/bash" \
-              --set EON_HX "${helixPackage}/bin/hx" \
-              --set EON_YAZI "${yaziPackage}/bin/yazi" \
-              --set EON_DIRECTORY_PICKER_CONFIG "${directoryPickerConfig}" \
-              --set EON_YA "${yaziPackage}/bin/ya" \
-              --set EON_LAZYGIT "${lazygitPackage}/bin/lazygit" \
-              --set EON_NU_VENDOR_AUTOLOAD "$out/libexec/eon/shell/nu" \
-              --set EON_BASH_RC "$out/libexec/eon/shell/eon.bashrc" \
-              --set EON_SESSION_BIN "$out/libexec/eon/bin" \
-              --prefix TERMINFO_DIRS : "${orbitPackage}/share/terminfo"
+            wrapProgram "$out/bin/eon" ${wrapperArgs (eonEnvironment (placeholder "out"))}
           '';
           meta = {
             description = "Native terminal workspaces with persistent terminals";
@@ -582,6 +607,23 @@
           EON_DEMO_PATH = lib.makeBinPath [ pkgs.coreutils pkgs.bash pkgs.git ];
         };
       };
+      bundleRelink = import ./nix/bundle-relink.nix {
+        inherit pkgs eonPackage wrapperArgs;
+        wrappers = [
+          {
+            program = "${eonPackage}/bin/eon";
+            environment = eonEnvironment "${eonPackage}";
+          }
+          {
+            program = "${venusPackage}/bin/yazelix-venus";
+            environment = venusEnvironment;
+          }
+          {
+            program = "${codexbarPackage}/bin/CodexBarCLI";
+            environment = codexbarEnvironment;
+          }
+        ];
+      };
       br = pkgs.runCommand "br-0.7.2" { } ''
         mkdir -p "$out/bin" "$out/share/licenses/br"
         ${pkgs.gnutar}/bin/tar -xzf ${pkgs.fetchurl {
@@ -629,7 +671,8 @@
         helix-grammars = helix.checks.${system}.codeberg_grammars;
         eonbase-closure = eonbaseClosureCheck;
         managed-command-path = managedCommandPathCheck;
-        bundle-relink = import ./nix/bundle-relink.nix { inherit pkgs eonPackage; };
+        bundle-relink = bundleRelink.tree;
+        bundle-launch = bundleRelink.launch;
       };
       devShells.${system}.default = pkgs.mkShell {
         packages = [
