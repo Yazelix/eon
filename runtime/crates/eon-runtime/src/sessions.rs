@@ -611,6 +611,12 @@ fn retire_dead_run(
     identity: &LiveIdentity,
     deadline: Instant,
 ) -> Result<(), String> {
+    remove_dead_endpoints(identity)?;
+    reap_untracked_child(identity.process_id, deadline)?;
+    cleanup_record(record, object)
+}
+
+fn remove_dead_endpoints(identity: &LiveIdentity) -> Result<(), String> {
     remove_dead_endpoint(
         Path::new(OsStr::from_bytes(&identity.presentation.path)),
         &identity.presentation,
@@ -618,9 +624,7 @@ fn retire_dead_run(
     remove_dead_endpoint(
         Path::new(OsStr::from_bytes(&identity.management.path)),
         &identity.management,
-    )?;
-    reap_untracked_child(identity.process_id, deadline)?;
-    cleanup_record(record, object)
+    )
 }
 
 pub(super) fn recover_sessions(
@@ -904,7 +908,12 @@ pub(super) fn start_orbit(
             session.child = Some(orbit);
             Ok(session)
         }
-        Err(error) => match rollback_unleased_orbit(orbit, claim, deadline) {
+        Err(error) => match rollback_unleased_orbit(
+            orbit,
+            claim,
+            (&run_id, component_generation, socket),
+            deadline,
+        ) {
             Ok(()) => Err(error),
             Err(stop_error) => Err(format!("{error}; cannot roll back terminal: {stop_error}")),
         },
@@ -914,6 +923,7 @@ pub(super) fn start_orbit(
 fn rollback_unleased_orbit(
     mut orbit: Child,
     claim: ReadyClaim,
+    launch: (&str, &str, &Path),
     deadline: Instant,
 ) -> Result<(), String> {
     let claim_error = match claim.lock_for_rollback(deadline) {
@@ -931,15 +941,42 @@ fn rollback_unleased_orbit(
         Ok(false) => None,
         Err(error) => Some(error),
     };
-    let Ok(Some(RecordSnapshot {
-        object,
-        record: ManagementRecord::Live(identity),
-    })) = read_management_record(&claim.path)
-    else {
+    // Orbit never rewrites its record after exiting, so observe exit before reading it.
+    let exited = orbit
+        .try_wait()
+        .map_err(|error| format!("cannot observe terminal rollback: {error}"))?
+        .is_some();
+    let Ok(Some(RecordSnapshot { object, record })) = read_management_record(&claim.path) else {
         return claim_error.map_or(Ok(()), Err);
+    };
+    let (identity, ended) = match record {
+        ManagementRecord::Live(identity) => (identity, exited),
+        ManagementRecord::Tombstone(tombstone) => (tombstone.identity, true),
     };
     if identity.process_id != orbit.id() {
         return claim_error.map_or(Ok(()), Err);
+    }
+    if ended {
+        // Orbit published its final record: a tombstone after its child ended,
+        // or Live when Orbit itself died. Cleanup may no longer signal it, so
+        // wait for its own exit, then remove this launch's exact residue so the
+        // terminal number stays creatable.
+        let (run_id, component_generation, socket) = launch;
+        let (_, endpoint) =
+            validate_management_identity(&identity, component_generation, Some(run_id), false)?;
+        if endpoint != socket {
+            return Err("terminal final record does not match its launch".into());
+        }
+        while orbit
+            .try_wait()
+            .map_err(|error| format!("cannot observe terminal rollback: {error}"))?
+            .is_none()
+        {
+            operation_timeout(deadline, "terminal exit after its final record")?;
+            thread::sleep(Duration::from_millis(25));
+        }
+        remove_dead_endpoints(&identity)?;
+        return cleanup_record(&claim.path, object);
     }
     let mut session = acquire_management(
         ManagedCandidate {
@@ -1280,7 +1317,7 @@ mod tests {
             fd::AsRawFd,
             unix::{
                 ffi::OsStrExt,
-                fs::OpenOptionsExt,
+                fs::{OpenOptionsExt, PermissionsExt},
                 net::{UnixListener, UnixStream},
             },
         },
@@ -1537,6 +1574,88 @@ mod tests {
                 reaped,
                 "discovery removed {reason:?} record without reaping its child"
             );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn rollback_after_child_exit_keeps_the_terminal_number_creatable() {
+        let root = temporary_directory();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let record = root.join("session-5.sock.record");
+        for tombstone in [true, false] {
+            let claim = super::ReadyClaim::create(&record).unwrap();
+            let mut orbit = Command::new("true").spawn().unwrap();
+            let pid = orbit.id();
+            let process_path = PathBuf::from(format!("/proc/{pid}"));
+            // Orbit's endpoints, left behind as if it ended before removing them.
+            let endpoint = |name: &str| {
+                let path = root.join(name);
+                drop(UnixListener::bind(&path).unwrap());
+                fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+                let object = super::object_identity(&fs::symlink_metadata(&path).unwrap());
+                (path, object)
+            };
+            let (presentation, presentation_object) = endpoint("session-5.sock");
+            let (management_path, management_object) = endpoint("session-5.sock.management");
+            let identity = LiveIdentity {
+                session_id: "session-5".into(),
+                run_id: format!("run-{pid}"),
+                component_generation: "component-1".into(),
+                record_generation: management::RECORD_GENERATION,
+                management_generation: management::VERSION,
+                process_id: pid,
+                process_start: 1,
+                uid: super::effective_uid(),
+                presentation: EndpointIdentity {
+                    path: presentation.as_os_str().as_bytes().to_vec(),
+                    object: presentation_object,
+                },
+                management: EndpointIdentity {
+                    path: management_path.as_os_str().as_bytes().to_vec(),
+                    object: management_object,
+                },
+            };
+            if !tombstone {
+                // Orbit itself ended after Ready; Eon has already observed it.
+                orbit.wait().unwrap();
+            }
+            let value = if tombstone {
+                ManagementRecord::Tombstone(Tombstone {
+                    identity,
+                    reason: TerminationReason::NaturalExit,
+                    outcome: ProcessOutcome::ExitCode(7),
+                })
+            } else {
+                ManagementRecord::Live(identity)
+            };
+            // Orbit atomically replaces the empty claim with its record.
+            let published = root.join("published");
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&published)
+                .unwrap()
+                .write_all(&management::encode_record(&value).unwrap())
+                .unwrap();
+            fs::rename(&published, &record).unwrap();
+
+            let deadline = Instant::now() + Duration::from_secs(2);
+            let launch = (format!("run-{pid}"), presentation.clone());
+            super::rollback_unleased_orbit(
+                orbit,
+                claim,
+                (&launch.0, "component-1", &launch.1),
+                deadline,
+            )
+            .unwrap();
+            assert!(
+                !record.exists() && !presentation.exists() && !management_path.exists(),
+                "rollback left residue (tombstone: {tombstone})"
+            );
+            assert!(!process_path.exists(), "rollback did not reap the terminal");
+            drop(super::ReadyClaim::create(&record).unwrap());
         }
         fs::remove_dir_all(root).unwrap();
     }

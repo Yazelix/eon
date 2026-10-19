@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A terminal whose command exits right away, such as a failing
+  `[shell].command`, no longer blocks later terminals in that workspace. New
+  panes and tabs used to fail with "cannot create terminal Ready claim ...:
+  File exists" until the generation was stopped; Eon now removes the ended
+  terminal's leftover record when the start fails.
 - The unpublished manual Linux bundle no longer uses Bubblewrap or a user
   namespace, so stock Ubuntu 26.04 can run it without an AppArmor change. It
   ships Eon's closure relinked for the host glibc and now needs glibc 2.39 or
