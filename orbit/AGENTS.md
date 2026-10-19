@@ -67,5 +67,5 @@ clients consume the canonical wire representation, with no second handwritten
 schema and no raw PTY reparsing. Mark lossy projections: a text projection
 cannot prove `ORB-C6` rich-presentation fidelity.
 
-Name Superlogical's published first product `Superlogical terminal
-multiplexer`; do not invent a shorter name or research codename.
+Name Superlogical's published first product `Superlogical Rex` (`Rex` once
+introduced); do not invent another name or research codename.

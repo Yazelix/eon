@@ -444,8 +444,8 @@ prerequisite for the current single-session architecture.
   command-driven navigation and on-demand previews. Orbit rejects same-process
   UI/PTY lifetime and textual restoration as substitutes for `ORB-C1` detach
   survival.
-- The [Superlogical terminal multiplexer](https://www.superlogical.com/) is the
-  company's published first product; Mitchell Hashimoto's
+- [Superlogical Rex](https://www.superlogical.com/), a terminal multiplexer, is
+  the company's published first product; Mitchell Hashimoto's
   [company announcement](https://mitchellh.com/writing/superlogical),
   [architecture explanation](https://x.com/mitchellh/status/2082936029426892960),
   [native tabs and splits

@@ -48,8 +48,8 @@ before transferring older scrollback. Orbit shares the durable PTY,
 server-authority, and attachment-barrier principles while using a different
 replication boundary. Venus receives complete host-authored
 presentation frames and does not parse PTY output or reconstruct libghostty
-state. This repository uses the published description **Superlogical terminal
-multiplexer** rather than inventing a product codename.
+state. This repository uses the product's published name, **Superlogical
+Rex**, rather than inventing a codename.
 
 ## The hypothesis
 
