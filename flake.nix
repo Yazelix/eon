@@ -328,10 +328,6 @@
           carapacePackage
           ;
       };
-      inherit (shellEnvironment)
-        nuVendorAutoload
-        bashRc
-        ;
 
       bashLicense = pkgs.runCommand "bash-license" { } ''
         ${pkgs.gnutar}/bin/tar -xOf ${bashPackage.src} bash-5.3/COPYING > "$out"
@@ -456,6 +452,7 @@
             ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-directory-picker"
             ln -s ${atuinPackage}/bin/atuin "$out/libexec/eon/bin/atuin"
             ln -s ${carapacePackage}/bin/carapace "$out/libexec/eon/bin/carapace"
+            cp -r ${shellEnvironment} "$out/libexec/eon/shell"
             install -Dm444 ${./LICENSE} "$out/share/licenses/eon/LICENSE"
             install -Dm444 ${./runtime/LICENSE} "$out/share/licenses/eon/eon-runtime/LICENSE"
             install -Dm444 ${./runtime/NOTICE} "$out/share/licenses/eon/eon-runtime/NOTICE"
@@ -486,8 +483,8 @@
               --set EON_DIRECTORY_PICKER_CONFIG "${directoryPickerConfig}" \
               --set EON_YA "${yaziPackage}/bin/ya" \
               --set EON_LAZYGIT "${lazygitPackage}/bin/lazygit" \
-              --set EON_NU_VENDOR_AUTOLOAD "${nuVendorAutoload}" \
-              --set EON_BASH_RC "${bashRc}" \
+              --set EON_NU_VENDOR_AUTOLOAD "$out/libexec/eon/shell/nu" \
+              --set EON_BASH_RC "$out/libexec/eon/shell/eon.bashrc" \
               --set EON_SESSION_BIN "$out/libexec/eon/bin" \
               --prefix TERMINFO_DIRS : "${orbitPackage}/share/terminfo"
           '';
@@ -556,8 +553,14 @@
           test -n "$version_output" && test "$("eon-$command" --version)" = "$version_output"
         done
         eon-nu -c 'help clip copy | ignore; help clip paste | ignore'
-        test "$(eon-nu --config ${nuVendorAutoload}/0/eon.nu -c 'scope aliases | where name == "clc" | get expansion.0')" = 'clip copy'
-        test "$(eon-nu --config ${nuVendorAutoload}/0/eon.nu -c 'scope aliases | where name == "clp" | get expansion.0')" = 'clip paste'
+        test "$(eon-nu --config ${eonPackage}/libexec/eon/shell/nu/0/eon.nu -c 'scope aliases | where name == "clc" | get expansion.0')" = 'clip copy'
+        test "$(eon-nu --config ${eonPackage}/libexec/eon/shell/nu/0/eon.nu -c 'scope aliases | where name == "clp" | get expansion.0')" = 'clip paste'
+        eon-bash -i -c 'for tool in starship zoxide atuin carapace; do name=_eon_$tool; test -x "''${!name}" || exit 1; done'
+        if ${pkgs.gnugrep}/bin/grep -rl ${builtins.storeDir} ${eonPackage}/libexec/eon/shell; then
+          exit 1
+        elif test $? != 1; then
+          exit 1
+        fi
         ${pkgs.coreutils}/bin/touch "$out"
       '';
       recordDemo = kinestra.lib.${system}.mkRecorder {
