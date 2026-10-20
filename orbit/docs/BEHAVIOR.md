@@ -984,10 +984,9 @@ messages from one interactive client and one metadata observer, decodes both
 streams with the canonical codec, and fails at the first step whose messages
 differ. [nix/orbit-checks.nix](../../nix/orbit-checks.nix) builds the old
 Orbit from the flake input `old-orbit`, Eon revision
-`1d287440fe5787a5a7d6be8e201546e3f2829df5`, whose Orbit sources and tests are
-those the tag `orbit-rust-final` holds; only Orbit's docs and agent rules
-differ. Its `Cargo.lock` and libghostty build equal this
-tree's, so only the two servers' sources differ. The workload
+`92a0a97c66360033e9a742edd9ef6c95d37c3d2b`, the last commit before the Bend
+import, which the tag `orbit-rust-final` holds. Its `Cargo.lock` and
+libghostty build equal this tree's, so only the two servers' sources differ. The workload
 covers a clipboard write; rich output with attributes, palette and direct
 colors, a hyperlink, wide and combining characters, a working directory and
 history; a paste; a pressed and a released key; a resize; scroll commits, a

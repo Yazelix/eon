@@ -194,17 +194,17 @@
     "old-orbit": {
       "flake": false,
       "locked": {
-        "lastModified": 1792379879,
-        "narHash": "sha256-y0NkLbt24TrJ5H8c6BVLHYAti/JR/yJQpfBmh/QSjRw=",
+        "lastModified": 1792449216,
+        "narHash": "sha256-ACRrEPWSBViuhrW8So3rmaPp80w8odlgSpmh459xOPQ=",
         "owner": "Yazelix",
         "repo": "eon",
-        "rev": "1d287440fe5787a5a7d6be8e201546e3f2829df5",
+        "rev": "92a0a97c66360033e9a742edd9ef6c95d37c3d2b",
         "type": "github"
       },
       "original": {
         "owner": "Yazelix",
         "repo": "eon",
-        "rev": "1d287440fe5787a5a7d6be8e201546e3f2829df5",
+        "rev": "92a0a97c66360033e9a742edd9ef6c95d37c3d2b",
         "type": "github"
       }
     },

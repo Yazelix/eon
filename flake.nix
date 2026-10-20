@@ -36,11 +36,10 @@
       url = "github:bendlang/bend/234cb9b950800f20b15feafcb4ce2f43e76e7fae";
       flake = false;
     };
-    # The old Rust Orbit for the differential check: this revision's Orbit
-    # sources, tests and Cargo.lock are those tagged orbit-rust-final; only
-    # Orbit's docs and agent rules differ.
+    # The old Rust Orbit for the differential check: the last commit before
+    # the Bend import, tagged orbit-rust-final.
     old-orbit = {
-      url = "github:Yazelix/eon/1d287440fe5787a5a7d6be8e201546e3f2829df5";
+      url = "github:Yazelix/eon/92a0a97c66360033e9a742edd9ef6c95d37c3d2b";
       flake = false;
     };
     kinestra = {
