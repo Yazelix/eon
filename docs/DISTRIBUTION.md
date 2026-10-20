@@ -36,9 +36,10 @@ Eon's product version in `eon/crates/eon/Cargo.toml` is its one user-facing
 number; `eon --help`, `eon versions` and the window's `EON` label (when
 shown) report it. Every 0.x release is beta: commands, configuration and
 behavior may still change, and the changelog records what did. 1.0.0 marks the
-end of beta; its bar is a separate user decision. Orbit, Venus and Eon Runtime
-keep their own package versions, and EONW its protocol version, as
-compatibility identities.
+end of beta. `eon-igae` holds its scope, and
+[EON-C28](CONTRACTS.md#eon-c28--1x-stability) states what 1.x keeps stable.
+Orbit, Venus and Eon Runtime keep their own package versions, and EONW its
+protocol version, as compatibility identities.
 
 A release bumps the product version and tags that commit `vX.Y.Z`
 (`eon-versioning-beta-bfyf`, decided 2026-10-16). The earlier

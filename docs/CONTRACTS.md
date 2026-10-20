@@ -1614,3 +1614,80 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   (`#D97757`) within the existing quota chip bounds and owns the immutable mask
   and tint. Quota facts, layout, hover, accessibility and provider mechanisms
   remain under their existing contracts.
+
+## EON-C28 — 1.x stability
+
+- **Status:** Planned (`eon-igae.1`, approved by Lucca 2026-10-20). It binds
+  from v1.0.0; 0.x releases make no stability promise.
+- **Consumer:** People, scripts and agents that use Eon 1.0 on x86_64 Linux on
+  native Wayland and upgrade within 1.x.
+- **Trigger:** Installing a later 1.x release over 1.0 or another 1.x release.
+- **Result:**
+  - **Commands:** every `eon` command and flag that `eon --help` or
+    [Using Eon](USAGE.md) lists at 1.0 keeps its name, arguments and meaning,
+    except entries marked legacy (`claude-statusline`). Every `eon-` managed
+    command name that [Configuration](CONFIGURATION.md) documents, such as
+    `eon-nu`, `eon-bash`, `eon-hx`, `eon-yazi` and `eon-lazygit`, keeps its
+    name. Later releases may add commands and flags.
+  - **Exit statuses:** success stays 0, and each documented failure status
+    (`eon-8mnr.1`) keeps its meaning, the same with and without `--json`.
+  - **JSON output:** every field that a listed command's `--json` output
+    prints at 1.0 keeps its name, type and meaning; the 1.0 JSON fixture
+    (`eon-igae.11`) is the documented record of those fields. Later releases
+    may add fields and values; consumers ignore what they don't know.
+  - **Configuration:** a `config.toml` under `eon config-path` that loads in
+    1.0 loads in every 1.x with the same meaning, and the documented
+    `EON_CONFIG_HOME` and `EON_RUNTIME_DIR` variables keep theirs. A setting
+    deprecated in 1.x still loads and warns (the first deprecation adds the
+    warning); none is removed before 2.0. A built-in popup added in 1.x never
+    changes the meaning of a configured `[popups.<id>]` with the same ID.
+    Appearance means the `[bar]`, `[terminal]` and `[anima]` settings; they
+    and their 1.0 values keep loading, though how they render may change.
+    Every other default changes only with a changelog entry and a setting that
+    restores the old value.
+  - **Shortcuts:** every default shortcut the Alt+/ viewer lists at 1.0 keeps
+    its action. A later default never makes a 1.0 configuration fail: a
+    shortcut the user configured takes precedence over a default on the same
+    key (`eon-igae.10`, required before 1.0), except the reserved keys
+    [EON-C20](#eon-c20--discoverable-native-shortcuts) names (Alt+Slash and
+    Alt+0 through Alt+9), which 1.x never enlarges.
+  - **Upgrades:** installing a later 1.x never stops live terminals. The new
+    `eon` keeps the EONW lifecycle codec of every earlier 1.x release, so it
+    lists and stops every older 1.x generation through
+    [EON-C11](#eon-c11--runtime-generations-and-presentation).
+    `eon attach GENERATION` presents one only when its presentation is
+    compatible, which 1.x does not guarantee.
+- **Important failures:** A 1.x release that rejects a 1.0 configuration,
+  renames or removes a listed command, managed command name, flag, JSON field
+  or environment variable, changes a documented exit status or a default
+  shortcut's action, drops a 1.x lifecycle codec, or stops live terminals on
+  install breaks this contract; such a change waits for 2.0. Unknown
+  configuration keys still fail, so typos stay visible. A configuration written
+  for a newer 1.x may fail in an older one.
+- **Owner:** Eon owns the promise, the release review against it and the
+  managed command names its Nix composition installs. Eon Runtime owns the
+  commands, JSON, exit statuses, lifecycle codecs and configuration parsing
+  that carry it; Venus owns its fixed workspace bindings under EON-C20.
+- **Boundary:** Not covered: how appearance and layout render; behavior that
+  no document states; the ORBS and ORBF protocols, EONW beyond the lifecycle
+  codecs kept above, and the component manifest format, which carry their own
+  versions; legacy commands and internal helpers that no document lists, such
+  as `eon-directory-picker`; the unprefixed tool names inside terminals;
+  Anima's styles and options; eonbase; the behavior of pinned tools such as
+  Helix, Yazi and Nushell when their pins update;
+  reattaching across presentation-incompatible releases, which needs the
+  earlier release's executable (EON-C11); and every platform other than
+  x86_64 Linux on native Wayland, including the macOS preview.
+- **Proof:** None yet.
+- **Open proof:** Before v1.0.0, `eon-igae.11` adds these fixtures to the
+  workspace suite (`nix develop -c eon-test`), so every 1.x build runs them: a
+  configuration setting every 1.0 key, loaded with the documented environment
+  variables; a parse corpus of every listed 1.0 command and flag; the 1.0
+  fields of each `--json` output; the documented exit status of each failure
+  class; and the 1.0 default shortcut actions, with one configured override.
+  It also extends the `managed-command-path` flake check to every documented
+  `eon-` managed command name. Each later EONW revision adds its predecessor
+  to the previous-generation Stop test, as v2 through v11 are today. Each 1.x
+  release's proof adds a review of changed defaults against the changelog and
+  one installed upgrade observation in which the previous release's live
+  terminals keep running and the new release lists and stops them.
