@@ -306,6 +306,14 @@ without the rest. The real-PTY stopped-client check floods a client that has
 stopped reading; the server finishes about one second after the child exits,
 with the child reaped and the socket pathname removed.
 
+The client's output bound, which Bend sends at start, is one maximum frame,
+one maximum payload, two headers and 4 KiB, so a maximum frame the client has
+begun to read still leaves room for one maximum scroll outcome (ORB-C7). The
+host unit test `worker_bound_admits_a_maximum_scroll_outcome_behind_a_started_maximum_frame`
+reads the bound from the built worker, writes one byte of a maximum frame,
+and queues a maximum scroll outcome behind it; a worker bound without the
+frame's share made it fail.
+
 ## PTY input
 
 Client input and the terminal's replies to the child's queries reach the PTY
@@ -402,6 +410,17 @@ synchronized-output check splits one update across reads, accepts input while
 it is held, and covers the watchdog and exit release with one interactive
 client and one metadata observer.
 
+A client that attaches while an update is held receives its first frame only
+when the update ends (ORB-C4). The real-PTY held-attach check attaches during
+a held update and receives nothing until the child releases it, then a first
+frame with the title the update set; it attaches during one that is never
+released, checks that the attachment stays quiet for 0.3 seconds, then
+receives the first frame from the watchdog within two seconds of observing the
+child's mark. It then detaches from a rich alternate screen (styles, a
+hyperlink, wide and combining graphemes, a moved cursor), and a new client's
+first frame equals the last one exactly. Not reporting the held update to Bend
+made it fail, and so did a three-second watchdog.
+
 ## Revisions
 
 Bend keeps the presentation revision, a 64-bit counter held as two U32
@@ -436,6 +455,13 @@ libghostty keeps primary history under the 16 MiB byte budget the old Orbit
 uses, and each frame's scroll position comes from libghostty's scrollbar. The
 real-PTY history check prints 20,000 lines and reads the same history rows,
 at the live position, from a reconnected client.
+
+Rows read directly from libghostty's screen, as previews and history reads
+do, equal the canonical frame's rows (ORB-C6). The host unit test
+`direct_rows_match_rich_canonical_frame_rows` writes protected, styled,
+hyperlinked text with wide, combining and spacer-head cells that wraps, and
+compares every frame row with its direct read, before and after a resize to
+fewer columns reflows it; reading the direct row one line off made it fail.
 
 ## Clipboard writes
 
@@ -1171,12 +1197,12 @@ ORB_BASELINE_CPUS=6-11 ORB_BASELINE_GRID="54 90" \
   real-PTY check this document names: lifecycle, guardian-containment,
   delayed-output, differential, request-half-close, detached-exit,
   three-attach, late-observer, detached-observer, synchronized-output,
-  history, preview, scroll, return-to-live, schema-mismatch, paste-flood,
-  terminal-replies, silent-peer, pty-reopen, descendant-exit, unsupported,
-  interactive-pressure, key-live, mouse, slow-observer, observer-finish,
-  stale-socket, clipboard, command-line, selection, selection-tick,
-  refused-flush, management-record, management-lease, terminal-identity and
-  stopped-client-exit.
+  held-attach, history, preview, scroll, return-to-live, schema-mismatch,
+  paste-flood, terminal-replies, silent-peer, pty-reopen, descendant-exit,
+  unsupported, interactive-pressure, key-live, mouse, slow-observer,
+  observer-finish, stale-socket, clipboard, clipboard-pressure, command-line,
+  palette-reset, selection, selection-tick, refused-flush, management-record,
+  management-lease, terminal-identity and stopped-client-exit.
 
 Building the package runs the Rust unit tests. The real-PTY checks are Rust
 integration tests in [tests/real_pty](../tests/real_pty). They encode every

@@ -1180,6 +1180,24 @@ mod tests {
         assert!(!queue.can_push_scroll_outcome(frame + 8));
     }
 
+    /// Under the bound the worker sends, a maximum frame whose first byte is
+    /// already written still leaves room for one maximum scroll outcome
+    /// (ORB-C7).
+    #[test]
+    fn worker_bound_admits_a_maximum_scroll_outcome_behind_a_started_maximum_frame() {
+        let bound = crate::host::built_worker_output_bound();
+        let mut queue = OutputQueue::default();
+        let frame = vec![0; MAX_FRAME_BYTES + session::HEADER_BYTES];
+        assert!(queue.push(frame, MessageClass::Frame, bound));
+        let mut writes = [Ok(1), Err(io::Error::from(io::ErrorKind::WouldBlock))].into_iter();
+        assert!(queue.flush(|_| writes.next().unwrap()).unwrap());
+        assert_eq!(queue.offset, 1);
+        assert!(queue.can_push_scroll_outcome(bound));
+        let outcome = vec![0; session::MAX_PAYLOAD_BYTES + session::HEADER_BYTES];
+        assert!(queue.push(outcome, MessageClass::ScrollOutcome, bound));
+        assert_eq!(queue.messages.len(), 2);
+    }
+
     #[test]
     fn pressured_interactive_client_is_reported_without_waiting() {
         let (stream, mut peer) = UnixStream::pair().unwrap();

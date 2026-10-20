@@ -146,6 +146,7 @@ let
     { name = "late-observer"; variable = "LATE_OBSERVER_SHELL"; }
     { name = "detached-observer"; variable = "DETACHED_OBSERVER_SHELL"; }
     { name = "synchronized-output"; variable = "SYNC_SHELL"; }
+    { name = "held-attach"; variable = "HELD_ATTACH_SHELL"; timeout = "30s"; }
     { name = "history"; variable = "HISTORY_SHELL"; timeout = "30s"; }
     { name = "preview"; variable = "PREVIEW_SHELL"; timeout = "30s"; }
     { name = "scroll"; variable = "SCROLL_SHELL"; timeout = "60s"; }

@@ -33,6 +33,7 @@ checks!(
     detached_observer,
     differential,
     guardian_containment,
+    held_attach,
     history,
     interactive_pressure,
     key_live,

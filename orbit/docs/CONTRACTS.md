@@ -150,7 +150,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 
 ## ORB-C4 — Coherent ordered presentation
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One attached exact-version presentation client.
 - **Trigger:** Attachment begins or authoritative terminal state changes.
 - **Result:** Attachment starts with one complete frame at revision N and then
@@ -164,7 +164,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Consumes:** Canonical ORBF v2 in ORBS v13; Venus and Eon consume it in this
   repository.
 - **Boundary:** Native presentation quality remains Venus-owned.
-- **Proof:** the `eon-awmq.3` import commit
+- **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.2` commit
+  for held attachment and exact reattachment
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
     including the differential against the old Rust Orbit from Eon
@@ -177,14 +178,13 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     - [`orbit-three-attach`](../tests/real_pty/three_attach.rs) and
       [`orbit-differential`](../tests/real_pty/differential.rs), which compares
       every frame with the previous Rust server's
+    - [`orbit-held-attach`](../tests/real_pty/held_attach.rs) attaches during
+      a held update, whose first frame waits for the release or the watchdog,
+      and reattaches to a rich alternate screen with an identical frame.
     - [`output_queue_replaces_unstarted_presentations_within_its_bound`](../src/socket.rs)
     - Laws [`revision_next_is_ahead`](../LAWS.bend) and
       [`scrolling_and_selection_follow_their_contracts`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
-- **Open proof:** No check of this tree attaches a client while a synchronized
-  update is held, whose initial frame must wait for release or the watchdog.
-  None reattaches to a rich alternate screen and compares the frame exactly
-  (`eon-awmq.7`).
 
 ## ORB-C5 — Semantic terminal interaction
 
@@ -232,7 +232,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 
 ## ORB-C6 — Rich presentation without silent degradation
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** Every canonical presentation client.
 - **Trigger:** Orbit extracts or encodes terminal presentation state.
 - **Result:** The boundary carries rich terminal state or explicitly declares an
@@ -244,7 +244,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Consumes:** Canonical ORBF v2 in ORBS v13; Venus and Eon consume it in this
   repository.
 - **Boundary:** Kitty graphics remain explicitly unsupported.
-- **Proof:** the `eon-awmq.3` import commit
+- **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.2` commit
+  for direct rows, width roles, protection and reflow
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
     including the differential against the old Rust Orbit from Eon
@@ -253,18 +254,16 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   - **Evidence:**
     - [`terminal_frame_uses_the_canonical_protocol_owner`](../src/frame.rs)
     - [`vertical_preview_reads_history_nearest_first`](../src/frame.rs)
+    - [`direct_rows_match_rich_canonical_frame_rows`](../src/frame.rs)
     - [`orbit-differential`](../tests/real_pty/differential.rs) compares rich
       frames (styles, RGB and palette colors, hyperlink, wide and combining
       graphemes, working directory, resize) with the previous Rust server's.
     - [`orbf_v2_cell_width_topology_is_validated_at_every_acceptance_boundary`](../crates/protocol/src/lib.rs)
     - Canonical ORBF-in-ORBS codec checks in the workspace suite
-- **Open proof:** No check of this tree compares directly extracted rows with
-  the canonical frame rows. None covers protection, spacer-head width roles, or
-  reflow of wrapped rich text (`eon-awmq.7`).
 
 ## ORB-C7 — Bounded attachment pressure
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** Interactive attachments and metadata observers.
 - **Trigger:** A client reads slowly, breaks, or disconnects while Orbit continues
   processing PTY state.
@@ -278,7 +277,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   decisions from its Bend session policy.
 - **Boundary:** The proof covers one local input client plus one metadata
   observer.
-- **Proof:** the `eon-awmq.3` import commit
+- **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.2` commit
+  for the worker's output bound
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
     including the differential against the old Rust Orbit from Eon
@@ -288,6 +288,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     - [`output_queue_replaces_unstarted_presentations_within_its_bound`](../src/socket.rs)
     - [`output_queue_keeps_scroll_outcomes_and_admits_them_before_moving`](../src/socket.rs)
     - [`pressured_interactive_client_is_reported_without_waiting`](../src/socket.rs)
+    - [`worker_bound_admits_a_maximum_scroll_outcome_behind_a_started_maximum_frame`](../src/socket.rs),
+      at the bound the built worker sends
     - [`observer_pressure_is_metadata_its_queue_cannot_take`](../src/socket.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
     - [`metadata_observer_streams_inactive_title_and_cwd_without_owning_input`](../tests/lifecycle.rs)
@@ -298,10 +300,6 @@ in this repository. Each contract below states the current ORBS v13 behavior.
       [`orbit-lifecycle`](../tests/real_pty/lifecycle.rs) and
       [`orbit-scroll`](../tests/real_pty/scroll.rs)
     - Workspace suite
-- **Open proof:** The capacity for one atomic maximum scroll outcome behind a
-  partially transmitted maximum frame follows from the worker's output bound
-  (one maximum frame, one maximum payload, two headers and 4 KiB). No check
-  of this tree exercises it at that bound (`eon-awmq.7`).
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
@@ -820,9 +818,10 @@ the normal suite because they do not exercise that terminal engine.
 The corpus's `conformance_c4_`, `conformance_c6_` and three `conformance_c8_`
 cases were unit tests of the previous Rust server and left with it (tag
 `orbit-rust-final`). The real-PTY checks `orbit-three-attach`,
-`orbit-differential`, `orbit-mouse`, `orbit-scroll`, `orbit-return-to-live` and
-`orbit-history` now exercise those contracts with other stimuli; the contracts'
-open proofs name what they do not cover.
+`orbit-held-attach`, `orbit-differential`, `orbit-mouse`, `orbit-scroll`,
+`orbit-return-to-live` and `orbit-history`, and the host unit test
+`direct_rows_match_rich_canonical_frame_rows`, now exercise those contracts
+with other stimuli; ORB-C8's open proof names what they do not cover.
 
 A mismatch is classified from the smallest reproducer: an Orbit regression if
 the adapter or ownership path changed, an upstream behavior change or defect if

@@ -442,6 +442,71 @@ mod tests {
         ));
     }
 
+    /// Rows read directly from libghostty's screen equal the canonical frame's
+    /// rows, for rich text that keeps protection, spacer-head and wide-cell
+    /// width roles, colors and a hyperlink, before and after a resize reflows
+    /// it (ORB-C6).
+    #[test]
+    fn direct_rows_match_rich_canonical_frame_rows() {
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 12,
+            rows: 4,
+            max_scrollback: 100,
+        })
+        .unwrap();
+        terminal.vt_write(
+            "\x1b]8;;https://example.test\x1b\\\x1b[1\"q\x1b[1;38;2;12;34;56;48;5;17mAe\u{301}界1234567界wrap-me-long\x1b[0m\x1b[0\"q\x1b]8;;\x1b\\\r\n\x1b[48;2;5;6;7m\x1b[2K\x1b[0m\r\nplain\r\ntail-1\r\ntail-2\r\ntail-3"
+                .as_bytes(),
+        );
+        let mut extractor = FrameExtractor::new().unwrap();
+        let mut frame_at_top = |terminal: &mut Terminal<'static, '_>, revision| {
+            terminal.scroll_viewport(ScrollViewport::Top);
+            let frame = extractor.frame(revision, terminal).unwrap();
+            session::encode_server_message(&ServerMessage::Frame(Box::new(frame.clone()))).unwrap();
+            for (y, expected) in frame.rows.iter().enumerate() {
+                let direct = extractor
+                    .row(terminal, y as u32, frame.dimensions.cols)
+                    .unwrap();
+                assert_eq!(direct, *expected, "row {y} at revision {revision}");
+            }
+            frame
+        };
+
+        let frame = frame_at_top(&mut terminal, 1);
+        let cells = || frame.rows.iter().flat_map(|row| &row.cells);
+        assert!(frame.rows.iter().any(|row| row.wrapped));
+        assert!(cells().any(|cell| cell.hyperlink == "https://example.test"));
+        assert!(cells().any(|cell| cell.style.protected));
+        assert!(cells().any(|cell| {
+            cell.style.foreground
+                == StyleColor::Rgb(Rgb {
+                    r: 12,
+                    g: 34,
+                    b: 56,
+                })
+        }));
+        assert!(
+            cells().any(|cell| cell.style.background == StyleColor::Rgb(Rgb { r: 0, g: 0, b: 95 }))
+        );
+        assert!(
+            cells().any(|cell| cell.style.background == StyleColor::Rgb(Rgb { r: 5, g: 6, b: 7 }))
+        );
+        assert!(cells().any(|cell| cell.text == "e\u{301}"));
+        assert!(cells().any(|cell| cell.width == CellWidth::Wide));
+        assert!(cells().any(|cell| cell.width == CellWidth::SpacerTail));
+        assert!(cells().any(|cell| cell.width == CellWidth::SpacerHead));
+
+        // Narrower columns reflow the wrapped rich text; its rows still match
+        // and keep their protection and hyperlink.
+        terminal.resize(9, 4, 8, 16).unwrap();
+        let reflowed = frame_at_top(&mut terminal, 2);
+        assert_eq!(reflowed.dimensions.cols, 9);
+        let cells = || reflowed.rows.iter().flat_map(|row| &row.cells);
+        assert!(reflowed.rows.iter().filter(|row| row.wrapped).count() >= 2);
+        assert!(cells().any(|cell| cell.style.protected));
+        assert!(cells().any(|cell| cell.hyperlink == "https://example.test"));
+    }
+
     #[test]
     fn vertical_preview_reads_history_nearest_first() {
         let mut terminal = Terminal::new(TerminalOptions {

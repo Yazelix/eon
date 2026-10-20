@@ -127,8 +127,7 @@ They cover parser continuation and terminal replies, semantic input and
 resize, and frozen selection copy. The real-PTY checks in
 [BEHAVIOR.md](BEHAVIOR.md) cover reattachment, rich extraction (the
 differential check compares frames cell by cell with the old Orbit's),
-viewport routing and retained history; reattachment to rich state is an
-[ORB-C4](CONTRACTS.md) gap (`eon-awmq.7`). The contract-oriented case inventory
+viewport routing and retained history. The contract-oriented case inventory
 and assertion policy live in the [contract index](CONTRACTS.md). The checks
 are offline, headless, and pinned to the same libghostty path as the normal
 suite; they add no second engine, fixture framework, or replay format.

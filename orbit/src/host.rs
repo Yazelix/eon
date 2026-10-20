@@ -1660,6 +1660,22 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
     }
 }
 
+/// The interactive client's output bound that this build's worker sends, for
+/// tests of the mechanisms it bounds.
+#[cfg(test)]
+pub(crate) fn built_worker_output_bound() -> usize {
+    let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
+    let mut bend = Bend::spawn(
+        Path::new(env!("ORBIT_BUILT_WORKER")),
+        &["--threads".into(), "1".into()],
+    )
+    .unwrap();
+    let bounds = bend.bounds();
+    bend.worker.kill().unwrap();
+    bend.worker.wait().unwrap();
+    bounds.unwrap().output_bytes as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

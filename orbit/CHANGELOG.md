@@ -26,6 +26,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   that fill a client's queue, and untrusted records and runtime directories
   refused before publishing (`eon-awmq.7.4`). A wrong-mode record was already
   refused at publish time, not only at lease acquisition as the import noted.
+- ORB-C4, ORB-C6 and ORB-C7 return to Proved: a real-PTY check covers
+  attachment during a held update and exact reattachment to a rich alternate
+  screen, and host unit tests cover direct rows against frame rows through
+  reflow and the scroll-outcome room at the worker's output bound
+  (`eon-awmq.7.2`).
 
 ## Before this repository
 
