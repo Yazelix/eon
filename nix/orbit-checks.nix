@@ -182,6 +182,7 @@ let
     { name = "stale-socket"; variable = "STALE_SHELL"; timeout = "30s"; }
     { name = "clipboard"; variable = "CLIPBOARD_SHELL"; timeout = "30s"; }
     { name = "command-line"; timeout = "30s"; }
+    { name = "palette-reset"; timeout = "30s"; }
     { name = "selection"; variable = "SELECT_SHELL"; timeout = "30s"; }
     { name = "selection-tick"; variable = "TICK_SHELL"; timeout = "30s"; }
     { name = "refused-flush"; variable = "FLUSH_SHELL"; timeout = "60s"; }

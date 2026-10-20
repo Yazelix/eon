@@ -249,4 +249,43 @@ mod tests {
             b"\x1b[<64;3;2M"
         );
     }
+
+    /// A Kitty-mode release reports a key the encoder can name, and never
+    /// falls back to its text for one it cannot (ORB-C5).
+    #[test]
+    fn kitty_release_never_falls_back_to_text() {
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 8,
+            rows: 2,
+            max_scrollback: 16,
+        })
+        .unwrap();
+        terminal.vt_write(b"\x1b[>3u");
+        let surface = session::SurfaceSize {
+            cols: 8,
+            rows: 2,
+            screen_width: 80,
+            screen_height: 36,
+            cell_width: 10,
+            cell_height: 18,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_left: 0,
+            padding_right: 0,
+        };
+        let release = |key, text: &str| {
+            let request = ClientMessage::Key(session::KeyEvent {
+                action: session::KeyAction::Release,
+                key,
+                modifiers: session::Modifiers::empty(),
+                consumed_modifiers: session::Modifiers::empty(),
+                composing: false,
+                text: Some(text.into()),
+                unshifted_codepoint: None,
+            });
+            encode_input(&terminal, surface, request).unwrap()
+        };
+        assert_eq!(release(session::PhysicalKey::SPACE, " "), b"\x1b[32;1:3u");
+        assert!(release(session::PhysicalKey::UNIDENTIFIED, "!").is_empty());
+    }
 }

@@ -41,6 +41,7 @@ checks!(
     management_record,
     mouse,
     observer_finish,
+    palette_reset,
     paste_flood,
     preview,
     pty_reopen,

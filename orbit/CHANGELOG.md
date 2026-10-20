@@ -19,6 +19,9 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   Partially proved, since some behavior the old unit tests checked has no
   check yet (`eon-awmq.7`); ORB-C14's native macOS proof covers only the old
   server, so macOS is unproved for this Orbit until it is re-proved.
+- ORB-C2 and ORB-C5 return to Proved: a real-PTY check covers a whole-palette
+  OSC 104 reset and the colors above 15, and a host unit test covers a Kitty
+  release of an unidentified key (`eon-awmq.7.1`).
 
 ## Before this repository
 

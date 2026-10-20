@@ -70,7 +70,10 @@ line or a command that cannot start fails with status 1 and a message
 prefixed `orbit: `. The old Orbit's `client` diagnostic subcommand does not
 exist. The real-PTY command-line and lifecycle
 checks cover the palette in frames, the child's arguments, exit codes, and
-both failures.
+both failures. The real-PTY palette-reset check has the child override colors
+0, 1 and 200, then send an OSC 104 that names no index: every color returns
+to the supplied 16 and xterm's defaults above them. Installing the palette as
+current colors instead of defaults made it fail.
 
 A start replaces a stale socket pathname, a private socket nobody listens on,
 under a lock on its private directory, so one of two racing starts wins
@@ -517,6 +520,13 @@ publishes the frame, which waits like any other while an update is held. Paste
 and other input, and a key that writes nothing, leave the viewport where it is.
 The real-PTY key-live check scrolls up, sends a paste and a key release that
 leave the viewport in history, then a key press that brings it back.
+
+A key release keeps its text only when the encoder knows the key's unshifted
+codepoint, so a Kitty-mode release of an unidentified key writes nothing
+rather than falling back to its text (ORB-C5). The host unit test
+`kitty_release_never_falls_back_to_text` encodes a space release and an
+unidentified release carrying `!`; keeping the text on every release made it
+fail.
 
 ## Mouse and wheel
 

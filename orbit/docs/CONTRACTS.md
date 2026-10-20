@@ -80,7 +80,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 
 ## ORB-C2 — Sole terminal-state authority
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** Every Orbit runtime and attached client.
 - **Trigger:** PTY bytes, client interaction, or terminal-generated responses
   change terminal state.
@@ -91,7 +91,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Owner:** Orbit's Rust host, the sole holder of libghostty terminal state.
 - **Boundary:** Ordered client-visible effects beyond the current transport
   contract remain unproved.
-- **Proof:** the `eon-awmq.3` import commit
+- **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.1` commit
+  for the palette reset
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
     including the differential against the old Rust Orbit from Eon
@@ -103,10 +104,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     - [`orbit-command-line`](../tests/real_pty/command_line.rs)
     - [`conformance_c2_parser_state_and_terminal_replies_survive_client_failure`](../tests/lifecycle.rs)
     - [`orbit-terminal-replies`](../tests/real_pty/terminal_replies.rs)
+    - [`orbit-palette-reset`](../tests/real_pty/palette_reset.rs)
     - Workspace suite
-- **Open proof:** No check of this tree resets the whole ANSI palette with
-  OSC 104 and no index, or checks that the colors above 15 keep their defaults
-  exactly (`eon-awmq.7`).
 
 ## ORB-C3 — Bounded interactive and metadata attachment
 
@@ -189,7 +188,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 
 ## ORB-C5 — Semantic terminal interaction
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** Attached clients sending key, mouse, focus, paste, or resize
   interaction.
 - **Trigger:** Orbit accepts one canonical semantic input message or begins one
@@ -212,7 +211,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v13;
   Venus and Eon consume it in this repository.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
-- **Proof:** the `eon-awmq.3` import commit
+- **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.1` commit
+  for the Kitty release
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
     including the differential against the old Rust Orbit from Eon
@@ -220,6 +220,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     `tests/lifecycle.rs` unmodified)
   - **Evidence:**
     - [`canonical_input_uses_libghostty_encoding`](../src/input.rs)
+    - [`kitty_release_never_falls_back_to_text`](../src/input.rs)
     - [`conformance_c5_authoritative_input_modes_and_resize_survive_detach`](../tests/lifecycle.rs)
     - Real-PTY checks [`orbit-selection`](../tests/real_pty/selection.rs),
       [`orbit-mouse`](../tests/real_pty/mouse.rs),
@@ -228,9 +229,6 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     - Laws [`selection_answers_are_accounted`](../LAWS.bend) and
       [`selection_shift_selects_on_the_host`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
-- **Open proof:** No check of this tree sends a Kitty-mode release of an
-  unidentified key with text, which must write nothing rather than fall back to
-  text (`eon-awmq.7`).
 
 ## ORB-C6 — Rich presentation without silent degradation
 
