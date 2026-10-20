@@ -31,6 +31,18 @@
       url = "github:ghostty-org/ghostty/a887df42c56f6de86c0fe6da9c4eeca37931e083";
       flake = false;
     };
+    # Orbit's build-time Bend compiler (orbit/build.rs).
+    bend = {
+      url = "github:bendlang/bend/234cb9b950800f20b15feafcb4ce2f43e76e7fae";
+      flake = false;
+    };
+    # The old Rust Orbit for the differential check: this revision's Orbit
+    # sources, tests and Cargo.lock are those tagged orbit-rust-final; only
+    # Orbit's docs and agent rules differ.
+    old-orbit = {
+      url = "github:Yazelix/eon/1d287440fe5787a5a7d6be8e201546e3f2829df5";
+      flake = false;
+    };
     kinestra = {
       url = "github:Yazelix/kinestra/d1589705677dc001304584150557e67cef67f580";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -46,6 +58,8 @@
       yazi,
       ratconfig,
       ghostty,
+      bend,
+      old-orbit,
       kinestra,
     }:
     let
@@ -97,6 +111,9 @@
         ./eon
       ]) (lib.fileset.unions ([
         ./orbit/docs
+        ./orbit/LAWS.bend
+        ./orbit/PROOF.bend
+        ./orbit/proof
         ./venus/docs
       ] ++ map (lib.fileset.fileFilter (file: file.hasExt "md")) [
         ./orbit
@@ -219,13 +236,32 @@
         GHOSTTY_ZIG_SYSTEM_DIR = ghosttyDeps;
       };
 
+      # orbit/build.rs runs the pinned Bend compiler and compiles its C with this
+      # clang, named rather than put on PATH so it never becomes the dev shell's
+      # cc. Without BEND_NO_TELEMETRY the compiler contacts bend-lang.com once a
+      # day and writes ~/.bend. Orbit's package and the dev shell share this.
+      bendBuildEnv = {
+        BEND_SOURCE_DIR = bend;
+        BEND_CLANG = "${pkgs.clang}/bin/clang";
+        BEND_NO_TELEMETRY = "1";
+      };
+      # Orbit's host and its Bend worker (orbit/docs/HOST.md), which
+      # orbit/build.rs compiles. The unit tests run here; the real-PTY test
+      # binary, whose checks are ignored here, goes to the tests output for the
+      # real-PTY checks. tests/lifecycle.rs needs host /usr/bin/setsid, which
+      # the build sandbox lacks, so eon-test runs it.
       orbitPackage =
         assert ghostty.rev == "a887df42c56f6de86c0fe6da9c4eeca37931e083";
+        assert bend.rev == "234cb9b950800f20b15feafcb4ce2f43e76e7fae";
         pkgs.rustPlatform.buildRustPackage {
           pname = workspacePackages.orbit;
           inherit (orbitIdentity) version;
           src = crateSource;
           cargoLock = workspaceCargoLock;
+          outputs = [
+            "out"
+            "tests"
+          ];
           cargoBuildFlags = [
             "--package"
             workspacePackages.orbit
@@ -233,26 +269,39 @@
           cargoTestFlags = [
             "--package"
             workspacePackages.orbit
+            "--lib"
+            "--test"
+            "real_pty"
           ];
-          # The accepted upstream suite needs host /bin/sh and set-ID chmod,
-          # neither of which exists in the Nix build sandbox.
-          doCheck = false;
           nativeBuildInputs = [
+            pkgs.bun
             pkgs.ncurses
             pkgs.zig_0_15.hook
           ];
+          inherit (bendBuildEnv) BEND_SOURCE_DIR BEND_CLANG BEND_NO_TELEMETRY;
           inherit (ghosttyBuildEnv) LIBGHOSTTY_VT_SYS_CPU GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
           dontUseZigBuild = true;
           dontUseZigCheck = true;
           dontUseZigInstall = true;
           postInstall = ''
+            mapfile -t workers < <(find target -type f -path '*/release/build/*/out/yazelix-orbit-worker')
+            mapfile -t realPty < <(find target -type f -path '*/release/deps/real_pty-*' -perm -u+x)
+            test ''${#workers[@]} = 1
+            test ''${#realPty[@]} = 1
+            install -Dm755 "''${workers[0]}" "$out/libexec/yazelix-orbit/yazelix-orbit-worker"
+            install -Dm755 "''${realPty[0]}" "$tests/libexec/real-pty"
             mkdir -p "$out/share/terminfo"
             ${pkgs.ncurses}/bin/tic -x -o "$out/share/terminfo" ${./orbit/terminfo/eon.terminfo}
             install -Dm444 ${./orbit/LICENSE} "$out/share/licenses/orbit/LICENSE"
             install -Dm444 ${ghostty}/LICENSE "$out/share/licenses/orbit/ghostty/LICENSE"
             install -Dm444 ${./licenses/libghostty-rs-MIT} "$out/share/licenses/orbit/libghostty-rs/LICENSE"
+            install -Dm444 ${bend}/LICENSE "$out/share/licenses/orbit/bend/LICENSE"
           '';
         };
+      orbitChecks = import ./nix/orbit-checks.nix {
+        inherit pkgs bend orbitPackage ghosttyBuildEnv workspaceCargoLock;
+        oldOrbitSource = old-orbit;
+      };
 
       venusRuntimeLibraries = [
         pkgs.libxkbcommon
@@ -701,7 +750,7 @@
         managed-command-path = managedCommandPathCheck;
         bundle-relink = bundleRelink.tree;
         bundle-launch = bundleRelink.launch;
-      };
+      } // orbitChecks;
       devShells.${system}.default = pkgs.mkShell {
         packages = [
           pkgs.cargo
@@ -712,12 +761,14 @@
           pkgs.ncurses
           pkgs.pkg-config
           pkgs.zig_0_15
+          pkgs.bun
           (import ./nix/test-sandbox.nix { inherit pkgs; })
           br
           bv
         ];
         buildInputs = venusBuildInputs;
         inherit (ghosttyBuildEnv) LIBGHOSTTY_VT_SYS_CPU GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
+        inherit (bendBuildEnv) BEND_SOURCE_DIR BEND_CLANG BEND_NO_TELEMETRY;
         FONTCONFIG_FILE = venusFontsConf;
       };
     };

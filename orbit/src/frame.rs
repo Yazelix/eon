@@ -1,0 +1,498 @@
+//! Canonical frames and vertical previews read from libghostty.
+
+use crate::errno;
+use libghostty_vt::{
+    Error as GhosttyError, RenderState, Terminal, TerminalOptions,
+    render::{CellIterator, CursorVisualStyle as GhosttyCursorShape, RowIterator},
+    screen::{CellContentTag, CellWide as GhosttyCellWidth, GridRef, Screen as GhosttyScreen},
+    style::{RgbColor, Style, StyleColor as GhosttyStyleColor, Underline as GhosttyUnderline},
+    terminal::{Point, PointCoordinate, ScrollViewport},
+};
+use orbit_protocol::{
+    Capabilities, Cell as ProtocolCell, CellStyle, CellWidth, Colors, Cursor, CursorShape,
+    CursorViewport, Dimensions, Frame, FrameSize, MAX_CELLS, MAX_FRAME_BYTES, Rgb, Row,
+    Screen as ProtocolScreen, ScrollPosition, StyleColor, Underline,
+    session::{PreviewOutcome, VerticalDirection},
+};
+use std::io::{self};
+
+// libghostty's max_scrollback is a byte budget (Ghostty Screen.zig), as in the old Orbit.
+pub(crate) const SCROLLBACK_BUDGET_BYTES: usize = 16 * 1024 * 1024;
+
+pub(crate) struct FrameExtractor {
+    state: RenderState<'static>,
+    rows: RowIterator<'static>,
+    cells: CellIterator<'static>,
+}
+
+impl FrameExtractor {
+    pub(crate) fn new() -> io::Result<Self> {
+        Ok(Self {
+            state: RenderState::new().map_err(|_| errno(libc::EIO))?,
+            rows: RowIterator::new().map_err(|_| errno(libc::EIO))?,
+            cells: CellIterator::new().map_err(|_| errno(libc::EIO))?,
+        })
+    }
+
+    pub(crate) fn frame(
+        &mut self,
+        revision: u64,
+        terminal: &Terminal<'static, '_>,
+    ) -> io::Result<Frame> {
+        let snapshot = self.state.update(terminal).map_err(|_| errno(libc::EIO))?;
+        let cols = snapshot.cols().map_err(|_| errno(libc::EIO))?;
+        let rows = snapshot.rows().map_err(|_| errno(libc::EIO))?;
+        if usize::from(cols) * usize::from(rows) > MAX_CELLS {
+            return Err(errno(libc::EOVERFLOW));
+        }
+
+        let colors = snapshot.colors().map_err(|_| errno(libc::EIO))?;
+        let screen = match terminal.active_screen().map_err(|_| errno(libc::EIO))? {
+            GhosttyScreen::Primary => ProtocolScreen::Primary,
+            GhosttyScreen::Alternate => ProtocolScreen::Alternate,
+        };
+        let scrollbar = terminal.scrollbar().map_err(|_| errno(libc::EIO))?;
+        if scrollbar.len != u64::from(rows) {
+            return Err(errno(libc::EPROTO));
+        }
+        let history_rows = scrollbar
+            .total
+            .checked_sub(scrollbar.len)
+            .ok_or_else(|| errno(libc::EPROTO))?;
+        let cursor = Cursor {
+            visible: snapshot.cursor_visible().map_err(|_| errno(libc::EIO))?,
+            blinking: snapshot.cursor_blinking().map_err(|_| errno(libc::EIO))?,
+            password_input: snapshot
+                .cursor_password_input()
+                .map_err(|_| errno(libc::EIO))?,
+            shape: cursor_shape(
+                snapshot
+                    .cursor_visual_style()
+                    .map_err(|_| errno(libc::EIO))?,
+            )?,
+            viewport: snapshot
+                .cursor_viewport()
+                .map_err(|_| errno(libc::EIO))?
+                .map(|cursor| CursorViewport {
+                    x: cursor.x,
+                    y: cursor.y,
+                    at_wide_tail: cursor.at_wide_tail,
+                }),
+        };
+        let title = terminal.title().map_err(|_| errno(libc::EIO))?;
+        let working_directory = terminal.pwd().map_err(|_| errno(libc::EIO))?;
+        let mut size = FrameSize::new(
+            title,
+            working_directory,
+            colors.cursor.is_some(),
+            cursor.viewport.is_some(),
+        )
+        .map_err(|_| errno(libc::EOVERFLOW))?;
+        let title = title.to_owned();
+        let working_directory = working_directory.to_owned();
+        let mut row_iter = self.rows.update(&snapshot).map_err(|_| errno(libc::EIO))?;
+        let mut text = String::new();
+        let mut frame_rows = Vec::with_capacity(usize::from(rows));
+        for y in 0..rows {
+            size.add_row().map_err(|_| errno(libc::EOVERFLOW))?;
+            let row = row_iter.next().ok_or_else(|| errno(libc::EPROTO))?;
+            let raw_row = row.raw_row().map_err(|_| errno(libc::EIO))?;
+            let mut cell_iter = self.cells.update(row).map_err(|_| errno(libc::EIO))?;
+            let mut frame_cells = Vec::with_capacity(usize::from(cols));
+            for x in 0..cols {
+                let cell = cell_iter.next().ok_or_else(|| errno(libc::EPROTO))?;
+                let raw_cell = cell.raw_cell().map_err(|_| errno(libc::EIO))?;
+                let mut style = cell.style().map_err(|_| errno(libc::EIO))?;
+                if let Some(background) = cell.bg_color().map_err(|_| errno(libc::EIO))? {
+                    style.bg_color = GhosttyStyleColor::Rgb(background);
+                }
+                let grapheme_count = cell.graphemes_len().map_err(|_| errno(libc::EIO))?;
+                if grapheme_count > MAX_FRAME_BYTES / size_of::<char>() {
+                    return Err(errno(libc::EOVERFLOW));
+                }
+                text.clear();
+                cell.graphemes_utf8(&mut text)
+                    .map_err(|_| errno(libc::EOVERFLOW))?;
+                let hyperlink = if raw_cell.has_hyperlink().map_err(|_| errno(libc::EIO))? {
+                    hyperlink(terminal, x, y)?
+                } else {
+                    String::new()
+                };
+                size.add_cell(&text, &hyperlink)
+                    .map_err(|_| errno(libc::EOVERFLOW))?;
+                frame_cells.push(ProtocolCell {
+                    width: cell_width(raw_cell.wide().map_err(|_| errno(libc::EIO))?),
+                    style: cell_style(
+                        style,
+                        cell.is_selected().map_err(|_| errno(libc::EIO))?,
+                        raw_cell.is_protected().map_err(|_| errno(libc::EIO))?,
+                    )?,
+                    text: text.clone(),
+                    hyperlink,
+                });
+            }
+            if cell_iter.next().is_some() {
+                return Err(errno(libc::EPROTO));
+            }
+            frame_rows.push(Row {
+                wrapped: raw_row.is_wrapped().map_err(|_| errno(libc::EIO))?,
+                wrap_continuation: raw_row
+                    .is_wrap_continuation()
+                    .map_err(|_| errno(libc::EIO))?,
+                kitty_virtual_placeholder: raw_row
+                    .has_kitty_virtual_placeholder()
+                    .map_err(|_| errno(libc::EIO))?,
+                cells: frame_cells,
+            });
+        }
+        if row_iter.next().is_some() {
+            return Err(errno(libc::EPROTO));
+        }
+        Ok(Frame {
+            revision,
+            dimensions: Dimensions { cols, rows },
+            screen,
+            title,
+            working_directory,
+            capabilities: Capabilities {
+                hyperlinks: true,
+                kitty_graphics: false,
+            },
+            colors: Colors {
+                background: rgb(colors.background),
+                foreground: rgb(colors.foreground),
+                cursor: colors.cursor.map(rgb),
+                palette: colors.palette.map(rgb),
+            },
+            cursor,
+            scroll_position: ScrollPosition {
+                rows_from_live: history_rows
+                    .checked_sub(scrollbar.offset)
+                    .ok_or_else(|| errno(libc::EPROTO))?,
+                history_rows,
+            },
+            rows: frame_rows,
+        })
+    }
+}
+
+impl FrameExtractor {
+    /// One canonical row from libghostty's screen coordinates, for history beyond the viewport.
+    fn row(&self, terminal: &Terminal<'static, '_>, screen_y: u32, cols: u16) -> io::Result<Row> {
+        let at = |x| {
+            terminal
+                .grid_ref(Point::Screen(PointCoordinate { x, y: screen_y }))
+                .map_err(|_| errno(libc::EIO))
+        };
+        let raw_row = at(0)?.row().map_err(|_| errno(libc::EIO))?;
+        let palette = terminal.color_palette().map_err(|_| errno(libc::EIO))?;
+        let mut chars = vec!['\0'; 8];
+        let mut cells = Vec::with_capacity(usize::from(cols));
+        for x in 0..cols {
+            let reference = at(x)?;
+            let raw_cell = reference.cell().map_err(|_| errno(libc::EIO))?;
+            let mut style = reference.style().map_err(|_| errno(libc::EIO))?;
+            style.bg_color = match raw_cell.content_tag().map_err(|_| errno(libc::EIO))? {
+                CellContentTag::BgColorPalette => GhosttyStyleColor::Rgb(
+                    palette.get(raw_cell.bg_color_palette().map_err(|_| errno(libc::EIO))?),
+                ),
+                CellContentTag::BgColorRgb => {
+                    GhosttyStyleColor::Rgb(raw_cell.bg_color_rgb().map_err(|_| errno(libc::EIO))?)
+                }
+                CellContentTag::Codepoint | CellContentTag::CodepointGrapheme => {
+                    match style.bg_color {
+                        GhosttyStyleColor::Palette(index) => {
+                            GhosttyStyleColor::Rgb(palette.get(index))
+                        }
+                        background => background,
+                    }
+                }
+            };
+            let length = match reference.graphemes(&mut chars) {
+                Ok(length) => length,
+                Err(GhosttyError::OutOfSpace { required })
+                    if required <= MAX_FRAME_BYTES / size_of::<char>() =>
+                {
+                    chars.resize(required, '\0');
+                    reference
+                        .graphemes(&mut chars)
+                        .map_err(|_| errno(libc::EIO))?
+                }
+                Err(GhosttyError::OutOfSpace { .. }) => return Err(errno(libc::EOVERFLOW)),
+                Err(_) => return Err(errno(libc::EIO)),
+            };
+            let hyperlink = if raw_cell.has_hyperlink().map_err(|_| errno(libc::EIO))? {
+                hyperlink_uri(&reference)?
+            } else {
+                String::new()
+            };
+            cells.push(ProtocolCell {
+                width: cell_width(raw_cell.wide().map_err(|_| errno(libc::EIO))?),
+                style: cell_style(
+                    style,
+                    false,
+                    raw_cell.is_protected().map_err(|_| errno(libc::EIO))?,
+                )?,
+                text: chars[..length].iter().collect(),
+                hyperlink,
+            });
+        }
+        Ok(Row {
+            wrapped: raw_row.is_wrapped().map_err(|_| errno(libc::EIO))?,
+            wrap_continuation: raw_row
+                .is_wrap_continuation()
+                .map_err(|_| errno(libc::EIO))?,
+            kitty_virtual_placeholder: raw_row
+                .has_kitty_virtual_placeholder()
+                .map_err(|_| errno(libc::EIO))?,
+            cells,
+        })
+    }
+}
+
+/// The canonical frame of a fresh terminal after `vt`, with the viewport `scroll`
+/// rows above live. Only the differential check's own tests call this.
+#[doc(hidden)]
+pub fn frame_after_vt(
+    cols: u16,
+    rows: u16,
+    vt: &[u8],
+    scroll: isize,
+    revision: u64,
+) -> io::Result<Frame> {
+    let mut terminal = Terminal::new(TerminalOptions {
+        cols,
+        rows,
+        max_scrollback: SCROLLBACK_BUDGET_BYTES,
+    })
+    .map_err(|_| errno(libc::EIO))?;
+    terminal.vt_write(vt);
+    terminal.scroll_viewport(ScrollViewport::Delta(-scroll));
+    FrameExtractor::new()?.frame(revision, &terminal)
+}
+
+/// Up to one viewport of rows beyond the viewport, nearest first, bounded like a frame.
+pub(crate) fn viewport_preview(
+    terminal: &Terminal<'static, '_>,
+    extractor: &FrameExtractor,
+    direction: VerticalDirection,
+) -> io::Result<PreviewOutcome> {
+    let scrollbar = terminal.scrollbar().map_err(|_| errno(libc::EIO))?;
+    let cols = terminal.cols().map_err(|_| errno(libc::EIO))?;
+    let window = u64::from(terminal.rows().map_err(|_| errno(libc::EIO))?);
+    let below = scrollbar.offset.saturating_add(scrollbar.len);
+    let mut size = FrameSize::new("", "", false, false).map_err(|_| errno(libc::EOVERFLOW))?;
+    let mut rows = Vec::new();
+    let mut complete = true;
+    for index in 0..window {
+        let target = match direction {
+            VerticalDirection::Up => scrollbar.offset.checked_sub(index + 1),
+            VerticalDirection::Down => below.checked_add(index).filter(|y| *y < scrollbar.total),
+        };
+        let Some(target) = target else {
+            break;
+        };
+        let row = extractor.row(
+            terminal,
+            u32::try_from(target).map_err(|_| errno(libc::EOVERFLOW))?,
+            cols,
+        )?;
+        let mut next = size;
+        let sized = next.add_row().and_then(|()| {
+            row.cells
+                .iter()
+                .try_for_each(|cell| next.add_cell(&cell.text, &cell.hyperlink))
+        });
+        if sized.is_err() {
+            complete = false;
+            break;
+        }
+        size = next;
+        rows.push(row);
+    }
+    let edge_reached = complete
+        && match direction {
+            VerticalDirection::Up => scrollbar.offset <= window,
+            VerticalDirection::Down => below.saturating_add(window) >= scrollbar.total,
+        };
+    Ok(PreviewOutcome::Viewport {
+        cols,
+        edge_reached,
+        rows,
+    })
+}
+
+fn hyperlink(terminal: &Terminal<'static, '_>, x: u16, y: u16) -> io::Result<String> {
+    let reference = terminal
+        .grid_ref(Point::Viewport(PointCoordinate { x, y: u32::from(y) }))
+        .map_err(|_| errno(libc::EIO))?;
+    hyperlink_uri(&reference)
+}
+
+fn hyperlink_uri(reference: &GridRef<'_>) -> io::Result<String> {
+    let mut bytes = vec![0; 256];
+    let length = match reference.hyperlink_uri(&mut bytes) {
+        Ok(length) => length,
+        Err(GhosttyError::OutOfSpace { required }) if required <= MAX_FRAME_BYTES => {
+            bytes.resize(required, 0);
+            reference
+                .hyperlink_uri(&mut bytes)
+                .map_err(|_| errno(libc::EIO))?
+        }
+        Err(GhosttyError::OutOfSpace { .. }) => return Err(errno(libc::EOVERFLOW)),
+        Err(_) => return Err(errno(libc::EIO)),
+    };
+    bytes.truncate(length);
+    String::from_utf8(bytes).map_err(|_| errno(libc::EPROTO))
+}
+
+fn rgb(color: RgbColor) -> Rgb {
+    Rgb {
+        r: color.r,
+        g: color.g,
+        b: color.b,
+    }
+}
+
+fn cursor_shape(shape: GhosttyCursorShape) -> io::Result<CursorShape> {
+    match shape {
+        GhosttyCursorShape::Bar => Ok(CursorShape::Bar),
+        GhosttyCursorShape::Block => Ok(CursorShape::Block),
+        GhosttyCursorShape::Underline => Ok(CursorShape::Underline),
+        GhosttyCursorShape::BlockHollow => Ok(CursorShape::BlockHollow),
+        _ => Err(errno(libc::EPROTO)),
+    }
+}
+
+fn cell_width(width: GhosttyCellWidth) -> CellWidth {
+    match width {
+        GhosttyCellWidth::Narrow => CellWidth::Narrow,
+        GhosttyCellWidth::Wide => CellWidth::Wide,
+        GhosttyCellWidth::SpacerTail => CellWidth::SpacerTail,
+        GhosttyCellWidth::SpacerHead => CellWidth::SpacerHead,
+    }
+}
+
+fn style_color(color: GhosttyStyleColor) -> StyleColor {
+    match color {
+        GhosttyStyleColor::None => StyleColor::None,
+        GhosttyStyleColor::Palette(index) => StyleColor::Palette(index.0),
+        GhosttyStyleColor::Rgb(color) => StyleColor::Rgb(rgb(color)),
+    }
+}
+
+fn underline(value: GhosttyUnderline) -> io::Result<Underline> {
+    match value {
+        GhosttyUnderline::None => Ok(Underline::None),
+        GhosttyUnderline::Single => Ok(Underline::Single),
+        GhosttyUnderline::Double => Ok(Underline::Double),
+        GhosttyUnderline::Curly => Ok(Underline::Curly),
+        GhosttyUnderline::Dotted => Ok(Underline::Dotted),
+        GhosttyUnderline::Dashed => Ok(Underline::Dashed),
+        _ => Err(errno(libc::EPROTO)),
+    }
+}
+
+fn cell_style(style: Style, selected: bool, protected: bool) -> io::Result<CellStyle> {
+    Ok(CellStyle {
+        foreground: style_color(style.fg_color),
+        background: style_color(style.bg_color),
+        underline_color: style_color(style.underline_color),
+        bold: style.bold,
+        italic: style.italic,
+        faint: style.faint,
+        blink: style.blink,
+        inverse: style.inverse,
+        invisible: style.invisible,
+        strikethrough: style.strikethrough,
+        overline: style.overline,
+        selected,
+        protected,
+        underline: underline(style.underline)?,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use orbit_protocol::session::{self, ServerMessage, VerticalPreview};
+
+    #[test]
+    fn terminal_frame_uses_the_canonical_protocol_owner() {
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 8,
+            rows: 2,
+            max_scrollback: 16,
+        })
+        .unwrap();
+        terminal.vt_write(b"\x1b]8;;https://example.test\x1b\\READY\x1b]8;;\x1b\\");
+        let frame = FrameExtractor::new().unwrap().frame(1, &terminal).unwrap();
+        assert_eq!(
+            (frame.revision, frame.dimensions.cols, frame.dimensions.rows),
+            (1, 8, 2)
+        );
+        assert!(frame.capabilities.hyperlinks);
+        assert_eq!(frame.rows[0].cells[0].text, "R");
+        assert_eq!(frame.rows[0].cells[0].hyperlink, "https://example.test");
+        let encoded =
+            session::encode_server_message(&ServerMessage::Frame(Box::new(frame))).unwrap();
+        assert!(matches!(
+            session::decode_server_message(&encoded).unwrap(),
+            ServerMessage::Frame(frame) if frame.revision == 1
+        ));
+    }
+
+    #[test]
+    fn vertical_preview_reads_history_nearest_first() {
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 8,
+            rows: 2,
+            max_scrollback: SCROLLBACK_BUDGET_BYTES,
+        })
+        .unwrap();
+        terminal.vt_write(
+            b"\x1b]8;;https://example.test\x1b\\one\x1b]8;;\x1b\\\r\ntwo\r\nthree\r\nlongerthan8\r\nlast",
+        );
+        let extractor = FrameExtractor::new().unwrap();
+        let text = |row: &Row| {
+            row.cells
+                .iter()
+                .map(|cell| cell.text.as_str())
+                .collect::<String>()
+        };
+        let up = viewport_preview(&terminal, &extractor, VerticalDirection::Up).unwrap();
+        let encoded =
+            session::encode_server_message(&ServerMessage::VerticalPreview(VerticalPreview {
+                frame_revision: 3,
+                direction: VerticalDirection::Up,
+                outcome: up,
+            }))
+            .unwrap();
+        let ServerMessage::VerticalPreview(VerticalPreview {
+            outcome:
+                PreviewOutcome::Viewport {
+                    cols: 8,
+                    edge_reached: false,
+                    rows,
+                },
+            ..
+        }) = session::decode_server_message(&encoded).unwrap()
+        else {
+            panic!("preview was not a canonical viewport window");
+        };
+        let rows: Vec<_> = rows.iter().map(|row| (text(row), row.wrapped)).collect();
+        assert_eq!(rows, [("longerth".into(), true), ("three".into(), false)]);
+
+        let oldest = extractor.row(&terminal, 0, 8).unwrap();
+        assert_eq!(text(&oldest), "one");
+        assert_eq!(oldest.cells[0].hyperlink, "https://example.test");
+        assert_eq!(
+            viewport_preview(&terminal, &extractor, VerticalDirection::Down).unwrap(),
+            PreviewOutcome::Viewport {
+                cols: 8,
+                edge_reached: true,
+                rows: Vec::new(),
+            }
+        );
+    }
+}

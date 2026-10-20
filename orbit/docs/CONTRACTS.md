@@ -37,9 +37,9 @@ frame's revision. Failed engine extraction does not fabricate zero or publish a
 partial frame. Existing 4 MiB/100,000-cell bounds remain.
 
 ORBS v7 through v13 are explicitly breaking, exact-version boundaries with no
-compatibility window or adapter; each replaced its predecessor. The diagnostic
-client, owned test fixtures, Venus and Eon consume the canonical crate in this
-repository. Each contract below states the current ORBS v13 behavior.
+compatibility window or adapter; each replaced its predecessor. Orbit's
+real-PTY checks and lifecycle tests, Venus and Eon consume the canonical crate
+in this repository. Each contract below states the current ORBS v13 behavior.
 
 ## ORB-C1 — Session survival across client loss
 
@@ -52,24 +52,35 @@ repository. Each contract below states the current ORBS v13 behavior.
 - **Important failures:** Transient Linux PTY close/reopen, portable PTY EOF,
   partial final writes, and simultaneous stale socket claims recover or fail
   explicitly without losing the reachable owner.
-- **Owner:** Orbit's concrete runtime coordinator with the isolated platform PTY
-  lifecycle.
+- **Owner:** Orbit's Bend session policy, which decides attachment and the
+  lifecycle, and its Rust host, which owns the PTY child and its mechanics.
 - **Boundary:** Persistence across Orbit or machine restart is excluded.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`;
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified);
     Apple M2 macOS 26.7.1 native `cargo test --locked -p yazelix-orbit -p
-    orbit-protocol` at `4910b81e9d68942a65ad96ad21e03385de7144f5`
-    (`eon-orb-c14-mac-reproof-l8rz`)
+    orbit-protocol` of the previous Rust server at
+    `4910b81e9d68942a65ad96ad21e03385de7144f5` (`eon-orb-c14-mac-reproof-l8rz`)
   - **Evidence:**
     - [`transient_pty_eio_recovers_when_the_live_child_reopens_the_terminal`](../tests/lifecycle.rs)
     - [`simultaneous_stale_socket_claim_has_one_reachable_owner`](../tests/lifecycle.rs)
+    - [`shell_survives_detach_and_one_client_reattaches`](../tests/lifecycle.rs)
+    - Real-PTY checks [`orbit-three-attach`](../tests/real_pty/three_attach.rs),
+      [`orbit-pty-reopen`](../tests/real_pty/pty_reopen.rs) and
+      [`orbit-stale-socket`](../tests/real_pty/stale_socket.rs)
+    - Laws [`detach_preserves_pid`](../LAWS.bend),
+      [`reconnect_preserves_pid`](../LAWS.bend) and
+      [`lifecycle_follows_its_contracts`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
-    - On macOS the stale-socket check passes; the transient PTY EIO check is
-      Linux-only.
+    - On macOS the stale-socket check passed for the previous Rust server; the
+      transient PTY EIO check is Linux-only.
 
 ## ORB-C2 — Sole terminal-state authority
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** Every Orbit runtime and attached client.
 - **Trigger:** PTY bytes, client interaction, or terminal-generated responses
   change terminal state.
@@ -77,15 +88,25 @@ repository. Each contract below states the current ORBS v13 behavior.
   terminal-generated responses to the PTY.
 - **Important failures:** Client failure cannot duplicate a terminal response or
   transfer parser authority.
-- **Owner:** Orbit's platform-neutral concrete runtime coordinator.
+- **Owner:** Orbit's Rust host, the sole holder of libghostty terminal state.
 - **Boundary:** Ordered client-visible effects beyond the current transport
   contract remain unproved.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified)
   - **Evidence:**
-    - [`ansi_palette_is_bounded_and_resets_to_supplied_defaults`](../src/main.rs)
+    - [`palettes_are_exactly_sixteen_hex_colors`](../src/cli.rs)
+    - [`ansi_palette_launch_is_visible_and_survives_reattachment`](../tests/lifecycle.rs)
+    - [`orbit-command-line`](../tests/real_pty/command_line.rs)
     - [`conformance_c2_parser_state_and_terminal_replies_survive_client_failure`](../tests/lifecycle.rs)
+    - [`orbit-terminal-replies`](../tests/real_pty/terminal_replies.rs)
     - Workspace suite
+- **Open proof:** No check of this tree resets the whole ANSI palette with
+  OSC 104 and no index, or checks that the colors above 15 keep their defaults
+  exactly (`eon-awmq.7`).
 
 ## ORB-C3 — Bounded interactive and metadata attachment
 
@@ -103,23 +124,34 @@ repository. Each contract below states the current ORBS v13 behavior.
 - **Important failures:** Excess roles, incompatible or malformed peers, slow
   readers, disconnect, and exit fail deterministically without disturbing the
   PTY, child, other role, or cleanup.
-- **Owner:** Orbit attachment transport and runtime coordinator with canonical
-  `orbit-protocol` ORBS v7.
+- **Owner:** Orbit's Bend admission policy and Rust socket transport with
+  canonical `orbit-protocol` ORBS v7.
 - **Consumes:** Canonical ORBS v7 behavior, preserved through ORBS v13; Venus
   and Eon consume it in this repository.
 - **Boundary:** Visible text observation, agent observation, multiple observers,
   multiple interactive clients, remote access, and process authority are
   excluded.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified)
   - **Evidence:**
-    - [`metadata_observer_is_read_only_and_keeps_only_the_latest_change`](../src/attachment.rs)
+    - [`metadata_observer_is_canonical_read_only_and_reports_changes`](../src/socket.rs)
+    - [`nonreading_observer_converges_on_the_latest_metadata`](../src/socket.rs)
     - [`metadata_observer_streams_inactive_title_and_cwd_without_owning_input`](../tests/lifecycle.rs)
+    - Real-PTY checks [`orbit-slow-observer`](../tests/real_pty/slow_observer.rs),
+      [`orbit-late-observer`](../tests/real_pty/late_observer.rs),
+      [`orbit-detached-observer`](../tests/real_pty/detached_observer.rs),
+      [`orbit-unsupported`](../tests/real_pty/unsupported.rs) and
+      [`orbit-silent-peer`](../tests/real_pty/silent_peer.rs)
+    - Law [`admission_answers_are_accounted`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
 
 ## ORB-C4 — Coherent ordered presentation
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One attached exact-version presentation client.
 - **Trigger:** Attachment begins or authoritative terminal state changes.
 - **Result:** Attachment starts with one complete frame at revision N and then
@@ -127,22 +159,37 @@ repository. Each contract below states the current ORBS v13 behavior.
   presentation.
 - **Important failures:** Split or synchronized output and a slow reader cannot
   publish partial state or violate final convergence.
-- **Owner:** Orbit attachment transport and synchronized runtime publication
-  with canonical session and complete-frame codecs.
+- **Owner:** Orbit's Bend session policy, which decides each publication and
+  its revision, and its Rust host's frame extraction and socket transport, with
+  canonical session and complete-frame codecs.
 - **Consumes:** Canonical ORBF v2 in ORBS v13; Venus and Eon consume it in this
   repository.
 - **Boundary:** Native presentation quality remains Venus-owned.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified)
   - **Evidence:**
-    - [`synchronized_presentation_coalesces_defers_and_times_out`](../src/runtime.rs)
-    - [`real_pty_synchronized_output_holds_split_large_update`](../src/presentation.rs)
-    - [`conformance_c4_real_pty_reattach_converges_through_complete_ordered_frames`](../src/presentation.rs)
+    - [`orbit-synchronized-output`](../tests/real_pty/synchronized_output.rs)
+      holds a split update, bounds it with the watchdog, and releases it at
+      child exit.
+    - [`orbit-three-attach`](../tests/real_pty/three_attach.rs) and
+      [`orbit-differential`](../tests/real_pty/differential.rs), which compares
+      every frame with the previous Rust server's
+    - [`output_queue_replaces_unstarted_presentations_within_its_bound`](../src/socket.rs)
+    - Laws [`revision_next_is_ahead`](../LAWS.bend) and
+      [`scrolling_and_selection_follow_their_contracts`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
+- **Open proof:** No check of this tree attaches a client while a synchronized
+  update is held, whose initial frame must wait for release or the watchdog.
+  None reattaches to a rich alternate screen and compares the frame exactly
+  (`eon-awmq.7`).
 
 ## ORB-C5 — Semantic terminal interaction
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** Attached clients sending key, mouse, focus, paste, or resize
   interaction.
 - **Trigger:** Orbit accepts one canonical semantic input message or begins one
@@ -159,22 +206,35 @@ repository. Each contract below states the current ORBS v13 behavior.
   fallback text or duplicate insertion. Invalid phase order, pressure, cancel,
   endpoint loss, or a terminal-mode change cannot switch an active sequence,
   emit partial input, or synthesize terminal input.
-- **Owner:** Canonical platform-neutral `orbit-protocol` values and Orbit's
-  semantic interaction owner.
+- **Owner:** Canonical platform-neutral `orbit-protocol` values, Orbit's Bend
+  selection policy for the pointer route, and its Rust host's libghostty input
+  encoding.
 - **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v13;
   Venus and Eon consume it in this repository.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified)
   - **Evidence:**
-    - [`kitty_release_never_falls_back_to_text`](../src/interaction.rs)
+    - [`canonical_input_uses_libghostty_encoding`](../src/input.rs)
     - [`conformance_c5_authoritative_input_modes_and_resize_survive_detach`](../tests/lifecycle.rs)
-    - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
+    - Real-PTY checks [`orbit-selection`](../tests/real_pty/selection.rs),
+      [`orbit-mouse`](../tests/real_pty/mouse.rs),
+      [`orbit-key-live`](../tests/real_pty/key_live.rs) and
+      [`orbit-paste-flood`](../tests/real_pty/paste_flood.rs)
+    - Laws [`selection_answers_are_accounted`](../LAWS.bend) and
+      [`selection_shift_selects_on_the_host`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
+- **Open proof:** No check of this tree sends a Kitty-mode release of an
+  unidentified key with text, which must write nothing rather than fall back to
+  text (`eon-awmq.7`).
 
 ## ORB-C6 — Rich presentation without silent degradation
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** Every canonical presentation client.
 - **Trigger:** Orbit extracts or encodes terminal presentation state.
 - **Result:** The boundary carries rich terminal state or explicitly declares an
@@ -186,16 +246,27 @@ repository. Each contract below states the current ORBS v13 behavior.
 - **Consumes:** Canonical ORBF v2 in ORBS v13; Venus and Eon consume it in this
   repository.
 - **Boundary:** Kitty graphics remain explicitly unsupported.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified)
   - **Evidence:**
-    - [`conformance_c6_direct_rows_match_rich_canonical_frame_rows`](../src/presentation.rs)
+    - [`terminal_frame_uses_the_canonical_protocol_owner`](../src/frame.rs)
+    - [`vertical_preview_reads_history_nearest_first`](../src/frame.rs)
+    - [`orbit-differential`](../tests/real_pty/differential.rs) compares rich
+      frames (styles, RGB and palette colors, hyperlink, wide and combining
+      graphemes, working directory, resize) with the previous Rust server's.
     - [`orbf_v2_cell_width_topology_is_validated_at_every_acceptance_boundary`](../crates/protocol/src/lib.rs)
     - Canonical ORBF-in-ORBS codec checks in the workspace suite
+- **Open proof:** No check of this tree compares directly extracted rows with
+  the canonical frame rows. None covers protection, spacer-head width roles, or
+  reflow of wrapped rich text (`eon-awmq.7`).
 
 ## ORB-C7 — Bounded attachment pressure
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** Interactive attachments and metadata observers.
 - **Trigger:** A client reads slowly, breaks, or disconnects while Orbit continues
   processing PTY state.
@@ -205,20 +276,38 @@ repository. Each contract below states the current ORBS v13 behavior.
   outcome.
 - **Important failures:** Pressure disconnects the failing client instead of
   blocking the owner loop or admitting a partial result.
-- **Owner:** Orbit attachment transport in the concrete runtime coordinator.
+- **Owner:** Orbit's Rust socket transport, with output bounds and pressure
+  decisions from its Bend session policy.
 - **Boundary:** The proof covers one local input client plus one metadata
   observer.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified)
   - **Evidence:**
-    - [`pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision`](../src/attachment.rs)
+    - [`output_queue_replaces_unstarted_presentations_within_its_bound`](../src/socket.rs)
+    - [`output_queue_keeps_scroll_outcomes_and_admits_them_before_moving`](../src/socket.rs)
+    - [`pressured_interactive_client_is_reported_without_waiting`](../src/socket.rs)
+    - [`observer_pressure_is_metadata_its_queue_cannot_take`](../src/socket.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
     - [`metadata_observer_streams_inactive_title_and_cwd_without_owning_input`](../tests/lifecycle.rs)
+    - Real-PTY checks
+      [`orbit-interactive-pressure`](../tests/real_pty/interactive_pressure.rs),
+      [`orbit-slow-observer`](../tests/real_pty/slow_observer.rs),
+      [`orbit-refused-flush`](../tests/real_pty/refused_flush.rs),
+      [`orbit-lifecycle`](../tests/real_pty/lifecycle.rs) and
+      [`orbit-scroll`](../tests/real_pty/scroll.rs)
     - Workspace suite
+- **Open proof:** The capacity for one atomic maximum scroll outcome behind a
+  partially transmitted maximum frame follows from the worker's output bound
+  (one maximum frame, one maximum payload, two headers and 4 KiB). No check
+  of this tree exercises it at that bound (`eon-awmq.7`).
 
 ## ORB-C8 — Retained history and authoritative scrolling
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One healthy exact-version attached client.
 - **Trigger:** The client previews or commits relative vertical movement from a
   complete-frame revision it has presented, or requests an absolute return to
@@ -267,41 +356,57 @@ repository. Each contract below states the current ORBS v13 behavior.
     positions outside the top row, and alternate-screen state without PTY input
     or viewport mutation. Synchronized output holds at most one unresolved tick;
     bounded output pressure fails before movement.
-- **Owner:** Orbit's semantic interaction and synchronized-presentation owners
-  with libghostty's native viewport, byte-budgeted history, one canonical row
-  extractor, and bounded output queue.
+- **Owner:** Orbit's Bend vertical policy and its Rust host's synchronized
+  output handling, with libghostty's native viewport, byte-budgeted history,
+  one canonical row extractor, and bounded output queue.
 - **Consumes:** Canonical ORBF v2 in accepted ORBS v13; Venus and Eon consume
   it in this repository.
 - **Boundary:** Arbitrary line-count guarantees, gesture cadence, downward
   selection autoscroll, velocity, kinetic effects, graphics, and restart
   persistence are excluded; physical wheels retain their existing typed
   terminal-routed or one-row behavior. This does not accept Eonova, or any
-  ORBS v13 client on Apple Silicon (Venus, Eon, the diagnostic client or
-  bend-orbit); ORB-C14 covers Orbit's own native ORBS v13 behavior.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
+  ORBS v13 client on Apple Silicon (Venus or Eon); ORB-C14 covers Orbit's own
+  native ORBS v13 behavior.
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified)
   - **Evidence:**
-    - [`conformance_c8_scroll_position_follows_published_terminal_state`](../src/runtime.rs)
-    - [`conformance_c8_authoritative_viewport_routes_wheel_and_key_from_terminal_state`](../src/interaction.rs)
+    - Real-PTY checks [`orbit-history`](../tests/real_pty/history.rs),
+      [`orbit-preview`](../tests/real_pty/preview.rs),
+      [`orbit-scroll`](../tests/real_pty/scroll.rs),
+      [`orbit-return-to-live`](../tests/real_pty/return_to_live.rs),
+      [`orbit-mouse`](../tests/real_pty/mouse.rs),
+      [`orbit-key-live`](../tests/real_pty/key_live.rs) and
+      [`orbit-selection-tick`](../tests/real_pty/selection_tick.rs)
+    - [`vertical_preview_reads_history_nearest_first`](../src/frame.rs)
+    - [`output_queue_keeps_scroll_outcomes_and_admits_them_before_moving`](../src/socket.rs)
+    - Laws [`vertical_answers_are_accounted`](../LAWS.bend),
+      [`vertical_future_requests_fail`](../LAWS.bend),
+      [`vertical_routed_requests_answer_at_once`](../LAWS.bend),
+      [`vertical_nothing_resolves_while_held`](../LAWS.bend),
+      [`vertical_release_resolves_waiting`](../LAWS.bend) and
+      [`scrolling_and_selection_follow_their_contracts`](../LAWS.bend)
+      (`orbit-laws`)
     - [`scroll_position_is_canonical_at_every_acceptance_boundary`](../crates/protocol/src/lib.rs)
     - [`vertical_scroll_batches_are_bounded_and_canonical`](../crates/protocol/src/session/tests.rs)
-    - [`pending_presentations_keep_scroll_outcomes_and_latest_replaceable_revision`](../src/attachment.rs)
-    - [`conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative`](../src/interaction.rs)
-    - [`conformance_c8_return_to_live_is_one_authoritative_jump_without_pty_input`](../src/interaction.rs)
-    - [`conformance_c9_upward_selection_scroll_keeps_one_gesture_and_exact_copy`](../src/interaction.rs)
-      covers cell, span, and line granularity with unchanged deferral, bounds,
-      ordered outcomes, and exact Unicode copy.
     - [`return_to_live_has_zero_payload`](../crates/protocol/src/session/tests.rs)
     - [`authoritative_viewport_survives_detach_and_slow_reader_pressure`](../tests/lifecycle.rs)
-    - [`real_pty_synchronized_output_holds_split_large_update`](../src/presentation.rs)
     - Workspace suite
-- **Open proof:** Pending re-proof in this repository: installed scrollback and
-  ReturnToLive through Venus (`eon-monorepo-2oko.6` dogfood item 9 was not
-  exercised).
+- **Open proof:**
+  - Pending re-proof in this repository: installed scrollback and
+    ReturnToLive through Venus (`eon-monorepo-2oko.6` dogfood item 9 was not
+    exercised).
+  - No check of this tree covers the scroll position through reflow,
+    byte-budget eviction, `CSI 3 J` clear or reset, or a commit or return to
+    live clearing an active host selection. None ticks upward at span or line
+    granularity with Unicode copy (`eon-awmq.7`).
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One healthy exact-version ORBS v13 attachment for upward ticks.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
   left-pointer sequence; a held host gesture may tick upward with a top-row
@@ -363,9 +468,10 @@ repository. Each contract below states the current ORBS v13 behavior.
     selection frame.
   - An upward tick with no valid host gesture or top-row position fails without
     movement or PTY input; an invalidated tracked anchor cancels the gesture.
-- **Owner:** Orbit's semantic interaction owner with authoritative mouse modes,
-  libghostty current-viewport gesture selection, and canonical ORBS v13. Venus
-  owns native event delivery and clipboard effects.
+- **Owner:** Orbit's Bend selection policy and its Rust host's pointer
+  mechanism, with authoritative mouse modes, libghostty current-viewport
+  gesture selection, and canonical ORBS v13. Venus owns native event delivery
+  and clipboard effects.
 - **Consumes:** Accepted ORBS v13 and ORB-C7 bounded-pressure behavior; Venus
   and Eon consume it in this repository.
 - **Boundary:** Configurable word separators or click thresholds, block selection,
@@ -374,33 +480,49 @@ repository. Each contract below states the current ORBS v13 behavior.
   Spans retain native word-selection limits: a wide-character trailing spacer
   can stop the selected span (`a;界,é` selects `a;界`). This inherited
   libghostty limitation is outside the click-ladder correction.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified)
   - **Evidence:**
-    - [`authoritative_selection_click_ladder_preserves_wrapped_text_and_copy`](../src/interaction.rs)
-      checks exact highlighted cells, frozen text for both copy effects,
-      soft wraps, compatible live output, fourth/fifth clicks and late resets
-      through canonical encoded results and frames.
-    - [`conformance_c9_upward_selection_scroll_keeps_one_gesture_and_exact_copy`](../src/interaction.rs)
-      covers more than two viewports, synchronized deferral, oldest-edge stop,
-      and exact Unicode release copy.
+    - [`the_click_ladder_selects_cells_words_spans_and_lines_across_wraps`](../src/pointer.rs)
+      checks soft wraps, compatible live output between press and release,
+      fourth/fifth clicks and a late reset.
+    - [`orbit-selection`](../tests/real_pty/selection.rs) checks the route,
+      Shift, Cancel, the click ladder's frozen text for both copy effects,
+      Finish revisions, terminal-routed mouse bytes and client-scoped copy
+      through canonical messages.
+    - [`orbit-selection-tick`](../tests/real_pty/selection_tick.rs) covers more
+      than one viewport, synchronized deferral, oldest-edge stop, and exact
+      release copy.
+    - [`output_that_enables_mouse_tracking_unanchors_the_host_selection`](../src/pointer.rs)
+    - [`output_queue_replaces_unstarted_presentations_within_its_bound`](../src/socket.rs)
+    - [`orbit-differential`](../tests/real_pty/differential.rs)
+    - Laws [`selection_answers_are_accounted`](../LAWS.bend),
+      [`selection_shift_selects_on_the_host`](../LAWS.bend),
+      [`selection_future_press_fails`](../LAWS.bend) and
+      [`scrolling_and_selection_follow_their_contracts`](../LAWS.bend)
+      (`orbit-laws`)
     - [`every_client_message_round_trips`](../crates/protocol/src/session/tests.rs)
       and [`malformed_typed_payloads_are_rejected`](../crates/protocol/src/session/tests.rs)
       cover the exact ORBS v13 action and invalid positions.
-    - [`authoritative_selection_accepts_presented_input_and_freezes_copy`](../src/interaction.rs)
-    - [`active_selection_tracks_scrolling_pty_output`](../src/interaction.rs)
-    - [`authoritative_selection_uses_libghostty_click_and_drag_granularity`](../src/interaction.rs)
-    - [`authoritative_left_pointer_route_is_pinned_and_shift_selects`](../src/interaction.rs)
-    - [`host_selection_supersedes_unpresented_drag_frames_before_release`](../src/interaction.rs)
     - [`conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped`](../tests/lifecycle.rs)
     - Workspace suite
-- **Open proof:** Pending re-proof in this repository: the installed click
-  selection ladder, drag selection and copy/paste through Venus
-  (`eon-monorepo-2oko.6` dogfood item 9 was not exercised).
+- **Open proof:**
+  - Pending re-proof in this repository: the installed click selection
+    ladder, drag selection and copy/paste through Venus
+    (`eon-monorepo-2oko.6` dogfood item 9 was not exercised).
+  - No check of this tree covers an active host gesture surviving output that
+    scrolls its text into history, span delimiters (space/tab runs,
+    non-breaking space, combining marks), or a drag back to the press cell
+    clearing the selection. None checks exact highlighted cells or a host
+    phase refused for output pressure (`eon-awmq.7`).
 
 ## ORB-C10 — Eon terminal identity
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** Every Orbit-owned PTY child and its launch environment.
 - **Trigger:** Orbit launches a PTY child.
 - **Result:** The child receives `TERM=eon` and `COLORTERM=truecolor`; the launch
@@ -408,22 +530,29 @@ repository. Each contract below states the current ORBS v13 behavior.
   inheriting `xterm-256color`, so lookup and `clear` succeed.
 - **Important failures:** Missing or invalid terminfo is exposed by lookup and
   real-PTY behavior checks rather than hidden by a fallback identity.
-- **Owner:** Orbit's platform PTY seam and
+- **Owner:** Orbit's Rust host, which spawns the PTY child, and
   [`terminfo/eon.terminfo`](../terminfo/eon.terminfo); Eon installs the entry.
 - **Boundary:** Other distribution formats remain outside this contract's proof.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; `nix build .#default`, installed
-    `/nix/store/gg71kiz3k854f4xihasr1pwligypznl3-eon-0.1.0`
-  - **Evidence:** The Nix build compiles the entry with `tic`; with only the
-    installed Orbit package's `share/terminfo`, `infocmp -x eon` resolves the
-    entry and `TERM=eon tput clear` emits the clear sequence. The platform seam
-    sets `TERM` and `COLORTERM` in [`src/platform.rs`](../src/platform.rs).
-- **Open proof:** Pending re-proof in this repository: the isolated real-PTY
-  `TERM` and post-`clear` check.
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified)
+  - **Evidence:**
+    - `orbit-terminfo` checks that the Nix build's `tic`-compiled entry, with
+      only the package's `share/terminfo`, resolves through `infocmp -x eon`
+      and that `TERM=eon tput clear` emits the clear sequence it inherits from
+      `xterm-256color`; without that directory `eon` is unknown.
+    - [`orbit-terminal-identity`](../tests/real_pty/terminal_identity.rs)
+      checks through a real PTY that the child sees `TERM=eon`,
+      `COLORTERM=truecolor` and only the package's terminfo, and that `clear`
+      exits 0 and blanks the next frame. The host sets `TERM` and `COLORTERM`
+      when it spawns the child in [`src/pty.rs`](../src/pty.rs).
 
 ## ORB-C11 — Ordered terminal-authored clipboard writes
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One healthy ORBS v7 attachment and its native clipboard owner.
 - **Trigger:** The terminal emits one clipboard write with exactly one nonempty
   UTF-8 `text/plain` representation.
@@ -435,19 +564,29 @@ repository. Each contract below states the current ORBS v13 behavior.
   representations, payloads above 1 MiB, detached writes, and bounded pressure
   fail without retention, replay, or silent coalescing; pressure disconnects the
   client.
-- **Owner:** Orbit attachment transport and concrete runtime clipboard
-  interpretation with libghostty normalized effects and canonical ORBS v7.
+- **Owner:** Orbit's Rust host, which captures and transports the writes, and
+  its Bend session policy, which orders and bounds them, with libghostty
+  normalized effects and canonical ORBS v7.
 - **Consumes:** Canonical ORBS v7.
 - **Boundary:** Ordinary clipboard delivery, Wayland without data-control,
   broader compositors, and non-Linux policy remain unproved.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified)
   - **Evidence:**
-    - [`src/attachment.rs`](../src/attachment.rs) ordered bounded output checks
-    - [`real_pty_clipboard_write_precedes_its_frame`](../src/presentation.rs)
-    - [`clipboard_capture_is_attached_typed_and_bounded`](../src/runtime.rs)
-    - [`clipboard_output_pressure_disconnects_without_retaining_effects`](../src/runtime.rs)
+    - [`src/socket.rs`](../src/socket.rs) ordered bounded output checks
+    - [`orbit-clipboard`](../tests/real_pty/clipboard.rs) checks order before
+      the frame of the same read, a write during a held update, refused clear
+      and detached writes, and an overflowing read that ends the attachment
+      with no write and no replay.
+    - [`clipboard_capture_is_attached_typed_and_bounded`](../src/pty.rs)
     - Workspace suite
+- **Open proof:** No check of this tree fills a client's output queue while
+  clipboard writes wait, which must disconnect the client without retaining
+  the writes (`eon-awmq.7`).
 
 ## ORB-C12 — Bounded Session shutdown
 
@@ -473,38 +612,52 @@ repository. Each contract below states the current ORBS v13 behavior.
   - PID reuse, foreground-group changes, child exit during grace, and writing
     descendants cannot cause delayed signaling or unbounded server lifetime.
   - Client disconnection remains the non-destructive ORB-C1 detach path.
-- **Owner:** Orbit's concrete runtime coordinator owns graceful timing,
-  escalation, direct-child reaping, and result truth; Unix PTY and process-group
-  mechanics stay in the platform seam.
+- **Owner:** Orbit's Bend session policy decides the stop and its result; its
+  Rust host carries out graceful timing, escalation, and direct-child reaping
+  with its Unix PTY and process-group mechanics.
 - **Boundary:**
   - Deliberately detached processes, non-foreground groups outside the initial
     group, and SIGHUP-ignoring foreground jobs whose shell exits during grace may
     survive.
   - Orbit scans no process names, ancestry, session IDs, or procfs and claims no
-    whole-descendant cleanup. Direct-child HUP and reaping are also proved
-    natively on Apple Silicon macOS; the special detached and foreground-group
-    topology remains Linux-proved only.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`;
-    installed `/nix/store/gg71kiz3k854f4xihasr1pwligypznl3-eon-0.1.0` driven
+    whole-descendant cleanup. Direct-child HUP and reaping were proved natively
+    on Apple Silicon macOS for the previous Rust server (ORB-C14); the special
+    detached and foreground-group topology remains Linux-proved only.
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified);
+    the previous Rust server installed as
+    `/nix/store/gg71kiz3k854f4xihasr1pwligypznl3-eon-0.1.0` driven
     headlessly by a Kinestra recipe on a private headless Sway (wlroots, pixman);
     Apple M2 macOS 26.7.1 native `cargo test --locked -p yazelix-orbit -p
-    orbit-protocol` at `4910b81e9d68942a65ad96ad21e03385de7144f5`
-    (`eon-orb-c14-mac-reproof-l8rz`)
+    orbit-protocol` of the previous Rust server at
+    `4910b81e9d68942a65ad96ad21e03385de7144f5` (`eon-orb-c14-mac-reproof-l8rz`)
   - **Evidence:**
     - [`shutdown_hups_the_unreaped_direct_child`](../tests/lifecycle.rs)
     - [`shutdown_escalates_foreground_and_permits_a_detached_process`](../tests/lifecycle.rs)
     - [`stale_socket_and_safe_signal_shutdown`](../tests/lifecycle.rs)
     - [`writing_descendant_cannot_hold_server_open_after_known_child_exit`](../tests/lifecycle.rs)
+    - Real-PTY checks
+      [`orbit-guardian-containment`](../tests/real_pty/guardian_containment.rs),
+      [`orbit-descendant-exit`](../tests/real_pty/descendant_exit.rs),
+      [`orbit-observer-finish`](../tests/real_pty/observer_finish.rs) and
+      [`orbit-stopped-client-exit`](../tests/real_pty/stopped_client_exit.rs)
+    - Laws [`bounded_stop_preserves_pid`](../LAWS.bend),
+      [`pre_reap_events_preserve_stopped`](../LAWS.bend) and
+      [`lifecycle_follows_its_contracts`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
     - Eon consumes this shutdown boundary; `eon-monorepo-2oko.6` dogfood
       checklist item 12 stops the installed generation.
     - On macOS the direct-child HUP, safe signal shutdown and management Stop
-      checks pass; the escalation and writing-descendant checks are Linux-only.
+      checks passed for the previous Rust server; the escalation and
+      writing-descendant checks are Linux-only.
 
 ## ORB-C13 — Same-boot management ownership
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One local Eon launcher and one later replacement on the same boot
   and login.
 - **Trigger:** A launcher prepares an owned mode-0600 record, Orbit crosses Ready,
@@ -562,27 +715,42 @@ repository. Each contract below states the current ORBS v13 behavior.
   - Platform-neutral identity, lease, status, and failure values use shared
     endpoint, permission, record, and polling mechanics with isolated Linux and
     Darwin peer-credential and process-start identity mechanisms.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
-  - **Environment:** x86_64 Linux; sandboxed `cargo test --locked --offline --workspace`;
+- **Proof:** the `eon-awmq.3` import commit
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
+    including the differential against the old Rust Orbit from Eon
+    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `tests/lifecycle.rs` unmodified);
     Apple M2 macOS 26.7.1 native `cargo test --locked -p yazelix-orbit -p
-    orbit-protocol` at `4910b81e9d68942a65ad96ad21e03385de7144f5`
-    (`eon-orb-c14-mac-reproof-l8rz`)
+    orbit-protocol` of the previous Rust server at
+    `4910b81e9d68942a65ad96ad21e03385de7144f5` (`eon-orb-c14-mac-reproof-l8rz`)
   - **Evidence:**
     - [`managed_run_survives_launcher_loss_and_has_one_replacement_owner`](../tests/lifecycle.rs)
     - [`management_authority_negatives_fail_closed_without_stopping_session`](../tests/lifecycle.rs)
+    - Real-PTY checks
+      [`orbit-management-record`](../tests/real_pty/management_record.rs) and
+      [`orbit-management-lease`](../tests/real_pty/management_lease.rs)
+    - Laws [`management_answers_are_accounted`](../LAWS.bend),
+      [`management_stop_needs_the_lease`](../LAWS.bend) and
+      [`management_follows_its_contract`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
     - Eon consumes management v1 in this repository.
-    - Both checks pass on macOS; the managed run's `/proc` check that the PTY
-      child inherits no Orbit listener is Linux-only.
+    - Both lifecycle checks passed on macOS for the previous Rust server; the
+      managed run's `/proc` check that the PTY child inherits no Orbit
+      listener is Linux-only.
+- **Open proof:** No check of this tree refuses, at publish time, a symlinked,
+  FIFO or wrong-mode record, a directory in a record's place, or a symlinked or
+  wrong-mode runtime directory, as the previous server's unit test did; a
+  wrong-mode record is refused only at lease acquisition (`eon-awmq.7`).
 
 ## ORB-C14 — Apple Silicon macOS platform
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** A native Orbit user on `aarch64-darwin`.
 - **Trigger:** The Orbit server launches one ordinary or managed PTY Session
   with local Unix endpoints on Apple Silicon macOS.
-- **Result:** The same binary, owner loop, terminal authority, semantic input,
-  canonical protocols, and presentation frames used on Linux preserve the
+- **Result:** The same Rust host, Bend worker, terminal authority, semantic
+  input, canonical protocols, and presentation frames used on Linux preserve the
   native platform-sensitive parts of ORB-C1 through ORB-C13. Shared Unix logic
   owns PTY, process-group, signal, polling, descriptor, resize, EOF, socket,
   permission, and cleanup behavior; libc supplies the OS ioctl values and
@@ -592,51 +760,55 @@ repository. Each contract below states the current ORBS v13 behavior.
   identity, incompatible libghostty behavior, lifecycle mismatch, or incomplete
   native evidence fails explicitly. Target evaluation or compilation alone is
   not a runtime or support claim.
-- **Owner:** Orbit's existing platform seam owns native mechanics; the shared
-  runtime and protocol owners retain every product invariant.
+- **Owner:** Orbit's Rust host owns native mechanics; its Bend session policy
+  and the protocol owners retain every product invariant.
 - **Boundary:** The contract covers ordinary and managed Orbit Sessions,
   including bounded direct-child shutdown. Venus and Eon integration, Nix
   packaging, `x86_64-darwin`, signing, notarization, direct distribution,
   remote transport, and restart persistence remain unsupported.
-- **Proof:** `4910b81e9d68942a65ad96ad21e03385de7144f5`
+- **Proof:** Not proved for this tree. The previous Rust server proved it at
+  `4910b81e9d68942a65ad96ad21e03385de7144f5`, and bend-orbit, which this tree
+  imports, ran natively at `b017e4f02f2e85f2566957c6d503e330491aabd4`.
   - **Environment:** Apple M2 (16 GiB), macOS 26.7.1 (25G241),
-    `aarch64-apple-darwin`; native `cargo build --locked -p yazelix-orbit`,
-    `cargo test --locked -p yazelix-orbit -p orbit-protocol` and
-    `cargo test --locked -p yazelix-orbit conformance_`
-    with Rust 1.96.0, Zig 0.15.2 against the macOS 15.4 Command Line Tools
-    SDK, and Ghostty `a887df42c56f6de86c0fe6da9c4eeca37931e083`. The run and
-    toolchain are recorded in `eon-orb-c14-mac-reproof-l8rz`. The shared Unix
-    seam was first re-proved on x86_64 Linux at
-    `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`.
+    `aarch64-apple-darwin`. The previous server: native
+    `cargo test --locked -p yazelix-orbit -p orbit-protocol` with Rust 1.96.0,
+    recorded in `eon-orb-c14-mac-reproof-l8rz`. bend-orbit: native build with
+    Rust 1.95.0, zig 0.15.2, bun 1.3.13 and Bend
+    `234cb9b950800f20b15feafcb4ce2f43e76e7fae`, recorded in
+    `borb-orbit-in-bend-lj8.79` in the bend-orbit repository. Both used the
+    macOS 15.4 Command Line Tools SDK and Ghostty
+    `a887df42c56f6de86c0fe6da9c4eeca37931e083`.
   - **Evidence:**
-    - All 74 protocol, management, unit and lifecycle tests pass natively,
-      including the `conformance_` corpus; the two opt-in history measurements
-      stay ignored, as everywhere.
-    - [`management_artifacts_and_kernel_identity_fail_closed`](../src/platform.rs)
-      runs the Darwin `getpeereid` peer identity.
+    - The previous server passed all 74 protocol, management, unit and
+      lifecycle tests natively, including the `conformance_` corpus.
+    - bend-orbit printed `ALL PROOFS CHECK` for `PROOF.bend` and passed its 24
+      Rust unit tests, all 36 real-PTY checks, and 15 of
+      [`tests/lifecycle.rs`](../tests/lifecycle.rs)'s 18 tests; the other
+      three are Linux-only.
     - [`managed_run_survives_launcher_loss_and_has_one_replacement_owner`](../tests/lifecycle.rs)
       checks a managed run's Darwin `proc_pidinfo` process-start identity
-      against an independent read, then ends it with management Stop.
-    - [`tests/lifecycle.rs`](../tests/lifecycle.rs) also covers attachment
-      negotiation, real PTY input and resize, detach/reconnect, bounded
-      pressure, metadata, owner-only endpoint permissions, EOF, stale-socket
-      ownership, direct-child HUP/reaping, signal cleanup, and management
-      launch, replacement, Busy, status, Stop, tombstones, and fail-closed
-      identity and permission checks.
-    - Linux-gated checks do not run on macOS: the lifecycle tests for transient
-      PTY EIO, a writing descendant, and the detached and foreground-group
-      shutdown topology; the unit test
-      `exited_child_output_is_drained_into_authoritative_state`; and the managed
-      run's `/proc` assertion that the PTY child inherits no Orbit listener.
+      against an independent read, and
+      [`orbit-management-lease`](../tests/real_pty/management_lease.rs)
+      exercises the Darwin `getpeereid` peer identity; on macOS the real-PTY
+      checks use `lsof` where Linux reads `/proc`.
+- **Open proof:** This tree differs from bend-orbit `b017e4f0` in its names,
+  boundary schema digest, worker lookup and `orbit-protocol` path dependency
+  (`eon-awmq.3`), so the bend-orbit run is evidence about the design, not a
+  proof of this revision. Native re-proof runs `orbit-laws`, the unit tests,
+  every real-PTY check and `tests/lifecycle.rs` on Apple Silicon. Eon records
+  the same macOS gap under `EON-C7` in
+  [`docs/CONTRACTS.md`](../../docs/CONTRACTS.md). The publish-time
+  refusals of ORB-C13's management artifacts have no check of this tree
+  either (`eon-awmq.7`).
 
 ## Focused terminal conformance corpus
 
-The current corpus groups six accepted `orb-8s0` tests and the accepted x12
-test under one offline, headless command without copying their stimuli or
-expectations:
+The current corpus groups three accepted tests in
+[`tests/lifecycle.rs`](../tests/lifecycle.rs) under one offline, headless
+command without copying their stimuli or expectations:
 
 ```sh
-cargo test --locked conformance_
+nix develop -c eon-test -p yazelix-orbit --test lifecycle conformance_
 ```
 
 The command runs the pinned `libghostty-vt` 0.2.2 path backed by Ghostty
@@ -646,13 +818,15 @@ the normal suite because they do not exercise that terminal engine.
 | Case | Stimulus | Orbit-visible observation | Assertion policy | Owner |
 | --- | --- | --- | --- | --- |
 | `conformance_c2_parser_state_and_terminal_replies_survive_client_failure` | Split DEC 1049 input across client loss, then cursor visibility and position query | The authoritative parser completes the alternate-screen transition, emits one PTY response, and later restores primary | Exact reply bytes and single emission; semantic screen and cursor state | `ORB-C2` |
-| `conformance_c4_real_pty_reattach_converges_through_complete_ordered_frames` | Primary pending wrap, rich alternate screen, resize, detach under continuous output, responsive semantic interrupt, then split CSI, UTF-8, and APC tails | Reattachment starts at the complete current frame; later revisions strictly increase and converge on the final primary state | Exact reattached-frame equality and revision order; semantic final convergence | `ORB-C4` |
 | `conformance_c5_authoritative_input_modes_and_resize_survive_detach` | Resize plus key, mouse, focus, paste, Kitty-keyboard, mode change, and reattach | The PTY receives terminal-state-aware input once and retains the requested dimensions | Exact PTY bytes and `stty` dimensions | `ORB-C5` |
-| `conformance_c6_direct_rows_match_rich_canonical_frame_rows` | Wrapped styled text, RGB and palette colors, hyperlink, protection, combining and wide graphemes, viewport movement, and resize | Direct row extraction equals the corresponding canonical frame rows before and after reflow | Exact canonical-row equality; semantic presence of accepted rich fields and width roles | `ORB-C6` |
-| `conformance_c8_authoritative_viewport_routes_wheel_and_key_from_terminal_state` | Preview and wheel at history edges, mouse tracking, alternate screen, synchronized output, semantic key, and pressure | Orbit returns typed terminal or viewport outcomes without forbidden mutation and routes exact terminal input when required | Exact typed outcomes, revisions, and PTY bytes; semantic no-mutation and boundedness | `ORB-C8` |
-| `conformance_c8_signed_scroll_batch_is_atomic_bounded_and_authoritative` | One large signed commit, both history edges, lagging and future authority, routing changes, synchronized output, selection, and pressure | Orbit performs one native viewport movement and returns one result with exact requested/applied rows, one frame, and the next preview | Exact result count, rows, revision, adjacent preview, PTY absence, and failure non-mutation | `ORB-C8` |
-| `conformance_c8_scroll_position_follows_published_terminal_state` | Output while anchored, alternate screen, reflow, actual byte-budget eviction, fresh attachment, live bottom, clear and reset | Complete frames carry authoritative display-row distance and history bounds at their own revision | Exact position/content assertions through the canonical session codec | `ORB-C4`, `ORB-C6`, `ORB-C8` |
 | `conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped` | Wide and combining text, viewport movement, reversed selection, detach, alternate-screen output, and resize | Selected presentation is client-scoped while finished copy stays frozen across later terminal mutations | Exact copied Unicode text; semantic selection visibility, scope, and freeze | `ORB-C9` |
+
+The corpus's `conformance_c4_`, `conformance_c6_` and three `conformance_c8_`
+cases were unit tests of the previous Rust server and left with it (tag
+`orbit-rust-final`). The real-PTY checks `orbit-three-attach`,
+`orbit-differential`, `orbit-mouse`, `orbit-scroll`, `orbit-return-to-live` and
+`orbit-history` now exercise those contracts with other stimuli; the contracts'
+open proofs name what they do not cover.
 
 A mismatch is classified from the smallest reproducer: an Orbit regression if
 the adapter or ownership path changed, an upstream behavior change or defect if
@@ -691,7 +865,8 @@ remains owned by `orb-vt-unicode-baselines-i32`; performance remains owned by
   notes.
 - Closing an implementation Bead updates the status, owner, checks, and gap for
   every affected contract.
-- A `Proved` contract names the exact accepted proof-bearing commit. A later
+- A `Proved` contract names its exact proof-bearing commit, or its owning Bead
+  when that Bead's own commit is the proof's revision, as in Eon's index. A later
   change to its owner or implementation surface reruns the indexed checks and
   advances that revision, or downgrades the status and records the gap.
 
@@ -710,5 +885,5 @@ and native, web, or mobile clients. Eon owns product workspace topology and
 policy. Multiple sessions, windows, tabs, splits, restart recovery, remote
 transport, web, mobile, and multiplayer are not initial Orbit contracts and
 receive no IDs until the user authorizes their implementation scope. ORB-C14 is
-the sole authorized platform expansion; it proves Orbit alone, and Venus and
+the sole authorized platform expansion; it covers Orbit alone, and Venus and
 Eon have not adopted macOS.

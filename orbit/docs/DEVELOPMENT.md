@@ -13,10 +13,21 @@ git diff --check
 br ready
 ```
 
-`nix develop -c eon-test` runs Orbit's suites with the rest of the workspace
-in the isolated sandbox that `nix/test-sandbox.nix` defines.
+Cargo builds of `yazelix-orbit` run [build.rs](../build.rs), which compiles
+the Bend worker with the pinned Bend compiler (`BEND_SOURCE_DIR`), bun and
+the clang at `BEND_CLANG`; `nix develop` supplies all three.
 
-Beads contain the dependency-ordered experiment plan.
+`nix develop -c eon-test` runs Orbit's unit tests and the old Orbit's
+black-box suite, [tests/lifecycle.rs](../tests/lifecycle.rs), with the rest of
+the workspace in the isolated sandbox that `nix/test-sandbox.nix` defines.
+`nix flake check -L` runs Orbit's Bend proofs, its boundary and terminfo checks
+and every real-PTY check; [BEHAVIOR.md](BEHAVIOR.md#check) describes them and
+how to run the real-PTY checks without Nix's sandbox. After a change to
+[src/session.bend](../src/session.bend) or a law's automaton, regenerate the
+per-fact lemmas in `proof/` with [tools/step-proof.rs](../tools/step-proof.rs),
+whose header gives its usage.
+
+Beads contain the dependency-ordered plan.
 
 ### Orbit–Venus performance baseline
 
@@ -63,6 +74,12 @@ samples, and summaries; throughput also retains raw vtebench DAT files. This
 output is an internal, intentionally unstable evidence artifact rather than a
 product trace format.
 
+[`tools/perf/headless-throughput.rs`](../tools/perf/headless-throughput.rs)
+runs the same vtebench command without a desktop, detached and with a client
+that reads and discards every message, for any servers that take Orbit's
+command line; its header gives its usage, and
+[BEHAVIOR.md](BEHAVIOR.md#throughput) records its measurements.
+
 vtebench measures blocking PTY consumption, not frame rate or visual latency.
 The lifecycle reattachment check proves process survival, transport attachment,
 and authoritative grid continuity. Native Wayland does not expose another
@@ -86,7 +103,8 @@ checks only deterministic repository facts:
 
 - Contract sections and crate-decision records retain their canonical labeled
   fields. Contract sections use unique `ORB-C*` IDs and a known status; proved
-  sections name a full Git commit and a check or evidence. `CONTRACTS.md`,
+  sections name a full Git commit or the known Bead whose commit is the proof,
+  and a check or evidence. `CONTRACTS.md`,
   `CRATES.md`, and Beads cannot refer to an unknown contract.
 - Selected crate decisions name an exact version or commit, alternatives, and
   an existing evidence Bead from the shared tracker. Selected, planned,
@@ -116,7 +134,9 @@ renaming the engine crate fails the test instead of disabling the rule.
 ## Documentation map
 
 The [contract index](CONTRACTS.md) is the durable behavioral source of
-truth. The [design rationale](RATIONALE.md) records where the idea came
+truth. [BEHAVIOR.md](BEHAVIOR.md) states the implementation's behavior claim
+by claim with the check that covers each, [HOST.md](HOST.md) the host and
+worker protocol, and [BEND.md](BEND.md) the practices for writing Bend. The [design rationale](RATIONALE.md) records where the idea came
 from, the ownership hypothesis, relevant prior art, tradeoffs, and explicit
 graduation and stop criteria. The [reference map](REFERENCES.md) connects
 existing projects and crates to the implementation slice where their evidence

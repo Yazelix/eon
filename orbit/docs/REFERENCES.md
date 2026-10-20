@@ -242,7 +242,8 @@ Mars, Mars Next, or another project by default.
 
 ## Execution runtime gate
 
-Orbit's current one-session proof uses an owned synchronous poll/event loop.
+Orbit's current one-session proof uses an owned synchronous poll/event loop in
+its Rust host, which asks a Bend worker for each decision ([HOST.md](HOST.md)).
 Do not replace or generalize it without a measured contract pressure and a
 crate gate that compares all four credible shapes:
 
@@ -263,6 +264,18 @@ deterministic-test quality, project-owned LOC, dependency and build cost,
 macOS feasibility, and integration pressure from required crates. A runtime is
 not selected because another reference uses it, and an async runtime is not a
 prerequisite for the current single-session architecture.
+
+## Session policy in Bend
+
+- [Bend at `234cb9b9`](https://github.com/bendlang/bend/tree/234cb9b950800f20b15feafcb4ce2f43e76e7fae),
+  its guide, effects guide and WONTFIX list, for the language Orbit's worker
+  and laws are written in; [BEND.md](BEND.md) keeps the practices drawn from
+  them. Bend's native effects are C only, so Orbit uses its Base `File`
+  effects and keeps every mechanism in Rust rather than adding owned C.
+- The bend-orbit repository at `e03926274203d78b76f49337e9f6670d2dd6e97d` is
+  the comparable implementation Orbit imported: its host and worker protocol
+  ([HOST.md](HOST.md)), its laws, and its differential check against the old
+  Orbit. Its issue history and the ORBF encoder experiment stay there.
 
 ## Native client and rendering
 

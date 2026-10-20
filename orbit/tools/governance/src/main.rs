@@ -141,7 +141,11 @@ fn lowercase_hex(value: &str, length: usize) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn check_contracts(text: &str, errors: &mut Vec<String>) -> BTreeSet<String> {
+fn check_contracts(
+    text: &str,
+    known_beads: &BTreeSet<String>,
+    errors: &mut Vec<String>,
+) -> BTreeSet<String> {
     const REQUIRED_FIELDS: &[&str] = &[
         "Status",
         "Consumer",
@@ -207,16 +211,16 @@ fn check_contracts(text: &str, errors: &mut Vec<String>) -> BTreeSet<String> {
             ));
         }
         if status == "Proved" {
+            // As in Eon's index: a proof names its full commit, or the owning
+            // Bead whose commit is the proof's revision.
             let proof = section
                 .fields
                 .get("Proof")
                 .map(String::as_str)
-                .unwrap_or("")
-                .strip_prefix('`')
-                .and_then(|value| value.strip_suffix('`'));
-            if !proof.is_some_and(|value| lowercase_hex(value, 40)) {
+                .unwrap_or("");
+            if !has_full_commit(proof) && !cites_known_bead(proof, known_beads) {
                 errors.push(format!(
-                    "{CONTRACTS}: Proved {id} requires a full 40-character proof commit"
+                    "{CONTRACTS}: Proved {id} requires a full proof commit or its owning Bead"
                 ));
             }
             if section
@@ -468,17 +472,14 @@ fn check_unknown_references(
 
 fn check_repository(root: &Path) -> Vec<String> {
     let mut errors = Vec::new();
-    let contracts = read_text(root, CONTRACTS, &mut errors);
-    let known_contracts = check_contracts(&contracts, &mut errors);
     let beads = read_text(root, BEADS, &mut errors);
     let issues = load_issues(&beads, &mut errors);
+    let known_beads = issues.iter().map(|issue| issue.id.clone()).collect();
+    let contracts = read_text(root, CONTRACTS, &mut errors);
+    let known_contracts = check_contracts(&contracts, &known_beads, &mut errors);
     check_issue_references(&issues, &known_contracts, &mut errors);
     let crates = read_text(root, CRATES, &mut errors);
-    check_crates(
-        &crates,
-        &issues.iter().map(|issue| issue.id.clone()).collect(),
-        &mut errors,
-    );
+    check_crates(&crates, &known_beads, &mut errors);
     check_unknown_references(CONTRACTS, &contracts, &known_contracts, &mut errors);
     check_unknown_references(CRATES, &crates, &known_contracts, &mut errors);
     errors
@@ -569,6 +570,16 @@ mod tests {
                      - **Owner:** Orbit.\n\
                      - **Boundary:** Restart persistence is excluded.\n\
                      - **Proof:** `{COMMIT}`\n\
+                       - **Evidence:** canonical contract test\n\n\
+                     ## ORB-C2 — Bead-named proof\n\n\
+                     - **Status:** Proved\n\
+                     - **Consumer:** One local client.\n\
+                     - **Trigger:** The client attaches.\n\
+                     - **Result:** It sees the Session.\n\
+                     - **Important failures:** Attachment failure is explicit.\n\
+                     - **Owner:** Orbit.\n\
+                     - **Boundary:** One client.\n\
+                     - **Proof:** The `eon-proof.1` commit\n\
                        - **Evidence:** canonical contract test\n"
                 ),
             );
@@ -724,7 +735,7 @@ mod tests {
         assert!(errors.contains("invalid contract status Done"));
         assert!(errors.contains("ORB-C2 requires a nonempty Owner field"));
         assert!(errors.contains("ORB-C2 has unknown Maybe field"));
-        assert!(errors.contains("ORB-C2 requires a full 40-character proof commit"));
+        assert!(errors.contains("ORB-C2 requires a full proof commit or its owning Bead"));
         assert!(errors.contains("ORB-C2 requires a named check or evidence"));
         assert!(errors.contains("unknown contract reference ORB-C9"));
         assert!(errors.contains("orbit/docs/CONTRACTS.md: unknown contract reference ORB-C8"));

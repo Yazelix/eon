@@ -1,0 +1,414 @@
+# The boundary between the Rust host and the Bend worker (docs/HOST.md): the
+# facts the host reports and the decisions the worker answers with. This file
+# is its only definition: tools/boundary.rs generates src/boundary.rs and
+# src/boundary.bend from it, and the orbit-boundary check fails while they
+# are stale. Regenerate, from the orbit directory, with
+#   mkdir -p target
+#   rustc --edition 2024 tools/boundary.rs -o target/boundary
+#   target/boundary src/boundary.schema src
+#
+# A fact crosses the pipe as one line, `CODE FLAGS ARG...`: the fact's code,
+# the flags word, whose bit N is the flag numbered N, and one word per field
+# (0 or 1 for a bool, the variant's value for an enum), except that a
+# revision, a 64-bit presentation revision, takes two words: its high and low
+# 32 bits. A decision crosses as
+# one line, `CODE ARG...`, with one word per field in the same encoding; the
+# worker ends each answer with a line `end`. Before its first answer the
+# worker writes the line `schema DIGEST`, the 64-bit FNV-1a digest of this
+# file in hex, which both generated files carry; the host refuses a worker
+# that names another.
+#
+#   flag BIT name                       one bit of the flags word
+#   enum Name                           a field type; its variants follow,
+#     VALUE Variant                     indented, with their wire values
+#   fact CODE Name [field:TYPE]...      a fact; TYPE is u32, bool, revision
+#                                       or an enum
+#   decision CODE Name [field:TYPE]...  a decision
+#
+# Comment lines directly above an item document it in both outputs.
+
+# A synchronized update is open. Reading it arms Bend's watchdog the first
+# time it is set.
+flag 0 held
+# Mouse tracking or alternate-screen mode 1007 routes the vertical wheel to
+# the terminal.
+flag 1 routed
+# The client's queue has room for a scroll outcome of any size.
+flag 4 room
+# The alternate screen is active.
+flag 6 alternate
+# The client's queue has room for a frame of any size.
+flag 8 frame_room
+# The primary screen's viewport is above live output (sent with a key).
+flag 9 above_live
+# The PTY turn produced clipboard writes for the client.
+flag 10 clipboard
+# The PTY turn's clipboard writes passed their bound of 64 writes or 1 MiB.
+flag 11 clipboard_overflow
+# The terminal tracks the mouse (sent with a pointer request).
+flag 12 tracking
+# The pointer phase holds Shift.
+flag 13 shift
+# PTY output left libghostty's click gesture without an anchor, or newly
+# enabled mouse tracking, since the gesture was last cleared.
+flag 14 unanchored
+# The client's queue can take an answer and a frame of any size, replacing
+# nothing (sent with a pointer request).
+flag 15 result_frame_room
+# The pointer phase's position lies outside the viewport.
+flag 17 outside
+# The client's queue can take a host phase's answer, frame and copied text.
+flag 18 host_room
+# The client's queue can take a terminal phase's answer.
+flag 19 terminal_room
+# The PTY input queue cannot hold the phase's mouse input.
+flag 20 pty_full
+# The terminal's title or working directory differs from the metadata last
+# queued for the observer, or none was queued.
+flag 21 metadata_changed
+# No metadata was queued for the observer since it was admitted.
+flag 22 metadata_fresh
+
+# A peer's first message, as Bend's admission policy hears it.
+enum FirstMessage
+  1 Hello
+  2 ObserveMetadata
+  # A malformed message or another request, which `refuse_peer` answers.
+  3 Refused
+  # Another ORBS version, which gets no answer.
+  4 Unsupported
+
+# What applying one input request did.
+enum Effect
+  # There was nothing to write.
+  0 Quiet
+  # Bytes were queued for the PTY.
+  1 Write
+  2 Resize
+  # The PTY input queue could not hold the input, so it took nothing.
+  3 Full
+  # A key's bytes were queued for the PTY.
+  4 Key
+  # The PTY is closed, so nothing was applied.
+  5 Closed
+
+# Why the observer is gone or behind.
+enum ObserverLoss
+  # It closed.
+  1 Closed
+  # Its send buffer is full.
+  2 Pressured
+  # An I/O error or a header of another ORBS version.
+  3 Failed
+
+# A vertical preview's direction.
+enum Direction
+  0 Up
+  1 Down
+
+# The state of the input a vertical wheel would send the terminal if routed:
+# a mouse event under mouse tracking, otherwise an arrow key.
+enum WheelInput
+  0 Fits
+  # It encodes to nothing, as outside the terminal grid.
+  1 Empty
+  # The client's queue cannot take TerminalRouted.
+  2 NoOutcomeRoom
+  # The PTY input queue cannot hold it.
+  3 PtyFull
+
+# A pointer request.
+enum SelectionKind
+  0 Begin
+  1 Update
+  2 Finish
+  3 Cancel
+  4 Copy
+
+# How the host selection phase or upward tick Bend asked for went.
+enum Selected
+  # Applied a drag.
+  0 Applied
+  # Applied a release, which froze the selected text if a selection is
+  # presented.
+  1 Finished
+  # Failed, and libghostty's gesture and selection were cleared.
+  2 Failed
+  # Applied a press, which began a host sequence.
+  3 Began
+  # Applied an upward selection tick.
+  4 Ticked
+
+# Whether an upward selection tick may run on the held gesture; Bend checks
+# that a host sequence is held on the primary screen.
+enum TickState
+  0 Fits
+  # The position is not in the top row.
+  2 NotTopRow
+  # The gesture's anchor is gone.
+  3 AnchorLost
+
+# One management event (ORB-C13).
+enum ManagementEvent
+  # A connection waits for admission.
+  1 Connect
+  # An Acquire whose identity, record, peer and sockets matched.
+  2 AcquireValid
+  # An Acquire whose identity, record, peer or sockets did not match.
+  3 AcquireInvalid
+  4 Status
+  5 Stop
+  # A request that is malformed, over 4 KiB or pipelined.
+  6 Bad
+  # The connection closed, was refused, or outlived its one-second bound.
+  7 Gone
+
+# The child printed its READY line; peers may connect.
+fact 0 Started pid:u32
+# PTY output was fed to the terminal: one 8 KiB read while a client is
+# attached, as the old Orbit publishes per read, or reads until the PTY is
+# empty, up to 512 KiB, while none is.
+fact 1 Output
+# The PTY reached end of file while the direct child lives; the host reads and
+# writes it no more and discards queued input. A live child may hold no
+# terminal descriptor for a while; until it exits, EIO only pauses reading for
+# 10 ms, as in the old Orbit.
+fact 2 PtyClosed
+# A peer's first message.
+fact 3 Peer message:FirstMessage
+# The client's input, including mouse input other than the vertical wheel,
+# was applied.
+fact 4 Applied effect:Effect
+# The client closed its side: fully, or only its write half.
+fact 5 Closed full:bool
+# The client's output passed its bound.
+fact 6 Pressured
+# The child was reaped with this exit code: 1 for a signal, as in the old
+# Orbit.
+fact 7 Reaped status:u32
+# The child was not reaped within two seconds.
+fact 8 NotReaped
+# The session finished; Bend prints its result and exits.
+fact 9 Finished
+# The attached client sent a role again.
+fact 11 RoleRepeated
+# The client's request failed to decode: malformed, or of another ORBS
+# version.
+fact 12 Refused version:bool
+# The observer is gone or behind. Before an ObserveMetadata peer's fact, the
+# host reports a gone observer, or ObserverMessage, this way first.
+fact 13 ObserverGone loss:ObserverLoss
+# Bend's synchronized-output watchdog fired.
+fact 14 Expired
+# A vertical preview from the frame at `revision`, which may be ahead of
+# authority.
+fact 15 PreviewVertical revision:revision direction:Direction
+# Replaces Started when `ORBIT_GUARDIAN_FAULT=1`: Bend prints
+# `FAULT pid=PID` and dies, so the containment check sees a fatal worker exit.
+fact 16 Fault pid:u32
+# A physical vertical wheel.
+fact 17 Wheel input:WheelInput
+# A pointer request. A press names the frame it was made on, at `revision`,
+# which may be ahead of authority; other kinds carry 0.
+fact 18 Selection kind:SelectionKind revision:revision
+# The host selection phase or upward tick Bend asked for went this way, and
+# whether libghostty presents a host selection after it.
+fact 19 Selected outcome:Selected presented:bool
+# An upward selection tick from the position whose F32 coordinates have the
+# bits `x` and `y`.
+fact 20 Tick state:TickState x:u32 y:u32
+# A management event (ORB-C13).
+fact 21 Management event:ManagementEvent
+# The direct child exited and was reaped, which the host checks every turn and
+# at least every 100 ms, as the old Orbit polls it, so a descendant that
+# holds the PTY open cannot hide the exit. The host first fed the PTY's
+# remaining output, at most four reads, to the terminal; `drained` tells
+# whether any arrived. The PTY is read and written no more.
+fact 22 ChildExited drained:bool
+# A connection arrived while another peer negotiates its role. The listener is
+# not watched again until Bend answers it.
+fact 23 Crowded
+# The metadata observer sent a whole message header, which it may not; a
+# malformed header counts too.
+fact 24 ObserverMessage
+# A scroll commit of `rows`, a 16-bit two's complement, from the frame at
+# `revision`, which may be ahead of authority.
+fact 25 ScrollVertical revision:revision rows:u32
+# A return to live output.
+fact 26 ReturnToLive
+# The lease's stop found the child already exited with this exit code, so
+# the run ends naturally, as in the old Orbit.
+fact 27 ExitedBeforeStop status:u32
+
+# Why Bend rejects a request with Failure. The host owns each reason's code
+# and the old Orbit's exact text.
+enum Reason
+  # A vertical request arrived while another is deferred.
+  0 VerticalBusy
+  # A vertical request names a revision ahead of authority.
+  1 VerticalAhead
+  # The client's queue cannot take a scroll's whole outcome (ORB-C8).
+  2 ScrollNoRoom
+  # A return to live output while the terminal owns scrolling.
+  3 LiveOwned
+  # The client's queue cannot take the live viewport's frame.
+  4 LiveNoRoom
+  # A routed wheel's input encodes to nothing, outside the terminal grid.
+  5 WheelOutside
+  # The client's queue cannot take a wheel's outcome.
+  6 WheelNoRoom
+  # A viewport wheel while a synchronized update is open.
+  7 WheelSynchronized
+  # A press names a revision ahead of authority.
+  8 SelectionAhead
+  # A press while a pointer sequence is active.
+  9 SelectionActive
+  # An update without an active sequence.
+  10 UpdateIdle
+  # A finish without an active sequence.
+  11 FinishIdle
+  # A copy without finished copied text.
+  12 NoCopy
+  # A host phase's position lies outside the viewport.
+  13 SelectionOutside
+  # The client's queue cannot take a host phase's answer and frame, or a
+  # cancel's.
+  14 SelectionNoRoom
+  # The client's queue cannot take a terminal phase's answer.
+  15 PointerNoRoom
+  # The host selection phase failed.
+  16 SelectionFailed
+  # An upward selection tick without a held host gesture on the primary
+  # screen.
+  17 TickNoGesture
+  # An upward selection tick outside the top row.
+  18 TickNotTopRow
+  # An upward selection tick whose gesture lost its anchor.
+  19 AnchorLost
+  # The client's queue cannot take a selection tick's whole scroll outcome
+  # (ORB-C9).
+  20 TickNoRoom
+  # The attached client sent a role again.
+  21 RoleRepeated
+  # The PTY input queue cannot hold the client's input.
+  22 PtyFull
+  # The client's input came after the PTY closed.
+  23 PtyClosed
+
+# The worker's first answer, before any fact: the finish bound, the
+# pending-peer bound and the synchronized-output bound in milliseconds, and
+# the interactive client's output bound in bytes.
+decision 0 Bounds finish_ms:u32 peer_ms:u32 sync_ms:u32 output_bytes:u32
+# Admits the pending peer as the interactive client (Attached).
+decision 1 Attach
+# Admits the pending peer as the metadata observer (ObservingMetadata).
+decision 2 Observing
+# Answers the pending peer Busy and closes it.
+decision 3 Busy
+# Answers the pending peer Failure(Protocol) and closes it.
+decision 4 Refuse
+# Closes the pending peer without an answer.
+decision 5 Drop
+# Writes Busy to the connection of fact Crowded without waiting, as
+# the old Orbit does, and closes it; the negotiating peer keeps its turn.
+decision 6 TurnAway
+# Queues Failure(Protocol) behind the observer's metadata, with "metadata
+# observers cannot send messages" or the decoder's detail, and closes the
+# observer once it is written, within the finish bound; the slot is free at
+# once.
+decision 7 RefuseObserver
+# Closes the observer.
+decision 8 DropObserver
+# Sends Accepted.
+decision 9 Accepted
+# Sends Failure for the reason and forgets the request being decided.
+decision 10 Reject reason:Reason
+# Answers a refused request with Failure(Protocol) and the decoder's detail.
+decision 11 RefuseRequest
+# Closes the interactive client; the child keeps running.
+decision 12 Detach
+# Ends the attachment of a client Bend refused: it keeps writing its queued
+# output, its Failure included, for at most the finish bound before its
+# socket closes, while the slot is free at once.
+decision 13 Dismiss
+# Publishes the current terminal as one canonical frame at `revision`.
+decision 14 Frame revision:revision
+# Queues `revision` and the current title and working directory for the
+# observer; reports ObserverGone instead if it cannot. `ordered` metadata
+# stays queued; other metadata replaces queued metadata that has not started.
+decision 15 Metadata revision:revision ordered:bool
+# Sends the PTY turn's clipboard writes in order, each as one ClipboardWrite
+# that no later frame replaces.
+decision 16 Clipboard
+# Ends an open synchronized update and disarms the watchdog.
+decision 17 Release
+# Moves the viewport to live output; the next frame shows it.
+decision 18 Bottom
+# Sends a VerticalPreview at `revision` of the viewport in `direction`, or
+# TerminalRouted when `routed`.
+decision 19 PreviewAnswer direction:Direction routed:bool revision:revision
+# Answers the wheel being decided. When `routed`, it queues the wheel's input
+# for the PTY and sends WheelOutcome::TerminalRouted; otherwise it moves the
+# viewport one row, clamped at the history edges, and sends
+# WheelOutcome::Viewport with the frame at `revision`.
+decision 20 WheelAnswer routed:bool revision:revision
+# Answers a scroll of `rows`, as in fact ScrollVertical: TerminalOwned when
+# `routed`, otherwise it moves the viewport and sends one ScrollOutcome with
+# the frame at `revision`.
+decision 21 ScrollAnswer rows:u32 routed:bool revision:revision
+# Moves the viewport to live output and publishes one frame at `revision`.
+decision 22 LiveAnswer revision:revision
+# Applies the pointer phase being decided to the host selection through
+# libghostty's gestures; a finish freezes the selected plain text. It drops
+# unstarted frames from the queue and sends fact Selected.
+decision 23 SelectHost
+# Queues the phase's left-button mouse input for the PTY.
+decision 24 SelectTerminal
+# Resets libghostty's gesture and clears the host selection, keeping the
+# frozen text. `advance` tells that a presented selection is cleared, for which
+# Bend advances the revision; the host does not read it.
+decision 25 Unselect advance:bool
+# Sends SelectionFinished naming `revision`, the revision of the finished
+# phase's frame.
+decision 26 SelectionFinished revision:revision
+# Sends the frozen text as CopiedText for the selection clipboard when
+# `selection`, otherwise for the standard one.
+decision 27 Copied selection:bool
+# Admits the waiting management connection under its one-second bound.
+decision 28 ManageAdmit
+# Answers the waiting management connection Busy and closes it.
+decision 29 ManageBusy
+# Answers the connection Lease, which ends its bound.
+decision 30 ManageLease
+# Answers the connection Status, with the live identity.
+decision 31 ManageStatus
+# Answers Failure(InvalidIdentity) and closes the connection once it is
+# written.
+decision 32 ManageRejectIdentity
+# Answers Failure(InvalidRequest) and closes the connection once it is
+# written.
+decision 33 ManageReject
+# Hangs up and reaps the child with the bounded shutdown, then sends fact
+# Reaped or NotReaped; a child that already exited is not hung up, and sends
+# fact ExitedBeforeStop.
+decision 34 ManageStop
+# Waits up to two seconds for the child, then sends fact Reaped or NotReaped;
+# after ChildExited the child is already reaped.
+decision 35 Reap
+# Gives the client, then a live observer, the finish bound each to take its
+# queued output and Exited with `status`, closes every peer, removes the
+# socket pathname, and sends fact Finished; the host then exits with `status`.
+# An `explicit` finish, of a stop through the lease, closes the client without
+# Exited, writes the explicit tombstone, answers the lease Stopped, and exits 0.
+decision 36 Finish status:u32 explicit:bool
+# Moves the viewport and the selection one row up from the tick's position, as
+# in fact Tick, sends one ScrollOutcome with the frame at `revision` and
+# reports Selected Ticked; a gesture that fails is cleared and reported as
+# Selected Failed, and sends nothing.
+decision 37 TickAnswer x:u32 y:u32 revision:revision
+# Reports the tick at this position again as fact Tick, since its gesture may
+# have ended while it waited.
+decision 38 Retick x:u32 y:u32
+# Captures the terminal's clipboard writes from the next PTY turn on when
+# `on`, and refuses them otherwise (ORB-C11).
+decision 39 Capture on:bool

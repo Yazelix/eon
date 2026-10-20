@@ -329,11 +329,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon platform and distribution policy; child-owned kernel
   capabilities remain explicit child contracts.
 - **Boundary:** Current accepted support remains x86_64 Linux native Wayland.
-  Orbit `ORB-C14` is proved natively on Apple Silicon; Venus `VEN-C16` has a
-  partial native proof in this repository. Apple Silicon macOS remains
-  unsupported until Venus and full-Eon native proofs pass. X11, Xwayland,
-  Intel macOS, signing, notarization, direct bundles, and public macOS
-  distribution remain outside this contract.
+  Orbit `ORB-C14` was proved natively on Apple Silicon for the previous Rust
+  Orbit, but the Bend Orbit imported by `eon-awmq.3` has no native proof yet;
+  Venus `VEN-C16` has a partial native proof in this repository. Apple Silicon
+  macOS remains unsupported until Orbit, Venus and full-Eon native proofs pass.
+  X11, Xwayland, Intel macOS, signing, notarization, direct bundles, and public
+  macOS distribution remain outside this contract.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
   the combined Linux/macOS contract is not proved.
   - **Environment:** Automated tier; installed tier.
@@ -350,7 +351,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   EON-C8 records reader qualification as pending. Wider compositors,
   fractional/HiDPI coverage, proprietary NVIDIA and installed non-systemd
   behavior remain unproved. Machine-restart recovery is not supported.
-  Native Apple Silicon proof follows the proved Orbit ORB-C14, Venus VEN-C16, then
+  Native Apple Silicon proof follows Orbit ORB-C14's re-proof, Venus VEN-C16, then
   `eon-prove-full-eon-apple-silicon-macos-t8o`; compile/evaluation is insufficient.
 
 ## EON-C8 — Durable tab and pane workspace

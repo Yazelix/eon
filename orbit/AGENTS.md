@@ -5,9 +5,9 @@ holds the protocol import and the repository-wide rules. Do not edit this
 generated file directly. Edit `.agent-protocols.local.md` in this directory,
 then render from the pinned source.
 
-Orbit is Eon's terminal-session engine: the `yazelix-orbit` server, the
-standalone `orbit-protocol` crate (ORBS and ORBF), and the `orbit-governance`
-tool.
+Orbit is Eon's terminal-session engine: the `yazelix-orbit` server, a Rust
+host with a Bend policy worker, the standalone `orbit-protocol` crate (ORBS
+and ORBF), and the `orbit-governance` tool.
 
 ## Terminal authority
 
@@ -32,14 +32,40 @@ Zellij compatibility, layouts, tabs, plugins, or configuration framework.
 Broaden these only by explicit user decision.
 
 Classify every `orbit-protocol` change as compatible or breaking and name each
-known consumer: Venus, Eon Runtime, Eon, and bend-orbit. Breaking changes,
+known consumer: Venus, Eon Runtime, and Eon. Breaking changes,
 adapters, and compatibility windows need an explicit user choice. A consumer
 reports missing state or capability to Orbit instead of compensating for it.
 
+## Host and worker
+
+The Bend worker (`src/main.bend` and the policies it calls) decides every
+answer. The Rust host (`src/host.rs`) and its mechanisms own the PTY,
+sockets, libghostty, the event loop and cleanup, and carry out the worker's
+decisions. `docs/HOST.md` owns the protocol between them, and
+`src/boundary.schema` is its only definition: regenerate `src/boundary.rs`
+and `src/boundary.bend` with `tools/boundary.rs` after a schema change.
+
+Orbit has no C of its own, by the user's decision of 2026-10-17: add no C and
+no custom Bend effect; the worker uses only Base's `File` effects. Read
+`docs/BEND.md` before writing Bend, and add lessons there. Prefer generating
+repetitive Bend over hand-writing continuation plumbing.
+
+`LAWS.bend` holds the laws and `PROOF.bend` their proofs, which succeed with
+`ALL PROOFS CHECK`; `tools/step-proof.rs` regenerates the per-fact lemmas in
+`proof/`. The user owns the laws: show a new or changed law to the user before
+relying on its proof. Each law gets a sensitivity check that breaks the policy
+in a scratch copy and makes the proof fail.
+
+`docs/BEHAVIOR.md` states current behavior in the present tense, and each
+claim names the real-PTY check, unit test or proof that covers it, plus any
+sensitivity check. Throughput runs (`tools/perf`) mean something only below a
+load average of about 2; check `/proc/loadavg` first.
+
 ## Platform seam
 
-x86_64 Linux is proved, and `aarch64-darwin` is proved natively under
-`ORB-C14`; Venus and Eon have not adopted it. Keep PTY creation, process
+x86_64 Linux is proved. `ORB-C14`'s native `aarch64-darwin` proof predates the
+Bend host and worker, so this tree's macOS proof is a recorded gap (`EON-C7`);
+Venus and Eon have not adopted macOS. Keep PTY creation, process
 groups, signals, polling, file-descriptor flags, socket paths and permissions,
 and platform-specific EOF or error behavior behind one narrow seam. Keep Darwin
 mechanics to what `ORB-C14` requires; add no generic portability framework,

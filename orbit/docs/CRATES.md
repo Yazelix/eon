@@ -35,15 +35,22 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 
 ### Platform-specific PTY and local-runtime mechanics
 
-- **Selected shape:** One concrete `src/platform.rs` seam around direct `libc` 0.2.189 calls
-- **Status:** Selected and proved for ordinary and managed Sessions on x86_64
-  Linux and Apple Silicon macOS
+- **Selected shape:** Direct `libc` 0.2.189 calls in the host's mechanisms:
+  [`src/pty.rs`](../src/pty.rs), [`src/socket.rs`](../src/socket.rs),
+  [`src/management.rs`](../src/management.rs) and [`src/lib.rs`](../src/lib.rs)
+- **Status:** Selected for ordinary and managed Sessions on x86_64 Linux,
+  with the proof status of [ORB-C1](CONTRACTS.md) and [ORB-C13](CONTRACTS.md);
+  the old Orbit's `src/platform.rs` seam was also proved on Apple Silicon macOS,
+  and [ORB-C14](CONTRACTS.md) records this host's macOS status
 - **Credible alternatives:** Handwritten C ABI with no crate; `pty-process` 0.5.3; `nix`
   0.31.3 with narrow `fs`, `poll`, `process`, `signal`, and `term` features; `portable-pty`
   0.9.0; `rustix` 1.1.4 with `rustix-openpty` 0.2.0
-- **Why:** The seam owns PTY setup, process groups, descriptors, polling, signals, socket
-  paths and permissions, and platform EOF classification while the owner loop sees concrete
-  platform-neutral outcomes. Ghostty confirms the physical PTY split; portable-pty's trait
+- **Why:** The host's mechanisms own PTY setup, process groups, descriptors, polling,
+  signals, socket paths and permissions, and platform EOF classification; the Bend worker
+  sees only facts. The host keeps the old Orbit's direct-`libc` choice, and its OS branches
+  are pipe creation, the worker's and child's death signal, a zero-length send's flags,
+  peer credentials and process-start identities. The measurements below were taken on
+  the old Orbit. Ghostty confirms the physical PTY split; portable-pty's trait
   model and eleven-package normal dependency graph are broader than Orbit needs. The
   measured `nix` shape adds `nix` and `cfg-if` plus a build dependency without reducing net
   owned LOC; the rustix shape adds `rustix-openpty`, `rustix`, and `linux-raw-sys`, with
@@ -61,12 +68,14 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 - **Evidence:** Retroactive crate gate in `orb-bi4.2`; exact Apple, Ghostty, portable-pty,
   and libc sources plus the portability disposition are recorded in `orb-pmp`;
   post-candidate `pty-process` evidence is recorded there for a future decision. The
-  native ORB-C14 run is recorded in `eon-orb-c14-mac-reproof-l8rz`.
+  old Orbit's native ORB-C14 run is recorded in `eon-orb-c14-mac-reproof-l8rz`, and the
+  host's import in `eon-awmq.3`.
 
 ### Linux PTY Session shutdown
 
 - **Selected shape:** Existing direct `libc` 0.2.189 process-group signals and direct-child
-  reaping in `src/platform.rs`
+  reaping, in the host's [`src/pty.rs`](../src/pty.rs) and [`src/host.rs`](../src/host.rs)
+  (the old Orbit's `src/platform.rs`)
 - **Status:** Selected replacement candidate in `orb-portable-pty-shutdown-ke1`; no
   manifest, feature, normal-graph, helper-service, privilege, namespace, or build change
 - **Credible alternatives:** Retain mandatory cgroup v2; make cgroup cleanup optional; SID
@@ -90,21 +99,46 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 
 ### Owner-loop scheduling and concurrency
 
-- **Selected shape:** Owned synchronous poll/event loop at Orbit
-  `e4fde443e625180d7332eff4dff366f64bee30a8`
+- **Selected shape:** Owned synchronous poll event loop in the Rust host, which asks a
+  separate Bend worker process for every decision over two pipes, imported from bend-orbit
+  `e03926274203d78b76f49337e9f6670d2dd6e97d` ([HOST.md](HOST.md))
 - **Status:** Selected for the current one-session proof; replacement requires measured
   pressure and a fresh gate
 - **Credible alternatives:** Asupersync; Tokio; smol; a revised owned synchronous/event-loop
-  design
+  design; the old Orbit's single-process loop at `e4fde443e625180d7332eff4dff366f64bee30a8`
 - **Why:** The current shape keeps PTY reads, terminal authority, client writes, signals,
-  and shutdown ordering explicit without an async-runtime dependency. Before changing it,
+  and shutdown ordering explicit without an async-runtime dependency. Each wait serves one
+  ready source, starting after the one served last, and lasts at most 100 ms; each fact is
+  one synchronous round trip to the worker with a two-second deadline. Before changing it,
   compare cancellation and quiescence semantics, deterministic testing, ecosystem fit, owned
   LOC, transitive and build cost, macOS feasibility, and the exact contract failure or scale
   pressure that justifies migration. Asupersync is a candidate for region ownership, bounded
   cancellation, and deterministic replay; it is not preselected, and reference use does not
   bypass license or dependency review.
 - **Evidence:** Accepted proof in `orb-bi4.3`; deferred replacement gate in `orb-m73`,
-  triggered only by measured contract pressure
+  triggered only by measured contract pressure; host and worker import in `eon-awmq.3`
+
+### Bend session-policy worker
+
+- **Selected shape:** Bend compiler `234cb9b950800f20b15feafcb4ce2f43e76e7fae` (release
+  2.0.37), run by bun 1.3.13, whose C output clang 21.1.8 compiles; bun and clang come from
+  nixpkgs `567a49d1913ce81ac6e9582e3553dd90a955875f`
+- **Status:** Selected as build- and check-time tools for Orbit's worker; nothing from them
+  runs at runtime except the compiled worker
+- **Credible alternatives:** The old single-process Rust server; Bend in-process through an
+  owned C adapter (bend-orbit `9ef0e61f`); custom Bend effects in C; shipping the Bend
+  toolchain and compiling at runtime; a second worker derivation beside the host's build
+- **Why:** Bend owns Orbit's session policy so that its laws and proofs are machine-checked
+  (`LAWS.bend`, `PROOF.bend`). The worker uses only Base's `File` effects, so Orbit owns no
+  C and a Bend update cannot break a native adapter. [`build.rs`](../build.rs) is the one
+  recipe for cargo and Nix builds; `nix develop` and the package supply `BEND_SOURCE_DIR`,
+  bun and `BEND_CLANG`, with `BEND_NO_TELEMETRY=1`: without it the compiler contacts
+  bend-lang.com once a day and writes `~/.bend`, and no Orbit build or check needs the
+  network. Bend's runtime C is spliced into the worker, so Bend's Apache-2.0 license
+  ships in `share/licenses/orbit/bend`. Upgrade the Bend pin only on purpose, with
+  `PROOF.bend` and every real-PTY check rerun; bun and clang follow the nixpkgs pin. Exit:
+  a rollback to `orbit-rust-final` removes all three.
+- **Evidence:** Language decision in `eon-awmq`; reference gate and import in `eon-awmq.3`
 
 ### Repository governance metadata
 
@@ -135,9 +169,10 @@ defines the dependency gate, and Beads retain the full candidate evidence.
   experiment can reuse the selected dependency. Orbit selects no diff or serialization
   crate. Dirty tracking does not define patch composition, history, effects, or wire
   compatibility. A bounded encoder and output queue need no serialization, buffer, async,
-  binding, or second-engine crate. The presentation implementation and co-located canonical
-  proof occupy 650 lines in `src/presentation.rs`; total owned Rust is 2,322 lines versus
-  1,554 before the proof. The ten-package normal graph is unchanged, and the boundary stays
+  binding, or second-engine crate. In the old Orbit, the presentation implementation and
+  co-located canonical proof occupied 650 lines in `src/presentation.rs`, and total owned
+  Rust was 2,322 lines versus 1,554 before the proof; the host's extractor is
+  [`src/frame.rs`](../src/frame.rs). The ten-package normal graph is unchanged, and the boundary stays
   platform-neutral above the accepted PTY seam. Ghostling
   `f9034e43a50a2f3a8101e35497f486090c1ddd6e` and libghostty-rs
   `72ac98f292879bf9f788fcbb11238c562a1eebe6` confirm render ownership; justerm

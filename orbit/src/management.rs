@@ -1,92 +1,463 @@
-use crate::{Result, attachment::is_disconnect, platform};
+//! Management of ORB-C13, as the old Orbit keeps it: a private
+//! management socket beside the presentation socket, an exact 0600 live
+//! record published at Ready through the launcher's ready claim, one
+//! management connection with bounded requests, and a tombstone that
+//! replaces the record when the run ends. Every path and identity is
+//! checked here; Bend decides every answer (src/management.bend).
+
+use crate::{Timer, boundary::ManagementEvent as Event, errno, socket::Listener};
 use orbit_protocol::management::{
-    self as protocol, Failure, FailureCode, LiveIdentity, ProcessOutcome, Record, ServerMessage,
-    TerminationReason, Tombstone,
+    self as protocol, ClientMessage, EndpointIdentity, Failure, FailureCode, LiveIdentity,
+    ObjectIdentity, ProcessOutcome, Record, ServerMessage, TerminationReason, Tombstone,
 };
 use std::{
+    ffi::OsStr,
+    fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::unix::{
-        net::{UnixListener, UnixStream},
-        process::ExitStatusExt,
+    os::{
+        fd::AsRawFd,
+        unix::{
+            ffi::OsStrExt,
+            fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+            net::UnixStream,
+            process::ExitStatusExt,
+        },
     },
     path::{Path, PathBuf},
     process::ExitStatus,
-    time::{Duration, Instant},
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
 };
 
-const ARGUMENT: &str = "--management-v1";
-const NEGOTIATION_TIMEOUT: Duration = Duration::from_secs(1);
+/// The old Orbit's bound on a management connection's negotiation and on
+/// writing the Stopped answer.
+pub(crate) const NEGOTIATION_MS: u32 = 1000;
 
-pub(super) struct Launch {
-    session_id: String,
-    run_id: String,
-    component_generation: String,
+static NEXT_ARTIFACT: AtomicU64 = AtomicU64::new(0);
+
+/// The identities `--management-v1` names.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Launch {
+    pub(crate) session_id: String,
+    pub(crate) run_id: String,
+    pub(crate) component_generation: String,
 }
 
-struct Client {
-    stream: UnixStream,
+impl Launch {
+    /// Checks the old Orbit's bounds: each identity has 1 to 128 UTF-8 bytes.
+    pub(crate) fn new(values: [&OsStr; 3]) -> Result<Self, String> {
+        let mut checked = Vec::with_capacity(3);
+        for (field, value) in ["Session ID", "run ID", "component generation"]
+            .into_iter()
+            .zip(values)
+        {
+            let value = value
+                .to_str()
+                .filter(|value| !value.is_empty() && value.len() <= protocol::MAX_ID_BYTES)
+                .ok_or_else(|| {
+                    format!(
+                        "{field} must contain 1 through {} UTF-8 bytes",
+                        protocol::MAX_ID_BYTES
+                    )
+                })?;
+            checked.push(value.to_owned());
+        }
+        let [session_id, run_id, component_generation] =
+            <[String; 3]>::try_from(checked).map_err(|_| "three identities".to_owned())?;
+        Ok(Self {
+            session_id,
+            run_id,
+            component_generation,
+        })
+    }
+
+    /// Opens the management socket before the child starts.
+    pub(crate) fn prepare(self, socket: &Path) -> io::Result<Prepared> {
+        let path = artifact_path(socket, ".management");
+        let listener = Listener::open(&path)?;
+        Ok(Prepared {
+            launch: self,
+            path,
+            listener,
+        })
+    }
+}
+
+pub(crate) struct Prepared {
+    launch: Launch,
+    path: PathBuf,
+    listener: Listener,
+}
+
+/// A published run: its management socket, its record, the identity the
+/// record carries, a connection waiting for Bend's admission, and the one
+/// admitted connection.
+pub(crate) struct Owner {
+    pub(crate) listener: Listener,
+    record: RecordGuard,
+    pub(crate) identity: LiveIdentity,
+    pub(crate) incoming: Option<UnixStream>,
+    pub(crate) connection: Option<Connection>,
+}
+
+/// The admitted management connection: one request and one answer at a time,
+/// each at most 4 KiB, and a one-second bound until Bend grants the lease. A
+/// refused connection stays until its Failure is written.
+pub(crate) struct Connection {
+    pub(crate) stream: UnixStream,
     peer_uid: u32,
     input: Vec<u8>,
     output: Vec<u8>,
-    output_offset: usize,
+    written: usize,
     close_after_flush: bool,
-    negotiation_deadline: Option<Instant>,
+    /// The negotiation bound, which Bend's Lease ends. Bend's session holds
+    /// the slot; Rust reads this only to time the bound and to answer the
+    /// lease Stopped after a termination signal, which the host carries out
+    /// without the worker.
+    pub(crate) deadline: Option<Timer>,
+    /// Why the last request was refused, for the Failure Bend sends.
+    refusal: Option<String>,
 }
 
-pub(super) struct Prepared {
-    launch: Launch,
-    management_path: PathBuf,
-    listener: UnixListener,
-    socket_guard: platform::SocketGuard,
-}
-
-pub(super) struct Owner {
-    listener: UnixListener,
-    _socket_guard: platform::SocketGuard,
-    record: platform::RecordGuard,
-    identity: LiveIdentity,
-    client: Option<Client>,
-}
-
-pub(super) fn take_launch(arguments: &mut Vec<String>) -> Result<Option<Launch>> {
-    let launch_end = arguments
-        .iter()
-        .position(|argument| argument == "--")
-        .unwrap_or(arguments.len());
-    let mut positions = arguments[..launch_end]
-        .iter()
-        .enumerate()
-        .filter_map(|(index, argument)| (argument == ARGUMENT).then_some(index));
-    let Some(index) = positions.next() else {
-        return Ok(None);
-    };
-    if positions.next().is_some() {
-        return Err("duplicate --management-v1 argument".into());
+impl Prepared {
+    /// Crosses Ready: publishes the live record beside the presentation
+    /// socket. A launcher's empty retained record is claimed with an
+    /// exclusive lock first, so only one run publishes it.
+    pub(crate) fn publish(self, presentation: &Path) -> io::Result<Owner> {
+        // SAFETY: geteuid has no preconditions.
+        let uid = unsafe { libc::geteuid() };
+        let identity = LiveIdentity {
+            session_id: self.launch.session_id,
+            run_id: self.launch.run_id,
+            component_generation: self.launch.component_generation,
+            record_generation: protocol::RECORD_GENERATION,
+            management_generation: protocol::VERSION,
+            process_id: std::process::id(),
+            process_start: process_start_identity()?,
+            uid,
+            presentation: endpoint_identity(presentation)?,
+            management: endpoint_identity(&self.path)?,
+        };
+        let live = protocol::encode_record(&Record::Live(identity.clone()))
+            .map_err(|_| errno(libc::EPROTO))?;
+        let record = RecordGuard::publish(&artifact_path(presentation, ".record"), &live)?;
+        Ok(Owner {
+            listener: self.listener,
+            record,
+            identity,
+            incoming: None,
+            connection: None,
+        })
     }
-    let values = arguments
-        .get(index + 1..index + 4)
-        .filter(|_| index + 4 <= launch_end)
-        .ok_or("--management-v1 requires Session, run, and component identities")?;
-    for (field, value) in [
-        ("Session ID", &values[0]),
-        ("run ID", &values[1]),
-        ("component generation", &values[2]),
-    ] {
-        if value.is_empty() || value.len() > protocol::MAX_ID_BYTES {
-            return Err(format!(
-                "{field} must contain 1 through {} UTF-8 bytes",
-                protocol::MAX_ID_BYTES
-            )
-            .into());
+}
+
+impl Owner {
+    /// Accepts one waiting management connection for Bend to admit.
+    pub(crate) fn accept(&mut self) -> io::Result<Option<Event>> {
+        match self.listener.listener.accept() {
+            Ok((stream, _)) => {
+                self.incoming = Some(stream);
+                Ok(Some(Event::Connect))
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
         }
     }
-    let launch = Launch {
-        session_id: values[0].clone(),
-        run_id: values[1].clone(),
-        component_generation: values[2].clone(),
-    };
-    arguments.drain(index..index + 4);
-    Ok(Some(launch))
+
+    /// Admits the waiting connection under the negotiation bound.
+    pub(crate) fn admit(&mut self) -> io::Result<()> {
+        let stream = self.incoming.take().ok_or_else(|| errno(libc::EPROTO))?;
+        stream.set_nonblocking(true)?;
+        let mut deadline = Timer::default();
+        deadline.set(Some(NEGOTIATION_MS));
+        self.connection = Some(Connection {
+            peer_uid: peer_uid(&stream)?,
+            stream,
+            input: Vec::new(),
+            output: Vec::new(),
+            written: 0,
+            close_after_flush: false,
+            deadline: Some(deadline),
+            refusal: None,
+        });
+        Ok(())
+    }
+
+    /// Answers the waiting connection Busy, if it takes it now, and closes it.
+    pub(crate) fn busy(&mut self) -> io::Result<()> {
+        if let Some(mut stream) = self.incoming.take() {
+            stream.set_nonblocking(true)?;
+            let busy = encode(&ServerMessage::Busy)?;
+            let _ = stream.write(&busy);
+        }
+        Ok(())
+    }
+
+    /// Closes a connection whose negotiation bound passed.
+    pub(crate) fn expire(&mut self) -> Option<Event> {
+        let deadline = self.connection.as_mut()?.deadline.as_mut()?;
+        if !deadline.expired() {
+            return None;
+        }
+        self.connection = None;
+        Some(Event::Gone)
+    }
+
+    /// Reads the connection's next request and reports it for Bend: one
+    /// whole request at most 4 KiB, never two at once, and an Acquire whose
+    /// identity, record, peer and sockets all match this run.
+    pub(crate) fn read(&mut self) -> io::Result<Option<Event>> {
+        let Some(connection) = self.connection.as_mut() else {
+            return Ok(None);
+        };
+        if !connection.output.is_empty() {
+            return Ok(None);
+        }
+        let remaining = protocol::MAX_MESSAGE_BYTES.saturating_sub(connection.input.len());
+        if remaining == 0 {
+            return Ok(Some(
+                connection.refuse("management request exceeded its bound"),
+            ));
+        }
+        let mut bytes = [0; protocol::MAX_MESSAGE_BYTES];
+        match connection.stream.read(&mut bytes[..remaining]) {
+            Ok(0) => {
+                self.connection = None;
+                return Ok(Some(Event::Gone));
+            }
+            Ok(read) => connection.input.extend_from_slice(&bytes[..read]),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                ) =>
+            {
+                return Ok(None);
+            }
+            Err(error) if crate::socket::peer_disconnected(&error) => {
+                self.connection = None;
+                return Ok(Some(Event::Gone));
+            }
+            Err(error) => return Err(error),
+        }
+        let length = match protocol::client_message_len(&connection.input) {
+            Ok(Some(length)) => length,
+            Ok(None) => return Ok(None),
+            Err(error) => return Ok(Some(connection.refuse(&error.to_string()))),
+        };
+        if connection.input.len() != length {
+            return Ok(Some(
+                connection.refuse("management requests cannot be pipelined"),
+            ));
+        }
+        let message = match protocol::decode_client_message(&connection.input) {
+            Ok(message) => message,
+            Err(error) => return Ok(Some(connection.refuse(&error.to_string()))),
+        };
+        connection.input.clear();
+        Ok(Some(match message {
+            ClientMessage::Acquire { expected, record } => {
+                let valid = connection.peer_uid == self.identity.uid
+                    && expected == self.identity
+                    && self
+                        .record
+                        .identity()
+                        .is_ok_and(|current| current == record)
+                    && endpoint_matches(&self.identity.presentation)
+                    && endpoint_matches(&self.identity.management);
+                if valid {
+                    Event::AcquireValid
+                } else {
+                    Event::AcquireInvalid
+                }
+            }
+            ClientMessage::Status => Event::Status,
+            ClientMessage::Stop => Event::Stop,
+        }))
+    }
+
+    /// Grants the lease: the negotiation bound ends and Lease names the run.
+    pub(crate) fn lease(&mut self) -> io::Result<()> {
+        let identity = self.identity.clone();
+        let connection = self
+            .connection
+            .as_mut()
+            .ok_or_else(|| errno(libc::EPROTO))?;
+        connection.deadline = None;
+        connection.respond(&ServerMessage::Lease(identity), false)
+    }
+
+    pub(crate) fn status(&mut self) -> io::Result<()> {
+        let identity = self.identity.clone();
+        let connection = self
+            .connection
+            .as_mut()
+            .ok_or_else(|| errno(libc::EPROTO))?;
+        connection.respond(&ServerMessage::Status(identity), false)
+    }
+
+    /// Refuses the connection's request with this failure and closes it once
+    /// the answer is written.
+    pub(crate) fn reject(&mut self, code: FailureCode) -> io::Result<()> {
+        let connection = self
+            .connection
+            .as_mut()
+            .ok_or_else(|| errno(libc::EPROTO))?;
+        let detail = match code {
+            FailureCode::InvalidIdentity => "live Orbit identity did not match".to_owned(),
+            FailureCode::InvalidRequest => connection
+                .refusal
+                .take()
+                .unwrap_or_else(|| "acquire the management lease before this request".to_owned()),
+        };
+        connection.respond(&ServerMessage::Failure(Failure { code, detail }), true)
+    }
+
+    /// Writes the connection's answer as its socket takes it; a connection
+    /// that closed, or was answered with a refusal, goes.
+    pub(crate) fn flush(&mut self) -> io::Result<Option<Event>> {
+        let Some(connection) = self.connection.as_mut() else {
+            return Ok(None);
+        };
+        while connection.written < connection.output.len() {
+            match connection
+                .stream
+                .write(&connection.output[connection.written..])
+            {
+                Ok(0) => break,
+                Ok(written) => connection.written += written,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(None),
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                Err(error) if crate::socket::peer_disconnected(&error) => break,
+                Err(error) => return Err(error),
+            }
+        }
+        if connection.written == connection.output.len() {
+            connection.output.clear();
+            connection.written = 0;
+            if !connection.close_after_flush {
+                return Ok(None);
+            }
+        }
+        self.connection = None;
+        Ok(Some(Event::Gone))
+    }
+
+    /// Answers the lease with the run's tombstone, waiting at most the
+    /// negotiation bound for its socket to take it.
+    pub(crate) fn reply_stopped(&mut self, tombstone: Tombstone) {
+        let Some(connection) = self.connection.as_mut().filter(|c| c.deadline.is_none()) else {
+            return;
+        };
+        let Ok(stopped) = encode(&ServerMessage::Stopped(tombstone)) else {
+            return;
+        };
+        let stream = &mut connection.stream;
+        if stream.set_nonblocking(false).is_ok()
+            && stream
+                .set_write_timeout(Some(Duration::from_millis(NEGOTIATION_MS.into())))
+                .is_ok()
+        {
+            let _ = stream.write_all(&stopped);
+        }
+    }
+
+    /// Replaces the live record with one tombstone carrying why the run
+    /// ended and the child's exact exit code or signal.
+    pub(crate) fn finish(
+        &mut self,
+        reason: TerminationReason,
+        status: ExitStatus,
+    ) -> io::Result<Tombstone> {
+        let outcome = match (status.code(), status.signal()) {
+            (Some(code), _) => ProcessOutcome::ExitCode(code),
+            (None, Some(signal)) => ProcessOutcome::Signal(signal),
+            (None, None) => return Err(errno(libc::EPROTO)),
+        };
+        let tombstone = Tombstone {
+            identity: self.identity.clone(),
+            reason,
+            outcome,
+        };
+        let bytes = protocol::encode_record(&Record::Tombstone(tombstone.clone()))
+            .map_err(|_| errno(libc::EPROTO))?;
+        self.record.replace_and_preserve(&bytes)?;
+        Ok(tombstone)
+    }
+}
+
+impl Connection {
+    fn refuse(&mut self, detail: &str) -> Event {
+        self.input.clear();
+        self.refusal = Some(detail.to_owned());
+        Event::Bad
+    }
+
+    fn respond(&mut self, message: &ServerMessage, close: bool) -> io::Result<()> {
+        if !self.output.is_empty() {
+            return Err(errno(libc::EPROTO));
+        }
+        self.output = encode(message)?;
+        self.written = 0;
+        self.close_after_flush = close;
+        Ok(())
+    }
+
+    /// Whether the connection waits to write its answer.
+    pub(crate) fn writing(&self) -> bool {
+        !self.output.is_empty()
+    }
+
+    pub(crate) fn deadline(&self) -> Option<std::time::Instant> {
+        self.deadline.as_ref().and_then(Timer::deadline)
+    }
+}
+
+fn encode(message: &ServerMessage) -> io::Result<Vec<u8>> {
+    protocol::encode_server_message(message).map_err(|_| errno(libc::EPROTO))
+}
+
+#[cfg(target_os = "linux")]
+fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
+    // SAFETY: getsockopt fills the zeroed credentials of the owned socket.
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    if unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&raw mut credentials).cast(),
+            &raw mut length,
+        )
+    } == -1
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(credentials.uid)
+}
+
+#[cfg(target_os = "macos")]
+fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
+    let (mut uid, mut gid) = (0, 0);
+    // SAFETY: getpeereid fills both identities of the owned socket's peer.
+    if unsafe { libc::getpeereid(stream.as_raw_fd(), &raw mut uid, &raw mut gid) } == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(uid)
+}
+
+/// Whether an endpoint is still the exact socket a record names.
+fn endpoint_matches(expected: &EndpointIdentity) -> bool {
+    endpoint_identity(Path::new(OsStr::from_bytes(&expected.path)))
+        .is_ok_and(|current| current == *expected)
 }
 
 fn artifact_path(socket: &Path, suffix: &str) -> PathBuf {
@@ -95,297 +466,220 @@ fn artifact_path(socket: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
-impl Launch {
-    pub(super) fn prepare(self, socket: &Path) -> Result<Prepared> {
-        let management_path = artifact_path(socket, ".management");
-        let (listener, socket_guard) = platform::create_listener(&management_path)?;
-        Ok(Prepared {
-            launch: self,
-            management_path,
-            listener,
-            socket_guard,
-        })
+/// The kernel's start time of this process, in clock ticks since boot.
+#[cfg(target_os = "linux")]
+fn process_start_identity() -> io::Result<u64> {
+    let stat = fs::read_to_string("/proc/self/stat")?;
+    stat.rsplit_once(')')
+        .and_then(|(_, fields)| fields.split_whitespace().nth(19))
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| errno(libc::EPROTO))
+}
+
+/// The kernel's start time of this process in microseconds, as the old
+/// Orbit reads it on macOS.
+#[cfg(target_os = "macos")]
+fn process_start_identity() -> io::Result<u64> {
+    let pid = std::process::id();
+    // SAFETY: proc_pidinfo fills the zeroed record for this process.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&info) as libc::c_int;
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid as libc::c_int,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            (&raw mut info).cast(),
+            size,
+        )
+    };
+    if read != size || info.pbi_pid != pid || info.pbi_start_tvusec >= 1_000_000 {
+        return Err(errno(libc::EPROTO));
+    }
+    info.pbi_start_tvsec
+        .checked_mul(1_000_000)
+        .and_then(|seconds| seconds.checked_add(info.pbi_start_tvusec))
+        .filter(|identity| *identity != 0)
+        .ok_or_else(|| errno(libc::EPROTO))
+}
+
+fn endpoint_identity(path: &Path) -> io::Result<EndpointIdentity> {
+    let metadata = fs::symlink_metadata(path)?;
+    validate(&metadata, Kind::Socket)?;
+    Ok(EndpointIdentity {
+        path: path.as_os_str().as_bytes().to_vec(),
+        object: object_identity(&metadata),
+    })
+}
+
+#[derive(Clone, Copy)]
+enum Kind {
+    Socket,
+    Regular,
+}
+
+/// Records and sockets must be exact user-owned 0600 objects of their type.
+fn validate(metadata: &fs::Metadata, kind: Kind) -> io::Result<()> {
+    let typed = match kind {
+        Kind::Socket => metadata.file_type().is_socket(),
+        Kind::Regular => metadata.file_type().is_file(),
+    };
+    // SAFETY: geteuid has no preconditions.
+    let uid = unsafe { libc::geteuid() };
+    if !typed || metadata.uid() != uid || metadata.mode() & 0o7777 != 0o600 {
+        return Err(errno(libc::EACCES));
+    }
+    Ok(())
+}
+
+fn object_identity(metadata: &fs::Metadata) -> ObjectIdentity {
+    ObjectIdentity {
+        device: metadata.dev(),
+        inode: metadata.ino(),
     }
 }
 
-impl Prepared {
-    pub(super) fn publish(self, presentation_path: &Path) -> Result<Owner> {
-        let identity = LiveIdentity {
-            session_id: self.launch.session_id,
-            run_id: self.launch.run_id,
-            component_generation: self.launch.component_generation,
-            record_generation: protocol::RECORD_GENERATION,
-            management_generation: protocol::VERSION,
-            process_id: std::process::id(),
-            process_start: platform::process_start_identity()?,
-            uid: platform::current_uid(),
-            presentation: platform::endpoint_identity(presentation_path)?,
-            management: platform::endpoint_identity(&self.management_path)?,
-        };
-        let live_record = protocol::encode_record(&Record::Live(identity.clone()))?;
-        let record = platform::RecordGuard::publish(
-            &artifact_path(presentation_path, ".record"),
-            &live_record,
-        )?;
-        Ok(Owner {
-            listener: self.listener,
-            _socket_guard: self.socket_guard,
-            record,
-            identity,
-            client: None,
-        })
-    }
+fn record_identity(path: &Path) -> io::Result<ObjectIdentity> {
+    let metadata = fs::symlink_metadata(path)?;
+    validate(&metadata, Kind::Regular)?;
+    Ok(object_identity(&metadata))
 }
 
-impl Owner {
-    pub(super) fn listener(&self) -> &UnixListener {
-        &self.listener
+fn private_parent(path: &Path) -> io::Result<()> {
+    let parent = path.parent().ok_or_else(|| errno(libc::EINVAL))?;
+    let metadata = fs::symlink_metadata(parent)?;
+    // SAFETY: geteuid has no preconditions.
+    let uid = unsafe { libc::geteuid() };
+    if !metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o7777 != 0o700 {
+        return Err(errno(libc::EACCES));
+    }
+    Ok(())
+}
+
+/// The live record this run published. It is removed when the run fails
+/// while the record is still its own, and kept once a tombstone replaces it.
+struct RecordGuard {
+    path: PathBuf,
+    identity: Option<ObjectIdentity>,
+    contents: Vec<u8>,
+}
+
+impl RecordGuard {
+    fn publish(path: &Path, bytes: &[u8]) -> io::Result<Self> {
+        if let Some((mut claim, expected)) = ready_claim(path)? {
+            claim.try_lock().map_err(|error| match error {
+                fs::TryLockError::WouldBlock => errno(libc::EBUSY),
+                fs::TryLockError::Error(error) => error,
+            })?;
+            if claim.metadata()?.len() != 0 || record_identity(path)? != expected {
+                return Err(errno(libc::EBUSY));
+            }
+            claim.write_all(b"1")?;
+        }
+        atomic_replace(path, bytes)?;
+        Ok(Self {
+            path: path.to_owned(),
+            identity: Some(record_identity(path)?),
+            contents: bytes.to_vec(),
+        })
     }
 
-    pub(super) fn client_readiness(&self) -> Option<(&UnixStream, bool)> {
-        self.client
-            .as_ref()
-            .map(|client| (&client.stream, !client.output.is_empty()))
-    }
-
-    pub(super) fn release_expired(&mut self, now: Instant) {
-        if self
-            .client
-            .as_ref()
-            .and_then(|client| client.negotiation_deadline)
-            .is_some_and(|deadline| now >= deadline)
+    fn identity(&self) -> io::Result<ObjectIdentity> {
+        let expected = self.identity.ok_or_else(|| errno(libc::ESTALE))?;
+        if record_identity(&self.path)? != expected {
+            return Err(errno(libc::ESTALE));
+        }
+        let mut file = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(&self.path)?;
+        let metadata = file.metadata()?;
+        validate(&metadata, Kind::Regular)?;
+        let mut contents = Vec::with_capacity(self.contents.len() + 1);
+        Read::by_ref(&mut file)
+            .take(self.contents.len() as u64 + 1)
+            .read_to_end(&mut contents)?;
+        if object_identity(&metadata) != expected
+            || contents != self.contents
+            || record_identity(&self.path)? != expected
         {
-            self.client = None;
+            return Err(errno(libc::ESTALE));
         }
+        Ok(expected)
     }
 
-    pub(super) fn accept(&mut self) -> Result {
-        loop {
-            match self.listener.accept() {
-                Ok((mut stream, _)) => {
-                    if self.client.is_some() {
-                        let busy = protocol::encode_server_message(&ServerMessage::Busy)?;
-                        let _ = stream.write_all(&busy);
-                        continue;
-                    }
-                    stream.set_nonblocking(true)?;
-                    self.client = Some(Client {
-                        peer_uid: platform::peer_uid(&stream)?,
-                        stream,
-                        input: Vec::new(),
-                        output: Vec::new(),
-                        output_offset: 0,
-                        close_after_flush: false,
-                        negotiation_deadline: Some(Instant::now() + NEGOTIATION_TIMEOUT),
-                    });
-                }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-    }
-
-    pub(super) fn read_request(&mut self) -> Result<bool> {
-        let request = {
-            let Some(client) = self.client.as_mut() else {
-                return Ok(false);
-            };
-            if !client.output.is_empty() {
-                return Ok(false);
-            }
-            let remaining = protocol::MAX_MESSAGE_BYTES.saturating_sub(client.input.len());
-            if remaining == 0 {
-                queue_failure(client, "management request exceeded its bound")?;
-                return Ok(false);
-            }
-            let mut bytes = [0; protocol::MAX_MESSAGE_BYTES];
-            match client.stream.read(&mut bytes[..remaining]) {
-                Ok(0) => {
-                    self.client = None;
-                    return Ok(false);
-                }
-                Ok(read) => client.input.extend_from_slice(&bytes[..read]),
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(false),
-                Err(error) if error.kind() == io::ErrorKind::Interrupted => return Ok(false),
-                Err(error) if is_disconnect(&error) => {
-                    self.client = None;
-                    return Ok(false);
-                }
-                Err(error) => return Err(error.into()),
-            }
-            let length = match protocol::client_message_len(&client.input) {
-                Ok(Some(length)) => length,
-                Ok(None) => return Ok(false),
-                Err(error) => {
-                    queue_failure(client, &error.to_string())?;
-                    return Ok(false);
-                }
-            };
-            if client.input.len() != length {
-                queue_failure(client, "management requests cannot be pipelined")?;
-                return Ok(false);
-            }
-            let message = match protocol::decode_client_message(&client.input) {
-                Ok(message) => message,
-                Err(error) => {
-                    queue_failure(client, &error.to_string())?;
-                    return Ok(false);
-                }
-            };
-            client.input.clear();
-            (
-                message,
-                client.peer_uid,
-                client.negotiation_deadline.is_none(),
-            )
-        };
-
-        match request {
-            (protocol::ClientMessage::Acquire { expected, record }, peer_uid, false) => {
-                let valid = peer_uid == self.identity.uid
-                    && expected == self.identity
-                    && self
-                        .record
-                        .identity()
-                        .is_ok_and(|current| current == record)
-                    && platform::endpoint_matches(&self.identity.presentation)
-                    && platform::endpoint_matches(&self.identity.management);
-                let client = self.client.as_mut().expect("request has one client");
-                if valid {
-                    client.negotiation_deadline = None;
-                    queue_response(client, &ServerMessage::Lease(self.identity.clone()))?;
-                } else {
-                    queue_response(
-                        client,
-                        &ServerMessage::Failure(Failure {
-                            code: FailureCode::InvalidIdentity,
-                            detail: "live Orbit identity did not match".into(),
-                        }),
-                    )?;
-                    client.close_after_flush = true;
-                }
-                Ok(false)
-            }
-            (protocol::ClientMessage::Status, _, true) => {
-                let identity = self.identity.clone();
-                queue_response(
-                    self.client.as_mut().expect("request has one client"),
-                    &ServerMessage::Status(identity),
-                )?;
-                Ok(false)
-            }
-            (protocol::ClientMessage::Stop, _, true) => Ok(true),
-            _ => {
-                let client = self.client.as_mut().expect("request has one client");
-                queue_response(
-                    client,
-                    &ServerMessage::Failure(Failure {
-                        code: FailureCode::InvalidRequest,
-                        detail: "acquire the management lease before this request".into(),
-                    }),
-                )?;
-                client.close_after_flush = true;
-                Ok(false)
-            }
-        }
-    }
-
-    pub(super) fn flush(&mut self) -> Result {
-        let mut disconnect = false;
-        if let Some(client) = &mut self.client {
-            while client.output_offset < client.output.len() {
-                match client.stream.write(&client.output[client.output_offset..]) {
-                    Ok(0) => {
-                        disconnect = true;
-                        break;
-                    }
-                    Ok(written) => client.output_offset += written,
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(()),
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-                    Err(error) if is_disconnect(&error) => {
-                        disconnect = true;
-                        break;
-                    }
-                    Err(error) => return Err(error.into()),
-                }
-            }
-            if client.output_offset == client.output.len() {
-                client.output.clear();
-                client.output_offset = 0;
-                disconnect |= client.close_after_flush;
-            }
-        }
-        if disconnect {
-            self.client = None;
-        }
-        Ok(())
-    }
-
-    pub(super) fn finish_explicit(&mut self, status: ExitStatus) -> Result<Tombstone> {
-        self.finish(TerminationReason::ExplicitStop, status)
-    }
-
-    pub(super) fn finish_natural(&mut self, status: ExitStatus) -> Result<Tombstone> {
-        self.finish(TerminationReason::NaturalExit, status)
-    }
-
-    fn finish(&mut self, reason: TerminationReason, status: ExitStatus) -> Result<Tombstone> {
-        let outcome = if let Some(code) = status.code() {
-            ProcessOutcome::ExitCode(code)
-        } else if let Some(signal) = status.signal() {
-            ProcessOutcome::Signal(signal)
-        } else {
-            return Err("PTY child had neither an exit code nor a termination signal".into());
-        };
-        let tombstone = Tombstone {
-            identity: self.identity.clone(),
-            reason,
-            outcome,
-        };
-        let bytes = protocol::encode_record(&Record::Tombstone(tombstone.clone()))?;
-        self.record.replace_and_preserve(&bytes)?;
-        Ok(tombstone)
-    }
-
-    pub(super) fn reply_stopped(&mut self, tombstone: &Tombstone) -> Result {
-        let Some(client) = self
-            .client
-            .as_mut()
-            .filter(|client| client.negotiation_deadline.is_none())
-        else {
-            return Ok(());
-        };
-        let response = protocol::encode_server_message(&ServerMessage::Stopped(tombstone.clone()))?;
-        if client.stream.set_nonblocking(false).is_ok()
-            && client
-                .stream
-                .set_write_timeout(Some(NEGOTIATION_TIMEOUT))
-                .is_ok()
-        {
-            let _ = client.stream.write_all(&response);
-        }
+    fn replace_and_preserve(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.identity()?;
+        atomic_replace(&self.path, bytes)?;
+        self.identity = None;
         Ok(())
     }
 }
 
-fn queue_response(client: &mut Client, message: &ServerMessage) -> Result {
-    if !client.output.is_empty() {
-        return Err("management response already in flight".into());
+impl Drop for RecordGuard {
+    fn drop(&mut self) {
+        if self.identity().is_ok() {
+            let _ = fs::remove_file(&self.path);
+        }
     }
-    client.output = protocol::encode_server_message(message)?;
-    client.output_offset = 0;
-    Ok(())
 }
 
-fn queue_failure(client: &mut Client, detail: &str) -> Result {
-    queue_response(
-        client,
-        &ServerMessage::Failure(Failure {
-            code: FailureCode::InvalidRequest,
-            detail: detail.into(),
-        }),
-    )?;
-    client.close_after_flush = true;
-    Ok(())
+/// A launcher's retained record: an exact empty 0600 file at the record's
+/// pathname, or None when there is none to claim.
+fn ready_claim(path: &Path) -> io::Result<Option<(File, ObjectIdentity)>> {
+    private_parent(path)?;
+    let file = match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let metadata = file.metadata()?;
+    validate(&metadata, Kind::Regular)?;
+    if metadata.len() != 0 {
+        return Ok(None);
+    }
+    let identity = object_identity(&metadata);
+    if record_identity(path)? != identity {
+        return Err(errno(libc::EBUSY));
+    }
+    Ok(Some((file, identity)))
+}
+
+/// Writes a record through a private temporary file and one rename.
+fn atomic_replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    private_parent(path)?;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => validate(&metadata, Kind::Regular)?,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    let mut temporary = path.as_os_str().to_os_string();
+    temporary.push(format!(
+        ".tmp.{}.{}",
+        std::process::id(),
+        NEXT_ARTIFACT.fetch_add(1, Ordering::Relaxed)
+    ));
+    let temporary = PathBuf::from(temporary);
+    let written = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+            .open(&temporary)?;
+        file.write_all(bytes)?;
+        fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
+        validate(&fs::symlink_metadata(&temporary)?, Kind::Regular)?;
+        fs::rename(&temporary, path)?;
+        validate(&fs::symlink_metadata(path)?, Kind::Regular)
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    written
 }

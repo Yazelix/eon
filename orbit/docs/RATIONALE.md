@@ -376,8 +376,9 @@ so the graduation plan below is historical. `Saturn` remains reserved for
 possible future use; that reservation creates no product, repository, feature,
 or planning scope.
 
-Orbit retains the headless runtime and diagnostic client used by its proof.
-Venus owns the graphical client. The boundary planned for graduation was:
+Orbit retains the headless runtime its proof uses; the old Orbit's diagnostic
+client did not survive the move to Bend. Venus owns the graphical client. The
+boundary planned for graduation was:
 
 ```text
 Eon
@@ -390,6 +391,19 @@ Orbit survives as the runtime subsystem name. Venus remains distinct from Mars.
 A failed experiment leaves Nova and its Mars and Zellij path unchanged. A
 successful experiment gives Eon its own architecture while Nova continues to
 grow independently.
+
+## Bend session policy
+
+The user chose Bend for Orbit's session policy on 2026-10-19 (`eon-awmq`):
+Bend is young with a high ceiling, and its laws and machine-checked proofs
+bring safety to the decisions that keep a Session alive, admit peers and stop
+the child. The bend-orbit repository developed the shape against the old
+Orbit's contracts, its black-box suite and a differential check, and Orbit
+imported it in `eon-awmq.3`. A Rust host keeps every mechanism the old Orbit
+had, and a Bend worker in its own process decides every answer, so Orbit owns
+no C and the proofs cover a pure step ([HOST.md](HOST.md),
+[BEHAVIOR.md](BEHAVIOR.md)). The old single-process Rust server stays at the
+tag `orbit-rust-final` as the rollback.
 
 ## Evidence sequence
 

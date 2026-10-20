@@ -26,6 +26,23 @@
         "type": "github"
       }
     },
+    "bend": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792162031,
+        "narHash": "sha256-R4I3kwAJT3hIO75qpu8CAy6l1NQfAea8cMFdxZWSyMo=",
+        "owner": "bendlang",
+        "repo": "bend",
+        "rev": "234cb9b950800f20b15feafcb4ce2f43e76e7fae",
+        "type": "github"
+      },
+      "original": {
+        "owner": "bendlang",
+        "repo": "bend",
+        "rev": "234cb9b950800f20b15feafcb4ce2f43e76e7fae",
+        "type": "github"
+      }
+    },
     "fenix": {
       "inputs": {
         "nixpkgs": [
@@ -174,6 +191,23 @@
         "type": "github"
       }
     },
+    "old-orbit": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1792379879,
+        "narHash": "sha256-y0NkLbt24TrJ5H8c6BVLHYAti/JR/yJQpfBmh/QSjRw=",
+        "owner": "Yazelix",
+        "repo": "eon",
+        "rev": "1d287440fe5787a5a7d6be8e201546e3f2829df5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Yazelix",
+        "repo": "eon",
+        "rev": "1d287440fe5787a5a7d6be8e201546e3f2829df5",
+        "type": "github"
+      }
+    },
     "ratconfig": {
       "flake": false,
       "locked": {
@@ -216,10 +250,12 @@
     "root": {
       "inputs": {
         "anima": "anima",
+        "bend": "bend",
         "ghostty": "ghostty",
         "helix": "helix",
         "kinestra": "kinestra",
         "nixpkgs": "nixpkgs_2",
+        "old-orbit": "old-orbit",
         "ratconfig": "ratconfig",
         "yazi": "yazi"
       }

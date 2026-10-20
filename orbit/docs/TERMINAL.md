@@ -11,11 +11,13 @@ Orbit owns one real PTY and the authoritative libghostty terminal. A client can
 disconnect and later attach to the same live process. Orbit sends complete,
 structured frames; it does not ask clients to parse raw terminal output.
 
-The ordinary and managed server is proved on x86_64 Linux and natively on Apple
-Silicon macOS, covering PTY spawn, input, resize, reconnect, socket permissions,
-EOF, HUP shutdown, and management Stop. The diagnostic client is proved on
-Linux; its macOS proof awaits re-proof in this repository.
-Venus, Eon, Nix packaging, signing, and distribution have not adopted macOS.
+A Rust host owns the PTY, libghostty and the sockets and asks a Bend worker for
+every decision ([HOST.md](HOST.md)); [BEHAVIOR.md](BEHAVIOR.md) states the
+behavior claim by claim with its checks. The ordinary and managed server is
+proved on x86_64 Linux, covering PTY spawn, input, resize, reconnect, socket
+permissions, EOF, HUP shutdown, and management Stop; [ORB-C14](CONTRACTS.md)
+records Apple Silicon macOS. Venus, Eon, Nix packaging, signing, and
+distribution have not adopted macOS.
 
 ### Scrollback and wire versions
 
@@ -114,19 +116,22 @@ repository carries no permanent test target for the rejected reconstruction
 path. Orbit uses no fork, binding extension, compatibility wrapper, second
 terminal engine, or replay fallback.
 
-The focused Orbit terminal conformance corpus reuses eight authoritative unit
-and real-PTY tests under one filter:
+The focused Orbit terminal conformance cases of the old Orbit's black-box
+suite run under one filter:
 
 ```sh
 nix develop -c eon-test -p yazelix-orbit conformance_
 ```
 
-It covers parser continuation and terminal replies, complete rich reattachment,
-semantic input and resize, canonical rich extraction, viewport routing and
-retained-history reflow, and frozen selection copy. The contract-oriented case
-inventory and assertion policy live in the [contract index](CONTRACTS.md).
-The check is offline, headless, and pinned to the same libghostty path as the
-normal suite; it adds no second engine, fixture framework, or replay format.
+They cover parser continuation and terminal replies, semantic input and
+resize, and frozen selection copy. The real-PTY checks in
+[BEHAVIOR.md](BEHAVIOR.md) cover reattachment, rich extraction (the
+differential check compares frames cell by cell with the old Orbit's),
+viewport routing and retained history; reattachment to rich state is an
+[ORB-C4](CONTRACTS.md) gap (`eon-awmq.7`). The contract-oriented case inventory
+and assertion policy live in the [contract index](CONTRACTS.md). The checks
+are offline, headless, and pinned to the same libghostty path as the normal
+suite; they add no second engine, fixture framework, or replay format.
 
 ### Frame publication
 
@@ -151,13 +156,18 @@ Publication stays bounded:
   and ordered effects continue. Release publishes the latest frame; a one-second
   watchdog clears an abandoned hold. New attachments wait for release.
 - One pending revision-bound preview or signed scroll resolves against the
-  complete state after release. The owner handles one PTY read per readiness turn.
+  complete state after release. While a client is attached, each PTY read of
+  at most 8 KiB is one turn that may publish a frame; while none is, the host
+  drains up to 512 KiB before it asks the worker
+  ([BEHAVIOR.md](BEHAVIOR.md#throughput)).
 - A fixed byte bound covers terminal replies and semantic input. When it fills,
   Orbit rejects a whole new input and closes that client.
 
-The real-PTY proof in [`src/presentation.rs`](../src/presentation.rs) covers
-ordered revisions, rich alternate and restored primary state, split parser
-input, slow clients, input fairness, and final convergence after reattach.
+The real-PTY synchronized-output, three-attach, interactive-pressure,
+slow-observer, paste-flood and differential checks in
+[BEHAVIOR.md](BEHAVIOR.md) cover ordered revisions, rich state, split
+updates, slow clients, input that waits for the PTY, and convergence after
+reattach.
 
 [`crates/protocol`](../crates/protocol) is the sole ORBF v2 format owner. Its
 strict decoder validates magic, version, dimensions, tags, reserved flags,

@@ -16,7 +16,7 @@ instead of duplicating product pins. Implementing Beads record exact inspected r
 
 ## Orbit and terminal architecture
 
-### Does an Eon design question depend on terminal service, engine, attachment, or diagnostic-client internals?
+### Does an Eon design question depend on terminal service, engine, or attachment internals?
 
 - **Owner:** Orbit
 - **Read first:** [Orbit contracts](../orbit/docs/CONTRACTS.md) and
@@ -24,7 +24,7 @@ instead of duplicating product pins. Implementing Beads record exact inspected r
 - **Read additionally only if:** Follow only the child route matching a demonstrated Orbit
   contract gap.
 - **Preserve / reject:** Consume accepted Orbit contracts. Do not repeat or reopen engine
-  and diagnostic-client decisions in Eon.
+  decisions in Eon.
 
 ### If Eon for the web is activated, should its browser client consume canonical Orbit frames or restore a libghostty-vt WebAssembly snapshot plus ordered tail?
 

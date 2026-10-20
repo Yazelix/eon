@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Orbit, which keeps Eon's terminals alive, decides its session policy in a
+  Bend worker whose laws are machine-checked, beside the Rust host that owns
+  the terminal. Terminals, the protocol Venus uses, and how Eon starts Orbit
+  are unchanged. Orbit's package adds the worker at
+  `libexec/yazelix-orbit/yazelix-orbit-worker` and Bend's Apache-2.0 license
+  under `share/licenses/orbit/bend`, and drops the `yazelix-orbit client`
+  diagnostic subcommand.
 - A terminal whose command exits right away, such as a failing
   `[shell].command`, no longer blocks later terminals in that workspace. New
   panes and tabs used to fail with "cannot create terminal Ready claim ...:

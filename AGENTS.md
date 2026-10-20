@@ -78,10 +78,11 @@ decision that names the subsystem advantage and accepts the added toolchain and
 ownership cost.
 
 Bend is approved for Orbit's session policy, so that its laws and proofs are
-machine-checked (`eon-awmq`, 2026-10-19); until `eon-awmq.3` imports it, Orbit
-is Rust-only. Once imported, Orbit owns the Nix-pinned Bend compiler and its
-upgrades: bun runs the compiler, which emits C that clang compiles into Orbit's
-worker. Bun, the compiler and clang are build-time tools only, and Eon adds no
+machine-checked (`eon-awmq`, 2026-10-19). Orbit owns the Nix-pinned Bend
+compiler and its upgrades. Bun runs the compiler at build time, where it emits
+C that clang compiles into Orbit's worker, and at check time and in Orbit's
+proof tools, where it checks `orbit/PROOF.bend` and builds test workers. Bun,
+the compiler and clang never ship or run in the product, and Eon adds no
 TypeScript of its own.
 
 ## Desktop Focus

@@ -8,12 +8,14 @@ boundaries in `AGENTS.md` and `docs/CONTRACTS.md`.
 
 ## Default ownership
 
-The stack has a Rust center with platform-specific languages only at boundaries
-where they have a concrete native advantage.
+The stack has a Rust center with other languages only at boundaries where
+they have a concrete advantage: platform-specific languages where they are
+native, and Bend for Orbit's session policy, whose laws it proves.
 
 | Surface | Default owner | Boundary |
 | --- | --- | --- |
-| Orbit runtime and terminal authority | Rust | No second application language or in-process plugin runtime |
+| Orbit host, mechanisms and terminal authority | Rust | Owns the PTY, sockets, libghostty, the event loop and cleanup; no in-process plugin runtime |
+| Orbit session policy | Bend, in Orbit's worker process | Decides every answer as a pure step with proved laws ([HOST.md](HOST.md)); the Bend compiler, bun and clang run only at build and check time |
 | Canonical Orbit protocol codec | Rust | May compile to WebAssembly for a browser consumer |
 | Venus shared state and native client | Rust | Renderer dependencies require the Venus crate gate |
 | Venus GPU shaders | WGSL when required | Shader code only, not application policy |

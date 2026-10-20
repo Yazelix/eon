@@ -1,7 +1,8 @@
 # `eon-test`: runs the Rust test suites inside bubblewrap so they cannot reach
 # a live Eon session. The sandbox has private PID, network and /dev, empty
 # /tmp and /run that hide the session's Wayland, D-Bus and Eon sockets, and
-# only the toolchain variables of the calling `nix develop` shell. Without arguments it
+# only the toolchain variables of the calling `nix develop` shell, plus the
+# variables that point Orbit's tests at a server. Without arguments it
 # runs the workspace suites, then the installer's, stopping at the first
 # failing suite.
 { pkgs }:
@@ -60,7 +61,8 @@ pkgs.writeShellApplication {
       case $name in
         CARGO_* | RUST* | NIX_* | PKG_CONFIG* | CC | CXX | AR | AS | LD | NM | \
           OBJCOPY | OBJDUMP | RANLIB | READELF | SIZE | STRINGS | STRIP | \
-          GHOSTTY_* | LIBGHOSTTY_* | ZIG_* | FONTCONFIG_FILE | \
+          GHOSTTY_* | LIBGHOSTTY_* | ZIG_* | BEND_* | FONTCONFIG_FILE | \
+          ORBIT_* | OLD_ORBIT_BIN | MISMATCHED_WORKER | \
           LANG | LC_ALL | USER | LOGNAME | SOURCE_DATE_EPOCH)
           environment+=(--setenv "$name" "''${entry#*=}")
           ;;

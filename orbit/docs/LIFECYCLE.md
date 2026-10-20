@@ -1,28 +1,25 @@
 # Session lifecycle
 
-## Run the server and client
+## Run the server
 
-The ordinary server and diagnostic client share one foreground binary. Start
-the server:
+`yazelix-orbit serve` runs one Session in the foreground. Inside `nix develop`,
+from `orbit/`:
 
 ```sh
 tic -x terminfo/eon.terminfo
 cargo run --locked -- serve
 ```
 
-In another terminal:
-
-```sh
-cargo run --locked -- client
-```
-
 The first command installs Orbit's `eon` terminal identity in the current
 user's terminfo database. Eon distribution remains responsible for installing
-the same entry in its runtime closure.
+the same entry in its runtime closure. Orbit has no client of its own;
+[Venus](../../venus/README.md) attaches to its socket.
 
-The server owns the PTY, child process, terminal state, presentation extraction,
-input encoding, resize, and terminal-generated replies on one thread. The
-client and server use only the bounded ORBS v13 codec. An exact-version
+The server is two processes ([HOST.md](HOST.md)). The Rust host owns the PTY,
+child process, terminal state, presentation extraction, input encoding,
+resize, and terminal-generated replies in one event loop, and asks the Bend
+worker, which it starts and contains, for every decision. Clients and the
+server use only the bounded ORBS v13 codec. An exact-version
 attachment receives typed outcomes, canonical presentation frames,
 acknowledgements, bounded failures, and session exit. Client messages carry
 semantic key, mouse, focus, arbitrary paste, full surface-resize, and
@@ -79,8 +76,12 @@ detached process, a non-foreground group outside the initial group, or a
 SIGHUP-ignoring foreground job whose shell exits during the grace period may
 survive. Orbit does not scan process names, ancestry, session IDs, or procfs to
 find it. Client disconnection remains non-destructive and separate from
-explicit Session stop. Direct-child HUP and reaping are also proved natively on
-Apple Silicon macOS; the special detached and foreground-group topology remains Linux-proved only.
+explicit Session stop. The special detached and foreground-group topology is
+Linux-proved only; [ORB-C14](CONTRACTS.md) records the macOS proof status.
+
+If the Bend worker dies or stops answering, the host stops the child the same
+way and removes the socket pathname; [BEHAVIOR.md](BEHAVIOR.md#fatal-exit-boundary)
+states the bounds and the checks that cover them.
 
 ### Platform seam and checks
 
@@ -96,15 +97,18 @@ reduced owned Rust by 44 lines while adding `pty-process`, `rustix`, and
 `linux-raw-sys` to the normal Linux graph. Adopting it remains a separate crate
 decision.
 
-Shared Unix PTY, process-group, descriptor, polling, signal, socket-path,
-permission, and EOF mechanics live in one concrete `src/platform.rs` seam.
-Only OS ioctl values, peer credentials, process-start identities, and PTY EOF
-classification diverge. The owner loop sees platform-neutral PTY I/O,
-readiness, and management identities; terminal authority, semantic input, and
-the attachment protocol do not contain `libc` values.
+The host's mechanisms hold the Unix calls: [src/pty.rs](../src/pty.rs) the
+PTY, child, process groups and signals, [src/socket.rs](../src/socket.rs) the
+socket path, permissions and peers, and [src/management.rs](../src/management.rs)
+peer credentials and process-start identities. Only pipe creation, the
+death signal of the worker and child, a zero-length send's flags, peer
+credentials and process-start identities diverge by OS
+([BEHAVIOR.md](BEHAVIOR.md#macos-evidence)). The Bend worker sees only facts
+and never a `libc` value.
 
-The subprocess checks in [`tests/lifecycle.rs`](../tests/lifecycle.rs) synchronize
-on typed responses, frames, and PTY state. With bounded timeouts they cover:
+The old Orbit's subprocess checks in [`tests/lifecycle.rs`](../tests/lifecycle.rs),
+which run unmodified against this server, synchronize on typed responses,
+frames, and PTY state. With bounded timeouts they cover:
 
 - negotiation, handshake order, input, paste, mouse, focus, and resize;
 - selection over soft wraps and wide text, exact copy after later output, and
@@ -115,16 +119,21 @@ on typed responses, frames, and PTY state. With bounded timeouts they cover:
   process-group reaping, and intentional foreground-job survival;
 - recovery when a live child closes every PTY descriptor and later reopens it.
 
+The real-PTY checks in [BEHAVIOR.md](BEHAVIOR.md) cover the same ground in
+finer steps, and the Bend laws prove the lifecycle decisions.
+
 ## Initial boundaries
 
-- ordinary and managed Orbit PTY Sessions are proved on x86_64 Linux and
-  Apple Silicon macOS; Venus/Eon composition, packaging, and distribution remain
-  unsupported on macOS as separate downstream scope
+- ordinary and managed Orbit PTY Sessions are proved on x86_64 Linux;
+  [ORB-C14](CONTRACTS.md) records Apple Silicon macOS, and Venus/Eon
+  composition, packaging, and distribution remain unsupported on macOS as
+  separate downstream scope
 - local Unix socket transport
 - one terminal session, one input-capable client, and one read-only metadata
   observer
-- one product binary, one private canonical protocol library, and one isolated
-  repository-governance tool; only the binary owns terminal and PTY authority
+- one product binary with its Bend worker, one canonical protocol library, and
+  one isolated repository-governance tool; only the host owns terminal and PTY
+  authority, and only the worker decides
 - [Venus](../../venus/README.md) owns graphical implementation; the
   [contract index](CONTRACTS.md) records the producer and consumer proofs
 - no multiplayer, remote transport, Zellij compatibility, layouts, tabs,
