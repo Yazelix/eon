@@ -14,8 +14,8 @@ use super::{
     windows,
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::v11::{
-    Action, Direction, PopupTarget, Response, VERSION, WorkspaceAction,
+use eon_workspace_protocol::v12::{
+    Action, Direction, PopupTarget, Response, Side, VERSION, WorkspaceAction,
 };
 use std::{
     env,
@@ -451,7 +451,7 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
   {command}tab move left|right [--json]{reset}                Move the active tab
   {command}pane create [--json]{reset}                        Add a pane to the active tab
   {command}pane close PANE [--json]{reset}                    Close a pane of the active tab
-  {command}pane move up|down [--json]{reset}                  Move the selected pane
+  {command}pane move up|down|left|right [--json]{reset}       Move the selected pane
   {command}focus ID|left|right|up|down [--json]{reset}        Focus by ID or navigate
 
 {heading}Tools & information{reset}
@@ -655,6 +655,8 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Str
         },
         ["pane", "move", "up"] => Action::Workspace(WorkspaceAction::Move(Direction::Up)),
         ["pane", "move", "down"] => Action::Workspace(WorkspaceAction::Move(Direction::Down)),
+        ["pane", "move", "left"] => Action::MovePaneSideways(Side::Left),
+        ["pane", "move", "right"] => Action::MovePaneSideways(Side::Right),
         ["focus", "left"] => Action::Workspace(WorkspaceAction::Focus(Direction::Left)),
         ["focus", "right"] => Action::Workspace(WorkspaceAction::Focus(Direction::Right)),
         ["focus", "up"] => Action::Workspace(WorkspaceAction::Focus(Direction::Up)),
@@ -747,13 +749,14 @@ mod tests {
                 (Action::Workspace(WorkspaceAction::Move(direction)), true)
             );
         }
-        for (scope, name) in [
-            ("tab", "up"),
-            ("tab", "down"),
-            ("pane", "left"),
-            ("pane", "right"),
-        ] {
-            assert!(parse_control_arguments(&[scope, "move", name].map(Into::into)).is_err());
+        for (name, side) in [("left", Side::Left), ("right", Side::Right)] {
+            assert_eq!(
+                parse_control_arguments(&["pane", "move", name].map(Into::into)).unwrap(),
+                (Action::MovePaneSideways(side), false)
+            );
+        }
+        for name in ["up", "down"] {
+            assert!(parse_control_arguments(&["tab", "move", name].map(Into::into)).is_err());
         }
     }
 

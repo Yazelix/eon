@@ -9,7 +9,7 @@ use std::{
     process::Command,
 };
 
-use eon_workspace_protocol::v11::{
+use eon_workspace_protocol::v12::{
     ALT, CTRL, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry, SHIFT, SUPER,
     Shortcut,
 };
@@ -576,6 +576,7 @@ fn workspace_shortcut(shortcut: &Shortcut) -> bool {
         ))
         || (shortcut.modifiers == (ALT | SHIFT) && matches!(key, "KeyT" | "KeyW" | "KeyB" | "KeyM"))
         || (shortcut.modifiers == (CTRL | ALT) && matches!(key, "KeyH" | "KeyJ" | "KeyK" | "KeyL"))
+        || (shortcut.modifiers == (CTRL | ALT | SHIFT) && matches!(key, "KeyH" | "KeyL"))
         || (shortcut.modifiers == (CTRL | SHIFT) && matches!(key, "KeyC" | "KeyV"))
 }
 
@@ -1155,6 +1156,8 @@ keep_alive = false
             "Alt+Shift+B",
             "Alt+Shift+M",
             "Alt+W",
+            "Ctrl+Alt+Shift+H",
+            "Ctrl+Alt+Shift+L",
             "Alt+0",
             "Alt+1",
             "Alt+2",

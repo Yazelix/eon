@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Ctrl+Alt+H/L now moves the selected pane into the column to its left or
+  right, landing just below that column's open pane, so Ctrl+Alt+H/J/K/L moves
+  a pane in every direction. A column left empty goes away, and at the tab's
+  edge a pane from a stack opens a new column, up to four. Moving the active
+  tab moves to Ctrl+Alt+Shift+H/L, which popup keybindings can no longer use.
+  `eon pane move left|right` does the same from the command line, and
+  `eon versions` reports EONW 12.
 - Orbit, which keeps Eon's terminals alive, decides its session policy in a
   Bend worker whose laws are machine-checked, beside the Rust host that owns
   the terminal. Terminals, the protocol Venus uses, and how Eon starts Orbit

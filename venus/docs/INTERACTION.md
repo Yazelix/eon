@@ -48,8 +48,9 @@ the empty region between tabs and controls drags an undecorated window.
 | Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
 | Alt+H / Alt+L | Walk columns, continuing into the previous or next tab |
 | Alt+K / Alt+J | Walk the selected column's panes |
-| Ctrl+Alt+H / Ctrl+Alt+L | Move the active tab |
-| Ctrl+Alt+K / Ctrl+Alt+J | Move the selected pane |
+| Ctrl+Alt+H / Ctrl+Alt+L | Move the selected pane into the neighbouring column |
+| Ctrl+Alt+K / Ctrl+Alt+J | Move the selected pane within its column |
+| Ctrl+Alt+Shift+H / Ctrl+Alt+Shift+L | Move the active tab |
 | Alt+Shift+T | Request a pending tab |
 | Alt+M | Create a pane in the selected column |
 | Alt+Shift+M | Create a column right of the selected one |
@@ -88,7 +89,8 @@ rounded card with an even gap around it, and the hints sit bare in the margin
 below the cards. Hiding the footer returns its row to terminal content.
 Coral red modifier badges use plain aliases, such as C-A, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects
-the tenth tab. The move hint groups H/L for tabs and K/J for panes.
+the tenth tab. The move pane hint groups H/L and K/J under C-A; the move tab
+hint shows H/L under C-A-S.
 Copy/Paste and Open link stay in full Shortcuts, without footer hints.
 Full Shortcuts and screen-reader labels retain complete chords and action
 names. Narrow windows drop whole hints, keeping help and the visibility toggle

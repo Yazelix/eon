@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Venus consumes EONW v12. VEN-C8: Ctrl+Alt+H/L sends one non-repeating
+  `MovePaneSideways` for the selected pane, applying Alt+Shift+M's 40-column
+  refusal when the move would open a column; moving the active tab moves to
+  Ctrl+Alt+Shift+H/L (`eon-sideways-pane-moves-k9ca`).
 - Venus consumes EONW v11. VEN-C8: Alt+W sends one non-repeating `ClosePane`
   naming the active tab's selected pane and is consumed without an action when
   the tab has none (`eon-close-pane-onwi`).

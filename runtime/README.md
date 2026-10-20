@@ -6,7 +6,7 @@ Both crates build and test without the Eon crates.
 | Package | Owns | Version |
 |---|---|---|
 | `eon-runtime` | Invocation, terminal lifecycle, workspace state, configuration parsing and generation identity | `0.1.0` |
-| `eon-workspace-protocol` | EONW v2–v11 types and bounded codecs | `0.1.0` |
+| `eon-workspace-protocol` | EONW v2–v12 types and bounded codecs | `0.1.0` |
 
 ## Consumer boundary
 
@@ -19,8 +19,8 @@ with terminal-only color and concise usage errors; child options remain forwarde
 
 Popup configuration rejects Alt+Shift+B, reserved for the native window's
 shortcut-hints visibility toggle, Alt+Shift+M, reserved for creating a
-column, and Alt+W, reserved for closing a pane, before creating workspace
-state.
+column, Alt+W, reserved for closing a pane, and Ctrl+Alt+Shift+H/L, reserved
+for moving a tab, before creating workspace state.
 
 The optional native version label uses the supervising product version. Runtime
 parses `[bar] show_version` against the assembly-supplied default when opening
@@ -69,10 +69,11 @@ are drained silently with a two-second/64 KiB bound, without writing quota state
 Eon's [EON-C27](../docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
 owns product policy and installed acceptance.
 
-EONW v11 adds a request that closes one pane by its stable identity; v10
+EONW v12 adds a request that moves the selected pane into the neighbouring
+column; v11 adds a request that closes one pane by its stable identity; v10
 arranges each tab's panes into up to four columns; v9 permits genuinely absent
-provider resets, including stale observations. Historical v2–v10 APIs and
-validators remain unchanged. The current CLI inspects and stops v2–v10
+provider resets, including stale observations. Historical v2–v11 APIs and
+validators remain unchanged. The current CLI inspects and stops v2–v11
 supervisors through their historical lifecycle codecs;
 presentation remains bound to the original exact executable.
 
@@ -88,7 +89,7 @@ same source. Runtime depends on the in-tree Orbit protocol crate.
 Runtime and codec have separate package manifests and version owners.
 
 EONW's complete package is its Cargo manifest and `src/lib.rs`, `src/v2.rs`
-through `src/v11.rs`. It has no external dependencies, feature declarations,
+through `src/v12.rs`. It has no external dependencies, feature declarations,
 build script or workspace-inherited settings.
 
 Eon's `eon-runtime-producer-68hq` holds the accepted transfer revision and

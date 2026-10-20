@@ -72,7 +72,7 @@ eon stop all
 
 `eon stop` shows the generation's live terminal identities and asks for
 confirmation. Closing a window is therefore detach; stopping a generation ends
-its terminals. Previous generations using EONW v2 through v10 can be stopped
+its terminals. Previous generations using EONW v2 through v11 can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
 The runtime extraction changes the component graph and selects a new generation.
 Reattach earlier work with its retained exact Eon or eonbase executable; the
@@ -109,8 +109,9 @@ one, and clicking another column's terminal selects it.
 | Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
 | Alt+H / Alt+L | Select the column to the left or right, continuing into the previous or next tab |
 | Alt+K / Alt+J | Select the previous or next pane in the column |
-| Ctrl+Alt+H / Ctrl+Alt+L | Move the active tab |
-| Ctrl+Alt+K / Ctrl+Alt+J | Move the selected pane |
+| Ctrl+Alt+H / Ctrl+Alt+L | Move the selected pane into the column to the left or right; at the tab's edge a stacked pane opens a new column |
+| Ctrl+Alt+K / Ctrl+Alt+J | Move the selected pane up or down in its column |
+| Ctrl+Alt+Shift+H / Ctrl+Alt+Shift+L | Move the active tab |
 | Alt+Shift+T | Create a tab through the directory picker |
 | Alt+M | Create a pane in the selected column |
 | Alt+Shift+M | Create a column right of the selected one, up to four per tab |
@@ -150,7 +151,8 @@ Coral red modifier badges use plain aliases, such as A-S, before mint keys and g
 labels. The compact tab range is 1..9; Alt+0 still selects the tenth tab.
 Copy/Paste and Open link stay in full help, without footer hints.
 Each group uses C for Ctrl, A for Alt, and S for Shift, joined by hyphens.
-H/L moves tabs and K/J moves panes in the combined move hint. Full help and
+The move pane hint groups H/L and K/J under C-A; the move tab hint shows H/L
+under C-A-S. Full help and
 screen-reader labels keep complete chords and action names. The header `?` disappears when all applicable hints
 fit in the visible bar, unless that button has keyboard focus. Alt+/ always
 opens the complete Shortcuts viewer, including the hints toggle. Eon has no
@@ -218,6 +220,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon pane create [--json]` | Create a pane in the active tab's selected column |
 | `eon pane close PANE [--json]` | Close a pane of the active tab, stopping its terminal |
 | `eon pane move up\|down [--json]` | Move the selected pane one position within its column |
+| `eon pane move left\|right [--json]` | Move the selected pane into the neighbouring column, as Ctrl+Alt+H/L does |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon config-path` | Create and print the configuration root |

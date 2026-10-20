@@ -1,8 +1,8 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v11::{
+use eon_workspace_protocol::v12::{
     Action, Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS,
     MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
-    PopupEntry as SnapshotEntry, PopupTarget, Snapshot, Tab as SnapshotTab, WorkspaceAction,
+    PopupEntry as SnapshotEntry, PopupTarget, Side, Snapshot, Tab as SnapshotTab, WorkspaceAction,
     check_popup_action,
 };
 use std::{
@@ -306,6 +306,7 @@ impl Workspace {
                 self.start_column(self.active, &mut operate)
                     .map_err(|detail| action_error("session-start", detail))?;
             }
+            Action::MovePaneSideways(side) => self.move_pane_sideways(side)?,
         }
         self.remember(request_id);
         Ok(())
@@ -1023,6 +1024,67 @@ impl Workspace {
         Ok(())
     }
 
+    /// Moves the selected pane into the neighbouring column's stack, below its
+    /// expanded pane; past the outer column a stacked pane opens a new column.
+    fn move_pane_sideways(&mut self, side: Side) -> Result<(), Failure> {
+        self.require_established(self.active)?;
+        let tab = &mut self.tabs[self.active];
+        if tab.selected_popup.is_some() {
+            return Err(action_error(
+                "unavailable",
+                "close the popup before moving a pane sideways",
+            ));
+        }
+        let source = tab
+            .selected_column
+            .ok_or_else(|| action_error("unavailable", "active tab has no pane"))?;
+        let neighbor = match side {
+            Side::Left => source.checked_sub(1),
+            Side::Right => Some(source + 1).filter(|next| *next < tab.columns.len()),
+        };
+        let stacked = tab.columns[source].panes.len() > 1;
+        if neighbor.is_none() && (!stacked || tab.columns.len() >= MAX_COLUMNS) {
+            return Ok(());
+        }
+        let column = &mut tab.columns[source];
+        let pane = column.panes.remove(column.expanded);
+        if stacked {
+            column.expanded =
+                index_after_removal(column.expanded, column.expanded, column.panes.len());
+        } else {
+            tab.columns.remove(source);
+        }
+        let selected = match neighbor {
+            Some(target) => {
+                let target = if !stacked && target > source {
+                    target - 1
+                } else {
+                    target
+                };
+                let column = &mut tab.columns[target];
+                column.expanded += 1;
+                column.panes.insert(column.expanded, pane);
+                target
+            }
+            None => {
+                let index = match side {
+                    Side::Left => 0,
+                    Side::Right => tab.columns.len(),
+                };
+                tab.columns.insert(
+                    index,
+                    Column {
+                        panes: vec![pane],
+                        expanded: 0,
+                    },
+                );
+                index
+            }
+        };
+        tab.selected_column = Some(selected);
+        Ok(())
+    }
+
     fn set_tab_directory(&mut self, id: &str, directory: Vec<u8>) -> Result<(), Failure> {
         if tab_number(id).is_none() {
             return Err(action_error(
@@ -1325,13 +1387,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v11::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v12::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v11::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v11::ALT, "Alt"),
-        (eon_workspace_protocol::v11::SHIFT, "Shift"),
-        (eon_workspace_protocol::v11::SUPER, "Super"),
+        (eon_workspace_protocol::v12::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v12::ALT, "Alt"),
+        (eon_workspace_protocol::v12::SHIFT, "Shift"),
+        (eon_workspace_protocol::v12::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1384,7 +1446,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v11::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v12::{ALT, PopupGeometry, Shortcut};
 
     fn catalog() -> PopupCatalog {
         PopupCatalog {
@@ -1485,8 +1547,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v11::encode_response(
-            &eon_workspace_protocol::v11::Response::Snapshot(after),
+        eon_workspace_protocol::v12::encode_response(
+            &eon_workspace_protocol::v12::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -1751,6 +1813,210 @@ mod tests {
         let snapshot = workspace.snapshot();
         assert_eq!(snapshot.tabs.len(), 1);
         assert_eq!(snapshot.active_tab, "t1");
+    }
+
+    #[test]
+    fn sideways_pane_moves_join_neighbor_stacks_split_at_edges_and_drop_emptied_columns() {
+        let mut workspace = Workspace::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let ok = |_| Ok(());
+        let request = |workspace: &mut Workspace, id: &str, action| {
+            workspace.dispatch(id, action, prepared, ok)
+        };
+        let workspace_action = |workspace: &mut Workspace, id: &str, action| {
+            request(workspace, id, Action::Workspace(action))
+        };
+        let sideways = |workspace: &mut Workspace, id: &str, side| {
+            request(workspace, id, Action::MovePaneSideways(side))
+        };
+        // Each column's panes with the expanded one marked, then the selected pane.
+        let layout = |workspace: &Workspace| {
+            let tab = &workspace.snapshot().tabs[0];
+            let columns = tab
+                .columns
+                .iter()
+                .map(|column| {
+                    column
+                        .panes
+                        .iter()
+                        .map(|pane| {
+                            if pane.id == column.expanded {
+                                format!("[{}]", pane.id)
+                            } else {
+                                pane.id.clone()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .collect::<Vec<_>>();
+            (columns, tab.selected_pane.clone().unwrap())
+        };
+        workspace_action(&mut workspace, "p", WorkspaceAction::CreatePane).unwrap();
+
+        // A stacked pane past the outer column opens a new column there.
+        sideways(&mut workspace, "r1", Side::Right).unwrap();
+        assert_eq!(
+            layout(&workspace),
+            (vec!["[p1]".into(), "[p2]".into()], "p2".into())
+        );
+        // A pane alone in the outer column stops quietly.
+        let edge = workspace.snapshot();
+        sideways(&mut workspace, "r2", Side::Right).unwrap();
+        assert_eq!(workspace.snapshot(), edge);
+
+        // A lone pane joins the neighbour's stack and takes its emptied column away.
+        sideways(&mut workspace, "l1", Side::Left).unwrap();
+        assert_eq!(layout(&workspace), (vec!["p1 [p2]".into()], "p2".into()));
+
+        // The moved pane lands directly below the neighbour's expanded pane, not at the end.
+        workspace_action(&mut workspace, "f1", WorkspaceAction::FocusId("p1".into())).unwrap();
+        sideways(&mut workspace, "r3", Side::Right).unwrap();
+        workspace_action(&mut workspace, "f2", WorkspaceAction::FocusId("p2".into())).unwrap();
+        workspace_action(&mut workspace, "p3", WorkspaceAction::CreatePane).unwrap();
+        workspace_action(&mut workspace, "f3", WorkspaceAction::FocusId("p2".into())).unwrap();
+        workspace_action(&mut workspace, "f4", WorkspaceAction::FocusId("p1".into())).unwrap();
+        assert_eq!(
+            layout(&workspace),
+            (vec!["[p2] p3".into(), "[p1]".into()], "p1".into())
+        );
+        sideways(&mut workspace, "l2", Side::Left).unwrap();
+        assert_eq!(layout(&workspace), (vec!["p2 [p1] p3".into()], "p1".into()));
+
+        // The source column expands the following pane; identities and terminals stay.
+        sideways(&mut workspace, "l3", Side::Left).unwrap();
+        assert_eq!(
+            layout(&workspace),
+            (vec!["[p1]".into(), "p2 [p3]".into()], "p1".into())
+        );
+        let tab = &workspace.snapshot().tabs[0];
+        assert_eq!(tab.columns[0].panes[0].session, "session-1");
+
+        // A stacked pane cannot open a fifth column; the move stops quietly.
+        request(&mut workspace, "c1", Action::CreateColumn).unwrap();
+        request(&mut workspace, "c2", Action::CreateColumn).unwrap();
+        workspace_action(&mut workspace, "f5", WorkspaceAction::FocusId("p3".into())).unwrap();
+        let full = workspace.snapshot();
+        assert_eq!(full.tabs[0].columns.len(), MAX_COLUMNS);
+        sideways(&mut workspace, "r4", Side::Right).unwrap();
+        assert_eq!(workspace.snapshot(), full);
+        assert_eq!(
+            sideways(&mut workspace, "r4", Side::Right)
+                .unwrap_err()
+                .code,
+            "duplicate-request"
+        );
+
+        // Removing a lone source left of its target shifts the target's index.
+        workspace_action(&mut workspace, "f6", WorkspaceAction::FocusId("p5".into())).unwrap();
+        sideways(&mut workspace, "r5", Side::Right).unwrap();
+        assert_eq!(
+            layout(&workspace),
+            (
+                vec!["[p1]".into(), "[p4]".into(), "p2 p3 [p5]".into()],
+                "p5".into()
+            )
+        );
+        // Moving the last pane out of a stack expands its preceding pane.
+        sideways(&mut workspace, "r6", Side::Right).unwrap();
+        assert_eq!(
+            layout(&workspace),
+            (
+                vec![
+                    "[p1]".into(),
+                    "[p4]".into(),
+                    "p2 [p3]".into(),
+                    "[p5]".into()
+                ],
+                "p5".into()
+            )
+        );
+
+        // The picker-bound pending tab refuses without changing topology.
+        workspace_action(&mut workspace, "t2", WorkspaceAction::CreateTab).unwrap();
+        let pending = workspace.snapshot();
+        assert_eq!(
+            sideways(&mut workspace, "l4", Side::Left).unwrap_err().code,
+            "choose-directory-first"
+        );
+        assert_eq!(workspace.snapshot(), pending);
+    }
+
+    #[test]
+    fn sideways_pane_moves_refuse_covering_popups_without_changing_tabs() {
+        let mut workspace = Workspace::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        for (id, action) in [
+            ("stack", WorkspaceAction::CreatePane),
+            ("other-tab", WorkspaceAction::CreateTab),
+            ("select", WorkspaceAction::FocusId("t1".into())),
+        ] {
+            workspace
+                .dispatch(id, Action::Workspace(action), prepared, |_| Ok(()))
+                .unwrap();
+        }
+        for entry in ["agent", "project"] {
+            for with_panes in [true, false] {
+                let mut covered = workspace.clone();
+                covered
+                    .dispatch(
+                        "open",
+                        Action::InvokePopup {
+                            tab: "t1".into(),
+                            entry: entry.into(),
+                            expected_instance: None,
+                            intent: InvokeIntent::Toggle,
+                        },
+                        prepared,
+                        |_| Ok(()),
+                    )
+                    .unwrap();
+                if !with_panes {
+                    for session in ["session-1", "session-2"] {
+                        covered
+                            .session_ended(session, SessionEnd::Exited, |_| Ok(()))
+                            .unwrap();
+                    }
+                }
+                let before = covered.clone();
+                for side in [Side::Left, Side::Right] {
+                    assert_eq!(
+                        covered
+                            .dispatch("move", Action::MovePaneSideways(side), prepared, |_| {
+                                panic!("a refused pane move must not start or stop a terminal")
+                            })
+                            .unwrap_err()
+                            .code,
+                        "unavailable"
+                    );
+                    assert_eq!(covered, before);
+                }
+            }
+        }
     }
 
     #[test]
@@ -2218,8 +2484,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v11::encode_response(
-            &eon_workspace_protocol::v11::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v12::encode_response(
+            &eon_workspace_protocol::v12::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 

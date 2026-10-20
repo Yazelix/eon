@@ -1,6 +1,6 @@
 use super::{NATIVE_PLATFORM, NativePlatform};
-use eon_workspace_protocol::v11::{
-    Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, Snapshot,
+use eon_workspace_protocol::v12::{
+    Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, Side, Snapshot, Tab,
     WorkspaceAction as CommonAction,
 };
 use orbit_protocol::session;
@@ -28,6 +28,7 @@ pub(super) enum NativeShortcutAction {
     FocusTabPosition,
     Focus(WorkspaceDirection),
     Move(WorkspaceDirection),
+    MovePaneSideways(Side),
     CreatePane,
     CreateColumn,
     CreateTab,
@@ -98,6 +99,7 @@ pub(super) const CTRL_ALT: session::Modifiers =
     session::Modifiers::CTRL.union(session::Modifiers::ALT);
 pub(super) const CTRL_SHIFT: session::Modifiers =
     session::Modifiers::CTRL.union(session::Modifiers::SHIFT);
+const CTRL_ALT_SHIFT: session::Modifiers = CTRL_ALT.union(session::Modifiers::SHIFT);
 pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
     NativeShortcut {
         group: "Navigate",
@@ -214,15 +216,29 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         "Tabs and panes",
         "Move tab left",
         KeyCode::KeyH,
-        CTRL_ALT,
+        CTRL_ALT_SHIFT,
         NativeShortcutAction::Move(WorkspaceDirection::Left),
     ),
     NativeShortcut::key(
         "Tabs and panes",
         "Move tab right",
         KeyCode::KeyL,
-        CTRL_ALT,
+        CTRL_ALT_SHIFT,
         NativeShortcutAction::Move(WorkspaceDirection::Right),
+    ),
+    NativeShortcut::key(
+        "Tabs and panes",
+        "Move pane to left column",
+        KeyCode::KeyH,
+        CTRL_ALT,
+        NativeShortcutAction::MovePaneSideways(Side::Left),
+    ),
+    NativeShortcut::key(
+        "Tabs and panes",
+        "Move pane to right column",
+        KeyCode::KeyL,
+        CTRL_ALT,
+        NativeShortcutAction::MovePaneSideways(Side::Right),
     ),
     NativeShortcut::key(
         "Tabs and panes",
@@ -397,14 +413,14 @@ pub(super) fn native_pointer_shortcut_for(
 }
 
 pub(super) fn shortcut_groups(
-    entries: &[eon_workspace_protocol::v11::PopupEntry],
+    entries: &[eon_workspace_protocol::v12::PopupEntry],
 ) -> Vec<ShortcutGroup> {
     shortcut_groups_for(NATIVE_PLATFORM, entries)
 }
 
 pub(super) fn shortcut_groups_for(
     platform: NativePlatform,
-    entries: &[eon_workspace_protocol::v11::PopupEntry],
+    entries: &[eon_workspace_protocol::v12::PopupEntry],
 ) -> Vec<ShortcutGroup> {
     let mut groups = ["Navigate", "Tabs and panes", "Host"]
         .into_iter()
@@ -451,7 +467,7 @@ pub(super) fn shortcut_groups_for(
 pub(super) fn shortcut_hints_for(
     platform: NativePlatform,
     focus: WorkspaceFocus,
-    entries: &[eon_workspace_protocol::v11::PopupEntry],
+    entries: &[eon_workspace_protocol::v12::PopupEntry],
 ) -> Vec<ShortcutHint> {
     let mut hints: Vec<ShortcutHint> = Vec::new();
     for shortcut in FIXED_SHORTCUTS {
@@ -468,7 +484,8 @@ pub(super) fn shortcut_hints_for(
             Action::FocusTabPosition => ("tab", 3),
             Action::CloseTab => ("close tab", 3),
             Action::ClosePane => ("close pane", 3),
-            Action::Move(_) => ("move", 3),
+            Action::Move(Left | Right) => ("move tab", 3),
+            Action::Move(Up | Down) | Action::MovePaneSideways(_) => ("move pane", 3),
             Action::NewWindow => ("new window", 3),
             Action::ReturnToTerminal if focus != WorkspaceFocus::Terminal => ("terminal", 0),
             Action::TraverseChrome(Left | Right) if focus == WorkspaceFocus::Tabs => ("tabs", 1),
@@ -479,7 +496,7 @@ pub(super) fn shortcut_hints_for(
             NativeShortcutTrigger::Key(code, modifiers) => {
                 (wire_modifiers(modifiers), format!("{code:?}"))
             }
-            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v11::ALT, "1..9".into()),
+            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v12::ALT, "1..9".into()),
             _ => continue,
         };
         let modifiers = physical_modifiers_label_for(platform, modifiers, true);
@@ -550,7 +567,7 @@ fn physical_shortcut_label_for(platform: NativePlatform, modifiers: u8, key: &st
 }
 
 fn physical_modifiers_label_for(platform: NativePlatform, modifiers: u8, compact: bool) -> String {
-    use eon_workspace_protocol::v11 as wire;
+    use eon_workspace_protocol::v12 as wire;
 
     let mut parts = Vec::with_capacity(5);
     let labels = match (platform, compact) {
@@ -594,7 +611,7 @@ fn physical_key_label(key: &str) -> &str {
 }
 
 fn wire_modifiers(modifiers: session::Modifiers) -> u8 {
-    use eon_workspace_protocol::v11 as wire;
+    use eon_workspace_protocol::v12 as wire;
 
     [
         (session::Modifiers::SHIFT, wire::SHIFT),
@@ -623,6 +640,9 @@ pub(super) fn workspace_shortcut(
         NativeShortcutAction::Move(direction) => CommonAction::Move(direction),
         NativeShortcutAction::CreatePane => CommonAction::CreatePane,
         NativeShortcutAction::CreateColumn => return Some(WorkspaceAction::CreateColumn),
+        NativeShortcutAction::MovePaneSideways(side) => {
+            return Some(WorkspaceAction::MovePaneSideways(side));
+        }
         NativeShortcutAction::CreateTab => CommonAction::CreateTab,
         NativeShortcutAction::CloseTab => CommonAction::CloseTab {
             tab: active_tab.into(),
@@ -633,6 +653,20 @@ pub(super) fn workspace_shortcut(
         _ => return None,
     };
     Some(WorkspaceAction::Workspace(action))
+}
+
+/// Whether a sideways move would need a new column at that edge. Eon owns the cap.
+pub(super) fn sideways_move_opens_column(tab: &Tab, side: Side) -> bool {
+    if tab.selected_popup.is_some() {
+        return false;
+    }
+    let column = match side {
+        Side::Left => tab.columns.first(),
+        Side::Right => tab.columns.last(),
+    };
+    column.is_some_and(|column| {
+        column.panes.len() > 1 && tab.selected_pane.as_ref() == Some(&column.expanded)
+    })
 }
 
 pub(super) fn tab_shortcut_index(
@@ -692,7 +726,7 @@ pub(super) fn popup_shortcut(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v11::PopupEntry;
+    use eon_workspace_protocol::v12::PopupEntry;
 
     #[test]
     fn direct_workspace_shortcuts_use_stable_eon_actions() {
@@ -727,12 +761,16 @@ mod tests {
             ),
             (
                 KeyCode::KeyH,
-                Modifiers::CTRL.union(Modifiers::ALT),
+                Modifiers::CTRL
+                    .union(Modifiers::ALT)
+                    .union(Modifiers::SHIFT),
                 CommonAction::Move(WorkspaceDirection::Left),
             ),
             (
                 KeyCode::KeyL,
-                Modifiers::CTRL.union(Modifiers::ALT),
+                Modifiers::CTRL
+                    .union(Modifiers::ALT)
+                    .union(Modifiers::SHIFT),
                 CommonAction::Move(WorkspaceDirection::Right),
             ),
             (
@@ -765,6 +803,12 @@ mod tests {
             ),
             Some(WorkspaceAction::CreateColumn)
         );
+        for (key, side) in [(KeyCode::KeyH, Side::Left), (KeyCode::KeyL, Side::Right)] {
+            assert_eq!(
+                workspace_shortcut(key, Modifiers::CTRL.union(Modifiers::ALT), "t2", Some("p3")),
+                Some(WorkspaceAction::MovePaneSideways(side))
+            );
+        }
         assert_eq!(
             workspace_shortcut(KeyCode::KeyW, Modifiers::ALT, "t2", Some("p3")),
             Some(WorkspaceAction::ClosePane { pane: "p3".into() })
@@ -802,20 +846,55 @@ mod tests {
     }
 
     #[test]
+    fn sideways_moves_open_a_column_only_for_a_stacked_outer_pane() {
+        use eon_workspace_protocol::v12::{Column, Pane};
+
+        let pane = |id: &str| Pane {
+            id: id.into(),
+            session: format!("session-{id}"),
+            endpoint: Vec::new(),
+            live: true,
+        };
+        let column = |ids: &[&str]| Column {
+            panes: ids.iter().map(|id| pane(id)).collect(),
+            expanded: ids[0].into(),
+        };
+        let tab = |columns, selected: &str| Tab {
+            id: "t1".into(),
+            directory: b"/".to_vec(),
+            pending: false,
+            selected_pane: Some(selected.into()),
+            selected_popup: None,
+            columns,
+            popups: Vec::new(),
+        };
+        let stacked = tab(vec![column(&["p1", "p2"]), column(&["p3"])], "p1");
+        assert!(sideways_move_opens_column(&stacked, Side::Left));
+        assert!(!sideways_move_opens_column(&stacked, Side::Right));
+        let lone = tab(vec![column(&["p1"]), column(&["p2", "p3"])], "p1");
+        assert!(!sideways_move_opens_column(&lone, Side::Left));
+        let mut outer = tab(vec![column(&["p1"]), column(&["p2", "p3"])], "p3");
+        outer.columns[1].expanded = "p3".into();
+        assert!(sideways_move_opens_column(&outer, Side::Right));
+        outer.selected_popup = Some("u1".into());
+        assert!(!sideways_move_opens_column(&outer, Side::Right));
+    }
+
+    #[test]
     fn shortcut_hints_follow_bindings_catalog_and_native_focus() {
         let entry = PopupEntry {
             id: "agent".into(),
             label: "My agent".into(),
-            shortcut: eon_workspace_protocol::v11::Shortcut {
-                modifiers: eon_workspace_protocol::v11::SUPER,
+            shortcut: eon_workspace_protocol::v12::Shortcut {
+                modifiers: eon_workspace_protocol::v12::SUPER,
                 key: "KeyF".into(),
             },
         };
         let project = PopupEntry {
             id: "project".into(),
             label: "Folder chooser".into(),
-            shortcut: eon_workspace_protocol::v11::Shortcut {
-                modifiers: eon_workspace_protocol::v11::ALT,
+            shortcut: eon_workspace_protocol::v12::Shortcut {
+                modifiers: eon_workspace_protocol::v12::ALT,
                 key: "KeyZ".into(),
             },
         };
@@ -883,13 +962,20 @@ mod tests {
                     entry.label,
                 )
             );
-            let moves: Vec<_> = terminal
-                .iter()
-                .filter(|hint| hint.label == "move")
-                .collect();
-            assert_eq!(moves.len(), 1);
-            assert_eq!(moves[0].modifiers, "C-A");
-            assert_eq!(moves[0].key, "H/L · K/J");
+            let moves = |label| {
+                terminal
+                    .iter()
+                    .filter(|hint| hint.label == label)
+                    .collect::<Vec<_>>()
+            };
+            let panes = moves("move pane");
+            assert_eq!(panes.len(), 1);
+            assert_eq!(panes[0].modifiers, "C-A");
+            assert_eq!(panes[0].key, "H/L · K/J");
+            let tabs = moves("move tab");
+            assert_eq!(tabs.len(), 1);
+            assert_eq!(tabs[0].modifiers, "C-A-S");
+            assert_eq!(tabs[0].key, "H/L");
             assert!(
                 terminal
                     .iter()

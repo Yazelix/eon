@@ -359,7 +359,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Status:** Partially proved
 - **Consumer:** One local Eon workspace user.
 - **Trigger:** Launch, create or close a tab, create or close a pane, create a
-  column, traverse focus, reorder the active tab or selected pane, receive
+  column, traverse focus, reorder the active tab or selected pane, move the
+  selected pane into a neighbouring column, receive
   terminal exit, or recover accepted same-boot runs.
 - **Result:**
   - A workspace contains horizontal tabs. Each established tab with panes
@@ -428,12 +429,20 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Alt+Shift+M to it and, in a tab with one to three columns, refuses it with
     a notice when a column would get fewer than 40 terminal columns. Alt+M adds
     a pane to the selected column.
-  - Moving left/right swaps the active tab with exactly one adjacent tab;
-    moving up/down swaps the selected pane with exactly one adjacent pane in
-    the selected column. The moved stable identity remains selected. Movement stops
-    quietly at ordered edges and remains unavailable in the picker-bound active tab.
-    Venus maps Ctrl+Alt+H/L and Ctrl+Alt+K/J directly to these actions without a
-    mode.
+  - Moving the tab left/right swaps the active tab with exactly one adjacent
+    tab; moving up/down swaps the selected pane with exactly one adjacent pane
+    in the selected column. Moving the selected pane sideways places it in the
+    neighbouring column's stack directly below that column's expanded pane,
+    expanded; the source column expands its following pane, otherwise its
+    preceding one, and disappears when emptied. Past the tab's outer column a
+    pane from a stack opens a new column at that edge while the tab has fewer
+    than four columns; a pane alone there, or a fifth column, stops quietly.
+    Sideways movement is unavailable while a popup or picker covers the tab.
+    The moved stable identity remains selected and keeps its terminal. Movement
+    stops quietly at ordered edges and remains unavailable in the picker-bound
+    active tab. Venus maps Ctrl+Alt+Shift+H/L, Ctrl+Alt+K/J and Ctrl+Alt+H/L
+    directly to these actions without a mode; `eon pane move left|right` sends
+    the same EONW v12 sideways move.
   - Closing names the expected active `tN` and requires another live tab. A
     non-final pending tab first stops its exact picker, then disappears and
     restores its prior tab. Eon stops the tab's pane and popup terminals one at
@@ -482,10 +491,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v11 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v12 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
-  arbitrary reorder target, cross-column or cross-tab pane movement, picker relocation, durable layout
+  arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
   restoration, a per-pane terminal restart action, closing panes outside the
   active tab, terminal
   content/history, provider state, plugin surface, remote access, or
@@ -553,6 +562,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   pane, a stacked pane and a non-final tab's only pane with Alt+W, each pruned
   as a natural exit, and refused the final pane with the rejected-action
   notice.
+  Sideways pane moves (`eon-sideways-pane-moves-k9ca`): runtime
+  `sideways_pane_moves_join_neighbor_stacks_split_at_edges_and_drop_emptied_columns`,
+  `sideways_pane_moves_refuse_covering_popups_without_changing_tabs`,
+  the real-binary `eon pane move right` in
+  `delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`,
+  `sideways_pane_moves_are_v12_requests_and_older_traffic_keeps_v11_bytes`,
+  `reorder_parser_accepts_only_each_workspace_axis` and Venus
+  `direct_workspace_shortcuts_use_stable_eon_actions` and
+  `sideways_moves_open_a_column_only_for_a_stacked_outer_pane`; installed
+  dogfood of both chords is pending.
   Installed AT-SPI labels and broader reader use remain open. These checks do not establish uninterrupted picker rendering,
   fractional-scale, wider compositor or non-systemd coverage.
 
@@ -651,7 +670,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   content, or direct child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v2–v11 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v2–v12 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -728,7 +747,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     configuration, PIDs and live state do not define identity.
   - Older live generations remain discoverable, explicitly presentable when
     compatible, and explicitly stoppable through their own supervisor. Generation
-    inspection and Stop use the supervisor's known EONW v2 through v10 lifecycle
+    inspection and Stop use the supervisor's known EONW v2 through v11 lifecycle
     codec; presentation still requires the exact current EONW and component graph.
   - `eon stop previous` attempts every non-dead generation except the exact
     current one, whether current is live or not. Fixed-namespace legacy work
@@ -1451,7 +1470,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Copy, Paste and Open link retain their bindings and full-help
   entries, without footer hints. Compact headers use C/A/S aliases joined by
   hyphens, such as A-S; the compact tab range is 1..9, while full help retains
-  Alt+0 for the tenth tab. Short labels use keys/hints and one move hint for both axes. Full
+  Alt+0 for the tenth tab. Short labels use keys/hints, one pane-move hint for both axes and
+  one tab-move hint. Full
   help and accessible names retain complete chords and actions; creation
   labels name the tab, pane or window explicitly. Width pressure drops whole hints,
   retaining help and the visibility toggle longest. The header Shortcuts button is

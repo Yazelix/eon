@@ -1,5 +1,5 @@
 use crate::scene::{DrawRow, Scene, ScenePreview};
-use eon_workspace_protocol::v11::{Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab};
+use eon_workspace_protocol::v12::{Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab};
 use orbit_protocol::FrameReducer;
 use orbit_protocol::session::{
     ClipboardLocation, FailureCode, PreviewOutcome, ScrollOutcome, ServerMessage, WheelOutcome,
@@ -537,7 +537,7 @@ fn bounded(mut detail: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v11::{
+    use eon_workspace_protocol::v12::{
         self as workspace, CodexQuota, CodexQuotaState, Failure, Pane, PopupEntry, Shortcut, Tab,
     };
 
@@ -553,7 +553,7 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v11::Column {
+                    columns: vec![eon_workspace_protocol::v12::Column {
                         panes: vec![Pane {
                             id: "pane-1".into(),
                             session: "session-1".into(),
@@ -570,7 +570,7 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-2".into()),
-                    columns: vec![eon_workspace_protocol::v11::Column {
+                    columns: vec![eon_workspace_protocol::v12::Column {
                         panes: vec![Pane {
                             id: "pane-2".into(),
                             session: "session-2".into(),
@@ -581,7 +581,7 @@ mod tests {
                     }],
                 },
             ],
-            geometry: eon_workspace_protocol::v11::PopupGeometry {
+            geometry: eon_workspace_protocol::v12::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },

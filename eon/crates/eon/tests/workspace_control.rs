@@ -1,6 +1,6 @@
 use eon_workspace_protocol::{
-    v2, v3, v4 as legacy, v5, v6, v7, v8, v9, v10,
-    v11::{
+    v2, v3, v4 as legacy, v5, v6, v7, v8, v9, v10, v11,
+    v12::{
         Action as ProtocolAction, Column, Direction, HEADER_BYTES, InvokeIntent, MAX_SESSIONS,
         Pane, Popup, PopupGeometry, PopupTarget, Request, Response, Snapshot, Tab, VERSION,
         WorkspaceAction as Action, declared_message_len, decode_request, decode_response,
@@ -2719,6 +2719,21 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         assert_eq!(unsafe { libc::kill(pid, 0) }, 0);
     }
 
+    // A sideways move splits the selected stacked pane into a new column.
+    let moved = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["pane", "move", "right", "--json"],
+    );
+    assert!(
+        moved.status.success(),
+        "stdout={} stderr={}",
+        stdout(&moved),
+        String::from_utf8_lossy(&moved.stderr)
+    );
+    assert!(stdout(&moved).contains("{\"id\":\"p3\",\"column\":2,\"expanded\":true,"));
+
     // Closing a pane stops exactly its terminal and prunes it like an exit.
     let second = live_identity(&generation.join("session-2.sock")).process_id;
     let closed = invoke(
@@ -4153,6 +4168,7 @@ fn previous_supervisor(
                     8 => v8::encode_response(&v8::Response::Failure(failure)),
                     9 => v9::encode_response(&v9::Response::Failure(failure)),
                     10 => v10::encode_response(&v10::Response::Failure(failure)),
+                    11 => v11::encode_response(&v11::Response::Failure(failure)),
                     _ => unreachable!(),
                 }
                 .unwrap()
@@ -4227,6 +4243,15 @@ fn previous_supervisor(
                         }
                         _ => "wrong",
                     },
+                    11 => match v11::decode_request(&request).unwrap().action {
+                        v11::Action::Workspace(v11::WorkspaceAction::InspectRuntime) => "inspect",
+                        v11::Action::Workspace(v11::WorkspaceAction::Stop { generation })
+                            if generation == server_id =>
+                        {
+                            "stop"
+                        }
+                        _ => "wrong",
+                    },
                     _ => unreachable!(),
                 };
                 assert_eq!(action, if step == 4 { "stop" } else { "inspect" });
@@ -4262,6 +4287,7 @@ fn previous_supervisor(
                     8 => v8::encode_lifecycle_response(&lifecycle),
                     9 => v9::encode_lifecycle_response(&lifecycle),
                     10 => v10::encode_lifecycle_response(&lifecycle),
+                    11 => v11::encode_lifecycle_response(&lifecycle),
                     _ => unreachable!(),
                 }
                 .unwrap()
@@ -4273,7 +4299,7 @@ fn previous_supervisor(
 
 #[test]
 fn current_cli_stops_known_previous_eonw_generations_through_their_supervisors() {
-    for version in 2..=10 {
+    for version in 2..=11 {
         let root = temporary_directory();
         let runtime = root.join("runtime");
         let config = root.join("config");
@@ -4474,7 +4500,7 @@ fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
     let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
     assert!(listed.status.success());
     assert!(stdout(&listed).contains("\"id\":\"legacy\",\"kind\":\"legacy\",\"state\":\"live\""));
-    assert!(stdout(&listed).contains("current Eon requires EONW v11"));
+    assert!(stdout(&listed).contains("current Eon requires EONW v12"));
     assert!(stdout(&listed).contains("legacy supervisor has no authoritative stop action"));
 
     let attached = eon_command(&binary)
@@ -4486,7 +4512,7 @@ fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
         .output()
         .unwrap();
     assert_eq!(attached.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&attached.stderr).contains("current Eon requires EONW v11"));
+    assert!(String::from_utf8_lossy(&attached.stderr).contains("current Eon requires EONW v12"));
     assert!(!venus_log.exists());
 
     let stopped = invoke(&binary, &runtime, &config, &["stop", "legacy", "--json"]);

@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v2 / ORBS v13 through the
-in-tree `orbit-protocol` crate and canonical EONW v11 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v12 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version.
@@ -541,8 +541,11 @@ re-proved when that platform or feature is next touched.
     snapshot and sends the existing stable `tN` through `FocusId`. A missing
     position is consumed without an action or terminal input. Alt+H/L remains
     the traversal path for tabs after position 10.
-  - Ctrl+Alt+H/L sends one non-repeating semantic move for the active tab;
-    Ctrl+Alt+K/J does the same for its selected pane. Alt+Shift+W sends one
+  - Ctrl+Alt+Shift+H/L sends one non-repeating semantic move for the active
+    tab; Ctrl+Alt+K/J does the same for its selected pane within its column, and
+    Ctrl+Alt+H/L sends one EONW v12 sideways move of that pane into the
+    neighbouring column. When that move would open a column at the tab's edge,
+    Venus applies Alt+Shift+M's 40-terminal-column refusal. Alt+Shift+W sends one
     non-repeating close naming the snapshot's active stable `tN`; Alt+W sends
     one EONW v11 close naming the active tab's selected `pN` and is consumed
     without an action when the tab has none. Venus consumes
@@ -1142,7 +1145,8 @@ re-proved when that platform or feature is next touched.
   Copy, Paste and Open link stay in full help and dispatch, without footer hints.
   Compact modifier headers use C/A/S aliases joined by hyphens, such as A-S.
   The compact tab range is 1..9; full help retains the tenth-tab Alt+0 binding.
-  Short labels use keys and hints; one move hint groups horizontal and vertical keys.
+  Short labels use keys and hints; one pane-move hint groups horizontal and vertical
+  keys, and one tab-move hint holds the tab keys.
   Full help and accessible labels retain complete chords and action names.
   Creation labels name the tab, pane, column or window explicitly.
   Width pressure drops low-priority hints before help and the visibility

@@ -614,7 +614,7 @@ fn features(r: &mut Recorder) -> Result<()> {
         r.sleep(Duration::from_millis(500))?;
         shoot(r, "eon", &poster)?;
         r.sleep(Duration::from_millis(400))?;
-        r.key("Ctrl+Alt+l", Duration::from_millis(300))?;
+        r.key("Ctrl+Alt+Shift+l", Duration::from_millis(300))?;
         wait_for(r, &eon, &home, "tab moved right", |state| {
             state["tabs"][1]["id"] == "t1"
         })?;
