@@ -1,4 +1,5 @@
 use crate::support::*;
+use orbit_protocol::Frame;
 use orbit_protocol::session::{
     ClientMessage, ClipboardLocation, FailureCode, Modifiers, ScrollOutcome, SelectionAction,
     SelectionPosition, ServerMessage,
@@ -27,6 +28,22 @@ fn tick(position: SelectionPosition) -> ClientMessage {
 
 /// Column 0 of the top row.
 const TOP: SelectionPosition = SelectionPosition { x: 5.0, y: 9.0 };
+
+fn finished(client: &mut Peer) -> u64 {
+    match client.receive() {
+        ServerMessage::SelectionFinished { frame_revision } => frame_revision,
+        other => panic!("expected SelectionFinished, received {}", brief(&other)),
+    }
+}
+
+/// Whether the frame presents a host selection.
+fn selected(frame: &Frame) -> bool {
+    frame
+        .rows
+        .iter()
+        .flat_map(|row| &row.cells)
+        .any(|cell| cell.style.selected)
+}
 
 /// Reads frames until a scroll outcome; returns its requested and applied rows.
 fn outcome(client: &mut Peer) -> (i16, i16) {
@@ -98,11 +115,10 @@ pub fn run() {
     assert_eq!(applied, expected);
 
     client.send(&finish(position(1.0, 9.0)));
-    let named = match client.receive() {
-        ServerMessage::SelectionFinished { frame_revision } => frame_revision,
-        other => panic!("expected SelectionFinished, received {}", brief(&other)),
-    };
-    assert_eq!(client.frame().revision, named);
+    let named = finished(&mut client);
+    let released = client.frame();
+    assert_eq!(released.revision, named);
+    assert!(selected(&released));
     // From the oldest row down to the press at the start of line 43.
     let text = match client.receive() {
         ServerMessage::CopiedText {
@@ -113,6 +129,31 @@ pub fn run() {
     };
     let lines: Vec<String> = (1..43).map(|n| format!("line {n:02}")).collect();
     assert_eq!(text, lines.join("\n"));
+
+    // A commit toward live clears the presented selection, though rows of it
+    // stay in view; so does a return to live from two rows above live.
+    client.send(&scroll(named, 35));
+    let (_, applied, moved) = client.scroll_outcome();
+    assert_eq!((applied, moved.scroll_position.rows_from_live), (35, 2));
+    assert!(!selected(&moved));
+    let row = 10.0 * 18.0 + 9.0; // "line 46", still in view at live.
+    client.send(&begin(moved.revision, position(1.0, row)));
+    client.expect(ServerMessage::Accepted);
+    client.frame();
+    client.send(&finish(position(39.0, row)));
+    let named = finished(&mut client);
+    assert!(selected(&client.frame()));
+    client.expect(ServerMessage::CopiedText {
+        location: ClipboardLocation::Selection,
+        text: "line".into(),
+    });
+    client.send(&ClientMessage::ReturnToLive);
+    let live = client.frame();
+    assert_eq!(
+        (live.revision, live.scroll_position.rows_from_live),
+        (named + 1, 0)
+    );
+    assert!(!selected(&live));
 
     gate.release();
     client.exited(6);

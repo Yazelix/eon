@@ -507,6 +507,81 @@ mod tests {
         assert!(cells().any(|cell| cell.hyperlink == "https://example.test"));
     }
 
+    /// A frame's scroll position follows libghostty's viewport through output
+    /// below a held viewport, the alternate screen, reflow, byte-budget
+    /// eviction, `CSI 3 J` and reset (ORB-C8).
+    #[test]
+    fn scroll_position_follows_reflow_eviction_and_clears() {
+        let mut terminal = Terminal::new(TerminalOptions {
+            cols: 8,
+            rows: 4,
+            max_scrollback: 64 * 1024,
+        })
+        .unwrap();
+        let mut extractor = FrameExtractor::new().unwrap();
+        let mut frame = |terminal: &Terminal<'static, '_>| extractor.frame(0, terminal).unwrap();
+        let position = |rows_from_live, history_rows| ScrollPosition {
+            rows_from_live,
+            history_rows,
+        };
+        for line in 0..100 {
+            terminal.vt_write(format!("{line:07}\r\n").as_bytes());
+        }
+        assert_eq!(frame(&terminal).scroll_position, position(0, 97));
+
+        // Output below a held viewport keeps its rows and deepens it.
+        terminal.scroll_viewport(ScrollViewport::Delta(-3));
+        let held = frame(&terminal);
+        assert_eq!(held.scroll_position, position(3, 97));
+        terminal.vt_write(b"0000100\r\n0000101\r\n");
+        let output = frame(&terminal);
+        assert_eq!(output.rows, held.rows);
+        assert_eq!(output.scroll_position, position(5, 99));
+
+        // The alternate screen has no history; leaving it restores the primary viewport.
+        terminal.vt_write(b"\x1b[?1049hAlternate");
+        assert_eq!(frame(&terminal).scroll_position, position(0, 0));
+        terminal.vt_write(b"\x1b[?1049l");
+        let primary = frame(&terminal);
+        assert_eq!(primary.scroll_position, output.scroll_position);
+        assert_eq!(primary.rows, output.rows);
+
+        // Narrower columns reflow history into more rows.
+        terminal.resize(4, 4, 8, 16).unwrap();
+        let reflowed = frame(&terminal).scroll_position;
+        assert!(reflowed.history_rows > primary.scroll_position.history_rows);
+        assert!(reflowed.rows_from_live > primary.scroll_position.rows_from_live);
+
+        // Output past the byte budget evicts the oldest rows under a viewport
+        // held at the top. Wider rows fill libghostty's pages in fewer rows,
+        // each of which costs about a millisecond in a debug build.
+        terminal.resize(80, 4, 8, 16).unwrap();
+        terminal.scroll_viewport(ScrollViewport::Top);
+        let oldest = frame(&terminal);
+        for line in 102..1_602 {
+            terminal.vt_write(format!("{line:07}\r\n").as_bytes());
+        }
+        let evicted = frame(&terminal);
+        assert!(evicted.scroll_position.history_rows < 1_500);
+        assert_eq!(
+            evicted.scroll_position.rows_from_live,
+            evicted.scroll_position.history_rows
+        );
+        assert_ne!(evicted.rows, oldest.rows);
+
+        // CSI 3 J and reset leave no history.
+        terminal.scroll_viewport(ScrollViewport::Bottom);
+        assert_eq!(frame(&terminal).scroll_position.rows_from_live, 0);
+        terminal.vt_write(b"\x1b[3J");
+        assert_eq!(frame(&terminal).scroll_position, position(0, 0));
+        terminal.vt_write(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n");
+        terminal.scroll_viewport(ScrollViewport::Delta(-1));
+        let refilled = frame(&terminal).scroll_position;
+        assert!(refilled.history_rows > 0 && refilled.rows_from_live == 1);
+        terminal.vt_write(b"\x1bc");
+        assert_eq!(frame(&terminal).scroll_position, position(0, 0));
+    }
+
     #[test]
     fn vertical_preview_reads_history_nearest_first() {
         let mut terminal = Terminal::new(TerminalOptions {

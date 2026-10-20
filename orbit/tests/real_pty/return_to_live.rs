@@ -1,5 +1,7 @@
 use crate::support::*;
-use orbit_protocol::session::{ClientMessage, FailureCode, ServerMessage};
+use orbit_protocol::session::{
+    ClientMessage, FailureCode, Modifiers, SelectionAction, ServerMessage,
+};
 use std::time::Instant;
 
 // Each idle tick queues one Failure of about 84 bytes; this many leave the
@@ -115,13 +117,19 @@ pub fn run() {
     revision += 1;
 
     // A client that stops reading lets its queue fill past the room a frame
-    // needs: the return then fails with Failure(Terminal) before the viewport
-    // moves, and the client stays attached. The server reads the flood as
-    // fast as it answers each request, which under load takes longer than the
-    // usual ten seconds.
+    // needs: the return and a host selection press then fail with
+    // Failure(Terminal) before the viewport or selection changes, and the
+    // client stays attached. The server reads the flood as fast as it answers
+    // each request, which under load takes longer than the usual ten seconds.
     peer.set_timeout(60.0);
     let mut flood = encode(&idle_tick()).repeat(STALLED_REQUESTS);
     flood.extend(encode(&ClientMessage::ReturnToLive));
+    flood.extend(encode(&ClientMessage::Selection(SelectionAction::Begin {
+        frame_revision: revision,
+        position: position(5.0, 9.0),
+        time_ns: 1,
+        modifiers: Modifiers::empty(),
+    })));
     flood.extend(encode(&paste(b"x")));
     peer.send_bytes(&flood);
     peer.set_timeout(10.0);
@@ -135,7 +143,14 @@ pub fn run() {
         peer.failure(FailureCode::InvalidInput);
     }
     peer.failure(FailureCode::Terminal);
+    peer.failure(FailureCode::Terminal);
     peer.expect(ServerMessage::Accepted);
+    // The refused press left no sequence to update.
+    peer.send(&ClientMessage::Selection(SelectionAction::Update {
+        position: position(15.0, 9.0),
+        modifiers: Modifiers::empty(),
+    }));
+    peer.failure(FailureCode::InvalidInput);
     peer.send(&scroll(revision, -1));
     assert_eq!(outcome(&mut peer), (-1, -1, revision + 1, 29));
     peer.send(&ClientMessage::ReturnToLive);

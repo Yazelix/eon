@@ -363,7 +363,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   terminal-routed or one-row behavior. This does not accept Eonova, or any
   ORBS v13 client on Apple Silicon (Venus or Eon); ORB-C14 covers Orbit's own
   native ORBS v13 behavior.
-- **Proof:** the `eon-awmq.3` import commit
+- **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.3` commit
+  for scroll position, selection clearing and granular ticks
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
     including the differential against the old Rust Orbit from Eon
@@ -377,7 +378,14 @@ in this repository. Each contract below states the current ORBS v13 behavior.
       [`orbit-mouse`](../tests/real_pty/mouse.rs),
       [`orbit-key-live`](../tests/real_pty/key_live.rs) and
       [`orbit-selection-tick`](../tests/real_pty/selection_tick.rs)
+    - [`orbit-selection-tick`](../tests/real_pty/selection_tick.rs) also
+      finds a presented selection cleared by a commit toward live and by a
+      return to live, with rows of it still in view.
     - [`vertical_preview_reads_history_nearest_first`](../src/frame.rs)
+    - [`scroll_position_follows_reflow_eviction_and_clears`](../src/frame.rs)
+      follows the position through output below a held viewport, the alternate
+      screen, reflow, byte-budget eviction, `CSI 3 J` and reset.
+    - [`upward_ticks_extend_cells_spans_and_lines_with_unicode_copy`](../src/pointer.rs)
     - [`output_queue_keeps_scroll_outcomes_and_admits_them_before_moving`](../src/socket.rs)
     - Laws [`vertical_answers_are_accounted`](../LAWS.bend),
       [`vertical_future_requests_fail`](../LAWS.bend),
@@ -395,10 +403,6 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   - Pending re-proof in this repository: installed scrollback and
     ReturnToLive through Venus (`eon-monorepo-2oko.6` dogfood item 9 was not
     exercised).
-  - No check of this tree covers the scroll position through reflow,
-    byte-budget eviction, `CSI 3 J` clear or reset, or a commit or return to
-    live clearing an active host selection. None ticks upward at span or line
-    granularity with Unicode copy (`eon-awmq.7`).
 
 ## ORB-C9 — Authoritative bounded selection and copy
 
@@ -476,7 +480,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   Spans retain native word-selection limits: a wide-character trailing spacer
   can stop the selected span (`a;界,é` selects `a;界`). This inherited
   libghostty limitation is outside the click-ladder correction.
-- **Proof:** the `eon-awmq.3` import commit
+- **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.3` commit
+  for history, span delimiters, drag-back, highlighted cells and pressure
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
     including the differential against the old Rust Orbit from Eon
@@ -485,7 +490,11 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   - **Evidence:**
     - [`the_click_ladder_selects_cells_words_spans_and_lines_across_wraps`](../src/pointer.rs)
       checks soft wraps, compatible live output between press and release,
-      fourth/fifth clicks and a late reset.
+      fourth/fifth clicks, a late reset and exactly which cells are
+      highlighted.
+    - [`spans_end_only_at_ascii_space_tab_and_unwritten_cells`](../src/pointer.rs),
+      [`a_drag_back_to_the_press_cell_clears_the_selection`](../src/pointer.rs)
+      and [`a_held_gesture_survives_output_that_scrolls_it_into_history`](../src/pointer.rs)
     - [`orbit-selection`](../tests/real_pty/selection.rs) checks the route,
       Shift, Cancel, the click ladder's frozen text for both copy effects,
       Finish revisions, terminal-routed mouse bytes and client-scoped copy
@@ -493,6 +502,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     - [`orbit-selection-tick`](../tests/real_pty/selection_tick.rs) covers more
       than one viewport, synchronized deferral, oldest-edge stop, and exact
       release copy.
+    - [`orbit-return-to-live`](../tests/real_pty/return_to_live.rs) refuses
+      a host press for output pressure, leaving no sequence.
     - [`output_that_enables_mouse_tracking_unanchors_the_host_selection`](../src/pointer.rs)
     - [`output_queue_replaces_unstarted_presentations_within_its_bound`](../src/socket.rs)
     - [`orbit-differential`](../tests/real_pty/differential.rs)
@@ -510,11 +521,6 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   - Pending re-proof in this repository: the installed click selection
     ladder, drag selection and copy/paste through Venus
     (`eon-monorepo-2oko.6` dogfood item 9 was not exercised).
-  - No check of this tree covers an active host gesture surviving output that
-    scrolls its text into history, span delimiters (space/tab runs,
-    non-breaking space, combining marks), or a drag back to the press cell
-    clearing the selection. None checks exact highlighted cells or a host
-    phase refused for output pressure (`eon-awmq.7`).
 
 ## ORB-C10 — Eon terminal identity
 

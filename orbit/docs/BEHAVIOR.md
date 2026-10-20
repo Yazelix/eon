@@ -15,7 +15,7 @@ repository and imported at its revision
 Where this document says the old Orbit, it means the single-process Rust
 server it replaced, kept at the tag `orbit-rust-final`. References of the form
 lj8.N name the issues `borb-orbit-in-bend-lj8.N` in bend-orbit's tracker. The
-sensitivity checks this document names, each of which broke the code or a law
+imported sensitivity checks, each of which broke the code or a law
 in a scratch copy to show that a check or proof can fail, ran in bend-orbit
 before the import.
 
@@ -454,7 +454,12 @@ frames that carry it.
 libghostty keeps primary history under the 16 MiB byte budget the old Orbit
 uses, and each frame's scroll position comes from libghostty's scrollbar. The
 real-PTY history check prints 20,000 lines and reads the same history rows,
-at the live position, from a reconnected client.
+at the live position, from a reconnected client. The host unit test
+`scroll_position_follows_reflow_eviction_and_clears` follows the frame's
+position through output below a held viewport, which keeps its rows, the
+alternate screen and back, a reflow to fewer columns, eviction under a small
+byte budget with the viewport held at the oldest row, `CSI 3 J` and reset
+(ORB-C8); counting `rows_from_live` from the top instead made it fail.
 
 Rows read directly from libghostty's screen, as previews and history reads
 do, equal the canonical frame's rows (ORB-C6). The host unit test
@@ -554,9 +559,11 @@ two scroll commits and returns in one frame. It covers deferral during
 synchronized output with a refused second request, refusal under mouse tracking
 and on the alternate screen without moving the viewport, and a client that
 stops reading until its queue lacks room for a frame: that return fails with
-`Failure(Terminal)`, a later scroll shows the viewport did not move, and the
-client then returns to live. The child confirms that the first input it reads
-is a paste sent after every return.
+`Failure(Terminal)`, as does a host selection press behind it; a later update
+finds no sequence, a later scroll shows the viewport did not move, and the
+client then returns to live. Admitting the press without room made it fail.
+The child confirms that the first input it reads is a paste sent after every
+return.
 
 A key that writes PTY bytes also returns a scrolled-back primary viewport to
 live output, as in the old Orbit: Rust reports the key and whether the
@@ -775,13 +782,39 @@ host with Shift while the child tracks the mouse, and finds the copy gone for
 a new client. The real-PTY selection-tick check refuses a tick without a
 gesture and one away from the top row, defers one during a synchronized update
 and refuses a second, then ticks through all 37 history rows and four more at
-the oldest row, and copies exactly `line 01` to `line 42`. The real-PTY
+the oldest row, and copies exactly `line 01` to `line 42`. It then commits
+35 rows toward live and finds the presented selection cleared though rows of
+it stay in view, selects again two rows above live and returns to live with
+that selection cleared (ORB-C8); dropping the clear from either move made it
+fail. The real-PTY
 differential check ([Differential comparison](#differential-comparison)) has the child exit while a
 double-click word selection is presented and matches the old Orbit's last frame;
 a `step` that kept the selection at the exit made it fail at the exit step. A
 unit test replays the old Orbit's click-ladder stimulus on a
-wrapped line with output between each press and release; giving the third
-press libghostty's native events instead of span events made it fail.
+wrapped line with output between each press and release, and checks that
+exactly the copied text's cells are highlighted; giving the third press
+libghostty's native events instead of span events made it fail, and so did
+presenting no cell as selected.
+
+Unit tests in [src/pointer.rs](../src/pointer.rs) cover the rest of the
+gesture mechanism (ORB-C9). `spans_end_only_at_ascii_space_tab_and_unwritten_cells`
+triple-clicks punctuation, a space run, which selects and copies as empty,
+the text after a tab and the unwritten cells the tab skips, which select
+nothing, a non-breaking space and a combining mark; making the non-breaking
+space a boundary made it fail.
+`a_drag_back_to_the_press_cell_clears_the_selection` drags away and back and
+finds nothing presented or highlighted; keeping the last selection when a drag
+selects nothing made it fail.
+`a_held_gesture_survives_output_that_scrolls_it_into_history` scrolls a held
+selection's row into history, checks that its selected text survives the output,
+and copies from there on release; unanchoring on output that grows history
+made it fail.
+`upward_ticks_extend_cells_spans_and_lines_with_unicode_copy` ticks a held
+cell, span and line gesture from mid-row through more than one viewport to the
+oldest row and copies the exact text with its wide characters (ORB-C8); not
+recognizing the span made it fail. Giving the ticks themselves native events
+instead of span events did not, since libghostty appears to keep the span its
+press chose.
 
 ## Scrolling and selection law
 

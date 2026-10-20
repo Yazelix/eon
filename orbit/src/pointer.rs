@@ -354,13 +354,14 @@ fn format_selection(terminal: &Terminal<'static, 'static>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frame::FrameExtractor;
     use libghostty_vt::TerminalOptions;
 
     fn terminal(cols: u16, rows: u16) -> Terminal<'static, 'static> {
         let mut terminal = Terminal::new(TerminalOptions {
             cols,
             rows,
-            max_scrollback: 0,
+            max_scrollback: 4096,
         })
         .unwrap();
         terminal.resize(cols, rows, 10, 18).unwrap();
@@ -436,16 +437,17 @@ mod tests {
         let size = size(16, 4);
         terminal.vt_write(b"prefix alpha:beta/gamma suffix");
         let mut pointer = Pointer::default();
+        let mut extractor = FrameExtractor::new().unwrap();
         let line = "prefix alpha:beta/gamma suffix";
-        for (time_ns, expected) in [
-            (1_000_000_000, None),
-            (1_100_000_000, Some("beta/gamma")),
-            (1_200_000_000, Some("alpha:beta/gamma")),
-            (1_300_000_000, Some(line)),
-            (1_400_000_000, Some(line)),
+        for (time_ns, expected, highlighted) in [
+            (1_000_000_000, None, 0..0),
+            (1_100_000_000, Some("beta/gamma"), 13..23),
+            (1_200_000_000, Some("alpha:beta/gamma"), 7..23),
+            (1_300_000_000, Some(line), 0..30),
+            (1_400_000_000, Some(line), 0..30),
             // A late press after the saturated sequence starts over.
-            (2_000_000_000, None),
-            (2_100_000_000, Some("beta/gamma")),
+            (2_000_000_000, None, 0..0),
+            (2_100_000_000, Some("beta/gamma"), 13..23),
         ] {
             let copied = click(
                 &mut pointer,
@@ -456,6 +458,204 @@ mod tests {
                 b"\x1b[4;1Hlive",
             );
             assert_eq!(copied.as_deref(), expected, "time {time_ns}");
+            // Exactly the selected text's cells, counted across the wrap, are highlighted.
+            let frame = extractor.frame(0, &terminal).unwrap();
+            assert!(frame.rows[0].wrapped);
+            for (index, cell) in frame.rows.iter().flat_map(|row| &row.cells).enumerate() {
+                assert_eq!(
+                    cell.style.selected,
+                    highlighted.contains(&index),
+                    "cell {index}, time {time_ns}"
+                );
+            }
+        }
+    }
+
+    /// Spans end only at ASCII space and tab runs, unwritten cells and hard
+    /// line breaks: other punctuation, a non-breaking space and combining
+    /// marks stay inside, and a click on a space run selects it, trimmed to
+    /// nothing in the copy (ORB-C9).
+    #[test]
+    fn spans_end_only_at_ascii_space_tab_and_unwritten_cells() {
+        let mut terminal = terminal(12, 4);
+        let size = size(12, 4);
+        let mut pointer = Pointer::default();
+        for (text, column, expected) in [
+            ("a::b,,c", 1, Some("a::b,,c")),
+            ("a  b", 1, Some("")),
+            ("a\tb", 8, Some("b")),
+            ("a\tb", 2, None),
+            ("a\u{a0}b", 1, Some("a\u{a0}b")),
+            ("a;b,e\u{301}", 0, Some("a;b,e\u{301}")),
+        ] {
+            pointer.clear(&terminal).unwrap();
+            terminal.vt_write(b"\x1b[2J\x1b[H");
+            terminal.vt_write(text.as_bytes());
+            let mut copied = None;
+            for time_ns in [1_000_000_000, 1_100_000_000, 1_200_000_000] {
+                copied = click(
+                    &mut pointer,
+                    &mut terminal,
+                    size,
+                    at(column, 0),
+                    time_ns,
+                    b"",
+                );
+            }
+            assert_eq!(copied.as_deref(), expected, "{text:?}");
+        }
+    }
+
+    /// A drag back to the press cell clears the selection it had made, and
+    /// its highlight (ORB-C9).
+    #[test]
+    fn a_drag_back_to_the_press_cell_clears_the_selection() {
+        let mut terminal = terminal(12, 4);
+        let size = size(12, 4);
+        terminal.vt_write(b"alpha beta");
+        let mut pointer = Pointer::default();
+        let mut extractor = FrameExtractor::new().unwrap();
+        let modifiers = session::Modifiers::empty();
+        // Whether the phase presents a selection, and how many cells it highlights.
+        let mut phase = |action| {
+            let presented = pointer.host_phase(action, &terminal, size).unwrap();
+            let frame = extractor.frame(0, &terminal).unwrap();
+            let cells = frame.rows.iter().flat_map(|row| &row.cells);
+            (presented, cells.filter(|cell| cell.style.selected).count())
+        };
+        let begin = SelectionAction::Begin {
+            frame_revision: 0,
+            position: at(0, 0),
+            time_ns: 1,
+            modifiers,
+        };
+        assert_eq!(phase(begin), (false, 0));
+        let away = SelectionAction::Update {
+            position: at(5, 0),
+            modifiers,
+        };
+        assert_eq!(phase(away), (true, 5));
+        let back = SelectionAction::Update {
+            position: at(0, 0),
+            modifiers,
+        };
+        assert_eq!(phase(back), (false, 0));
+        let finish = SelectionAction::Finish {
+            position: at(0, 0),
+            modifiers,
+        };
+        assert_eq!(phase(finish), (false, 0));
+    }
+
+    /// A held gesture survives output that scrolls its text into history and
+    /// its release copies from there (ORB-C9).
+    #[test]
+    fn a_held_gesture_survives_output_that_scrolls_it_into_history() {
+        let mut terminal = terminal(12, 4);
+        let size = size(12, 4);
+        terminal.vt_write(b"alpha beta\r\nsecond\r\nthird\r\nfourth");
+        let mut pointer = Pointer::default();
+        let modifiers = session::Modifiers::empty();
+        pointer
+            .host_phase(
+                SelectionAction::Begin {
+                    frame_revision: 0,
+                    position: at(0, 0),
+                    time_ns: 1,
+                    modifiers,
+                },
+                &terminal,
+                size,
+            )
+            .unwrap();
+        pointer
+            .host_phase(
+                SelectionAction::Update {
+                    position: at(5, 0),
+                    modifiers,
+                },
+                &terminal,
+                size,
+            )
+            .unwrap();
+        let tracked = pointer.watch(&terminal).unwrap().unwrap();
+        terminal.vt_write(b"\r\nlive");
+        pointer.after_output(&terminal, tracked).unwrap();
+        assert!(!pointer.unanchored);
+        assert_eq!(terminal.scrollbar().unwrap().total, 5);
+        assert_eq!(format_selection(&terminal).as_deref(), Some("alpha"));
+        // Row 0 now shows "second".
+        assert!(
+            pointer
+                .host_phase(
+                    SelectionAction::Finish {
+                        position: at(6, 0),
+                        modifiers,
+                    },
+                    &terminal,
+                    size,
+                )
+                .unwrap()
+        );
+        assert_eq!(pointer.copied, "alpha beta\nsecond");
+    }
+
+    /// Upward ticks from mid-row extend a held cell, span or logical-line
+    /// gesture at its own granularity through more than one viewport of
+    /// history to the oldest row, and release copies the exact Unicode text,
+    /// the press's span or line included (ORB-C8).
+    #[test]
+    fn upward_ticks_extend_cells_spans_and_lines_with_unicode_copy() {
+        let lines: Vec<_> = (0..16).map(|row| format!("L{row:02}:part 界")).collect();
+        for (clicks, oldest, press_end) in [
+            (1, "art 界", None),
+            (3, "L00:part 界", Some("L14:part")),
+            (4, "L00:part 界", Some("L14:part 界")),
+        ] {
+            let mut terminal = terminal(12, 4);
+            let size = size(12, 4);
+            terminal.vt_write(lines.join("\r\n").as_bytes());
+            let mut pointer = Pointer::default();
+            let modifiers = session::Modifiers::empty();
+            for click in 1..=clicks {
+                let begin = SelectionAction::Begin {
+                    frame_revision: 0,
+                    position: at(0, 2),
+                    time_ns: click * 100_000_000,
+                    modifiers,
+                };
+                pointer.host_phase(begin, &terminal, size).unwrap();
+                if click < clicks {
+                    let finish = SelectionAction::Finish {
+                        position: at(0, 2),
+                        modifiers,
+                    };
+                    pointer.host_phase(finish, &terminal, size).unwrap();
+                }
+            }
+            let update = SelectionAction::Update {
+                position: at(5, 0),
+                modifiers,
+            };
+            pointer.host_phase(update, &terminal, size).unwrap();
+            let mut moved = 0;
+            while terminal.scrollbar().unwrap().offset > 0 {
+                let offset = terminal.scrollbar().unwrap().offset;
+                assert!(pointer.tick(&terminal, at(5, 0), size).unwrap());
+                assert_eq!(terminal.scrollbar().unwrap().offset, offset - 1);
+                moved += 1;
+            }
+            assert_eq!(moved, 12, "{clicks} clicks");
+            let finish = SelectionAction::Finish {
+                position: at(5, 0),
+                modifiers,
+            };
+            assert!(pointer.host_phase(finish, &terminal, size).unwrap());
+            let mut expected = format!("{oldest}\n{}", lines[1..14].join("\n"));
+            if let Some(end) = press_end {
+                expected = format!("{expected}\n{end}");
+            }
+            assert_eq!(pointer.copied, expected, "{clicks} clicks");
         }
     }
 
