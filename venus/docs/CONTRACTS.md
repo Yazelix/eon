@@ -610,6 +610,13 @@ re-proved when that platform or feature is next touched.
   dogfood of the built package on a private headless Sway
   (`eon-close-pane-onwi` slice B, 1280x720) showed the `close pane` hint and
   the refusal notice.
+  Sideways pane moves (`eon-sideways-pane-moves-k9ca`): the Ctrl+Alt+H/L and
+  Ctrl+Alt+Shift+H/L mappings and the edge-column predicate by
+  `direct_workspace_shortcuts_use_stable_eon_actions` and
+  `sideways_moves_open_a_column_only_for_a_stacked_outer_pane`; isolated
+  dogfood of the built package on a private headless Sway (slice B, 1280x720)
+  delivered both chords with exact modifiers and showed the 40-column notice
+  for a move that would open a third column.
   Fractional native scale remains to be dogfooded. Cards
   (`eon-gapped-rounded-cards-txco`, whose commit is the revision) are covered by
   `column_backgrounds_cover_the_gaps_between_cards` and the card geometry in

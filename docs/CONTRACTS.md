@@ -570,8 +570,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `sideways_pane_moves_are_v12_requests_and_older_traffic_keeps_v11_bytes`,
   `reorder_parser_accepts_only_each_workspace_axis` and Venus
   `direct_workspace_shortcuts_use_stable_eon_actions` and
-  `sideways_moves_open_a_column_only_for_a_stacked_outer_pane`; installed
-  dogfood of both chords is pending.
+  `sideways_moves_open_a_column_only_for_a_stacked_outer_pane`; isolated
+  dogfood of the built package on a private headless Sway (1280x720) split
+  stacked panes into new right and left columns, left a lone edge pane in
+  place, joined a lone pane below the neighbour's expanded pane, showed
+  the 40-column notice for a third column, refused a move under the Git popup
+  with the rejected-action notice, and moved a tab left and back with
+  Ctrl+Alt+Shift+H/L.
   Installed AT-SPI labels and broader reader use remain open. These checks do not establish uninterrupted picker rendering,
   fractional-scale, wider compositor or non-systemd coverage.
 
