@@ -911,53 +911,6 @@ fn invoke(binary: &Path, runtime: &Path, config: &Path, arguments: &[&str]) -> O
         .unwrap()
 }
 
-#[test]
-fn legacy_claude_statusline_is_silent_stateless_and_bounded() {
-    let root = temporary_directory();
-    let runtime = root.join("runtime");
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    let spawn = || {
-        eon_command(&binary)
-            .arg("claude-statusline")
-            .env("EON_RUNTIME_DIR", &runtime)
-            .env("CLAUDE_CONFIG_DIR", root.join("missing-credentials"))
-            .process_group(0)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap()
-    };
-    let mut child = ManagedChild(spawn());
-    child
-        .0
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(b"{\"private\":\"discard\"}\n")
-        .unwrap();
-    wait_for_successful_exit(&mut child.0);
-    let mut stdout = Vec::new();
-    child
-        .0
-        .stdout
-        .take()
-        .unwrap()
-        .read_to_end(&mut stdout)
-        .unwrap();
-    assert!(stdout.is_empty());
-    let mut hanging = ManagedChild(spawn());
-    let _held_input = hanging.0.stdin.take().unwrap();
-    let started = Instant::now();
-    assert!(wait_for_exit(&mut hanging.0).success());
-    assert!(started.elapsed() < Duration::from_secs(4));
-    assert!(
-        !runtime.exists(),
-        "legacy callback never writes quota state or launches Eon"
-    );
-    fs::remove_dir_all(root).unwrap();
-}
-
 fn workspace_action(socket: &Path, id: &str, action: Action) -> Response {
     protocol_action(socket, id, ProtocolAction::Workspace(action))
 }
@@ -2515,12 +2468,6 @@ cat >/dev/null
     let wrong_mode = invoke(&binary, &runtime, &config, &[]);
     assert!(!wrong_mode.status.success());
     assert!(String::from_utf8_lossy(&wrong_mode.stderr).contains("usage: eonbase"));
-    let retired = root.join("bin/eonterm");
-    symlink(&eon, &retired).unwrap();
-    let retired = invoke(&retired, &runtime, &config, &["--help"]);
-    assert!(!retired.status.success());
-    assert!(stdout(&retired).is_empty());
-    assert!(String::from_utf8_lossy(&retired.stderr).contains("usage: eonbase"));
     let removed = invoke(
         &eon,
         &root.join("removed-runtime"),

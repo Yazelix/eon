@@ -77,8 +77,6 @@ through their own supervisor even when the current desktop cannot attach to them
 The runtime extraction changes the component graph and selects a new generation.
 Reattach earlier work with its retained exact Eon or eonbase executable; the
 new installed client can inspect and stop that work through its owner.
-Terminals started by the retired `eonterm` stay in its own namespace: reach
-them only through that pinned `eonterm` executable.
 `previous` attempts every non-dead generation except the installed build's exact
 current generation, including when current has not started.
 `all` includes current and stops it last. Each generation gets its own

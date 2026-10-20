@@ -64,8 +64,7 @@ Runtime validates timestamps, actual periods and percentages, rounding remaining
 percentages down once. Failed reads keep last-good facts unchanged;
 observations become stale after one hour and disappear after 24 hours.
 Windows disappear at a supplied reset; missing reset times remain unknown.
-Successful missing quota clears prior facts. Existing `claude-statusline` wrappers
-are drained silently with a two-second/64 KiB bound, without writing quota state.
+Successful missing quota clears prior facts.
 Eon's [EON-C27](../docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
 owns product policy and installed acceptance.
 

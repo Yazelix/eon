@@ -3,12 +3,8 @@ use eon_workspace_protocol::v12::{
 };
 use serde_json::Value;
 use std::{
-    fs::File,
     io::{self, Read},
-    os::{
-        fd::{AsFd, AsRawFd},
-        unix::process::CommandExt,
-    },
+    os::{fd::AsRawFd, unix::process::CommandExt},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{Arc, Mutex, mpsc},
@@ -296,36 +292,6 @@ fn fetch(
     }
     let _ = child.wait();
     result
-}
-
-pub(crate) fn legacy_statusline() -> Result<i32, String> {
-    // Drain ordinary callbacks so old wrappers with pipefail can still run their own renderer.
-    let mut input = File::from(
-        io::stdin()
-            .as_fd()
-            .try_clone_to_owned()
-            .map_err(|e| e.to_string())?,
-    );
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let mut remaining = MAX_BYTES;
-    while remaining > 0 && Instant::now() < deadline {
-        let mut poll = libc::pollfd {
-            fd: input.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
-        };
-        // SAFETY: poll writes only this live, single-descriptor array.
-        if unsafe { libc::poll(&mut poll, 1, 100) } <= 0 {
-            continue;
-        }
-        let mut chunk = [0; 4096];
-        match input.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(count) => remaining -= count.min(remaining),
-            Err(_) => break,
-        }
-    }
-    Ok(0)
 }
 
 #[cfg(test)]

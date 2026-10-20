@@ -73,9 +73,8 @@ pub fn run(inputs: Inputs) -> (&'static str, Result<i32, String>) {
     }
     match Path::new(&invocation).file_name().and_then(OsStr::to_str) {
         Some("eonbase") => ("eonbase", execute_eonbase(&inputs, arguments)),
-        // The retired name selects neither product. Other names stay Eon: Nix's wrapped
-        // executable relaunches itself under its own file name for independent windows.
-        Some("eonterm") => ("eonbase", Err(EONBASE_USAGE.into())),
+        // Other names stay Eon: Nix's wrapped executable relaunches itself under its own file
+        // name for independent windows.
         _ => match managed_environment::tool(&invocation) {
             Some(tool) => ("eon", launch_managed(&inputs, tool, arguments)),
             None => ("eon", execute(&inputs, arguments)),
@@ -351,7 +350,6 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
     }
     match arguments.as_slice() {
         [flag] if flag == "-h" || flag == "--help" => print_help(inputs),
-        [command] if command == "claude-statusline" => super::quota::legacy_statusline(),
         [] => launch_current(inputs, LaunchMode::Workspace, &[], true, false, "eon"),
         [command, action] if command == "window" && action == "new" => windows::new_window(inputs),
         [command, action, id] if command == "window" && action == "attach" => {
@@ -458,7 +456,6 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
   {command}anima [STYLE] [CHILD OPTIONS...]{reset}            Play an animation here
   {command}versions{reset}                                    Show exact component versions
   {command}config-path{reset}                                 Create and print the config root
-  {command}claude-statusline{reset}                           Legacy Claude status-line sink
   {command}-h, --help{reset}                                  Show this help
 
 {heading}Examples{reset}

@@ -845,9 +845,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     topology.
 - **Important failures:** Missing command, invalid identity, incompatible
   component, startup failure, supervisor loss, or explicit Stop follows the same
-  bounded ownership and cleanup rules without creating workspace state. The
-  shared executable invoked as the retired `eonterm` selects neither product
-  and fails with eonbase usage.
+  bounded ownership and cleanup rules without creating workspace state.
 - **Owner:** Eon defines and packages the standalone product; Eon Runtime
   implements exact-command launch/generation mechanisms. Orbit owns the terminal and
   Venus owns the surface.
@@ -1545,7 +1543,6 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Retired 2026-10-14 by Lucca. EON-C27 owns Claude quota collection
   through CodexBar and the chip policy; Venus `VEN-C26` owns the Claude chip.
-  `eon claude-statusline` remains a bounded silent sink under EON-C27.
 - **Reason:** The status-line collector this contract described no longer
   exists, so it cannot be proved in this repository.
 
@@ -1576,8 +1573,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   reading ages like any other (Lucca, 2026-10-16). Blocked/unknown labels are
   not guaranteed.
   CodexBar owns its local authentication/cache mechanisms. Eon does not rewrite
-  provider configuration; `claude-statusline` remains a bounded silent sink for
-  existing wrappers and no longer owns quota or persistent cache state.
+  provider configuration.
 - **Source choice:** CodexBar v0.74.1, source
   `7c08c0ae783b72040b728757eb85a6cfe4fc2443`, MIT; upstream musl x86_64 release
   and resources are hash-pinned. This accepts its Swift binary size to remove
@@ -1624,11 +1620,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Trigger:** Installing a later 1.x release over 1.0 or another 1.x release.
 - **Result:**
   - **Commands:** every `eon` command and flag that `eon --help` or
-    [Using Eon](USAGE.md) lists at 1.0 keeps its name, arguments and meaning,
-    except entries marked legacy (`claude-statusline`). Every `eon-` managed
-    command name that [Configuration](CONFIGURATION.md) documents, such as
-    `eon-nu`, `eon-bash`, `eon-hx`, `eon-yazi` and `eon-lazygit`, keeps its
-    name. Later releases may add commands and flags.
+    [Using Eon](USAGE.md) lists at 1.0 keeps its name, arguments and meaning.
+    Every `eon-` managed command name that [Configuration](CONFIGURATION.md)
+    documents, such as `eon-nu`, `eon-bash`, `eon-hx`, `eon-yazi` and
+    `eon-lazygit`, keeps its name. Later releases may add commands and flags.
   - **Exit statuses:** success stays 0, and each documented failure status
     (`eon-8mnr.1`) keeps its meaning, the same with and without `--json`.
   - **JSON output:** every field that a listed command's `--json` output
@@ -1671,7 +1666,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Boundary:** Not covered: how appearance and layout render; behavior that
   no document states; the ORBS and ORBF protocols, EONW beyond the lifecycle
   codecs kept above, and the component manifest format, which carry their own
-  versions; legacy commands and internal helpers that no document lists, such
+  versions; internal helpers that no document lists, such
   as `eon-directory-picker`; the unprefixed tool names inside terminals;
   Anima's styles and options; eonbase; the behavior of pinned tools such as
   Helix, Yazi and Nushell when their pins update;

@@ -137,8 +137,7 @@ Composed activation requires an exact v12 Venus consumer.
 The optional Claude observation adds only bounded presentation facts. Under
 EON-C27, pinned CodexBar collects it; Runtime owns bounded subprocesses,
 validation, observation age and expiry, and Venus owns its native chip.
-`eon claude-statusline` remains a bounded silent sink that writes no quota
-state. Credential contents, account identity and raw provider output stay
+Credential contents, account identity and raw provider output stay
 outside EONW and Venus.
 
 Within one exact runtime generation, Eon consumes Orbit's canonical private

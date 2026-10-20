@@ -91,10 +91,7 @@ disappear after 24 hours. Each supplied reset expires its own window. Missing
 facts do not mean zero usage. Sign-out is not detected; the last reading ages
 like any other and disappears after 24 hours.
 
-Claude needs no status-line setup. Existing `eon claude-statusline` calls remain
-silent and bounded for wrappers that also run another renderer, and can be
-removed while preserving that renderer's exact command. Eon does not edit those
-settings or read the previous quota cache.
+Claude needs no status-line setup.
 
 Existing Eon windows retain their running build after installation updates;
 start a fresh workspace with the updated command to use this backend.
