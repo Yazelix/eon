@@ -128,6 +128,17 @@ gone and the natural tombstone,
 refuses a start whose retained record is locked and claims it once it is
 free, and refuses identities outside the bounds.
 
+Rust checks the runtime directory and any object at `SOCKET.record` before it
+publishes: the directory must be an exact user-owned 0700 directory, reached
+without a symlink, and an existing record an exact user-owned 0600 regular
+file. Otherwise the start is refused with nothing published, and the object
+stays as it was. The management-record check refuses a symlinked record, a
+FIFO, an empty 0700 file, a 0640 file, a directory in the record's place, a
+1700 runtime directory, and a symlink to a private runtime directory holding
+an empty retained record. Ignoring the record's mode made it fail, and so did
+ignoring the directory's mode both when binding the socket and when
+publishing; either directory check alone suffices.
+
 ## Management lease
 
 The management socket takes one connection at a time. Bend decides every
@@ -447,6 +458,14 @@ frame, and ends the attachment on a read with 300 writes; a new client then
 attaches to the same child and receives none of them. A sensitivity check
 that sent the writes after the frame made it fail, and so did one in which
 Bend never turned capture on at attachment.
+
+The real-PTY clipboard-pressure check attaches a client that stops reading
+after its first frame, while the child sends 40 writes of 512 KiB, one at a
+time, paced by a metadata observer. The writes fill the client's queue, which
+ends the attachment after fewer than 40 whole writes; a new client then hears
+none of them. Ignoring the queue's bound made it fail, and so did keeping
+each turn's writes for later turns. Letting only ordered messages past the
+bound did not: the frame queued behind them still overflowed it.
 
 ## Vertical preview
 

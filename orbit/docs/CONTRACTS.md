@@ -550,7 +550,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 
 ## ORB-C11 — Ordered terminal-authored clipboard writes
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One healthy ORBS v7 attachment and its native clipboard owner.
 - **Trigger:** The terminal emits one clipboard write with exactly one nonempty
   UTF-8 `text/plain` representation.
@@ -568,7 +568,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Consumes:** Canonical ORBS v7.
 - **Boundary:** Ordinary clipboard delivery, Wayland without data-control,
   broader compositors, and non-Linux policy remain unproved.
-- **Proof:** the `eon-awmq.3` import commit
+- **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.4` commit
+  for clipboard writes under output pressure
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
     including the differential against the old Rust Orbit from Eon
@@ -581,10 +582,10 @@ in this repository. Each contract below states the current ORBS v13 behavior.
       and detached writes, and an overflowing read that ends the attachment
       with no write and no replay.
     - [`clipboard_capture_is_attached_typed_and_bounded`](../src/pty.rs)
+    - [`orbit-clipboard-pressure`](../tests/real_pty/clipboard_pressure.rs)
+      fills a non-reading client's queue with writes, which ends the
+      attachment; a new client receives none of them.
     - Workspace suite
-- **Open proof:** No check of this tree fills a client's output queue while
-  clipboard writes wait, which must disconnect the client without retaining
-  the writes (`eon-awmq.7`).
 
 ## ORB-C12 — Bounded Session shutdown
 
@@ -655,7 +656,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 
 ## ORB-C13 — Same-boot management ownership
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** One local Eon launcher and one later replacement on the same boot
   and login.
 - **Trigger:** A launcher prepares an owned mode-0600 record, Orbit crosses Ready,
@@ -713,7 +714,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   - Platform-neutral identity, lease, status, and failure values use shared
     endpoint, permission, record, and polling mechanics with isolated Linux and
     Darwin peer-credential and process-start identity mechanisms.
-- **Proof:** the `eon-awmq.3` import commit
+- **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.4` commit
+  for untrusted records and runtime directories
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
     including the differential against the old Rust Orbit from Eon
@@ -726,7 +728,9 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     - [`managed_run_survives_launcher_loss_and_has_one_replacement_owner`](../tests/lifecycle.rs)
     - [`management_authority_negatives_fail_closed_without_stopping_session`](../tests/lifecycle.rs)
     - Real-PTY checks
-      [`orbit-management-record`](../tests/real_pty/management_record.rs) and
+      [`orbit-management-record`](../tests/real_pty/management_record.rs),
+      which also refuses symlinked, FIFO, wrong-mode and directory records and
+      wrong-mode or symlinked runtime directories before publishing, and
       [`orbit-management-lease`](../tests/real_pty/management_lease.rs)
     - Laws [`management_answers_are_accounted`](../LAWS.bend),
       [`management_stop_needs_the_lease`](../LAWS.bend) and
@@ -736,10 +740,6 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     - Both lifecycle checks passed on macOS for the previous Rust server; the
       managed run's `/proc` check that the PTY child inherits no Orbit
       listener is Linux-only.
-- **Open proof:** No check of this tree refuses, at publish time, a symlinked,
-  FIFO or wrong-mode record, a directory in a record's place, or a symlinked or
-  wrong-mode runtime directory, as the previous server's unit test did; a
-  wrong-mode record is refused only at lease acquisition (`eon-awmq.7`).
 
 ## ORB-C14 — Apple Silicon macOS platform
 
@@ -795,9 +795,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   proof of this revision. Native re-proof runs `orbit-laws`, the unit tests,
   every real-PTY check and `tests/lifecycle.rs` on Apple Silicon. Eon records
   the same macOS gap under `EON-C7` in
-  [`docs/CONTRACTS.md`](../../docs/CONTRACTS.md). The publish-time
-  refusals of ORB-C13's management artifacts have no check of this tree
-  either (`eon-awmq.7`).
+  [`docs/CONTRACTS.md`](../../docs/CONTRACTS.md).
 
 ## Focused terminal conformance corpus
 

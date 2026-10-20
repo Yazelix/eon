@@ -22,6 +22,10 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 - ORB-C2 and ORB-C5 return to Proved: a real-PTY check covers a whole-palette
   OSC 104 reset and the colors above 15, and a host unit test covers a Kitty
   release of an unidentified key (`eon-awmq.7.1`).
+- ORB-C11 and ORB-C13 return to Proved: real-PTY checks cover clipboard writes
+  that fill a client's queue, and untrusted records and runtime directories
+  refused before publishing (`eon-awmq.7.4`). A wrong-mode record was already
+  refused at publish time, not only at lease acquisition as the import noted.
 
 ## Before this repository
 

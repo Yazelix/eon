@@ -25,6 +25,7 @@ macro_rules! checks {
 
 checks!(
     clipboard,
+    clipboard_pressure,
     command_line,
     delayed_output,
     descendant_exit,

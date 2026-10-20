@@ -7,7 +7,7 @@ use std::{
     fs,
     os::unix::{
         ffi::OsStrExt,
-        fs::{FileTypeExt, MetadataExt, OpenOptionsExt},
+        fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
         io::AsRawFd,
         net::UnixListener,
     },
@@ -254,5 +254,81 @@ pub fn run() {
             .assert_refused();
         }
         assert_eq!(fs::read_dir(&*directory).expect("directory").count(), 0);
+    }
+
+    // An untrusted object at the record's pathname, or an untrusted runtime
+    // directory, stops the start before anything is published, and the
+    // object is left as it was.
+    {
+        let directory = TempDir::new();
+        let refused = |path: &Path| {
+            run_command(
+                &server_command(path, &[OsStr::new("/bin/true")], &MANAGED),
+                &[],
+                30.0,
+            )
+            .assert_refused();
+            assert!(!path.exists() && !suffixed(path, ".management").exists());
+        };
+        let private_record = |path: &Path, mode: u32, contents: &[u8]| {
+            fs::write(path, contents).expect("record");
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("chmod");
+        };
+
+        // A record in another private directory, reached through a symlink.
+        let elsewhere = directory.join("elsewhere");
+        fs::DirBuilder::new().mode(0o700).create(&elsewhere).expect("directory");
+        let target = elsewhere.join("orbit.sock.record");
+        private_record(&target, 0o600, b"");
+
+        for name in [
+            "symlink",
+            "fifo",
+            "empty-executable",
+            "group-readable",
+            "directory",
+        ] {
+            let run = directory.join(name);
+            fs::DirBuilder::new().mode(0o700).create(&run).expect("directory");
+            let path = run.join("orbit.sock");
+            let record_path = suffixed(&path, ".record");
+            match name {
+                "symlink" => std::os::unix::fs::symlink(&target, &record_path).expect("symlink"),
+                "fifo" => {
+                    Gate::new(&run, "orbit.sock.record");
+                }
+                "empty-executable" => private_record(&record_path, 0o700, b""),
+                "group-readable" => private_record(&record_path, 0o640, b"stale"),
+                _ => fs::DirBuilder::new()
+                    .mode(0o700)
+                    .create(&record_path)
+                    .expect("directory"),
+            }
+            let before = fs::symlink_metadata(&record_path).expect("lstat");
+            refused(&path);
+            let after = fs::symlink_metadata(&record_path).expect("lstat");
+            assert_eq!(
+                (after.ino(), after.mode(), after.len()),
+                (before.ino(), before.mode(), before.len()),
+                "{name} record changed"
+            );
+            assert_eq!(fs::read_dir(&run).expect("directory").count(), 1, "{name}");
+        }
+        assert!(fs::read(&target).expect("target").is_empty());
+
+        // A runtime directory with a mode other than 0700.
+        let sticky = directory.join("sticky");
+        fs::create_dir(&sticky).expect("directory");
+        fs::set_permissions(&sticky, fs::Permissions::from_mode(0o1700)).expect("chmod");
+        refused(&sticky.join("orbit.sock"));
+        assert_eq!(fs::read_dir(&sticky).expect("directory").count(), 0);
+
+        // A runtime directory reached through a symlink, holding a launcher's
+        // empty retained record.
+        let linked = directory.join("linked");
+        std::os::unix::fs::symlink(&elsewhere, &linked).expect("symlink");
+        refused(&linked.join("orbit.sock"));
+        assert!(fs::read(&target).expect("target").is_empty());
+        assert_eq!(fs::read_dir(&elsewhere).expect("directory").count(), 1);
     }
 }
