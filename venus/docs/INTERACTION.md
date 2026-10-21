@@ -2,17 +2,23 @@
 
 ## Hyperlinks
 
-Hover an explicit OSC 8 link to highlight it and preview its actual target.
+Hover an explicit OSC 8 link, or an `http://` or `https://` URL printed as
+plain text, to highlight it and preview its actual target.
 Ctrl+left click opens it on Linux; Command+left click opens it on macOS.
 Ctrl+Shift+C on Linux or Command+C on macOS copies the hovered target
 unless the terminal has selected text, in which case it copies that selection.
 Both Command actions on a hovered link are observed natively on Apple Silicon
 in this repository (`VEN-C16`).
-Ordinary clicks retain terminal mouse reporting and selection behavior;
-ordinary URL-looking text is not detected as a link. The accessibility tree
-exposes each current visible target as an Open link followed by a Copy button.
-A changed frame retires both. Hover and actions pause during scroll animation
-and renderer recovery.
+Ordinary clicks retain terminal mouse reporting and selection behavior.
+Plain-text detection joins soft-wrapped rows, drops trailing sentence
+punctuation and unmatched closing brackets, and keeps only targets the opener
+accepts; an explicit link on any of its cells wins. Other schemes, bare hosts
+such as `localhost:3000`, and file paths are not detected. A URL that a program
+breaks onto a new line itself, instead of letting the terminal wrap it, is
+detected only up to that line end, so check the preview before opening it. The
+accessibility tree exposes each current visible target as an Open link followed
+by a Copy button. A changed frame retires both. Hover and actions pause during
+scroll animation and renderer recovery.
 
 Opening accepts ASCII HTTP/HTTPS targets up to 4096 bytes, with a host and
 without credentials. Other schemes, malformed targets and oversized links

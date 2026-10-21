@@ -48,9 +48,11 @@ for one zero-payload semantic action without a new dependency or adapter.
 - **Owner consequence:** GIO owns desktop handler selection and launch. Venus
   owns its HTTP/HTTPS admission policy and one dispatcher with a ten-second
   deadline. Missing GIO or a handler produces a visible, accessible failure.
-  The existing Wayland clipboard owner copies explicit targets independently.
+  The existing Wayland clipboard owner copies link targets independently.
 - **Rejected:** A browser/opener crate, direct portal dependency, custom D-Bus
-  plumbing, URL discovery, and `xdg-open` paths that wait for browser lifetime.
+  plumbing, a URL-discovery crate (Scene's own scanner detects plain-text
+  targets under `eon-nlcy`), and `xdg-open` paths that wait for browser
+  lifetime.
   Revisit only if a supported Linux desktop cannot dispatch through host GIO.
 
 ### Eon workspace protocol consumer

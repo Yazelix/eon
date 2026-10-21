@@ -160,7 +160,7 @@ impl Snapshot {
                         copy,
                         row: link.row,
                         column: link.column,
-                        label: accessible_link_label(link.uri),
+                        label: accessible_link_label(&link.uri),
                         bounds,
                     })
                 })

@@ -207,6 +207,19 @@ launcher. Venus rejects its traversal mode, URL discovery, launch templates and
 file rewriting; the chosen interaction keeps only pointer opening and hovered
 target copying.
 
+`eon-nlcy` later added plain-text HTTP/HTTPS detection at Lucca's request.
+Ghostty `a887df42c56f6de86c0fe6da9c4eeca37931e083` (`src/config/url.zig`),
+WezTerm `5046fc225992db6ba2ef8812743fadfdfe4b184a` (`default_hyperlink_rules`)
+and foot `85655c74a4ded119392ea8b632626c3920042807` (`url-mode.c`) all join
+soft-wrapped rows. Venus keeps a count-based form of foot's bracket trimming,
+which drops a closing `)` or `]` the target does not open, and foot's rule
+that an OSC 8 link overrides any overlapping detected target. It rejects Ghostty's
+other schemes, file paths and Ctrl-held highlighting, and WezTerm's
+longest-match rule order, which links `(https://x)` with its closing
+parenthesis. A hand-written Scene scanner limited to the opener's URI bytes
+replaces a regex dependency, and only targets the opener accepts are
+detected.
+
 AccessKit models custom actions, but the locked Linux adapter's exact
 [`accesskit_atspi_common` source](https://github.com/AccessKit/accesskit/blob/c88605b96d04431f9c3c792464a0f2f253480e94/platforms/atspi-common/src/node.rs)
 maps actionable nodes only to the standard Click action. Venus therefore

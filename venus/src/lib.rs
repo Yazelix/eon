@@ -25,7 +25,8 @@ pub use scene::{
     Color, DrawCell, DrawCursor, DrawRow, DrawStyle, GlyphRun, Hyperlink, LocalClock, PaneMetadata,
     Scene, ScenePreview, SceneRect, ShortcutGroup, ShortcutHint, ShortcutHintsScene, ShortcutRow,
     ShortcutViewerScene, WorkspaceColumn, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit,
-    WorkspacePane, WorkspaceScene, WorkspaceTab, workspace_column_width,
+    WorkspacePane, WorkspaceScene, WorkspaceTab, validate_copy_uri, validate_open_uri,
+    workspace_column_width,
 };
 pub use transport::{
     MetadataEvent, MetadataTransport, SendError, Transport, TransportEvent, WorkspaceEvent,

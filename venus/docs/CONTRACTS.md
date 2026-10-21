@@ -100,22 +100,31 @@ Proofs cite revisions of this repository. "Pending re-proof in this repository"
 marks an earlier proof that was not repeated after consolidation; it is
 re-proved when that platform or feature is next touched.
 
-## VEN-C5 — Explicit native hyperlinks
+## VEN-C5 — Native hyperlinks
 
 - **Status:** Proved on x86_64 Linux by the automated tier; native Linux
   hyperlink interaction is pending re-proof in this repository. Apple Silicon
   hover, Command+C, and Command+click are observed natively under `VEN-C16`.
-- **Consumer/trigger:** A Venus user hovers an Orbit-authored OSC 8 link or
-  explicitly activates one.
-- **Result:** The hovered link is highlighted and its escaped target is shown
-  with Open and Copy actions. Linux uses `Ctrl+click` and `Ctrl+Shift+C`; macOS
-  uses `Command+click` and `Command+C`. When a current Eon popup takes the
-  Copy key under VEN-C20, the hint omits Copy and that key invokes the popup;
-  the AccessKit Copy button remains. Opening requires a press and release on
-  the same current presented target. Copy uses the current hovered target unless
-  terminal selection retains precedence. AccessKit exposes each current visible
-  target as an Open link followed by a Copy button, both using the native Click
-  action. Ordinary terminal clicks, input and selection retain their owners.
+- **Consumer/trigger:** A Venus user hovers an Orbit-authored OSC 8 link or a
+  plain-text HTTP/HTTPS URL in visible terminal text, or explicitly activates
+  one.
+- **Result:** Scene detects plain-text targets in each frame's visible rows: an
+  `http://` or `https://` start, in any case, at a line start or after a byte
+  that is not an ASCII letter or digit, extended over the opener's URI bytes and
+  joined across soft-wrapped rows. A trailing `.`, `,`, `:`, `;`, `!`, `?` or
+  `'` is trimmed, as is a closing `)` or `]` the target does not open. Only
+  targets the opener accepts are detected, and a target touching any OSC 8 cell
+  is not, so the explicit link wins. Each row segment of a wrapped target is one
+  target with the full URI. The hovered link is highlighted and its escaped
+  target is shown with Open and Copy actions. Linux uses `Ctrl+click` and
+  `Ctrl+Shift+C`; macOS uses `Command+click` and `Command+C`. When a current Eon
+  popup takes the Copy key under VEN-C20, the hint omits Copy and that key
+  invokes the popup; the AccessKit Copy button remains. Opening requires a press
+  and release on the same current presented target. Copy uses the current
+  hovered target unless terminal selection retains precedence. AccessKit exposes
+  each current visible target as an Open link followed by a Copy button, both
+  using the native Click action. Ordinary terminal clicks, input and selection
+  retain their owners.
 - **Failures:** Revision, attachment, geometry, presentation, focus, occlusion,
   or scroll changes retire link actions. A captured release without Ctrl is
   consumed without activation. Opening accepts at most 4096 bytes of ASCII
@@ -123,17 +132,19 @@ re-proved when that platform or feature is next touched.
   target text without control characters. Unsupported or malformed targets,
   missing native handlers, and launch failures/timeouts have bounded visual and
   accessible notices. No URI is opened on hover or keyboard focus.
-- **Owners:** Orbit owns URI attributes; Scene derives spans; Venus presentation
-  identity gates actions; the existing renderer, input, AccessKit status and
-  native clipboard owners project them. Linux `gio open` on the host PATH
-  dispatches the exact URI as one argument to the desktop's registered handler.
-  One launch runs at a time with a ten-second dispatcher deadline.
+- **Owners:** Orbit owns URI attributes; Scene derives explicit spans and
+  detects plain-text targets from the projected visible cell text; Venus
+  presentation identity gates actions; the existing renderer, input, AccessKit
+  status and native clipboard owners project them. Linux `gio open` on the host
+  PATH dispatches the exact URI as one argument to the desktop's registered
+  handler. One launch runs at a time with a ten-second dispatcher deadline.
 - **Consumes:** Orbit `ORB-C6` through ORBF v2 / ORBS v13.
-- **Boundary:** No heuristic detection, file/custom-scheme opening, URI rewrite,
-  browser embedding, new crate, or protocol change. Host GIO and a registered
-  handler are required for Linux opening; copy remains available without them.
-  macOS uses fixed `/usr/bin/open -u` and the general pasteboard. Product-path
-  accessibility activation remains unaccepted on macOS.
+- **Boundary:** No detection of other schemes, bare hosts, file paths, or a URL
+  whose start is above the visible rows; no file/custom-scheme opening, URI
+  rewrite, browser embedding, new crate, or protocol change. Host GIO and a
+  registered handler are required for Linux opening; copy remains available
+  without them. macOS uses fixed `/usr/bin/open -u` and the general pasteboard.
+  Product-path accessibility activation remains unaccepted on macOS.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** Automated.
   - **Evidence:** `hyperlink_actions_require_current_presentation_and_safe_exact_uri`,
@@ -142,6 +153,12 @@ re-proved when that platform or feature is next touched.
     `visible_links_offer_only_open_and_copy_and_retire_with_the_scene`,
     `clipboard_failure_outranks_stale_link_notice`, and
     `macos_uses_command_for_standard_host_actions_only` in the workspace suite.
+  - **Plain-text detection evidence (`eon-nlcy`):**
+    `plain_text_links_trim_punctuation_and_unopened_brackets`,
+    `plain_text_links_join_soft_wrapped_rows_only`, and
+    `explicit_links_and_non_uri_cells_bound_plain_text_links` in the Venus
+    suite; one isolated installed hover and Ctrl+click observation on headless
+    Sway recorded in `eon-nlcy`.
   - **Override evidence (`eon-igae.10`):**
     `configured_popups_take_fixed_bindings_except_reserved_keys`; the installed
     observation is pending.

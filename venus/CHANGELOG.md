@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C5: Venus detects `http://` and `https://` URLs printed as plain text
+  in visible rows, joined across soft wraps and trimmed of trailing
+  punctuation and unmatched closing brackets, and gives the ones its opener
+  accepts the same hover, preview, Open, Copy and accessibility actions as
+  OSC 8 links; an OSC 8 link on any of their cells wins (`eon-nlcy`).
 - VEN-C2: a named key the active keymap produces (Escape, Return, Tab, arrows,
   function and modifier keys) outside the numpad replaces the physical key for
   terminal input and Venus's own key handling; letter, digit, punctuation and

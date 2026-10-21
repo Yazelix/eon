@@ -36,7 +36,7 @@ use yazelix_venus::{
     PresentOutcome, Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene,
     ShortcutViewerScene, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus,
     WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
-    active_popup,
+    active_popup, validate_copy_uri, validate_open_uri,
 };
 
 mod geometry;
@@ -175,78 +175,6 @@ impl PresentationState {
             && identity.generation == self.generation
             && self.presented == Some(identity)
     }
-}
-
-fn validate_copy_uri(uri: &str) -> std::result::Result<(), &'static str> {
-    if uri.is_empty() || uri.len() > MAX_LINK_BYTES {
-        Err("Link target must contain 1–4096 bytes.")
-    } else if uri.chars().any(char::is_control) {
-        Err("Link target contains control characters.")
-    } else {
-        Ok(())
-    }
-}
-
-fn validate_open_uri(uri: &str) -> std::result::Result<(), &'static str> {
-    validate_copy_uri(uri)?;
-    let malformed =
-        "Cannot open this link: expected an ASCII HTTP/HTTPS URI with a host and no credentials.";
-    let (scheme, rest) = uri.split_once(':').ok_or(malformed)?;
-    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
-        return Err("Only HTTP and HTTPS links can be opened. Copy other targets explicitly.");
-    }
-    let rest = rest.strip_prefix("//").ok_or(malformed)?;
-    // A deliberately narrow serialized-URI policy, not URL discovery or normalization.
-    let bytes = uri.as_bytes();
-    for (i, &byte) in bytes.iter().enumerate() {
-        if !byte.is_ascii_alphanumeric() && !b"-._~:/?#[]@!$&'()*+,;=%".contains(&byte) {
-            return Err(malformed);
-        }
-        if byte == b'%'
-            && !bytes
-                .get(i + 1..i + 3)
-                .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
-        {
-            return Err("Link target contains an invalid percent escape.");
-        }
-    }
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-    let (host, port) = if let Some(ipv6) = authority.strip_prefix('[') {
-        let (host, suffix) = ipv6.split_once(']').ok_or(malformed)?;
-        host.parse::<std::net::Ipv6Addr>().map_err(|_| malformed)?;
-        (host, suffix)
-    } else {
-        let (host, port) = authority.split_at(authority.find(':').unwrap_or(authority.len()));
-        if !host
-            .strip_suffix('.')
-            .unwrap_or(host)
-            .split('.')
-            .all(|label| {
-                !label.is_empty()
-                    && label.len() <= 63
-                    && !label.starts_with('-')
-                    && !label.ends_with('-')
-                    && label
-                        .bytes()
-                        .all(|c| c.is_ascii_alphanumeric() || c == b'-')
-            })
-            || host.len() > 253
-        {
-            return Err(malformed);
-        }
-        (host, port)
-    };
-    if host.is_empty()
-        || (!port.is_empty()
-            && !port.strip_prefix(':').is_some_and(|port| {
-                !port.is_empty()
-                    && port.bytes().all(|c| c.is_ascii_digit())
-                    && port.parse::<u16>().is_ok()
-            }))
-    {
-        return Err(malformed);
-    }
-    Ok(())
 }
 
 fn link_hint(uri: &str, entries: &[PopupEntry]) -> String {
@@ -2242,7 +2170,7 @@ impl Application {
                 "Link target exceeds {MAX_LINK_BYTES} bytes; opening and copying are disabled."
             ));
         }
-        Some(link_hint(link.uri, self.popup_entries()))
+        Some(link_hint(&link.uri, self.popup_entries()))
     }
 
     fn handle_link_copy(&mut self, key: PhysicalKey, state: ElementState, repeat: bool) -> bool {
@@ -2266,7 +2194,7 @@ impl Application {
     }
 
     fn activate_link(&mut self, copy: bool) {
-        let Some(uri) = self.focused_link().map(|link| link.uri.to_owned()) else {
+        let Some(uri) = self.focused_link().map(|link| link.uri.into_owned()) else {
             return;
         };
         self.activate_uri(uri, copy);
@@ -2276,7 +2204,7 @@ impl Application {
         let Some(uri) = self
             .link_scene()
             .and_then(|(scene, _)| scene.hyperlink_at(row, column))
-            .map(|link| link.uri.to_owned())
+            .map(|link| link.uri.into_owned())
         else {
             return;
         };

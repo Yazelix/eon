@@ -1,5 +1,5 @@
 use crate::{
-    CpuUse,
+    CpuUse, MAX_LINK_BYTES,
     model::{active_popup, presented_panes},
     render::CellMetrics,
 };
@@ -10,7 +10,14 @@ use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, Rgb, Row, Screen, StyleColor, Underline,
     session::VerticalDirection,
 };
-use std::{ffi::OsStr, fmt::Write, ops::Range, os::unix::ffi::OsStrExt, path::Path};
+use std::{
+    borrow::Cow,
+    ffi::OsStr,
+    fmt::Write,
+    ops::{Range, RangeInclusive},
+    os::unix::ffi::OsStrExt,
+    path::Path,
+};
 use winit::dpi::PhysicalSize;
 
 /// Physical rectangle shared by workspace drawing, hit testing, and accessibility.
@@ -1718,18 +1725,19 @@ pub struct DrawRow {
     pub cells: Vec<DrawCell>,
 }
 
-/// A contiguous visible row span, borrowing Orbit's exact target.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A contiguous visible row span, borrowing Orbit's exact target or owning a
+/// target detected in plain text.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hyperlink<'a> {
     pub row: u16,
     pub column: u16,
     pub columns: u16,
-    pub uri: &'a str,
+    pub uri: Cow<'a, str>,
 }
 
 impl Hyperlink<'_> {
     #[must_use]
-    pub fn rect(self, origin: SceneRect, metrics: CellMetrics) -> SceneRect {
+    pub fn rect(&self, origin: SceneRect, metrics: CellMetrics) -> SceneRect {
         SceneRect {
             left: origin.left + metrics.padding + f32::from(self.column) * metrics.width,
             top: origin.top + metrics.padding + f32::from(self.row) * metrics.height,
@@ -1739,9 +1747,115 @@ impl Hyperlink<'_> {
     }
 
     #[must_use]
-    pub fn contains(self, row: u16, column: u16) -> bool {
+    pub fn contains(&self, row: u16, column: u16) -> bool {
         self.row == row && (self.column..self.column + self.columns).contains(&column)
     }
+}
+
+fn is_uri_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || b"-._~:/?#[]@!$&'()*+,;=%".contains(&byte)
+}
+
+/// Accept any bounded link target without control characters for copying.
+pub fn validate_copy_uri(uri: &str) -> std::result::Result<(), &'static str> {
+    if uri.is_empty() || uri.len() > MAX_LINK_BYTES {
+        Err("Link target must contain 1–4096 bytes.")
+    } else if uri.chars().any(char::is_control) {
+        Err("Link target contains control characters.")
+    } else {
+        Ok(())
+    }
+}
+
+/// Accept only an ASCII HTTP/HTTPS URI with a host and no credentials for opening.
+pub fn validate_open_uri(uri: &str) -> std::result::Result<(), &'static str> {
+    validate_copy_uri(uri)?;
+    let malformed =
+        "Cannot open this link: expected an ASCII HTTP/HTTPS URI with a host and no credentials.";
+    let (scheme, rest) = uri.split_once(':').ok_or(malformed)?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return Err("Only HTTP and HTTPS links can be opened. Copy other targets explicitly.");
+    }
+    let rest = rest.strip_prefix("//").ok_or(malformed)?;
+    // A deliberately narrow serialized-URI policy, not URL discovery or normalization.
+    let bytes = uri.as_bytes();
+    for (i, &byte) in bytes.iter().enumerate() {
+        if !is_uri_byte(byte) {
+            return Err(malformed);
+        }
+        if byte == b'%'
+            && !bytes
+                .get(i + 1..i + 3)
+                .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+        {
+            return Err("Link target contains an invalid percent escape.");
+        }
+    }
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let (host, port) = if let Some(ipv6) = authority.strip_prefix('[') {
+        let (host, suffix) = ipv6.split_once(']').ok_or(malformed)?;
+        host.parse::<std::net::Ipv6Addr>().map_err(|_| malformed)?;
+        (host, suffix)
+    } else {
+        let (host, port) = authority.split_at(authority.find(':').unwrap_or(authority.len()));
+        if !host
+            .strip_suffix('.')
+            .unwrap_or(host)
+            .split('.')
+            .all(|label| {
+                !label.is_empty()
+                    && label.len() <= 63
+                    && !label.starts_with('-')
+                    && !label.ends_with('-')
+                    && label
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'-')
+            })
+            || host.len() > 253
+        {
+            return Err(malformed);
+        }
+        (host, port)
+    };
+    if host.is_empty()
+        || (!port.is_empty()
+            && !port.strip_prefix(':').is_some_and(|port| {
+                !port.is_empty()
+                    && port.bytes().all(|c| c.is_ascii_digit())
+                    && port.parse::<u16>().is_ok()
+            }))
+    {
+        return Err(malformed);
+    }
+    Ok(())
+}
+
+/// The next `http://` or `https://` at or after `from` that does not continue a word.
+fn uri_start(text: &[u8], from: usize) -> Option<usize> {
+    (from..text.len()).find(|&i| {
+        (i == 0 || !text[i - 1].is_ascii_alphanumeric())
+            && [&b"http://"[..], b"https://"].iter().any(|scheme| {
+                text.get(i..i + scheme.len())
+                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(scheme))
+            })
+    })
+}
+
+/// Drop trailing sentence punctuation and closing brackets that the URI does not open.
+fn trim_uri_end(mut uri: &[u8]) -> &[u8] {
+    let count = |byte| uri.iter().filter(|&&b| b == byte).count() as isize;
+    let mut unopened_parens = count(b')') - count(b'(');
+    let mut unopened_brackets = count(b']') - count(b'[');
+    while let Some((&last, rest)) = uri.split_last() {
+        match last {
+            b'.' | b',' | b':' | b';' | b'!' | b'?' | b'\'' => {}
+            b')' if unopened_parens > 0 => unopened_parens -= 1,
+            b']' if unopened_brackets > 0 => unopened_brackets -= 1,
+            _ => break,
+        }
+        uri = rest;
+    }
+    uri
 }
 
 impl DrawRow {
@@ -1771,7 +1885,7 @@ impl DrawRow {
                     row,
                     column: start as u16,
                     columns: (column - start) as u16,
-                    uri,
+                    uri: Cow::Borrowed(uri),
                 });
             }
             None
@@ -1911,11 +2025,20 @@ impl AccessibleText {
 }
 
 impl Scene {
+    /// Explicit and detected link segments in row-major order.
     pub fn hyperlinks(&self) -> impl Iterator<Item = Hyperlink<'_>> {
-        self.content
-            .iter()
-            .enumerate()
-            .flat_map(|(row, content)| content.hyperlinks(row as u16))
+        let mut links = Vec::new();
+        let mut row = 0;
+        while row < self.content.len() {
+            let line = self.logical_line(row);
+            row = line.end() + 1;
+            for row in line.clone() {
+                links.extend(self.content[row].hyperlinks(row as u16));
+            }
+            links.extend(self.detected_links(line));
+        }
+        links.sort_by_key(|link| (link.row, link.column));
+        links.into_iter()
     }
 
     #[must_use]
@@ -1924,6 +2047,80 @@ impl Scene {
             .get(usize::from(row))?
             .hyperlinks(row)
             .find(|link| link.contains(row, column))
+            .or_else(|| {
+                self.detected_links(self.logical_line(usize::from(row)))
+                    .into_iter()
+                    .find(|link| link.contains(row, column))
+            })
+    }
+
+    /// The visible rows of the soft-wrapped line containing `row`.
+    fn logical_line(&self, row: usize) -> RangeInclusive<usize> {
+        let rows = &self.content;
+        let mut first = row;
+        while first > 0 && rows[first].wrap_continuation && rows[first - 1].wrapped {
+            first -= 1;
+        }
+        let mut last = row;
+        while rows[last].wrapped
+            && rows
+                .get(last + 1)
+                .is_some_and(|next| next.wrap_continuation)
+        {
+            last += 1;
+        }
+        first..=last
+    }
+
+    /// Plain-text HTTP/HTTPS targets on one logical line, one segment per row.
+    /// Only targets the opener accepts are detected, and an explicit link on
+    /// any of a target's cells wins over the whole target.
+    fn detected_links(&self, line: RangeInclusive<usize>) -> Vec<Hyperlink<'_>> {
+        // One byte per narrow cell; a cell no URI can contain becomes a space.
+        let mut text = Vec::new();
+        let mut cells = Vec::new();
+        for row in line {
+            for (column, cell) in self.content[row].cells.iter().enumerate() {
+                if cell.width == CellWidth::SpacerTail {
+                    continue;
+                }
+                text.push(match cell.text.as_bytes() {
+                    &[byte]
+                        if cell.width == CellWidth::Narrow
+                            && !cell.style.invisible
+                            && is_uri_byte(byte) =>
+                    {
+                        byte
+                    }
+                    _ => b' ',
+                });
+                cells.push((row as u16, column as u16, !cell.hyperlink.is_empty()));
+            }
+        }
+        let mut links = Vec::new();
+        let mut next = 0;
+        while let Some(start) = uri_start(&text, next) {
+            let end = (start..text.len())
+                .find(|&i| !is_uri_byte(text[i]))
+                .unwrap_or(text.len());
+            next = end;
+            let span = start..start + trim_uri_end(&text[start..end]).len();
+            let uri: String = text[span.clone()].iter().copied().map(char::from).collect();
+            let cells = &cells[span];
+            if validate_open_uri(&uri).is_err() || cells.iter().any(|&(_, _, explicit)| explicit) {
+                continue;
+            }
+            for segment in cells.chunk_by(|a, b| a.0 == b.0) {
+                let (row, column, _) = segment[0];
+                links.push(Hyperlink {
+                    row,
+                    column,
+                    columns: segment.len() as u16,
+                    uri: Cow::Owned(uri.clone()),
+                });
+            }
+        }
+        links
     }
 
     /// Materialize a validated Orbit frame without retaining a second wire schema.
@@ -2878,6 +3075,117 @@ mod tests {
         assert!(links[0].contains(2, 2));
         assert!(!links[0].contains(2, 3));
         assert_eq!((links[1].column, links[1].columns), (4, 1));
+    }
+
+    /// Rows of narrow cells padded to `columns`; `true` marks a row that soft-wraps.
+    fn text_scene(columns: usize, rows: &[(&str, bool)]) -> Scene {
+        let content = rows
+            .iter()
+            .enumerate()
+            .map(|(index, (text, wrapped))| DrawRow {
+                wrapped: *wrapped,
+                wrap_continuation: index > 0 && rows[index - 1].1,
+                kitty_virtual_placeholder: false,
+                cells: format!("{text:columns$}")
+                    .chars()
+                    .map(|c| draw_cell(&c.to_string(), CellWidth::Narrow, false))
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+        Scene {
+            revision: 1,
+            columns: columns as u16,
+            rows: content.len() as u16,
+            screen: Screen::Primary,
+            title: String::new(),
+            working_directory: String::new(),
+            background: Color::default(),
+            foreground: Color::default(),
+            cursor: None,
+            content,
+        }
+    }
+
+    fn link_spans(scene: &Scene) -> Vec<(u16, u16, u16, String)> {
+        scene
+            .hyperlinks()
+            .map(|link| (link.row, link.column, link.columns, link.uri.into_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn plain_text_links_trim_punctuation_and_unopened_brackets() {
+        for (text, expected) in [
+            ("see https://example.com/a.", Some("https://example.com/a")),
+            ("(https://example.com/x)", Some("https://example.com/x")),
+            (
+                "https://e.org/Rust_(game),",
+                Some("https://e.org/Rust_(game)"),
+            ),
+            ("[HTTP://localhost:5173/]", Some("HTTP://localhost:5173/")),
+            ("'http://[::1]:3000/'", Some("http://[::1]:3000/")),
+            ("xhttps://example.com", None),
+            ("ftp://e.org file:///etc localhost:3000", None),
+            ("https://user@example.com/", None),
+            ("https://", None),
+        ] {
+            let scene = text_scene(40, &[(text, false)]);
+            let links = link_spans(&scene);
+            let Some(uri) = expected else {
+                assert!(links.is_empty(), "{text:?}: {links:?}");
+                continue;
+            };
+            let column = text.find(uri).unwrap() as u16;
+            assert_eq!(
+                links,
+                [(0, column, uri.len() as u16, uri.into())],
+                "{text:?}"
+            );
+            let link = scene.hyperlink_at(0, column + 1).unwrap();
+            assert_eq!(link.uri, uri);
+            assert!(scene.hyperlink_at(0, column + uri.len() as u16).is_none());
+        }
+    }
+
+    #[test]
+    fn plain_text_links_join_soft_wrapped_rows_only() {
+        let uri = "https://example.com/p";
+        let wrapped = text_scene(14, &[("go https://exa", true), ("mple.com/p ok", false)]);
+        assert_eq!(
+            link_spans(&wrapped),
+            [(0, 3, 11, uri.into()), (1, 0, 10, uri.into())]
+        );
+        assert_eq!(wrapped.hyperlink_at(1, 9).unwrap().uri, uri);
+        assert!(wrapped.hyperlink_at(1, 10).is_none());
+
+        let hard = text_scene(14, &[("go https://exa", false), ("mple.com/p ok", false)]);
+        assert_eq!(link_spans(&hard), [(0, 3, 11, "https://exa".into())]);
+    }
+
+    #[test]
+    fn explicit_links_and_non_uri_cells_bound_plain_text_links() {
+        let mut scene = text_scene(40, &[("a https://e.org/x b https://f.org/y", false)]);
+        scene.content[0].cells[16].hyperlink = "https://explicit.invalid/".into();
+        assert_eq!(
+            link_spans(&scene),
+            [
+                (0, 16, 1, "https://explicit.invalid/".into()),
+                (0, 20, 15, "https://f.org/y".into()),
+            ]
+        );
+        assert!(scene.hyperlink_at(0, 3).is_none());
+
+        let row = &mut scene.content[0];
+        row.cells[15] = draw_cell("界", CellWidth::Wide, false);
+        row.cells[16] = draw_cell("", CellWidth::SpacerTail, false);
+        row.cells[33].style.invisible = true;
+        assert_eq!(
+            link_spans(&scene),
+            [
+                (0, 2, 13, "https://e.org".into()),
+                (0, 20, 13, "https://f.org".into()),
+            ]
+        );
     }
 
     #[test]
