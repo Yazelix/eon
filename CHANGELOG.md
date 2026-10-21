@@ -9,6 +9,10 @@ installation, and proven contract changes.
   and prints one JSON array with each window's ID and its `eon stop all --json`
   results. It used to fail with `invalid Eon window ID "all"`.
 
+- Alt+Enter in the Files popup sets the tab's directory to the hovered folder,
+  or Yazi's current one, without moving Yazi; in its search it uses the
+  selected result. Popup terminals carry their tab's identity in `EON_TAB`.
+
 - Alt+Shift+Y opens a Files popup: Yazi at the tab's directory that keeps its
   place while hidden and when the tab's directory changes. Tab or Z searches
   recent folders and Enter moves Yazi there, Shift+Tab shows the hovered

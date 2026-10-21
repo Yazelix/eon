@@ -803,6 +803,8 @@ impl RunningSession {
 /// Names the calling terminal for `eon` commands. Only Orbit terminals carry
 /// it; the supervisor's other children never inherit the launching terminal's.
 pub(super) const TERMINAL_VARIABLE: &str = "EON_TERMINAL";
+/// A popup terminal's owning tab identity when it started.
+pub(super) const TAB_VARIABLE: &str = "EON_TAB";
 
 /// The `EON_TERMINAL` value of one exact Orbit run, unique across generations
 /// and windows; callers treat it as opaque.
@@ -819,6 +821,7 @@ pub(super) fn start_orbit(
     component_generation: &str,
     directory: &Path,
     child: &[OsString],
+    tab: Option<&str>,
     deadline: Instant,
 ) -> Result<RunningSession, String> {
     let run_id = request_id();
@@ -832,6 +835,7 @@ pub(super) fn start_orbit(
         component_generation,
         directory,
         child,
+        tab,
     )?;
     let claim = ReadyClaim::create(&record_path)?;
     let mut orbit = match orbit_command.spawn() {
@@ -1018,6 +1022,7 @@ fn orbit_command(
     component_generation: &str,
     directory: &Path,
     child: &[OsString],
+    tab: Option<&str>,
 ) -> Result<Command, String> {
     let mut orbit_command = Command::new(&inputs.orbit);
     orbit_command
@@ -1032,10 +1037,14 @@ fn orbit_command(
         .arg("--")
         .env("EON_CONFIG_HOME", config)
         .env(TERMINAL_VARIABLE, terminal_identity(session_id, run_id))
+        .env_remove(TAB_VARIABLE)
         .current_dir(directory)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    if let Some(tab) = tab {
+        orbit_command.env(TAB_VARIABLE, tab);
+    }
     if let Some(session_bin) = &inputs.managed.shell_bin {
         orbit_command.env("PATH", managed_environment::session_path(session_bin)?);
     }
@@ -1899,6 +1908,7 @@ mod tests {
             "component-1",
             root.as_path(),
             &[],
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -1927,6 +1937,7 @@ mod tests {
             Some(Some(OsStr::new("session-1.run-1")))
         );
         assert_eq!(command_environment(&default, "XDG_CONFIG_HOME"), None);
+        assert_eq!(command_environment(&default, "EON_TAB"), Some(None));
         assert_eq!(default.get_current_dir(), Some(root.as_path()));
         assert_eq!(
             std::env::split_paths(
@@ -1950,8 +1961,13 @@ mod tests {
             "component-2",
             root.as_path(),
             &["codex".into(), "--model".into(), "test".into()],
+            Some("t3"),
         )
         .unwrap();
+        assert_eq!(
+            command_environment(&explicit, "EON_TAB"),
+            Some(Some(OsStr::new("t3")))
+        );
         assert_eq!(
             explicit.get_args().map(OsString::from).collect::<Vec<_>>(),
             [

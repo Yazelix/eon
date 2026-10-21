@@ -462,9 +462,9 @@
       '';
 
       # The Files popup's Yazi: Nova's F+ keys (Yazelix Nova defaults/yazi at cd95fee1)
-      # without its tab-folder and editor actions.
+      # without its editor actions.
       filesPopupConfig = pkgs.runCommand "eon-files-popup-config" { } ''
-        mkdir -p "$out/plugins/quick-search.yazi"
+        mkdir -p "$out/plugins/quick-search.yazi" "$out/plugins/tab-folder.yazi"
         cat > "$out/keymap.toml" <<'EOF'
         [mgr]
         prepend_keymap = [
@@ -472,6 +472,7 @@
           { on = "Z", run = "plugin quick-search", desc = "Search recent folders" },
           { on = "<BackTab>", run = "spot", desc = "Spot hovered file" },
           { on = "<S-Tab>", run = "spot", desc = "Spot hovered file" },
+          { on = "<A-Enter>", run = "plugin tab-folder", desc = "Set the hovered or current folder as the tab folder" },
         ]
         EOF
         cat > "$out/init.lua" <<'EOF'
@@ -480,11 +481,11 @@
           Status:children_remove(id, id <= 3 and Status.LEFT or Status.RIGHT)
         end
         Status:children_add(function()
-          return tostring(cx.layer) == "mgr" and " Tab/Z Search · Shift+Tab Spot" or ""
+          return tostring(cx.layer) == "mgr" and " Alt+Enter Set tab folder · Tab/Z Search · Shift+Tab Spot" or ""
         end, 1000, Status.LEFT)
         EOF
         cat > "$out/plugins/quick-search.yazi/main.lua" <<'EOF'
-        -- One move-only search of Zoxide history for Tab and Z.
+        -- One search of Zoxide history for Tab and Z: Enter moves Yazi, Alt+Enter sets the tab folder.
         local M = {}
 
         local cwd = ya.sync(function() return tostring(cx.active.current.cwd) end)
@@ -502,9 +503,10 @@
           local permit = ui.hide()
           local child, spawn_err = Command("fzf")
             :env("FZF_DEFAULT_OPTS", "--exact --no-sort --cycle --keep-right --info=inline --layout=reverse "
-              .. "--height=100% --border=none --tabstop=1 --exit-0 "
+              .. "--height=100% --border=none --tabstop=1 --exit-0 --expect=alt-enter "
               .. "--bind=enter:accept-non-empty,ctrl-z:ignore,tab:abort,btab:up --prompt='Go to folder > ' "
-              .. "--footer='Enter Go here · Tab/Esc Browse Yazi' --footer-border=none --color=footer:-1")
+              .. "--footer='Enter Go here · Alt+Enter Set tab folder · Tab/Esc Browse Yazi' "
+              .. "--footer-border=none --color=footer:-1")
             :env("FZF_DEFAULT_OPTS_FILE", "")
             :stdin(Command.PIPED)
             :stdout(Command.PIPED)
@@ -518,11 +520,72 @@
           if child then output, wait_err = child:wait_with_output() end
           permit:drop()
           if not output then return fail(spawn_err or wait_err) end
-          if output.status.code == 130 then return end
+          -- 130 is a cancel; 1 is Alt+Enter with no match.
+          if output.status.code == 130 or output.status.code == 1 then return end
           if not output.status.success then return fail(output.stderr) end
-          local target = output.stdout:gsub("\n$", "")
-          if target ~= "" then ya.emit("cd", { target, raw = true }) end
+          local key, target = output.stdout:match("^([^\n]*)\n(.*)")
+          target = target and target:gsub("\n$", "")
+          if not target or target == "" then return end
+          if key == "alt-enter" then return require("tab-folder").set(target) end
+          ya.emit("cd", { target, raw = true })
         end
+
+        return M
+        EOF
+        cat > "$out/plugins/tab-folder.yazi/main.lua" <<'EOF'
+        -- Alt+Enter: set this popup's Eon tab directory without moving Yazi.
+        local M = {}
+
+        local target = ya.sync(function()
+          local current = cx.active.current
+          local hovered = current.hovered
+          return tostring(hovered and hovered.cha.is_dir and hovered.url or current.cwd)
+        end)
+
+        local function notify(content, level)
+          ya.notify({ title = "Tab folder", content = content, timeout = level == "info" and 3 or 5, level = level })
+        end
+
+        -- After a supervisor recovery EON_TAB can name another tab, so act only
+        -- while that tab still lists this terminal among its popups.
+        local function owns(eon, tab)
+          local session = (os.getenv("EON_TERMINAL") or ""):match("^([^.]+)%.")
+          if not session then return false end
+          local output, err = Command(eon):arg({ "workspace", "--json" }):output()
+          if not output then return nil, tostring(err) end
+          if not output.status.success then return nil, (output.stderr:gsub("%s+$", "")) end
+          local ok, snapshot = pcall(ya.json_decode, output.stdout)
+          if not ok or type(snapshot) ~= "table" then return false end
+          for _, item in ipairs(snapshot.tabs or {}) do
+            if item.id == tab then
+              for _, popup in ipairs(item.popups or {}) do
+                if popup.session == session then return true end
+              end
+            end
+          end
+          return false
+        end
+
+        function M.set(dir)
+          local eon, tab = os.getenv("EON_FILES_CLI"), os.getenv("EON_TAB")
+          if not eon or eon == "" or not tab or tab == "" then
+            return notify("This Yazi is not an Eon Files popup", "error")
+          end
+          local owned, failure = owns(eon, tab)
+          if owned == nil then
+            return notify(failure ~= "" and failure or "eon workspace failed", "error")
+          end
+          if not owned then return notify("This Yazi is no longer a popup of tab " .. tab, "error") end
+          local output, err = Command(eon):arg({ "tab", "directory", tab, "--", dir }):output()
+          if not output then return notify(tostring(err), "error") end
+          if not output.status.success then
+            local detail = output.stderr:gsub("%s+$", "")
+            return notify(detail ~= "" and detail or "eon exited with status " .. tostring(output.status.code), "error")
+          end
+          notify("Set to " .. dir, "info")
+        end
+
+        function M:entry() M.set(target()) end
 
         return M
         EOF

@@ -698,7 +698,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     pane. Within that tab each action behaves as it does for the active tab,
     so `pane create` selects the new pane and dismisses the tab's popup; the
     active tab and desktop focus never change. Other commands, and commands
-    run outside Eon terminals, ignore it.
+    run outside Eon terminals, ignore it. Every popup terminal's environment
+    also carries `EON_TAB`, the `tN` identity of the tab that owned it when it
+    started.
 - **Important failures:** A caller that names no live terminal of the
   addressed supervisor (ended, closed, from another generation or window,
   empty, or malformed) changes nothing and exits 3 (`unknown-caller`), with no fallback
@@ -742,11 +744,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   behavior, including file operations, and the footer names the search and Spot
   keys. Files remains live when hidden and keeps its process, location and
   cursor across tab-directory changes; only after its process exits does the
-  next invocation start a fresh instance at the tab directory. For Git and other
-  keep-alive popups except Files, retargeting changes no process until the next
-  invocation, which stops the exact old terminal before starting a fresh one at
-  the new directory. A stop failure preserves the old instance; a start failure
-  records no replacement.
+  next invocation start a fresh instance at the tab directory. In Files,
+  Alt+Enter sets the owning tab's directory, as `eon tab directory` with its
+  `EON_TAB` would, to the hovered folder, else Yazi's current folder, or in
+  search to the selected result; Yazi does not move. It refuses when that tab
+  no longer lists the popup, as after a supervisor recovery. A notification
+  reports the result, and a failure changes nothing. The footers name Alt+Enter. For
+  Git and other keep-alive popups except Files, retargeting changes no process
+  until the next invocation, which stops the exact old terminal before starting
+  a fresh one at the new directory. A stop failure preserves the old instance;
+  a start failure records no replacement.
   Anima defaults to Alt+Shift+A and launches the pinned random native animation
   as a transient popup. A dismissal, replacement, or tab close stops its Orbit
   terminal, restores the prior tab focus, and leaves no hidden animation running.
@@ -781,7 +788,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   exit statuses `eon-8mnr.1` and `eon-8mnr.3` (automated tier); calling-terminal
   targets `eon-8mnr.2` (automated and installed tiers); Agent parking on
   retarget `eon-tbn1` (automated and installed tiers); the Files popup
-  `eon-ecne.1` (automated and installed tiers).
+  `eon-ecne.1` (automated and installed tiers); `EON_TAB` and Files Alt+Enter
+  `eon-ecne.4` (automated and installed tiers).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -794,6 +802,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `retarget_parks_the_agent_and_restarts_git_only_on_its_next_invocation`,
     `chooser_retarget_parks_a_hidden_agent_as_the_first_pane_of_a_paneless_tab`,
     `files_keeps_its_terminal_across_retargets`,
+    `orbit_uses_configured_argv_only_for_default_sessions`,
     `chooser_result_requires_its_exact_live_invocation`); deadlines and
     failures (`unix_connection_attempt_obeys_timeout`,
     `management_response_obeys_one_deadline_across_partial_reads`,
@@ -820,7 +829,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     search and Spot footer, its Yazi reading only the packaged configuration;
     Tab and Shift+Z searches moved Yazi; after `eon tab directory` the same
     Yazi process kept its location; `d` trashed a file; and after `q` the next
-    Alt+Shift+Y opened a fresh Yazi at the new directory.
+    Alt+Shift+Y opened a fresh Yazi at the new directory. Installed `eon-ecne.4`
+    observation on isolated headless Sway: Alt+Enter on a hovered folder and on
+    a search result set tab t1's directory without moving Yazi; Alt+Enter on a
+    search with no match changed nothing quietly; after a supervisor kill and
+    recovery, Alt+Enter in the recovered Files Yazi refused and changed
+    nothing.
 
 ## EON-C11 — Runtime generations and presentation
 

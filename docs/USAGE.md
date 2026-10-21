@@ -173,7 +173,9 @@ the next time you open it. Files is Yazi at the tab's directory: Tab or Z
 searches recent folders and Enter moves Yazi there, Shift+Tab shows the
 hovered file's details, and every other Yazi key, including file operations,
 works as usual. It keeps its place when the tab's directory changes; quitting Yazi with
-`q` closes it, and the next Alt+Shift+Y opens a fresh one. Anima is transient:
+`q` closes it, and the next Alt+Shift+Y opens a fresh one. Alt+Enter sets the
+tab's directory to the hovered folder, or Yazi's current one, without moving
+Yazi; in search it uses the selected result. Anima is transient:
 closing its popup stops playback and returns to the tab.
 
 ### Scrolling and directory picker

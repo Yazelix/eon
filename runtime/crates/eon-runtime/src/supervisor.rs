@@ -9,8 +9,8 @@ use super::{
     managed_environment::{self, nonempty_environment_path},
     quota,
     sessions::{
-        RunningSession, TERMINAL_VARIABLE, acquire_generation_sessions, recover_sessions,
-        session_finished, start_orbit, stop_managed_sessions,
+        RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE, acquire_generation_sessions,
+        recover_sessions, session_finished, start_orbit, stop_managed_sessions,
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, Workspace},
 };
@@ -358,7 +358,9 @@ fn venus_command(
     decorations: bool,
 ) -> Result<Command, String> {
     let mut command = Command::new(&inputs.venus);
-    command.env_remove(TERMINAL_VARIABLE);
+    command
+        .env_remove(TERMINAL_VARIABLE)
+        .env_remove(TAB_VARIABLE);
     if !decorations {
         command.arg("--no-decorations");
     }
@@ -724,6 +726,7 @@ fn supervise(
             generation,
             &launch_directory,
             &initial_child,
+            None,
             deadline,
         )?);
         initial_child.clear();
@@ -1074,12 +1077,13 @@ fn apply_session_operation(
     operation: SessionOperation,
     startup_animation: Option<&managed_environment::StartupAnimation>,
 ) -> Result<(), String> {
-    let (session, directory, command) = match operation {
+    let (session, directory, command, tab) = match operation {
         SessionOperation::Start {
             session,
             directory,
             command,
-        } => (session, directory, command),
+            tab,
+        } => (session, directory, command, tab),
         SessionOperation::Stop(id) => return stop_owned_session(sessions, &id).map(|_| ()),
     };
     let child = match command {
@@ -1105,6 +1109,7 @@ fn apply_session_operation(
         component_generation,
         &directory,
         &child,
+        tab.as_deref(),
         Instant::now() + SESSION_START_TIMEOUT,
     )?;
     sessions.push(running);

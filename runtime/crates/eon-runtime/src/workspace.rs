@@ -56,6 +56,8 @@ pub(crate) enum SessionOperation {
         session: Session,
         directory: PathBuf,
         command: LaunchCommand,
+        /// The owning tab of a popup terminal, exported to it as `EON_TAB`.
+        tab: Option<String>,
     },
     Stop(String),
 }
@@ -621,6 +623,7 @@ impl Workspace {
             session: popup.session.clone(),
             directory: popup.launch_directory.clone(),
             command,
+            tab: Some(self.tabs[tab_index].id.clone()),
         })
     }
 
@@ -894,6 +897,7 @@ impl Workspace {
             session: pane.session.clone(),
             directory: directory.to_path_buf(),
             command: LaunchCommand::Pane,
+            tab: None,
         })?;
         self.next_pane += 1;
         self.next_session += 1;
@@ -2990,9 +2994,18 @@ mod tests {
             expected_instance: expected.map(Into::into),
             intent: InvokeIntent::Toggle,
         };
+        let mut started = Vec::new();
         workspace
-            .dispatch("open", None, invoke(None), prepared, |_| Ok(()))
+            .dispatch("open", None, invoke(None), prepared, |operation| {
+                started.push(operation);
+                Ok(())
+            })
             .unwrap();
+        // A popup terminal names its owning tab for `EON_TAB`.
+        assert!(matches!(
+            started.as_slice(),
+            [SessionOperation::Start { tab: Some(tab), .. }] if tab == "t1"
+        ));
         let files = workspace.snapshot().tabs[0].popups[0].clone();
         workspace
             .dispatch("hide", None, invoke(Some(&files.id)), prepared, |_| Ok(()))

@@ -689,8 +689,14 @@ pub(crate) fn command(
         Tool::Files => {
             let files = env::var_os("EON_FILES_CONFIG")
                 .ok_or("the installed Eon package has no Files popup configuration")?;
+            // Its Alt+Enter calls this same Eon build to set the popup's tab directory.
+            let eon = env::current_exe()
+                .map_err(|error| format!("cannot find the running Eon executable: {error}"))?;
             // Yazi prefers PWD even when it disagrees with the terminal's actual CWD.
-            command.env("YAZI_CONFIG_HOME", files).env_remove("PWD");
+            command
+                .env("YAZI_CONFIG_HOME", files)
+                .env("EON_FILES_CLI", eon)
+                .env_remove("PWD");
         }
         Tool::LazyGit => {
             command

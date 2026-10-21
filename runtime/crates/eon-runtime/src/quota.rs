@@ -228,6 +228,7 @@ fn fetch(
 ) -> Result<Option<Vec<u8>>, ()> {
     let mut child = Command::new(program)
         .env_remove(super::sessions::TERMINAL_VARIABLE)
+        .env_remove(super::sessions::TAB_VARIABLE)
         .args([
             "usage",
             "--provider",
