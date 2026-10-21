@@ -164,7 +164,11 @@ minor modes yet.
 Tabs own launch directories; changing a shell's directory does not rename or
 retarget its tab. Project changes the directory used by future terminals in the
 captured tab without moving existing terminals. Git and Agent are tab-scoped
-terminals whose terminal state survives hiding and reopening. Anima is transient:
+terminals whose terminal state survives hiding and reopening. When the tab's
+directory changes, a running Agent moves out of its popup into a pane of the
+tab, with its conversation and old directory intact, and the next Alt+Shift+L
+starts a fresh agent in the new directory. Git restarts in the new directory
+the next time you open it. Anima is transient:
 closing its popup stops playback and returns to the tab.
 
 ### Scrolling and directory picker

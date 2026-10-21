@@ -683,7 +683,7 @@ impl Workspace {
             self.tabs[tab_index].directory = directory;
             self.tabs[tab_index].pending = false;
         } else {
-            self.tabs[tab_index].directory = directory;
+            self.retarget(tab_index, directory)?;
         }
         Ok(())
     }
@@ -1185,18 +1185,67 @@ impl Workspace {
                 "tab directory targets require a canonical tN identity",
             ));
         }
-        let tab = self
+        let tab_index = self
             .tabs
-            .iter_mut()
-            .find(|tab| tab.id == id)
+            .iter()
+            .position(|tab| tab.id == id)
             .ok_or_else(|| action_error("unknown-tab", format!("tab {id} is not live")))?;
-        if tab.pending {
+        if self.tabs[tab_index].pending {
             return Err(action_error(
                 "choose-directory-first",
                 "the pending tab requires its exact Project chooser result",
             ));
         }
-        tab.directory = validated_directory(directory)?;
+        self.retarget(tab_index, validated_directory(directory)?)
+    }
+
+    /// Changes an established tab's directory and parks a live Agent launched
+    /// elsewhere as an ordinary pane, keeping its terminal: at the end of the
+    /// selected column, expanded and selected when its popup was shown, or as
+    /// the first column of a tab without panes.
+    fn retarget(&mut self, tab_index: usize, directory: PathBuf) -> Result<(), Failure> {
+        let tab = &self.tabs[tab_index];
+        let parked = tab
+            .popups
+            .iter()
+            .position(|popup| popup.entry == "agent" && popup.launch_directory != directory);
+        if parked.is_some() && self.next_pane == usize::MAX {
+            return Err(action_error(
+                "capacity",
+                "workspace exhausted pane identities",
+            ));
+        }
+        let tab = &mut self.tabs[tab_index];
+        tab.directory = directory;
+        let Some(index) = parked else {
+            return Ok(());
+        };
+        let popup = tab.popups.remove(index);
+        let shown = tab.selected_popup.as_deref() == Some(&popup.id);
+        if shown {
+            tab.selected_popup = None;
+        }
+        let pane = Pane {
+            id: format!("p{}", self.next_pane),
+            session: popup.session,
+        };
+        self.next_pane += 1;
+        match tab.selected_column {
+            Some(selected) => {
+                let column = &mut tab.columns[selected];
+                column.panes.push(pane);
+                if shown {
+                    column.expanded = column.panes.len() - 1;
+                }
+            }
+            None => {
+                tab.columns.push(Column {
+                    panes: vec![pane],
+                    expanded: 0,
+                });
+                tab.selected_column = Some(0);
+            }
+        }
         Ok(())
     }
 
@@ -1619,6 +1668,16 @@ mod tests {
                         key: "KeyA".into(),
                     },
                     command: PopupCommand::Argv(vec!["agent".into()]),
+                    keep_alive: true,
+                },
+                PopupDefinition {
+                    id: "git".into(),
+                    label: "Git".into(),
+                    shortcut: Shortcut {
+                        modifiers: ALT,
+                        key: "KeyG".into(),
+                    },
+                    command: PopupCommand::Argv(vec!["git".into()]),
                     keep_alive: true,
                 },
             ],
@@ -2519,7 +2578,7 @@ mod tests {
     }
 
     #[test]
-    fn popup_identity_reuses_hides_and_replaces_only_after_retarget() {
+    fn retarget_parks_the_agent_and_restarts_git_only_on_its_next_invocation() {
         let root = std::env::temp_dir().join(format!("eon-workspace-{}", std::process::id()));
         let old = root.join("old");
         let new = root.join("new");
@@ -2546,111 +2605,137 @@ mod tests {
             operations.push(operation);
             Ok(())
         };
-        workspace
-            .dispatch(
-                "open",
-                None,
-                Action::InvokePopup {
-                    tab: "t1".into(),
-                    entry: "agent".into(),
-                    expected_instance: None,
-                    intent: InvokeIntent::Toggle,
-                },
-                prepared,
-                &mut operate,
-            )
+        let invoke = |entry: &str, expected: Option<&str>| Action::InvokePopup {
+            tab: "t1".into(),
+            entry: entry.into(),
+            expected_instance: expected.map(Into::into),
+            intent: InvokeIntent::Toggle,
+        };
+        let retarget = |directory: &Path| {
+            Action::Workspace(WorkspaceAction::SetTabDirectory {
+                tab: "t1".into(),
+                directory: directory.as_os_str().as_bytes().to_vec(),
+            })
+        };
+        for (request, entry) in [("agent", "agent"), ("git", "git")] {
+            workspace
+                .dispatch(request, None, invoke(entry, None), prepared, &mut operate)
+                .unwrap();
+        }
+        let [agent, git] = workspace.snapshot().tabs[0]
+            .popups
+            .clone()
+            .try_into()
             .unwrap();
-        let first = workspace.snapshot().tabs[0].popups[0].clone();
         workspace
             .dispatch(
                 "hide",
                 None,
-                Action::InvokePopup {
-                    tab: "t1".into(),
-                    entry: "agent".into(),
-                    expected_instance: Some(first.id.clone()),
-                    intent: InvokeIntent::Toggle,
-                },
+                invoke("git", Some(&git.id)),
                 prepared,
                 &mut operate,
             )
             .unwrap();
-        assert_eq!(workspace.snapshot().tabs[0].popups[0], first);
+        assert_eq!(
+            workspace.snapshot().tabs[0].popups,
+            [agent.clone(), git.clone()]
+        );
+
+        // Git, opened over the Agent and then hidden, leaves the Agent hidden: it
+        // parks collapsed at the end of the selected column.
         workspace
-            .dispatch(
-                "retarget",
-                None,
-                Action::Workspace(WorkspaceAction::SetTabDirectory {
-                    tab: "t1".into(),
-                    directory: new.as_os_str().as_bytes().to_vec(),
-                }),
-                prepared,
-                &mut operate,
-            )
+            .dispatch("retarget", None, retarget(&new), prepared, &mut operate)
             .unwrap();
-        assert_eq!(workspace.snapshot().tabs[0].popups[0], first);
+        let tab = &workspace.snapshot().tabs[0];
+        assert_eq!(tab.popups, std::slice::from_ref(&git));
+        assert_eq!(tab.selected_popup, None);
+        assert_eq!(tab.selected_pane.as_deref(), Some("p1"));
+        let panes = &tab.columns[0].panes;
+        assert_eq!(panes.len(), 2);
+        assert_eq!(
+            (panes[1].session.as_str(), panes[1].endpoint.as_slice()),
+            (agent.session.as_str(), agent.endpoint.as_slice())
+        );
+        let parked = panes[1].id.clone();
+
+        // The next Agent starts fresh at the new directory; Git restarts there.
+        workspace
+            .dispatch("fresh", None, invoke("agent", None), prepared, &mut operate)
+            .unwrap();
         workspace
             .dispatch(
                 "replace",
                 None,
-                Action::InvokePopup {
-                    tab: "t1".into(),
-                    entry: "agent".into(),
-                    expected_instance: Some(first.id.clone()),
-                    intent: InvokeIntent::Toggle,
-                },
+                invoke("git", Some(&git.id)),
                 prepared,
                 &mut operate,
             )
             .unwrap();
-        let replacement = &workspace.snapshot().tabs[0].popups[0];
-        assert_ne!(replacement.id, first.id);
-        assert_eq!(
-            operations
+        let popups = workspace.snapshot().tabs[0].popups.clone();
+        assert_eq!(popups.len(), 2);
+        assert!(
+            popups
                 .iter()
-                .filter_map(|operation| match operation {
-                    SessionOperation::Stop(id) => Some(id.as_str()),
-                    _ => None,
-                })
-                .collect::<Vec<_>>(),
-            [first.session]
+                .all(|popup| popup.id != agent.id && popup.id != git.id)
         );
         assert_eq!(
             operations
                 .iter()
-                .filter_map(|operation| match operation {
-                    SessionOperation::Start { directory, .. } => Some(directory),
-                    SessionOperation::Stop(_) => None,
+                .map(|operation| match operation {
+                    SessionOperation::Start { directory, .. } => directory.clone(),
+                    SessionOperation::Stop(id) => PathBuf::from(format!("stop {id}")),
                 })
                 .collect::<Vec<_>>(),
-            [&root.join("old"), &new]
+            [
+                root.join("old"),
+                root.join("old"),
+                new.clone(),
+                PathBuf::from(format!("stop {}", git.session)),
+                new.clone(),
+            ]
         );
 
-        let live = replacement.clone();
+        // A shown Agent parks as the selected, expanded pane.
+        let live_git = popups
+            .iter()
+            .find(|popup| popup.entry == "git")
+            .unwrap()
+            .clone();
+        let fresh = popups
+            .iter()
+            .find(|popup| popup.entry == "agent")
+            .unwrap()
+            .clone();
         workspace
             .dispatch(
-                "retarget-again",
+                "show",
                 None,
-                Action::Workspace(WorkspaceAction::SetTabDirectory {
-                    tab: "t1".into(),
-                    directory: newest.as_os_str().as_bytes().to_vec(),
-                }),
+                invoke("agent", Some(&fresh.id)),
                 prepared,
                 |_| Ok(()),
             )
             .unwrap();
-        let replace = || Action::InvokePopup {
-            tab: "t1".into(),
-            entry: "agent".into(),
-            expected_instance: Some(live.id.clone()),
-            intent: InvokeIntent::Toggle,
-        };
+        workspace
+            .dispatch("retarget-again", None, retarget(&newest), prepared, |_| {
+                Err("parking starts and stops nothing".into())
+            })
+            .unwrap();
+        let tab = &workspace.snapshot().tabs[0];
+        assert_eq!(tab.popups, std::slice::from_ref(&live_git));
+        assert_eq!(tab.selected_popup, None);
+        let panes = &tab.columns[0].panes;
+        assert_eq!(panes[1].id, parked);
+        assert_eq!(panes[2].session, fresh.session);
+        assert_eq!(tab.selected_pane.as_ref(), Some(&panes[2].id));
+
+        // Git's restart keeps the old instance when its stop fails and records
+        // no replacement when its start fails.
         assert_eq!(
             workspace
                 .dispatch(
                     "stop-fails",
                     None,
-                    replace(),
+                    invoke("git", Some(&live_git.id)),
                     prepared,
                     |operation| match operation {
                         SessionOperation::Stop(_) => Err("stop failed".into()),
@@ -2662,15 +2747,15 @@ mod tests {
             "popup-stop"
         );
         assert_eq!(
-            workspace.snapshot().tabs[0].popups.as_slice(),
-            std::slice::from_ref(&live)
+            workspace.snapshot().tabs[0].popups,
+            std::slice::from_ref(&live_git)
         );
         assert_eq!(
             workspace
                 .dispatch(
                     "start-fails",
                     None,
-                    replace(),
+                    invoke("git", Some(&live_git.id)),
                     prepared,
                     |operation| match operation {
                         SessionOperation::Stop(_) => Ok(()),
@@ -2866,6 +2951,86 @@ mod tests {
                 )
                 .is_err()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn chooser_retarget_parks_a_hidden_agent_as_the_first_pane_of_a_paneless_tab() {
+        let root = std::env::temp_dir().join(format!("eon-park-{}", std::process::id()));
+        let next = root.join("next");
+        fs::create_dir_all(&next).unwrap();
+        let mut workspace = Workspace::with_recovered_sessions(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: root.join("orbit.sock"),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let invoke = |entry: &str, expected: Option<&str>| Action::InvokePopup {
+            tab: "t1".into(),
+            entry: entry.into(),
+            expected_instance: expected.map(Into::into),
+            intent: InvokeIntent::Toggle,
+        };
+        workspace
+            .dispatch("agent", None, invoke("agent", None), prepared, |_| Ok(()))
+            .unwrap();
+        let agent = workspace.snapshot().tabs[0].popups[0].clone();
+        workspace
+            .dispatch(
+                "hide",
+                None,
+                invoke("agent", Some(&agent.id)),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        workspace
+            .session_ended("session-1", SessionEnd::Exited, |_| Ok(()))
+            .unwrap();
+        assert!(workspace.snapshot().tabs[0].columns.is_empty());
+        workspace
+            .dispatch("project", None, invoke("project", None), prepared, |_| {
+                Ok(())
+            })
+            .unwrap();
+        let project = workspace.snapshot().tabs[0]
+            .popups
+            .iter()
+            .find(|popup| popup.entry == "project")
+            .unwrap()
+            .clone();
+        workspace
+            .dispatch(
+                "commit",
+                None,
+                Action::CommitDirectory {
+                    target: PopupTarget {
+                        tab: "t1".into(),
+                        instance: project.id.clone(),
+                    },
+                    directory: next.as_os_str().as_bytes().to_vec(),
+                },
+                prepared,
+                |_| Err("parking starts and stops nothing".into()),
+            )
+            .unwrap();
+        let tab = &workspace.snapshot().tabs[0];
+        assert_eq!(tab.directory, next.as_os_str().as_bytes());
+        assert_eq!(tab.popups, std::slice::from_ref(&project));
+        let [column] = tab.columns.as_slice() else {
+            panic!("the parked Agent is the tab's only column");
+        };
+        assert_eq!(column.panes.len(), 1);
+        assert_eq!(column.panes[0].session, agent.session);
+        assert_eq!(tab.selected_pane.as_ref(), Some(&column.panes[0].id));
         fs::remove_dir_all(root).unwrap();
     }
 

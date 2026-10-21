@@ -726,10 +726,19 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
   Agent defaults to the first available provider in the accepted Nova order on
   Alt+Shift+L. Git and Agent remain live when hidden. Reopening at the same tab
-  directory preserves identity; explicit retargeting changes no process until
-  the next invocation, which stops the exact old terminal before starting a
-  fresh one at the new directory. A stop failure preserves the old instance; a
-  start failure records no replacement.
+  directory preserves identity. When a tab's directory changes explicitly
+  (Project chooser completion or `SetTabDirectory`), a live Agent terminal
+  launched at another directory is parked in the same step: it leaves the popup
+  and becomes an ordinary pane at the end of the tab's selected column, or the
+  first column of a tab without panes, keeping its Orbit terminal, process and
+  directory. It is the selected, expanded pane when its popup was shown or the
+  tab had no panes; otherwise the tab's selection is unchanged. Parking starts
+  and stops nothing and cannot fail on terminal or column capacity. The next
+  Agent invocation starts a fresh agent at the new directory. For Git and other
+  keep-alive popups, retargeting changes no process until the next invocation,
+  which stops the exact old terminal before starting a fresh one at the new
+  directory. A stop failure preserves the old instance; a start failure records
+  no replacement.
   Anima defaults to Alt+Shift+A and launches the pinned random native animation
   as a transient popup. A dismissal, replacement, or tab close stops its Orbit
   terminal, restores the prior tab focus, and leaves no hidden animation running.
@@ -762,7 +771,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   There is no negotiation or adapter.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
   exit statuses `eon-8mnr.1` and `eon-8mnr.3` (automated tier); calling-terminal
-  targets `eon-8mnr.2` (automated and installed tiers).
+  targets `eon-8mnr.2` (automated and installed tiers); Agent parking on
+  retarget `eon-tbn1` (automated and installed tiers).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -772,7 +782,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `every_legal_snapshot_fits_the_frame_budget`); popup policy
     (`popup_configuration_owns_defaults_overrides_and_collisions`,
     `popup_executable_preflight_uses_the_session_context`,
-    `popup_identity_reuses_hides_and_replaces_only_after_retarget`,
+    `retarget_parks_the_agent_and_restarts_git_only_on_its_next_invocation`,
+    `chooser_retarget_parks_a_hidden_agent_as_the_first_pane_of_a_paneless_tab`,
     `chooser_result_requires_its_exact_live_invocation`); deadlines and
     failures (`unix_connection_attempt_obeys_timeout`,
     `management_response_obeys_one_deadline_across_partial_reads`,
@@ -788,7 +799,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Project, Git, Agent and Anima popups). Installed `eon-8mnr.2` observation on
     isolated headless Sway: from a terminal in an inactive tab, `eon pane create`
     adds its pane there while the new tab stays active, and a stale
-    `EON_TERMINAL` exits 3 with the workspace unchanged.
+    `EON_TERMINAL` exits 3 with the workspace unchanged. Installed `eon-tbn1`
+    observation on isolated headless Sway with a stub Agent provider: a shown
+    Agent retargeted by `eon tab directory` became the selected, expanded pane
+    with the same process, transcript and input; the next Alt+Shift+L started a
+    fresh agent at the new directory; hidden and retargeted through Alt+Z, that
+    agent parked collapsed at the column's end with the selection unchanged,
+    and both agents stayed live.
 
 ## EON-C11 — Runtime generations and presentation
 

@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Changing a tab's directory with Alt+Z or `eon tab directory` no longer
+  restarts a running Agent on the next Alt+Shift+L. The agent moves out of its
+  popup into a pane of the tab, with its conversation and old directory intact,
+  and the next Alt+Shift+L starts a fresh agent in the new directory. The pane
+  is selected if the Agent popup was showing or the tab had no panes.
+
 - URLs printed as plain text, such as `http://localhost:5173/` from a dev
   server or a link in an agent's reply, highlight on hover and open with
   Ctrl+click, like links programs mark explicitly. Only `http://` and
