@@ -421,7 +421,7 @@ mod tests {
     use super::{parse_and_validate, version_report};
     use serde_json::Value;
 
-    const CANONICAL: &str = include_str!("../../../../components/eon-alpha-v3.json");
+    const CANONICAL: &str = include_str!("../../../../components/eon-v4.json");
 
     fn component_mut<'a>(manifest: &'a mut Value, id: &str) -> &'a mut Value {
         manifest["components"]

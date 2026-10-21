@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The component graph's product ID is `eon` instead of `eon-alpha`, so
+  `eon versions` reports `eon x86_64-linux`. The canonical manifest is
+  `components/eon-v4.json`. The new build still lists and stops a generation
+  started before this change, but it reports that generation's component graph
+  as different; reattach it with the build that started it.
 - The Eon Bar shows the local time as a 24-hour `HH:MM` clock beside the
   Shortcuts and Close buttons. Hover it for the date and UTC offset. It hides
   first when the window is narrow, and it doesn't appear if Eon can't

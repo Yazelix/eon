@@ -5,7 +5,7 @@ use eon_runtime::{
 use eon_workspace_protocol::v12::{ALT, PopupGeometry, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
-    const MANIFEST: &str = include_str!("../../../../components/eon-alpha-v3.json");
+    const MANIFEST: &str = include_str!("../../../../components/eon-v4.json");
     Inputs {
         version: env!("CARGO_PKG_VERSION"),
         component_report: eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string()),

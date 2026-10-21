@@ -58,7 +58,7 @@
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
       inherit (pkgs) lib;
-      manifest = builtins.fromJSON (builtins.readFile ./components/eon-alpha-v3.json);
+      manifest = builtins.fromJSON (builtins.readFile ./components/eon-v4.json);
       eonCargo = builtins.fromTOML (builtins.readFile ./eon/crates/eon/Cargo.toml);
       helixCargo = builtins.fromTOML (builtins.readFile "${helix}/Cargo.toml");
       component =
@@ -716,7 +716,7 @@
         manual-bundle = import ./nix/linux-bundle.nix {
           inherit pkgs eonPackage;
           relink = bundleRelink;
-          manifestFile = ./components/eon-alpha-v3.json;
+          manifestFile = ./components/eon-v4.json;
           lockFile = ./flake.lock;
         };
       };
