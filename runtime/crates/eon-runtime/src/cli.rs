@@ -1,13 +1,14 @@
 use super::{
     control::{
         ControlResponse, EndpointFailureKind, Error, failure, report_failure, send_action,
-        write_stdout,
+        send_action_from, write_stdout,
     },
     generation::{
         attach_generation, current_generation, generations_command, stop_generation,
         stop_generations, valid_generation,
     },
     managed_environment,
+    sessions::TERMINAL_VARIABLE,
     supervisor::{
         LaunchMode, configuration_directory, launch_current, prepare_configuration,
         prepare_generation_runtime, runtime_directory,
@@ -15,8 +16,8 @@ use super::{
     windows,
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::v12::{
-    Action, Direction, PopupTarget, Response, Side, VERSION, WorkspaceAction,
+use eon_workspace_protocol::v13::{
+    Action, Direction, Failure, PopupTarget, Response, Side, VERSION, WorkspaceAction, valid_caller,
 };
 use std::{
     env,
@@ -476,6 +477,7 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
   {command}eon anima --help{reset}                            Browse animation styles/options
 
 Closing a window detaches. Stop ends its terminals.
+Inside Eon, tab move and pane commands act on the calling terminal's tab.
 Where shown, {command}--json{reset} prints JSON and skips Stop confirmation.
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
 4 Eon unreachable, 130 interrupted.
@@ -603,7 +605,11 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
     let root = runtime_directory("eon");
     let runtime = prepare_generation_runtime(&root, &generation)?;
     let socket = runtime.join("eon.sock");
-    let response = match send_action(&socket, action) {
+    let caller = match calling_terminal(&action) {
+        Ok(caller) => caller,
+        Err(error) => return report_failure(&error, json),
+    };
+    let response = match send_action_from(&socket, caller, action) {
         Ok(response) => response,
         Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
             return report_failure(&failure("malformed-action", error.detail), json);
@@ -634,6 +640,32 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
             Err("Eon supervisor returned a lifecycle result for a workspace action".into())
         }
     }
+}
+
+/// The terminal an action that targets the active tab acts for instead: the
+/// one named by `EON_TERMINAL` when the command runs inside Eon.
+fn calling_terminal(action: &Action) -> Result<Option<String>, Failure> {
+    if !matches!(
+        action,
+        Action::Workspace(WorkspaceAction::CreatePane | WorkspaceAction::Move(_))
+            | Action::MovePaneSideways(_)
+            | Action::ClosePane { .. }
+    ) {
+        return Ok(None);
+    }
+    let Some(caller) = env::var_os(TERMINAL_VARIABLE) else {
+        return Ok(None);
+    };
+    caller
+        .to_str()
+        .filter(|caller| valid_caller(caller))
+        .map(|caller| Some(caller.into()))
+        .ok_or_else(|| {
+            failure(
+                "unknown-caller",
+                format!("{TERMINAL_VARIABLE} does not name an Eon terminal"),
+            )
+        })
 }
 
 fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Error> {

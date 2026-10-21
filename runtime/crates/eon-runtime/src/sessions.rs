@@ -7,7 +7,7 @@ use super::{
     },
     workspace::{is_directory_picker_endpoint, is_directory_picker_session},
 };
-use eon_workspace_protocol::v12::MAX_SESSIONS;
+use eon_workspace_protocol::v13::MAX_SESSIONS;
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LiveIdentity,
     ObjectIdentity, ProcessOutcome, Record as ManagementRecord,
@@ -793,6 +793,21 @@ impl RunningSession {
     pub(super) fn is_finished(&self) -> bool {
         self.finished.is_some()
     }
+
+    /// Whether this live terminal is the one an `EON_TERMINAL` value names.
+    pub(super) fn is_terminal(&self, caller: &str) -> bool {
+        !self.is_finished() && caller == terminal_identity(&self.id, &self.identity.run_id)
+    }
+}
+
+/// Names the calling terminal for `eon` commands. Only Orbit terminals carry
+/// it; the supervisor's other children never inherit the launching terminal's.
+pub(super) const TERMINAL_VARIABLE: &str = "EON_TERMINAL";
+
+/// The `EON_TERMINAL` value of one exact Orbit run, unique across generations
+/// and windows; callers treat it as opaque.
+fn terminal_identity(session_id: &str, run_id: &str) -> String {
+    format!("{session_id}.{run_id}")
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1016,6 +1031,7 @@ fn orbit_command(
         .arg(inputs.defaults.ansi_palette)
         .arg("--")
         .env("EON_CONFIG_HOME", config)
+        .env(TERMINAL_VARIABLE, terminal_identity(session_id, run_id))
         .current_dir(directory)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1905,6 +1921,10 @@ mod tests {
         assert_eq!(
             command_environment(&default, "EON_CONFIG_HOME"),
             Some(Some(config.as_os_str()))
+        );
+        assert_eq!(
+            command_environment(&default, "EON_TERMINAL"),
+            Some(Some(OsStr::new("session-1.run-1")))
         );
         assert_eq!(command_environment(&default, "XDG_CONFIG_HOME"), None);
         assert_eq!(default.get_current_dir(), Some(root.as_path()));

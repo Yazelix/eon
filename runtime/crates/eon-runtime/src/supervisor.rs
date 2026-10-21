@@ -9,12 +9,12 @@ use super::{
     managed_environment::{self, nonempty_environment_path},
     quota,
     sessions::{
-        RunningSession, acquire_generation_sessions, recover_sessions, session_finished,
-        start_orbit, stop_managed_sessions,
+        RunningSession, TERMINAL_VARIABLE, acquire_generation_sessions, recover_sessions,
+        session_finished, start_orbit, stop_managed_sessions,
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, Workspace},
 };
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     Action, Availability, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
     Stopped, VERSION, WorkspaceAction,
 };
@@ -358,6 +358,7 @@ fn venus_command(
     decorations: bool,
 ) -> Result<Command, String> {
     let mut command = Command::new(&inputs.venus);
+    command.env_remove(TERMINAL_VARIABLE);
     if !decorations {
         command.arg("--no-decorations");
     }
@@ -458,7 +459,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v12::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v13::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -976,7 +977,7 @@ fn close_workspace_tab(
 }
 
 fn close_workspace_pane(
-    request_id: &str,
+    request: &Request,
     pane: &str,
     state: &mut SupervisorState,
     inputs: &Inputs,
@@ -984,11 +985,12 @@ fn close_workspace_pane(
 ) -> Result<Snapshot, Failure> {
     reap_finished_sessions(state, inputs, config)
         .map_err(|detail| failure("pane-close-failed", detail))?;
+    let caller = caller_session(state, inputs, config, request)?;
     let workspace = state
         .workspace
         .as_mut()
         .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
-    let id = workspace.prepare_close_pane(request_id, pane)?;
+    let id = workspace.prepare_close_pane(&request.id, caller.as_deref(), pane)?;
     let natural_status = stop_owned_session(&mut state.sessions, &id)
         .map_err(|detail| failure("pane-close-failed", format!("{id}: {detail}")))?;
     state
@@ -1004,6 +1006,32 @@ fn close_workspace_pane(
     Ok(state
         .workspace_snapshot()
         .expect("pane close retains a nonempty workspace"))
+}
+
+/// The live terminal session a request's `EON_TERMINAL` caller names; a
+/// terminal that has ended since the last reconciliation names none.
+fn caller_session(
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    config: &Path,
+    request: &Request,
+) -> Result<Option<String>, Failure> {
+    let Some(caller) = &request.caller else {
+        return Ok(None);
+    };
+    reap_finished_sessions(state, inputs, config)
+        .map_err(|detail| failure("unavailable", detail))?;
+    state
+        .sessions
+        .iter()
+        .find(|session| session.is_terminal(caller))
+        .map(|session| Some(session.id.clone()))
+        .ok_or_else(|| {
+            failure(
+                "unknown-caller",
+                "the calling terminal is not live in this Eon workspace",
+            )
+        })
 }
 
 fn directory_picker_command(
@@ -1442,6 +1470,7 @@ fn dispatch_control_request(
         Request {
             id,
             action: Action::Workspace(WorkspaceAction::CloseTab { tab }),
+            ..
         } => match close_workspace_tab(&id, &tab, state, inputs, config) {
             Ok(snapshot) => (
                 ControlResponse::Workspace(Response::Snapshot(snapshot)),
@@ -1450,9 +1479,9 @@ fn dispatch_control_request(
             Err(error) => (ControlResponse::Workspace(Response::Failure(error)), false),
         },
         Request {
-            id,
-            action: Action::ClosePane { pane },
-        } => match close_workspace_pane(&id, &pane, state, inputs, config) {
+            action: Action::ClosePane { ref pane },
+            ..
+        } => match close_workspace_pane(&request, pane, state, inputs, config) {
             Ok(snapshot) => (
                 ControlResponse::Workspace(Response::Snapshot(snapshot)),
                 false,
@@ -1460,7 +1489,7 @@ fn dispatch_control_request(
             Err(error) => (ControlResponse::Workspace(Response::Failure(error)), false),
         },
         request => {
-            let Some(workspace) = &mut state.workspace else {
+            if state.workspace.is_none() {
                 return (
                     ControlResponse::Workspace(Response::Failure(failure(
                         "workspace-unavailable",
@@ -1468,12 +1497,20 @@ fn dispatch_control_request(
                     ))),
                     false,
                 );
+            }
+            let caller = match caller_session(state, inputs, config, &request) {
+                Ok(caller) => caller,
+                Err(error) => return (ControlResponse::Workspace(Response::Failure(error)), false),
+            };
+            let Some(workspace) = &mut state.workspace else {
+                unreachable!("reconciliation keeps the workspace owner");
             };
             let component_generation = &state.component_generation;
             let sessions = &mut state.sessions;
             let initial_child = &mut state.initial_child;
             match workspace.dispatch(
                 &request.id,
+                caller.as_deref(),
                 request.action,
                 |command, directory| {
                     managed_environment::prepare_popup_command(
@@ -1577,7 +1614,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v12::{
+        use eon_workspace_protocol::v13::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::{

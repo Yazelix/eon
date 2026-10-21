@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Venus consumes EONW v13, whose requests may name a calling terminal; Venus
+  sends none, so its actions keep targeting the active tab (`eon-8mnr.2`).
 - VEN-C28: a read-only `CPU 12%` label joins the Eon Bar before the clock,
   sampled from `/proc/stat` every 2 seconds on Linux. It uses only spare space
   and yields right after the clock (`eon-cpu-widget-eon-bar-acxs`).

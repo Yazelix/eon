@@ -1,5 +1,5 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     Action, Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS,
     MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
     PopupEntry as SnapshotEntry, PopupTarget, Side, Snapshot, Tab as SnapshotTab, WorkspaceAction,
@@ -72,6 +72,14 @@ struct Popup {
     entry: String,
     session: Session,
     launch_directory: PathBuf,
+}
+
+/// A tab's selected column and one column's expanded pane before a caller's
+/// pane action took them.
+struct Selection {
+    tab: String,
+    column: Option<usize>,
+    expanded: (usize, usize),
 }
 
 /// One accordion of panes; `expanded` indexes the pane it shows.
@@ -263,9 +271,13 @@ impl Workspace {
         }
     }
 
+    /// Applies one action. `caller` names the issuing terminal's session, whose
+    /// tab and pane replace the active tab and its selection as the implicit
+    /// target of pane create and move actions and tab moves.
     pub(crate) fn dispatch(
         &mut self,
         request_id: &str,
+        caller: Option<&str>,
         action: Action,
         mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
@@ -273,9 +285,39 @@ impl Workspace {
         self.reject_duplicate(request_id)?;
         check_popup_action(&self.snapshot(), &action)
             .map_err(|error| action_error("stale-popup", error.to_string()))?;
+        let (target, previous) = match &action {
+            Action::Workspace(WorkspaceAction::Move(Direction::Left | Direction::Right)) => {
+                (self.target_tab(caller)?.0, None)
+            }
+            Action::Workspace(WorkspaceAction::CreatePane | WorkspaceAction::Move(_))
+            | Action::MovePaneSideways(_) => {
+                let (target, pane) = self.target_tab(caller)?;
+                (target, pane.map(|pane| self.select(target, pane)))
+            }
+            _ => (self.active, None),
+        };
+        let result = self.apply(action, target, caller.is_some(), &mut prepare, &mut operate);
+        if result.is_err()
+            && let Some(previous) = previous
+        {
+            self.restore(previous);
+        }
+        result?;
+        self.remember(request_id);
+        Ok(())
+    }
+
+    fn apply(
+        &mut self,
+        action: Action,
+        target: usize,
+        called: bool,
+        mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
+    ) -> Result<(), Failure> {
         match action {
             Action::Workspace(action) => {
-                self.dispatch_workspace(action, &mut prepare, &mut operate)?
+                self.dispatch_workspace(action, target, called, &mut prepare, &mut operate)?
             }
             Action::ClosePane { .. } => {
                 return Err(action_error(
@@ -291,9 +333,14 @@ impl Workspace {
                 self.commit_directory(&target, directory, &mut operate)?
             }
             // A tab without columns gains its first one exactly as a new pane would.
-            Action::CreateColumn if self.tabs[self.active].columns.is_empty() => {
-                self.dispatch_workspace(WorkspaceAction::CreatePane, &mut prepare, &mut operate)?
-            }
+            Action::CreateColumn if self.tabs[self.active].columns.is_empty() => self
+                .dispatch_workspace(
+                    WorkspaceAction::CreatePane,
+                    self.active,
+                    false,
+                    &mut prepare,
+                    &mut operate,
+                )?,
             Action::CreateColumn => {
                 self.require_established(self.active)?;
                 if self.tabs[self.active].columns.len() >= MAX_COLUMNS {
@@ -302,19 +349,20 @@ impl Workspace {
                         format!("a tab holds at most {MAX_COLUMNS} columns"),
                     ));
                 }
-                self.dismiss_for_pane_action(self.active, &mut operate)?;
-                self.start_column(self.active, &mut operate)
+                let active = self.dismiss_for_pane_action(self.active, &mut operate)?;
+                self.start_column(active, &mut operate)
                     .map_err(|detail| action_error("session-start", detail))?;
             }
-            Action::MovePaneSideways(side) => self.move_pane_sideways(side)?,
+            Action::MovePaneSideways(side) => self.move_pane_sideways(target, side)?,
         }
-        self.remember(request_id);
         Ok(())
     }
 
     fn dispatch_workspace(
         &mut self,
         action: WorkspaceAction,
+        target: usize,
+        called: bool,
         prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
@@ -332,14 +380,19 @@ impl Workspace {
             }
             WorkspaceAction::CreateTab => self.create_tab(prepare, operate)?,
             WorkspaceAction::CreatePane => {
-                self.require_established(self.active)?;
-                self.dismiss_for_pane_action(self.active, operate)?;
-                self.start_pane(self.active, operate)
+                self.require_established(target)?;
+                if called {
+                    self.require_surviving_dismissal(target)?;
+                }
+                let target = self.dismiss_for_pane_action(target, operate)?;
+                self.start_pane(target, operate)
                     .map_err(|detail| action_error("session-start", detail))?;
             }
             WorkspaceAction::FocusId(id) => self.focus_id(&id, operate)?,
             WorkspaceAction::Focus(direction) => self.focus_direction(direction, operate)?,
-            WorkspaceAction::Move(direction) => self.move_direction(direction, operate)?,
+            WorkspaceAction::Move(direction) => {
+                self.move_direction(target, direction, called, operate)?
+            }
             WorkspaceAction::SetTabDirectory { tab, directory } => {
                 self.set_tab_directory(&tab, directory)?;
             }
@@ -742,14 +795,17 @@ impl Workspace {
         Ok(sessions)
     }
 
-    /// Validates closing one pane of the active tab and names its terminal.
+    /// Validates closing one pane of the caller's tab, else of the active tab,
+    /// and names its terminal.
     pub(crate) fn prepare_close_pane(
         &mut self,
         request_id: &str,
+        caller: Option<&str>,
         id: &str,
     ) -> Result<String, Failure> {
         self.reject_duplicate(request_id)?;
-        let tab = &self.tabs[self.active];
+        let tab_index = self.target_tab(caller)?.0;
+        let tab = &self.tabs[tab_index];
         let Some((column, pane)) = tab.find_pane(|pane| pane.id == id) else {
             return Err(
                 if self
@@ -757,7 +813,12 @@ impl Workspace {
                     .iter()
                     .any(|tab| tab.find_pane(|pane| pane.id == id).is_some())
                 {
-                    action_error("not-active", format!("pane {id} is not in the active tab"))
+                    let tab = if caller.is_some() {
+                        "calling"
+                    } else {
+                        "active"
+                    };
+                    action_error("not-active", format!("pane {id} is not in the {tab} tab"))
                 } else {
                     action_error("unknown-pane", format!("pane {id} is not live"))
                 },
@@ -872,21 +933,53 @@ impl Workspace {
         Ok(())
     }
 
+    /// Refuses a caller's pane action, before anything changes, when dismissing
+    /// its tab's popup would stop the tab's last terminal and remove the tab.
+    fn require_surviving_dismissal(&self, tab_index: usize) -> Result<(), Failure> {
+        let tab = &self.tabs[tab_index];
+        let Some(selected) = &tab.selected_popup else {
+            return Ok(());
+        };
+        let transient = tab
+            .popups
+            .iter()
+            .find(|popup| &popup.id == selected)
+            .map(|popup| self.definition(&popup.entry).map(|entry| !entry.keep_alive))
+            .transpose()?
+            .unwrap_or(false);
+        if transient && tab.columns.is_empty() && tab.popups.len() == 1 && self.tabs.len() > 1 {
+            return Err(action_error(
+                "unavailable",
+                "the popup is this tab's last terminal; close it before changing panes",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Dismisses the tab's popup before a pane action and returns the tab's
+    /// index afterwards. Dismissing the last popup of a tab without panes
+    /// removes it, and the action falls to the tab that became active.
     fn dismiss_for_pane_action(
         &mut self,
         tab_index: usize,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
-    ) -> Result<(), Failure> {
+    ) -> Result<usize, Failure> {
         let Some(instance) = self.tabs[tab_index].selected_popup.clone() else {
-            return Ok(());
+            return Ok(tab_index);
         };
+        let tab = self.tabs[tab_index].id.clone();
         self.dismiss_popup(
             &PopupTarget {
-                tab: self.tabs[tab_index].id.clone(),
+                tab: tab.clone(),
                 instance,
             },
             operate,
-        )
+        )?;
+        Ok(self
+            .tabs
+            .iter()
+            .position(|item| item.id == tab)
+            .unwrap_or(self.active))
     }
 
     fn focus_id(
@@ -957,8 +1050,8 @@ impl Workspace {
             }
             Direction::Up | Direction::Down => {
                 self.require_established(self.active)?;
-                self.dismiss_for_pane_action(self.active, operate)?;
-                let tab = &mut self.tabs[self.active];
+                let active = self.dismiss_for_pane_action(self.active, operate)?;
+                let tab = &mut self.tabs[active];
                 let selected = tab
                     .selected_column
                     .ok_or_else(|| action_error("unavailable", "active tab has no pane"))?;
@@ -978,25 +1071,39 @@ impl Workspace {
 
     fn move_direction(
         &mut self,
+        tab_index: usize,
         direction: Direction,
+        called: bool,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         match direction {
-            Direction::Left if self.active > 0 => {
-                self.tabs.swap(self.active, self.active - 1);
-                self.active -= 1;
-            }
-            Direction::Right if self.active + 1 < self.tabs.len() => {
-                self.tabs.swap(self.active, self.active + 1);
-                self.active += 1;
+            Direction::Left | Direction::Right => {
+                let neighbor = if direction == Direction::Left {
+                    tab_index.checked_sub(1)
+                } else {
+                    Some(tab_index + 1).filter(|next| *next < self.tabs.len())
+                };
+                if let Some(neighbor) = neighbor {
+                    self.tabs.swap(tab_index, neighbor);
+                    // The active tab stays active wherever it moves.
+                    if self.active == tab_index {
+                        self.active = neighbor;
+                    } else if self.active == neighbor {
+                        self.active = tab_index;
+                    }
+                }
             }
             Direction::Up | Direction::Down => {
-                self.require_established(self.active)?;
-                self.dismiss_for_pane_action(self.active, operate)?;
-                let tab = &mut self.tabs[self.active];
+                self.require_established(tab_index)?;
+                // A caller's tab without panes refuses before its popup goes.
+                if called && self.tabs[tab_index].selected_column.is_none() {
+                    return Err(action_error("unavailable", "tab has no pane"));
+                }
+                let tab_index = self.dismiss_for_pane_action(tab_index, operate)?;
+                let tab = &mut self.tabs[tab_index];
                 let column = tab
                     .selected_column
-                    .ok_or_else(|| action_error("unavailable", "active tab has no pane"))?;
+                    .ok_or_else(|| action_error("unavailable", "tab has no pane"))?;
                 let column = &mut tab.columns[column];
                 let selected = column.expanded;
                 let target = if direction == Direction::Up {
@@ -1013,16 +1120,15 @@ impl Workspace {
                 column.panes.swap(selected, target);
                 column.expanded = target;
             }
-            Direction::Left | Direction::Right => {}
         }
         Ok(())
     }
 
     /// Moves the selected pane into the neighbouring column's stack, below its
     /// expanded pane; past the outer column a stacked pane opens a new column.
-    fn move_pane_sideways(&mut self, side: Side) -> Result<(), Failure> {
-        self.require_established(self.active)?;
-        let tab = &mut self.tabs[self.active];
+    fn move_pane_sideways(&mut self, tab_index: usize, side: Side) -> Result<(), Failure> {
+        self.require_established(tab_index)?;
+        let tab = &mut self.tabs[tab_index];
         if tab.selected_popup.is_some() {
             return Err(action_error(
                 "unavailable",
@@ -1031,7 +1137,7 @@ impl Workspace {
         }
         let source = tab
             .selected_column
-            .ok_or_else(|| action_error("unavailable", "active tab has no pane"))?;
+            .ok_or_else(|| action_error("unavailable", "tab has no pane"))?;
         let neighbor = match side {
             Side::Left => source.checked_sub(1),
             Side::Right => Some(source + 1).filter(|next| *next < tab.columns.len()),
@@ -1136,6 +1242,59 @@ impl Workspace {
         {
             self.tabs.remove(tab_index);
             self.active = index_after_removal(self.active, tab_index, self.tabs.len());
+        }
+    }
+
+    /// The implicit target tab: the active one, or the tab holding the caller's
+    /// terminal, with the caller's column and pane when it is a pane.
+    fn target_tab(&self, caller: Option<&str>) -> Result<(usize, Option<(usize, usize)>), Failure> {
+        let Some(session) = caller else {
+            return Ok((self.active, None));
+        };
+        for (index, tab) in self.tabs.iter().enumerate() {
+            if let Some(pane) = tab.find_pane(|pane| pane.session.id == session) {
+                return Ok((index, Some(pane)));
+            }
+            if tab.popups.iter().any(|popup| popup.session.id == session) {
+                return Ok((index, None));
+            }
+        }
+        Err(action_error(
+            "unknown-caller",
+            "the calling terminal is not part of this workspace",
+        ))
+    }
+
+    /// Makes a calling pane its tab's selected pane, so pane actions apply to
+    /// it, and returns the selection it replaced.
+    fn select(&mut self, tab_index: usize, (column, pane): (usize, usize)) -> Selection {
+        let tab = &mut self.tabs[tab_index];
+        let previous = Selection {
+            tab: tab.id.clone(),
+            column: tab.selected_column,
+            expanded: (column, tab.columns[column].expanded),
+        };
+        tab.selected_column = Some(column);
+        tab.columns[column].expanded = pane;
+        previous
+    }
+
+    /// Restores a selection after the caller's action failed.
+    fn restore(&mut self, previous: Selection) {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == previous.tab) else {
+            return;
+        };
+        let (column, expanded) = previous.expanded;
+        if let Some(item) = tab.columns.get_mut(column)
+            && expanded < item.panes.len()
+        {
+            item.expanded = expanded;
+        }
+        if previous
+            .column
+            .is_none_or(|selected| selected < tab.columns.len())
+        {
+            tab.selected_column = previous.column;
         }
     }
 
@@ -1381,13 +1540,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v12::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v13::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v12::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v12::ALT, "Alt"),
-        (eon_workspace_protocol::v12::SHIFT, "Shift"),
-        (eon_workspace_protocol::v12::SUPER, "Super"),
+        (eon_workspace_protocol::v13::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v13::ALT, "Alt"),
+        (eon_workspace_protocol::v13::SHIFT, "Shift"),
+        (eon_workspace_protocol::v13::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1440,7 +1599,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v12::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v13::{ALT, PopupGeometry, Shortcut};
 
     fn catalog() -> PopupCatalog {
         PopupCatalog {
@@ -1508,12 +1667,13 @@ mod tests {
         };
         for id in ["c1", "c2", "c3"] {
             workspace
-                .dispatch(id, Action::CreateColumn, prepared, ok)
+                .dispatch(id, None, Action::CreateColumn, prepared, ok)
                 .unwrap();
         }
         workspace
             .dispatch(
                 "t2",
+                None,
                 Action::Workspace(WorkspaceAction::CreateTab),
                 prepared,
                 ok,
@@ -1524,7 +1684,7 @@ mod tests {
             .session_ended(&picker, SessionEnd::Exited, ok)
             .unwrap();
         workspace
-            .dispatch("open", project("t2"), prepared, ok)
+            .dispatch("open", None, project("t2"), prepared, ok)
             .unwrap();
         let pane = workspace.snapshot().tabs[1].columns[0].panes[0]
             .session
@@ -1536,15 +1696,95 @@ mod tests {
         assert!(tab.columns.is_empty() && tab.selected_popup.is_some());
 
         workspace
-            .dispatch("c4", Action::CreateColumn, prepared, ok)
+            .dispatch("c4", None, Action::CreateColumn, prepared, ok)
             .unwrap();
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v12::encode_response(
-            &eon_workspace_protocol::v12::Response::Snapshot(after),
+        eon_workspace_protocol::v13::encode_response(
+            &eon_workspace_protocol::v13::Response::Snapshot(after),
         )
         .unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_transient_popup_caller_never_removes_its_paneless_tab() {
+        let root = std::env::temp_dir().join(format!("eon-popup-caller-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut workspace = Workspace::with_recovered_sessions(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: root.join("orbit.sock"),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let ok = |_| Ok(());
+        workspace
+            .dispatch(
+                "t2",
+                None,
+                Action::Workspace(WorkspaceAction::CreateTab),
+                prepared,
+                ok,
+            )
+            .unwrap();
+        let picker = workspace.snapshot().tabs[1].popups[0].session.clone();
+        workspace
+            .session_ended(&picker, SessionEnd::Exited, ok)
+            .unwrap();
+        let project = Action::InvokePopup {
+            tab: "t2".into(),
+            entry: "project".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        };
+        workspace
+            .dispatch("open", None, project, prepared, ok)
+            .unwrap();
+        let pane = workspace.snapshot().tabs[1].columns[0].panes[0]
+            .session
+            .clone();
+        workspace
+            .session_ended(&pane, SessionEnd::Exited, ok)
+            .unwrap();
+        workspace
+            .dispatch(
+                "away",
+                None,
+                Action::Workspace(WorkspaceAction::FocusId("t1".into())),
+                prepared,
+                ok,
+            )
+            .unwrap();
+        let caller = workspace.snapshot().tabs[1].popups[0].session.clone();
+
+        // Its own pane create would stop the tab's last terminal, and a tab
+        // without panes has nothing to move: both change nothing.
+        let before = workspace.snapshot();
+        for action in [
+            WorkspaceAction::CreatePane,
+            WorkspaceAction::Move(Direction::Down),
+        ] {
+            let failure = workspace
+                .dispatch(
+                    "refused",
+                    Some(&caller),
+                    Action::Workspace(action),
+                    prepared,
+                    ok,
+                )
+                .unwrap_err();
+            assert_eq!(failure.code, "unavailable");
+            assert_eq!(workspace.snapshot(), before);
+        }
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1568,7 +1808,7 @@ mod tests {
         .unwrap();
         let ok = |_| Ok(());
         let request = |workspace: &mut Workspace, id: &str, action| {
-            workspace.dispatch(id, action, prepared, ok)
+            workspace.dispatch(id, None, action, prepared, ok)
         };
         let shape = |workspace: &Workspace| {
             let tab = &workspace.snapshot().tabs[0];
@@ -1726,10 +1966,10 @@ mod tests {
         .unwrap();
         let ok = |_| Ok(());
         let request = |workspace: &mut Workspace, id: &str, action| {
-            workspace.dispatch(id, action, prepared, ok).unwrap()
+            workspace.dispatch(id, None, action, prepared, ok).unwrap()
         };
         let close = |workspace: &mut Workspace, id: &str, pane: &str| {
-            let session = workspace.prepare_close_pane(id, pane)?;
+            let session = workspace.prepare_close_pane(id, None, pane)?;
             workspace.session_ended(&session, SessionEnd::Closed, ok)?;
             Ok::<_, Failure>(session)
         };
@@ -1810,6 +2050,149 @@ mod tests {
     }
 
     #[test]
+    fn callers_act_in_their_own_tab_without_changing_the_active_tab() {
+        let mut workspace = Workspace::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let request = |workspace: &mut Workspace, id: &str, caller: Option<&str>, action| {
+            workspace.dispatch(id, caller, action, prepared, |_| Ok(()))
+        };
+        request(
+            &mut workspace,
+            "t2",
+            None,
+            Action::Workspace(WorkspaceAction::CreateTab),
+        )
+        .unwrap();
+        let picker = workspace.snapshot().tabs[1].popups[0].clone();
+        request(
+            &mut workspace,
+            "t2-dir",
+            None,
+            Action::CommitDirectory {
+                target: PopupTarget {
+                    tab: "t2".into(),
+                    instance: picker.id,
+                },
+                directory: b"/".to_vec(),
+            },
+        )
+        .unwrap();
+        workspace
+            .session_ended(&picker.session, SessionEnd::Exited, |_| Ok(()))
+            .unwrap();
+        let panes = |workspace: &Workspace, tab: &str| {
+            let snapshot = workspace.snapshot();
+            let tab = snapshot.tabs.iter().find(|item| item.id == tab).unwrap();
+            let panes = tab.panes().map(|pane| pane.id.clone()).collect::<Vec<_>>();
+            (panes, tab.selected_pane.clone().unwrap())
+        };
+        let active = panes(&workspace, "t2");
+
+        // A pane in the inactive tab creates beside itself, and the user stays put.
+        request(
+            &mut workspace,
+            "c1",
+            Some("session-1"),
+            Action::Workspace(WorkspaceAction::CreatePane),
+        )
+        .unwrap();
+        let (created, selected) = panes(&workspace, "t1");
+        assert_eq!(created.len(), 2);
+        assert_eq!(selected, created[1]);
+        assert_eq!(workspace.snapshot().active_tab, "t2");
+        assert_eq!(panes(&workspace, "t2"), active);
+
+        // A failed action restores the selection the caller's pane took.
+        let before = workspace.snapshot();
+        workspace
+            .dispatch(
+                "c-fails",
+                Some("session-1"),
+                Action::Workspace(WorkspaceAction::CreatePane),
+                prepared,
+                |_| Err("start failed".into()),
+            )
+            .unwrap_err();
+        assert_eq!(workspace.snapshot(), before);
+
+        // The caller's tab moves; the active tab stays active.
+        request(
+            &mut workspace,
+            "m1",
+            Some("session-1"),
+            Action::Workspace(WorkspaceAction::Move(Direction::Right)),
+        )
+        .unwrap();
+        let snapshot = workspace.snapshot();
+        let order = snapshot
+            .tabs
+            .iter()
+            .map(|tab| tab.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            (order, snapshot.active_tab.as_str()),
+            (vec!["t2", "t1"], "t2")
+        );
+
+        // Closing resolves the pane in the caller's tab, not the active one.
+        let session = workspace
+            .prepare_close_pane("x1", Some("session-1"), &created[1])
+            .unwrap();
+        workspace
+            .session_ended(&session, SessionEnd::Closed, |_| Ok(()))
+            .unwrap();
+        assert_eq!(panes(&workspace, "t1").0, ["p1"]);
+
+        // A popup's terminal acts for its tab's selected column.
+        request(
+            &mut workspace,
+            "a1",
+            None,
+            Action::InvokePopup {
+                tab: "t2".into(),
+                entry: "agent".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Toggle,
+            },
+        )
+        .unwrap();
+        let agent = workspace.snapshot().tabs[0].popups[0].session.clone();
+        request(
+            &mut workspace,
+            "c2",
+            Some(&agent),
+            Action::Workspace(WorkspaceAction::CreatePane),
+        )
+        .unwrap();
+        assert_eq!(panes(&workspace, "t2").0.len(), active.0.len() + 1);
+        assert_eq!(panes(&workspace, "t1").0, ["p1"]);
+
+        // A caller that is no terminal of this workspace changes nothing.
+        let before = workspace.snapshot();
+        let failure = request(
+            &mut workspace,
+            "c3",
+            Some("session-99"),
+            Action::Workspace(WorkspaceAction::CreatePane),
+        )
+        .unwrap_err();
+        assert_eq!(failure.code, "unknown-caller");
+        assert_eq!(workspace.snapshot(), before);
+    }
+
+    #[test]
     fn sideways_pane_moves_join_neighbor_stacks_split_at_edges_and_drop_emptied_columns() {
         let mut workspace = Workspace::with_recovered_sessions(
             "/runtime".into(),
@@ -1827,7 +2210,7 @@ mod tests {
         .unwrap();
         let ok = |_| Ok(());
         let request = |workspace: &mut Workspace, id: &str, action| {
-            workspace.dispatch(id, action, prepared, ok)
+            workspace.dispatch(id, None, action, prepared, ok)
         };
         let workspace_action = |workspace: &mut Workspace, id: &str, action| {
             request(workspace, id, Action::Workspace(action))
@@ -1970,7 +2353,7 @@ mod tests {
             ("select", WorkspaceAction::FocusId("t1".into())),
         ] {
             workspace
-                .dispatch(id, Action::Workspace(action), prepared, |_| Ok(()))
+                .dispatch(id, None, Action::Workspace(action), prepared, |_| Ok(()))
                 .unwrap();
         }
         for entry in ["agent", "project"] {
@@ -1979,6 +2362,7 @@ mod tests {
                 covered
                     .dispatch(
                         "open",
+                        None,
                         Action::InvokePopup {
                             tab: "t1".into(),
                             entry: entry.into(),
@@ -2000,9 +2384,15 @@ mod tests {
                 for side in [Side::Left, Side::Right] {
                     assert_eq!(
                         covered
-                            .dispatch("move", Action::MovePaneSideways(side), prepared, |_| {
-                                panic!("a refused pane move must not start or stop a terminal")
-                            })
+                            .dispatch(
+                                "move",
+                                None,
+                                Action::MovePaneSideways(side),
+                                prepared,
+                                |_| {
+                                    panic!("a refused pane move must not start or stop a terminal")
+                                }
+                            )
                             .unwrap_err()
                             .code,
                         "unavailable"
@@ -2033,7 +2423,7 @@ mod tests {
         .unwrap();
         let ok = |_| Ok(());
         let request = |workspace: &mut Workspace, id: &str, action| {
-            workspace.dispatch(id, action, prepared, ok)
+            workspace.dispatch(id, None, action, prepared, ok)
         };
         let workspace_action = |workspace: &mut Workspace, id: &str, action| {
             request(workspace, id, Action::Workspace(action))
@@ -2139,6 +2529,7 @@ mod tests {
         workspace
             .dispatch(
                 "open",
+                None,
                 Action::InvokePopup {
                     tab: "t1".into(),
                     entry: "agent".into(),
@@ -2153,6 +2544,7 @@ mod tests {
         workspace
             .dispatch(
                 "hide",
+                None,
                 Action::InvokePopup {
                     tab: "t1".into(),
                     entry: "agent".into(),
@@ -2167,6 +2559,7 @@ mod tests {
         workspace
             .dispatch(
                 "retarget",
+                None,
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: new.as_os_str().as_bytes().to_vec(),
@@ -2179,6 +2572,7 @@ mod tests {
         workspace
             .dispatch(
                 "replace",
+                None,
                 Action::InvokePopup {
                     tab: "t1".into(),
                     entry: "agent".into(),
@@ -2216,6 +2610,7 @@ mod tests {
         workspace
             .dispatch(
                 "retarget-again",
+                None,
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: newest.as_os_str().as_bytes().to_vec(),
@@ -2234,6 +2629,7 @@ mod tests {
             workspace
                 .dispatch(
                     "stop-fails",
+                    None,
                     replace(),
                     prepared,
                     |operation| match operation {
@@ -2253,6 +2649,7 @@ mod tests {
             workspace
                 .dispatch(
                     "start-fails",
+                    None,
                     replace(),
                     prepared,
                     |operation| match operation {
@@ -2297,12 +2694,19 @@ mod tests {
         };
 
         workspace
-            .dispatch("agent-open", invoke("agent", None), prepared, &mut operate)
+            .dispatch(
+                "agent-open",
+                None,
+                invoke("agent", None),
+                prepared,
+                &mut operate,
+            )
             .unwrap();
         let agent = workspace.snapshot().tabs[0].popups[0].clone();
         workspace
             .dispatch(
                 "agent-hide",
+                None,
                 invoke("agent", Some(agent.id.clone())),
                 prepared,
                 &mut operate,
@@ -2311,6 +2715,7 @@ mod tests {
         workspace
             .dispatch(
                 "project-open",
+                None,
                 invoke("project", None),
                 prepared,
                 &mut operate,
@@ -2319,6 +2724,7 @@ mod tests {
         workspace
             .dispatch(
                 "agent-return",
+                None,
                 invoke("agent", Some(agent.id.clone())),
                 prepared,
                 &mut operate,
@@ -2355,9 +2761,13 @@ mod tests {
             selected_popup: None,
         });
         workspace
-            .dispatch("project-again", invoke("project", None), prepared, |_| {
-                Ok(())
-            })
+            .dispatch(
+                "project-again",
+                None,
+                invoke("project", None),
+                prepared,
+                |_| Ok(()),
+            )
             .unwrap();
         workspace
             .session_ended(&agent.session, SessionEnd::Exited, |_| Ok(()))
@@ -2370,6 +2780,7 @@ mod tests {
         let failure = workspace
             .dispatch(
                 "replacement-fails",
+                None,
                 invoke("agent", None),
                 prepared,
                 |operation| match operation {
@@ -2406,7 +2817,7 @@ mod tests {
         };
         assert_eq!(
             workspace
-                .dispatch("commit-fails", commit(), prepared, |_| {
+                .dispatch("commit-fails", None, commit(), prepared, |_| {
                     Err("start failed".into())
                 })
                 .unwrap_err()
@@ -2418,13 +2829,14 @@ mod tests {
         assert_eq!(unchanged.tabs[0].directory, root.as_os_str().as_bytes());
         assert!(unchanged.tabs[0].columns.is_empty());
         workspace
-            .dispatch("commit", commit(), prepared, |_| Ok(()))
+            .dispatch("commit", None, commit(), prepared, |_| Ok(()))
             .unwrap();
         assert!(!workspace.snapshot().tabs[0].pending);
         assert!(
             workspace
                 .dispatch(
                     "stale",
+                    None,
                     Action::DismissPopup(PopupTarget {
                         tab: "t1".into(),
                         instance: "u999".into(),
@@ -2455,6 +2867,7 @@ mod tests {
         workspace
             .dispatch(
                 "new",
+                None,
                 Action::Workspace(WorkspaceAction::CreateTab),
                 prepared,
                 |operation| {
@@ -2478,8 +2891,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v12::encode_response(
-            &eon_workspace_protocol::v12::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v13::encode_response(
+            &eon_workspace_protocol::v13::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 
@@ -2489,6 +2902,7 @@ mod tests {
             let error = workspace
                 .dispatch(
                     "invalid",
+                    None,
                     Action::Workspace(WorkspaceAction::CreateTab),
                     prepared,
                     |_| panic!("invalid home launched a terminal"),
@@ -2514,6 +2928,7 @@ mod tests {
         workspace
             .dispatch(
                 "new-t2",
+                None,
                 Action::Workspace(WorkspaceAction::CreateTab),
                 prepared,
                 |_| Ok(()),
@@ -2534,6 +2949,7 @@ mod tests {
         workspace
             .dispatch(
                 "focus-t1",
+                None,
                 Action::Workspace(WorkspaceAction::FocusId("t1".into())),
                 prepared,
                 |_| Ok(()),
@@ -2552,6 +2968,7 @@ mod tests {
             workspace
                 .dispatch(
                     "stale-t1",
+                    None,
                     Action::CommitDirectory {
                         target: PopupTarget {
                             tab: "t1".into(),
@@ -2570,6 +2987,7 @@ mod tests {
             workspace
                 .dispatch(
                     "new-fails",
+                    None,
                     Action::Workspace(WorkspaceAction::CreateTab),
                     prepared,
                     |_| Err("launch failed".into()),
@@ -2583,6 +3001,7 @@ mod tests {
         workspace
             .dispatch(
                 "new-t3",
+                None,
                 Action::Workspace(WorkspaceAction::CreateTab),
                 prepared,
                 |_| Ok(()),
@@ -2601,6 +3020,7 @@ mod tests {
         workspace
             .dispatch(
                 "accept-t2",
+                None,
                 Action::CommitDirectory {
                     target: PopupTarget {
                         tab: "t2".into(),
@@ -2631,6 +3051,7 @@ mod tests {
             workspace
                 .dispatch(
                     &format!("new-t{number}"),
+                    None,
                     Action::Workspace(WorkspaceAction::CreateTab),
                     prepared,
                     |_| Ok(()),

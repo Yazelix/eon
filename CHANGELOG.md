@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Run inside an Eon terminal, `eon pane create`, `pane close`, `pane move` and
+  `tab move` act on that terminal's own tab instead of the active one, so an
+  agent in a background tab no longer changes the tab you are looking at. Each
+  terminal names itself in `EON_TERMINAL`; a command from a terminal that has
+  ended or belongs to another generation changes nothing and exits 3. Use
+  `env -u EON_TERMINAL eon ...` for the previous behavior.
 - The Eon Bar shows whole-machine CPU use, such as `CPU 12%`, before the
   clock, updated every 2 seconds. Hover it for details. It hides right after
   the clock when the window is narrow.
@@ -26,7 +32,7 @@ installation, and proven contract changes.
   4 supervisor unreachable, 130 interrupted. Structured failures exited 2 and
   every other failure 1; scripts that tested for those values need updating.
   `eon --help` and [Using Eon](docs/USAGE.md#exit-status) list the statuses.
-- `eon` speaks only EONW 12. A generation started by an older build that uses
+- `eon` speaks only EONW 13. A generation started by an older build that uses
   an earlier EONW is listed as incompatible and can no longer be inspected or
   stopped by this `eon`; stop it with the build that started it.
 - `eon claude-statusline` is gone; Claude quota has come from CodexBar since
@@ -42,8 +48,7 @@ installation, and proven contract changes.
   a pane in every direction. A column left empty goes away, and at the tab's
   edge a pane from a stack opens a new column, up to four. Moving the active
   tab moves to Ctrl+Alt+Shift+H/L.
-  `eon pane move left|right` does the same from the command line, and
-  `eon versions` reports EONW 12.
+  `eon pane move left|right` does the same from the command line.
 - Orbit, which keeps Eon's terminals alive, decides its session policy in a
   Bend worker whose laws are machine-checked, beside the Rust host that owns
   the terminal. Terminals, the protocol Venus uses, and how Eon starts Orbit

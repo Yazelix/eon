@@ -442,7 +442,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     stops quietly at ordered edges and remains unavailable in the picker-bound
     active tab. Venus maps Ctrl+Alt+Shift+H/L, Ctrl+Alt+K/J and Ctrl+Alt+H/L
     directly to these actions without a mode; `eon pane move left|right` sends
-    the same EONW v12 sideways move.
+    the same EONW v12 sideways move. Run from an Eon terminal, `eon tab move`,
+    `eon pane move`, `eon pane create` and `eon pane close` act on the calling
+    terminal's tab and pane instead of the active tab and its selected pane
+    ([EON-C10](#eon-c10--typed-workspace-control)).
   - Closing names the expected active `tN` and requires another live tab. A
     non-final pending tab first stops its exact picker, then disappears and
     restores its prior tab. Eon stops the tab's pane and popup terminals one at
@@ -455,7 +458,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     reconciled and pruned as an exit rather than reported as a successful Stop.
     Venus maps Alt+Shift+W directly to this stable-target action; lowercase
     Ctrl+W remains terminal input.
-  - Closing a pane names a `pN` in the active tab. Eon stops that pane's
+  - Closing a pane names a `pN` in the active tab, or in the calling
+    terminal's tab under EON-C10. Eon stops that pane's
     terminal and prunes the confirmed end through the normal terminal-exit
     owner, so its column, its tab and focus follow the ended-terminal rules
     below. The final tab's last pane cannot be closed, and closing is
@@ -476,7 +480,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - New current-generation full Eon surfaces omit the redundant native title
     bar while retaining the selected terminal title for compositor semantics.
 - **Important failures:** Unknown or stale identity, a close target other than
-  the active tab, final-tab close, a pane outside the active tab, the final
+  the active tab, final-tab close, a pane outside the active or calling tab, the final
   tab's last pane, pane close under a popup or picker, creating a fifth column,
   durable close in the picker-bound tab,
   invalid transition, unavailable endpoint, duplicate identity, or partial
@@ -491,12 +495,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v12 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v13 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
   restoration, a per-pane terminal restart action, closing panes outside the
-  active tab, terminal
+  active or calling tab, terminal
   content/history, provider state, plugin surface, remote access, or
   reconstructed terminal state.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
@@ -667,7 +671,23 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `--json`. The CLI projection derives the status from the failure code.
     Multi-target Stop exits with its largest status; commands that run another
     program pass on its status.
-- **Important failures:** Malformed, oversized, incompatible, unavailable,
+  - Every Eon terminal's environment carries `EON_TERMINAL`, an opaque value
+    naming that terminal's exact Orbit run; the supervisor's other children
+    never inherit one. When set, it makes `pane create`, `pane close
+    PANE`, `pane move` and `tab move` act on that terminal's tab instead of the
+    active tab: `pane create` adds to the caller's column, the moves move the
+    caller's own pane or tab, and `pane close` resolves PANE in the caller's
+    tab. A popup terminal acts for its tab and that tab's selected column and
+    pane. Within that tab each action behaves as it does for the active tab,
+    so `pane create` selects the new pane and dismisses the tab's popup; the
+    active tab and desktop focus never change. Other commands, and commands
+    run outside Eon terminals, ignore it.
+- **Important failures:** A caller that names no live terminal of the
+  addressed supervisor (ended, closed, from another generation or window,
+  empty, or malformed) changes nothing and exits 3 (`unknown-caller`), with no fallback
+  to the active tab. In a tab without panes, a popup caller's `pane move`
+  refuses, and so does its `pane create` when dismissing that popup would end
+  the tab's last terminal; both change nothing and exit 1. Malformed, oversized, incompatible, unavailable,
   rejected, timed-out, partially read, or response-lost operations fail within
   the shared bound without reconstructing hidden state or reviving completed
   Stop. Accepted Stop names affected live terminals, sends canonical Stop through
@@ -676,14 +696,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v12 and accepted Orbit management operations.
+- **Consumes:** Current EONW v13 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content, or direct child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v12 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v13 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -724,7 +744,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   retired v4 picker opcode is unavailable; Project uses ordinary popup invocation.
   There is no negotiation or adapter.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
-  exit statuses `eon-8mnr.1` (automated tier).
+  exit statuses `eon-8mnr.1` (automated tier); calling-terminal targets
+  `eon-8mnr.2` (automated and installed tiers).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -741,8 +762,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `lost_stop_response_still_finishes_the_supervisor`,
     `failure_kinds_exit_with_distinct_statuses_with_and_without_json`,
     `invalid_focus_is_rejected_before_supervisor_connection`,
-    `closed_stdout_pipe_is_not_a_panic`). Installed checklist items 3 and 4
-    (`eon workspace` against the window; Project, Git, Agent and Anima popups).
+    `closed_stdout_pipe_is_not_a_panic`); calling terminals
+    (`messages_keep_their_wire_bytes`,
+    `callers_act_in_their_own_tab_without_changing_the_active_tab`,
+    `a_transient_popup_caller_never_removes_its_paneless_tab`,
+    `commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing`).
+    Installed checklist items 3 and 4 (`eon workspace` against the window;
+    Project, Git, Agent and Anima popups). Installed `eon-8mnr.2` observation on
+    isolated headless Sway: from a terminal in an inactive tab, `eon pane create`
+    adds its pane there while the new tab stays active, and a stale
+    `EON_TERMINAL` exits 3 with the workspace unchanged.
 
 ## EON-C11 — Runtime generations and presentation
 

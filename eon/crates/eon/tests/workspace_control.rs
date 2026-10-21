@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
@@ -916,6 +916,7 @@ fn workspace_action(socket: &Path, id: &str, action: Action) -> Response {
 fn protocol_action(socket: &Path, id: &str, action: ProtocolAction) -> Response {
     let request = encode_request(&Request {
         id: id.into(),
+        caller: None,
         action,
     })
     .unwrap();
@@ -2575,6 +2576,106 @@ fn eonbase_replaces_exact_residue_after_its_supervisor_and_session_die() {
 }
 
 #[test]
+fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = eon_command(&binary)
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for(&control);
+
+    // The first terminal names itself to commands run inside it.
+    let first = generation.join("orbit.sock");
+    wait_for(&first);
+    let environment = fs::read(format!(
+        "/proc/{}/environ",
+        live_identity(&first).process_id
+    ))
+    .unwrap();
+    let caller = environment
+        .split(|byte| *byte == 0)
+        .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+        .map(|value| String::from_utf8(value.to_vec()).unwrap())
+        .expect("terminal environment names its terminal");
+    let from = |caller: &str, arguments: &[&str]| {
+        eon_command(&binary)
+            .args(arguments)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_TERMINAL", caller)
+            .output()
+            .unwrap()
+    };
+    let inspect = |id: &str| match workspace_action(&control, id, Action::Inspect) {
+        Response::Snapshot(snapshot) => snapshot,
+        response => panic!("cannot inspect workspace: {response:?}"),
+    };
+
+    // A second column takes the selection away from the first terminal's column.
+    assert!(matches!(
+        protocol_action(&control, "column", ProtocolAction::CreateColumn),
+        Response::Snapshot(snapshot) if snapshot.tabs[0].selected_pane.as_deref() == Some("p2")
+    ));
+    let created = from(&caller, &["pane", "create", "--json"]);
+    assert!(
+        created.status.success(),
+        "stdout={} stderr={}",
+        stdout(&created),
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let snapshot = inspect("after-create");
+    let ids = |column: usize| {
+        snapshot.tabs[0].columns[column]
+            .panes
+            .iter()
+            .map(|pane| pane.id.as_str())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!((ids(0), ids(1)), (vec!["p1", "p3"], vec!["p2"]));
+    assert_eq!(snapshot.tabs[0].selected_pane.as_deref(), Some("p3"));
+
+    // A caller that names no live terminal, or nothing at all, changes nothing.
+    let stale = format!("{caller}0");
+    for caller in [stale.as_str(), "not a terminal", ""] {
+        let refused = from(caller, &["pane", "create", "--json"]);
+        assert_eq!(refused.status.code(), Some(3), "{caller}");
+        assert!(stdout(&refused).contains("\"code\":\"unknown-caller\""));
+    }
+    assert_eq!(inspect("after-refusals"), snapshot);
+
+    let closed = from(&caller, &["pane", "close", "p3", "--json"]);
+    assert!(closed.status.success(), "{}", stdout(&closed));
+    assert!(!stdout(&closed).contains("\"id\":\"p3\""));
+
+    fs::write(&stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
@@ -2655,6 +2756,7 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
 
     let mut incompatible = encode_request(&Request {
         id: "incompatible-1".into(),
+        caller: None,
         action: ProtocolAction::Workspace(Action::Inspect),
     })
     .unwrap();
@@ -3760,6 +3862,7 @@ fn lost_stop_response_still_finishes_the_supervisor() {
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     let request = encode_request(&Request {
         id: "lost-stop-response".into(),
+        caller: None,
         action: ProtocolAction::Workspace(Action::Stop {
             generation: generation_id.into(),
         }),

@@ -219,11 +219,11 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon tab create [--json]` | Create a distinct pending tab with its directory picker, even while another picker is open |
 | `eon tab close TAB [--json]` | Close the expected active non-final tab |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |
-| `eon tab move left\|right [--json]` | Move the active tab one position |
-| `eon pane create [--json]` | Create a pane in the active tab's selected column |
-| `eon pane close PANE [--json]` | Close a pane of the active tab, stopping its terminal |
-| `eon pane move up\|down [--json]` | Move the selected pane one position within its column |
-| `eon pane move left\|right [--json]` | Move the selected pane into the neighbouring column, as Ctrl+Alt+H/L does |
+| `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
+| `eon pane create [--json]` | Create a pane in the active tab's selected column, or in the calling pane's column |
+| `eon pane close PANE [--json]` | Close a pane of the active tab, or of the calling terminal's tab, stopping its terminal |
+| `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |
+| `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon config-path` | Create and print the configuration root |
@@ -239,6 +239,15 @@ one target the default workspace. `eon stop all` covers generations in that
 current namespace. `eon window stop all` covers independent windows and visits
 the caller's window last. Run it outside those terminals when you need its final
 status; stopping its own terminal can terminate the CLI.
+
+Every Eon terminal names itself in `EON_TERMINAL`, an opaque value. Run inside
+an Eon terminal, `pane create`, `pane close`, `pane move` and `tab move` act on
+that terminal's own tab rather than the active one: a pane adds the new pane to
+its own column and moves itself, and a popup acts for its tab's selected pane.
+The active tab and desktop focus stay where they are. When the terminal has
+ended, or belongs to another generation or window, the command changes nothing
+and exits 3. Other commands ignore `EON_TERMINAL`; run
+`env -u EON_TERMINAL eon ...` to act on the active tab from inside Eon.
 
 ### Exit status
 

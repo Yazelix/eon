@@ -9,7 +9,7 @@ use std::{
     process::Command,
 };
 
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     ALT, CTRL, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry, SHIFT, SUPER,
     Shortcut,
 };

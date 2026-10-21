@@ -2,7 +2,7 @@ use super::{
     supervisor::{LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id},
     workspace,
 };
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
@@ -54,7 +54,16 @@ pub(super) fn send_action(
     socket: &Path,
     action: Action,
 ) -> Result<ControlResponse, EndpointFailure> {
-    let action = prepare_action(action)?;
+    send_action_from(socket, None, action)
+}
+
+/// Sends an action on behalf of the calling terminal `caller`, if any.
+pub(super) fn send_action_from(
+    socket: &Path,
+    caller: Option<String>,
+    action: Action,
+) -> Result<ControlResponse, EndpointFailure> {
+    let action = prepare_action(caller, action)?;
     send_prepared_action(connect_control(socket)?, action)
 }
 
@@ -121,10 +130,13 @@ pub(super) fn send_action_on(
     stream: UnixStream,
     action: Action,
 ) -> Result<ControlResponse, EndpointFailure> {
-    send_prepared_action(stream, prepare_action(action)?)
+    send_prepared_action(stream, prepare_action(None, action)?)
 }
 
-fn prepare_action(action: Action) -> Result<(bool, Vec<u8>, Duration), EndpointFailure> {
+fn prepare_action(
+    caller: Option<String>,
+    action: Action,
+) -> Result<(bool, Vec<u8>, Duration), EndpointFailure> {
     let timeout = if matches!(action, Action::Workspace(WorkspaceAction::Stop { .. })) {
         // One in-flight operation may precede the bounded managed Stop.
         CONTROL_TIMEOUT.saturating_add(SESSION_START_TIMEOUT)
@@ -142,6 +154,7 @@ fn prepare_action(action: Action) -> Result<(bool, Vec<u8>, Duration), EndpointF
     );
     let request = encode_request(&Request {
         id: request_id(),
+        caller,
         action,
     })
     .map_err(|error| {
@@ -462,7 +475,7 @@ fn failure_status(code: &str) -> u8 {
     match code {
         "invalid-tab" | "malformed-action" => USAGE,
         "unknown-tab" | "unknown-pane" | "unknown-id" | "unknown-session" | "unknown-popup"
-        | "stale-popup" | "unknown-generation" => MISSING,
+        | "stale-popup" | "unknown-generation" | "unknown-caller" => MISSING,
         "missing-supervisor" | "supervisor-unavailable" => UNREACHABLE,
         _ => FAILED,
     }

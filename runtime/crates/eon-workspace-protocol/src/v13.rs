@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v12 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v13 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -6,7 +6,7 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 12;
+pub const VERSION: u16 = 13;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -126,6 +126,10 @@ pub enum Action {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Request {
     pub id: String,
+    /// The opaque `EON_TERMINAL` of the terminal that issued the request. Pane
+    /// create, move and close actions and tab moves then target its tab,
+    /// column and pane instead of the active tab's selection.
+    pub caller: Option<String>,
     pub action: Action,
 }
 
@@ -439,8 +443,12 @@ pub fn check_popup_action(snapshot: &Snapshot, action: &Action) -> Result<()> {
 pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
     validate_popup_action(&request.action)?;
     identity("request id", &request.id)?;
+    if let Some(caller) = &request.caller {
+        identity("caller", caller)?;
+    }
     let mut payload = Encoder::default();
     payload.string(&request.id);
+    encode_optional(&mut payload, &request.caller);
     match &request.action {
         Action::Workspace(action) => encode_workspace_action(&mut payload, action)?,
         Action::InvokePopup {
@@ -538,6 +546,10 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
     }
     let mut decoder = Decoder::new(payload);
     let id = decoder.string("request id", MAX_ID_BYTES)?;
+    let caller = decode_optional(&mut decoder, "caller")?;
+    if let Some(caller) = &caller {
+        identity("caller", caller)?;
+    }
     let tag = decoder.byte()?;
     let action = match tag {
         CREATE_COLUMN => Some(Action::CreateColumn),
@@ -555,7 +567,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
         if let Action::ClosePane { pane } = &action {
             identity("pane id", pane)?;
         }
-        return Ok(Request { id, action });
+        return Ok(Request { id, caller, action });
     }
     identity("request id", &id)?;
     let action = match tag {
@@ -592,7 +604,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
     };
     decoder.finish()?;
     validate_popup_action(&action)?;
-    Ok(Request { id, action })
+    Ok(Request { id, caller, action })
 }
 
 fn decode_workspace_action(decoder: &mut Decoder<'_>, tag: u8) -> Result<WorkspaceAction> {
@@ -1384,6 +1396,11 @@ fn validate_endpoint(endpoint: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Whether a request may carry `caller` as its calling terminal.
+pub fn valid_caller(caller: &str) -> bool {
+    identity("caller", caller).is_ok()
+}
+
 fn identity(field: &'static str, value: &str) -> Result<()> {
     nonempty(field, value, MAX_ID_BYTES)?;
     if !value
@@ -1694,12 +1711,14 @@ mod tests {
                 assert!(
                     encode_request(&Request {
                         id: id.into(),
+                        caller: None,
                         action: Action::MovePaneSideways(side),
                     })
                     .is_err()
                 );
                 let mut payload = Encoder::default();
                 payload.string(id);
+                payload.byte(0);
                 payload.byte(tag);
                 let bytes = frame(REQUEST, payload.bytes).unwrap();
                 assert!(decode_request(&bytes).is_err());
@@ -1709,6 +1728,7 @@ mod tests {
             payload.string("r1");
             let truncated = frame(REQUEST, payload.bytes.clone()).unwrap();
             assert_eq!(decode_request(&truncated), Err(Error::Truncated));
+            payload.byte(0);
             payload.byte(tag);
             payload.byte(0);
             let trailing = frame(REQUEST, payload.bytes).unwrap();
@@ -1728,14 +1748,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e570c00010009000000020072311202007431",
+                "454f4e570d0001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e570c0001000f000000020072310c0200743104002f746d70",
+                "454f4e570d0001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -1744,32 +1764,51 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e570c000100140000000200723113020074310300676974010200753101",
+                "454f4e570d00010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e570c000100130000000200723115020074310200753104002f746d70",
+                "454f4e570d00010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e570c000100050000000200723116"),
+            (Action::CreateColumn, "454f4e570d00010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e570c00010009000000020072311702007032",
+                "454f4e570d0001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e570c000100050000000200723119",
+                "454f4e570d00010006000000020072310019",
             ),
         ] {
             let request = Request {
                 id: "r1".into(),
+                caller: None,
                 action,
             };
             let bytes = encode_request(&request).unwrap();
             assert_eq!(hex(&bytes), expected, "{request:?}");
             assert_eq!(decode_request(&bytes).unwrap(), request);
+        }
+        let request = Request {
+            id: "r1".into(),
+            caller: Some("session-2.9-1".into()),
+            action: Action::Workspace(WorkspaceAction::CreatePane),
+        };
+        let bytes = encode_request(&request).unwrap();
+        assert_eq!(
+            hex(&bytes),
+            "454f4e570d0001001500000002007231010d0073657373696f6e2d322e392d3102",
+        );
+        assert_eq!(decode_request(&bytes).unwrap(), request);
+        for caller in ["", "session 2"] {
+            let request = Request {
+                caller: Some(caller.into()),
+                ..request.clone()
+            };
+            assert!(encode_request(&request).is_err(), "{caller:?}");
         }
 
         let snapshot = Response::Snapshot(Snapshot {
@@ -1831,7 +1870,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e570c008100b20000000100020002000100010000000200743100000041",
+                    "454f4e570d008100b20000000100020002000100010000000200743100000041",
                     "000080400100030067697403004769740404004b65794701000200743104002f",
                     "746d700001020070330102007531030002007031030073703103002f70310102",
                     "007032030073703203002f70320102007033030073703303002f703301010002",
@@ -1839,7 +1878,7 @@ mod tests {
                     "00002a01f40100000000000001015a000000000000000100602700000700",
                 ),
             ),
-            (failure, "454f4e570c0082000a00000004006275737902006e6f"),
+            (failure, "454f4e570d0082000a00000004006275737902006e6f"),
         ] {
             let bytes = encode_response(&response).unwrap();
             assert_eq!(hex(&bytes), expected, "{response:?}");
@@ -1864,7 +1903,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e570c00830026000000020067310500302e392e300c0002006f6b010002",
+                    "454f4e570d00830026000000020067310500302e392e300d0002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -1873,7 +1912,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e570c00840006000000020067310000",
+                "454f4e570d00840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -1886,6 +1925,7 @@ mod tests {
     fn frames_reject_other_versions_and_malformed_headers() {
         let request = encode_request(&Request {
             id: "r1".into(),
+            caller: None,
             action: Action::Workspace(WorkspaceAction::Inspect),
         })
         .unwrap();
@@ -1897,8 +1937,8 @@ mod tests {
         for (message, error) in [
             (edit(0, b"EONX"), Error::InvalidMagic),
             (
-                edit(4, &11_u16.to_le_bytes()),
-                Error::UnsupportedVersion { version: 11 },
+                edit(4, &12_u16.to_le_bytes()),
+                Error::UnsupportedVersion { version: 12 },
             ),
             (edit(6, &[SNAPSHOT]), Error::InvalidKind { value: SNAPSHOT }),
             (edit(7, &[1]), Error::InvalidFlags { value: 1 }),
@@ -1961,6 +2001,7 @@ mod tests {
         let frame_action = |id: &str, action: &[u8]| {
             let mut payload = Encoder::default();
             payload.string(id);
+            payload.byte(0);
             payload.bytes.extend_from_slice(action);
             frame(REQUEST, payload.bytes).unwrap()
         };
@@ -2015,6 +2056,7 @@ mod tests {
         for (action, bytes) in valid {
             let request = Request {
                 id: "r1".into(),
+                caller: None,
                 action,
             };
             let bytes = frame_action("r1", bytes);
@@ -2108,6 +2150,7 @@ mod tests {
         for (id, action, bytes, expected) in invalid {
             let request = Request {
                 id: id.into(),
+                caller: None,
                 action,
             };
             let encoded = encode_request(&request).unwrap_err();
