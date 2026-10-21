@@ -10,7 +10,7 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
-use yazelix_venus::{Color, FontSettings};
+use yazelix_venus::{BarItem, Color, FontSettings};
 
 const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("magma", rgb(0xff3b30)),
@@ -22,7 +22,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--eon-version VERSION] [--background-opacity VALUE] [--background-blur] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--background-opacity VALUE] [--background-blur] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -34,6 +34,7 @@ pub(super) struct LaunchArguments {
     pub(super) decorations: bool,
     pub(super) pane_frames: bool,
     pub(super) eon_version: Option<String>,
+    pub(super) bar_items: Vec<BarItem>,
     pub(super) background_opacity: f32,
     pub(super) background_blur: bool,
     pub(super) cursor_tail: Option<(Color, f32)>,
@@ -53,6 +54,7 @@ pub(super) fn launch_arguments(
     let mut decorations = true;
     let mut pane_frames = None;
     let mut eon_version = None;
+    let mut bar_items = None;
     let mut background_opacity = None;
     let mut background_blur = false;
     let mut cursor_effect = None;
@@ -93,6 +95,17 @@ pub(super) fn launch_arguments(
                         .bytes()
                         .all(|c| c.is_ascii_alphanumeric() || b".-+".contains(&c))
             }) {
+                return Err(USAGE.into());
+            }
+        } else if argument == "--bar-items" {
+            if bar_items.is_some() {
+                return Err(USAGE.into());
+            }
+            bar_items = arguments
+                .next()
+                .and_then(|value| value.into_string().ok())
+                .and_then(|value| parse_bar_items(&value));
+            if bar_items.is_none() {
                 return Err(USAGE.into());
             }
         } else if argument == "--pane-frames" {
@@ -191,7 +204,7 @@ pub(super) fn launch_arguments(
         }
     }
 
-    if eon_version.is_some() && workspace_socket.is_none() {
+    if (eon_version.is_some() || bar_items.is_some()) && workspace_socket.is_none() {
         return Err(USAGE.into());
     }
     if orbit_socket.is_none() && workspace_socket.is_none() {
@@ -248,6 +261,7 @@ pub(super) fn launch_arguments(
         decorations,
         pane_frames: pane_frames.unwrap_or(true),
         eon_version,
+        bar_items: bar_items.unwrap_or_else(|| BarItem::DEFAULT.into()),
         background_opacity: background_opacity.unwrap_or(1.0),
         background_blur,
         cursor_tail,
@@ -268,6 +282,28 @@ fn option_value<T: std::str::FromStr>(slot: &mut Option<T>, value: Option<OsStri
         return Err(USAGE.into());
     }
     Ok(())
+}
+
+/// Parses comma-separated item names in their left-to-right order. An empty list shows no
+/// item; an unknown, repeated or empty name is invalid.
+fn parse_bar_items(list: &str) -> Option<Vec<BarItem>> {
+    let mut items = Vec::new();
+    for name in list.split(',').filter(|_| !list.is_empty()) {
+        let item = match name {
+            "codex_quota" => BarItem::CodexQuota,
+            "claude_quota" => BarItem::ClaudeQuota,
+            "cpu" => BarItem::Cpu,
+            "ram" => BarItem::Ram,
+            "clock" => BarItem::Clock,
+            "version" => BarItem::Version,
+            _ => return None,
+        };
+        if items.contains(&item) {
+            return None;
+        }
+        items.push(item);
+    }
+    Some(items)
 }
 
 fn valid_application_id(value: &str) -> bool {
@@ -358,6 +394,47 @@ fn default_socket_path() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bar_items_are_an_ordered_workspace_choice() {
+        let parse = |items: &[&str]| {
+            launch_arguments(
+                items
+                    .iter()
+                    .copied()
+                    .chain(["--workspace", "eon.sock"])
+                    .map(OsString::from),
+                None,
+            )
+        };
+        assert_eq!(parse(&[]).unwrap().bar_items, BarItem::DEFAULT);
+        assert_eq!(
+            parse(&["--bar-items", "clock,claude_quota,cpu"])
+                .unwrap()
+                .bar_items,
+            [BarItem::Clock, BarItem::ClaudeQuota, BarItem::Cpu]
+        );
+        assert!(parse(&["--bar-items", ""]).unwrap().bar_items.is_empty());
+        for items in [
+            vec!["--bar-items", "gpu"],
+            vec!["--bar-items", "CPU"],
+            vec!["--bar-items", "cpu,cpu"],
+            vec!["--bar-items", "cpu,"],
+            vec!["--bar-items", "cpu, ram"],
+            vec!["--bar-items", "cpu", "--bar-items", "ram"],
+        ] {
+            assert!(parse(&items).is_err(), "accepted {items:?}");
+        }
+        for arguments in [
+            &["--bar-items", "cpu", "orbit.sock"][..],
+            &["--workspace", "eon.sock", "--bar-items"],
+        ] {
+            assert!(
+                launch_arguments(arguments.iter().map(OsString::from), None).is_err(),
+                "accepted {arguments:?}"
+            );
+        }
+    }
 
     #[test]
     fn eon_version_is_bounded_workspace_identity() {

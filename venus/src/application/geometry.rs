@@ -6,7 +6,7 @@ use eon_workspace_protocol::v14::MAX_COLUMNS;
 use orbit_protocol::{MAX_CELLS, session::SurfaceSize};
 use winit::dpi::PhysicalSize;
 use yazelix_venus::{
-    CellMetrics, SceneRect, ShortcutHintsScene, WorkspaceFocus, WorkspaceScene,
+    CellMetrics, EonBar, SceneRect, ShortcutHintsScene, WorkspaceFocus, WorkspaceScene,
     workspace_column_width,
 };
 
@@ -51,10 +51,7 @@ pub(super) fn initial_window_size(
         let workspace = snapshot.map(|snapshot| {
             WorkspaceScene::from_snapshot_with_metadata(
                 snapshot,
-                None,
-                None,
-                None,
-                None,
+                EonBar::default(),
                 size,
                 metrics,
                 0.0,
@@ -239,10 +236,7 @@ mod tests {
                     let workspace = snapshot.map(|s| {
                         WorkspaceScene::from_snapshot_with_metadata(
                             s,
-                            None,
-                            None,
-                            None,
-                            None,
+                            EonBar::default(),
                             size,
                             metrics,
                             0.0,

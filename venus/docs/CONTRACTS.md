@@ -1285,10 +1285,10 @@ re-proved when that platform or feature is next touched.
 - **Trigger:** A workspace client receives an optional supervising Eon version
   through `--eon-version`.
 - **Result:** One read-only `EON <version>` label in regular terminal monospace and
-  softened cyan joins the existing top row at its edge, right before shortcut
-  help when visible and before close. Its full version is available through
-  hover and a static AccessKit label; it adds no focus target or action and is
-  not a window-drag target.
+  softened cyan joins the existing top row, by default (VEN-C29) at its edge,
+  right before shortcut help when visible and before close. Its full version is
+  available through hover and a static AccessKit label; it adds no focus target
+  or action and is not a window-drag target.
   Width fitting hides it before required controls and active-tab reservation.
 - **Important failures:** Absent input means no label; malformed or standalone input is
   rejected. Existing workspace/terminal behavior and footer bounds remain owned
@@ -1387,9 +1387,9 @@ re-proved when that platform or feature is next touched.
 - **Trigger:** A workspace surface is presented, or the local wall-clock minute
   changes.
 - **Result:** One read-only `HH:MM` label in terminal monospace shows local
-  24-hour time in the existing top row on the quota chips' rounded fill, after
-  the quota chips and the CPU and RAM labels and before the version label,
-  Shortcuts and Close. It changes within a second of
+  24-hour time in the existing top row on the quota chips' rounded fill, by
+  default (VEN-C29) after the quota chips and the CPU and RAM labels and before
+  the version label, Shortcuts and Close. It changes within a second of
   each minute boundary. Hover and a static AccessKit label name the time, date
   and UTC offset, such as `Local time 14:05, Wednesday 21 October 2026,
   UTC−03:00`.
@@ -1421,9 +1421,9 @@ re-proved when that platform or feature is next touched.
   workspace on Linux.
 - **Trigger:** A workspace surface is presented, and every 2 seconds after.
 - **Result:** Two read-only labels in terminal monospace, `CPU  12%` then
-  `RAM  43%`, sit in the existing top row after the quota chips and before the
-  clock, each on the quota chips' rounded fill and padded to the width of
-  `CPU 100%` with the value right-aligned. The CPU label shows whole-machine
+  `RAM  43%`, sit in the existing top row, by default (VEN-C29) after the
+  quota chips and before the clock, each on the quota chips' rounded fill and
+  padded to the width of `CPU 100%` with the value right-aligned. The CPU label shows whole-machine
   CPU use over the last 2 seconds as a whole percentage from `/proc/stat`; it
   first appears one interval after the surface opens. The RAM label shows
   whole-machine memory use, MemTotal minus MemAvailable over MemTotal from
@@ -1456,3 +1456,34 @@ re-proved when that platform or feature is next touched.
     `readings_yield_after_the_clock_and_have_no_actions` in the Venus suite;
     isolated installed observations recorded in
     `eon-cpu-widget-eon-bar-acxs` and `eon-igae.3`.
+
+## VEN-C29 — Eon Bar item order
+
+- **Status:** Proven by the automated tier; installed placement of a chosen
+  order is pending `eon-igae.14.2`, which makes Eon pass the input.
+- **Consumer:** Eon Runtime launching a Venus surface for a full Eon workspace.
+- **Trigger:** A workspace launch with an optional `--bar-items ITEM,...`
+  naming any of `codex_quota`, `claude_quota`, `cpu`, `ram`, `clock` and
+  `version`, each at most once.
+- **Result:** The named items sit left to right in that order, between the
+  drag region and Shortcuts and Close. An item left out gets no chip, hit
+  target, hover or AccessKit node, and Venus neither reads nor wakes for a
+  left-out CPU, RAM or clock. An empty value shows no items. Without the input
+  the order is `codex_quota`, `claude_quota`, `cpu`, `ram`, `clock`, `version`.
+  AccessKit order follows the visual order. Width fitting keeps its fixed
+  priority whatever the order: the clock hides first, then RAM, then CPU, then
+  the version label, then quota compaction, before tabs or controls.
+- **Important failures:** A missing value, an unknown, repeated or empty name,
+  a repeated flag, or the input without `--workspace` fails before window
+  creation. A named item without data (no quota from EONW, no `--eon-version`,
+  no valid reading) shows nothing, as its own contract says.
+- **Owner:** Eon owns the choice and passes it at launch; Venus owns
+  validation, placement and fitting.
+- **Boundary:** No EONW change, configuration file, per-item option,
+  configurable hiding priority or new item.
+- **Proof:** `eon-igae.14.1`
+  - **Environment:** Automated; the default bar observed installed.
+  - **Evidence:** `bar_items_are_an_ordered_workspace_choice` and
+    `eon_orders_and_omits_bar_items` in the Venus suite; the existing
+    VEN-C25, VEN-C27 and VEN-C28 tests for the default order; the installed
+    observation recorded in `eon-igae.14.1`.

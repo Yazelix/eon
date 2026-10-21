@@ -21,11 +21,11 @@ pub use model::{
 };
 pub use render::{CellMetrics, FontSettings, FontSetup, PresentOutcome, RenderError, Renderer};
 pub use scene::{
-    Color, DrawCell, DrawCursor, DrawRow, DrawStyle, GlyphRun, Hyperlink, LocalClock, PaneMetadata,
-    Scene, ScenePreview, SceneRect, ShortcutGroup, ShortcutHint, ShortcutHintsScene, ShortcutRow,
-    ShortcutViewerScene, WorkspaceColumn, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit,
-    WorkspacePane, WorkspaceScene, WorkspaceTab, validate_copy_uri, validate_open_uri,
-    workspace_column_width,
+    BarItem, Color, DrawCell, DrawCursor, DrawRow, DrawStyle, EonBar, GlyphRun, Hyperlink,
+    LocalClock, PaneMetadata, Scene, ScenePreview, SceneRect, ShortcutGroup, ShortcutHint,
+    ShortcutHintsScene, ShortcutRow, ShortcutViewerScene, WorkspaceColumn, WorkspaceFocus,
+    WorkspaceHeaderControl, WorkspaceHit, WorkspacePane, WorkspaceScene, WorkspaceTab,
+    validate_copy_uri, validate_open_uri, workspace_column_width,
 };
 pub use system::{CpuTimes, CpuUse, RamUse};
 pub use transport::{

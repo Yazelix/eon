@@ -226,19 +226,24 @@ impl Snapshot {
         let status_alert = terminal && !self.status.is_empty();
         let mut root_children = if let Some(workspace) = &self.workspace {
             let mut children = vec![TAB_LIST, NEW_TAB];
-            for quota in &workspace.quotas {
-                children.push(quota_id(quota.provider));
-            }
-            for (id, label) in [
-                (CPU, &workspace.cpu),
-                (RAM, &workspace.ram),
-                (CLOCK, &workspace.clock),
-                (VERSION, &workspace.version),
-            ] {
-                if label.is_some() {
-                    children.push(id);
-                }
-            }
+            // Quota chips and labels follow their visual order, which Eon chooses.
+            let mut items = workspace
+                .quotas
+                .iter()
+                .map(|quota| (quota.rect.left, quota_id(quota.provider)))
+                .chain(
+                    [
+                        (CPU, &workspace.cpu),
+                        (RAM, &workspace.ram),
+                        (CLOCK, &workspace.clock),
+                        (VERSION, &workspace.version),
+                    ]
+                    .into_iter()
+                    .filter_map(|(id, label)| Some((label.as_ref()?.rect.left, id))),
+                )
+                .collect::<Vec<_>>();
+            items.sort_by(|a, b| a.0.total_cmp(&b.0));
+            children.extend(items.into_iter().map(|(_, id)| id));
             if workspace.has_control(WorkspaceHeaderControl::Shortcuts) {
                 children.push(SHORTCUTS);
             }
@@ -806,7 +811,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Color, DrawCell, DrawRow, DrawStyle, PaneMetadata, ShortcutGroup, ShortcutRow};
+    use crate::{
+        Color, DrawCell, DrawRow, DrawStyle, EonBar, PaneMetadata, ShortcutGroup, ShortcutRow,
+    };
     use eon_workspace_protocol::v14::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, CodexQuotaWindow, Pane, Popup,
         PopupEntry, PopupGeometry, Shortcut, Snapshot as WorkspaceSnapshot, Tab,
@@ -942,10 +949,10 @@ mod tests {
                             let project = |version| {
                                 WorkspaceScene::from_snapshot_with_metadata(
                                     &snapshot,
-                                    version,
-                                    None,
-                                    None,
-                                    None,
+                                    EonBar {
+                                        version,
+                                        ..EonBar::default()
+                                    },
                                     size,
                                     metrics,
                                     0.0,
@@ -1085,10 +1092,10 @@ mod tests {
                     codex_quota: None,
                     claude_quota: None,
                 },
-                None,
-                None,
-                None,
-                Some(&clock),
+                EonBar {
+                    clock: Some(&clock),
+                    ..EonBar::default()
+                },
                 PhysicalSize::new(1100, 600),
                 CellMetrics::for_scale(1.0),
                 0.0,
@@ -1147,10 +1154,11 @@ mod tests {
                         let project = |logical_width: u32, version, clock| {
                             WorkspaceScene::from_snapshot_with_metadata(
                                 &snapshot,
-                                version,
-                                None,
-                                None,
-                                clock,
+                                EonBar {
+                                    version,
+                                    clock,
+                                    ..EonBar::default()
+                                },
                                 PhysicalSize::new(
                                     (logical_width as f32 * metrics.scale) as u32,
                                     600,
@@ -1315,10 +1323,13 @@ mod tests {
         let project = |logical_width: u32, version, cpu, ram, clock| {
             WorkspaceScene::from_snapshot_with_metadata(
                 &snapshot,
-                version,
-                cpu,
-                ram,
-                clock,
+                EonBar {
+                    version,
+                    cpu,
+                    ram,
+                    clock,
+                    ..EonBar::default()
+                },
                 PhysicalSize::new((logical_width as f32 * metrics.scale) as u32, 600),
                 metrics,
                 0.0,
@@ -1428,6 +1439,121 @@ mod tests {
             }
         }
         assert_eq!(partial, [true; 2]);
+    }
+
+    #[test]
+    fn eon_orders_and_omits_bar_items() {
+        let cpu = crate::CpuUse::between(
+            crate::CpuTimes::parse("cpu 0 0 0 0 0 0 0 0").unwrap(),
+            crate::CpuTimes::parse("cpu 12 0 0 88 0 0 0 0").unwrap(),
+        )
+        .unwrap();
+        let ram =
+            crate::RamUse::parse("MemTotal: 32800000 kB\nMemAvailable: 18677760 kB\n").unwrap();
+        let clock = crate::LocalClock::new(
+            &jiff::civil::date(2026, 10, 21)
+                .at(14, 5, 0, 0)
+                .to_zoned(jiff::tz::TimeZone::fixed(jiff::tz::offset(-3)))
+                .unwrap(),
+        );
+        let windows = || {
+            vec![CodexQuotaWindow {
+                duration_minutes: 300,
+                remaining_percent: 74,
+                resets_at: None,
+            }]
+        };
+        let snapshot = WorkspaceSnapshot {
+            active_tab: "t1".into(),
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            tabs: vec![workspace_tab("t1", &["p1"], "p1")],
+            codex_quota: Some(CodexQuota {
+                state: CodexQuotaState::Fresh,
+                observed_at: 1,
+                windows: windows(),
+            }),
+            claude_quota: Some(ClaudeQuota {
+                state: ClaudeQuotaState::Fresh,
+                observed_at: 1,
+                windows: windows(),
+            }),
+        };
+        let metrics = CellMetrics::for_scale(1.0);
+        let size = PhysicalSize::new(3000, 600);
+        let project = |items: &[crate::BarItem]| {
+            WorkspaceScene::from_snapshot_with_metadata(
+                &snapshot,
+                EonBar {
+                    items,
+                    version: Some("9.8.7"),
+                    cpu: Some(&cpu),
+                    ram: Some(&ram),
+                    clock: Some(&clock),
+                },
+                size,
+                metrics,
+                0.0,
+                0.0,
+                |_| None,
+                |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+                None,
+            )
+        };
+        let full = project(&crate::BarItem::DEFAULT);
+        let scene = project(&[
+            crate::BarItem::Clock,
+            crate::BarItem::ClaudeQuota,
+            crate::BarItem::Version,
+            crate::BarItem::Cpu,
+            crate::BarItem::CodexQuota,
+        ]);
+        assert_eq!(scene.tabs, full.tabs);
+        assert_eq!(scene.controls, full.controls);
+        assert_eq!(scene.terminal, full.terminal);
+        // The left-out RAM label has no chip, hit target or accessible node.
+        assert!(scene.ram.is_none());
+        let [claude, codex] = &scene.quotas[..] else {
+            panic!("both quota chips show");
+        };
+        assert_eq!(claude.provider.name(), "Claude");
+        let rects = [
+            scene.clock.as_ref().unwrap().rect,
+            claude.rect,
+            scene.version.as_ref().unwrap().rect,
+            scene.cpu.as_ref().unwrap().rect,
+            codex.rect,
+        ];
+        assert_eq!(scene.drag_region.right(), rects[0].left);
+        for pair in rects.windows(2) {
+            assert_eq!(pair[0].right(), pair[1].left);
+        }
+        assert_eq!(rects[4].right(), scene.controls[1].rect.left);
+        assert_eq!(codex.logo.left, codex.rect.left + metrics.padding);
+        let mut accessible = Snapshot::new(size);
+        accessible.set_workspace(Some(&scene));
+        let tree = accessible.tree();
+        let children = node(&tree, WINDOW).children();
+        let start = children.iter().position(|id| *id == NEW_TAB).unwrap() + 1;
+        assert_eq!(
+            children[start..start + 6],
+            [
+                CLOCK,
+                quota_id(claude.provider),
+                VERSION,
+                CPU,
+                quota_id(codex.provider),
+                SHORTCUTS
+            ]
+        );
+        assert!(tree.nodes.iter().all(|(id, _)| *id != RAM));
+        // With no items, the drag region reaches Shortcuts.
+        let bare = project(&[]);
+        assert!(bare.quotas.is_empty() && bare.cpu.is_none() && bare.version.is_none());
+        assert_eq!(bare.drag_region.right(), bare.controls[1].rect.left);
     }
 
     #[test]
@@ -2320,10 +2446,7 @@ mod tests {
         let project = |footer| {
             WorkspaceScene::from_snapshot_with_metadata(
                 &workspace,
-                None,
-                None,
-                None,
-                None,
+                EonBar::default(),
                 size,
                 metrics,
                 0.0,
@@ -2516,10 +2639,7 @@ mod tests {
                 codex_quota: None,
                 claude_quota: None,
             },
-            None,
-            None,
-            None,
-            None,
+            EonBar::default(),
             PhysicalSize::new(800, 600),
             CellMetrics::for_scale(1.0),
             0.0,

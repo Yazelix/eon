@@ -271,6 +271,13 @@ pub(crate) enum QuotaProvider {
 }
 
 impl QuotaProvider {
+    fn item(self) -> BarItem {
+        match self {
+            Self::Codex => BarItem::CodexQuota,
+            Self::Claude => BarItem::ClaudeQuota,
+        }
+    }
+
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Codex => "Codex",
@@ -296,6 +303,50 @@ pub(crate) struct WorkspaceLabel {
     pub(crate) rect: SceneRect,
     pub(crate) label: String,
     pub(crate) description: String,
+}
+
+/// One item Eon may place in the Eon Bar between the drag region and Shortcuts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BarItem {
+    CodexQuota,
+    ClaudeQuota,
+    Cpu,
+    Ram,
+    Clock,
+    Version,
+}
+
+impl BarItem {
+    /// Every item, in the order Venus shows them when Eon names none.
+    pub const DEFAULT: [Self; 6] = [
+        Self::CodexQuota,
+        Self::ClaudeQuota,
+        Self::Cpu,
+        Self::Ram,
+        Self::Clock,
+        Self::Version,
+    ];
+}
+
+/// The Eon Bar items in order, and the values Venus has for them.
+pub struct EonBar<'a> {
+    pub items: &'a [BarItem],
+    pub version: Option<&'a str>,
+    pub cpu: Option<&'a CpuUse>,
+    pub ram: Option<&'a RamUse>,
+    pub clock: Option<&'a LocalClock>,
+}
+
+impl Default for EonBar<'_> {
+    fn default() -> Self {
+        Self {
+            items: &BarItem::DEFAULT,
+            version: None,
+            cpu: None,
+            ram: None,
+            clock: None,
+        }
+    }
 }
 
 /// One local wall-clock minute shown in the workspace header.
@@ -1056,10 +1107,7 @@ impl WorkspaceScene {
     ) -> Self {
         Self::from_snapshot_with_metadata(
             snapshot,
-            None,
-            None,
-            None,
-            None,
+            EonBar::default(),
             size,
             metrics,
             tab_scroll,
@@ -1074,10 +1122,7 @@ impl WorkspaceScene {
     #[allow(clippy::too_many_arguments)]
     pub fn from_snapshot_with_metadata<'a>(
         snapshot: &Snapshot,
-        eon_version: Option<&str>,
-        cpu: Option<&CpuUse>,
-        ram: Option<&RamUse>,
-        clock: Option<&LocalClock>,
+        bar: EonBar<'_>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         tab_scroll: f32,
@@ -1106,35 +1151,37 @@ impl WorkspaceScene {
         let tab_height = header_height(metrics, height, content_height, minimum_height);
         let gap = tab_gap(metrics, tab_height);
         let inset = tab_inset(metrics, tab_height);
-        let quota_texts = snapshot
-            .codex_quota
-            .as_ref()
-            .map(|quota| {
-                (
-                    QuotaProvider::Codex,
-                    quota_text(
+        let quota_texts = bar
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                BarItem::CodexQuota => snapshot.codex_quota.as_ref().map(|quota| {
+                    (
                         QuotaProvider::Codex,
-                        quota.state,
-                        quota.observed_at,
-                        &quota.windows,
-                    ),
-                )
-            })
-            .into_iter()
-            .chain(snapshot.claude_quota.as_ref().map(|quota| {
-                (
-                    QuotaProvider::Claude,
-                    quota_text(
+                        quota_text(
+                            QuotaProvider::Codex,
+                            quota.state,
+                            quota.observed_at,
+                            &quota.windows,
+                        ),
+                    )
+                }),
+                BarItem::ClaudeQuota => snapshot.claude_quota.as_ref().map(|quota| {
+                    (
                         QuotaProvider::Claude,
-                        match quota.state {
-                            ClaudeQuotaState::Fresh => CodexQuotaState::Fresh,
-                            ClaudeQuotaState::Stale => CodexQuotaState::Stale,
-                        },
-                        quota.observed_at,
-                        &quota.windows,
-                    ),
-                )
-            }))
+                        quota_text(
+                            QuotaProvider::Claude,
+                            match quota.state {
+                                ClaudeQuotaState::Fresh => CodexQuotaState::Fresh,
+                                ClaudeQuotaState::Stale => CodexQuotaState::Stale,
+                            },
+                            quota.observed_at,
+                            &quota.windows,
+                        ),
+                    )
+                }),
+                _ => None,
+            })
             .collect::<Vec<_>>();
         let quota_padding = metrics.padding * 2.0 + metrics.font_size + metrics.padding / 2.0;
         let mut measure_quotas = |compact| {
@@ -1236,19 +1283,25 @@ impl WorkspaceScene {
         // Read-only labels take spare header space without shortening tabs, in this order, and
         // stop at the first that does not fit: the clock yields first, then RAM, then CPU use,
         // then the version label. The readings also need every quota chip at full width.
+        let shown = |item| bar.items.contains(&item);
+        let reading = |item| !compact && shown(item);
         let mut labels = [
-            eon_version.map(|version| {
-                (
-                    format!("EON {version}"),
-                    format!("Running Eon version {version}"),
-                )
-            }),
-            cpu.filter(|_| !compact)
+            bar.version
+                .filter(|_| shown(BarItem::Version))
+                .map(|version| {
+                    (
+                        format!("EON {version}"),
+                        format!("Running Eon version {version}"),
+                    )
+                }),
+            bar.cpu
+                .filter(|_| reading(BarItem::Cpu))
                 .map(|cpu| (cpu.label.clone(), cpu.description.clone())),
-            ram.filter(|_| !compact)
+            bar.ram
+                .filter(|_| reading(BarItem::Ram))
                 .map(|ram| (ram.label.clone(), ram.description.clone())),
-            clock
-                .filter(|_| !compact)
+            bar.clock
+                .filter(|_| reading(BarItem::Clock))
                 .map(|clock| (clock.label.clone(), clock.description.clone())),
         ]
         .map(|label| {
@@ -1278,21 +1331,32 @@ impl WorkspaceScene {
                 *label = None;
             }
         }
-        // The readings follow the quota chips; the version label sits at the edge, before
-        // Shortcuts and Close.
+        // Quota chips and labels sit in Eon's order between the drag region and Shortcuts.
         let [version, cpu, ram, clock] = labels;
-        let mut labels = [cpu, ram, clock, version];
-        let mut right = controls[1].rect.left;
-        for label in labels.iter_mut().rev().flatten() {
-            right -= label.rect.width;
-            label.rect.left = right;
+        let mut labels = [
+            (BarItem::Cpu, cpu),
+            (BarItem::Ram, ram),
+            (BarItem::Clock, clock),
+            (BarItem::Version, version),
+        ];
+        let mut left = drag_region.right();
+        for item in bar.items {
+            if let Some(label) = labels
+                .iter_mut()
+                .find_map(|(kind, label)| label.as_mut().filter(|_| kind == item))
+            {
+                label.rect.left = left;
+                left = label.rect.right();
+            } else if let Some(quota) = quotas
+                .iter_mut()
+                .find(|quota| quota.provider.item() == *item)
+            {
+                quota.rect.left = left;
+                quota.logo.left = left + metrics.padding;
+                left = quota.rect.right();
+            }
         }
-        let shift = controls[1].rect.left - right;
-        for quota in &mut quotas {
-            quota.rect.left -= shift;
-            quota.logo.left -= shift;
-        }
-        let [cpu, ram, clock, version] = labels;
+        let [(_, cpu), (_, ram), (_, clock), (_, version)] = labels;
         let tab_scroll_limit = (tab_end - tab_viewport.width).max(0.0);
         let active = tabs[active_tab].rect;
         // Revealing the first tab never scrolls.
@@ -2575,10 +2639,7 @@ mod tests {
                 let footer_rect = footer.rect;
                 let with_hints = WorkspaceScene::from_snapshot_with_metadata(
                     &snapshot,
-                    None,
-                    None,
-                    None,
-                    None,
+                    EonBar::default(),
                     size,
                     metrics,
                     0.0,

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C29: an optional workspace-only `--bar-items` launch input sets the
+  order of the Eon Bar's quota chips, CPU and RAM labels, clock and version
+  label, and leaves out the items it does not name; Venus does not read or
+  wake for a left-out reading. Without it the bar is unchanged
+  (`eon-igae.14.1`).
 - VEN-C5: Venus detects `http://` and `https://` URLs printed as plain text
   in visible rows, joined across soft wraps and trimmed of trailing
   punctuation and unmatched closing brackets, and gives the ones its opener

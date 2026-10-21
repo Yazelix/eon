@@ -30,13 +30,13 @@ use winit::{
     window::{CursorIcon, UserAttentionType, Window, WindowAttributes, WindowId},
 };
 use yazelix_venus::{
-    Accessibility, AccessibilityTarget, CellMetrics, ClipboardEffect, Color, ConnectionState,
-    CpuTimes, CpuUse, FontSettings, FontSetup, Hyperlink, InputState, LocalClock,
-    LocalNoticeSource, MAX_LINK_BYTES, MetadataEvent, MetadataTransport, ModelError, PaneMetadata,
-    PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene,
-    ShortcutViewerScene, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus,
-    WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
-    active_popup, validate_copy_uri, validate_open_uri,
+    Accessibility, AccessibilityTarget, BarItem, CellMetrics, ClipboardEffect, Color,
+    ConnectionState, CpuTimes, CpuUse, EonBar, FontSettings, FontSetup, Hyperlink, InputState,
+    LocalClock, LocalNoticeSource, MAX_LINK_BYTES, MetadataEvent, MetadataTransport, ModelError,
+    PaneMetadata, PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel,
+    ShortcutHintsScene, ShortcutViewerScene, Transport, TransportEvent, WorkspaceEvent,
+    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene,
+    WorkspaceTransport, active_popup, validate_copy_uri, validate_open_uri,
 };
 
 mod geometry;
@@ -449,6 +449,7 @@ struct Application {
     decorations: bool,
     pane_frames: bool,
     eon_version: Option<String>,
+    bar_items: Vec<BarItem>,
     background_opacity: f32,
     background_blur: bool,
     cursor_tail: Option<(Color, f32)>,
@@ -510,6 +511,7 @@ impl Application {
             decorations,
             pane_frames,
             eon_version,
+            bar_items,
             background_opacity,
             background_blur,
             cursor_tail,
@@ -536,6 +538,7 @@ impl Application {
             decorations,
             pane_frames,
             eon_version,
+            bar_items,
             background_opacity,
             background_blur,
             cursor_tail,
@@ -796,10 +799,13 @@ impl Application {
         self.workspace_model.snapshot().map(|snapshot| {
             WorkspaceScene::from_snapshot_with_metadata(
                 snapshot,
-                self.eon_version.as_deref(),
-                self.cpu.as_ref(),
-                self.ram.as_ref(),
-                self.clock.as_ref(),
+                EonBar {
+                    items: &self.bar_items,
+                    version: self.eon_version.as_deref(),
+                    cpu: self.cpu.as_ref(),
+                    ram: self.ram.as_ref(),
+                    clock: self.clock.as_ref(),
+                },
                 state.renderer.size(),
                 state.renderer.metrics(),
                 self.tab_scroll,
@@ -1022,10 +1028,13 @@ impl Application {
         self.quota_widths.clear();
         Some(WorkspaceScene::from_snapshot_with_metadata(
             snapshot,
-            self.eon_version.as_deref(),
-            self.cpu.as_ref(),
-            self.ram.as_ref(),
-            self.clock.as_ref(),
+            EonBar {
+                items: &self.bar_items,
+                version: self.eon_version.as_deref(),
+                cpu: self.cpu.as_ref(),
+                ram: self.ram.as_ref(),
+                clock: self.clock.as_ref(),
+            },
             state.renderer.size(),
             state.renderer.metrics(),
             tab_scroll,
@@ -3534,7 +3543,16 @@ impl ApplicationHandler<UserEvent> for Application {
         }
         self.retry_orbit(now);
         self.retry_column_views(now);
-        if self.workspace_model.snapshot().is_some() && self.next_clock.is_none_or(|due| now >= due)
+        // Items Eon leaves out of the bar are never read and never wake Venus.
+        let shown = |item| self.bar_items.contains(&item);
+        let (show_clock, show_cpu, show_ram) = (
+            shown(BarItem::Clock),
+            shown(BarItem::Cpu),
+            shown(BarItem::Ram),
+        );
+        if self.workspace_model.snapshot().is_some()
+            && show_clock
+            && self.next_clock.is_none_or(|due| now >= due)
         {
             let reading = read_local_clock();
             self.next_clock = Some(now + reading.as_ref().map_or(MINUTE, |(_, wait)| *wait));
@@ -3545,10 +3563,11 @@ impl ApplicationHandler<UserEvent> for Application {
             }
         }
         if self.workspace_model.snapshot().is_some()
+            && (show_cpu || show_ram)
             && self.next_reading.is_none_or(|due| now >= due)
         {
             self.next_reading = Some(now + READING_INTERVAL);
-            let times = CpuTimes::read();
+            let times = show_cpu.then(CpuTimes::read).flatten();
             // Each value compares readings about one interval apart, as the label says. After a
             // failed read or an event-loop stall, the next reading starts over.
             let cpu = self
@@ -3557,7 +3576,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 .zip(times)
                 .and_then(|((_, earlier), later)| CpuUse::between(earlier, later));
             self.cpu_times = times.map(|times| (now, times));
-            let ram = RamUse::read();
+            let ram = show_ram.then(RamUse::read).flatten();
             if cpu != self.cpu || ram != self.ram {
                 self.cpu = cpu;
                 self.ram = ram;

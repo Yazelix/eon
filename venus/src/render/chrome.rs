@@ -630,7 +630,7 @@ impl Renderer {
             );
         }
         rectangles.clip = None;
-        // Quota chips and readings share one pill; the version label stays plain at the edge.
+        // Quota chips and readings share one pill; the version label stays plain.
         let chip = SceneColor {
             r: 23,
             g: 34,
@@ -884,6 +884,7 @@ impl Renderer {
 mod tests {
     use super::super::*;
     use super::*;
+    use crate::EonBar;
     use glyphon::cosmic_text::SubpixelBin;
 
     #[test]
@@ -1146,10 +1147,7 @@ mod tests {
                 };
                 let workspace = WorkspaceScene::from_snapshot_with_metadata(
                     &snapshot,
-                    None,
-                    None,
-                    None,
-                    None,
+                    EonBar::default(),
                     PhysicalSize::new(900, 600),
                     renderer.metrics(),
                     0.0,
