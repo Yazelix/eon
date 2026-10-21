@@ -1343,19 +1343,26 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   enabled popup catalog supplied through current EONW v7. Opening, refreshing,
   scrolling, resizing, and closing the viewer change no workspace or Orbit
   terminal state. Title, subtitle and first group heading occupy separate
-  readable vertical space at normal and compact window sizes.
-- **Important failures:** Eon rejects configured popup shortcuts that collide
-  with Alt+Slash or positional Alt+0 through Alt+9 before workspace mutation.
+  readable vertical space at normal and compact window sizes. A configured
+  popup shortcut on the key of any other fixed binding takes that key; the
+  fixed binding is unbound while that configuration is active, and the viewer
+  lists it as overridden by the popup.
+- **Important failures:** Eon rejects configured popup shortcuts on Alt+Slash
+  or positional Alt+0 through Alt+9, a reserved set no 1.x release enlarges,
+  before workspace mutation.
   Invalid or stale component identity fails before profile activation. Profile
   refresh preserves running supervisors and terminals; they retain their older
   client until a normal restart.
 - **Owner:** Eon owns component/default selection, profile delivery and
   installed acceptance; Eon Runtime enforces configured popup collisions.
-  Venus owns viewer state, input, rendering, focus, and accessibility.
+  Venus owns viewer state, input, rendering, focus, accessibility, and a
+  configured popup's precedence over its other fixed bindings.
 - **Consumes:** Venus VEN-C20 and VEN-C5, current EONW v7 and Orbit terminals.
 - **Boundary:** No Eon-rendered viewer, second shortcut catalog, EONW change,
   Orbit update, child-application bindings, rebinding UI, command palette,
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
+  Venus derives overrides from the popup catalog it already receives over
+  EONW.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -1363,6 +1370,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `shortcut_viewer_uses_live_rows_and_captures_its_local_sequence`,
     `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog` and
     `recognized_shortcuts_are_one_shot`. Installed checklist item 5.
+  - **Override evidence (`eon-igae.10`):** Runtime
+    `popup_configuration_owns_defaults_overrides_and_collisions` and Venus
+    `configured_popups_take_fixed_bindings_except_reserved_keys`; isolated
+    dogfood of the built package on a private headless Sway (1280x720), with a
+    Files popup configured on Alt+Shift+N: the key opened and hid the popup
+    without a second window, and Alt+/ listed `Open new Eon window (overridden
+    by Files)`.
 - **Open proof:** Pending re-proof in this repository: header spacing at
   compact sizes, rebound and disabled popup rows, and AT-SPI projection on an
   installed surface. No eonbase, fractional-scale, screen-reader workflow,
@@ -1489,11 +1503,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Important failures:** The toggle is captured once per press, without repeat
   or release leakage. Visibility changes preserve focus, selected identities
   and live terminals; normal resizing is their only terminal effect. Popup
-  configuration that collides with Alt+Shift+B is rejected before mutation.
+  configuration on Alt+Shift+B takes the toggle's key under EON-C20 and leaves
+  the hints in their current visibility.
   Tiny bounds preserve valid geometry and whole chords. Accessible hints are
   read-only, without extra focus stops or announcements.
 - **Owner:** Venus owns presentation and window-local visibility under
-  VEN-C24. Eon Runtime owns popup collision enforcement. Orbit owns terminal
+  VEN-C24. Eon Runtime owns the reserved popup keys. Orbit owns terminal
   resizing. Eon owns product composition and exact accepted component pins.
 - **Consumes:** EON-C19/C20/C21, VEN-C24, existing EONW v7 and ORBF2/ORBS13.
 - **Boundary:** No minor-mode framework, child-application key discovery,
@@ -1508,6 +1523,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `shortcut_hints_are_read_only_and_retire_hidden_help_actions` and
     `workspace_shortcut_capture_starts_once_and_retains_release`. Installed
     checklist item 5.
+  - **Override evidence (`eon-igae.10`):** Runtime
+    `popup_configuration_owns_defaults_overrides_and_collisions` and Venus
+    `configured_popups_take_fixed_bindings_except_reserved_keys`; the installed
+    observation is pending.
 - **Open proof:** Pending re-proof in this repository: footer placement below
   the cards across widths, fractional scales and minimum fonts on an installed
   surface. No performance, macOS or screen-reader workflow claim.

@@ -2,7 +2,9 @@ use crate::{
     model::{active_popup, presented_panes},
     render::CellMetrics,
 };
-use eon_workspace_protocol::v12::{ClaudeQuotaState, CodexQuotaState, QuotaWindow, Snapshot};
+use eon_workspace_protocol::v12::{
+    ALT, ClaudeQuotaState, CodexQuotaState, PopupEntry, QuotaWindow, SHIFT, Snapshot,
+};
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, Rgb, Row, Screen, StyleColor, Underline,
     session::VerticalDirection,
@@ -220,10 +222,19 @@ pub enum WorkspaceHeaderControl {
 }
 
 impl WorkspaceHeaderControl {
-    pub(crate) fn label(self) -> &'static str {
+    /// The tooltip and accessible name, which drop the chord when a configured popup takes
+    /// this control's key (VEN-C20). Eon reserves Alt+/.
+    fn label(self, entries: &[PopupEntry]) -> &'static str {
+        let taken = |key: &str| {
+            entries
+                .iter()
+                .any(|entry| entry.shortcut.modifiers == ALT | SHIFT && entry.shortcut.key == key)
+        };
         match self {
+            Self::NewTab if taken("KeyT") => "New tab",
             Self::NewTab => "New tab — Alt+Shift+T",
             Self::Shortcuts => "Keyboard shortcuts — Alt+/",
+            Self::CloseTab if taken("KeyW") => "Close tab",
             Self::CloseTab => "Close tab — Alt+Shift+W",
         }
     }
@@ -242,6 +253,7 @@ impl WorkspaceHeaderControl {
 pub(crate) struct WorkspaceControl {
     pub(crate) kind: WorkspaceHeaderControl,
     pub(crate) rect: SceneRect,
+    pub(crate) label: &'static str,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -760,6 +772,7 @@ fn workspace_header_geometry(
     metrics: CellMetrics,
     requested_quota_width: Option<f32>,
     show_shortcuts: bool,
+    entries: &[PopupEntry],
 ) -> (
     SceneRect,
     SceneRect,
@@ -828,6 +841,7 @@ fn workspace_header_geometry(
                 height: tab_height,
                 ..SceneRect::default()
             },
+            label: kind.label(entries),
         };
         left += width;
         control
@@ -983,7 +997,7 @@ impl WorkspaceScene {
         // Header widths depend only on the pill row, never on the header's extra inset.
         let tab_height = header_heights(metrics).0.min(size.height as f32);
         let (_, tab_viewport, _, _, _) =
-            workspace_header_geometry(size, tab_height, metrics, None, true);
+            workspace_header_geometry(size, tab_height, metrics, None, true, &[]);
         (tab_max_width(metrics, tab_viewport.width) - metrics.padding * 2.0)
             .max(0.0)
             .floor()
@@ -1131,8 +1145,14 @@ impl WorkspaceScene {
         let geometry = loop {
             let requested =
                 (!quotas.is_empty()).then(|| quotas.iter().map(|quota| quota.rect.width).sum());
-            let geometry =
-                workspace_header_geometry(size, tab_height, metrics, requested, show_shortcuts);
+            let geometry = workspace_header_geometry(
+                size,
+                tab_height,
+                metrics,
+                requested,
+                show_shortcuts,
+                &snapshot.entries,
+            );
             if geometry.3.is_some() || quotas.is_empty() {
                 break geometry;
             }

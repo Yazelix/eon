@@ -109,7 +109,9 @@ re-proved when that platform or feature is next touched.
   explicitly activates one.
 - **Result:** The hovered link is highlighted and its escaped target is shown
   with Open and Copy actions. Linux uses `Ctrl+click` and `Ctrl+Shift+C`; macOS
-  uses `Command+click` and `Command+C`. Opening requires a press and release on
+  uses `Command+click` and `Command+C`. When a current Eon popup takes the
+  Copy key under VEN-C20, the hint omits Copy and that key invokes the popup;
+  the AccessKit Copy button remains. Opening requires a press and release on
   the same current presented target. Copy uses the current hovered target unless
   terminal selection retains precedence. AccessKit exposes each current visible
   target as an Open link followed by a Copy button, both using the native Click
@@ -140,6 +142,9 @@ re-proved when that platform or feature is next touched.
     `visible_links_offer_only_open_and_copy_and_retire_with_the_scene`,
     `clipboard_failure_outranks_stale_link_notice`, and
     `macos_uses_command_for_standard_host_actions_only` in the workspace suite.
+  - **Override evidence (`eon-igae.10`):**
+    `configured_popups_take_fixed_bindings_except_reserved_keys`; the installed
+    observation is pending.
 - **Open proof:** Pending re-proof in this repository: installed hyperlink open
   and copy (dogfood item 9 was not exercised), AT-SPI Open/Copy
   activation, and native missing-handler failure. Fractional scale and other
@@ -971,7 +976,10 @@ re-proved when that platform or feature is next touched.
   grouped native workspace, host, and current Eon popup shortcuts. Fixed
   bindings share their descriptor owner with dispatch; popup rows use the exact
   enabled label and normalized physical shortcut from the current Eon
-  snapshot. Wheel and navigation keys scroll bounded content. Opening,
+  snapshot. A popup on the key of a fixed binding other than Alt+Slash and
+  Alt+0 through Alt+9 takes that key: dispatch invokes the popup, the footer
+  omits the fixed hint, and the viewer row reads "<action> (overridden by
+  <popup label>)". Wheel and navigation keys scroll bounded content. Opening,
   refreshing, scrolling, and closing send no terminal bytes or workspace
   action; matching releases remain captured and prior terminal/chrome focus is
   restored on dismissal. The title, subtitle, and first group heading occupy
@@ -983,7 +991,8 @@ re-proved when that platform or feature is next touched.
   workspace actions do not reach their normal targets.
 - **Owner:** Venus owns viewer state, fixed native binding descriptors, scene,
   rendering, input precedence, and AccessKit projection. Eon owns the enabled
-  popup catalog and must reserve Alt+Slash before full-product delivery.
+  popup catalog and must reserve Alt+Slash and Alt+0 through Alt+9 before
+  full-product delivery.
 - **Consumes:** Canonical EONW through the in-tree `eon-workspace-protocol`
   0.1.0.
 - **Boundary:** No Orbit Session, Eon configuration parsing, child-application
@@ -996,6 +1005,12 @@ re-proved when that platform or feature is next touched.
     `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space`, and
     `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog` in the
     workspace suite; dogfood checklist item 5.
+  - **Override evidence (`eon-igae.10`):**
+    `configured_popups_take_fixed_bindings_except_reserved_keys`; isolated
+    dogfood of the built package on a private headless Sway (1280x720), with a
+    Files popup configured on Alt+Shift+N: the key opened and hid the popup
+    without a second window, and Alt+/ listed `Open new Eon window (overridden
+    by Files)`.
 - **Open proof:** Pending re-proof in this repository: AT-SPI dialog traversal
   and tiny-surface clipping.
 
@@ -1017,7 +1032,9 @@ re-proved when that platform or feature is next touched.
   EONW actions and the existing local VEN-C20 viewer. Their tooltips and
   accessible names are
   `New tab — Alt+Shift+T`, `Keyboard shortcuts — Alt+/`, and
-  `Close tab — Alt+Shift+W`. A bounded empty region between New tab and the
+  `Close tab — Alt+Shift+W`. A button whose key a current Eon popup takes
+  under VEN-C20 drops the chord from its tooltip and accessible name
+  (`New tab`, `Close tab`). A bounded empty region between New tab and the
   trailing controls starts compositor-owned window movement only from its
   immediate left press.
   The accessibility tree orders tabs, New tab, optional quota, Shortcuts,
@@ -1051,6 +1068,9 @@ re-proved when that platform or feature is next touched.
     `eon_bar_buttons_share_scene_bounds_and_separate_focus_from_activation`,
     and `workspace_accessibility_order_matches_tabs_then_one_expanded_pane` in
     the workspace suite; dogfood checklist items 3 and 6.
+  - **Override evidence (`eon-igae.10`):**
+    `eon_bar_buttons_share_scene_bounds_and_separate_focus_from_activation`; the
+    installed observation is pending.
 - **Open proof:** Pending re-proof in this repository: compositor window drag
   from the empty header region, narrow-width captures, and AT-SPI header order.
 
@@ -1108,7 +1128,8 @@ re-proved when that platform or feature is next touched.
 
 - **Status:** Proved on x86_64 Linux Wayland.
 - **Consumer:** A Venus window supervised by full Eon on x86_64 Linux Wayland.
-- **Trigger:** Physical Alt+Shift+N, including while Shortcuts is open.
+- **Trigger:** Physical Alt+Shift+N, including while Shortcuts is open, unless
+  a current Eon popup takes that key under VEN-C20.
 - **Result:** Venus runs the exact Eon executable supplied by its supervisor
   with `window new` on a worker thread. The action appears in native Shortcuts;
   the current terminal does not receive the key. Eon owns the new workspace,
@@ -1128,6 +1149,12 @@ re-proved when that platform or feature is next touched.
   - **Environment:** Automated and installed.
   - **Evidence:** `new_window_shortcut_invokes_the_supplied_eon_command` in the
     workspace suite; dogfood checklist item 10.
+  - **Override evidence (`eon-igae.10`):**
+    `configured_popups_take_fixed_bindings_except_reserved_keys`; isolated
+    dogfood of the built package on a private headless Sway (1280x720), with a
+    Files popup configured on Alt+Shift+N: the key opened and hid the popup
+    without a second window, and Alt+/ listed `Open new Eon window (overridden
+    by Files)`.
 
 ## VEN-C24 — Contextual bottom shortcut hints
 
@@ -1173,7 +1200,8 @@ re-proved when that platform or feature is next touched.
   without extra keyboard-focus targets or live announcements.
 - **Owner:** Venus owns native visibility, projection, fitting, Scene geometry,
   rendering, input and AccessKit. Eon owns product selection and delivery;
-  Runtime reserves the toggle against popup collisions; Orbit owns resizing.
+  a current Eon popup may take the toggle's key under VEN-C20; Orbit owns
+  resizing.
 - **Consumes:** Existing VEN-C19/C20/C21, canonical EONW, and ORBF v2 / ORBS v13.
 - **Boundary:** No new input mode, child-application key discovery, interactive
   hints, durable preference, generic widget registry, dependency, wire change
@@ -1185,6 +1213,9 @@ re-proved when that platform or feature is next touched.
     `shortcut_hints_drop_whole_pairs_and_rebuild_modifier_headers`, and
     `shortcut_hints_are_read_only_and_retire_hidden_help_actions` in the
     workspace suite; dogfood checklist item 5.
+  - **Override evidence (`eon-igae.10`):**
+    `configured_popups_take_fixed_bindings_except_reserved_keys`; the installed
+    observation is pending.
 - **Open proof:** Pending re-proof in this repository: native raster checks of
   the footer below the cards across widths and fractional scale, and read-only
   AT-SPI footer lifecycle.

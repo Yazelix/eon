@@ -365,7 +365,7 @@ impl Snapshot {
                     continue;
                 }
                 let mut node = Node::new(Role::Button);
-                node.set_label(control.kind.label());
+                node.set_label(control.label);
                 if control.kind == WorkspaceHeaderControl::CloseTab
                     && let Some(tab) = workspace.tabs.iter().find(|tab| tab.selected)
                 {
@@ -2241,6 +2241,41 @@ mod tests {
         assert_eq!(
             node(&snapshot.tree(), CLOSE_TAB).description(),
             Some("Active tab t2")
+        );
+
+        // A configured popup on Alt+Shift+T takes New tab's key, so its name drops the chord.
+        let taken = WorkspaceScene::from_snapshot(
+            &WorkspaceSnapshot {
+                active_tab: "t1".into(),
+                tabs: vec![workspace_tab("t1", &["pane-a"], "pane-a")],
+                geometry: PopupGeometry {
+                    side_margin: 8.0,
+                    vertical_margin: 4.0,
+                },
+                entries: vec![PopupEntry {
+                    id: "files".into(),
+                    label: "Files".into(),
+                    shortcut: Shortcut {
+                        modifiers: eon_workspace_protocol::v12::ALT
+                            | eon_workspace_protocol::v12::SHIFT,
+                        key: "KeyT".into(),
+                    },
+                }],
+                codex_quota: None,
+                claude_quota: None,
+            },
+            PhysicalSize::new(800, 600),
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+        );
+        snapshot.set_workspace(Some(&taken));
+        let update = snapshot.tree();
+        assert_eq!(node(&update, NEW_TAB).label(), Some("New tab"));
+        assert_eq!(
+            node(&update, CLOSE_TAB).label(),
+            Some("Close tab — Alt+Shift+W")
         );
     }
 

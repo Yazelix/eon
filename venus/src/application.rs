@@ -1,7 +1,8 @@
 use crate::{Result, launch::LaunchArguments};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
 use eon_workspace_protocol::v12::{
-    Action as WorkspaceAction, Direction as WorkspaceDirection, WorkspaceAction as CommonAction,
+    Action as WorkspaceAction, Direction as WorkspaceDirection, PopupEntry,
+    WorkspaceAction as CommonAction,
 };
 use orbit_protocol::session::{
     self, ClientMessage, ClipboardLocation, FailureCode, ScrollOutcome, SelectionAction,
@@ -50,9 +51,10 @@ use geometry::{
 use scroll::{PendingViewportRequest, SelectionAutoscroll, TerminalScroll, finish_scroll_failure};
 
 use shortcuts::{
-    NativeShortcutAction, NativeShortcutTrigger, native_key_shortcut, native_pointer_shortcut,
-    paste_shortcut, popup_shortcut, shortcut_groups, shortcut_hints_for,
-    sideways_move_opens_column, tab_shortcut_index, workspace_shortcut,
+    NativeShortcutAction, NativeShortcutTrigger, copy_paste_modifiers, native_key_shortcut,
+    native_key_shortcut_for, native_pointer_shortcut, paste_shortcut, popup_shortcut,
+    shortcut_groups, shortcut_hints_for, sideways_move_opens_column, tab_shortcut_index,
+    workspace_shortcut,
 };
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -246,26 +248,37 @@ fn validate_open_uri(uri: &str) -> std::result::Result<(), &'static str> {
     Ok(())
 }
 
-fn link_hint(uri: &str) -> String {
-    link_hint_for(NATIVE_PLATFORM, uri)
+fn link_hint(uri: &str, entries: &[PopupEntry]) -> String {
+    link_hint_for(NATIVE_PLATFORM, uri, entries)
 }
 
-fn link_hint_for(platform: NativePlatform, uri: &str) -> String {
-    format!(
-        "{}\n{} Open · {} Copy",
+fn link_hint_for(platform: NativePlatform, uri: &str, entries: &[PopupEntry]) -> String {
+    let open = format!(
+        "{}\n{} Open",
         uri.escape_default(),
         NativeShortcutTrigger::OpenLink.display_label_for(platform),
-        NativeShortcutTrigger::Copy.display_label_for(platform),
-    )
+    );
+    let copy = PhysicalKey::Code(KeyCode::KeyC);
+    if native_key_shortcut_for(platform, copy, copy_paste_modifiers(platform), entries)
+        .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Copy)
+    {
+        format!(
+            "{open} · {} Copy",
+            NativeShortcutTrigger::Copy.display_label_for(platform)
+        )
+    } else {
+        open
+    }
 }
 
 fn link_copy_shortcut(
     key: PhysicalKey,
     modifiers: session::Modifiers,
+    entries: &[PopupEntry],
     selected: bool,
     current: bool,
 ) -> bool {
-    native_key_shortcut(key, modifiers)
+    native_key_shortcut(key, modifiers, entries)
         .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Copy)
         && !selected
         && current
@@ -867,15 +880,17 @@ impl Application {
         })
     }
 
+    fn popup_entries(&self) -> &[PopupEntry] {
+        self.workspace_model
+            .snapshot()
+            .map_or(&[][..], |snapshot| snapshot.entries.as_slice())
+    }
+
     fn shortcut_viewer_scene(&self) -> Option<ShortcutViewerScene> {
         let state = self.window.as_ref()?;
         self.shortcut_viewer.open.then(|| {
-            let entries = self
-                .workspace_model
-                .snapshot()
-                .map_or(&[][..], |snapshot| snapshot.entries.as_slice());
             ShortcutViewerScene::new(
-                shortcut_groups(entries),
+                shortcut_groups(self.popup_entries()),
                 state.renderer.size(),
                 state.renderer.metrics(),
                 self.shortcut_viewer.scroll,
@@ -906,8 +921,12 @@ impl Application {
         if !self.shortcut_viewer.open && self.workspace_model.snapshot().is_none() {
             return false;
         }
-        if native_key_shortcut(event.physical_key, self.input.modifiers())
-            .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::NewWindow)
+        if native_key_shortcut(
+            event.physical_key,
+            self.input.modifiers(),
+            self.popup_entries(),
+        )
+        .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::NewWindow)
         {
             return false;
         }
@@ -1690,7 +1709,7 @@ impl Application {
             PhysicalKey::Unidentified(_) => return focus != WorkspaceFocus::Terminal,
         };
         let modifiers = self.input.modifiers();
-        let fixed = native_key_shortcut(event.physical_key, modifiers);
+        let fixed = native_key_shortcut(event.physical_key, modifiers, &snapshot.entries);
         let has_terminal = self.workspace_model.active_attachment().is_some();
         let cycles_focus =
             fixed.is_some_and(|shortcut| shortcut.action == NativeShortcutAction::CycleFocus);
@@ -1722,7 +1741,13 @@ impl Application {
             )
             .or_else(|| {
                 let selected_pane = active_tab.and_then(|tab| tab.selected_pane.as_deref());
-                workspace_shortcut(code, modifiers, &snapshot.active_tab, selected_pane)
+                workspace_shortcut(
+                    code,
+                    modifiers,
+                    &snapshot.entries,
+                    &snapshot.active_tab,
+                    selected_pane,
+                )
             }),
         };
         let opens_column = match &action {
@@ -2207,7 +2232,7 @@ impl Application {
                 "Link target exceeds {MAX_LINK_BYTES} bytes; opening and copying are disabled."
             ));
         }
-        Some(link_hint(link.uri))
+        Some(link_hint(link.uri, self.popup_entries()))
     }
 
     fn handle_link_copy(&mut self, key: PhysicalKey, state: ElementState, repeat: bool) -> bool {
@@ -2218,7 +2243,8 @@ impl Application {
             .scene()
             .is_some_and(Scene::has_selected_content);
         let current = self.focused_link().is_some();
-        let recognized = link_copy_shortcut(key, modifiers, selected, current);
+        let recognized =
+            link_copy_shortcut(key, modifiers, self.popup_entries(), selected, current);
         if !self.input.consumes_shortcut(key, state, repeat, recognized) {
             return false;
         }
@@ -2959,6 +2985,16 @@ impl ApplicationHandler<UserEvent> for Application {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 self.cancel_terminal_scroll();
+                let modifiers = self.input.modifiers();
+                let pastes = paste_shortcut(
+                    &event.key_without_modifiers(),
+                    event.physical_key,
+                    modifiers,
+                    self.popup_entries(),
+                );
+                let copies =
+                    native_key_shortcut(event.physical_key, modifiers, self.popup_entries())
+                        .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Copy);
                 if self
                     .input
                     .suppresses_retired_key(event.physical_key, event.state, event.repeat)
@@ -2970,11 +3006,7 @@ impl ApplicationHandler<UserEvent> for Application {
                     event.physical_key,
                     event.state,
                     event.repeat,
-                    paste_shortcut(
-                        &event.key_without_modifiers(),
-                        event.physical_key,
-                        self.input.modifiers(),
-                    ),
+                    pastes,
                 ) {
                     if shortcut_is_ready(event.state, event.repeat) {
                         self.paste_clipboard();
@@ -2983,8 +3015,7 @@ impl ApplicationHandler<UserEvent> for Application {
                     event.physical_key,
                     event.state,
                     event.repeat,
-                    native_key_shortcut(event.physical_key, self.input.modifiers())
-                        .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Copy),
+                    copies,
                 ) {
                     if copy_is_ready(self.input.is_selecting(), event.state, event.repeat) {
                         self.send_or_defer_selection(
@@ -3910,8 +3941,9 @@ fn shortcut_viewer_command(
     modifiers: session::Modifiers,
     repeat: bool,
 ) -> Option<ShortcutViewerCommand> {
+    // Eon reserves the viewer toggle, so no popup takes it.
     if !repeat
-        && native_key_shortcut(PhysicalKey::Code(code), modifiers)
+        && native_key_shortcut(PhysicalKey::Code(code), modifiers, &[])
             .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::ToggleViewer)
     {
         return Some(ShortcutViewerCommand::Toggle);
@@ -5861,19 +5893,21 @@ mod tests {
         assert!(validate_copy_uri("https://example.com/\n").is_err());
         let target = "https://example.com/\u{202e}abc";
         assert_eq!(
-            link_hint_for(NativePlatform::Linux, target),
+            link_hint_for(NativePlatform::Linux, target, &[]),
             "https://example.com/\\u{202e}abc\nCtrl+click Open · Ctrl+Shift+C Copy"
         );
         let copy_modifiers = copy_paste_modifiers(NATIVE_PLATFORM);
         assert!(link_copy_shortcut(
             PhysicalKey::Code(KeyCode::KeyC),
             copy_modifiers,
+            &[],
             false,
             true,
         ));
         assert!(!link_copy_shortcut(
             PhysicalKey::Code(KeyCode::KeyC),
             copy_modifiers,
+            &[],
             true,
             true,
         ));
@@ -5889,6 +5923,7 @@ mod tests {
             assert!(!link_copy_shortcut(
                 PhysicalKey::Code(key),
                 copy_modifiers,
+                &[],
                 false,
                 true,
             ));
@@ -6029,6 +6064,7 @@ mod tests {
             NativePlatform::Linux,
             PhysicalKey::Code(KeyCode::KeyN),
             ALT_SHIFT,
+            &[],
         )
         .unwrap();
         assert_eq!(shortcut.action, NativeShortcutAction::NewWindow);
@@ -6108,7 +6144,7 @@ mod tests {
     fn shortcut_viewer_uses_live_rows_and_captures_its_local_sequence() {
         let toggle = PhysicalKey::Code(KeyCode::KeyB);
         assert_eq!(
-            native_key_shortcut(toggle, ALT_SHIFT).map(|shortcut| shortcut.action),
+            native_key_shortcut(toggle, ALT_SHIFT, &[]).map(|shortcut| shortcut.action),
             Some(NativeShortcutAction::ToggleHints)
         );
         use orbit_protocol::session::Modifiers;
@@ -6123,7 +6159,7 @@ mod tests {
         }];
         let groups = shortcut_groups_for(NativePlatform::Linux, &entries);
         let key_shortcut = |key, modifiers| {
-            native_key_shortcut_for(NativePlatform::Linux, key, modifiers).unwrap()
+            native_key_shortcut_for(NativePlatform::Linux, key, modifiers, &[]).unwrap()
         };
         let rows = groups
             .iter()
@@ -6221,7 +6257,7 @@ mod tests {
             None
         );
         assert_eq!(
-            workspace_shortcut(KeyCode::Slash, Modifiers::ALT, "t1", None),
+            workspace_shortcut(KeyCode::Slash, Modifiers::ALT, &[], "t1", None),
             None
         );
 
@@ -6237,8 +6273,13 @@ mod tests {
         use orbit_protocol::session::Modifiers;
 
         let action = |key, modifiers| {
-            native_key_shortcut_for(NativePlatform::Macos, PhysicalKey::Code(key), modifiers)
-                .map(|shortcut| shortcut.action)
+            native_key_shortcut_for(
+                NativePlatform::Macos,
+                PhysicalKey::Code(key),
+                modifiers,
+                &[],
+            )
+            .map(|shortcut| shortcut.action)
         };
         assert_eq!(
             action(KeyCode::KeyC, Modifiers::SUPER),
@@ -6288,7 +6329,7 @@ mod tests {
             assert!(rows.iter().any(|row| row == label), "{label}");
         }
         assert_eq!(
-            link_hint_for(NativePlatform::Macos, "https://example.com/"),
+            link_hint_for(NativePlatform::Macos, "https://example.com/", &[]),
             "https://example.com/\nCommand+click Open · Command+C Copy"
         );
 

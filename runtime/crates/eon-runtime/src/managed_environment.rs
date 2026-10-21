@@ -535,9 +535,9 @@ fn validate_popup_entries(entries: &[PopupDefinition]) -> Result<(), String> {
                 entry.id
             ));
         }
-        if workspace_shortcut(&entry.shortcut) {
+        if reserved_shortcut(&entry.shortcut) {
             return Err(format!(
-                "popups.{}.keybinding conflicts with an Eon workspace shortcut",
+                "popups.{}.keybinding is reserved for an Eon shortcut",
                 entry.id
             ));
         }
@@ -551,18 +551,13 @@ fn validate_popup_entries(entries: &[PopupDefinition]) -> Result<(), String> {
     Ok(())
 }
 
-fn workspace_shortcut(shortcut: &Shortcut) -> bool {
-    let key = shortcut.key.as_str();
-    (shortcut.modifiers == ALT
+/// Alt+Slash and Alt+0 through Alt+9, which no 1.x release enlarges (EON-C20). A popup
+/// takes the key of any other fixed Venus binding.
+fn reserved_shortcut(shortcut: &Shortcut) -> bool {
+    shortcut.modifiers == ALT
         && matches!(
-            key,
-            "KeyH"
-                | "KeyJ"
-                | "KeyK"
-                | "KeyL"
-                | "KeyM"
-                | "KeyW"
-                | "Digit0"
+            shortcut.key.as_str(),
+            "Digit0"
                 | "Digit1"
                 | "Digit2"
                 | "Digit3"
@@ -573,11 +568,7 @@ fn workspace_shortcut(shortcut: &Shortcut) -> bool {
                 | "Digit8"
                 | "Digit9"
                 | "Slash"
-        ))
-        || (shortcut.modifiers == (ALT | SHIFT) && matches!(key, "KeyT" | "KeyW" | "KeyB" | "KeyM"))
-        || (shortcut.modifiers == (CTRL | ALT) && matches!(key, "KeyH" | "KeyJ" | "KeyK" | "KeyL"))
-        || (shortcut.modifiers == (CTRL | ALT | SHIFT) && matches!(key, "KeyH" | "KeyL"))
-        || (shortcut.modifiers == (CTRL | SHIFT) && matches!(key, "KeyC" | "KeyV"))
+        )
 }
 
 pub(crate) fn prepare_popup_command(
@@ -1153,11 +1144,6 @@ keep_alive = false
 
         for keybinding in [
             "Alt+Slash",
-            "Alt+Shift+B",
-            "Alt+Shift+M",
-            "Alt+W",
-            "Ctrl+Alt+Shift+H",
-            "Ctrl+Alt+Shift+L",
             "Alt+0",
             "Alt+1",
             "Alt+2",
@@ -1177,29 +1163,38 @@ keep_alive = false
             assert!(
                 popup_catalog(&root, &inputs.defaults)
                     .unwrap_err()
-                    .contains("conflicts with an Eon workspace shortcut"),
+                    .contains("is reserved for an Eon shortcut"),
                 "{keybinding} was not reserved"
             );
         }
 
-        fs::write(
-            root.join("config.toml"),
-            "[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"Ctrl+Shift+O\"\n",
-        )
-        .unwrap();
-        assert!(
-            popup_catalog(&root, &inputs.defaults)
-                .unwrap()
-                .entries
-                .iter()
-                .any(|entry| entry.id == "extra")
-        );
+        // A popup takes the key of any other fixed Venus binding.
+        for keybinding in [
+            "Ctrl+Shift+O",
+            "Alt+Shift+N",
+            "Alt+Shift+B",
+            "Alt+Shift+M",
+            "Alt+W",
+            "Alt+M",
+            "Ctrl+Alt+Shift+H",
+            "Ctrl+Shift+C",
+        ] {
+            fs::write(
+                root.join("config.toml"),
+                format!("[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"{keybinding}\"\n"),
+            )
+            .unwrap();
+            assert!(
+                popup_catalog(&root, &inputs.defaults)
+                    .unwrap()
+                    .entries
+                    .iter()
+                    .any(|entry| entry.id == "extra"),
+                "{keybinding} was rejected"
+            );
+        }
 
         for (source, expected) in [
-            (
-                "[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"Alt+M\"\n",
-                "conflicts with an Eon workspace shortcut",
-            ),
             (
                 "[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"Alt+Z\"\n",
                 "conflicts with popups.project.keybinding",

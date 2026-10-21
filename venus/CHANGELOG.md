@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C5, VEN-C20, VEN-C21, VEN-C23, VEN-C24: a current Eon popup on the key of
+  a fixed binding other than Alt+Slash and Alt+0 through Alt+9 takes that key;
+  the footer omits the fixed hint, Shortcuts lists it as overridden by the
+  popup, and header buttons and the link hint stop advertising it
+  (`eon-igae.10`).
 - VEN-C27: a read-only local 24-hour clock joins the Eon Bar, before Shortcuts
   and Close. It uses only spare space, yields before every other header item,
   and adds the jiff dependency for the local time zone (`eon-igae.4`).

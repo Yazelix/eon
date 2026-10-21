@@ -17,10 +17,9 @@ result. Eon retains process exit/error handling.
 The private CLI prints grouped Eon help for standalone `-h` and `--help`,
 with terminal-only color and concise usage errors; child options remain forwarded.
 
-Popup configuration rejects Alt+Shift+B, reserved for the native window's
-shortcut-hints visibility toggle, Alt+Shift+M, reserved for creating a
-column, Alt+W, reserved for closing a pane, and Ctrl+Alt+Shift+H/L, reserved
-for moving a tab, before creating workspace state.
+Popup configuration rejects Alt+Slash, reserved for the shortcut viewer, and
+Alt+0 through Alt+9, reserved for tab positions, before creating workspace
+state. A popup on the key of any other native binding takes that key.
 
 The optional native version label uses the supervising product version. Runtime
 parses `[bar] show_version` against the assembly-supplied default when opening

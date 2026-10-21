@@ -1,7 +1,7 @@
 use super::{NATIVE_PLATFORM, NativePlatform};
 use eon_workspace_protocol::v12::{
-    Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, Side, Snapshot, Tab,
-    WorkspaceAction as CommonAction,
+    Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, PopupEntry, Side,
+    Snapshot, Tab, WorkspaceAction as CommonAction,
 };
 use orbit_protocol::session;
 use winit::{
@@ -14,9 +14,10 @@ pub(super) fn paste_shortcut(
     key: &Key,
     physical_key: PhysicalKey,
     modifiers: session::Modifiers,
+    entries: &[PopupEntry],
 ) -> bool {
     matches!(key, Key::Named(winit::keyboard::NamedKey::Paste))
-        || native_key_shortcut(physical_key, modifiers)
+        || native_key_shortcut(physical_key, modifiers, entries)
             .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Paste)
 }
 
@@ -352,6 +353,26 @@ impl NativeShortcut {
         }
     }
 
+    /// The configured popup that takes this binding's key. Eon reserves the viewer toggle
+    /// and tab positions, so no popup takes those.
+    fn overriding_popup(
+        self,
+        platform: NativePlatform,
+        entries: &[PopupEntry],
+    ) -> Option<&PopupEntry> {
+        let (code, modifiers) = match self.trigger {
+            NativeShortcutTrigger::Key(code, modifiers)
+                if self.action != NativeShortcutAction::ToggleViewer =>
+            {
+                (code, modifiers)
+            }
+            NativeShortcutTrigger::Copy => (KeyCode::KeyC, copy_paste_modifiers(platform)),
+            NativeShortcutTrigger::Paste => (KeyCode::KeyV, copy_paste_modifiers(platform)),
+            _ => return None,
+        };
+        popup_entry(entries, code, modifiers)
+    }
+
     fn matches_pointer(
         self,
         platform: NativePlatform,
@@ -381,18 +402,22 @@ fn open_link_modifiers(platform: NativePlatform) -> session::Modifiers {
 pub(super) fn native_key_shortcut(
     key: PhysicalKey,
     modifiers: session::Modifiers,
+    entries: &[PopupEntry],
 ) -> Option<&'static NativeShortcut> {
-    native_key_shortcut_for(NATIVE_PLATFORM, key, modifiers)
+    native_key_shortcut_for(NATIVE_PLATFORM, key, modifiers, entries)
 }
 
+/// The fixed binding a key triggers, unless a configured popup takes that key.
 pub(super) fn native_key_shortcut_for(
     platform: NativePlatform,
     key: PhysicalKey,
     modifiers: session::Modifiers,
+    entries: &[PopupEntry],
 ) -> Option<&'static NativeShortcut> {
-    FIXED_SHORTCUTS
-        .iter()
-        .find(|shortcut| shortcut.matches_key(platform, key, modifiers))
+    FIXED_SHORTCUTS.iter().find(|shortcut| {
+        shortcut.matches_key(platform, key, modifiers)
+            && shortcut.overriding_popup(platform, entries).is_none()
+    })
 }
 
 pub(super) fn native_pointer_shortcut(
@@ -412,15 +437,13 @@ pub(super) fn native_pointer_shortcut_for(
         .find(|shortcut| shortcut.matches_pointer(platform, button, modifiers))
 }
 
-pub(super) fn shortcut_groups(
-    entries: &[eon_workspace_protocol::v12::PopupEntry],
-) -> Vec<ShortcutGroup> {
+pub(super) fn shortcut_groups(entries: &[PopupEntry]) -> Vec<ShortcutGroup> {
     shortcut_groups_for(NATIVE_PLATFORM, entries)
 }
 
 pub(super) fn shortcut_groups_for(
     platform: NativePlatform,
-    entries: &[eon_workspace_protocol::v12::PopupEntry],
+    entries: &[PopupEntry],
 ) -> Vec<ShortcutGroup> {
     let mut groups = ["Navigate", "Tabs and panes", "Host"]
         .into_iter()
@@ -433,7 +456,12 @@ pub(super) fn shortcut_groups_for(
                     .map(|shortcut| {
                         ShortcutRow::new(
                             shortcut.trigger.display_label_for(platform),
-                            shortcut.label,
+                            match shortcut.overriding_popup(platform, entries) {
+                                Some(entry) => {
+                                    format!("{} (overridden by {})", shortcut.label, entry.label)
+                                }
+                                None => shortcut.label.into(),
+                            },
                         )
                     })
                     .collect(),
@@ -467,10 +495,13 @@ pub(super) fn shortcut_groups_for(
 pub(super) fn shortcut_hints_for(
     platform: NativePlatform,
     focus: WorkspaceFocus,
-    entries: &[eon_workspace_protocol::v12::PopupEntry],
+    entries: &[PopupEntry],
 ) -> Vec<ShortcutHint> {
     let mut hints: Vec<ShortcutHint> = Vec::new();
     for shortcut in FIXED_SHORTCUTS {
+        if shortcut.overriding_popup(platform, entries).is_some() {
+            continue;
+        }
         use NativeShortcutAction as Action;
         use WorkspaceDirection::{Down, Left, Right, Up};
         let (label, priority) = match shortcut.action {
@@ -632,10 +663,11 @@ fn wire_modifiers(modifiers: session::Modifiers) -> u8 {
 pub(super) fn workspace_shortcut(
     code: KeyCode,
     modifiers: orbit_protocol::session::Modifiers,
+    entries: &[PopupEntry],
     active_tab: &str,
     selected_pane: Option<&str>,
 ) -> Option<WorkspaceAction> {
-    let action = match native_key_shortcut(PhysicalKey::Code(code), modifiers)?.action {
+    let action = match native_key_shortcut(PhysicalKey::Code(code), modifiers, entries)?.action {
         NativeShortcutAction::Focus(direction) => CommonAction::Focus(direction),
         NativeShortcutAction::Move(direction) => CommonAction::Move(direction),
         NativeShortcutAction::CreatePane => CommonAction::CreatePane,
@@ -673,7 +705,8 @@ pub(super) fn tab_shortcut_index(
     code: KeyCode,
     modifiers: orbit_protocol::session::Modifiers,
 ) -> Option<usize> {
-    if native_key_shortcut(PhysicalKey::Code(code), modifiers)
+    // Eon reserves tab positions, so no popup takes them.
+    if native_key_shortcut(PhysicalKey::Code(code), modifiers, &[])
         .is_none_or(|shortcut| shortcut.action != NativeShortcutAction::FocusTabPosition)
     {
         return None;
@@ -699,13 +732,7 @@ pub(super) fn popup_shortcut(
     snapshot: &Snapshot,
     terminal_focused: bool,
 ) -> Option<WorkspaceAction> {
-    let normalized = wire_modifiers(modifiers);
-    // winit's physical KeyCode names are the canonical names in EONW v9.
-    let key = format!("{code:?}");
-    let entry = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.shortcut.modifiers == normalized && entry.shortcut.key == key)?;
+    let entry = popup_entry(&snapshot.entries, code, modifiers)?;
     let tab = snapshot
         .tabs
         .iter()
@@ -723,10 +750,22 @@ pub(super) fn popup_shortcut(
     })
 }
 
+fn popup_entry(
+    entries: &[PopupEntry],
+    code: KeyCode,
+    modifiers: session::Modifiers,
+) -> Option<&PopupEntry> {
+    let modifiers = wire_modifiers(modifiers);
+    // winit's physical KeyCode names are the canonical names in EONW v9.
+    let key = format!("{code:?}");
+    entries
+        .iter()
+        .find(|entry| entry.shortcut.modifiers == modifiers && entry.shortcut.key == key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v12::PopupEntry;
 
     #[test]
     fn direct_workspace_shortcuts_use_stable_eon_actions() {
@@ -790,7 +829,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                workspace_shortcut(key, modifiers, "t2", Some("p3")),
+                workspace_shortcut(key, modifiers, &[], "t2", Some("p3")),
                 Some(WorkspaceAction::Workspace(action))
             );
         }
@@ -798,6 +837,7 @@ mod tests {
             workspace_shortcut(
                 KeyCode::KeyM,
                 Modifiers::ALT.union(Modifiers::SHIFT),
+                &[],
                 "t2",
                 Some("p3"),
             ),
@@ -805,16 +845,22 @@ mod tests {
         );
         for (key, side) in [(KeyCode::KeyH, Side::Left), (KeyCode::KeyL, Side::Right)] {
             assert_eq!(
-                workspace_shortcut(key, Modifiers::CTRL.union(Modifiers::ALT), "t2", Some("p3")),
+                workspace_shortcut(
+                    key,
+                    Modifiers::CTRL.union(Modifiers::ALT),
+                    &[],
+                    "t2",
+                    Some("p3")
+                ),
                 Some(WorkspaceAction::MovePaneSideways(side))
             );
         }
         assert_eq!(
-            workspace_shortcut(KeyCode::KeyW, Modifiers::ALT, "t2", Some("p3")),
+            workspace_shortcut(KeyCode::KeyW, Modifiers::ALT, &[], "t2", Some("p3")),
             Some(WorkspaceAction::ClosePane { pane: "p3".into() })
         );
         assert_eq!(
-            workspace_shortcut(KeyCode::KeyW, Modifiers::ALT, "t2", None),
+            workspace_shortcut(KeyCode::KeyW, Modifiers::ALT, &[], "t2", None),
             None
         );
         for (key, modifiers) in [KeyCode::KeyT, KeyCode::KeyW]
@@ -832,12 +878,16 @@ mod tests {
             })
             .filter(|&(key, modifiers)| (key, modifiers) != (KeyCode::KeyW, Modifiers::ALT))
         {
-            assert_eq!(workspace_shortcut(key, modifiers, "t2", Some("p3")), None);
+            assert_eq!(
+                workspace_shortcut(key, modifiers, &[], "t2", Some("p3")),
+                None
+            );
         }
         assert_eq!(
             workspace_shortcut(
                 KeyCode::KeyH,
                 Modifiers::ALT.union(Modifiers::SHIFT),
+                &[],
                 "t2",
                 Some("p3"),
             ),
@@ -1033,6 +1083,128 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn configured_popups_take_fixed_bindings_except_reserved_keys() {
+        use eon_workspace_protocol::v12::{ALT, SHIFT, Shortcut};
+
+        let popup = |id: &str, modifiers, key: &str| PopupEntry {
+            id: id.into(),
+            label: "Files".into(),
+            shortcut: Shortcut {
+                modifiers,
+                key: key.into(),
+            },
+        };
+        let new_window = PhysicalKey::Code(KeyCode::KeyN);
+        for platform in [NativePlatform::Linux, NativePlatform::Macos] {
+            let copy = copy_paste_modifiers(platform);
+            let entries = [
+                popup("files", ALT | SHIFT, "KeyN"),
+                popup("clip", wire_modifiers(copy), "KeyC"),
+                popup("hints", ALT | SHIFT, "KeyB"),
+                popup("closer", ALT, "KeyW"),
+                // Runtime rejects these; Venus still keeps the reserved bindings.
+                popup("viewer", ALT, "Slash"),
+                popup("third", ALT, "Digit3"),
+            ];
+            assert_eq!(
+                native_key_shortcut_for(platform, new_window, ALT_SHIFT, &[])
+                    .map(|shortcut| shortcut.action),
+                Some(NativeShortcutAction::NewWindow)
+            );
+            for (key, modifiers) in [
+                (new_window, ALT_SHIFT),
+                (PhysicalKey::Code(KeyCode::KeyC), copy),
+                (PhysicalKey::Code(KeyCode::KeyB), ALT_SHIFT),
+            ] {
+                assert!(native_key_shortcut_for(platform, key, modifiers, &entries).is_none());
+            }
+            // The link hint stops advertising a Copy key the popup takes.
+            let link = |entries: &[PopupEntry]| super::super::link_hint_for(platform, "u", entries);
+            assert!(link(&[]).ends_with(" Copy"));
+            assert!(!link(&entries).contains("Copy"));
+            for (key, action) in [
+                (KeyCode::Slash, NativeShortcutAction::ToggleViewer),
+                (KeyCode::Digit3, NativeShortcutAction::FocusTabPosition),
+            ] {
+                assert_eq!(
+                    native_key_shortcut_for(
+                        platform,
+                        PhysicalKey::Code(key),
+                        session::Modifiers::ALT,
+                        &entries
+                    )
+                    .map(|shortcut| shortcut.action),
+                    Some(action)
+                );
+            }
+
+            let rows = shortcut_groups_for(platform, &entries)
+                .into_iter()
+                .flat_map(|group| group.rows)
+                .map(|row| row.action)
+                .collect::<Vec<_>>();
+            for action in [
+                "Open new Eon window (overridden by Files)",
+                "Copy selected text or focused link (overridden by Files)",
+                "Show or close shortcuts",
+                "Focus tab by position",
+                "Paste",
+            ] {
+                assert!(rows.iter().any(|row| row == action), "missing {action}");
+            }
+            let hints = shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries);
+            for taken in ["Open new Eon window", "Show or hide shortcut hints"] {
+                assert!(
+                    hints
+                        .iter()
+                        .all(|hint| !hint.accessible_label.contains(taken))
+                );
+            }
+            assert!(
+                hints
+                    .iter()
+                    .any(|hint| hint.accessible_label.contains("Show or close shortcuts"))
+            );
+        }
+
+        // Dispatch tries the popup first, and the fixed Alt+W no longer resolves.
+        let entries = vec![popup("closer", ALT, "KeyW")];
+        let snapshot = Snapshot {
+            active_tab: "t1".into(),
+            geometry: eon_workspace_protocol::v12::PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: entries.clone(),
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/".to_vec(),
+                pending: false,
+                selected_pane: Some("p1".into()),
+                selected_popup: None,
+                columns: Vec::new(),
+                popups: Vec::new(),
+            }],
+            codex_quota: None,
+            claude_quota: None,
+        };
+        assert!(matches!(
+            popup_shortcut(KeyCode::KeyW, session::Modifiers::ALT, &snapshot, true),
+            Some(WorkspaceAction::InvokePopup { entry, .. }) if entry == "closer"
+        ));
+        assert_eq!(
+            workspace_shortcut(
+                KeyCode::KeyW,
+                session::Modifiers::ALT,
+                &entries,
+                "t1",
+                Some("p1")
+            ),
+            None
+        );
     }
 
     #[test]

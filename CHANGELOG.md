@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A popup keybinding may now use the key of a built-in Eon shortcut, such as
+  Alt+Shift+N or Alt+W, instead of failing to load: the popup takes the key,
+  and Alt+/ lists the built-in shortcut as overridden. Only Alt+/ and Alt+0
+  through Alt+9 stay reserved.
 - The component graph's product ID is `eon` instead of `eon-alpha`, so
   `eon versions` reports `eon x86_64-linux`. The canonical manifest is
   `components/eon-v4.json`. The new build still lists and stops a generation
@@ -34,7 +38,7 @@ installation, and proven contract changes.
   right, landing just below that column's open pane, so Ctrl+Alt+H/J/K/L moves
   a pane in every direction. A column left empty goes away, and at the tab's
   edge a pane from a stack opens a new column, up to four. Moving the active
-  tab moves to Ctrl+Alt+Shift+H/L, which popup keybindings can no longer use.
+  tab moves to Ctrl+Alt+Shift+H/L.
   `eon pane move left|right` does the same from the command line, and
   `eon versions` reports EONW 12.
 - Orbit, which keeps Eon's terminals alive, decides its session policy in a
@@ -70,7 +74,7 @@ installation, and proven contract changes.
   stays, and closing is refused while a popup or picker covers the tab.
   `eon pane close PANE` does the same from the command line, and
   `eon versions` reports EONW 11. Alt+W no longer reaches terminal programs in
-  a full Eon workspace, and popup keybindings can no longer use it.
+  a full Eon workspace.
 - EonTerm is now eonbase: the command is `eonbase`, with the same arguments,
   and the flake package and app are `.#eonbase`. There is no `eonterm` alias.
   To switch, remove the `eonterm` profile element and run
@@ -91,7 +95,7 @@ installation, and proven contract changes.
   another column's terminal selects it; closing a column's last pane removes
   the column. Eon refuses another column when one would be narrower than 40
   terminal columns. Alt+Shift+M no longer reaches terminal programs in a full
-  Eon workspace, and popup keybindings can no longer use it.
+  Eon workspace.
 - Pane frames draw each column as its own rounded card, with an even 8-pixel
   gap around and between the cards; popups and the Project picker draw as one
   card. The shortcut hints sit bare in the margin below the cards. Everything

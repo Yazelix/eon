@@ -226,7 +226,7 @@ impl Renderer {
             .iter()
             .find(|control| self.header.hovers(WorkspaceFocus::Header(control.kind), ""))
         {
-            (control.kind.label(), control.rect)
+            (control.label, control.rect)
         } else {
             return;
         };

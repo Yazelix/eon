@@ -118,7 +118,9 @@ Anima defaults to Alt+Shift+A, opens a random animation, and stops when dismisse
 or replaced. Set `[popups.anima].enabled = false` to hide that shortcut; its
 command and transient lifetime are fixed.
 Set `enabled = false` on Git, Agent, or a custom popup to disable it. Project is
-required on Alt+Z. Popup shortcuts cannot collide with workspace shortcuts.
+required on Alt+Z. A popup shortcut on the key of a built-in Eon shortcut
+takes that key, and Alt+/ lists the built-in one as overridden. Alt+/ and
+Alt+0 through Alt+9 are reserved and cannot be bound.
 
 Set `EON_CONFIG_HOME` to select another configuration root and `EON_RUNTIME_DIR`
 to select another runtime root. Relative `EON_CONFIG_HOME` values resolve once
