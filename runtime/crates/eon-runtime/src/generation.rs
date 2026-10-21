@@ -2,11 +2,11 @@ use super::cli::Inputs;
 use super::control::{
     ControlResponse, EndpointFailure, EndpointFailureKind, connect_control, failure,
     probe_generation_runtime, remove_socket_if_identity, report_failure, send_generation_action_on,
-    send_legacy_inspect, socket_identity, socket_identity_from, write_stdout,
+    socket_identity, socket_identity_from, write_stdout,
 };
 use super::supervisor::{
-    effective_uid, path_exists, present_at, probe_supervisor, runtime_directory,
-    supervisor_lock_path, try_lock_supervisor_lifecycle, validate_private_directory,
+    effective_uid, present_at, probe_supervisor, runtime_directory, supervisor_lock_path,
+    try_lock_supervisor_lifecycle, validate_private_directory,
 };
 use super::workspace::json_escape;
 use eon_workspace_protocol::v12::{
@@ -151,9 +151,6 @@ fn discover_generations(
             ));
         }
     }
-    if path_exists(&root.join("eon.sock")) || path_exists(&root.join("orbit.sock")) {
-        records.push(inspect_legacy(root));
-    }
     Ok(records)
 }
 
@@ -168,13 +165,6 @@ fn inspect_selected_generation(
     if !private_directory_exists(root, "runtime directory")? {
         return Ok(missing_current());
     }
-    if target == "legacy" {
-        return Ok(
-            (path_exists(&root.join("eon.sock")) || path_exists(&root.join("orbit.sock")))
-                .then(|| inspect_legacy(root)),
-        );
-    }
-
     let parent = root.join("generations");
     if !private_directory_exists(&parent, "generation directory")? {
         return Ok(missing_current());
@@ -290,55 +280,6 @@ fn inspect_generation(
             }
             record
         }
-    }
-}
-
-fn inspect_legacy(root: &Path) -> GenerationRecord {
-    let runtime = root.to_path_buf();
-    let socket = root.join("eon.sock");
-    match send_legacy_inspect(&socket) {
-        Ok(eon_workspace_protocol::v4::Response::Snapshot(snapshot)) => GenerationRecord {
-            id: "legacy".into(),
-            kind: "legacy",
-            state: "live",
-            runtime,
-            eon_version: None,
-            workspace_protocol: Some(eon_workspace_protocol::v4::VERSION),
-            component_report: None,
-            sessions: snapshot
-                .tabs
-                .iter()
-                .flat_map(|tab| tab.panes.iter().map(|pane| pane.session.clone()))
-                .collect(),
-            attach: Availability {
-                available: false,
-                reason: format!(
-                    "legacy supervisor uses EONW v4; current Eon requires EONW v{VERSION}"
-                ),
-            },
-            stop: Availability {
-                available: false,
-                reason: "legacy supervisor has no authoritative stop action".into(),
-            },
-            detail: "live fixed-namespace supervisor; component identity unavailable".into(),
-        },
-        Ok(eon_workspace_protocol::v4::Response::Failure(failure)) => failed_generation(
-            "legacy",
-            "legacy",
-            runtime,
-            EndpointFailure::new(
-                if failure.code == "unsupported-version" {
-                    EndpointFailureKind::Incompatible
-                } else {
-                    EndpointFailureKind::Corrupt
-                },
-                format!(
-                    "legacy supervisor rejected EONW inspection: {}",
-                    failure.detail
-                ),
-            ),
-        ),
-        Err(error) => failed_generation("legacy", "legacy", runtime, error),
     }
 }
 

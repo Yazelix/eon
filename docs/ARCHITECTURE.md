@@ -111,11 +111,10 @@ presentation signal to the supervisor's live Venus child, or starts one replacem
 after detachment with the supervisor's original native-decoration choice. Venus
 alone translates that signal into a native presentation request.
 A side-effect-free presentation-capability inspection leaves existing runtime
-reports unchanged. Supervisors with runtime inspection but no presentation
-actions remain discoverable but not presentable. In eonbase mode the same
-private EONW endpoint retains lifecycle authority but returns
-`workspace-unavailable` to topology actions, while Venus receives only Orbit's
-endpoint. EONW carries opaque Orbit endpoint bytes but no terminal content.
+reports unchanged. In eonbase mode the same private EONW endpoint retains
+lifecycle authority but returns `workspace-unavailable` to topology actions,
+while Venus receives only Orbit's endpoint. EONW carries opaque Orbit endpoint
+bytes but no terminal content.
 
 EONW v12 is the current Eon source boundary. It adds one request that moves
 the selected pane into the neighbouring column and keeps v11's bytes for

@@ -3,8 +3,8 @@ use super::{
     workspace,
 };
 use eon_workspace_protocol::v12::{
-    Action, Availability, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse,
-    MAX_DETAIL_BYTES, Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
+    Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
+    Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
     encode_request, encode_response,
 };
@@ -126,47 +126,6 @@ pub(super) fn send_action_on(
     send_prepared_action(stream, prepare_action(action)?)
 }
 
-pub(super) fn send_legacy_inspect(socket: &Path) -> Result<v4::Response, EndpointFailure> {
-    let mut stream = connect_control(socket)?;
-    let request = v4::encode_request(&v4::Request {
-        id: request_id(),
-        action: v4::Action::Inspect,
-    })
-    .map_err(|error| {
-        EndpointFailure::new(
-            EndpointFailureKind::InvalidAction,
-            format!("cannot encode legacy Eon inspection: {error}"),
-        )
-    })?;
-    stream
-        .write_all(&request)
-        .map_err(|error| io_endpoint_failure(error, "cannot send legacy Eon inspection"))?;
-    let mut response = vec![0; v4::HEADER_BYTES];
-    stream
-        .read_exact(&mut response)
-        .map_err(|error| io_endpoint_failure(error, "cannot read legacy Eon inspection"))?;
-    let length = v4::declared_message_len(&response).map_err(|error| {
-        EndpointFailure::new(
-            EndpointFailureKind::Corrupt,
-            format!("invalid legacy EONW response: {error}"),
-        )
-    })?;
-    response.resize(length, 0);
-    stream
-        .read_exact(&mut response[v4::HEADER_BYTES..])
-        .map_err(|error| io_endpoint_failure(error, "cannot read complete legacy Eon result"))?;
-    v4::decode_response(&response).map_err(|error| {
-        EndpointFailure::new(
-            if matches!(error, v4::Error::UnsupportedVersion { .. }) {
-                EndpointFailureKind::Incompatible
-            } else {
-                EndpointFailureKind::Corrupt
-            },
-            format!("invalid legacy EONW response: {error}"),
-        )
-    })
-}
-
 fn prepare_action(action: Action) -> Result<(bool, Vec<u8>, Duration), EndpointFailure> {
     let timeout = result_timeout(&action);
     let lifecycle = matches!(
@@ -262,10 +221,6 @@ fn protocol_endpoint_failure(error: ProtocolError) -> EndpointFailure {
         },
         format!("invalid EONW response: {error}"),
     )
-}
-
-fn probe_runtime_action(socket: &Path, action: Action) -> Result<Runtime, EndpointFailure> {
-    runtime_response(send_action(socket, action)?)
 }
 
 fn runtime_response(response: ControlResponse) -> Result<Runtime, EndpointFailure> {
@@ -424,22 +379,10 @@ pub(super) fn send_generation_action_on(
 }
 
 pub(super) fn probe_presentable_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
-    match probe_runtime_action(
+    runtime_response(send_action(
         socket,
         Action::Workspace(WorkspaceAction::InspectPresentation),
-    ) {
-        Ok(runtime) => Ok(runtime),
-        Err(error) if error.kind == EndpointFailureKind::Incompatible => {
-            let mut runtime =
-                probe_runtime_action(socket, Action::Workspace(WorkspaceAction::InspectRuntime))?;
-            runtime.attach = Availability {
-                available: false,
-                reason: "supervisor does not support presentation requests".into(),
-            };
-            Ok(runtime)
-        }
-        Err(error) => Err(error),
-    }
+    )?)
 }
 
 pub(super) fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFailure> {
@@ -678,80 +621,14 @@ pub(super) fn remove_socket_if_identity(path: &Path, identity: SocketIdentity) {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ControlListener, probe_presentable_runtime, read_request, remove_socket_if_identity,
-        socket_identity,
-    };
+    use super::{ControlListener, remove_socket_if_identity, socket_identity};
     use crate::supervisor::temporary_directory;
-    use eon_workspace_protocol::v12::{
-        Action, Availability, Failure, LifecycleResponse, Response, Runtime, VERSION,
-        WorkspaceAction, encode_lifecycle_response, encode_response,
-    };
+    use eon_workspace_protocol::v12::{Availability, Runtime, WorkspaceAction};
     use std::{
         fs,
         io::Write,
-        os::unix::{
-            fs::PermissionsExt,
-            net::{UnixListener, UnixStream},
-        },
-        thread,
+        os::unix::net::{UnixListener, UnixStream},
     };
-
-    #[test]
-    fn old_supervisor_remains_inspectable_but_not_presentable() {
-        let root = temporary_directory();
-        let socket = root.join("eon.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
-        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
-        let server = thread::spawn(move || {
-            let responses = [
-                (
-                    Action::Workspace(WorkspaceAction::InspectPresentation),
-                    encode_response(&Response::Failure(Failure {
-                        code: "malformed-action".into(),
-                        detail: "unknown EONW action tag 11".into(),
-                    }))
-                    .unwrap(),
-                ),
-                (
-                    Action::Workspace(WorkspaceAction::InspectRuntime),
-                    encode_lifecycle_response(&LifecycleResponse::Runtime(Runtime {
-                        generation: "g1-0123456789abcdef0123456789abcdef".into(),
-                        eon_version: "0.1.0".into(),
-                        workspace_protocol: VERSION,
-                        component_report: "old components".into(),
-                        sessions: vec!["session-1".into()],
-                        attach: Availability {
-                            available: true,
-                            reason: "older client attachment".into(),
-                        },
-                        stop: Availability {
-                            available: true,
-                            reason: "generation-aware supervisor".into(),
-                        },
-                    }))
-                    .unwrap(),
-                ),
-            ];
-            for (action, response) in responses {
-                let (mut stream, _) = listener.accept().unwrap();
-                assert_eq!(read_request(&mut stream).unwrap().action, action);
-                stream.write_all(&response).unwrap();
-            }
-        });
-
-        let runtime = probe_presentable_runtime(&socket).unwrap();
-        assert_eq!(runtime.sessions, ["session-1"]);
-        assert!(!runtime.attach.available);
-        assert_eq!(
-            runtime.attach.reason,
-            "supervisor does not support presentation requests"
-        );
-        assert!(runtime.stop.available);
-
-        server.join().unwrap();
-        fs::remove_dir_all(root).unwrap();
-    }
 
     #[test]
     fn previous_supervisors_keep_inspection_and_stop_without_presentation() {

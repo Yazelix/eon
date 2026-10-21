@@ -1,5 +1,5 @@
 use eon_workspace_protocol::{
-    v2, v3, v4 as legacy, v5, v6, v7, v8, v9, v10, v11,
+    v2, v3, v4, v5, v6, v7, v8, v9, v10, v11,
     v12::{
         Action as ProtocolAction, Column, Direction, HEADER_BYTES, InvokeIntent, MAX_SESSIONS,
         Pane, Popup, PopupGeometry, PopupTarget, Request, Response, Snapshot, Tab, VERSION,
@@ -4108,7 +4108,7 @@ fn previous_supervisor(
                 match version {
                     2 => v2::encode_response(&v2::Response::Failure(failure)),
                     3 => v3::encode_response(&v3::Response::Failure(failure)),
-                    4 => legacy::encode_response(&legacy::Response::Failure(failure)),
+                    4 => v4::encode_response(&v4::Response::Failure(failure)),
                     5 => v5::encode_response(&v5::Response::Failure(failure)),
                     6 => v6::encode_response(&v6::Response::Failure(failure)),
                     7 => v7::encode_response(&v7::Response::Failure(failure)),
@@ -4131,9 +4131,9 @@ fn previous_supervisor(
                         v3::Action::Stop { generation } if generation == server_id => "stop",
                         _ => "wrong",
                     },
-                    4 => match legacy::decode_request(&request).unwrap().action {
-                        legacy::Action::InspectRuntime => "inspect",
-                        legacy::Action::Stop { generation } if generation == server_id => "stop",
+                    4 => match v4::decode_request(&request).unwrap().action {
+                        v4::Action::InspectRuntime => "inspect",
+                        v4::Action::Stop { generation } if generation == server_id => "stop",
                         _ => "wrong",
                     },
                     5 => match v5::decode_request(&request).unwrap().action {
@@ -4227,7 +4227,7 @@ fn previous_supervisor(
                 match version {
                     2 => v2::encode_lifecycle_response(&lifecycle),
                     3 => v3::encode_lifecycle_response(&lifecycle),
-                    4 => legacy::encode_lifecycle_response(&lifecycle),
+                    4 => v4::encode_lifecycle_response(&lifecycle),
                     5 => v5::encode_lifecycle_response(&lifecycle),
                     6 => v6::encode_lifecycle_response(&lifecycle),
                     7 => v7::encode_lifecycle_response(&lifecycle),
@@ -4392,90 +4392,5 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     fourth.join().unwrap();
     wait_for_successful_exit(&mut current.child);
     assert!(!current_runtime.exists());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn legacy_workspace_is_visible_but_not_attachable_or_stoppable() {
-    let root = temporary_directory();
-    let runtime = root.join("runtime");
-    let config = root.join("config");
-    let venus = root.join("venus");
-    let venus_log = root.join("venus.log");
-    fs::create_dir(&runtime).unwrap();
-    fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
-    fs::write(runtime.join("orbit.sock"), "legacy-orbit").unwrap();
-    let listener = UnixListener::bind(runtime.join("eon.sock")).unwrap();
-    fs::set_permissions(runtime.join("eon.sock"), fs::Permissions::from_mode(0o600)).unwrap();
-    executable(
-        &venus,
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$EON_TEST_LOG\"\n",
-    );
-    let server = thread::spawn(move || {
-        for _ in 0..5 {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = vec![0; HEADER_BYTES];
-            stream.read_exact(&mut request).unwrap();
-            let length = legacy::declared_message_len(&request).unwrap();
-            request.resize(length, 0);
-            stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
-            assert!(matches!(
-                legacy::decode_request(&request).unwrap().action,
-                legacy::Action::Inspect
-            ));
-            let response = legacy::encode_response(&legacy::Response::Snapshot(legacy::Snapshot {
-                active_tab: "t1".into(),
-                tabs: vec![legacy::Tab {
-                    id: "t1".into(),
-                    directory: b"/legacy".to_vec(),
-                    selected_pane: Some("pane-1".into()),
-                    panes: vec![legacy::Pane {
-                        id: "pane-1".into(),
-                        session: "session-1".into(),
-                        endpoint: b"/legacy/orbit.sock".to_vec(),
-                        live: true,
-                    }],
-                }],
-                directory_picker: None,
-            }))
-            .unwrap();
-            stream.write_all(&response).unwrap();
-        }
-    });
-
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
-    assert!(listed.status.success());
-    assert!(stdout(&listed).contains("\"id\":\"legacy\",\"kind\":\"legacy\",\"state\":\"live\""));
-    assert!(stdout(&listed).contains("current Eon requires EONW v12"));
-    assert!(stdout(&listed).contains("legacy supervisor has no authoritative stop action"));
-
-    let attached = eon_command(&binary)
-        .args(["attach", "legacy"])
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .env("EON_VENUS", &venus)
-        .env("EON_TEST_LOG", &venus_log)
-        .output()
-        .unwrap();
-    assert_eq!(attached.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&attached.stderr).contains("current Eon requires EONW v12"));
-    assert!(!venus_log.exists());
-
-    let stopped = invoke(&binary, &runtime, &config, &["stop", "legacy", "--json"]);
-    assert_eq!(stopped.status.code(), Some(2));
-    assert!(stdout(&stopped).contains("\"code\":\"stop-unavailable\""));
-
-    let previous = invoke(&binary, &runtime, &config, &["stop", "previous", "--json"]);
-    assert_eq!(previous.status.code(), Some(2));
-    let result: serde_json::Value = serde_json::from_str(stdout(&previous)).unwrap();
-    assert_eq!(result[0]["error"]["code"], "stop-unavailable");
-    assert!(
-        result[0]["error"]["detail"]
-            .as_str()
-            .unwrap()
-            .contains("legacy supervisor has no authoritative stop action")
-    );
-    server.join().unwrap();
     fs::remove_dir_all(root).unwrap();
 }

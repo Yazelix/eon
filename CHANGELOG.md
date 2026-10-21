@@ -9,6 +9,10 @@ installation, and proven contract changes.
   EON-C27, so the command only drained old status-line wrappers. The shared
   executable no longer refuses the retired `eonterm` name; any name other than
   `eonbase` runs Eon.
+- `eon generations` no longer looks for work started before generations
+  existed, and `legacy` is no longer a generation target. A supervisor that
+  cannot answer a presentation request is now reported as incompatible
+  instead of listed without attach.
 - Ctrl+Alt+H/L now moves the selected pane into the column to its left or
   right, landing just below that column's open pane, so Ctrl+Alt+H/J/K/L moves
   a pane in every direction. A column left empty goes away, and at the tab's

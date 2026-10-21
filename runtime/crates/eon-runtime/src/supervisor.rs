@@ -118,10 +118,6 @@ pub(super) fn validate_private_directory(path: &Path) -> Result<(), String> {
     validate_owned_private_directory(path, "directory")
 }
 
-pub(super) fn path_exists(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok()
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum LaunchMode {
     Workspace,
@@ -254,7 +250,7 @@ pub(super) fn launch_current(
         decorations,
     )
     .or_else(|error| {
-        if attach_existing && path_exists(&socket) {
+        if attach_existing && fs::symlink_metadata(&socket).is_ok() {
             attach_competing_supervisor(inputs, &socket, &runtime, &generation, mode, &error)
         } else {
             Err(error)

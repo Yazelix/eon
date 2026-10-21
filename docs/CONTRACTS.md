@@ -714,8 +714,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   pending-tab state are explicit. Popup-only tabs are valid. Commands, provider
   selection, cwd and lifetime remain runtime policy and never cross EONW. The
   retired v4 picker opcode is unavailable; Project uses ordinary popup invocation.
-  Older fixed-namespace work may be inspectable without being presentable. There
-  is no negotiation or adapter.
+  There is no negotiation or adapter.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
@@ -755,9 +754,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     inspection and Stop use the supervisor's known EONW v2 through v11 lifecycle
     codec; presentation still requires the exact current EONW and component graph.
   - `eon stop previous` attempts every non-dead generation except the exact
-    current one, whether current is live or not. Fixed-namespace legacy work
-    reports its own unavailable reason. `eon stop all` includes current.
-    Each selected generation uses the existing validated
+    current one, whether current is live or not. `eon stop all` includes
+    current. Each selected generation uses the existing validated
     Stop; human mode confirms each target, while `--json` returns a result array
     without confirmation. Declining one target reports that no Stop was sent for
     that generation; earlier outcomes remain and later targets continue.
@@ -768,12 +766,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     when a complete result is required. When the CLI completes, it exits
     nonzero if any Stop attempt fails. `all` stops current last so earlier
     targets can finish when invoked inside a current terminal.
-    Neither command forcibly kills a process or treats fixed-namespace legacy
-    work as stoppable.
+    Neither command forcibly kills a process.
   - Implicit attach selects only a live supervisor reporting the exact current
     identity; otherwise Eon starts current without stopping older work. Explicit
     attach never substitutes another generation, and discovery distinguishes
-    current, previous, legacy, dead, incompatible, and corrupt candidates.
+    current, previous, dead, incompatible, and corrupt candidates.
   - One per-generation lifecycle lock covers listener and runtime teardown so a
     replacement cannot overlap cleanup; concurrent launch converges on one
     supervisor and terminal set.

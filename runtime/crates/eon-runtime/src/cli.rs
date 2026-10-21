@@ -574,7 +574,7 @@ fn generation_argument(argument: &OsStr) -> Result<&str, String> {
     let generation = argument
         .to_str()
         .ok_or_else(|| "Eon generation identities must be UTF-8".to_string())?;
-    if generation != "legacy" && !valid_generation(generation) {
+    if !valid_generation(generation) {
         return Err(format!("invalid Eon generation identity {generation:?}"));
     }
     Ok(generation)

@@ -88,8 +88,7 @@ is nothing to stop.
 
 Run a batch command outside the generations it will stop when you need every
 attempt or a complete result: stopping the caller's own terminal can terminate
-the CLI mid-batch. Fixed-namespace legacy work has no authoritative Stop action
-and is reported as unavailable.
+the CLI mid-batch.
 
 ## Workspace and picker
 
