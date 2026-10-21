@@ -30,11 +30,9 @@ provided under the following MIT license:
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
 
-OpenAI retains its marks. Eon Desktop's Apache-2.0 license does not grant
+OpenAI retains its marks. Eon's Apache-2.0 license does not grant
 rights to the OpenAI name or Blossom as trademarks. Their use remains subject
-to [OpenAI's brand guidelines](https://openai.com/brand/). Repository history
-also contains a removed Codex application mark in
-`assets/codex-app-logo-104.rgba`; it is likewise not an Eon Desktop mark.
+to [OpenAI's brand guidelines](https://openai.com/brand/).
 
 ## Claude logomark
 
