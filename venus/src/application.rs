@@ -19,7 +19,6 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 #[cfg(target_os = "linux")]
 use winit::platform::wayland::WindowAttributesExtWayland;
 use winit::{
@@ -2998,13 +2997,11 @@ impl ApplicationHandler<UserEvent> for Application {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 self.cancel_terminal_scroll();
+                let Some(event) = self.input.resolve_key(event) else {
+                    return;
+                };
                 let modifiers = self.input.modifiers();
-                let pastes = paste_shortcut(
-                    &event.key_without_modifiers(),
-                    event.physical_key,
-                    modifiers,
-                    self.popup_entries(),
-                );
+                let pastes = paste_shortcut(event.physical_key, modifiers, self.popup_entries());
                 let copies =
                     native_key_shortcut(event.physical_key, modifiers, self.popup_entries())
                         .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Copy);

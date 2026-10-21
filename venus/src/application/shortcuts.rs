@@ -6,17 +6,16 @@ use eon_workspace_protocol::v13::{
 use orbit_protocol::session;
 use winit::{
     event::MouseButton,
-    keyboard::{Key, KeyCode, PhysicalKey},
+    keyboard::{KeyCode, PhysicalKey},
 };
 use yazelix_venus::{ShortcutGroup, ShortcutHint, ShortcutRow, WorkspaceFocus};
 
 pub(super) fn paste_shortcut(
-    key: &Key,
     physical_key: PhysicalKey,
     modifiers: session::Modifiers,
     entries: &[PopupEntry],
 ) -> bool {
-    matches!(key, Key::Named(winit::keyboard::NamedKey::Paste))
+    physical_key == PhysicalKey::Code(KeyCode::Paste)
         || native_key_shortcut(physical_key, modifiers, entries)
             .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Paste)
 }

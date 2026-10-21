@@ -237,16 +237,27 @@ re-proved when that platform or feature is next touched.
 - **Result:** Venus maps native activity to canonical Orbit semantic input and
   resize messages using one shared scaled geometry owner. Compatible output
   advances render content without withdrawing the last presented input geometry.
+  Venus resolves each native key event to one key. When the active keymap
+  produces a named key (such as Escape, Return, Tab, an arrow, a function or
+  modifier key) outside the numpad and Orbit has a key for it, Venus uses that
+  key; otherwise it uses the physical key, so letter, digit, punctuation and
+  numpad keys stay physical. Venus's terminal input and its own named-key
+  actions (focus return, chrome traversal, the shortcut viewer, header
+  activation) use the resolved key.
 - **Important failures:** Invalid, stale, unsettled, or non-presented geometry
   cannot reach Orbit; capture and focus transitions withdraw obsolete input.
 - **Owner:** Venus native input and geometry owners; Orbit encodes terminal
   behavior.
 - **Consumes:** Orbit `ORB-C5` through canonical ORBS v13.
-- **Boundary:** Physical mixed-monitor hardware and broader Linux Wayland compositor
+- **Boundary:** Letter, digit and punctuation keys stay physical, so letter
+  shortcuts stay layout-independent, and keymaps that place letters on
+  unrelated keycodes (some virtual keyboards) remain unsupported for chords.
+  Physical mixed-monitor hardware and broader Linux Wayland compositor
   behavior remain manual quality surfaces. On macOS, only VEN-C16's Kotoeri
   Roman-to-kanji IME path is accepted; held-key repeat, dead keys, and other IMEs
   remain unaccepted. Physical trackpad gesture quality remains with VEN-C7.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, with the
+  `eon-venus-keysym-named-keys-chnh` commit for named-key resolution
   - **Environment:** Automated and installed.
   - **Evidence:** `maps_layout_independent_physical_keys`,
     `ime_distinguishes_committed_rejected_and_state_only_text`,
@@ -257,7 +268,18 @@ re-proved when that platform or feature is next touched.
     `surface_measurements_match_orbit_invariants`,
     `ime_requires_current_attached_terminal_but_always_cleans_up`, and
     `orbit_focus_requires_window_and_terminal_focus` in the workspace suite;
-    dogfood checklist items 1, 3 and 4 (Enter, Esc and Tab reached the picker).
+    dogfood checklist items 1, 3 and 4 (Enter, Esc and Tab reached the picker);
+    for named-key resolution,
+    `named_keys_follow_the_keymap_and_writing_keys_stay_physical` and
+    `a_press_pins_its_resolution_until_release` in the Venus suite, and an
+    installed observation of tree `acb2a2f2cc859b642f864da8cb25bfa102c8798a`
+    (`/nix/store/gaf0asn9dmpwl9h2jgslafpwd13avkp8-eon-0.1.1`) on x86_64 Linux,
+    private headless Sway 1.12 with wdotool 0.5.3 and wtype 0.4 virtual
+    keyboards: under the US layout, `caps:swapescape` (Escape from the CapsLock
+    key) and wtype's own keymap, a raw-mode pane received Escape, Return, Tab,
+    BackSpace and Up as `033`, `\r`, `\t`, `177` and `ESC [ A`, that Escape
+    closed the shortcut viewer, and Alt+Shift+T opened a tab under the US
+    layout and `caps:swapescape`.
 - **Open proof:** Pending re-proof in this repository: installed pointer
   input, selection and paste (dogfood item 9), the ignored native
   input-between-frames regression, native IME preedit/commit, Orca reader focus

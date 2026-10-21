@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Keyboard remaps such as CapsLock as Escape (`caps:escape`,
+  `caps:swapescape`) work in Eon: Escape, Return, Tab, arrows and other named
+  keys follow your keymap, where the remapped key used to send nothing or the
+  wrong key. Letter shortcuts still follow key position, whatever the layout.
 - Managed Nushell and Bash activate the host's mise when it is on PATH, so a
   project's mise-managed tools and environment work in Eon terminals as in
   your own shell. Set `[shell] mise = false` to turn it off.

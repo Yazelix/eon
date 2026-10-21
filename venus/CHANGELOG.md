@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C2: a named key the active keymap produces (Escape, Return, Tab, arrows,
+  function and modifier keys) outside the numpad replaces the physical key for
+  terminal input and Venus's own key handling; letter, digit, punctuation and
+  numpad keys stay physical (`eon-venus-keysym-named-keys-chnh`).
 - Venus consumes EONW v13, whose requests may name a calling terminal; Venus
   sends none, so its actions keep targeting the active tab (`eon-8mnr.2`).
 - VEN-C28: a read-only `CPU 12%` label joins the Eon Bar before the clock,

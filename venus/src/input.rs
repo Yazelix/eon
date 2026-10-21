@@ -7,7 +7,9 @@ use winit::{
         ElementState, Ime, KeyEvent as WinitKeyEvent, MouseButton as WinitMouseButton,
         MouseScrollDelta,
     },
-    keyboard::{Key, KeyCode, ModifiersState, PhysicalKey as WinitPhysicalKey},
+    keyboard::{
+        Key, KeyCode, KeyLocation, ModifiersState, NamedKey, PhysicalKey as WinitPhysicalKey,
+    },
     platform::modifier_supplement::KeyEventExtModifierSupplement,
 };
 
@@ -27,6 +29,9 @@ pub struct InputState {
     scroll: (f64, f64),
     selection_position: Option<SelectionPosition>,
     captured_shortcuts: Vec<WinitPhysicalKey>,
+    /// Native physical key, its resolved key pinned at press (VEN-C2), and
+    /// whether its sequence is still live rather than retired.
+    resolved_keys: Vec<(WinitPhysicalKey, WinitPhysicalKey, bool)>,
 }
 
 impl InputState {
@@ -65,6 +70,7 @@ impl InputState {
             self.retire_orbit_generation();
             self.modifiers = Modifiers::empty();
             self.retired_keys.clear();
+            self.resolved_keys.clear();
         }
         self.focus_event = Some(event);
         ClientMessage::Focus(event)
@@ -86,6 +92,9 @@ impl InputState {
     pub fn retire_orbit_generation(&mut self) -> Option<ClientMessage> {
         let mut retired = std::mem::take(&mut self.pressed_keys);
         retired.append(&mut self.captured_shortcuts);
+        for (_, key, live) in &mut self.resolved_keys {
+            *live &= !retired.contains(key);
+        }
         self.retired_keys.extend(retired);
         self.pressed_buttons.clear();
         self.reset_scroll();
@@ -155,6 +164,68 @@ impl InputState {
             text,
             unshifted_codepoint,
         }))
+    }
+
+    /// Replace a native key event's physical key with the one key Venus acts
+    /// on (VEN-C2), so terminal input and Venus's own key handling agree.
+    /// Returns `None` for an event to consume unseen.
+    #[must_use]
+    pub fn resolve_key(&mut self, mut event: WinitKeyEvent) -> Option<WinitKeyEvent> {
+        let key = self.pin_key(
+            event.physical_key,
+            resolved_key(event.physical_key, &event.logical_key, event.location),
+            event.state,
+            event.repeat,
+        )?;
+        event.physical_key = key;
+        Some(event)
+    }
+
+    /// The keymap's key can change while a key is held (a level change), so a
+    /// press pins its resolution and its repeats and release reuse it. Every
+    /// press goes through, but while another live key holds the same key,
+    /// such as CapsLock and Backspace under `caps:backspace`, a release is
+    /// consumed so that key is released once, after the last. A press that
+    /// meets a shortcut capture the other key holds ends that capture and
+    /// retires the other key, so the press acts on its own. A retired key
+    /// keeps its pin so its release pairs, but its repeats never reach a new
+    /// attachment and it never holds back another key's release.
+    fn pin_key(
+        &mut self,
+        native: WinitPhysicalKey,
+        resolved: WinitPhysicalKey,
+        state: ElementState,
+        repeat: bool,
+    ) -> Option<WinitPhysicalKey> {
+        let pinned = self
+            .resolved_keys
+            .iter()
+            .position(|(key, _, _)| *key == native)
+            .map(|index| self.resolved_keys.swap_remove(index));
+        let (key, live) = match (state, repeat, pinned) {
+            (ElementState::Pressed, false, _) | (_, _, None) => (resolved, true),
+            (_, _, Some((_, key, live))) => (key, live),
+        };
+        let shared = self
+            .resolved_keys
+            .iter()
+            .any(|(_, held, held_live)| *held == key && *held_live);
+        if state == ElementState::Pressed {
+            self.resolved_keys.push((native, key, live));
+        }
+        match (state, repeat) {
+            (ElementState::Pressed, false) => {
+                if shared && self.captured_shortcuts.contains(&key) {
+                    self.captured_shortcuts.retain(|captured| *captured != key);
+                    for (other, held, held_live) in &mut self.resolved_keys {
+                        *held_live &= *other == native || *held != key;
+                    }
+                }
+                Some(key)
+            }
+            (ElementState::Pressed, true) => live.then_some(key),
+            (ElementState::Released, _) => (!shared).then_some(key),
+        }
     }
 
     fn key_is_current(&self, key: WinitPhysicalKey, state: ElementState, repeat: bool) -> bool {
@@ -446,6 +517,121 @@ fn selection_position(
     })
 }
 
+/// A named key the active keymap produces wins over the physical key, so
+/// remaps such as `caps:escape` and virtual-keyboard keymaps keep Escape,
+/// Return and Tab. Other keys stay physical, which keeps letter shortcuts
+/// layout-independent, and numpad keys stay physical so `NumpadEnter` and
+/// the NumLock-off keypad keep their identity.
+fn resolved_key(
+    physical: WinitPhysicalKey,
+    logical: &Key,
+    location: KeyLocation,
+) -> WinitPhysicalKey {
+    match logical {
+        Key::Named(named) if location != KeyLocation::Numpad => {
+            named_key_code(*named, location).map_or(physical, WinitPhysicalKey::Code)
+        }
+        _ => physical,
+    }
+}
+
+/// The key code of a named key, for named keys Orbit has a key for.
+fn named_key_code(named: NamedKey, location: KeyLocation) -> Option<KeyCode> {
+    use KeyCode as W;
+    use NamedKey as N;
+    let side = |left, right| {
+        if location == KeyLocation::Right {
+            right
+        } else {
+            left
+        }
+    };
+    Some(match named {
+        N::Alt => side(W::AltLeft, W::AltRight),
+        N::Control => side(W::ControlLeft, W::ControlRight),
+        N::Shift => side(W::ShiftLeft, W::ShiftRight),
+        N::Super => side(W::SuperLeft, W::SuperRight),
+        N::Backspace => W::Backspace,
+        N::CapsLock => W::CapsLock,
+        N::ContextMenu => W::ContextMenu,
+        N::Enter => W::Enter,
+        N::Space => W::Space,
+        N::Tab => W::Tab,
+        N::Convert => W::Convert,
+        N::KanaMode => W::KanaMode,
+        N::NonConvert => W::NonConvert,
+        N::Delete => W::Delete,
+        N::End => W::End,
+        N::Help => W::Help,
+        N::Home => W::Home,
+        N::Insert => W::Insert,
+        N::PageDown => W::PageDown,
+        N::PageUp => W::PageUp,
+        N::ArrowDown => W::ArrowDown,
+        N::ArrowLeft => W::ArrowLeft,
+        N::ArrowRight => W::ArrowRight,
+        N::ArrowUp => W::ArrowUp,
+        N::NumLock => W::NumLock,
+        N::Escape => W::Escape,
+        N::Fn => W::Fn,
+        N::FnLock => W::FnLock,
+        N::PrintScreen => W::PrintScreen,
+        N::ScrollLock => W::ScrollLock,
+        N::Pause => W::Pause,
+        N::BrowserBack => W::BrowserBack,
+        N::BrowserFavorites => W::BrowserFavorites,
+        N::BrowserForward => W::BrowserForward,
+        N::BrowserHome => W::BrowserHome,
+        N::BrowserRefresh => W::BrowserRefresh,
+        N::BrowserSearch => W::BrowserSearch,
+        N::BrowserStop => W::BrowserStop,
+        N::Eject => W::Eject,
+        N::LaunchApplication1 => W::LaunchApp1,
+        N::LaunchApplication2 => W::LaunchApp2,
+        N::LaunchMail => W::LaunchMail,
+        N::LaunchMediaPlayer => W::MediaSelect,
+        N::MediaPlayPause => W::MediaPlayPause,
+        N::MediaStop => W::MediaStop,
+        N::MediaTrackNext => W::MediaTrackNext,
+        N::MediaTrackPrevious => W::MediaTrackPrevious,
+        N::Power => W::Power,
+        N::Standby => W::Sleep,
+        N::WakeUp => W::WakeUp,
+        N::AudioVolumeDown => W::AudioVolumeDown,
+        N::AudioVolumeMute => W::AudioVolumeMute,
+        N::AudioVolumeUp => W::AudioVolumeUp,
+        N::Copy => W::Copy,
+        N::Cut => W::Cut,
+        N::Paste => W::Paste,
+        N::F1 => W::F1,
+        N::F2 => W::F2,
+        N::F3 => W::F3,
+        N::F4 => W::F4,
+        N::F5 => W::F5,
+        N::F6 => W::F6,
+        N::F7 => W::F7,
+        N::F8 => W::F8,
+        N::F9 => W::F9,
+        N::F10 => W::F10,
+        N::F11 => W::F11,
+        N::F12 => W::F12,
+        N::F13 => W::F13,
+        N::F14 => W::F14,
+        N::F15 => W::F15,
+        N::F16 => W::F16,
+        N::F17 => W::F17,
+        N::F18 => W::F18,
+        N::F19 => W::F19,
+        N::F20 => W::F20,
+        N::F21 => W::F21,
+        N::F22 => W::F22,
+        N::F23 => W::F23,
+        N::F24 => W::F24,
+        N::F25 => W::F25,
+        _ => return None,
+    })
+}
+
 /// Map winit's physical identity directly into Orbit's accepted semantic type.
 #[must_use]
 fn physical_key(code: KeyCode) -> PhysicalKey {
@@ -686,6 +872,177 @@ mod tests {
         );
         assert_eq!(physical_key(KeyCode::F25), PhysicalKey::F25);
         assert_eq!(physical_key(KeyCode::Lang1), PhysicalKey::UNIDENTIFIED);
+    }
+
+    #[test]
+    fn named_keys_follow_the_keymap_and_writing_keys_stay_physical() {
+        use KeyCode as K;
+        use KeyLocation::{Left, Numpad, Right, Standard};
+        use NamedKey as N;
+        let resolved = |physical, logical: Key, location| {
+            resolved_key(WinitPhysicalKey::Code(physical), &logical, location)
+        };
+        for (physical, logical, location, expected) in [
+            // caps:escape and caps:swapescape.
+            (K::CapsLock, Key::Named(N::Escape), Standard, K::Escape),
+            // A virtual keyboard keymap with Return on an unrelated keycode.
+            (K::Digit1, Key::Named(N::Enter), Standard, K::Enter),
+            (K::CapsLock, Key::Named(N::Control), Left, K::ControlLeft),
+            (K::AltRight, Key::Named(N::Super), Right, K::SuperRight),
+            // AZERTY: letters keep their physical key.
+            (K::KeyA, Key::Character("q".into()), Standard, K::KeyA),
+            // AltGr has no Orbit key of its own.
+            (K::AltRight, Key::Named(N::AltGraph), Right, K::AltRight),
+            (K::NumpadEnter, Key::Named(N::Enter), Numpad, K::NumpadEnter),
+            (K::Numpad7, Key::Named(N::Home), Numpad, K::Numpad7),
+            (K::Enter, Key::Named(N::Standby), Standard, K::Sleep),
+            // XF86Paste on a letter key pastes through the dedicated Paste key.
+            (K::KeyV, Key::Named(N::Paste), Standard, K::Paste),
+        ] {
+            assert_eq!(
+                resolved(physical, logical, location),
+                WinitPhysicalKey::Code(expected)
+            );
+        }
+        let unidentified = WinitPhysicalKey::Unidentified(winit::keyboard::NativeKeyCode::Xkb(0));
+        assert_eq!(
+            resolved_key(unidentified, &Key::Named(N::Escape), Standard),
+            WinitPhysicalKey::Code(K::Escape)
+        );
+        assert_eq!(
+            resolved_key(unidentified, &Key::Character("a".into()), Standard),
+            unidentified
+        );
+    }
+
+    #[test]
+    fn a_press_pins_its_resolution_until_release() {
+        use ElementState::{Pressed, Released};
+        use KeyCode as K;
+        let code = WinitPhysicalKey::Code;
+        let mut input = InputState::default();
+        let mut pin = |native, resolved, state, repeat| {
+            input
+                .pin_key(code(native), code(resolved), state, repeat)
+                .map(|key| match key {
+                    WinitPhysicalKey::Code(key) => key,
+                    WinitPhysicalKey::Unidentified(_) => unreachable!(),
+                })
+        };
+        // caps:escape_shifted_capslock: Shift held at release changes the level.
+        assert_eq!(pin(K::CapsLock, K::Escape, Pressed, false), Some(K::Escape));
+        assert_eq!(
+            pin(K::CapsLock, K::CapsLock, Released, false),
+            Some(K::Escape)
+        );
+        // altwin:swap_alt_win: the held key keeps its press-time key.
+        assert_eq!(
+            pin(K::SuperLeft, K::AltLeft, Pressed, false),
+            Some(K::AltLeft)
+        );
+        assert_eq!(
+            pin(K::SuperLeft, K::SuperLeft, Pressed, true),
+            Some(K::AltLeft)
+        );
+        assert_eq!(
+            pin(K::SuperLeft, K::SuperLeft, Released, false),
+            Some(K::AltLeft)
+        );
+        // caps:backspace: both presses delete, and Backspace is released once.
+        assert_eq!(
+            pin(K::CapsLock, K::Backspace, Pressed, false),
+            Some(K::Backspace)
+        );
+        assert_eq!(
+            pin(K::Backspace, K::Backspace, Pressed, false),
+            Some(K::Backspace)
+        );
+        assert_eq!(
+            pin(K::Backspace, K::Backspace, Pressed, true),
+            Some(K::Backspace)
+        );
+        assert_eq!(pin(K::CapsLock, K::Backspace, Released, false), None);
+        assert_eq!(
+            pin(K::Backspace, K::Backspace, Released, false),
+            Some(K::Backspace)
+        );
+        // Retiring an attachment keeps the pin, so the retired release still
+        // pairs, a fresh press of another key on the same key goes through, and
+        // the retired key's repeats stay out of the new attachment.
+        assert_eq!(pin(K::CapsLock, K::Escape, Pressed, false), Some(K::Escape));
+        // A key the terminal never received, such as an arrow traversing tabs,
+        // keeps repeating across the attachment change it causes.
+        assert_eq!(
+            pin(K::ArrowRight, K::ArrowRight, Pressed, false),
+            Some(K::ArrowRight)
+        );
+        input.commit_key(code(K::Escape), Pressed);
+        input.retire_orbit_generation();
+        let mut pin = |native, resolved, state, repeat| {
+            input.pin_key(code(native), code(resolved), state, repeat)
+        };
+        assert_eq!(
+            pin(K::Escape, K::Escape, Pressed, false),
+            Some(code(K::Escape))
+        );
+        assert_eq!(pin(K::CapsLock, K::CapsLock, Pressed, true), None);
+        assert_eq!(
+            pin(K::ArrowRight, K::ArrowRight, Pressed, true),
+            Some(code(K::ArrowRight))
+        );
+        assert_eq!(pin(K::CapsLock, K::CapsLock, Released, false), None);
+        assert_eq!(
+            pin(K::Escape, K::Escape, Released, false),
+            Some(code(K::Escape))
+        );
+        assert_eq!(
+            pin(K::CapsLock, K::Escape, Pressed, false),
+            Some(code(K::Escape))
+        );
+        input.retire_orbit_generation();
+        assert_eq!(
+            input.pin_key(code(K::CapsLock), code(K::CapsLock), Released, false),
+            Some(code(K::Escape))
+        );
+        // Native focus loss forgets pins whose release will not arrive.
+        assert_eq!(
+            input.pin_key(code(K::CapsLock), code(K::Escape), Pressed, false),
+            Some(code(K::Escape))
+        );
+        input.native_focus(false, false);
+        assert_eq!(
+            input.pin_key(code(K::Escape), code(K::Escape), Pressed, false),
+            Some(code(K::Escape))
+        );
+        assert_eq!(
+            input.pin_key(code(K::Escape), code(K::Escape), Released, false),
+            Some(code(K::Escape))
+        );
+        // caps:escape: CapsLock closes the shortcut viewer, and Escape pressed
+        // before CapsLock is released reaches the terminal instead of joining
+        // that capture.
+        let escape = code(K::Escape);
+        for escape_first in [true, false] {
+            assert_eq!(
+                input.pin_key(code(K::CapsLock), escape, Pressed, false),
+                Some(escape)
+            );
+            assert!(input.consumes_shortcut(escape, Pressed, false, true));
+            assert_eq!(input.pin_key(escape, escape, Pressed, false), Some(escape));
+            assert!(!input.consumes_shortcut(escape, Pressed, false, false));
+            assert_eq!(
+                input.pin_key(code(K::CapsLock), escape, Pressed, true),
+                None
+            );
+            let releases = if escape_first {
+                [(escape, Some(escape)), (code(K::CapsLock), Some(escape))]
+            } else {
+                [(code(K::CapsLock), None), (escape, Some(escape))]
+            };
+            for (native, expected) in releases {
+                assert_eq!(input.pin_key(native, escape, Released, false), expected);
+            }
+        }
     }
 
     #[test]
