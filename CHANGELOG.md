@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon` speaks only EONW 12. A generation started by an older build that uses
+  an earlier EONW is listed as incompatible and can no longer be inspected or
+  stopped by this `eon`; stop it with the build that started it.
 - `eon claude-statusline` is gone; Claude quota has come from CodexBar since
   EON-C27, so the command only drained old status-line wrappers. The shared
   executable no longer refuses the retired `eonterm` name; any name other than

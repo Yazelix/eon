@@ -1,11 +1,9 @@
-use eon_workspace_protocol::{
-    v2, v3, v4, v5, v6, v7, v8, v9, v10, v11,
-    v12::{
-        Action as ProtocolAction, Column, Direction, HEADER_BYTES, InvokeIntent, MAX_SESSIONS,
-        Pane, Popup, PopupGeometry, PopupTarget, Request, Response, Snapshot, Tab, VERSION,
-        WorkspaceAction as Action, declared_message_len, decode_request, decode_response,
-        encode_request, encode_response,
-    },
+use eon_workspace_protocol::v12::{
+    Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
+    HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
+    PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
+    WorkspaceAction as Action, declared_message_len, decode_request, decode_response,
+    encode_lifecycle_response, encode_request, encode_response,
 };
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, Failure,
@@ -4072,12 +4070,7 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     fs::remove_dir_all(root).unwrap();
 }
 
-fn previous_supervisor(
-    runtime: &Path,
-    id: &str,
-    version: u16,
-    requests: usize,
-) -> thread::JoinHandle<()> {
+fn generation_listener(runtime: &Path, id: &str) -> UnixListener {
     let parent = runtime.join("generations");
     let generation = parent.join(id);
     fs::create_dir_all(&generation).unwrap();
@@ -4087,188 +4080,120 @@ fn previous_supervisor(
     let socket = generation.join("eon.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+    listener
+}
+
+fn read_request(stream: &mut UnixStream) -> Vec<u8> {
+    let mut request = vec![0; HEADER_BYTES];
+    stream.read_exact(&mut request).unwrap();
+    let length = declared_message_len(&request).unwrap();
+    request.resize(length, 0);
+    stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
+    request
+}
+
+/// Serves generation `id` of another build with the current EONW: it answers
+/// inspection until it receives Stop for itself.
+fn previous_supervisor(runtime: &Path, id: &str) -> thread::JoinHandle<()> {
+    let listener = generation_listener(runtime, id);
     let server_id = id.to_string();
     thread::spawn(move || {
-        for step in 0..requests {
+        loop {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut request = vec![0; HEADER_BYTES];
-            stream.read_exact(&mut request).unwrap();
-            let length = declared_message_len(&request).unwrap();
-            request.resize(length, 0);
-            stream.read_exact(&mut request[HEADER_BYTES..]).unwrap();
-            let response = if step == 0 || step == 2 {
-                assert_eq!(
-                    decode_request(&request).unwrap().action,
-                    ProtocolAction::Workspace(Action::InspectPresentation)
-                );
-                let failure = v2::Failure {
-                    code: "unsupported-version".into(),
-                    detail: format!("unsupported EONW version {VERSION}"),
-                };
-                match version {
-                    2 => v2::encode_response(&v2::Response::Failure(failure)),
-                    3 => v3::encode_response(&v3::Response::Failure(failure)),
-                    4 => v4::encode_response(&v4::Response::Failure(failure)),
-                    5 => v5::encode_response(&v5::Response::Failure(failure)),
-                    6 => v6::encode_response(&v6::Response::Failure(failure)),
-                    7 => v7::encode_response(&v7::Response::Failure(failure)),
-                    8 => v8::encode_response(&v8::Response::Failure(failure)),
-                    9 => v9::encode_response(&v9::Response::Failure(failure)),
-                    10 => v10::encode_response(&v10::Response::Failure(failure)),
-                    11 => v11::encode_response(&v11::Response::Failure(failure)),
-                    _ => unreachable!(),
-                }
-                .unwrap()
-            } else {
-                let action = match version {
-                    2 => match v2::decode_request(&request).unwrap().action {
-                        v2::Action::InspectRuntime => "inspect",
-                        v2::Action::Stop { generation } if generation == server_id => "stop",
-                        _ => "wrong",
-                    },
-                    3 => match v3::decode_request(&request).unwrap().action {
-                        v3::Action::InspectRuntime => "inspect",
-                        v3::Action::Stop { generation } if generation == server_id => "stop",
-                        _ => "wrong",
-                    },
-                    4 => match v4::decode_request(&request).unwrap().action {
-                        v4::Action::InspectRuntime => "inspect",
-                        v4::Action::Stop { generation } if generation == server_id => "stop",
-                        _ => "wrong",
-                    },
-                    5 => match v5::decode_request(&request).unwrap().action {
-                        v5::Action::Workspace(v5::WorkspaceAction::InspectRuntime) => "inspect",
-                        v5::Action::Workspace(v5::WorkspaceAction::Stop { generation })
-                            if generation == server_id =>
-                        {
-                            "stop"
-                        }
-                        _ => "wrong",
-                    },
-                    6 => match v6::decode_request(&request).unwrap().action {
-                        v6::Action::Workspace(v6::WorkspaceAction::InspectRuntime) => "inspect",
-                        v6::Action::Workspace(v6::WorkspaceAction::Stop { generation })
-                            if generation == server_id =>
-                        {
-                            "stop"
-                        }
-                        _ => "wrong",
-                    },
-                    7 => match v7::decode_request(&request).unwrap().action {
-                        v7::Action::Workspace(v7::WorkspaceAction::InspectRuntime) => "inspect",
-                        v7::Action::Workspace(v7::WorkspaceAction::Stop { generation })
-                            if generation == server_id =>
-                        {
-                            "stop"
-                        }
-                        _ => "wrong",
-                    },
-                    8 => match v8::decode_request(&request).unwrap().action {
-                        v8::Action::Workspace(v8::WorkspaceAction::InspectRuntime) => "inspect",
-                        v8::Action::Workspace(v8::WorkspaceAction::Stop { generation })
-                            if generation == server_id =>
-                        {
-                            "stop"
-                        }
-                        _ => "wrong",
-                    },
-                    9 => match v9::decode_request(&request).unwrap().action {
-                        v9::Action::Workspace(v9::WorkspaceAction::InspectRuntime) => "inspect",
-                        v9::Action::Workspace(v9::WorkspaceAction::Stop { generation })
-                            if generation == server_id =>
-                        {
-                            "stop"
-                        }
-                        _ => "wrong",
-                    },
-                    10 => match v10::decode_request(&request).unwrap().action {
-                        v10::Action::Workspace(v10::WorkspaceAction::InspectRuntime) => "inspect",
-                        v10::Action::Workspace(v10::WorkspaceAction::Stop { generation })
-                            if generation == server_id =>
-                        {
-                            "stop"
-                        }
-                        _ => "wrong",
-                    },
-                    11 => match v11::decode_request(&request).unwrap().action {
-                        v11::Action::Workspace(v11::WorkspaceAction::InspectRuntime) => "inspect",
-                        v11::Action::Workspace(v11::WorkspaceAction::Stop { generation })
-                            if generation == server_id =>
-                        {
-                            "stop"
-                        }
-                        _ => "wrong",
-                    },
-                    _ => unreachable!(),
-                };
-                assert_eq!(action, if step == 4 { "stop" } else { "inspect" });
-                let lifecycle = if step == 4 {
-                    v2::LifecycleResponse::Stopped(v2::Stopped {
-                        generation: server_id.clone(),
-                        sessions: vec!["session-1".into()],
-                    })
-                } else {
-                    v2::LifecycleResponse::Runtime(v2::Runtime {
+            let request = decode_request(&read_request(&mut stream)).unwrap();
+            let (response, stopped) = match request.action {
+                ProtocolAction::Workspace(Action::InspectPresentation) => (
+                    LifecycleResponse::Runtime(Runtime {
                         generation: server_id.clone(),
                         eon_version: "0.1.0".into(),
-                        workspace_protocol: version,
+                        workspace_protocol: VERSION,
                         component_report: "previous components".into(),
                         sessions: vec!["session-1".into()],
-                        attach: v2::Availability {
+                        attach: Availability {
                             available: true,
                             reason: "previous presentation".into(),
                         },
-                        stop: v2::Availability {
+                        stop: Availability {
                             available: true,
                             reason: "supervisor owns these Sessions".into(),
                         },
-                    })
-                };
-                match version {
-                    2 => v2::encode_lifecycle_response(&lifecycle),
-                    3 => v3::encode_lifecycle_response(&lifecycle),
-                    4 => v4::encode_lifecycle_response(&lifecycle),
-                    5 => v5::encode_lifecycle_response(&lifecycle),
-                    6 => v6::encode_lifecycle_response(&lifecycle),
-                    7 => v7::encode_lifecycle_response(&lifecycle),
-                    8 => v8::encode_lifecycle_response(&lifecycle),
-                    9 => v9::encode_lifecycle_response(&lifecycle),
-                    10 => v10::encode_lifecycle_response(&lifecycle),
-                    11 => v11::encode_lifecycle_response(&lifecycle),
-                    _ => unreachable!(),
+                    }),
+                    false,
+                ),
+                ProtocolAction::Workspace(Action::Stop { generation })
+                    if generation == server_id =>
+                {
+                    (
+                        LifecycleResponse::Stopped(Stopped {
+                            generation,
+                            sessions: vec!["session-1".into()],
+                        }),
+                        true,
+                    )
                 }
-                .unwrap()
+                action => panic!("unexpected request {action:?}"),
             };
-            stream.write_all(&response).unwrap();
+            stream
+                .write_all(&encode_lifecycle_response(&response).unwrap())
+                .unwrap();
+            if stopped {
+                return;
+            }
         }
     })
 }
 
 #[test]
-fn current_cli_stops_known_previous_eonw_generations_through_their_supervisors() {
-    for version in 2..=11 {
-        let root = temporary_directory();
-        let runtime = root.join("runtime");
-        let config = root.join("config");
-        let id = format!("g1-{version:032x}");
-        let server = previous_supervisor(&runtime, &id, version, 5);
+fn generations_from_another_eonw_are_incompatible_and_not_stopped() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    let id = format!("g1-{:032x}", 11);
+    let listener = generation_listener(&runtime, &id);
+    // An older build's supervisor rejects each request in its own framing.
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            assert_eq!(
+                decode_request(&read_request(&mut stream)).unwrap().action,
+                ProtocolAction::Workspace(Action::InspectPresentation)
+            );
+            let mut failure = encode_response(&Response::Failure(ProtocolFailure {
+                code: "unsupported-version".into(),
+                detail: format!("unsupported EONW version {VERSION}"),
+            }))
+            .unwrap();
+            failure[4..6].copy_from_slice(&11u16.to_le_bytes());
+            stream.write_all(&failure).unwrap();
+        }
+    });
 
-        let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-        let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
-        assert!(listed.status.success(), "{}", stdout(&listed));
-        assert!(stdout(&listed).contains("\"kind\":\"previous\",\"state\":\"live\""));
-        assert!(stdout(&listed).contains(&format!("\"workspace_protocol\":{version}")));
-        assert!(stdout(&listed).contains("\"attach\":{\"available\":false"));
-        assert!(stdout(&listed).contains("\"stop\":{\"available\":true"));
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let listed = invoke(&binary, &runtime, &config, &["generations", "--json"]);
+    assert!(listed.status.success(), "{}", stdout(&listed));
+    let listed: serde_json::Value = serde_json::from_str(stdout(&listed)).unwrap();
+    let older = listed["generations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|generation| generation["id"] == id.as_str())
+        .unwrap();
+    assert_eq!(older["state"], "incompatible");
+    assert_eq!(older["stop"]["available"], false);
+    assert!(
+        older["stop"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("supervisor uses EONW 11"),
+        "{older}"
+    );
 
-        let stopped = invoke(&binary, &runtime, &config, &["stop", &id, "--json"]);
-        assert!(stopped.status.success(), "{}", stdout(&stopped));
-        assert!(stdout(&stopped).contains(&format!(
-            "\"generation\":\"{id}\",\"sessions\":[\"session-1\"]"
-        )));
-        server.join().unwrap();
-        fs::remove_dir_all(root).unwrap();
-    }
+    let stopped = invoke(&binary, &runtime, &config, &["stop", &id, "--json"]);
+    assert_eq!(stopped.status.code(), Some(2), "{}", stdout(&stopped));
+    let stopped: serde_json::Value = serde_json::from_str(stdout(&stopped)).unwrap();
+    assert_eq!(stopped["error"]["code"], "stop-unavailable", "{stopped}");
+    server.join().unwrap();
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -4284,7 +4209,7 @@ fn previous_and_all_stop_older_generations_when_current_is_unstarted() {
         serde_json::json!([])
     );
     let first_id = format!("g1-{:032x}", 2);
-    let first = previous_supervisor(&runtime, &first_id, 6, 5);
+    let first = previous_supervisor(&runtime, &first_id);
 
     let previous = invoke(&binary, &runtime, &config, &["stop", "previous", "--json"]);
     assert!(previous.status.success(), "{}", stdout(&previous));
@@ -4294,7 +4219,7 @@ fn previous_and_all_stop_older_generations_when_current_is_unstarted() {
     first.join().unwrap();
 
     let second_id = format!("g1-{:032x}", 3);
-    let second = previous_supervisor(&runtime, &second_id, 6, 5);
+    let second = previous_supervisor(&runtime, &second_id);
     let all = invoke(&binary, &runtime, &config, &["stop", "all", "--json"]);
     assert!(all.status.success(), "{}", stdout(&all));
     let result: serde_json::Value = serde_json::from_str(stdout(&all)).unwrap();
@@ -4337,8 +4262,8 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
 
     let first_id = format!("g1-{:032x}", 2);
     let second_id = format!("g1-{:032x}", 3);
-    let first = previous_supervisor(&runtime, &first_id, 6, 5);
-    let second = previous_supervisor(&runtime, &second_id, 6, 5);
+    let first = previous_supervisor(&runtime, &first_id);
+    let second = previous_supervisor(&runtime, &second_id);
     let unavailable = runtime.join("generations").join(format!("g1-{:032x}", 1));
     fs::create_dir(&unavailable).unwrap();
     fs::set_permissions(&unavailable, fs::Permissions::from_mode(0o755)).unwrap();
@@ -4361,7 +4286,7 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     fs::remove_dir_all(unavailable).unwrap();
 
     let third_id = format!("g1-{:032x}", 4);
-    let third = previous_supervisor(&runtime, &third_id, 6, 5);
+    let third = previous_supervisor(&runtime, &third_id);
     let mut human = eon_command(&binary)
         .args(["stop", "all"])
         .env("EON_RUNTIME_DIR", &runtime)
@@ -4382,7 +4307,7 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     third.join().unwrap();
 
     let fourth_id = format!("g1-{:032x}", 5);
-    let fourth = previous_supervisor(&runtime, &fourth_id, 6, 5);
+    let fourth = previous_supervisor(&runtime, &fourth_id);
     let all = invoke(&binary, &runtime, &config, &["stop", "all", "--json"]);
     assert!(all.status.success(), "{}", stdout(&all));
     let results: serde_json::Value = serde_json::from_str(stdout(&all)).unwrap();

@@ -222,7 +222,8 @@ instead of duplicating product pins. Implementing Beads record exact inspected r
 
 - **Owner:** Eon Runtime's canonical workspace protocol; Venus consumes its exact crate.
 - **Read first:** `eon-tool-popups-e13.1`, EON-C10's v5 seed contract and
-  Eon Runtime's `crates/eon-workspace-protocol/src/{v2,v3,v4,v5}.rs`. Inspect its
+  Eon Runtime's `crates/eon-workspace-protocol/src/{v2,v3,v4,v5}.rs`, last
+  present at `2025d5ea36e1e8ccfcdabad80153454f155ead12`. Inspect its
   control/workspace consumers and Venus model/transport/scene/input consumers.
 - **Comparable implementations:** Eon's additive v3 seed
   `96119f29ca2e3ec4ad19bbe272708b07d588429a` and v4 seed
@@ -233,7 +234,7 @@ instead of duplicating product pins. Implementing Beads record exact inspected r
   version before Venus consumption and Eon activation. Reject duplicated
   commands/lifetime policy in Venus, runtime negotiation, a second schema and
   claims that codec tests prove installed popup behavior. The earlier
-  picker-only route describes the still-active v4 contract.
+  picker-only route describes the historical v4 contract.
 
 ### How should a tab picker reach folders absent from Zoxide history?
 

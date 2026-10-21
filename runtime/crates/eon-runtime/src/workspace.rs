@@ -343,12 +343,6 @@ impl Workspace {
             WorkspaceAction::SetTabDirectory { tab, directory } => {
                 self.set_tab_directory(&tab, directory)?;
             }
-            WorkspaceAction::PickTabDirectory => {
-                return Err(action_error(
-                    "unavailable",
-                    "the EONW v8 Project entry replaces the retired picker action",
-                ));
-            }
         }
         Ok(())
     }

@@ -125,12 +125,12 @@ snapshot retains v6's optional, bounded Codex quota field with fresh, stale,
 blocked, or unknown state and up to two
 normalized windows. Pinned CodexBar CLI owns Codex and Claude collection; Runtime validates and ages
 its readings, while Venus alone presents the optional chips. v9 permits absent
-provider resets; historical v2–v11 validators remain unchanged.
+provider resets.
 Credentials, account identity, provider payloads, and provider lifecycle stay
 out of EONW and Venus. v7 also permits distinct pending Project pickers in
-separate tabs while preserving the v6 single-pending validator. Eon provides no
-version negotiation layer. Existing live supervisors retain their generation
-until explicitly stopped; the updated executable starts a separate generation.
+separate tabs. Eon provides no version negotiation layer. Existing live
+supervisors retain their generation until explicitly stopped; the updated
+executable starts a separate generation.
 Composed activation requires an exact v12 Venus consumer.
 
 The optional Claude observation adds only bounded presentation facts. Under
@@ -284,7 +284,7 @@ adds an in-process Rust library, with no additional daemon or IPC boundary.
 |---|---|
 | Eon | Product contracts/version/default values, actual executable and exit/error mapping, canonical component graph and `eon-manifest`, assets, component selection, Nix translation and distribution |
 | `eon-runtime` | Existing `cli`, `quota`, `control`, `generation`, `managed_environment`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
-| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codecs v2–v12 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
+| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v12 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
 | Orbit and Venus | Their existing terminal and native-client authority |
 
 Eon calls one concrete library entry point. Runtime handles invocation selection,
@@ -367,10 +367,11 @@ The runtime library and its cutover were accepted through these boundaries.
 | Composed activation | Locked Rust and both Nix products accept runtime-only A/B with fixed Venus/codec; installed old/new generations retain owner authority. `eon-runtime-cutover-y1wy` |
 
 Cutover refreshes the named profile elements without restarting live work.
-Old generations remain discoverable and owner-stoppable through retained
-v2–v11 lifecycle codecs. New-client Present still requires exact current EONW
-and component-report equality; added package records can make old presentation
-incompatible. Retain the exact prior executable/artifact to reattach old work.
+Old generations that use the current EONW remain discoverable and
+owner-stoppable; one with another EONW version is listed as incompatible.
+New-client Present still requires exact current EONW and component-report
+equality; added package records can make old presentation incompatible.
+Retain the exact prior executable/artifact to reattach old work.
 A new bare launch selects the new generation; extraction promises no automatic
 adoption or same-generation migration.
 

@@ -72,11 +72,12 @@ eon stop all
 
 `eon stop` shows the generation's live terminal identities and asks for
 confirmation. Closing a window is therefore detach; stopping a generation ends
-its terminals. Previous generations using EONW v2 through v11 can be stopped
+its terminals. Previous generations that use the current EONW can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
+A generation from a build with another EONW version is listed as incompatible;
+stop it with the build that started it.
 The runtime extraction changes the component graph and selects a new generation.
-Reattach earlier work with its retained exact Eon or eonbase executable; the
-new installed client can inspect and stop that work through its owner.
+Reattach earlier work with its retained exact Eon or eonbase executable.
 `previous` attempts every non-dead generation except the installed build's exact
 current generation, including when current has not started.
 `all` includes current and stops it last. Each generation gets its own

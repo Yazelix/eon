@@ -8,7 +8,6 @@ use eon_workspace_protocol::v12::{
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
     encode_request, encode_response,
 };
-use eon_workspace_protocol::{v2, v3, v4, v5, v6, v7, v8, v9, v10, v11};
 use std::{
     fs,
     io::{Read, Write},
@@ -26,7 +25,6 @@ const CONTROL_TIMEOUT: Duration = SESSION_START_TIMEOUT.saturating_add(Duration:
 pub(super) enum EndpointFailureKind {
     Dead,
     Incompatible,
-    UnsupportedVersion(u16),
     InvalidAction,
     Unreachable,
     Corrupt,
@@ -127,7 +125,12 @@ pub(super) fn send_action_on(
 }
 
 fn prepare_action(action: Action) -> Result<(bool, Vec<u8>, Duration), EndpointFailure> {
-    let timeout = result_timeout(&action);
+    let timeout = if matches!(action, Action::Workspace(WorkspaceAction::Stop { .. })) {
+        // One in-flight operation may precede the bounded managed Stop.
+        CONTROL_TIMEOUT.saturating_add(SESSION_START_TIMEOUT)
+    } else {
+        CONTROL_TIMEOUT
+    };
     let lifecycle = matches!(
         action,
         Action::Workspace(
@@ -150,41 +153,15 @@ fn prepare_action(action: Action) -> Result<(bool, Vec<u8>, Duration), EndpointF
     Ok((lifecycle, request, timeout))
 }
 
-fn result_timeout(action: &Action) -> Duration {
-    if matches!(action, Action::Workspace(WorkspaceAction::Stop { .. })) {
-        // One in-flight operation may precede the bounded managed Stop.
-        CONTROL_TIMEOUT.saturating_add(SESSION_START_TIMEOUT)
-    } else {
-        CONTROL_TIMEOUT
-    }
-}
-
 fn send_prepared_action(
-    stream: UnixStream,
+    mut stream: UnixStream,
     (lifecycle, request, timeout): (bool, Vec<u8>, Duration),
 ) -> Result<ControlResponse, EndpointFailure> {
-    let response = exchange(stream, &request, timeout)?;
-    if lifecycle {
-        decode_lifecycle_response(&response)
-            .map(ControlResponse::Lifecycle)
-            .map_err(protocol_endpoint_failure)
-    } else {
-        decode_response(&response)
-            .map(ControlResponse::Workspace)
-            .map_err(protocol_endpoint_failure)
-    }
-}
-
-fn exchange(
-    mut stream: UnixStream,
-    request: &[u8],
-    timeout: Duration,
-) -> Result<Vec<u8>, EndpointFailure> {
     stream
         .set_read_timeout(Some(timeout))
         .map_err(|error| io_endpoint_failure(error, "cannot bound Eon action result"))?;
     stream
-        .write_all(request)
+        .write_all(&request)
         .map_err(|error| io_endpoint_failure(error, "cannot send Eon action"))?;
 
     let mut response = vec![0; HEADER_BYTES];
@@ -196,7 +173,15 @@ fn exchange(
     stream
         .read_exact(&mut response[HEADER_BYTES..])
         .map_err(|error| io_endpoint_failure(error, "cannot read complete Eon result"))?;
-    Ok(response)
+    if lifecycle {
+        decode_lifecycle_response(&response)
+            .map(ControlResponse::Lifecycle)
+            .map_err(protocol_endpoint_failure)
+    } else {
+        decode_response(&response)
+            .map(ControlResponse::Workspace)
+            .map_err(protocol_endpoint_failure)
+    }
 }
 
 fn io_endpoint_failure(error: std::io::Error, context: &str) -> EndpointFailure {
@@ -212,15 +197,19 @@ fn io_endpoint_failure(error: std::io::Error, context: &str) -> EndpointFailure 
 }
 
 fn protocol_endpoint_failure(error: ProtocolError) -> EndpointFailure {
-    EndpointFailure::new(
-        match error {
-            ProtocolError::UnsupportedVersion { version } => {
-                EndpointFailureKind::UnsupportedVersion(version)
-            }
-            _ => EndpointFailureKind::Corrupt,
-        },
-        format!("invalid EONW response: {error}"),
-    )
+    match error {
+        ProtocolError::UnsupportedVersion { version } => EndpointFailure::new(
+            EndpointFailureKind::Incompatible,
+            format!(
+                "supervisor uses EONW {version}, this Eon uses EONW {VERSION}; \
+                 the Eon build that started it can stop it"
+            ),
+        ),
+        _ => EndpointFailure::new(
+            EndpointFailureKind::Corrupt,
+            format!("invalid EONW response: {error}"),
+        ),
+    }
 }
 
 fn runtime_response(response: ControlResponse) -> Result<Runtime, EndpointFailure> {
@@ -257,125 +246,17 @@ fn runtime_response(response: ControlResponse) -> Result<Runtime, EndpointFailur
 }
 
 pub(super) fn probe_generation_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
-    match probe_presentable_runtime(socket) {
-        Ok(runtime) if runtime.workspace_protocol == VERSION => Ok(runtime),
-        Ok(runtime) => Err(EndpointFailure::new(
+    let runtime = probe_presentable_runtime(socket)?;
+    if runtime.workspace_protocol != VERSION {
+        return Err(EndpointFailure::new(
             EndpointFailureKind::Incompatible,
             format!(
                 "supervisor reports EONW {}, current Eon requires EONW {}",
                 runtime.workspace_protocol, VERSION
             ),
-        )),
-        Err(error) => {
-            let EndpointFailureKind::UnsupportedVersion(version) = error.kind else {
-                return Err(error);
-            };
-            if !(2..VERSION).contains(&version) {
-                return Err(error);
-            }
-            let runtime = runtime_response(send_generation_action_on(
-                connect_control(socket)?,
-                version,
-                WorkspaceAction::InspectRuntime,
-            )?)?;
-            if runtime.workspace_protocol != version {
-                return Err(EndpointFailure::new(
-                    EndpointFailureKind::Corrupt,
-                    format!(
-                        "supervisor reports EONW {} over EONW {version}",
-                        runtime.workspace_protocol
-                    ),
-                ));
-            }
-            Ok(runtime)
-        }
+        ));
     }
-}
-
-pub(super) fn send_generation_action_on(
-    stream: UnixStream,
-    version: u16,
-    action: WorkspaceAction,
-) -> Result<ControlResponse, EndpointFailure> {
-    if version == VERSION {
-        return send_action_on(stream, Action::Workspace(action));
-    }
-    let timeout = result_timeout(&Action::Workspace(action.clone()));
-    let id = request_id();
-    let request = match version {
-        2 => v2::encode_request(&v2::Request {
-            id,
-            action: match action {
-                WorkspaceAction::InspectRuntime => v2::Action::InspectRuntime,
-                WorkspaceAction::Stop { generation } => v2::Action::Stop { generation },
-                _ => {
-                    return Err(EndpointFailure::new(
-                        EndpointFailureKind::InvalidAction,
-                        "older EONW lifecycle only supports inspection and Stop",
-                    ));
-                }
-            },
-        }),
-        3 => v3::encode_request(&v3::Request { id, action }),
-        4 => v4::encode_request(&v4::Request { id, action }),
-        5 => v5::encode_request(&v5::Request {
-            id,
-            action: v5::Action::Workspace(action),
-        }),
-        6 => v6::encode_request(&v6::Request {
-            id,
-            action: v6::Action::Workspace(action),
-        }),
-        7 => v7::encode_request(&v7::Request {
-            id,
-            action: v7::Action::Workspace(action),
-        }),
-        8 => v8::encode_request(&v8::Request {
-            id,
-            action: v8::Action::Workspace(action),
-        }),
-        9 => v9::encode_request(&v9::Request {
-            id,
-            action: v9::Action::Workspace(action),
-        }),
-        10 => v10::encode_request(&v10::Request {
-            id,
-            action: v10::Action::Workspace(action),
-        }),
-        11 => v11::encode_request(&v11::Request {
-            id,
-            action: v11::Action::Workspace(action),
-        }),
-        _ => {
-            return Err(EndpointFailure::new(
-                EndpointFailureKind::Incompatible,
-                format!("EONW v{version} has no supported generation lifecycle codec"),
-            ));
-        }
-    }
-    .map_err(|error| {
-        EndpointFailure::new(
-            EndpointFailureKind::InvalidAction,
-            format!("cannot encode Eon generation action: {error}"),
-        )
-    })?;
-    let response = exchange(stream, &request, timeout)?;
-    let decoded = match version {
-        2 => v2::decode_lifecycle_response(&response),
-        3 => v3::decode_lifecycle_response(&response),
-        4 => v4::decode_lifecycle_response(&response),
-        5 => v5::decode_lifecycle_response(&response),
-        6 => v6::decode_lifecycle_response(&response),
-        7 => v7::decode_lifecycle_response(&response),
-        8 => v8::decode_lifecycle_response(&response),
-        9 => v9::decode_lifecycle_response(&response),
-        10 => v10::decode_lifecycle_response(&response),
-        11 => v11::decode_lifecycle_response(&response),
-        _ => unreachable!(),
-    };
-    decoded
-        .map(ControlResponse::Lifecycle)
-        .map_err(protocol_endpoint_failure)
+    Ok(runtime)
 }
 
 pub(super) fn probe_presentable_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
@@ -623,84 +504,10 @@ pub(super) fn remove_socket_if_identity(path: &Path, identity: SocketIdentity) {
 mod tests {
     use super::{ControlListener, remove_socket_if_identity, socket_identity};
     use crate::supervisor::temporary_directory;
-    use eon_workspace_protocol::v12::{Availability, Runtime, WorkspaceAction};
     use std::{
         fs,
-        io::Write,
         os::unix::net::{UnixListener, UnixStream},
     };
-
-    #[test]
-    fn previous_supervisors_keep_inspection_and_stop_without_presentation() {
-        use super::{ControlResponse, send_generation_action_on};
-        use eon_workspace_protocol::{v7, v8};
-        use std::io::Read;
-        for version in [7, 8] {
-            let generation = "g1-0123456789abcdef0123456789abcdef".to_string();
-            let runtime = Runtime {
-                generation: generation.clone(),
-                eon_version: "0.1.0".into(),
-                workspace_protocol: version,
-                component_report: "old components".into(),
-                sessions: vec!["session-1".into()],
-                attach: Availability {
-                    available: true,
-                    reason: "original executable".into(),
-                },
-                stop: Availability {
-                    available: true,
-                    reason: "generation-aware".into(),
-                },
-            };
-            for (action, expected) in [
-                (
-                    WorkspaceAction::InspectRuntime,
-                    v7::LifecycleResponse::Runtime(runtime),
-                ),
-                (
-                    WorkspaceAction::Stop {
-                        generation: generation.clone(),
-                    },
-                    v7::LifecycleResponse::Stopped(v7::Stopped {
-                        generation: generation.clone(),
-                        sessions: vec!["session-1".into()],
-                    }),
-                ),
-            ] {
-                let (client, mut server) = UnixStream::pair().unwrap();
-                server
-                    .set_read_timeout(Some(std::time::Duration::from_secs(1)))
-                    .unwrap();
-                let bytes = if version == 7 {
-                    v7::encode_lifecycle_response(&expected)
-                } else {
-                    v8::encode_lifecycle_response(&expected)
-                }
-                .unwrap();
-                server.write_all(&bytes).unwrap();
-                let response = send_generation_action_on(client, version, action.clone())
-                    .expect("v7 lifecycle remains usable");
-                assert!(
-                    matches!(response, ControlResponse::Lifecycle(actual) if actual == expected)
-                );
-                let mut header = [0; v7::HEADER_BYTES];
-                server.read_exact(&mut header).unwrap();
-                let mut bytes = vec![0; v7::declared_message_len(&header).unwrap()];
-                bytes[..header.len()].copy_from_slice(&header);
-                server.read_exact(&mut bytes[header.len()..]).unwrap();
-                assert_eq!(
-                    if version == 7 {
-                        v7::decode_request(&bytes)
-                    } else {
-                        v8::decode_request(&bytes)
-                    }
-                    .unwrap()
-                    .action,
-                    v7::Action::Workspace(action)
-                );
-            }
-        }
-    }
 
     #[test]
     fn listener_preserves_a_replacement_socket() {

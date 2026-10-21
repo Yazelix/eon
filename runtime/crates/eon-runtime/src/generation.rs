@@ -1,7 +1,7 @@
 use super::cli::Inputs;
 use super::control::{
     ControlResponse, EndpointFailure, EndpointFailureKind, connect_control, failure,
-    probe_generation_runtime, remove_socket_if_identity, report_failure, send_generation_action_on,
+    probe_generation_runtime, remove_socket_if_identity, report_failure, send_action_on,
     socket_identity, socket_identity_from, write_stdout,
 };
 use super::supervisor::{
@@ -10,7 +10,7 @@ use super::supervisor::{
 };
 use super::workspace::json_escape;
 use eon_workspace_protocol::v12::{
-    Availability, LifecycleResponse, Stopped, VERSION, WorkspaceAction,
+    Action, Availability, LifecycleResponse, Stopped, WorkspaceAction,
 };
 use std::{
     fs,
@@ -37,16 +37,6 @@ pub(super) fn current_generation(inputs: &Inputs) -> Result<String, String> {
         include_bytes!("workspace.rs"),
         include_bytes!("windows.rs"),
         include_bytes!("../../eon-workspace-protocol/src/lib.rs"),
-        include_bytes!("../../eon-workspace-protocol/src/v2.rs"),
-        include_bytes!("../../eon-workspace-protocol/src/v3.rs"),
-        include_bytes!("../../eon-workspace-protocol/src/v4.rs"),
-        include_bytes!("../../eon-workspace-protocol/src/v5.rs"),
-        include_bytes!("../../eon-workspace-protocol/src/v6.rs"),
-        include_bytes!("../../eon-workspace-protocol/src/v7.rs"),
-        include_bytes!("../../eon-workspace-protocol/src/v8.rs"),
-        include_bytes!("../../eon-workspace-protocol/src/v9.rs"),
-        include_bytes!("../../eon-workspace-protocol/src/v10.rs"),
-        include_bytes!("../../eon-workspace-protocol/src/v11.rs"),
         include_bytes!("../../eon-workspace-protocol/src/v12.rs"),
         include_bytes!("../../eon-workspace-protocol/Cargo.toml"),
     ];
@@ -247,15 +237,6 @@ fn inspect_generation(
                     reason: "component graph differs from the current Eon build".into(),
                 };
             }
-            if info.workspace_protocol != VERSION {
-                info.attach = Availability {
-                    available: false,
-                    reason: format!(
-                        "supervisor uses EONW {}, current Eon requires EONW {VERSION}",
-                        info.workspace_protocol
-                    ),
-                };
-            }
             GenerationRecord {
                 id: id.into(),
                 kind,
@@ -314,9 +295,7 @@ fn failed_generation(
 ) -> GenerationRecord {
     let state = match error.kind {
         EndpointFailureKind::Dead => "dead",
-        EndpointFailureKind::Incompatible | EndpointFailureKind::UnsupportedVersion(_) => {
-            "incompatible"
-        }
+        EndpointFailureKind::Incompatible => "incompatible",
         EndpointFailureKind::InvalidAction | EndpointFailureKind::Corrupt => "corrupt",
         EndpointFailureKind::Unreachable => "unreachable",
     };
@@ -559,18 +538,11 @@ pub(super) fn stop_generation(
             json,
         );
     }
-    let Some(version) = record.workspace_protocol else {
-        return report_failure(
-            &failure("stop-failed", "supervisor did not report its EONW version"),
-            json,
-        );
-    };
-    let response = match send_generation_action_on(
+    let response = match send_action_on(
         stream,
-        version,
-        WorkspaceAction::Stop {
+        Action::Workspace(WorkspaceAction::Stop {
             generation: target.into(),
-        },
+        }),
     ) {
         Ok(response) => response,
         Err(error) => {

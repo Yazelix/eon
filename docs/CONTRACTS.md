@@ -347,7 +347,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Open proof:** Pending re-proof in this repository: installed quota chip
   detail, Accelerando playback, blur, pointer interaction (item 9), a full
   COSMIC checklist, install from this repository's first tag, clean-account public-source qualification,
-  supervisor-loss adoption, and native Stop of a previous-EONW generation.
+  and supervisor-loss adoption.
   EON-C8 records reader qualification as pending. Wider compositors,
   fractional/HiDPI coverage, proprietary NVIDIA and installed non-systemd
   behavior remain unproved. Machine-restart recovery is not supported.
@@ -555,7 +555,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `pane_close_targets_the_active_tab_and_prunes_like_an_exit`, the real-binary
   Stop, deduplication and final-pane refusal in
   `delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`,
-  `close_pane_is_a_v11_request_and_older_traffic_keeps_v10_bytes`,
+  `messages_keep_their_wire_bytes`,
+  `requests_keep_their_tags_and_reject_malformed_actions`,
   `close_parsers_require_one_stable_identity` and Venus
   `direct_workspace_shortcuts_use_stable_eon_actions`; isolated dogfood of the
   built package on a private headless Sway (1280x720) closed a column's only
@@ -567,7 +568,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `sideways_pane_moves_refuse_covering_popups_without_changing_tabs`,
   the real-binary `eon pane move right` in
   `delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`,
-  `sideways_pane_moves_are_v12_requests_and_older_traffic_keeps_v11_bytes`,
+  `sideways_pane_moves_reject_malformed_requests`,
+  `messages_keep_their_wire_bytes`,
   `reorder_parser_accepts_only_each_workspace_axis` and Venus
   `direct_workspace_shortcuts_use_stable_eon_actions` and
   `sideways_moves_open_a_column_only_for_a_stacked_outer_pane`; isolated
@@ -666,16 +668,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v7 and accepted Orbit management operations; the
-  v5 popup shape and historical lifecycle codecs are covered by the codec tests
-  cited in Proof.
+- **Consumes:** Current EONW v12 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content, or direct child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v2–v12 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v12 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -749,10 +749,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     inputs with Eon assembly/default/validator/graph/Cargo/Nix-generated inputs;
     each generation owns one private directory. Store/profile paths, mutable
     configuration, PIDs and live state do not define identity.
-  - Older live generations remain discoverable, explicitly presentable when
-    compatible, and explicitly stoppable through their own supervisor. Generation
-    inspection and Stop use the supervisor's known EONW v2 through v11 lifecycle
-    codec; presentation still requires the exact current EONW and component graph.
+  - Older live generations that speak the current EONW remain discoverable,
+    presentable when compatible, and stoppable through their own supervisor;
+    presentation still requires the exact current EONW and component graph. A
+    generation from a build with another EONW version is listed as
+    incompatible; this `eon` neither inspects nor stops it, and the build that
+    started it can.
   - `eon stop previous` attempts every non-dead generation except the exact
     current one, whether current is live or not. `eon stop all` includes
     current. Each selected generation uses the existing validated
@@ -809,19 +811,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `concurrent_launches_converge_and_generation_stop_is_owner_routed`,
     `bare_eon_attaches_only_to_the_live_current_generation`,
     `launch_overlapping_last_session_exit_starts_a_fresh_session`,
-    `old_supervisor_remains_inspectable_but_not_presentable`,
-    `previous_supervisors_keep_inspection_and_stop_without_presentation`,
-    `current_cli_stops_known_previous_eonw_generations_through_their_supervisors`,
     `previous_and_all_stop_older_generations_when_current_is_unstarted`,
     `batch_stop_preserves_current_until_all_and_reports_unavailable_generations`,
-    `legacy_workspace_is_visible_but_not_attachable_or_stoppable` and
-    `stop_confirmation_refuses_a_replacement_supervisor`. Installed checklist
-    items 2 and 12: detach and attach of one live generation, and Stop of that
-    one exact generation.
+    and `stop_confirmation_refuses_a_replacement_supervisor`; from
+    `eon-igae.12.4`,
+    `generations_from_another_eonw_are_incompatible_and_not_stopped`.
+    Installed checklist items 2 and 12: detach and attach of one live
+    generation, and Stop of that one exact generation.
 - **Open proof:** Pending re-proof in this repository: native Present of a live
-  surface, launch with `/sys/fs/cgroup` hidden, and native Stop of a real
-  previous-EONW supervisor. Fixture-only historical codecs remain
-  fixture-verified.
+  surface and launch with `/sys/fs/cgroup` hidden.
 
 ## EON-C12 — Standalone exact-command terminal
 
@@ -1556,8 +1554,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Claude needs no status-line setup. No reset is invented for an idle window.
 - **Ownership:** Pinned CodexBar owns provider collection and credential access;
   Runtime owns bounded subprocesses, validation and freshness; canonical EONW
-  v9 permits absent resets, preserving all historical validators; Venus consumes
-  typed facts through its existing chip owners. Eon owns exact Nix composition.
+  permits absent resets; Venus consumes typed facts through its existing chip
+  owners. Eon owns exact Nix composition.
 - **Failure policy:** Each read has a ten-second deadline and 64 KiB output cap.
   A failed read keeps retained data unchanged; age alone marks it old after one
   hour. Readings disappear after 24 hours and windows at their reset.
@@ -1679,7 +1677,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   class; and the 1.0 default shortcut actions, with one configured override.
   It also extends the `managed-command-path` flake check to every documented
   `eon-` managed command name. Each later EONW revision adds its predecessor
-  to the previous-generation Stop test, as v2 through v11 are today. Each 1.x
-  release's proof adds a review of changed defaults against the changelog and
-  one installed upgrade observation in which the previous release's live
-  terminals keep running and the new release lists and stops them.
+  to the previous-generation Stop test. Each 1.x release's proof adds a
+  review of changed defaults against the changelog and one installed upgrade
+  observation in which the previous release's live terminals keep running and
+  the new release lists and stops them.

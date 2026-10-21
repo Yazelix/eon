@@ -10,10 +10,10 @@ pub const VERSION: u16 = 12;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
-pub(crate) const MAX_ID_BYTES: usize = 128;
-pub(crate) const MAX_ENDPOINT_BYTES: usize = 4096;
-pub(crate) const MAX_VERSION_BYTES: usize = 128;
-pub(crate) const MAX_COMPONENT_REPORT_BYTES: usize = 32 * 1024;
+const MAX_ID_BYTES: usize = 128;
+const MAX_ENDPOINT_BYTES: usize = 4096;
+const MAX_VERSION_BYTES: usize = 128;
+const MAX_COMPONENT_REPORT_BYTES: usize = 32 * 1024;
 pub const MAX_DETAIL_BYTES: usize = 1024;
 pub const MAX_TABS: usize = 64;
 pub const MAX_SESSIONS: usize = 256;
@@ -30,11 +30,11 @@ pub const CTRL: u8 = 2;
 pub const ALT: u8 = 4;
 pub const SUPER: u8 = 8;
 
-pub(crate) const REQUEST: u8 = 1;
-pub(crate) const SNAPSHOT: u8 = 129;
-pub(crate) const FAILURE: u8 = 130;
-pub(crate) const RUNTIME: u8 = 131;
-pub(crate) const STOPPED: u8 = 132;
+const REQUEST: u8 = 1;
+const SNAPSHOT: u8 = 129;
+const FAILURE: u8 = 130;
+const RUNTIME: u8 = 131;
+const STOPPED: u8 = 132;
 
 const INVOKE_POPUP: u8 = 19;
 const DISMISS_POPUP: u8 = 20;
@@ -76,8 +76,6 @@ pub enum WorkspaceAction {
         tab: String,
         directory: Vec<u8>,
     },
-    /// Retired in v5: every v5 or later request carrying it is rejected.
-    PickTabDirectory,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -482,7 +480,7 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             Side::Right => MOVE_PANE_RIGHT,
         }),
     }
-    frame_version(VERSION, REQUEST, payload.bytes)
+    frame(REQUEST, payload.bytes)
 }
 
 fn encode_workspace_action(payload: &mut Encoder, action: &WorkspaceAction) -> Result<()> {
@@ -514,7 +512,6 @@ fn encode_workspace_action(payload: &mut Encoder, action: &WorkspaceAction) -> R
             payload.string(tab);
             payload.raw(directory);
         }
-        WorkspaceAction::PickTabDirectory => unreachable!("rejected by validate_popup_action"),
         WorkspaceAction::Move(direction) => payload.byte(14 + direction_offset(*direction)),
         WorkspaceAction::CloseTab { tab } => {
             identity("tab id", tab)?;
@@ -535,7 +532,7 @@ fn direction_offset(direction: Direction) -> u8 {
 }
 
 pub fn decode_request(bytes: &[u8]) -> Result<Request> {
-    let (kind, payload) = unframe_version(bytes, VERSION)?;
+    let (kind, payload) = unframe(bytes)?;
     if kind != REQUEST {
         return Err(Error::InvalidKind { value: kind });
     }
@@ -632,7 +629,6 @@ fn decode_workspace_action(decoder: &mut Decoder<'_>, tag: u8) -> Result<Workspa
             validate_directory(&directory)?;
             WorkspaceAction::SetTabDirectory { tab, directory }
         }
-        13 => WorkspaceAction::PickTabDirectory,
         14..=17 => WorkspaceAction::Move(direction(tag - 14)),
         18 => {
             let tab = decoder.string("tab id", MAX_ID_BYTES)?;
@@ -650,11 +646,6 @@ fn decode_workspace_action(decoder: &mut Decoder<'_>, tag: u8) -> Result<Workspa
 
 fn validate_popup_action(action: &Action) -> Result<()> {
     match action {
-        Action::Workspace(WorkspaceAction::PickTabDirectory) => {
-            return Err(Error::InvalidValue {
-                field: "retired picker action",
-            });
-        }
         Action::InvokePopup {
             tab,
             entry,
@@ -694,25 +685,27 @@ struct WireTab {
     popups: Vec<Popup>,
 }
 
+impl From<&Tab> for WireTab {
+    fn from(tab: &Tab) -> Self {
+        Self {
+            id: tab.id.clone(),
+            directory: tab.directory.clone(),
+            pending: tab.pending,
+            selected_pane: tab.selected_pane.clone(),
+            selected_popup: tab.selected_popup.clone(),
+            panes: tab.panes().cloned().collect(),
+            popups: tab.popups.clone(),
+        }
+    }
+}
+
 /// A snapshot payload is the column layout, the workspace with flattened
 /// panes, then the Codex and Claude quotas.
 pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
     let mut payload = Encoder::default();
     let kind = match response {
         Response::Snapshot(snapshot) => {
-            let tabs: Vec<_> = snapshot
-                .tabs
-                .iter()
-                .map(|tab| WireTab {
-                    id: tab.id.clone(),
-                    directory: tab.directory.clone(),
-                    pending: tab.pending,
-                    selected_pane: tab.selected_pane.clone(),
-                    selected_popup: tab.selected_popup.clone(),
-                    panes: tab.panes().cloned().collect(),
-                    popups: tab.popups.clone(),
-                })
-                .collect();
+            let tabs: Vec<_> = snapshot.tabs.iter().map(WireTab::from).collect();
             let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
             validate_workspace(snapshot, &tabs)?;
             validate_quota(snapshot.codex_quota.as_ref())?;
@@ -741,11 +734,11 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             FAILURE
         }
     };
-    frame_version(VERSION, kind, payload.bytes)
+    frame(kind, payload.bytes)
 }
 
 pub fn decode_response(bytes: &[u8]) -> Result<Response> {
-    let (kind, payload) = unframe_version(bytes, VERSION)?;
+    let (kind, payload) = unframe(bytes)?;
     let mut decoder = Decoder::new(payload);
     if kind == FAILURE {
         let failure = decode_failure(&mut decoder)?;
@@ -1026,7 +1019,7 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
         {
             identity("surface id", id)?;
             identity("session id", session)?;
-            validate_endpoint(endpoint, "endpoint")?;
+            validate_endpoint(endpoint)?;
             if !identities.insert(id.as_str())
                 || !sessions.insert(session.as_str())
                 || !endpoints.insert(endpoint.as_slice())
@@ -1219,11 +1212,11 @@ pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>
             FAILURE
         }
     };
-    frame_version(VERSION, kind, payload.bytes)
+    frame(kind, payload.bytes)
 }
 
 pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
-    let (kind, payload) = unframe_version(bytes, VERSION)?;
+    let (kind, payload) = unframe(bytes)?;
     let mut decoder = Decoder::new(payload);
     let response = match kind {
         RUNTIME => {
@@ -1314,7 +1307,7 @@ fn decode_availability(decoder: &mut Decoder<'_>, field: &'static str) -> Result
     })
 }
 
-pub(crate) fn encode_failure(encoder: &mut Encoder, failure: &Failure) -> Result<()> {
+fn encode_failure(encoder: &mut Encoder, failure: &Failure) -> Result<()> {
     identity("failure code", &failure.code)?;
     nonempty("failure detail", &failure.detail, MAX_DETAIL_BYTES)?;
     encoder.string(&failure.code);
@@ -1322,7 +1315,7 @@ pub(crate) fn encode_failure(encoder: &mut Encoder, failure: &Failure) -> Result
     Ok(())
 }
 
-pub(crate) fn decode_failure(decoder: &mut Decoder<'_>) -> Result<Failure> {
+fn decode_failure(decoder: &mut Decoder<'_>) -> Result<Failure> {
     let code = decoder.string("failure code", MAX_ID_BYTES)?;
     identity("failure code", &code)?;
     let detail = decoder.string("failure detail", MAX_DETAIL_BYTES)?;
@@ -1365,7 +1358,7 @@ fn decode_u64(decoder: &mut Decoder<'_>) -> Result<u64> {
     Ok(value)
 }
 
-pub(crate) fn validate_directory(directory: &[u8]) -> Result<()> {
+fn validate_directory(directory: &[u8]) -> Result<()> {
     if directory.is_empty() || directory.contains(&0) {
         return Err(Error::InvalidValue { field: "directory" });
     }
@@ -1378,20 +1371,20 @@ pub(crate) fn validate_directory(directory: &[u8]) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_endpoint(endpoint: &[u8], field: &'static str) -> Result<()> {
+fn validate_endpoint(endpoint: &[u8]) -> Result<()> {
     if endpoint.is_empty() {
-        return Err(Error::InvalidSnapshot { field });
+        return Err(Error::InvalidSnapshot { field: "endpoint" });
     }
     if endpoint.len() > MAX_ENDPOINT_BYTES {
         return Err(Error::FieldTooLong {
-            field,
+            field: "endpoint",
             length: endpoint.len(),
         });
     }
     Ok(())
 }
 
-pub(crate) fn identity(field: &'static str, value: &str) -> Result<()> {
+fn identity(field: &'static str, value: &str) -> Result<()> {
     nonempty(field, value, MAX_ID_BYTES)?;
     if !value
         .bytes()
@@ -1402,7 +1395,7 @@ pub(crate) fn identity(field: &'static str, value: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn nonempty(field: &'static str, value: &str, maximum: usize) -> Result<()> {
+fn nonempty(field: &'static str, value: &str, maximum: usize) -> Result<()> {
     if value.len() > maximum {
         return Err(Error::FieldTooLong {
             field,
@@ -1430,14 +1423,14 @@ pub fn declared_message_len(header: &[u8]) -> Result<usize> {
     Ok(size)
 }
 
-pub(crate) fn frame_version(version: u16, kind: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
+fn frame(kind: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
     let size = HEADER_BYTES + payload.len();
     if size > MAX_MESSAGE_BYTES {
         return Err(Error::MessageTooLarge { size });
     }
     let mut message = Vec::with_capacity(size);
     message.extend_from_slice(MAGIC);
-    message.extend_from_slice(&version.to_le_bytes());
+    message.extend_from_slice(&VERSION.to_le_bytes());
     message.push(kind);
     message.push(0);
     message.extend_from_slice(&(payload.len() as u32).to_le_bytes());
@@ -1445,7 +1438,7 @@ pub(crate) fn frame_version(version: u16, kind: u8, payload: Vec<u8>) -> Result<
     Ok(message)
 }
 
-pub(crate) fn unframe_version(bytes: &[u8], expected_version: u16) -> Result<(u8, &[u8])> {
+fn unframe(bytes: &[u8]) -> Result<(u8, &[u8])> {
     if bytes.len() > MAX_MESSAGE_BYTES {
         return Err(Error::MessageTooLarge { size: bytes.len() });
     }
@@ -1456,7 +1449,7 @@ pub(crate) fn unframe_version(bytes: &[u8], expected_version: u16) -> Result<(u8
         return Err(Error::InvalidMagic);
     }
     let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-    if version != expected_version {
+    if version != VERSION {
         return Err(Error::UnsupportedVersion { version });
     }
     if bytes[7] != 0 {
@@ -1475,50 +1468,50 @@ pub(crate) fn unframe_version(bytes: &[u8], expected_version: u16) -> Result<(u8
 }
 
 #[derive(Default)]
-pub(crate) struct Encoder {
-    pub(crate) bytes: Vec<u8>,
+struct Encoder {
+    bytes: Vec<u8>,
 }
 
 impl Encoder {
-    pub(crate) fn byte(&mut self, value: u8) {
+    fn byte(&mut self, value: u8) {
         self.bytes.push(value);
     }
 
-    pub(crate) fn count(&mut self, value: usize) {
+    fn count(&mut self, value: usize) {
         let value = u16::try_from(value).expect("validated EONW count");
         self.number(value);
     }
 
-    pub(crate) fn number(&mut self, value: u16) {
+    fn number(&mut self, value: u16) {
         self.bytes.extend_from_slice(&value.to_le_bytes());
     }
 
-    pub(crate) fn string(&mut self, value: &str) {
+    fn string(&mut self, value: &str) {
         self.raw(value.as_bytes());
     }
 
-    pub(crate) fn raw(&mut self, value: &[u8]) {
+    fn raw(&mut self, value: &[u8]) {
         let length = u16::try_from(value.len()).expect("validated EONW field length");
         self.bytes.extend_from_slice(&length.to_le_bytes());
         self.bytes.extend_from_slice(value);
     }
 }
 
-pub(crate) struct Decoder<'a> {
+struct Decoder<'a> {
     bytes: &'a [u8],
     offset: usize,
 }
 
 impl<'a> Decoder<'a> {
-    pub(crate) fn new(bytes: &'a [u8]) -> Self {
+    fn new(bytes: &'a [u8]) -> Self {
         Self { bytes, offset: 0 }
     }
 
-    pub(crate) fn byte(&mut self) -> Result<u8> {
+    fn byte(&mut self) -> Result<u8> {
         Ok(self.take(1)?[0])
     }
 
-    pub(crate) fn count(&mut self, field: &'static str, maximum: usize) -> Result<usize> {
+    fn count(&mut self, field: &'static str, maximum: usize) -> Result<usize> {
         let value = self.number()? as usize;
         if value > maximum {
             return Err(Error::InvalidSnapshot { field });
@@ -1526,18 +1519,18 @@ impl<'a> Decoder<'a> {
         Ok(value)
     }
 
-    pub(crate) fn number(&mut self) -> Result<u16> {
+    fn number(&mut self) -> Result<u16> {
         let bytes = self.take(2)?;
         Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
-    pub(crate) fn string(&mut self, field: &'static str, maximum: usize) -> Result<String> {
+    fn string(&mut self, field: &'static str, maximum: usize) -> Result<String> {
         str::from_utf8(self.raw(field, maximum)?)
             .map(str::to_owned)
             .map_err(|_| Error::InvalidUtf8 { field })
     }
 
-    pub(crate) fn raw(&mut self, field: &'static str, maximum: usize) -> Result<&'a [u8]> {
+    fn raw(&mut self, field: &'static str, maximum: usize) -> Result<&'a [u8]> {
         let bytes = self.take(2)?;
         let length = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
         if length > maximum {
@@ -1553,11 +1546,7 @@ impl<'a> Decoder<'a> {
         Ok(value)
     }
 
-    pub(crate) fn rest(self) -> &'a [u8] {
-        &self.bytes[self.offset..]
-    }
-
-    pub(crate) fn finish(self) -> Result<()> {
+    fn finish(self) -> Result<()> {
         if self.offset == self.bytes.len() {
             Ok(())
         } else {
@@ -1585,6 +1574,118 @@ mod tests {
         }
     }
 
+    fn popup(id: &str, entry: &str) -> Popup {
+        Popup {
+            id: id.into(),
+            entry: entry.into(),
+            session: format!("s{id}"),
+            endpoint: format!("/{id}").into_bytes(),
+        }
+    }
+
+    fn window(duration_minutes: u32, resets_at: Option<u64>) -> QuotaWindow {
+        QuotaWindow {
+            duration_minutes,
+            remaining_percent: 50,
+            resets_at,
+        }
+    }
+
+    /// Hidden and inactive popups, a popup-only tab, two pending tabs, columns
+    /// and both quotas.
+    fn snapshot() -> Snapshot {
+        let entry = |id: &str, key: &str| PopupEntry {
+            id: id.into(),
+            label: id.into(),
+            shortcut: Shortcut {
+                modifiers: ALT | SHIFT,
+                key: key.into(),
+            },
+        };
+        let tab = |id: &str, columns, popups: Vec<Popup>| Tab {
+            id: id.into(),
+            directory: b"/tmp/\xff".to_vec(),
+            pending: false,
+            selected_pane: None,
+            selected_popup: None,
+            columns,
+            popups,
+        };
+        let pending = |id: &str, popup_id: &str| Tab {
+            pending: true,
+            selected_popup: Some(popup_id.into()),
+            ..tab(id, vec![], vec![popup(popup_id, PROJECT_ENTRY)])
+        };
+        let columns = vec![
+            Column {
+                panes: vec![pane("p1"), pane("p2")],
+                expanded: "p2".into(),
+            },
+            Column {
+                panes: vec![pane("p3")],
+                expanded: "p3".into(),
+            },
+        ];
+        Snapshot {
+            active_tab: "t1".into(),
+            geometry: PopupGeometry {
+                side_margin: 8.5,
+                vertical_margin: 4.0,
+            },
+            entries: vec![entry(PROJECT_ENTRY, "KeyZ"), entry("agent", "KeyL")],
+            tabs: vec![
+                Tab {
+                    selected_pane: Some("p3".into()),
+                    ..tab("t1", columns, vec![popup("u1", "agent")])
+                },
+                pending("t2", "u2"),
+                tab("t3", vec![], vec![popup("u3", "agent")]),
+                pending("t4", "u4"),
+            ],
+            codex_quota: Some(CodexQuota {
+                state: CodexQuotaState::Fresh,
+                observed_at: 100,
+                windows: vec![window(300, Some(200)), window(10080, None)],
+            }),
+            claude_quota: Some(ClaudeQuota {
+                state: ClaudeQuotaState::Fresh,
+                observed_at: 100,
+                windows: vec![window(300, Some(200)), window(10080, None)],
+            }),
+        }
+    }
+
+    /// Encodes a snapshot without validating it, as a faulty peer would.
+    fn forge(snapshot: &Snapshot) -> Vec<u8> {
+        let mut payload = Encoder::default();
+        payload.count(snapshot.tabs.len());
+        for tab in &snapshot.tabs {
+            payload.count(tab.columns.len());
+            for column in &tab.columns {
+                let expanded = column.panes.iter().position(|p| p.id == column.expanded);
+                payload.count(column.panes.len());
+                payload.count(expanded.unwrap_or(column.panes.len()));
+            }
+        }
+        let tabs: Vec<_> = snapshot.tabs.iter().map(WireTab::from).collect();
+        encode_workspace(&mut payload, snapshot, &tabs);
+        encode_quota(&mut payload, snapshot.codex_quota.as_ref());
+        let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
+        encode_quota(&mut payload, claude.as_ref());
+        frame(SNAPSHOT, payload.bytes).unwrap()
+    }
+
+    fn field(error: Error) -> &'static str {
+        match error {
+            Error::InvalidTag { field, .. }
+            | Error::InvalidUtf8 { field }
+            | Error::InvalidValue { field }
+            | Error::FieldTooLong { field, .. }
+            | Error::InvalidSnapshot { field } => field,
+            error => panic!("{error:?} names no field"),
+        }
+    }
+
     #[test]
     fn sideways_pane_moves_reject_malformed_requests() {
         let overlong = "r".repeat(MAX_ID_BYTES + 1);
@@ -1600,17 +1701,17 @@ mod tests {
                 let mut payload = Encoder::default();
                 payload.string(id);
                 payload.byte(tag);
-                let bytes = frame_version(VERSION, REQUEST, payload.bytes).unwrap();
+                let bytes = frame(REQUEST, payload.bytes).unwrap();
                 assert!(decode_request(&bytes).is_err());
             }
 
             let mut payload = Encoder::default();
             payload.string("r1");
-            let truncated = frame_version(VERSION, REQUEST, payload.bytes.clone()).unwrap();
+            let truncated = frame(REQUEST, payload.bytes.clone()).unwrap();
             assert_eq!(decode_request(&truncated), Err(Error::Truncated));
             payload.byte(tag);
             payload.byte(0);
-            let trailing = frame_version(VERSION, REQUEST, payload.bytes).unwrap();
+            let trailing = frame(REQUEST, payload.bytes).unwrap();
             assert_eq!(
                 decode_request(&trailing),
                 Err(Error::TrailingBytes { count: 1 })
@@ -1701,12 +1802,7 @@ mod tests {
                         expanded: "p3".into(),
                     },
                 ],
-                popups: vec![Popup {
-                    id: "u1".into(),
-                    entry: "git".into(),
-                    session: "su1".into(),
-                    endpoint: b"/u1".to_vec(),
-                }],
+                popups: vec![popup("u1", "git")],
             }],
             codex_quota: Some(CodexQuota {
                 state: CodexQuotaState::Fresh,
@@ -1784,5 +1880,649 @@ mod tests {
             assert_eq!(hex(&bytes), expected, "{response:?}");
             assert_eq!(decode_lifecycle_response(&bytes).unwrap(), response);
         }
+    }
+
+    #[test]
+    fn frames_reject_other_versions_and_malformed_headers() {
+        let request = encode_request(&Request {
+            id: "r1".into(),
+            action: Action::Workspace(WorkspaceAction::Inspect),
+        })
+        .unwrap();
+        let edit = |offset: usize, bytes: &[u8]| {
+            let mut message = request.clone();
+            message[offset..offset + bytes.len()].copy_from_slice(bytes);
+            message
+        };
+        for (message, error) in [
+            (edit(0, b"EONX"), Error::InvalidMagic),
+            (
+                edit(4, &11_u16.to_le_bytes()),
+                Error::UnsupportedVersion { version: 11 },
+            ),
+            (edit(6, &[SNAPSHOT]), Error::InvalidKind { value: SNAPSHOT }),
+            (edit(7, &[1]), Error::InvalidFlags { value: 1 }),
+            (
+                edit(8, &u32::MAX.to_le_bytes()),
+                Error::MessageTooLarge {
+                    size: HEADER_BYTES + u32::MAX as usize,
+                },
+            ),
+            (
+                [request.as_slice(), &[0][..]].concat(),
+                Error::TrailingBytes { count: 1 },
+            ),
+            (
+                vec![0; MAX_MESSAGE_BYTES + 1],
+                Error::MessageTooLarge {
+                    size: MAX_MESSAGE_BYTES + 1,
+                },
+            ),
+        ] {
+            assert_eq!(decode_request(&message), Err(error));
+        }
+        for end in 0..request.len() {
+            assert_eq!(decode_request(&request[..end]), Err(Error::Truncated));
+        }
+        assert_eq!(declared_message_len(&request), Ok(request.len()));
+        assert_eq!(
+            declared_message_len(&request[..HEADER_BYTES - 1]),
+            Err(Error::Truncated)
+        );
+
+        // Workspace and lifecycle replies share only the failure kind.
+        let stopped = encode_lifecycle_response(&LifecycleResponse::Stopped(Stopped {
+            generation: "g1".into(),
+            sessions: vec![],
+        }))
+        .unwrap();
+        assert_eq!(
+            decode_response(&stopped),
+            Err(Error::InvalidKind { value: STOPPED })
+        );
+        let state = encode_response(&Response::Snapshot(snapshot())).unwrap();
+        assert_eq!(
+            decode_lifecycle_response(&state),
+            Err(Error::InvalidKind { value: SNAPSHOT })
+        );
+        let failure = Failure {
+            code: "busy".into(),
+            detail: "no".into(),
+        };
+        let bytes = encode_response(&Response::Failure(failure.clone())).unwrap();
+        assert_eq!(
+            decode_lifecycle_response(&bytes),
+            Ok(LifecycleResponse::Failure(failure))
+        );
+    }
+
+    #[test]
+    fn requests_keep_their_tags_and_reject_malformed_actions() {
+        let frame_action = |id: &str, action: &[u8]| {
+            let mut payload = Encoder::default();
+            payload.string(id);
+            payload.bytes.extend_from_slice(action);
+            frame(REQUEST, payload.bytes).unwrap()
+        };
+        let w = Action::Workspace;
+        let target = |instance: &str| PopupTarget {
+            tab: "t1".into(),
+            instance: instance.into(),
+        };
+        let invoke = |entry: &str, intent| Action::InvokePopup {
+            tab: "t1".into(),
+            entry: entry.into(),
+            expected_instance: None,
+            intent,
+        };
+
+        let valid: [(Action, &[u8]); 20] = [
+            (w(WorkspaceAction::Inspect), &[0]),
+            (w(WorkspaceAction::CreateTab), &[1]),
+            (w(WorkspaceAction::CreatePane), &[2]),
+            (
+                w(WorkspaceAction::FocusId("p1".into())),
+                &[3, 2, 0, b'p', b'1'],
+            ),
+            (w(WorkspaceAction::Focus(Direction::Left)), &[4]),
+            (w(WorkspaceAction::Focus(Direction::Right)), &[5]),
+            (w(WorkspaceAction::Focus(Direction::Up)), &[6]),
+            (w(WorkspaceAction::Focus(Direction::Down)), &[7]),
+            (w(WorkspaceAction::InspectRuntime), &[8]),
+            (
+                w(WorkspaceAction::Stop {
+                    generation: "g1".into(),
+                }),
+                &[9, 2, 0, b'g', b'1'],
+            ),
+            (w(WorkspaceAction::Present { workspace: false }), &[10, 0]),
+            (w(WorkspaceAction::Present { workspace: true }), &[10, 1]),
+            (w(WorkspaceAction::InspectPresentation), &[11]),
+            (w(WorkspaceAction::Move(Direction::Left)), &[14]),
+            (w(WorkspaceAction::Move(Direction::Right)), &[15]),
+            (w(WorkspaceAction::Move(Direction::Up)), &[16]),
+            (w(WorkspaceAction::Move(Direction::Down)), &[17]),
+            (
+                invoke("git", InvokeIntent::Toggle),
+                &[19, 2, 0, b't', b'1', 3, 0, b'g', b'i', b't', 0, 0],
+            ),
+            (
+                Action::DismissPopup(target("u1")),
+                &[20, 2, 0, b't', b'1', 2, 0, b'u', b'1'],
+            ),
+            (Action::MovePaneSideways(Side::Left), &[24]),
+        ];
+        for (action, bytes) in valid {
+            let request = Request {
+                id: "r1".into(),
+                action,
+            };
+            let bytes = frame_action("r1", bytes);
+            assert_eq!(encode_request(&request).unwrap(), bytes, "{request:?}");
+            assert_eq!(decode_request(&bytes).unwrap(), request);
+        }
+
+        // Neither side accepts what the other would reject.
+        let invalid: [(&str, Action, &[u8], &str); 12] = [
+            ("r 1", w(WorkspaceAction::Inspect), &[0], "request id"),
+            (
+                "r1",
+                w(WorkspaceAction::FocusId(String::new())),
+                &[3, 0, 0],
+                "focus id",
+            ),
+            (
+                "r1",
+                w(WorkspaceAction::FocusId("x".repeat(MAX_ID_BYTES + 1))),
+                &[3, MAX_ID_BYTES as u8 + 1, 0],
+                "focus id",
+            ),
+            (
+                "r1",
+                w(WorkspaceAction::Stop {
+                    generation: "g 1".into(),
+                }),
+                &[9, 3, 0, b'g', b' ', b'1'],
+                "generation",
+            ),
+            (
+                "r1",
+                w(WorkspaceAction::SetTabDirectory {
+                    tab: String::new(),
+                    directory: b"/".to_vec(),
+                }),
+                &[12, 0, 0, 1, 0, b'/'],
+                "tab id",
+            ),
+            (
+                "r1",
+                w(WorkspaceAction::SetTabDirectory {
+                    tab: "t1".into(),
+                    directory: vec![],
+                }),
+                &[12, 2, 0, b't', b'1', 0, 0],
+                "directory",
+            ),
+            (
+                "r1",
+                w(WorkspaceAction::CloseTab { tab: String::new() }),
+                &[18, 0, 0],
+                "tab id",
+            ),
+            (
+                "r1",
+                invoke("", InvokeIntent::Toggle),
+                &[19, 2, 0, b't', b'1', 0, 0, 0, 0],
+                "entry id",
+            ),
+            (
+                "r1",
+                Action::DismissPopup(target("u 1")),
+                &[20, 2, 0, b't', b'1', 3, 0, b'u', b' ', b'1'],
+                "popup id",
+            ),
+            (
+                "r1",
+                Action::CommitDirectory {
+                    target: target("u1"),
+                    directory: b"/a\0".to_vec(),
+                },
+                &[21, 2, 0, b't', b'1', 2, 0, b'u', b'1', 3, 0, b'/', b'a', 0],
+                "directory",
+            ),
+            (
+                "r1",
+                Action::ClosePane {
+                    pane: String::new(),
+                },
+                &[23, 0, 0],
+                "pane id",
+            ),
+            (
+                "r1",
+                Action::ClosePane { pane: "p 2".into() },
+                &[23, 3, 0, b'p', b' ', b'2'],
+                "pane id",
+            ),
+        ];
+        for (id, action, bytes, expected) in invalid {
+            let request = Request {
+                id: id.into(),
+                action,
+            };
+            let encoded = encode_request(&request).unwrap_err();
+            assert_eq!(field(encoded), expected, "{request:?}");
+            let decoded = decode_request(&frame_action(id, bytes)).unwrap_err();
+            assert_eq!(field(decoded), expected, "{request:?}");
+        }
+
+        let decode_only: [(&[u8], Error); 6] = [
+            // The retired picker opcode.
+            (
+                &[13],
+                Error::InvalidTag {
+                    field: "action",
+                    value: 13,
+                },
+            ),
+            (
+                &[26],
+                Error::InvalidTag {
+                    field: "action",
+                    value: 26,
+                },
+            ),
+            (
+                &[10, 2],
+                Error::InvalidValue {
+                    field: "presentation mode",
+                },
+            ),
+            (
+                &[19, 2, 0, b't', b'1', 3, 0, b'g', b'i', b't', 2],
+                Error::InvalidValue {
+                    field: "expected instance",
+                },
+            ),
+            (
+                &[19, 2, 0, b't', b'1', 3, 0, b'g', b'i', b't', 0, 2],
+                Error::InvalidTag {
+                    field: "popup intent",
+                    value: 2,
+                },
+            ),
+            (&[0, 0], Error::TrailingBytes { count: 1 }),
+        ];
+        for (bytes, error) in decode_only {
+            assert_eq!(decode_request(&frame_action("r1", bytes)), Err(error));
+        }
+    }
+
+    #[test]
+    fn popup_actions_target_the_observed_instance() {
+        let target = |tab: &str, instance: &str| PopupTarget {
+            tab: tab.into(),
+            instance: instance.into(),
+        };
+        let invoke = |entry: &str, expected: Option<&str>, intent| Action::InvokePopup {
+            tab: "t1".into(),
+            entry: entry.into(),
+            expected_instance: expected.map(Into::into),
+            intent,
+        };
+        let commit = |tab: &str, instance: &str| Action::CommitDirectory {
+            target: target(tab, instance),
+            directory: b"/tmp/\xfe".to_vec(),
+        };
+        let mut state = snapshot();
+        let observed = [
+            invoke("agent", Some("u1"), InvokeIntent::Toggle),
+            invoke("agent", Some("u1"), InvokeIntent::Focus),
+            Action::DismissPopup(target("t1", "u1")),
+            commit("t2", "u2"),
+        ];
+        for action in &observed {
+            assert_eq!(check_popup_action(&state, action), Ok(()), "{action:?}");
+        }
+
+        // A replacement has a fresh id, so requests aimed at the old instance fail.
+        state.tabs[0].popups[0] = popup("u5", "agent");
+        state.tabs[1].popups[0] = popup("u6", PROJECT_ENTRY);
+        state.tabs[1].selected_popup = Some("u6".into());
+        for action in &observed {
+            assert!(check_popup_action(&state, action).is_err(), "{action:?}");
+        }
+
+        let checks = |state: &Snapshot, cases: &[(Action, bool)]| {
+            for (action, valid) in cases {
+                let result = check_popup_action(state, action);
+                assert_eq!(result.is_ok(), *valid, "{action:?}: {result:?}");
+            }
+        };
+        checks(
+            &state,
+            &[
+                (invoke(PROJECT_ENTRY, None, InvokeIntent::Toggle), true),
+                (invoke("agent", None, InvokeIntent::Toggle), false),
+                (invoke("missing", None, InvokeIntent::Toggle), false),
+                (commit("t2", "u6"), true),
+                (commit("t1", "u5"), false),
+                (Action::DismissPopup(target("t3", "u3")), true),
+                (Action::DismissPopup(target("t1", "u3")), false),
+            ],
+        );
+        // Only the selected project popup commits a directory.
+        state.tabs[0].popups.push(popup("u7", PROJECT_ENTRY));
+        checks(
+            &state,
+            &[
+                (invoke(PROJECT_ENTRY, None, InvokeIntent::Toggle), false),
+                (commit("t1", "u7"), false),
+            ],
+        );
+        state.tabs[0].selected_popup = Some("u7".into());
+        checks(&state, &[(commit("t1", "u7"), true)]);
+    }
+
+    #[test]
+    fn snapshots_reject_broken_ownership_on_both_sides() {
+        let state = snapshot();
+        let bytes = encode_response(&Response::Snapshot(state.clone())).unwrap();
+        assert_eq!(forge(&state), bytes);
+
+        let valid: [fn(&mut Snapshot); 5] = [
+            |_| {},
+            |s| {
+                s.codex_quota = None;
+                s.claude_quota = None;
+            },
+            |s| {
+                let quota = s.codex_quota.as_mut().unwrap();
+                quota.state = CodexQuotaState::Blocked;
+                quota.windows.clear();
+            },
+            |s| {
+                let quota = s.codex_quota.as_mut().unwrap();
+                quota.state = CodexQuotaState::Unknown;
+                quota.windows.clear();
+            },
+            |s| {
+                s.codex_quota.as_mut().unwrap().state = CodexQuotaState::Stale;
+                s.claude_quota.as_mut().unwrap().state = ClaudeQuotaState::Stale;
+            },
+        ];
+        for change in valid {
+            let mut candidate = snapshot();
+            change(&mut candidate);
+            let response = Response::Snapshot(candidate);
+            let bytes = encode_response(&response).unwrap();
+            assert_eq!(decode_response(&bytes).unwrap(), response);
+        }
+
+        fn codex(s: &mut Snapshot) -> &mut CodexQuota {
+            s.codex_quota.as_mut().unwrap()
+        }
+        fn claude(s: &mut Snapshot) -> &mut ClaudeQuota {
+            s.claude_quota.as_mut().unwrap()
+        }
+        type Change = fn(&mut Snapshot);
+        let invalid: [(&str, &[Change]); 21] = [
+            // Every tab, pane and popup owns its identity, session and endpoint.
+            (
+                "surface identity",
+                &[
+                    |s| s.tabs[0].popups[0].id = "p1".into(),
+                    |s| s.tabs[0].popups[0].session = "sp1".into(),
+                    |s| s.tabs[0].popups[0].endpoint = b"/p1".to_vec(),
+                    |s| s.tabs[3].popups[0].endpoint = b"/u2".to_vec(),
+                ],
+            ),
+            ("tab id", &[|s| s.tabs[2].id = "t1".into()]),
+            (
+                "popup entry",
+                &[
+                    |s| s.tabs[0].popups.push(popup("u5", "agent")),
+                    |s| s.tabs[0].popups[0].entry = "missing".into(),
+                ],
+            ),
+            (
+                "selected popup",
+                &[|s| s.tabs[0].selected_popup = Some("u3".into())],
+            ),
+            (
+                "selected pane",
+                &[
+                    |s| s.tabs[0].selected_pane = Some("u1".into()),
+                    |s| s.tabs[0].selected_pane = None,
+                    |s| s.tabs[2].selected_pane = Some("p1".into()),
+                    // The focus is an expanded pane.
+                    |s| s.tabs[0].selected_pane = Some("p1".into()),
+                ],
+            ),
+            ("empty tab", &[|s| s.tabs[2].popups.clear()]),
+            ("active tab", &[|s| s.active_tab = "t5".into()]),
+            // A pending tab holds exactly one selected project popup.
+            (
+                "pending tab",
+                &[
+                    |s| s.tabs[0].pending = true,
+                    |s| s.tabs[1].selected_popup = None,
+                    |s| s.tabs[1].popups[0].entry = "agent".into(),
+                ],
+            ),
+            (
+                "entries",
+                &[
+                    |s| s.entries[1].id = PROJECT_ENTRY.into(),
+                    |s| s.entries[1].shortcut.key = "KeyZ".into(),
+                ],
+            ),
+            (
+                "shortcut",
+                &[
+                    |s| s.entries[0].shortcut.modifiers = 128,
+                    |s| s.entries[0].shortcut.key = "keyz".into(),
+                ],
+            ),
+            (
+                "entry id",
+                &[|s| s.entries[0].id = "x".repeat(MAX_ENTRY_ID_BYTES + 1)],
+            ),
+            (
+                "entry label",
+                &[
+                    |s| s.entries[0].label = "x".repeat(MAX_LABEL_BYTES + 1),
+                    |s| s.entries[0].label = "tool\nnotice".into(),
+                ],
+            ),
+            (
+                "popup margin",
+                &[
+                    |s| s.geometry.side_margin = f32::NAN,
+                    |s| s.geometry.vertical_margin = 129.0,
+                ],
+            ),
+            (
+                "directory",
+                &[
+                    |s| s.tabs[0].directory.push(0),
+                    |s| s.tabs[0].directory = vec![b'/'; MAX_DIRECTORY_BYTES + 1],
+                ],
+            ),
+            (
+                "columns",
+                &[|s| {
+                    s.tabs[0]
+                        .columns
+                        .extend(["p4", "p5", "p6"].map(|id| Column {
+                            panes: vec![pane(id)],
+                            expanded: id.into(),
+                        }))
+                }],
+            ),
+            (
+                "empty column",
+                &[|s| {
+                    s.tabs[0].columns.push(Column {
+                        panes: vec![],
+                        expanded: "p1".into(),
+                    })
+                }],
+            ),
+            (
+                "expanded pane",
+                &[|s| s.tabs[0].columns[0].expanded = "p3".into()],
+            ),
+            (
+                "Codex quota",
+                &[
+                    |s| codex(s).observed_at = 0,
+                    |s| codex(s).windows.push(window(60, None)),
+                ],
+            ),
+            (
+                "Codex quota state",
+                &[
+                    |s| codex(s).state = CodexQuotaState::Blocked,
+                    |s| codex(s).windows.clear(),
+                    |s| claude(s).windows.clear(),
+                ],
+            ),
+            (
+                "Codex quota window",
+                &[
+                    |s| codex(s).windows[0].duration_minutes = 0,
+                    |s| codex(s).windows[0].remaining_percent = 101,
+                    |s| codex(s).windows[0].resets_at = Some(100),
+                    |s| claude(s).windows[0].remaining_percent = 101,
+                    |s| claude(s).windows[0].resets_at = Some(100),
+                ],
+            ),
+            (
+                "Claude quota",
+                &[
+                    |s| claude(s).windows[0].duration_minutes = 60,
+                    |s| claude(s).windows[1].duration_minutes = 300,
+                ],
+            ),
+        ];
+        for (expected, changes) in invalid {
+            for (index, change) in changes.iter().enumerate() {
+                let mut candidate = snapshot();
+                change(&mut candidate);
+                let error = encode_response(&Response::Snapshot(candidate.clone())).unwrap_err();
+                assert_eq!(field(error), expected, "{expected} case {index}");
+                let forged = forge(&candidate);
+                assert!(decode_response(&forged).is_err(), "{expected} case {index}");
+            }
+        }
+
+        // A layout covering fewer panes than the tab carries cannot drop the rest.
+        // The payload opens with the tab count, then t1's column count and its
+        // first column's pane count.
+        let mut forged = bytes;
+        forged[HEADER_BYTES + 4] = 1;
+        assert_eq!(
+            decode_response(&forged),
+            Err(Error::InvalidSnapshot { field: "columns" })
+        );
+    }
+
+    #[test]
+    fn every_legal_snapshot_fits_the_frame_budget() {
+        // Upper bound: every session takes the larger popup form, every tab
+        // reserves both selections and the most columns, and both quotas carry
+        // every window with a reset.
+        let id = 2 + MAX_ID_BYTES;
+        let entry_id = 2 + MAX_ENTRY_ID_BYTES;
+        let quota = 1 + 1 + 8 + 2 + MAX_CODEX_QUOTA_WINDOWS * (4 + 1 + 1 + 8);
+        let upper_bound = HEADER_BYTES
+            + 2
+            + MAX_TABS * (2 + MAX_COLUMNS * 4)
+            + id
+            + 8
+            + 2
+            + MAX_ENTRIES * (entry_id + 2 + MAX_LABEL_BYTES + 1 + 2 + MAX_KEY_BYTES)
+            + 2
+            + MAX_TABS * (id + 2 + MAX_DIRECTORY_BYTES + 1 + 2 * (1 + id) + 2 + 2)
+            + MAX_SESSIONS * (id + entry_id + id + 2 + MAX_ENDPOINT_BYTES)
+            + 2 * quota;
+        assert!(upper_bound <= MAX_MESSAGE_BYTES, "{upper_bound}");
+
+        let name = |prefix: &str, n: usize, length: usize| {
+            let name = format!("{prefix}{n}");
+            format!("{name}{}", "x".repeat(length - name.len()))
+        };
+        let mut state = snapshot();
+        state.entries = (0..MAX_ENTRIES)
+            .map(|n| PopupEntry {
+                id: name("entry", n, MAX_ENTRY_ID_BYTES),
+                label: "x".repeat(MAX_LABEL_BYTES),
+                shortcut: Shortcut {
+                    modifiers: (n % 15 + 1) as u8,
+                    key: ["BracketRight", "BracketLeft", "ArrowRight"][n / 15].into(),
+                },
+            })
+            .collect();
+        // Each tab holds two single-pane columns and two popups.
+        let per_tab = MAX_SESSIONS / MAX_TABS;
+        state.tabs = (0..MAX_TABS)
+            .map(|t| {
+                let surface = |i: usize| {
+                    let n = t * per_tab + i;
+                    let session = name("s", n, MAX_ID_BYTES);
+                    let endpoint = name("/", n, MAX_ENDPOINT_BYTES).into_bytes();
+                    (n, session, endpoint)
+                };
+                let columns: Vec<_> = (0..per_tab / 2)
+                    .map(|i| {
+                        let (n, session, endpoint) = surface(i);
+                        let id = name("p", n, MAX_ID_BYTES);
+                        Column {
+                            expanded: id.clone(),
+                            panes: vec![Pane {
+                                id,
+                                session,
+                                endpoint,
+                                live: true,
+                            }],
+                        }
+                    })
+                    .collect();
+                let popups: Vec<_> = (per_tab / 2..per_tab)
+                    .map(|i| {
+                        let (n, session, endpoint) = surface(i);
+                        Popup {
+                            id: name("u", n, MAX_ID_BYTES),
+                            entry: state.entries[i].id.clone(),
+                            session,
+                            endpoint,
+                        }
+                    })
+                    .collect();
+                Tab {
+                    id: name("t", t, MAX_ID_BYTES),
+                    directory: vec![b'/'; MAX_DIRECTORY_BYTES],
+                    pending: false,
+                    selected_pane: Some(columns[0].expanded.clone()),
+                    selected_popup: Some(popups[0].id.clone()),
+                    columns,
+                    popups,
+                }
+            })
+            .collect();
+        state.active_tab = state.tabs[0].id.clone();
+        let response = Response::Snapshot(state.clone());
+        let bytes = encode_response(&response).unwrap();
+        assert!(bytes.len() <= upper_bound);
+        assert_eq!(decode_response(&bytes).unwrap(), response);
+
+        // The bound rests on the session limit, which neither side lets a
+        // snapshot exceed.
+        let extra = popup("extra", &state.entries[per_tab].id);
+        state.tabs[0].popups.push(extra);
+        let error = encode_response(&Response::Snapshot(state.clone())).unwrap_err();
+        assert_eq!(field(error), "sessions");
+        assert!(decode_response(&forge(&state)).is_err());
     }
 }
