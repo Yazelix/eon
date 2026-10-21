@@ -390,9 +390,7 @@ impl Workspace {
             }
             WorkspaceAction::FocusId(id) => self.focus_id(&id, operate)?,
             WorkspaceAction::Focus(direction) => self.focus_direction(direction, operate)?,
-            WorkspaceAction::Move(direction) => {
-                self.move_direction(target, direction, called, operate)?
-            }
+            WorkspaceAction::Move(direction) => self.move_direction(target, direction)?,
             WorkspaceAction::SetTabDirectory { tab, directory } => {
                 self.set_tab_directory(&tab, directory)?;
             }
@@ -1069,13 +1067,7 @@ impl Workspace {
         Ok(())
     }
 
-    fn move_direction(
-        &mut self,
-        tab_index: usize,
-        direction: Direction,
-        called: bool,
-        operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
-    ) -> Result<(), Failure> {
+    fn move_direction(&mut self, tab_index: usize, direction: Direction) -> Result<(), Failure> {
         match direction {
             Direction::Left | Direction::Right => {
                 let neighbor = if direction == Direction::Left {
@@ -1095,12 +1087,13 @@ impl Workspace {
             }
             Direction::Up | Direction::Down => {
                 self.require_established(tab_index)?;
-                // A caller's tab without panes refuses before its popup goes.
-                if called && self.tabs[tab_index].selected_column.is_none() {
-                    return Err(action_error("unavailable", "tab has no pane"));
-                }
-                let tab_index = self.dismiss_for_pane_action(tab_index, operate)?;
                 let tab = &mut self.tabs[tab_index];
+                if tab.selected_popup.is_some() {
+                    return Err(action_error(
+                        "unavailable",
+                        "close the popup before moving a pane up or down",
+                    ));
+                }
                 let column = tab
                     .selected_column
                     .ok_or_else(|| action_error("unavailable", "tab has no pane"))?;
@@ -2169,6 +2162,34 @@ mod tests {
         )
         .unwrap();
         let agent = workspace.snapshot().tabs[0].popups[0].session.clone();
+
+        // A popup covering the active tab leaves another tab's pane free to
+        // move; with that other tab active, the popup's own terminal is
+        // refused.
+        request(
+            &mut workspace,
+            "m2",
+            Some("session-1"),
+            Action::Workspace(WorkspaceAction::Move(Direction::Up)),
+        )
+        .unwrap();
+        request(
+            &mut workspace,
+            "to-t1",
+            None,
+            Action::Workspace(WorkspaceAction::FocusId("t1".into())),
+        )
+        .unwrap();
+        let before = workspace.snapshot();
+        let failure = request(
+            &mut workspace,
+            "m3",
+            Some(&agent),
+            Action::Workspace(WorkspaceAction::Move(Direction::Down)),
+        )
+        .unwrap_err();
+        assert_eq!(failure.code, "unavailable");
+        assert_eq!(workspace.snapshot(), before);
         request(
             &mut workspace,
             "c2",
@@ -2332,7 +2353,7 @@ mod tests {
     }
 
     #[test]
-    fn sideways_pane_moves_refuse_covering_popups_without_changing_tabs() {
+    fn pane_moves_refuse_covering_popups_without_changing_tabs() {
         let mut workspace = Workspace::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -2381,18 +2402,17 @@ mod tests {
                     }
                 }
                 let before = covered.clone();
-                for side in [Side::Left, Side::Right] {
+                for action in [
+                    Action::MovePaneSideways(Side::Left),
+                    Action::MovePaneSideways(Side::Right),
+                    Action::Workspace(WorkspaceAction::Move(Direction::Up)),
+                    Action::Workspace(WorkspaceAction::Move(Direction::Down)),
+                ] {
                     assert_eq!(
                         covered
-                            .dispatch(
-                                "move",
-                                None,
-                                Action::MovePaneSideways(side),
-                                prepared,
-                                |_| {
-                                    panic!("a refused pane move must not start or stop a terminal")
-                                }
-                            )
+                            .dispatch("move", None, action, prepared, |_| {
+                                panic!("a refused pane move must not start or stop a terminal")
+                            })
                             .unwrap_err()
                             .code,
                         "unavailable"

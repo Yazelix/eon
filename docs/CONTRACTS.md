@@ -437,7 +437,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     preceding one, and disappears when emptied. Past the tab's outer column a
     pane from a stack opens a new column at that edge while the tab has fewer
     than four columns; a pane alone there, or a fifth column, stops quietly.
-    Sideways movement is unavailable while a popup or picker covers the tab.
+    Moving a pane sideways, up or down is unavailable while a popup or picker
+    covers the tab.
     The moved stable identity remains selected and keeps its terminal. Movement
     stops quietly at ordered edges and remains unavailable in the picker-bound
     active tab. Venus maps Ctrl+Alt+Shift+H/L, Ctrl+Alt+K/J and Ctrl+Alt+H/L
@@ -569,7 +570,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   notice.
   Sideways pane moves (`eon-sideways-pane-moves-k9ca`): runtime
   `sideways_pane_moves_join_neighbor_stacks_split_at_edges_and_drop_emptied_columns`,
-  `sideways_pane_moves_refuse_covering_popups_without_changing_tabs`,
+  `pane_moves_refuse_covering_popups_without_changing_tabs` (up/down too since
+  `eon-popup-covered-pane-reorder-iw2k`),
   the real-binary `eon pane move right` in
   `delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`,
   `sideways_pane_moves_reject_malformed_requests`,

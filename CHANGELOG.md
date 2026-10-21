@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Ctrl+Alt+K/J and `eon pane move up|down` no longer close a popup that
+  covers the tab to reorder the panes behind it. Like sideways moves, they
+  refuse until you close the popup. Alt+K/J still closes it and selects the
+  pane above or below.
 - Run inside an Eon terminal, `eon pane create`, `pane close`, `pane move` and
   `tab move` act on that terminal's own tab instead of the active one, so an
   agent in a background tab no longer changes the tab you are looking at. Each
