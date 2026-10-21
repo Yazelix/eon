@@ -130,7 +130,7 @@ native comparison: reuse measurement, row priority, hover and static AccessKit
 projection. Claude uses a plain C monogram, without copied brand artwork.
 Provider collection and freshness remain Runtime responsibilities.
 
-### CPU use
+### CPU and memory use
 
 VEN-C28 (`eon-cpu-widget-eon-bar-acxs`) compares btop v1.4.7
 (`6e39144aaf5a6bc01b9f795010b0914431067183`,
@@ -146,6 +146,15 @@ handling. It rejects btop's clamping of a counter that went backwards into a
 false 0% or 100%, Waybar's 32-bit total and unclamped casts, and both
 projects' since-boot or 100 ms first value: the first reading is only a
 baseline, and a failed or non-advancing reading shows nothing.
+
+Memory use (`eon-igae.3`) compares btop v1.4.7's Linux memory collection and
+Waybar 0.15.0's `src/modules/memory/` at the same revisions against Linux
+v7.3's `Documentation/filesystems/proc.rst` and `fs/proc/meminfo.c`. Venus
+keeps btop's used figure, MemTotal minus MemAvailable, rounded to nearest,
+with fields read by name. It rejects both projects' estimates for a kernel
+without MemAvailable (every kernel since 3.14 has it), and btop's MemFree
+substitution and Waybar's unchecked wrap when MemAvailable exceeds MemTotal:
+such readings show nothing. Waybar's ZFS ARC adjustment is out of scope.
 
 ### Local clock
 

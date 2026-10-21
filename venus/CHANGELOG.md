@@ -13,6 +13,11 @@
   numpad keys stay physical (`eon-venus-keysym-named-keys-chnh`).
 - Venus consumes EONW v13, whose requests may name a calling terminal; Venus
   sends none, so its actions keep targeting the active tab (`eon-8mnr.2`).
+- VEN-C28, VEN-C27, VEN-C25: a read-only `RAM  43%` label, from
+  `/proc/meminfo` on the CPU label's 2-second wake, joins the Eon Bar after
+  the CPU label and yields right after the clock. The CPU and RAM labels and
+  the clock take the quota chips' rounded fill, and the version label moves
+  to the edge before Shortcuts and Close (`eon-igae.3`).
 - VEN-C28: a read-only `CPU 12%` label joins the Eon Bar before the clock,
   sampled from `/proc/stat` every 2 seconds on Linux. It uses only spare space
   and yields right after the clock (`eon-cpu-widget-eon-bar-acxs`).

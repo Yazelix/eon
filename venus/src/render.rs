@@ -172,8 +172,10 @@ struct ContentKey {
     header: HeaderInteraction,
     scrollback_label: Option<String>,
     shortcut_viewer_scroll: Option<f32>,
-    /// CPU use and the clock change without a new presentation generation.
+    /// CPU and RAM use and the clock change without a new presentation generation. RAM keys on
+    /// its description, whose total the hover shows and the label does not.
     cpu: Option<String>,
+    ram: Option<String>,
     clock: Option<String>,
 }
 
@@ -852,6 +854,9 @@ impl Renderer {
             cpu: workspace
                 .and_then(|workspace| workspace.cpu.as_ref())
                 .map(|cpu| cpu.label.clone()),
+            ram: workspace
+                .and_then(|workspace| workspace.ram.as_ref())
+                .map(|ram| ram.description.clone()),
             clock: workspace
                 .and_then(|workspace| workspace.clock.as_ref())
                 .map(|clock| clock.label.clone()),
@@ -2277,6 +2282,7 @@ mod tests {
             scrollback_label: None,
             shortcut_viewer_scroll,
             cpu: None,
+            ram: None,
             clock: None,
         };
 

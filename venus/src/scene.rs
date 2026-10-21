@@ -1,5 +1,5 @@
 use crate::{
-    CpuUse, MAX_LINK_BYTES,
+    CpuUse, MAX_LINK_BYTES, RamUse,
     model::{active_popup, presented_panes},
     render::CellMetrics,
 };
@@ -329,6 +329,7 @@ pub enum WorkspaceHit<'a> {
     Quota(usize),
     Version,
     Cpu,
+    Ram,
     Clock,
     Control(WorkspaceHeaderControl),
     Drag,
@@ -656,6 +657,7 @@ pub struct WorkspaceScene {
     pub(crate) quotas: Vec<WorkspaceQuota>,
     pub(crate) version: Option<WorkspaceLabel>,
     pub(crate) cpu: Option<WorkspaceLabel>,
+    pub(crate) ram: Option<WorkspaceLabel>,
     pub(crate) clock: Option<WorkspaceLabel>,
     pub(crate) controls: [WorkspaceControl; 3],
     pub hints: Option<ShortcutHintsScene>,
@@ -1057,6 +1059,7 @@ impl WorkspaceScene {
             None,
             None,
             None,
+            None,
             size,
             metrics,
             tab_scroll,
@@ -1073,6 +1076,7 @@ impl WorkspaceScene {
         snapshot: &Snapshot,
         eon_version: Option<&str>,
         cpu: Option<&CpuUse>,
+        ram: Option<&RamUse>,
         clock: Option<&LocalClock>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
@@ -1230,8 +1234,8 @@ impl WorkspaceScene {
             - drag_region.left)
             .max(0.0);
         // Read-only labels take spare header space without shortening tabs, in this order, and
-        // stop at the first that does not fit: the clock yields first, then CPU use, then the
-        // version label. CPU use and the clock also need every quota chip at full width.
+        // stop at the first that does not fit: the clock yields first, then RAM, then CPU use,
+        // then the version label. The readings also need every quota chip at full width.
         let mut labels = [
             eon_version.map(|version| {
                 (
@@ -1241,6 +1245,8 @@ impl WorkspaceScene {
             }),
             cpu.filter(|_| !compact)
                 .map(|cpu| (cpu.label.clone(), cpu.description.clone())),
+            ram.filter(|_| !compact)
+                .map(|ram| (ram.label.clone(), ram.description.clone())),
             clock
                 .filter(|_| !compact)
                 .map(|clock| (clock.label.clone(), clock.description.clone())),
@@ -1272,6 +1278,10 @@ impl WorkspaceScene {
                 *label = None;
             }
         }
+        // The readings follow the quota chips; the version label sits at the edge, before
+        // Shortcuts and Close.
+        let [version, cpu, ram, clock] = labels;
+        let mut labels = [cpu, ram, clock, version];
         let mut right = controls[1].rect.left;
         for label in labels.iter_mut().rev().flatten() {
             right -= label.rect.width;
@@ -1282,7 +1292,7 @@ impl WorkspaceScene {
             quota.rect.left -= shift;
             quota.logo.left -= shift;
         }
-        let [version, cpu, clock] = labels;
+        let [cpu, ram, clock, version] = labels;
         let tab_scroll_limit = (tab_end - tab_viewport.width).max(0.0);
         let active = tabs[active_tab].rect;
         // Revealing the first tab never scrolls.
@@ -1340,6 +1350,7 @@ impl WorkspaceScene {
                 quotas,
                 version,
                 cpu,
+                ram,
                 clock,
                 controls,
                 hints,
@@ -1497,6 +1508,7 @@ impl WorkspaceScene {
             quotas,
             version,
             cpu,
+            ram,
             clock,
             controls,
             hints,
@@ -1575,6 +1587,9 @@ impl WorkspaceScene {
         }
         if self.cpu.as_ref().is_some_and(|cpu| cpu.rect.contains(x, y)) {
             return Some(WorkspaceHit::Cpu);
+        }
+        if self.ram.as_ref().is_some_and(|ram| ram.rect.contains(x, y)) {
+            return Some(WorkspaceHit::Ram);
         }
         if self
             .clock
@@ -2560,6 +2575,7 @@ mod tests {
                 let footer_rect = footer.rect;
                 let with_hints = WorkspaceScene::from_snapshot_with_metadata(
                     &snapshot,
+                    None,
                     None,
                     None,
                     None,

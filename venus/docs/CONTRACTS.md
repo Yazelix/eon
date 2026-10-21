@@ -1285,9 +1285,10 @@ re-proved when that platform or feature is next touched.
 - **Trigger:** A workspace client receives an optional supervising Eon version
   through `--eon-version`.
 - **Result:** One read-only `EON <version>` label in regular terminal monospace and
-  softened cyan joins the existing top row, before shortcut help when visible
-  and before close. Its full version is available through hover and a static AccessKit
-  label; it adds no focus target or action and is not a window-drag target.
+  softened cyan joins the existing top row at its edge, right before shortcut
+  help when visible and before close. Its full version is available through
+  hover and a static AccessKit label; it adds no focus target or action and is
+  not a window-drag target.
   Width fitting hides it before required controls and active-tab reservation.
 - **Important failures:** Absent input means no label; malformed or standalone input is
   rejected. Existing workspace/terminal behavior and footer bounds remain owned
@@ -1296,11 +1297,12 @@ re-proved when that platform or feature is next touched.
   and native projection.
 - **Boundary:** No EONW change, widget framework, version discovery, polling,
   dependency or platform expansion.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-igae.3`
   - **Environment:** Automated and installed.
   - **Evidence:** `eon_version_is_bounded_workspace_identity` and
     `version_label_uses_only_spare_space_and_has_no_actions` in the workspace
-    suite; dogfood checklist item 6.
+    suite; dogfood checklist item 6; the edge placement after the readings in
+    the installed observation recorded in `eon-igae.3`.
 - **Open proof:** Pending re-proof in this repository: native narrow-width
   hiding, label pointer/drag inertness, and AT-SPI order.
 
@@ -1385,8 +1387,9 @@ re-proved when that platform or feature is next touched.
 - **Trigger:** A workspace surface is presented, or the local wall-clock minute
   changes.
 - **Result:** One read-only `HH:MM` label in terminal monospace shows local
-  24-hour time in the existing top row, after the quota chips, version label
-  and CPU label and before Shortcuts and Close. It changes within a second of
+  24-hour time in the existing top row on the quota chips' rounded fill, after
+  the quota chips and the CPU and RAM labels and before the version label,
+  Shortcuts and Close. It changes within a second of
   each minute boundary. Hover and a static AccessKit label name the time, date
   and UTC offset, such as `Local time 14:05, Wednesday 21 October 2026,
   UTC−03:00`.
@@ -1404,40 +1407,52 @@ re-proved when that platform or feature is next touched.
 - **Boundary:** No EONW or runtime change, configuration, 12-hour mode,
   calendar, other time zone, widget framework or platform expansion. Its one
   dependency is `jiff` (`docs/CRATES.md`).
-- **Proof:** `eon-igae.4`
+- **Proof:** `eon-igae.4`, `eon-igae.3`
   - **Environment:** Automated and installed.
   - **Evidence:** `local_clock_names_minute_date_and_offset` and
-    `local_clock_yields_first_and_has_no_actions` in the workspace suite; one
-    isolated installed observation recorded in `eon-igae.4`.
+    `local_clock_yields_first_and_has_no_actions` in the workspace suite;
+    isolated installed observations recorded in `eon-igae.4` and, for the
+    rounded fill and placement before the version label, `eon-igae.3`.
 
-## VEN-C28 — CPU use in the Eon Bar
+## VEN-C28 — CPU and memory use in the Eon Bar
 
 - **Status:** Proven on native x86_64 Linux Wayland.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace on Linux.
 - **Trigger:** A workspace surface is presented, and every 2 seconds after.
-- **Result:** One read-only `CPU 12%` label in terminal monospace shows
-  whole-machine CPU use over the last 2 seconds as a whole percentage from
-  `/proc/stat`, in the existing top row after the quota chips and version label
-  and before the clock. It first appears one interval after the surface opens.
-  Hover and a static AccessKit label say `CPU use 12%, all cores, over the last
-  2 seconds`. The label uses only spare drag-region space and keeps that
-  region's minimum; it appears only while every quota chip is at full width, so
-  width fitting hides the clock first, then the CPU label, before the version
+- **Result:** Two read-only labels in terminal monospace, `CPU  12%` then
+  `RAM  43%`, sit in the existing top row after the quota chips and before the
+  clock, each on the quota chips' rounded fill and padded to the width of
+  `CPU 100%` with the value right-aligned. The CPU label shows whole-machine
+  CPU use over the last 2 seconds as a whole percentage from `/proc/stat`; it
+  first appears one interval after the surface opens. The RAM label shows
+  whole-machine memory use, MemTotal minus MemAvailable over MemTotal from
+  `/proc/meminfo`, as a whole percentage read on the same wake; it appears with
+  the first reading. Hover and static AccessKit labels say `CPU use 12%, all
+  cores, over the last 2 seconds` and `RAM use 43% of 31.3 GiB`. The labels
+  use only spare drag-region space and keep that region's minimum; they appear
+  only while every quota chip is at full width, so width fitting hides the
+  clock first, then the RAM label, then the CPU label, before the version
   label, quota compaction, tabs or controls.
-- **Important failures:** An unreadable, malformed or non-advancing sample
-  shows no label, never 0%; the label returns with the next valid sample. A
-  CPU-only change does not replace attachments, recenter navigation, cancel
-  scrolling or send an Orbit resize. The label has no action, focus target or
-  drag behavior. Other platforms show no label.
+- **Important failures:** An unreadable, malformed or non-advancing CPU
+  sample, or an unreadable or malformed memory reading, one without MemTotal or
+  MemAvailable, with a zero MemTotal or with MemAvailable above MemTotal, shows
+  no label for that reading, never 0%; a hidden label returns with the next
+  valid reading. A change to
+  either reading does not replace attachments, recenter navigation, cancel
+  scrolling or send an Orbit resize. Neither label has an action, focus target
+  or drag behavior. Other platforms show neither label.
 - **Owner:** Venus Scene owns the text and geometry, the application owns the
-  2-second wake, and a Venus module reads and parses `/proc/stat` on Linux.
-- **Boundary:** No EONW or runtime change, configuration, per-core view,
-  history, graph, dependency or platform expansion.
-- **Proof:** `eon-cpu-widget-eon-bar-acxs`
+  2-second wake, and a Venus module reads and parses `/proc/stat` and
+  `/proc/meminfo` on Linux.
+- **Boundary:** No EONW or runtime change, configuration, per-core view, swap,
+  per-process or GPU memory, history, graph, dependency or platform expansion.
+- **Proof:** `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`
   - **Environment:** Automated and installed.
   - **Evidence:** `cpu_use_counts_iowait_idle_and_guest_once`,
-    `cpu_use_rejects_bad_readings_instead_of_showing_zero` and
-    `cpu_use_yields_after_the_clock_and_has_no_actions` in the Venus suite;
-    one isolated installed observation recorded in
-    `eon-cpu-widget-eon-bar-acxs`.
+    `cpu_use_rejects_bad_readings_instead_of_showing_zero`,
+    `ram_use_is_total_minus_available_over_total`,
+    `ram_use_rejects_bad_readings_instead_of_showing_zero` and
+    `readings_yield_after_the_clock_and_have_no_actions` in the Venus suite;
+    isolated installed observations recorded in
+    `eon-cpu-widget-eon-bar-acxs` and `eon-igae.3`.

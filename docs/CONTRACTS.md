@@ -1836,22 +1836,25 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `local_clock_yields_first_and_has_no_actions`; the installed observation
     recorded in `eon-igae.4`.
 
-## EON-C30 — CPU use in the Eon Bar
+## EON-C30 — CPU and memory use in the Eon Bar
 
 - **Status:** Proven on x86_64 Linux Wayland.
 - **Consumer:** Full-Eon workspace users on x86_64 Linux.
 - **Trigger:** A workspace window is open.
-- **Result:** The Eon Bar shows Venus's VEN-C28 whole-machine CPU label,
-  always on, with no Eon configuration.
-- **Important failures:** As VEN-C28: an unreadable sample shows no label
-  rather than 0%, and narrow windows hide it right after the clock.
+- **Result:** The Eon Bar shows Venus's VEN-C28 whole-machine CPU and RAM
+  labels, always on, with no Eon configuration.
+- **Important failures:** As VEN-C28: an unreadable reading shows no label
+  rather than 0%, and narrow windows hide the RAM label right after the clock,
+  then the CPU label.
 - **Owner:** Eon owns the always-on product choice and composition; Venus owns
-  sampling and the label under VEN-C28.
+  sampling and the labels under VEN-C28.
 - **Boundary:** No setting, EONW or runtime change; an on/off setting needs its
   own decision.
-- **Proof:** `eon-cpu-widget-eon-bar-acxs`
-  - **Environment:** Automated; one isolated installed observation.
+- **Proof:** `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`
+  - **Environment:** Automated; isolated installed observations.
   - **Evidence:** Venus `cpu_use_counts_iowait_idle_and_guest_once`,
-    `cpu_use_rejects_bad_readings_instead_of_showing_zero` and
-    `cpu_use_yields_after_the_clock_and_has_no_actions`; the installed
-    observation recorded in `eon-cpu-widget-eon-bar-acxs`.
+    `cpu_use_rejects_bad_readings_instead_of_showing_zero`,
+    `ram_use_is_total_minus_available_over_total`,
+    `ram_use_rejects_bad_readings_instead_of_showing_zero` and
+    `readings_yield_after_the_clock_and_have_no_actions`; the installed
+    observations recorded in `eon-cpu-widget-eon-bar-acxs` and `eon-igae.3`.

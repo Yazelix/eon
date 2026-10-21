@@ -1,4 +1,5 @@
-//! Whole-machine CPU use for the Eon Bar (VEN-C28), from the aggregate `/proc/stat` line.
+//! Whole-machine CPU and memory use for the Eon Bar (VEN-C28), from the aggregate `/proc/stat`
+//! line and `/proc/meminfo`.
 
 /// Cumulative whole-machine CPU time since boot, in kernel ticks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,8 +59,55 @@ impl CpuUse {
         let percent = (u128::from(busy) * 200 + u128::from(total)) / (u128::from(total) * 2);
         Some(Self {
             // Padded to the width of `CPU 100%`, so the header never shifts as the value changes.
-            label: format!("{:>8}", format!("CPU {percent}%")),
+            label: format!("CPU {:>4}", format!("{percent}%")),
             description: format!("CPU use {percent}%, all cores, over the last 2 seconds"),
+        })
+    }
+}
+
+/// Memory use from one `/proc/meminfo` reading, as shown in the workspace header.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RamUse {
+    pub(crate) label: String,
+    pub(crate) description: String,
+}
+
+impl RamUse {
+    /// Reads `/proc/meminfo`; other platforms have no reading.
+    #[must_use]
+    pub fn read() -> Option<Self> {
+        if !cfg!(target_os = "linux") {
+            return None;
+        }
+        Self::parse(&std::fs::read_to_string("/proc/meminfo").ok()?)
+    }
+
+    /// Whole-percent use as btop computes it: MemTotal minus MemAvailable, over MemTotal. A
+    /// reading without both fields, or with MemAvailable above MemTotal, gives no value rather
+    /// than a guess or a false 0%.
+    pub(crate) fn parse(meminfo: &str) -> Option<Self> {
+        let field = |name: &str| -> Option<u64> {
+            let line = meminfo
+                .lines()
+                .find_map(|line| line.strip_prefix(name)?.strip_prefix(':'))?;
+            match line.split_ascii_whitespace().collect::<Vec<_>>()[..] {
+                [kib, "kB"] => kib.parse().ok(),
+                _ => None,
+            }
+        };
+        let total = field("MemTotal")?;
+        let used = total.checked_sub(field("MemAvailable")?)?;
+        if total == 0 {
+            return None;
+        }
+        let percent = (u128::from(used) * 200 + u128::from(total)) / (u128::from(total) * 2);
+        Some(Self {
+            // Padded to the width of `RAM 100%`, so the header never shifts as the value changes.
+            label: format!("RAM {:>4}", format!("{percent}%")),
+            description: format!(
+                "RAM use {percent}% of {:.1} GiB",
+                total as f64 / f64::from(1 << 20)
+            ),
         })
     }
 }
@@ -79,7 +127,7 @@ mod tests {
         // 30 busy (10 of it steal) and 70 idle (20 of it iowait); guest moves but is not counted.
         let later = times("cpu  115 0 5 850 120 0 0 10 90 90\n");
         let shown = CpuUse::between(earlier, later).unwrap();
-        assert_eq!(shown.label, " CPU 30%");
+        assert_eq!(shown.label, "CPU  30%");
         assert_eq!(
             shown.description,
             "CPU use 30%, all cores, over the last 2 seconds"
@@ -87,9 +135,9 @@ mod tests {
         // Whole percentages round to nearest, from 0 to 100.
         let at = |busy, idle| times(&format!("cpu {busy} 0 0 {idle} 0 0 0 0"));
         for (busy, idle, label) in [
-            (0, 3, "  CPU 0%"),
-            (1, 199, "  CPU 1%"),
-            (2, 1, " CPU 67%"),
+            (0, 3, "CPU   0%"),
+            (1, 199, "CPU   1%"),
+            (2, 1, "CPU  67%"),
             (5, 0, "CPU 100%"),
         ] {
             assert_eq!(
@@ -119,6 +167,44 @@ mod tests {
             "cpu 120 0 0 90 0 0 0 0",
         ] {
             assert_eq!(CpuUse::between(base, times(later)), None, "{later:?}");
+        }
+    }
+
+    #[test]
+    fn ram_use_is_total_minus_available_over_total() {
+        let shown = RamUse::parse(
+            "MemTotal:       32800000 kB\nMemFree:         1000000 kB\n\
+             MemAvailable:   18677760 kB\nCached:         9000000 kB\n",
+        )
+        .unwrap();
+        assert_eq!(shown.label, "RAM  43%");
+        assert_eq!(shown.description, "RAM use 43% of 31.3 GiB");
+        // Whole percentages round to nearest, from 0 to 100.
+        for (total, available, label) in [
+            (3, 3, "RAM   0%"),
+            (200, 199, "RAM   1%"),
+            (3, 1, "RAM  67%"),
+            (3, 0, "RAM 100%"),
+        ] {
+            let meminfo = format!("MemTotal: {total} kB\nMemAvailable: {available} kB\n");
+            assert_eq!(RamUse::parse(&meminfo).unwrap().label, label, "{meminfo:?}");
+        }
+    }
+
+    #[test]
+    fn ram_use_rejects_bad_readings_instead_of_showing_zero() {
+        for meminfo in [
+            "",
+            "MemTotal: 100 kB\nMemFree: 90 kB\n",
+            "MemAvailable: 10 kB\n",
+            "MemTotal: 0 kB\nMemAvailable: 0 kB\n",
+            "MemTotal: 100 kB\nMemAvailable: 101 kB\n",
+            "MemTotal: 100\nMemAvailable: 10 kB\n",
+            "MemTotal: 100 kB\nMemAvailable: x kB\n",
+            "MemTotal: -100 kB\nMemAvailable: 10 kB\n",
+            "MemTotalX: 100 kB\nMemAvailable: 10 kB\n",
+        ] {
+            assert_eq!(RamUse::parse(meminfo), None, "{meminfo:?}");
         }
     }
 }

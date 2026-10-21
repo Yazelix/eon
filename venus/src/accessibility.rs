@@ -32,6 +32,7 @@ const VERSION: NodeId = NodeId(12);
 const CLAUDE_QUOTA: NodeId = NodeId(13);
 const CLOCK: NodeId = NodeId(14);
 const CPU: NodeId = NodeId(15);
+const RAM: NodeId = NodeId(16);
 // Scene rows are u16, so this range cannot collide with fixed or text-run nodes.
 const WORKSPACE_NODE_START: u64 = 1 << 32;
 const LINK_NODE_START: u64 = 1 << 48;
@@ -228,14 +229,15 @@ impl Snapshot {
             for quota in &workspace.quotas {
                 children.push(quota_id(quota.provider));
             }
-            if workspace.version.is_some() {
-                children.push(VERSION);
-            }
-            if workspace.cpu.is_some() {
-                children.push(CPU);
-            }
-            if workspace.clock.is_some() {
-                children.push(CLOCK);
+            for (id, label) in [
+                (CPU, &workspace.cpu),
+                (RAM, &workspace.ram),
+                (CLOCK, &workspace.clock),
+                (VERSION, &workspace.version),
+            ] {
+                if label.is_some() {
+                    children.push(id);
+                }
             }
             if workspace.has_control(WorkspaceHeaderControl::Shortcuts) {
                 children.push(SHORTCUTS);
@@ -357,9 +359,10 @@ impl Snapshot {
                 nodes.push((quota_id(quota.provider), node));
             }
             for (id, label) in [
-                (VERSION, &workspace.version),
                 (CPU, &workspace.cpu),
+                (RAM, &workspace.ram),
                 (CLOCK, &workspace.clock),
+                (VERSION, &workspace.version),
             ] {
                 if let Some(label) = label {
                     let mut node = Node::new(Role::Label);
@@ -942,6 +945,7 @@ mod tests {
                                     version,
                                     None,
                                     None,
+                                    None,
                                     size,
                                     metrics,
                                     0.0,
@@ -1083,6 +1087,7 @@ mod tests {
                 },
                 None,
                 None,
+                None,
                 Some(&clock),
                 PhysicalSize::new(1100, 600),
                 CellMetrics::for_scale(1.0),
@@ -1144,6 +1149,7 @@ mod tests {
                                 &snapshot,
                                 version,
                                 None,
+                                None,
                                 clock,
                                 PhysicalSize::new(
                                     (logical_width as f32 * metrics.scale) as u32,
@@ -1202,7 +1208,8 @@ mod tests {
                                 assert!(logical_width < 3000, "a wide bar shows the clock");
                                 continue;
                             };
-                            // The clock yields before quota compaction and the version label.
+                            // The clock yields before quota compaction and the version label, which
+                            // follows it at the edge.
                             assert_eq!(
                                 scene
                                     .quotas
@@ -1217,13 +1224,20 @@ mod tests {
                                 5.0 * metrics.width + metrics.padding * 2.0
                             );
                             assert!(scene.drag_region.width >= metrics.font_size * 4.0);
-                            assert_eq!(shown.rect.right(), scene.controls[1].rect.left);
-                            let leading = scene.version.as_ref().map_or_else(
-                                || scene.quotas.last().map(|quota| quota.rect),
-                                |version| Some(version.rect),
+                            assert_eq!(
+                                shown.rect.right(),
+                                scene
+                                    .version
+                                    .as_ref()
+                                    .map_or(scene.controls[1].rect.left, |version| version
+                                        .rect
+                                        .left)
                             );
                             assert_eq!(
-                                leading.map_or(scene.drag_region.right(), SceneRect::right),
+                                scene
+                                    .quotas
+                                    .last()
+                                    .map_or(scene.drag_region.right(), |quota| quota.rect.right()),
                                 shown.rect.left
                             );
                             if let Some(quota) = scene.quotas.first() {
@@ -1240,15 +1254,12 @@ mod tests {
                             let index = children.iter().position(|id| *id == CLOCK).unwrap();
                             assert_eq!(
                                 children[index - 1],
-                                if version.is_some() {
-                                    VERSION
-                                } else {
-                                    scene
-                                        .quotas
-                                        .last()
-                                        .map_or(NEW_TAB, |quota| quota_id(quota.provider))
-                                }
+                                scene
+                                    .quotas
+                                    .last()
+                                    .map_or(NEW_TAB, |quota| quota_id(quota.provider))
                             );
+                            assert_eq!(children[index + 1] == VERSION, version.is_some());
                             let node = node(&tree, CLOCK);
                             assert_eq!(node.role(), Role::Label);
                             assert_eq!(
@@ -1267,12 +1278,14 @@ mod tests {
     }
 
     #[test]
-    fn cpu_use_yields_after_the_clock_and_has_no_actions() {
+    fn readings_yield_after_the_clock_and_have_no_actions() {
         let cpu = crate::CpuUse::between(
             crate::CpuTimes::parse("cpu 0 0 0 0 0 0 0 0").unwrap(),
             crate::CpuTimes::parse("cpu 12 0 0 88 0 0 0 0").unwrap(),
         )
         .unwrap();
+        let ram =
+            crate::RamUse::parse("MemTotal: 32800000 kB\nMemAvailable: 18677760 kB\n").unwrap();
         let clock = crate::LocalClock::new(
             &jiff::civil::date(2026, 10, 21)
                 .at(14, 5, 0, 0)
@@ -1299,11 +1312,12 @@ mod tests {
             }),
             claude_quota: None,
         };
-        let project = |logical_width: u32, version, cpu, clock| {
+        let project = |logical_width: u32, version, cpu, ram, clock| {
             WorkspaceScene::from_snapshot_with_metadata(
                 &snapshot,
                 version,
                 cpu,
+                ram,
                 clock,
                 PhysicalSize::new((logical_width as f32 * metrics.scale) as u32, 600),
                 metrics,
@@ -1319,55 +1333,72 @@ mod tests {
                 None,
             )
         };
-        let full_quotas = project(3000, None, None, None).quotas;
-        let mut without_clock = 0;
+        let full_quotas = project(3000, None, None, None, None).quotas;
+        // Widths that show CPU use without RAM, and RAM without the clock.
+        let mut partial = [false; 2];
         for version in [None, Some("9.8.7")] {
             for logical_width in (100..=1600).step_by(5) {
-                let baseline = project(logical_width, version, None, None);
-                let scene = project(logical_width, version, Some(&cpu), Some(&clock));
+                let baseline = project(logical_width, version, None, None, None);
+                let scene = project(logical_width, version, Some(&cpu), Some(&ram), Some(&clock));
                 assert_eq!(scene.tabs, baseline.tabs);
                 assert_eq!(scene.controls, baseline.controls);
                 assert_eq!(scene.terminal, baseline.terminal);
                 assert_eq!(scene.version.is_some(), baseline.version.is_some());
-                // The clock yields first, then CPU use, before the version label and quotas.
-                assert!(scene.clock.is_none() || scene.cpu.is_some());
-                let Some(shown) = &scene.cpu else {
+                // The clock yields first, then RAM, then CPU use, before the version label and
+                // quotas.
+                assert!(scene.clock.is_none() || scene.ram.is_some());
+                assert!(scene.ram.is_none() || scene.cpu.is_some());
+                let Some(shown_cpu) = &scene.cpu else {
                     assert!(logical_width < 1600, "a wide bar shows CPU use");
                     continue;
                 };
-                without_clock += usize::from(scene.clock.is_none());
+                partial[0] |= scene.ram.is_none();
+                partial[1] |= scene.ram.is_some() && scene.clock.is_none();
                 assert_eq!(scene.quotas.len(), full_quotas.len());
                 assert_eq!(scene.quotas[0].label, full_quotas[0].label);
                 assert_eq!(version.is_some(), scene.version.is_some());
-                assert_eq!(shown.label, " CPU 12%");
-                assert_eq!(
-                    shown.rect.width,
-                    8.0 * metrics.width + metrics.padding * 2.0
-                );
+                assert_eq!(shown_cpu.label, "CPU  12%");
+                if let Some(shown_ram) = &scene.ram {
+                    assert_eq!(shown_ram.label, "RAM  43%");
+                }
+                // The readings follow the quota chips in order, and the version label sits at
+                // the edge before Shortcuts and Close.
+                let labels = [
+                    (CPU, Some(shown_cpu)),
+                    (RAM, scene.ram.as_ref()),
+                    (CLOCK, scene.clock.as_ref()),
+                    (VERSION, scene.version.as_ref()),
+                ]
+                .into_iter()
+                .filter_map(|(id, label)| Some((id, label?)))
+                .collect::<Vec<_>>();
+                let mut left = scene.quotas[0].rect.right();
+                for (id, label) in &labels {
+                    assert_eq!(label.rect.left, left);
+                    left = label.rect.right();
+                    if *id != VERSION {
+                        assert_eq!(
+                            label.rect.width,
+                            label.label.len() as f32 * metrics.width + metrics.padding * 2.0
+                        );
+                    }
+                }
+                assert_eq!(left, scene.controls[1].rect.left);
                 assert!(scene.drag_region.width >= metrics.font_size * 4.0);
-                assert_eq!(
-                    scene
-                        .version
-                        .as_ref()
-                        .map_or(scene.quotas[0].rect, |version| version.rect)
-                        .right(),
-                    shown.rect.left
-                );
-                assert_eq!(
-                    shown.rect.right(),
-                    scene
-                        .clock
-                        .as_ref()
-                        .map_or(scene.controls[1].rect.left, |clock| clock.rect.left)
-                );
                 assert_eq!(scene.drag_region.right(), scene.quotas[0].rect.left);
-                assert_eq!(
-                    scene.hit_test(
-                        shown.rect.left + shown.rect.width / 2.0,
-                        shown.rect.height / 2.0
-                    ),
-                    Some(crate::WorkspaceHit::Cpu)
-                );
+                for (label, hit) in [
+                    (Some(shown_cpu), crate::WorkspaceHit::Cpu),
+                    (scene.ram.as_ref(), crate::WorkspaceHit::Ram),
+                ] {
+                    let Some(label) = label else { continue };
+                    assert_eq!(
+                        scene.hit_test(
+                            label.rect.left + label.rect.width / 2.0,
+                            label.rect.height / 2.0
+                        ),
+                        Some(hit)
+                    );
+                }
                 let mut accessible = Snapshot::new(PhysicalSize::new(
                     (logical_width as f32 * metrics.scale) as u32,
                     600,
@@ -1376,29 +1407,27 @@ mod tests {
                 let tree = accessible.tree();
                 let children = node(&tree, WINDOW).children();
                 let index = children.iter().position(|id| *id == CPU).unwrap();
+                assert_eq!(children[index - 1], quota_id(scene.quotas[0].provider));
                 assert_eq!(
-                    children[index - 1],
-                    if version.is_some() {
-                        VERSION
-                    } else {
-                        quota_id(scene.quotas[0].provider)
+                    children[index..index + labels.len()],
+                    labels.iter().map(|(id, _)| *id).collect::<Vec<_>>()[..]
+                );
+                for (id, value) in [
+                    (CPU, "CPU use 12%, all cores, over the last 2 seconds"),
+                    (RAM, "RAM use 43% of 31.3 GiB"),
+                ] {
+                    if id == RAM && scene.ram.is_none() {
+                        continue;
                     }
-                );
-                assert_eq!(children[index + 1] == CLOCK, scene.clock.is_some());
-                let node = node(&tree, CPU);
-                assert_eq!(node.role(), Role::Label);
-                assert_eq!(
-                    node.value(),
-                    Some("CPU use 12%, all cores, over the last 2 seconds")
-                );
-                assert!(!node.supports_action(Action::Click));
-                assert!(!node.supports_action(Action::Focus));
+                    let node = node(&tree, id);
+                    assert_eq!(node.role(), Role::Label);
+                    assert_eq!(node.value(), Some(value));
+                    assert!(!node.supports_action(Action::Click));
+                    assert!(!node.supports_action(Action::Focus));
+                }
             }
         }
-        assert!(
-            without_clock > 0,
-            "some width shows CPU use but not the clock"
-        );
+        assert_eq!(partial, [true; 2]);
     }
 
     #[test]
@@ -2294,6 +2323,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
                 size,
                 metrics,
                 0.0,
@@ -2486,6 +2516,7 @@ mod tests {
                 codex_quota: None,
                 claude_quota: None,
             },
+            None,
             None,
             None,
             None,

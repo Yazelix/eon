@@ -29,6 +29,7 @@ pub(super) struct HeaderInteraction {
     quota_hovered: Option<usize>,
     version_hovered: bool,
     cpu_hovered: bool,
+    ram_hovered: bool,
     clock_hovered: bool,
     pressed_header: Option<WorkspaceHeaderControl>,
 }
@@ -173,6 +174,10 @@ impl Renderer {
         self.header.cpu_hovered = hovered;
     }
 
+    pub fn set_ram_hovered(&mut self, hovered: bool) {
+        self.header.ram_hovered = hovered;
+    }
+
     pub fn set_clock_hovered(&mut self, hovered: bool) {
         self.header.clock_hovered = hovered;
     }
@@ -224,6 +229,10 @@ impl Renderer {
             && let Some(cpu) = &workspace.cpu
         {
             (cpu.description.as_str(), cpu.rect)
+        } else if self.header.ram_hovered
+            && let Some(ram) = &workspace.ram
+        {
+            (ram.description.as_str(), ram.rect)
         } else if self.header.clock_hovered
             && let Some(clock) = &workspace.clock
         {
@@ -621,17 +630,20 @@ impl Renderer {
             );
         }
         rectangles.clip = None;
+        // Quota chips and readings share one pill; the version label stays plain at the edge.
+        let chip = SceneColor {
+            r: 23,
+            g: 34,
+            b: 46,
+        };
+        let reading = SceneColor {
+            r: 162,
+            g: 174,
+            b: 190,
+        };
         for quota in &workspace.quotas {
             let visual = header_item_visual(quota.rect, self.metrics.padding);
-            rectangles.push_rounded(
-                visual,
-                visual.height / 2.0,
-                SceneColor {
-                    r: 23,
-                    g: 34,
-                    b: 46,
-                },
-            );
+            rectangles.push_rounded(visual, visual.height / 2.0, chip);
             self.push_quota_icon(quota.provider, quota.logo);
             let label_left = quota.logo.right() + self.metrics.padding / 2.0;
             let label_width = (quota.rect.right() - self.metrics.padding - label_left).max(0.0);
@@ -642,21 +654,15 @@ impl Renderer {
                 label_width,
                 label_width,
                 self.metrics.height.min(quota.rect.height),
-                SceneColor {
-                    r: 162,
-                    g: 174,
-                    b: 190,
-                },
+                reading,
                 DrawStyleKind::Status(Wrap::None),
                 quota.rect,
             );
         }
-        let reading = SceneColor {
-            r: 162,
-            g: 174,
-            b: 190,
-        };
-        for (label, color) in [
+        for (label, color, pill) in [
+            (&workspace.cpu, reading, true),
+            (&workspace.ram, reading, true),
+            (&workspace.clock, reading, true),
             (
                 &workspace.version,
                 SceneColor {
@@ -664,13 +670,16 @@ impl Renderer {
                     g: 196,
                     b: 216,
                 },
+                false,
             ),
-            (&workspace.cpu, reading),
-            (&workspace.clock, reading),
         ] {
             let Some(label) = label else {
                 continue;
             };
+            if pill {
+                let visual = header_item_visual(label.rect, self.metrics.padding);
+                rectangles.push_rounded(visual, visual.height / 2.0, chip);
+            }
             let width = (label.rect.width - self.metrics.padding * 2.0).max(0.0);
             self.push_text_clipped(
                 &label.label,
@@ -1137,6 +1146,7 @@ mod tests {
                 };
                 let workspace = WorkspaceScene::from_snapshot_with_metadata(
                     &snapshot,
+                    None,
                     None,
                     None,
                     None,

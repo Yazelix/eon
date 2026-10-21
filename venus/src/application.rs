@@ -33,7 +33,7 @@ use yazelix_venus::{
     Accessibility, AccessibilityTarget, CellMetrics, ClipboardEffect, Color, ConnectionState,
     CpuTimes, CpuUse, FontSettings, FontSetup, Hyperlink, InputState, LocalClock,
     LocalNoticeSource, MAX_LINK_BYTES, MetadataEvent, MetadataTransport, ModelError, PaneMetadata,
-    PresentOutcome, Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene,
+    PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene,
     ShortcutViewerScene, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus,
     WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
     active_popup, validate_copy_uri, validate_open_uri,
@@ -59,7 +59,7 @@ use shortcuts::{
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
 const MINUTE: Duration = Duration::from_secs(60);
-const CPU_INTERVAL: Duration = Duration::from_secs(2);
+const READING_INTERVAL: Duration = Duration::from_secs(2);
 const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -483,7 +483,8 @@ struct Application {
     /// The previous `/proc/stat` reading and when it was taken.
     cpu_times: Option<(Instant, CpuTimes)>,
     cpu: Option<CpuUse>,
-    next_cpu: Option<Instant>,
+    ram: Option<RamUse>,
+    next_reading: Option<Instant>,
     window_focused: bool,
     window_occluded: bool,
     workspace_focus: WorkspaceFocus,
@@ -558,7 +559,8 @@ impl Application {
             next_clock: None,
             cpu_times: None,
             cpu: None,
-            next_cpu: None,
+            ram: None,
+            next_reading: None,
             next_animation: None,
             window_focused: false,
             window_occluded: false,
@@ -796,6 +798,7 @@ impl Application {
                 snapshot,
                 self.eon_version.as_deref(),
                 self.cpu.as_ref(),
+                self.ram.as_ref(),
                 self.clock.as_ref(),
                 state.renderer.size(),
                 state.renderer.metrics(),
@@ -1021,6 +1024,7 @@ impl Application {
             snapshot,
             self.eon_version.as_deref(),
             self.cpu.as_ref(),
+            self.ram.as_ref(),
             self.clock.as_ref(),
             state.renderer.size(),
             state.renderer.metrics(),
@@ -2691,6 +2695,7 @@ impl Application {
         };
         let version_hovered = matches!(hovered_hit, Some(WorkspaceHit::Version));
         let cpu_hovered = matches!(hovered_hit, Some(WorkspaceHit::Cpu));
+        let ram_hovered = matches!(hovered_hit, Some(WorkspaceHit::Ram));
         let clock_hovered = matches!(hovered_hit, Some(WorkspaceHit::Clock));
         let mut refresh = false;
         let mut presented = false;
@@ -2705,6 +2710,7 @@ impl Application {
         state.renderer.set_quota_hovered(quota_hovered);
         state.renderer.set_version_hovered(version_hovered);
         state.renderer.set_cpu_hovered(cpu_hovered);
+        state.renderer.set_ram_hovered(ram_hovered);
         state.renderer.set_clock_hovered(clock_hovered);
         state.renderer.set_pressed_header(match self.header_press {
             Some(HeaderPress::Control(control)) => Some(control),
@@ -3017,6 +3023,7 @@ impl ApplicationHandler<UserEvent> for Application {
                                 | WorkspaceHit::Quota(_)
                                 | WorkspaceHit::Version
                                 | WorkspaceHit::Cpu
+                                | WorkspaceHit::Ram
                                 | WorkspaceHit::Clock
                                 | WorkspaceHit::Control(_),
                             ) => hit,
@@ -3232,6 +3239,7 @@ impl ApplicationHandler<UserEvent> for Application {
                             WorkspaceHit::Quota(_)
                             | WorkspaceHit::Version
                             | WorkspaceHit::Cpu
+                            | WorkspaceHit::Ram
                             | WorkspaceHit::Clock,
                         ) => None,
                         None => None,
@@ -3536,19 +3544,23 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.refresh_client_view();
             }
         }
-        if self.workspace_model.snapshot().is_some() && self.next_cpu.is_none_or(|due| now >= due) {
-            self.next_cpu = Some(now + CPU_INTERVAL);
+        if self.workspace_model.snapshot().is_some()
+            && self.next_reading.is_none_or(|due| now >= due)
+        {
+            self.next_reading = Some(now + READING_INTERVAL);
             let times = CpuTimes::read();
             // Each value compares readings about one interval apart, as the label says. After a
             // failed read or an event-loop stall, the next reading starts over.
             let cpu = self
                 .cpu_times
-                .filter(|(taken, _)| now.duration_since(*taken) < CPU_INTERVAL * 3 / 2)
+                .filter(|(taken, _)| now.duration_since(*taken) < READING_INTERVAL * 3 / 2)
                 .zip(times)
                 .and_then(|((_, earlier), later)| CpuUse::between(earlier, later));
             self.cpu_times = times.map(|times| (now, times));
-            if cpu != self.cpu {
+            let ram = RamUse::read();
+            if cpu != self.cpu || ram != self.ram {
                 self.cpu = cpu;
+                self.ram = ram;
                 self.refresh_client_view();
             }
         }
@@ -3580,7 +3592,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.next_blink,
                 self.next_animation,
                 self.next_clock,
-                self.next_cpu,
+                self.next_reading,
                 self.terminal.selection_scroll.next,
                 self.terminal.orbit_retry.deadline,
                 self.column_views
