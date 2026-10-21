@@ -646,13 +646,14 @@ mod tests {
     use crate::supervisor::{lock_supervisor_lifecycle, supervisor_lock_path, temporary_directory};
     use std::{
         fs,
+        io::ErrorKind,
         os::unix::{
             fs::{PermissionsExt, symlink},
-            net::UnixListener,
+            net::{UnixListener, UnixStream},
         },
         path::Path,
         thread,
-        time::Duration,
+        time::{Duration, Instant},
     };
 
     #[test]
@@ -697,6 +698,16 @@ mod tests {
         let listener = UnixListener::bind(dead.join("eon.sock")).unwrap();
         fs::set_permissions(dead.join("eon.sock"), fs::Permissions::from_mode(0o600)).unwrap();
         drop(listener);
+        // Until it execs, a child forked by a concurrent test shares this
+        // test's open files: the dropped listener can briefly keep accepting.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !matches!(
+            UnixStream::connect(dead.join("eon.sock")),
+            Err(error) if error.kind() == ErrorKind::ConnectionRefused
+        ) {
+            assert!(Instant::now() < deadline, "dead socket kept accepting");
+            thread::sleep(Duration::from_millis(1));
+        }
 
         let held = lock_supervisor_lifecycle(&supervisor_lock_path(&root, dead_id)).unwrap();
         let (sender, receiver) = std::sync::mpsc::channel();
@@ -712,6 +723,9 @@ mod tests {
         });
         let result = receiver.recv_timeout(Duration::from_secs(2));
         let preserved = dead.exists();
+        // Unlock rather than only drop: a child forked meanwhile shares the
+        // lock until it execs, and only an explicit unlock releases it there.
+        held.unlock().unwrap();
         drop(held);
         inspection.join().unwrap();
 
