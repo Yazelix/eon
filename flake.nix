@@ -27,8 +27,11 @@
       url = "github:luccahuguet/ratconfig/e6ec2ebfe84b2358186410680cbcaf0564eb59a2";
       flake = false;
     };
+    # Ghostty >= 8c425a7bd needs Zig 0.17, which only this newer nixpkgs
+    # carries; it supplies Orbit's Zig and nothing else (eon-a9tr.1).
+    nixpkgs-zig.url = "github:NixOS/nixpkgs/02c087f3fe673c9e317f206a627cb6b910336dbe";
     ghostty = {
-      url = "github:ghostty-org/ghostty/a887df42c56f6de86c0fe6da9c4eeca37931e083";
+      url = "github:ghostty-org/ghostty/8c425a7bd57de848aa83cb9b003b1ecd6037c56a";
       flake = false;
     };
     # Orbit's build-time Bend compiler (orbit/build.rs).
@@ -46,6 +49,7 @@
     {
       self,
       nixpkgs,
+      nixpkgs-zig,
       anima,
       helix,
       yazi,
@@ -57,6 +61,7 @@
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs { inherit system; };
+      zig = nixpkgs-zig.legacyPackages.${system}.zig_0_17;
       inherit (pkgs) lib;
       manifest = builtins.fromJSON (builtins.readFile ./components/eon-v4.json);
       eonCargo = builtins.fromTOML (builtins.readFile ./eon/crates/eon/Cargo.toml);
@@ -131,6 +136,7 @@
         lockFile = ./Cargo.lock;
         outputHashes."dpi-0.1.1" = "sha256-fJQqcXhKPGtivKo1AyyGhy1oNebTFGyzWDmOesFsltI=";
         outputHashes."accesskit-0.24.1" = "sha256-W4Zk2BcKSPztJeeWBtQS3ugV0WPZWD0x8aX6R37zqj8=";
+        outputHashes."libghostty-vt-0.2.1" = "sha256-rkG665SNP8JkafV5AheE2RDwn0MZCbYEwnzV5co1gmA=";
       };
       codexbarIdentity = component "codexbar";
       animaIdentity = component "anima";
@@ -213,13 +219,21 @@
           meta = { license = lib.licenses.mit; platforms = [ system ]; };
         };
 
-      ghosttyDeps = pkgs.zig_0_15.fetchDeps {
+      ghosttyDepsArchives = zig.fetchDeps {
         pname = "ghostty";
         version = "0-unstable";
         src = ghostty;
         fetchAll = true;
-        hash = "sha256-PnM+hZIlLyQwK8vJgd/Bhjt1lNIz06T8FahwliRmMrY=";
+        hash = "sha256-Q0ZgKPVtXbiTbJqrMlGPJBnNpmaXNLUAk0VcqLBFGFI=";
       };
+      # Zig 0.17 keeps fetched packages as archives, but `zig build --system`
+      # wants them unpacked; each archive holds its package directory.
+      ghosttyDeps = pkgs.runCommand "ghostty-zig-system-deps" { } ''
+        mkdir "$out"
+        for archive in ${ghosttyDepsArchives}/*.tar.gz; do
+          tar -xzf "$archive" -C "$out"
+        done
+      '';
       # libghostty's build script compiles the pinned Ghostty source with Zig
       # instead of cloning it; Orbit's package and the dev shell share this.
       ghosttyBuildEnv = {
@@ -243,7 +257,7 @@
       # real-PTY checks. tests/lifecycle.rs needs host /usr/bin/setsid, which
       # the build sandbox lacks, so eon-test runs it.
       orbitPackage =
-        assert ghostty.rev == "a887df42c56f6de86c0fe6da9c4eeca37931e083";
+        assert ghostty.rev == "8c425a7bd57de848aa83cb9b003b1ecd6037c56a";
         assert bend.rev == "234cb9b950800f20b15feafcb4ce2f43e76e7fae";
         pkgs.rustPlatform.buildRustPackage {
           pname = workspacePackages.orbit;
@@ -268,7 +282,7 @@
           nativeBuildInputs = [
             pkgs.bun
             pkgs.ncurses
-            pkgs.zig_0_15.hook
+            zig.hook
           ];
           inherit (bendBuildEnv) BEND_SOURCE_DIR BEND_CLANG BEND_NO_TELEMETRY;
           inherit (ghosttyBuildEnv) LIBGHOSTTY_VT_SYS_CPU GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
@@ -932,7 +946,7 @@
           pkgs.git
           pkgs.ncurses
           pkgs.pkg-config
-          pkgs.zig_0_15
+          zig
           pkgs.bun
           (import ./nix/test-sandbox.nix { inherit pkgs; })
           br

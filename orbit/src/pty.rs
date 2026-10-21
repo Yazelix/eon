@@ -10,7 +10,7 @@ use crate::{
     pointer::{Pointer, phase_position},
 };
 use libghostty_vt::{
-    Terminal, TerminalOptions,
+    Terminal,
     screen::Screen as GhosttyScreen,
     style::RgbColor,
     terminal::{
@@ -112,8 +112,8 @@ impl ClipboardWrites {
         if content.mime != "text/plain" {
             return Err(ClipboardWriteError::Unsupported);
         }
-        // Data that is not UTF-8 reaches us empty.
-        let text = content.data;
+        let text =
+            std::str::from_utf8(content.data).map_err(|_| ClipboardWriteError::InvalidData)?;
         if text.is_empty() || text.len() > session::MAX_COPY_BYTES || text.contains('\0') {
             return Err(ClipboardWriteError::InvalidData);
         }
@@ -169,12 +169,10 @@ impl Orbit {
         cols: u16,
         rows: u16,
     ) -> io::Result<Self> {
-        let mut terminal = Terminal::new(TerminalOptions {
-            cols,
-            rows,
-            max_scrollback: SCROLLBACK_BUDGET_BYTES,
-        })
-        .map_err(|_| errno(libc::EIO))?;
+        let mut terminal = Terminal::new(cols, rows).map_err(|_| errno(libc::EIO))?;
+        terminal
+            .set_scrollback_max_bytes(Some(SCROLLBACK_BUDGET_BYTES))
+            .map_err(|_| errno(libc::EIO))?;
         if let Some(colors) = palette {
             let mut defaults = terminal
                 .default_color_palette()
@@ -198,7 +196,10 @@ impl Orbit {
         let clipboard = Rc::new(RefCell::new(ClipboardWrites::default()));
         let captured = Rc::clone(&clipboard);
         terminal
-            .on_clipboard_write(move |_, write| captured.borrow_mut().capture(&write))
+            .on_clipboard_write(move |_, write| {
+                let result = captured.borrow_mut().capture(&write);
+                write.reply(result, false);
+            })
             .map_err(|_| errno(libc::EIO))?;
         let extractor = FrameExtractor::new()?;
         let hold = Timer::default();
@@ -709,17 +710,12 @@ mod tests {
         let clipboard = Rc::new(RefCell::new(ClipboardWrites::default()));
         let last_error = Rc::new(Cell::new(None));
         let (sink, error_sink) = (Rc::clone(&clipboard), Rc::clone(&last_error));
-        let mut terminal = Terminal::new(TerminalOptions {
-            cols: 80,
-            rows: 24,
-            max_scrollback: 0,
-        })
-        .unwrap();
+        let mut terminal = Terminal::new(80, 24).unwrap();
         terminal
             .on_clipboard_write(move |_, write| {
                 let result = sink.borrow_mut().capture(&write);
                 error_sink.set(result.err());
-                result
+                write.reply(result, false);
             })
             .unwrap();
         let writes = || clipboard.borrow().writes.clone();

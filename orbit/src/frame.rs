@@ -16,7 +16,6 @@ use orbit_protocol::{
 };
 use std::io::{self};
 
-// libghostty's max_scrollback is a byte budget (Ghostty Screen.zig).
 pub(crate) const SCROLLBACK_BUDGET_BYTES: usize = 16 * 1024 * 1024;
 
 pub(crate) struct FrameExtractor {
@@ -394,17 +393,12 @@ fn cell_style(style: Style, selected: bool, protected: bool) -> io::Result<CellS
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libghostty_vt::{TerminalOptions, terminal::ScrollViewport};
+    use libghostty_vt::terminal::ScrollViewport;
     use orbit_protocol::session::{self, ServerMessage, VerticalPreview};
 
     #[test]
     fn terminal_frame_uses_the_canonical_protocol_owner() {
-        let mut terminal = Terminal::new(TerminalOptions {
-            cols: 8,
-            rows: 2,
-            max_scrollback: 16,
-        })
-        .unwrap();
+        let mut terminal = Terminal::new(8, 2).unwrap();
         terminal.vt_write(b"\x1b]8;;https://example.test\x1b\\READY\x1b]8;;\x1b\\");
         let frame = FrameExtractor::new().unwrap().frame(1, &terminal).unwrap();
         assert_eq!(
@@ -428,12 +422,8 @@ mod tests {
     /// it (ORB-C6).
     #[test]
     fn direct_rows_match_rich_canonical_frame_rows() {
-        let mut terminal = Terminal::new(TerminalOptions {
-            cols: 12,
-            rows: 4,
-            max_scrollback: 100,
-        })
-        .unwrap();
+        let mut terminal = Terminal::new(12, 4).unwrap();
+        terminal.set_scrollback_max_bytes(Some(100)).unwrap();
         terminal.vt_write(
             "\x1b]8;;https://example.test\x1b\\\x1b[1\"q\x1b[1;38;2;12;34;56;48;5;17mAe\u{301}界1234567界wrap-me-long\x1b[0m\x1b[0\"q\x1b]8;;\x1b\\\r\n\x1b[48;2;5;6;7m\x1b[2K\x1b[0m\r\nplain\r\ntail-1\r\ntail-2\r\ntail-3"
                 .as_bytes(),
@@ -492,12 +482,8 @@ mod tests {
     /// eviction, `CSI 3 J` and reset (ORB-C8).
     #[test]
     fn scroll_position_follows_reflow_eviction_and_clears() {
-        let mut terminal = Terminal::new(TerminalOptions {
-            cols: 8,
-            rows: 4,
-            max_scrollback: 64 * 1024,
-        })
-        .unwrap();
+        let mut terminal = Terminal::new(8, 4).unwrap();
+        terminal.set_scrollback_max_bytes(Some(64 * 1024)).unwrap();
         let mut extractor = FrameExtractor::new().unwrap();
         let mut frame = |terminal: &Terminal<'static, '_>| extractor.frame(0, terminal).unwrap();
         let position = |rows_from_live, history_rows| ScrollPosition {
@@ -564,12 +550,10 @@ mod tests {
 
     #[test]
     fn vertical_preview_reads_history_nearest_first() {
-        let mut terminal = Terminal::new(TerminalOptions {
-            cols: 8,
-            rows: 2,
-            max_scrollback: SCROLLBACK_BUDGET_BYTES,
-        })
-        .unwrap();
+        let mut terminal = Terminal::new(8, 2).unwrap();
+        terminal
+            .set_scrollback_max_bytes(Some(SCROLLBACK_BUDGET_BYTES))
+            .unwrap();
         terminal.vt_write(
             b"\x1b]8;;https://example.test\x1b\\one\x1b]8;;\x1b\\\r\ntwo\r\nthree\r\nlongerthan8\r\nlast",
         );

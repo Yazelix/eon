@@ -6,5 +6,5 @@ publish = false
 
 [dependencies]
 libc = "=0.2.189"
-libghostty-vt = "=0.2.2"
+libghostty-vt = { git = "https://github.com/Yazelix/libghostty-rs.git", rev = "6313a9b4e594a08fb30979133fc85aabaa405760" }
 orbit-protocol = { path = "crates/protocol" }

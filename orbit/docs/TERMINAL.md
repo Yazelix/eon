@@ -74,11 +74,12 @@ revision so the client can wait for that frame.
 
 ## Attachment-model proof
 
-The proof pins `libghostty-vt` and `libghostty-vt-sys` 0.2.1 from crates.io.
-The sys crate builds Ghostty commit
-`a887df42c56f6de86c0fe6da9c4eeca37931e083`. The dependency builds on Linux
-with Rust 1.96.0 and Zig 0.15.2. Cargo locks ten third-party Rust crates,
-including the safe binding, sys crate, and proc-macro stack.
+The `orb-bi4` proof pinned `libghostty-vt` and `libghostty-vt-sys` 0.2.1 from
+crates.io. That sys crate built Ghostty commit
+`a887df42c56f6de86c0fe6da9c4eeca37931e083` on Linux with Rust 1.96.0 and Zig
+0.15.2, and Cargo locked ten third-party Rust crates, including the safe
+binding, sys crate, and proc-macro stack. [`CRATES.md`](CRATES.md) records
+Orbit's current pin.
 
 By default, the sys crate clones its pinned Ghostty source when
 `GHOSTTY_SOURCE_DIR` is unset and may let Zig resolve packages from the network
@@ -112,8 +113,8 @@ Git commit `ac0a291ebe7fcebe4d7cace914b89363856c4903` preserves the exact
 counterexample corpus. The current suite exercises the accepted authoritative
 runtime through real PTY lifecycle and structured-presentation checks. The
 repository carries no permanent test target for the rejected reconstruction
-path. Orbit uses no fork, binding extension, compatibility wrapper, second
-terminal engine, or replay fallback.
+path. Orbit uses no compatibility wrapper, second terminal engine, or replay
+fallback; its one binding fork is recorded in [`CRATES.md`](CRATES.md).
 
 The focused Orbit terminal conformance cases of the black-box suite
 run under one filter:

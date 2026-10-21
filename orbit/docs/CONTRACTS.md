@@ -5,11 +5,12 @@ ownership boundaries, proof status, and remaining gaps. `AGENTS.md` governs how
 agents work, Beads govern authorized changes, and this index records what the
 system must preserve.
 
-Orbit builds `libghostty-vt` and `libghostty-vt-sys` 0.2.2. The native build
-explicitly passes `-Dcpu=baseline` by default, preserving Ghostty
-`a887df42c56f6de86c0fe6da9c4eeca37931e083`, generated bindings and
-ORBF v2 / ORBS v13. This preserves the headless terminal contract checks; it
-does not establish older-CPU compatibility for a published cache artifact.
+Orbit builds `libghostty-vt` and `libghostty-vt-sys` 0.2.1 from the
+`Yazelix/libghostty-rs` fork that [`CRATES.md`](CRATES.md) records. The native
+build explicitly passes `-Dcpu=baseline` by default, building Ghostty
+`8c425a7bd57de848aa83cb9b003b1ecd6037c56a`, with ORBF v2 / ORBS v13. This
+preserves the headless terminal contract checks; it does not establish
+older-CPU compatibility for a published cache artifact.
 
 ## Status
 
@@ -796,8 +797,8 @@ command without copying their stimuli or expectations:
 nix develop -c eon-test -p yazelix-orbit --test lifecycle conformance_
 ```
 
-The command runs the pinned `libghostty-vt` 0.2.2 path backed by Ghostty
-`a887df42c56f6de86c0fe6da9c4eeca37931e083`. Protocol-only checks remain in
+The command runs the pinned `libghostty-vt` fork path backed by Ghostty
+`8c425a7bd57de848aa83cb9b003b1ecd6037c56a`. Protocol-only checks remain in
 the normal suite because they do not exercise that terminal engine.
 
 | Case | Stimulus | Orbit-visible observation | Assertion policy | Owner |

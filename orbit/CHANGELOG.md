@@ -31,6 +31,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   screen, and host unit tests cover direct rows against frame rows through
   reflow and the scroll-outcome room at the worker's output bound
   (`eon-awmq.7.2`).
+- Orbit builds Ghostty `8c425a7bd57de848aa83cb9b003b1ecd6037c56a` with Zig
+  0.17, through the `Yazelix/libghostty-rs` fork that `docs/CRATES.md`
+  records (`eon-a9tr.2`). The ORBS v13 and ORBF v2 wire is unchanged, so the
+  change is compatible for Venus, Eon Runtime and Eon. Terminal behavior
+  follows upstream: cursor positioning in origin mode and DECRQM reports
+  take Ghostty's fixes, and Orbit answers DECXCPR queries.
 
 ## Before this repository
 

@@ -13,24 +13,34 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 
 ### Authoritative terminal semantics
 
-- **Selected shape:** `libghostty-vt` 0.2.2, with `libghostty-vt-sys` 0.2.2 and pinned
-  Ghostty `a887df42c56f6de86c0fe6da9c4eeca37931e083`
+- **Selected shape:** `libghostty-vt` and `libghostty-vt-sys` 0.2.1 from the
+  `Yazelix/libghostty-rs` fork at `6313a9b4e594a08fb30979133fc85aabaa405760`, building
+  pinned Ghostty `8c425a7bd57de848aa83cb9b003b1ecd6037c56a` with Zig 0.17
 - **Status:** Selected for the experiment
-- **Credible alternatives:** Formatter reconstruction with the same crate; a binding
-  extension or fork; replacement by `rio-vt`
-- **Why:** The published crate supplies the chosen sole terminal authority and state-aware
+- **Credible alternatives:** Formatter reconstruction with the same crate; waiting for a
+  crates.io release that builds Ghostty `8c425a7bd`; replacement by `rio-vt`
+- **Why:** The binding supplies the chosen sole terminal authority and state-aware
   input. Its Formatter cannot provide exact client reconstruction, so Orbit keeps authority
   server-side and uses its public presentation surface.
   Vendored builds explicitly select Zig's `baseline` CPU by default;
   `LIBGHOSTTY_VT_SYS_CPU` permits an intentional deployment-specific override.
-  Release 0.2.2 preserves the pinned engine and generated bindings, adds wrapper
-  safety and Windows linking fixes, and leaves the dependency graph unchanged.
-  Adopting the upstream release avoids an owned build-script patch; Rust-only
-  CPU flags do not control this Zig build. No owned runtime logic is added.
+  Rust-only CPU flags do not control this Zig build. No owned runtime logic is added.
+  OSC 7501 program status needs Ghostty `8c425a7bd` or later, which no release of the
+  binding builds. The fork is upstream master `0ef8041` plus four commits: the Ghostty
+  and Zig 0.17 bump, enum-prefix fixes, the program-status and semantic-prompt
+  callbacks, and a docs resync. Master already carries the 0.2.2 release's soundness,
+  Windows-linking and baseline-CPU fixes, so the fork drops none of them. The same
+  series is offered upstream in
+  [Uzaaft/libghostty-rs#111](https://github.com/Uzaaft/libghostty-rs/issues/111).
+  Lucca approved this git pin, an exception to `orb-ze3`'s rule against unpublished
+  Git dependencies, for this dependency only (`eon-a9tr.1`, 2026-10-21). The pin moves
+  only by a bead. Exit condition: return to crates.io with the first release whose
+  `GHOSTTY_COMMIT` contains `8c425a7bd` and whose API has both callback wrappers.
 - **Evidence:** `orb-bi4.1` and its immutable negative corpus; accepted `orb-bi4.3`
   proof; portable build adoption with downstream acceptance tracked by Eon
   `eon-portable-orbit-cpu-omxq`. Those Beads record the pre-consolidation
-  revisions.
+  revisions. `eon-a9tr.1` measured the bump and chose the fork; `eon-a9tr.2`
+  landed it.
 
 ### Platform-specific PTY and local-runtime mechanics
 
@@ -157,14 +167,14 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 
 ### Structured presentation extraction
 
-- **Selected shape:** Existing `libghostty-vt` 0.2.2 `RenderState`, row/cell iterators, and
-  terminal grid references
+- **Selected shape:** The `RenderState`, row/cell iterators, and terminal grid
+  references of the `libghostty-vt` 0.2.1 fork pinned above
 - **Status:** Selected for the headless proof
 - **Credible alternatives:** A small approved binding extension; libghostty fork;
   replacement by `rio-vt`; secondary oracle using `vt100` or `termwiz`
 - **Why:** The public safe API supplies coherent render snapshots, styled graphemes,
   resolved background-only cells, palette and cursor data, while grid references supply
-  hyperlink URIs. The same release exposes global and per-row dirty state, so a later patch
+  hyperlink URIs. The same binding exposes global and per-row dirty state, so a later patch
   experiment can reuse the selected dependency. Orbit selects no diff or serialization
   crate. Dirty tracking does not define patch composition, history, effects, or wire
   compatibility. A bounded encoder and output queue need no serialization, buffer, async,

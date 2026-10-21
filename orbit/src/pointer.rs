@@ -354,15 +354,10 @@ fn format_selection(terminal: &Terminal<'static, 'static>) -> Option<String> {
 mod tests {
     use super::*;
     use crate::frame::FrameExtractor;
-    use libghostty_vt::TerminalOptions;
 
     fn terminal(cols: u16, rows: u16) -> Terminal<'static, 'static> {
-        let mut terminal = Terminal::new(TerminalOptions {
-            cols,
-            rows,
-            max_scrollback: 4096,
-        })
-        .unwrap();
+        let mut terminal = Terminal::new(cols, rows).unwrap();
+        terminal.set_scrollback_max_bytes(Some(4096)).unwrap();
         terminal.resize(cols, rows, 10, 18).unwrap();
         terminal
     }

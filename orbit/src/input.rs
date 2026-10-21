@@ -24,7 +24,7 @@ pub(crate) fn encode_input(
 ) -> io::Result<Vec<u8>> {
     match request {
         ClientMessage::Key(input) => {
-            let key = Key::try_from(u32::from(input.key.raw())).map_err(|_| errno(libc::EINVAL))?;
+            let key = Key::try_from(i32::from(input.key.raw())).map_err(|_| errno(libc::EINVAL))?;
             let unshifted = input
                 .unshifted_codepoint
                 .or((input.key == session::PhysicalKey::SPACE).then_some(' '));
@@ -167,16 +167,10 @@ pub(crate) fn wheel_direction(button: Option<session::MouseButton>) -> Option<Ve
 #[cfg(test)]
 mod tests {
     use super::*;
-    use libghostty_vt::TerminalOptions;
 
     #[test]
     fn canonical_input_uses_libghostty_encoding() {
-        let mut terminal = Terminal::new(TerminalOptions {
-            cols: 8,
-            rows: 2,
-            max_scrollback: 16,
-        })
-        .unwrap();
+        let mut terminal = Terminal::new(8, 2).unwrap();
         let surface = session::SurfaceSize {
             cols: 8,
             rows: 2,
@@ -254,12 +248,7 @@ mod tests {
     /// falls back to its text for one it cannot (ORB-C5).
     #[test]
     fn kitty_release_never_falls_back_to_text() {
-        let mut terminal = Terminal::new(TerminalOptions {
-            cols: 8,
-            rows: 2,
-            max_scrollback: 16,
-        })
-        .unwrap();
+        let mut terminal = Terminal::new(8, 2).unwrap();
         terminal.vt_write(b"\x1b[>3u");
         let surface = session::SurfaceSize {
             cols: 8,
