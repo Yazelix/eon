@@ -6,6 +6,7 @@
 pub const MAX_LINK_BYTES: usize = 4096;
 
 mod accessibility;
+mod cpu;
 mod input;
 mod model;
 mod render;
@@ -13,6 +14,7 @@ mod scene;
 mod transport;
 
 pub use accessibility::{Accessibility, AccessibilityTarget, Activation};
+pub use cpu::{CpuTimes, CpuUse};
 pub use input::InputState;
 pub use model::{
     ClipboardEffect, ConnectionState, LocalNoticeSource, ModelError, SessionModel, WorkspaceModel,

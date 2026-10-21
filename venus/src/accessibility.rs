@@ -31,6 +31,7 @@ const HINTS: NodeId = NodeId(11);
 const VERSION: NodeId = NodeId(12);
 const CLAUDE_QUOTA: NodeId = NodeId(13);
 const CLOCK: NodeId = NodeId(14);
+const CPU: NodeId = NodeId(15);
 // Scene rows are u16, so this range cannot collide with fixed or text-run nodes.
 const WORKSPACE_NODE_START: u64 = 1 << 32;
 const LINK_NODE_START: u64 = 1 << 48;
@@ -230,6 +231,9 @@ impl Snapshot {
             if workspace.version.is_some() {
                 children.push(VERSION);
             }
+            if workspace.cpu.is_some() {
+                children.push(CPU);
+            }
             if workspace.clock.is_some() {
                 children.push(CLOCK);
             }
@@ -352,7 +356,11 @@ impl Snapshot {
                 node.set_bounds(rect(quota.rect));
                 nodes.push((quota_id(quota.provider), node));
             }
-            for (id, label) in [(VERSION, &workspace.version), (CLOCK, &workspace.clock)] {
+            for (id, label) in [
+                (VERSION, &workspace.version),
+                (CPU, &workspace.cpu),
+                (CLOCK, &workspace.clock),
+            ] {
                 if let Some(label) = label {
                     let mut node = Node::new(Role::Label);
                     node.set_value(label.description.as_str());
@@ -933,6 +941,7 @@ mod tests {
                                     &snapshot,
                                     version,
                                     None,
+                                    None,
                                     size,
                                     metrics,
                                     0.0,
@@ -1073,6 +1082,7 @@ mod tests {
                     claude_quota: None,
                 },
                 None,
+                None,
                 Some(&clock),
                 PhysicalSize::new(1100, 600),
                 CellMetrics::for_scale(1.0),
@@ -1133,6 +1143,7 @@ mod tests {
                             WorkspaceScene::from_snapshot_with_metadata(
                                 &snapshot,
                                 version,
+                                None,
                                 clock,
                                 PhysicalSize::new(
                                     (logical_width as f32 * metrics.scale) as u32,
@@ -1253,6 +1264,141 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn cpu_use_yields_after_the_clock_and_has_no_actions() {
+        let cpu = crate::CpuUse::between(
+            crate::CpuTimes::parse("cpu 0 0 0 0 0 0 0 0").unwrap(),
+            crate::CpuTimes::parse("cpu 12 0 0 88 0 0 0 0").unwrap(),
+        )
+        .unwrap();
+        let clock = crate::LocalClock::new(
+            &jiff::civil::date(2026, 10, 21)
+                .at(14, 5, 0, 0)
+                .to_zoned(jiff::tz::TimeZone::fixed(jiff::tz::offset(-3)))
+                .unwrap(),
+        );
+        let metrics = CellMetrics::for_scale(1.25);
+        let snapshot = WorkspaceSnapshot {
+            active_tab: "t1".into(),
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            tabs: vec![workspace_tab("t1", &["p1"], "p1")],
+            codex_quota: Some(CodexQuota {
+                state: CodexQuotaState::Fresh,
+                observed_at: 1,
+                windows: vec![CodexQuotaWindow {
+                    duration_minutes: 300,
+                    remaining_percent: 74,
+                    resets_at: None,
+                }],
+            }),
+            claude_quota: None,
+        };
+        let project = |logical_width: u32, version, cpu, clock| {
+            WorkspaceScene::from_snapshot_with_metadata(
+                &snapshot,
+                version,
+                cpu,
+                clock,
+                PhysicalSize::new((logical_width as f32 * metrics.scale) as u32, 600),
+                metrics,
+                0.0,
+                0.0,
+                |_| None,
+                |_, text| {
+                    (
+                        text.to_owned(),
+                        text.chars().count() as f32 * 10.0 * metrics.scale,
+                    )
+                },
+                None,
+            )
+        };
+        let full_quotas = project(3000, None, None, None).quotas;
+        let mut without_clock = 0;
+        for version in [None, Some("9.8.7")] {
+            for logical_width in (100..=1600).step_by(5) {
+                let baseline = project(logical_width, version, None, None);
+                let scene = project(logical_width, version, Some(&cpu), Some(&clock));
+                assert_eq!(scene.tabs, baseline.tabs);
+                assert_eq!(scene.controls, baseline.controls);
+                assert_eq!(scene.terminal, baseline.terminal);
+                assert_eq!(scene.version.is_some(), baseline.version.is_some());
+                // The clock yields first, then CPU use, before the version label and quotas.
+                assert!(scene.clock.is_none() || scene.cpu.is_some());
+                let Some(shown) = &scene.cpu else {
+                    assert!(logical_width < 1600, "a wide bar shows CPU use");
+                    continue;
+                };
+                without_clock += usize::from(scene.clock.is_none());
+                assert_eq!(scene.quotas.len(), full_quotas.len());
+                assert_eq!(scene.quotas[0].label, full_quotas[0].label);
+                assert_eq!(version.is_some(), scene.version.is_some());
+                assert_eq!(shown.label, " CPU 12%");
+                assert_eq!(
+                    shown.rect.width,
+                    8.0 * metrics.width + metrics.padding * 2.0
+                );
+                assert!(scene.drag_region.width >= metrics.font_size * 4.0);
+                assert_eq!(
+                    scene
+                        .version
+                        .as_ref()
+                        .map_or(scene.quotas[0].rect, |version| version.rect)
+                        .right(),
+                    shown.rect.left
+                );
+                assert_eq!(
+                    shown.rect.right(),
+                    scene
+                        .clock
+                        .as_ref()
+                        .map_or(scene.controls[1].rect.left, |clock| clock.rect.left)
+                );
+                assert_eq!(scene.drag_region.right(), scene.quotas[0].rect.left);
+                assert_eq!(
+                    scene.hit_test(
+                        shown.rect.left + shown.rect.width / 2.0,
+                        shown.rect.height / 2.0
+                    ),
+                    Some(crate::WorkspaceHit::Cpu)
+                );
+                let mut accessible = Snapshot::new(PhysicalSize::new(
+                    (logical_width as f32 * metrics.scale) as u32,
+                    600,
+                ));
+                accessible.set_workspace(Some(&scene));
+                let tree = accessible.tree();
+                let children = node(&tree, WINDOW).children();
+                let index = children.iter().position(|id| *id == CPU).unwrap();
+                assert_eq!(
+                    children[index - 1],
+                    if version.is_some() {
+                        VERSION
+                    } else {
+                        quota_id(scene.quotas[0].provider)
+                    }
+                );
+                assert_eq!(children[index + 1] == CLOCK, scene.clock.is_some());
+                let node = node(&tree, CPU);
+                assert_eq!(node.role(), Role::Label);
+                assert_eq!(
+                    node.value(),
+                    Some("CPU use 12%, all cores, over the last 2 seconds")
+                );
+                assert!(!node.supports_action(Action::Click));
+                assert!(!node.supports_action(Action::Focus));
+            }
+        }
+        assert!(
+            without_clock > 0,
+            "some width shows CPU use but not the clock"
+        );
     }
 
     #[test]
@@ -2147,6 +2293,7 @@ mod tests {
                 &workspace,
                 None,
                 None,
+                None,
                 size,
                 metrics,
                 0.0,
@@ -2339,6 +2486,7 @@ mod tests {
                 codex_quota: None,
                 claude_quota: None,
             },
+            None,
             None,
             None,
             PhysicalSize::new(800, 600),

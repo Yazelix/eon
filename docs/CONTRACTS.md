@@ -1729,3 +1729,23 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Evidence:** Venus `local_clock_names_minute_date_and_offset` and
     `local_clock_yields_first_and_has_no_actions`; the installed observation
     recorded in `eon-igae.4`.
+
+## EON-C30 — CPU use in the Eon Bar
+
+- **Status:** Proven on x86_64 Linux Wayland.
+- **Consumer:** Full-Eon workspace users on x86_64 Linux.
+- **Trigger:** A workspace window is open.
+- **Result:** The Eon Bar shows Venus's VEN-C28 whole-machine CPU label,
+  always on, with no Eon configuration.
+- **Important failures:** As VEN-C28: an unreadable sample shows no label
+  rather than 0%, and narrow windows hide it right after the clock.
+- **Owner:** Eon owns the always-on product choice and composition; Venus owns
+  sampling and the label under VEN-C28.
+- **Boundary:** No setting, EONW or runtime change; an on/off setting needs its
+  own decision.
+- **Proof:** `eon-cpu-widget-eon-bar-acxs`
+  - **Environment:** Automated; one isolated installed observation.
+  - **Evidence:** Venus `cpu_use_counts_iowait_idle_and_guest_once`,
+    `cpu_use_rejects_bad_readings_instead_of_showing_zero` and
+    `cpu_use_yields_after_the_clock_and_has_no_actions`; the installed
+    observation recorded in `eon-cpu-widget-eon-bar-acxs`.

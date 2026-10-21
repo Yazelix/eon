@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- VEN-C28: a read-only `CPU 12%` label joins the Eon Bar before the clock,
+  sampled from `/proc/stat` every 2 seconds on Linux. It uses only spare space
+  and yields right after the clock (`eon-cpu-widget-eon-bar-acxs`).
 - VEN-C5, VEN-C20, VEN-C21, VEN-C23, VEN-C24: a current Eon popup on the key of
   a fixed binding other than Alt+Slash and Alt+0 through Alt+9 takes that key;
   the footer omits the fixed hint, Shortcuts lists it as overridden by the

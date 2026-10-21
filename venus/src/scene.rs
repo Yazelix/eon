@@ -1,4 +1,5 @@
 use crate::{
+    CpuUse,
     model::{active_popup, presented_panes},
     render::CellMetrics,
 };
@@ -320,6 +321,7 @@ pub enum WorkspaceHit<'a> {
     Tab(&'a str),
     Quota(usize),
     Version,
+    Cpu,
     Clock,
     Control(WorkspaceHeaderControl),
     Drag,
@@ -646,6 +648,7 @@ pub struct WorkspaceScene {
     pub(crate) drag_region: SceneRect,
     pub(crate) quotas: Vec<WorkspaceQuota>,
     pub(crate) version: Option<WorkspaceLabel>,
+    pub(crate) cpu: Option<WorkspaceLabel>,
     pub(crate) clock: Option<WorkspaceLabel>,
     pub(crate) controls: [WorkspaceControl; 3],
     pub hints: Option<ShortcutHintsScene>,
@@ -1046,6 +1049,7 @@ impl WorkspaceScene {
             snapshot,
             None,
             None,
+            None,
             size,
             metrics,
             tab_scroll,
@@ -1061,6 +1065,7 @@ impl WorkspaceScene {
     pub fn from_snapshot_with_metadata<'a>(
         snapshot: &Snapshot,
         eon_version: Option<&str>,
+        cpu: Option<&CpuUse>,
         clock: Option<&LocalClock>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
@@ -1217,62 +1222,60 @@ impl WorkspaceScene {
             .map_or(controls[1].rect.left, |quota| quota.rect.left)
             - drag_region.left)
             .max(0.0);
-        let version = eon_version.and_then(|version| {
-            let label = format!("EON {version}");
-            // Launch validation bounds identity to ASCII; rendering uses terminal cell spacing.
-            let width = label.len() as f32 * metrics.width + metrics.padding * 2.0;
-            // Informational identity uses spare header space without shortening tabs.
-            if !width.is_finite()
-                || width <= 0.0
-                || width + metrics.font_size * 4.0 > drag_region.width
-            {
-                return None;
-            }
-            let right = controls[1].rect.left;
-            drag_region.width -= width;
-            for quota in &mut quotas {
-                quota.rect.left -= width;
-                quota.logo.left -= width;
-            }
-            Some(WorkspaceLabel {
+        // Read-only labels take spare header space without shortening tabs, in this order, and
+        // stop at the first that does not fit: the clock yields first, then CPU use, then the
+        // version label. CPU use and the clock also need every quota chip at full width.
+        let mut labels = [
+            eon_version.map(|version| {
+                (
+                    format!("EON {version}"),
+                    format!("Running Eon version {version}"),
+                )
+            }),
+            cpu.filter(|_| !compact)
+                .map(|cpu| (cpu.label.clone(), cpu.description.clone())),
+            clock
+                .filter(|_| !compact)
+                .map(|clock| (clock.label.clone(), clock.description.clone())),
+        ]
+        .map(|label| {
+            label.map(|(label, description)| WorkspaceLabel {
                 rect: SceneRect {
-                    left: right - width,
-                    width,
+                    // Every label is ASCII (launch validation bounds the version), and
+                    // rendering uses terminal cell spacing.
+                    width: label.len() as f32 * metrics.width + metrics.padding * 2.0,
                     height: tab_height,
-                    top: 0.0,
+                    ..SceneRect::default()
                 },
                 label,
-                description: format!("Running Eon version {version}"),
+                description,
             })
         });
-        // The clock takes spare space last, so it yields before every other header item.
-        let clock = clock
-            .filter(|_| !compact && version.is_some() == eon_version.is_some())
-            .and_then(|clock| {
-                let width = clock.label.len() as f32 * metrics.width + metrics.padding * 2.0;
-                if !width.is_finite() || width + metrics.font_size * 4.0 > drag_region.width {
-                    return None;
-                }
+        let mut fits = true;
+        for label in &mut labels {
+            let Some(width) = label.as_ref().map(|label| label.rect.width) else {
+                continue;
+            };
+            fits &= width.is_finite()
+                && width > 0.0
+                && width + metrics.font_size * 4.0 <= drag_region.width;
+            if fits {
                 drag_region.width -= width;
-                for quota in &mut quotas {
-                    quota.rect.left -= width;
-                    quota.logo.left -= width;
-                }
-                Some(WorkspaceLabel {
-                    rect: SceneRect {
-                        left: controls[1].rect.left - width,
-                        width,
-                        height: tab_height,
-                        top: 0.0,
-                    },
-                    label: clock.label.clone(),
-                    description: clock.description.clone(),
-                })
-            });
-        let version = version.map(|mut version| {
-            version.rect.left -= clock.as_ref().map_or(0.0, |clock| clock.rect.width);
-            version
-        });
+            } else {
+                *label = None;
+            }
+        }
+        let mut right = controls[1].rect.left;
+        for label in labels.iter_mut().rev().flatten() {
+            right -= label.rect.width;
+            label.rect.left = right;
+        }
+        let shift = controls[1].rect.left - right;
+        for quota in &mut quotas {
+            quota.rect.left -= shift;
+            quota.logo.left -= shift;
+        }
+        let [version, cpu, clock] = labels;
         let tab_scroll_limit = (tab_end - tab_viewport.width).max(0.0);
         let active = tabs[active_tab].rect;
         // Revealing the first tab never scrolls.
@@ -1329,6 +1332,7 @@ impl WorkspaceScene {
                 drag_region,
                 quotas,
                 version,
+                cpu,
                 clock,
                 controls,
                 hints,
@@ -1485,6 +1489,7 @@ impl WorkspaceScene {
             drag_region,
             quotas,
             version,
+            cpu,
             clock,
             controls,
             hints,
@@ -1560,6 +1565,9 @@ impl WorkspaceScene {
             .is_some_and(|version| version.rect.contains(x, y))
         {
             return Some(WorkspaceHit::Version);
+        }
+        if self.cpu.as_ref().is_some_and(|cpu| cpu.rect.contains(x, y)) {
+            return Some(WorkspaceHit::Cpu);
         }
         if self
             .clock
@@ -2355,6 +2363,7 @@ mod tests {
                 let footer_rect = footer.rect;
                 let with_hints = WorkspaceScene::from_snapshot_with_metadata(
                     &snapshot,
+                    None,
                     None,
                     None,
                     size,

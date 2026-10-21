@@ -138,7 +138,9 @@ bar unchanged.
 See [quota behavior](CONFIGURATION.md#agent-quota).
 A 24-hour clock sits just before `?` and `×` and shows local time; hover it
 for the date and UTC offset. It hides first when the bar runs short of space,
-and stays hidden if the local time zone can't be determined.
+and stays hidden if the local time zone can't be determined. Before the clock,
+`CPU 12%` shows whole-machine CPU use over the last 2 seconds; hover it for
+details. It hides next.
 
 The bottom hints bar starts visible. Alt+Shift+B hides or restores it for this
 window, returning or reserving its space without restarting terminals. Hints

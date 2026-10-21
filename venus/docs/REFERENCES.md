@@ -130,6 +130,23 @@ native comparison: reuse measurement, row priority, hover and static AccessKit
 projection. Claude uses a plain C monogram, without copied brand artwork.
 Provider collection and freshness remain Runtime responsibilities.
 
+### CPU use
+
+VEN-C28 (`eon-cpu-widget-eon-bar-acxs`) compares btop v1.4.7
+(`6e39144aaf5a6bc01b9f795010b0914431067183`,
+`src/linux/btop_collect.cpp`) and Waybar 0.15.0
+(`90b209add8937514d0a987aa842e701bd8f1232e`,
+`src/modules/cpu_usage/linux.cpp` and `common.cpp`) against Linux v7.3's
+`Documentation/filesystems/proc.rst` and `kernel/sched/cputime.c`. Venus
+keeps btop's formula: idle is idle plus iowait, total is the first eight
+fields, so steal counts as busy and guest time, which the kernel already adds
+to user and nice, is not counted twice as Waybar does. It reads only the
+aggregate line, which covers every possible CPU and so needs no hotplug
+handling. It rejects btop's clamping of a counter that went backwards into a
+false 0% or 100%, Waybar's 32-bit total and unclamped casts, and both
+projects' since-boot or 100 ms first value: the first reading is only a
+baseline, and a failed or non-advancing reading shows nothing.
+
 ### Local clock
 
 VEN-C27 (`eon-igae.4`) compares Waybar's clock module at tag 0.14.0

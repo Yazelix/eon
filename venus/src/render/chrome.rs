@@ -28,6 +28,7 @@ pub(super) struct HeaderInteraction {
     hovered_header: Option<(WorkspaceFocus, String)>,
     quota_hovered: Option<usize>,
     version_hovered: bool,
+    cpu_hovered: bool,
     clock_hovered: bool,
     pressed_header: Option<WorkspaceHeaderControl>,
 }
@@ -168,6 +169,10 @@ impl Renderer {
         self.header.version_hovered = hovered;
     }
 
+    pub fn set_cpu_hovered(&mut self, hovered: bool) {
+        self.header.cpu_hovered = hovered;
+    }
+
     pub fn set_clock_hovered(&mut self, hovered: bool) {
         self.header.clock_hovered = hovered;
     }
@@ -215,6 +220,10 @@ impl Renderer {
             && let Some(version) = &workspace.version
         {
             (version.description.as_str(), version.rect)
+        } else if self.header.cpu_hovered
+            && let Some(cpu) = &workspace.cpu
+        {
+            (cpu.description.as_str(), cpu.rect)
         } else if self.header.clock_hovered
             && let Some(clock) = &workspace.clock
         {
@@ -642,6 +651,11 @@ impl Renderer {
                 quota.rect,
             );
         }
+        let reading = SceneColor {
+            r: 162,
+            g: 174,
+            b: 190,
+        };
         for (label, color) in [
             (
                 &workspace.version,
@@ -651,14 +665,8 @@ impl Renderer {
                     b: 216,
                 },
             ),
-            (
-                &workspace.clock,
-                SceneColor {
-                    r: 162,
-                    g: 174,
-                    b: 190,
-                },
-            ),
+            (&workspace.cpu, reading),
+            (&workspace.clock, reading),
         ] {
             let Some(label) = label else {
                 continue;
@@ -1129,6 +1137,7 @@ mod tests {
                 };
                 let workspace = WorkspaceScene::from_snapshot_with_metadata(
                     &snapshot,
+                    None,
                     None,
                     None,
                     PhysicalSize::new(900, 600),

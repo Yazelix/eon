@@ -1346,10 +1346,11 @@ re-proved when that platform or feature is next touched.
 - **Trigger:** A workspace surface is presented, or the local wall-clock minute
   changes.
 - **Result:** One read-only `HH:MM` label in terminal monospace shows local
-  24-hour time in the existing top row, after the quota chips and version label
-  and before Shortcuts and Close. It changes within a second of each minute
-  boundary. Hover and a static AccessKit label name the time, date and UTC
-  offset, such as `Local time 14:05, Wednesday 21 October 2026, UTC−03:00`.
+  24-hour time in the existing top row, after the quota chips, version label
+  and CPU label and before Shortcuts and Close. It changes within a second of
+  each minute boundary. Hover and a static AccessKit label name the time, date
+  and UTC offset, such as `Local time 14:05, Wednesday 21 October 2026,
+  UTC−03:00`.
   The clock uses only spare drag-region space and keeps that region's minimum;
   it appears only while every quota chip is at full width, so width fitting
   hides it before the version label, quota compaction, tabs or controls.
@@ -1369,3 +1370,35 @@ re-proved when that platform or feature is next touched.
   - **Evidence:** `local_clock_names_minute_date_and_offset` and
     `local_clock_yields_first_and_has_no_actions` in the workspace suite; one
     isolated installed observation recorded in `eon-igae.4`.
+
+## VEN-C28 — CPU use in the Eon Bar
+
+- **Status:** Proven on native x86_64 Linux Wayland.
+- **Consumer:** One person using a Venus surface controlled by a full Eon
+  workspace on Linux.
+- **Trigger:** A workspace surface is presented, and every 2 seconds after.
+- **Result:** One read-only `CPU 12%` label in terminal monospace shows
+  whole-machine CPU use over the last 2 seconds as a whole percentage from
+  `/proc/stat`, in the existing top row after the quota chips and version label
+  and before the clock. It first appears one interval after the surface opens.
+  Hover and a static AccessKit label say `CPU use 12%, all cores, over the last
+  2 seconds`. The label uses only spare drag-region space and keeps that
+  region's minimum; it appears only while every quota chip is at full width, so
+  width fitting hides the clock first, then the CPU label, before the version
+  label, quota compaction, tabs or controls.
+- **Important failures:** An unreadable, malformed or non-advancing sample
+  shows no label, never 0%; the label returns with the next valid sample. A
+  CPU-only change does not replace attachments, recenter navigation, cancel
+  scrolling or send an Orbit resize. The label has no action, focus target or
+  drag behavior. Other platforms show no label.
+- **Owner:** Venus Scene owns the text and geometry, the application owns the
+  2-second wake, and a Venus module reads and parses `/proc/stat` on Linux.
+- **Boundary:** No EONW or runtime change, configuration, per-core view,
+  history, graph, dependency or platform expansion.
+- **Proof:** `eon-cpu-widget-eon-bar-acxs`
+  - **Environment:** Automated and installed.
+  - **Evidence:** `cpu_use_counts_iowait_idle_and_guest_once`,
+    `cpu_use_rejects_bad_readings_instead_of_showing_zero` and
+    `cpu_use_yields_after_the_clock_and_has_no_actions` in the Venus suite;
+    one isolated installed observation recorded in
+    `eon-cpu-widget-eon-bar-acxs`.

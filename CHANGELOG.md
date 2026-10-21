@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The Eon Bar shows whole-machine CPU use, such as `CPU 12%`, before the
+  clock, updated every 2 seconds. Hover it for details. It hides right after
+  the clock when the window is narrow.
 - A popup keybinding may now use the key of a built-in Eon shortcut, such as
   Alt+Shift+N or Alt+W, instead of failing to load: the popup takes the key,
   and Alt+/ lists the built-in shortcut as overridden. Only Alt+/ and Alt+0
