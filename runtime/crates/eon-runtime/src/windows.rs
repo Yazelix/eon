@@ -1,6 +1,6 @@
 use super::{
     cli::Inputs,
-    control::write_stdout,
+    control::{Error, write_stdout},
     generation::{current_generation, generation_directory, private_directory_exists},
     supervisor::{
         LaunchMode, SESSION_START_TIMEOUT, base_runtime_directory, prepare_runtime,
@@ -67,10 +67,12 @@ fn existing_windows() -> Result<Vec<(String, PathBuf)>, String> {
     Ok(windows)
 }
 
-fn selected_window(id: &OsStr) -> Result<PathBuf, String> {
-    let id = id.to_str().ok_or("Eon window ID must be UTF-8")?;
+fn selected_window(id: &OsStr) -> Result<PathBuf, Error> {
+    let id = id
+        .to_str()
+        .ok_or_else(|| Error::usage("Eon window ID must be UTF-8"))?;
     if !valid_window_id(id) {
-        return Err(format!("invalid Eon window ID {id:?}"));
+        return Err(Error::usage(format!("invalid Eon window ID {id:?}")));
     }
     let parent = windows_root();
     validate_private_directory(&base_runtime_directory("eon"))?;
@@ -168,7 +170,7 @@ pub(super) fn new_window(inputs: &Inputs) -> Result<i32, String> {
     }
 }
 
-pub(super) fn window_action(id: &OsStr, stop: bool, json: bool) -> Result<i32, String> {
+pub(super) fn window_action(id: &OsStr, stop: bool, json: bool) -> Result<i32, Error> {
     let root = selected_window(id)?;
     let mut command = window_command(&root)?;
     command.args(if stop {
@@ -185,7 +187,7 @@ pub(super) fn window_action(id: &OsStr, stop: bool, json: bool) -> Result<i32, S
     Ok(status.code().unwrap_or(1))
 }
 
-pub(super) fn stop_all_windows() -> Result<i32, String> {
+pub(super) fn stop_all_windows() -> Result<i32, Error> {
     let current = runtime_directory("eon");
     let mut windows = existing_windows()?;
     windows.sort_by_key(|(_, root)| root == &current);

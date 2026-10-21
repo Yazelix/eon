@@ -7,11 +7,11 @@ fn main() -> ExitCode {
     match result {
         Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
         Err(error) => {
-            eprintln!("{product}: {error}");
+            eprintln!("{product}: {}", error.message);
             if product == "eon-directory-picker" {
                 thread::sleep(Duration::from_secs(2));
             }
-            ExitCode::FAILURE
+            ExitCode::from(error.status)
         }
     }
 }

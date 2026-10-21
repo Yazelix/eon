@@ -659,6 +659,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     and workspace-count bounds.
   - Harmless navigation no-ops return the unchanged Snapshot as success;
     request deduplication and picker/lifecycle restrictions still apply.
+  - `eon` and `eonbase` exit 0 on success, 1 when a command is refused or
+    fails, 2 for invalid command lines and argument syntax (including
+    `invalid-tab` and `malformed-action`), 3 when a named tab, pane, terminal,
+    popup or generation is missing or stale, 4 when the supervisor is missing
+    or unreachable, and 130 on interrupt, identically with and without
+    `--json`. The CLI projection derives the status from the failure code.
+    Multi-target Stop exits with its largest status; commands that run another
+    program pass on its status.
 - **Important failures:** Malformed, oversized, incompatible, unavailable,
   rejected, timed-out, partially read, or response-lost operations fail within
   the shared bound without reconstructing hidden state or reviving completed
@@ -715,7 +723,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   selection, cwd and lifetime remain runtime policy and never cross EONW. The
   retired v4 picker opcode is unavailable; Project uses ordinary popup invocation.
   There is no negotiation or adapter.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
+  exit statuses `eon-8mnr.1` (automated tier).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -730,7 +739,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     failures (`unix_connection_attempt_obeys_timeout`,
     `management_response_obeys_one_deadline_across_partial_reads`,
     `lost_stop_response_still_finishes_the_supervisor`,
-    `missing_supervisor_is_a_structured_workspace_failure`,
+    `failure_kinds_exit_with_distinct_statuses_with_and_without_json`,
     `invalid_focus_is_rejected_before_supervisor_connection`,
     `closed_stdout_pipe_is_not_a_panic`). Installed checklist items 3 and 4
     (`eon workspace` against the window; Project, Git, Agent and Anima popups).

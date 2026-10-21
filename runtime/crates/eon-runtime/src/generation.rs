@@ -1,6 +1,6 @@
 use super::cli::Inputs;
 use super::control::{
-    ControlResponse, EndpointFailure, EndpointFailureKind, connect_control, failure,
+    ControlResponse, EndpointFailure, EndpointFailureKind, Error, connect_control, failure,
     probe_generation_runtime, remove_socket_if_identity, report_failure, send_action_on,
     socket_identity, socket_identity_from, write_stdout,
 };
@@ -431,21 +431,22 @@ pub(super) fn attach_generation(
     inputs: &Inputs,
     target: Option<&str>,
     product: &str,
-) -> Result<i32, String> {
+) -> Result<i32, Error> {
     let root = runtime_directory(product);
     let current = current_generation(inputs)?;
     let target = target.unwrap_or(&current);
     let record = inspect_selected_generation(inputs, &root, &current, target)?
-        .ok_or_else(|| format!("generation {target} was not found"))?;
+        .ok_or_else(|| Error::missing(format!("generation {target} was not found")))?;
     if !record.attach.available {
         return Err(format!(
             "generation {target} is not attachable: {}",
             record.attach.reason
-        ));
+        )
+        .into());
     }
     let (mode, supervisor) = probe_supervisor(inputs, &record.runtime.join("eon.sock"), target)
         .map_err(|error| error.detail)?;
-    present_at(inputs, &record.runtime, target, mode, supervisor)
+    present_at(inputs, &record.runtime, target, mode, supervisor).map_err(Error::from)
 }
 
 pub(super) fn stop_generation(

@@ -1,6 +1,7 @@
 use super::{
     control::{
-        ControlResponse, EndpointFailureKind, failure, report_failure, send_action, write_stdout,
+        ControlResponse, EndpointFailureKind, Error, failure, report_failure, send_action,
+        write_stdout,
     },
     generation::{
         attach_generation, current_generation, generations_command, stop_generation,
@@ -53,7 +54,7 @@ impl Inputs {
     }
 }
 
-pub fn run(inputs: Inputs) -> (&'static str, Result<i32, String>) {
+pub fn run(inputs: Inputs) -> (&'static str, Result<i32, Error>) {
     let mut arguments = env::args_os();
     let invocation = arguments.next().unwrap_or_default();
     let mut arguments: Vec<OsString> = arguments.collect();
@@ -62,21 +63,30 @@ pub fn run(inputs: Inputs) -> (&'static str, Result<i32, String>) {
         .is_some_and(|argument| argument == OsStr::new("__directory-picker"))
     {
         arguments.remove(0);
-        return ("eon-directory-picker", directory_picker(&inputs, arguments));
+        return (
+            "eon-directory-picker",
+            directory_picker(&inputs, arguments).map_err(Error::from),
+        );
     }
     if arguments
         .first()
         .is_some_and(|argument| argument == OsStr::new("__startup-anima"))
     {
         arguments.remove(0);
-        return ("eon-directory-picker", startup_anima(&inputs, arguments));
+        return (
+            "eon-directory-picker",
+            startup_anima(&inputs, arguments).map_err(Error::from),
+        );
     }
     match Path::new(&invocation).file_name().and_then(OsStr::to_str) {
         Some("eonbase") => ("eonbase", execute_eonbase(&inputs, arguments)),
         // Other names stay Eon: Nix's wrapped executable relaunches itself under its own file
         // name for independent windows.
         _ => match managed_environment::tool(&invocation) {
-            Some(tool) => ("eon", launch_managed(&inputs, tool, arguments)),
+            Some(tool) => (
+                "eon",
+                launch_managed(&inputs, tool, arguments).map_err(Error::from),
+            ),
             None => ("eon", execute(&inputs, arguments)),
         },
     }
@@ -344,27 +354,27 @@ fn launch_managed(
     Err(format!("cannot launch {program}: {error}"))
 }
 
-fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
+fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     if let Some(code) = lifecycle_command(inputs, &arguments, "eon")? {
         return Ok(code);
     }
-    match arguments.as_slice() {
+    let result = match arguments.as_slice() {
         [flag] if flag == "-h" || flag == "--help" => print_help(inputs),
         [] => launch_current(inputs, LaunchMode::Workspace, &[], true, false, "eon"),
         [command, action] if command == "window" && action == "new" => windows::new_window(inputs),
         [command, action, id] if command == "window" && action == "attach" => {
-            windows::window_action(id, false, false)
+            Ok(windows::window_action(id, false, false)?)
         }
         [command, action, all] if command == "window" && action == "stop" && all == "all" => {
-            windows::stop_all_windows()
+            Ok(windows::stop_all_windows()?)
         }
         [command, action, id] if command == "window" && action == "stop" => {
-            windows::window_action(id, true, false)
+            Ok(windows::window_action(id, true, false)?)
         }
         [command, action, id, flag]
             if command == "window" && action == "stop" && flag == "--json" =>
         {
-            windows::window_action(id, true, true)
+            Ok(windows::window_action(id, true, true)?)
         }
         [command] if command == "windows" => windows::list_windows(false),
         [command, flag] if command == "windows" && flag == "--json" => windows::list_windows(true),
@@ -389,7 +399,8 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
                 || command == "pane"
                 || command == "focus" =>
         {
-            control(inputs, &arguments)
+            let (action, json) = parse_control_arguments(&arguments)?;
+            control(inputs, action, json)
         }
         [command] if command == "versions" => {
             write_stdout(format!(
@@ -407,8 +418,9 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
             write_stdout(format!("{}\n", path.display()))?;
             Ok(0)
         }
-        _ => Err(EON_USAGE.into()),
-    }
+        _ => return Err(Error::usage(EON_USAGE)),
+    };
+    Ok(result?)
 }
 
 fn print_help(inputs: &Inputs) -> Result<i32, String> {
@@ -465,17 +477,19 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
 
 Closing a window detaches. Stop ends its terminals.
 Where shown, {command}--json{reset} prints JSON and skips Stop confirmation.
+Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
+4 Eon unreachable, 130 interrupted.
 ",
         version = inputs.version
     ))?;
     Ok(0)
 }
 
-fn execute_eonbase(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
+fn execute_eonbase(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     if let Some(code) = lifecycle_command(inputs, &arguments, "eonbase")? {
         return Ok(code);
     }
-    match arguments.as_slice() {
+    let result = match arguments.as_slice() {
         [separator, child @ ..] if separator == "--" && !child.is_empty() => {
             launch_current(inputs, LaunchMode::Terminal, child, true, true, "eonbase")
         }
@@ -511,21 +525,24 @@ fn execute_eonbase(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Str
                 application_id_argument(application_id)?,
             )
         }
-        _ => Err(EONBASE_USAGE.into()),
-    }
+        _ => return Err(Error::usage(EONBASE_USAGE)),
+    };
+    Ok(result?)
 }
 
-fn application_id_argument(argument: &OsStr) -> Result<&str, String> {
+fn application_id_argument(argument: &OsStr) -> Result<&str, Error> {
     let value = argument
         .to_str()
-        .ok_or_else(|| "Eon application identities must be UTF-8".to_string())?;
+        .ok_or_else(|| Error::usage("Eon application identities must be UTF-8"))?;
     if value.is_empty()
         || value.len() > 128
         || !value
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
     {
-        return Err(format!("invalid Eon application identity {value:?}"));
+        return Err(Error::usage(format!(
+            "invalid Eon application identity {value:?}"
+        )));
     }
     Ok(value)
 }
@@ -534,27 +551,26 @@ fn lifecycle_command(
     inputs: &Inputs,
     arguments: &[OsString],
     product: &str,
-) -> Result<Option<i32>, String> {
-    match arguments {
-        [command] if command == "attach" => attach_generation(inputs, None, product),
+) -> Result<Option<i32>, Error> {
+    Ok(Some(match arguments {
+        [command] if command == "attach" => attach_generation(inputs, None, product)?,
         [command, generation] if command == "attach" => {
-            attach_generation(inputs, Some(generation_argument(generation)?), product)
+            attach_generation(inputs, Some(generation_argument(generation)?), product)?
         }
-        [command] if command == "generations" => generations_command(inputs, false, product),
+        [command] if command == "generations" => generations_command(inputs, false, product)?,
         [command, flag] if command == "generations" && flag == "--json" => {
-            generations_command(inputs, true, product)
+            generations_command(inputs, true, product)?
         }
         [command, generation] if command == "stop" => {
-            stop_argument(inputs, generation, false, product)
+            stop_argument(inputs, generation, false, product)?
         }
         [command, generation, flag] | [command, flag, generation]
             if command == "stop" && flag == "--json" =>
         {
-            stop_argument(inputs, generation, true, product)
+            stop_argument(inputs, generation, true, product)?
         }
         _ => return Ok(None),
-    }
-    .map(Some)
+    }))
 }
 
 fn stop_argument(
@@ -562,26 +578,27 @@ fn stop_argument(
     argument: &OsStr,
     json: bool,
     product: &str,
-) -> Result<i32, String> {
-    match argument.to_str() {
-        Some("previous") if product == "eon" => stop_generations(inputs, false, json, product),
-        Some("all") if product == "eon" => stop_generations(inputs, true, json, product),
-        _ => stop_generation(inputs, generation_argument(argument)?, json, product),
-    }
+) -> Result<i32, Error> {
+    Ok(match argument.to_str() {
+        Some("previous") if product == "eon" => stop_generations(inputs, false, json, product)?,
+        Some("all") if product == "eon" => stop_generations(inputs, true, json, product)?,
+        _ => stop_generation(inputs, generation_argument(argument)?, json, product)?,
+    })
 }
 
-fn generation_argument(argument: &OsStr) -> Result<&str, String> {
+fn generation_argument(argument: &OsStr) -> Result<&str, Error> {
     let generation = argument
         .to_str()
-        .ok_or_else(|| "Eon generation identities must be UTF-8".to_string())?;
+        .ok_or_else(|| Error::usage("Eon generation identities must be UTF-8"))?;
     if !valid_generation(generation) {
-        return Err(format!("invalid Eon generation identity {generation:?}"));
+        return Err(Error::usage(format!(
+            "invalid Eon generation identity {generation:?}"
+        )));
     }
     Ok(generation)
 }
 
-fn control(inputs: &Inputs, arguments: &[OsString]) -> Result<i32, String> {
-    let (action, json) = parse_control_arguments(arguments)?;
+fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
     let generation = current_generation(inputs)?;
     let root = runtime_directory("eon");
     let runtime = prepare_generation_runtime(&root, &generation)?;
@@ -619,7 +636,7 @@ fn control(inputs: &Inputs, arguments: &[OsString]) -> Result<i32, String> {
     }
 }
 
-fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), String> {
+fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Error> {
     if let Some(action) = parse_tab_directory_arguments(arguments)? {
         return Ok(action);
     }
@@ -628,10 +645,10 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Str
     for argument in arguments {
         let argument = argument
             .to_str()
-            .ok_or_else(|| "Eon workspace actions require UTF-8 arguments".to_string())?;
+            .ok_or_else(|| Error::usage("Eon workspace actions require UTF-8 arguments"))?;
         if argument == "--json" {
             if json {
-                return Err(EON_USAGE.into());
+                return Err(Error::usage(EON_USAGE));
             }
             json = true;
         } else {
@@ -659,12 +676,12 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Str
         ["focus", "up"] => Action::Workspace(WorkspaceAction::Focus(Direction::Up)),
         ["focus", "down"] => Action::Workspace(WorkspaceAction::Focus(Direction::Down)),
         ["focus", id] => Action::Workspace(WorkspaceAction::FocusId((*id).into())),
-        _ => return Err(EON_USAGE.into()),
+        _ => return Err(Error::usage(EON_USAGE)),
     };
     Ok((action, json))
 }
 
-fn parse_tab_directory_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>, String> {
+fn parse_tab_directory_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>, Error> {
     let (tab, directory, json) = match arguments {
         [command, operation, tab, separator, directory]
             if command == "tab" && operation == "directory" && separator == "--" =>
@@ -680,13 +697,13 @@ fn parse_tab_directory_arguments(arguments: &[OsString]) -> Result<Option<(Actio
             (tab, directory, true)
         }
         [command, operation, ..] if command == "tab" && operation == "directory" => {
-            return Err(EON_USAGE.into());
+            return Err(Error::usage(EON_USAGE));
         }
         _ => return Ok(None),
     };
     let tab = tab
         .to_str()
-        .ok_or_else(|| "Eon tab identities must be UTF-8".to_string())?;
+        .ok_or_else(|| Error::usage("Eon tab identities must be UTF-8"))?;
     Ok(Some((
         Action::Workspace(WorkspaceAction::SetTabDirectory {
             tab: tab.into(),

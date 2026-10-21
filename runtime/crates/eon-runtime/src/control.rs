@@ -449,7 +449,55 @@ pub(super) fn report_failure(failure: &Failure, json: bool) -> Result<i32, Strin
     } else {
         eprint!("{}", workspace::failure_human(failure));
     }
-    Ok(2)
+    Ok(failure_status(&failure.code).into())
+}
+
+// Documented command exit statuses (EON-C10).
+const FAILED: u8 = 1;
+const USAGE: u8 = 2;
+const MISSING: u8 = 3;
+const UNREACHABLE: u8 = 4;
+
+fn failure_status(code: &str) -> u8 {
+    match code {
+        "invalid-tab" | "malformed-action" => USAGE,
+        "unknown-tab" | "unknown-pane" | "unknown-id" | "unknown-session" | "unknown-popup"
+        | "stale-popup" | "unknown-generation" => MISSING,
+        "missing-supervisor" | "supervisor-unavailable" => UNREACHABLE,
+        _ => FAILED,
+    }
+}
+
+/// A failed command: the message to report and its documented exit status.
+#[derive(Debug)]
+pub struct Error {
+    pub status: u8,
+    pub message: String,
+}
+
+impl Error {
+    pub(super) fn usage(message: impl Into<String>) -> Self {
+        Self {
+            status: USAGE,
+            message: message.into(),
+        }
+    }
+
+    pub(super) fn missing(message: impl Into<String>) -> Self {
+        Self {
+            status: MISSING,
+            message: message.into(),
+        }
+    }
+}
+
+impl From<String> for Error {
+    fn from(message: String) -> Self {
+        Self {
+            status: FAILED,
+            message,
+        }
+    }
 }
 
 pub(super) fn write_stdout(output: impl AsRef<[u8]>) -> Result<(), String> {

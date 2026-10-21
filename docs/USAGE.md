@@ -235,6 +235,27 @@ current namespace. `eon window stop all` covers independent windows and visits
 the caller's window last. Run it outside those terminals when you need its final
 status; stopping its own terminal can terminate the CLI.
 
+### Exit status
+
+`eon` and `eonbase` commands exit with the same status with or without
+`--json`:
+
+| Status | Meaning |
+|---:|---|
+| 0 | Success, including a declined Stop confirmation |
+| 1 | The command was understood but refused or failed |
+| 2 | Invalid command or arguments, such as a malformed tab or generation ID |
+| 3 | The named tab, pane, terminal, popup or generation was not found |
+| 4 | The supervisor is not running or did not answer; run `eon` first |
+| 130 | Interrupted with Ctrl+C |
+
+The `code` in an `error` result, such as `unknown-tab`, names the failure more
+precisely. `eon stop previous|all` and `eon window stop all` exit with the
+largest status among their attempts. `eon window attach|stop ID` exits with the
+selected window's status. Commands that run another program instead exit with
+its status: `eon anima` with Anima's, and `eon run -- COMMAND` or
+`eonbase -- COMMAND` with the initial command's once it has ended.
+
 ### Accelerando glyphs
 
 In Eon's native terminal, `eon anima accelerando` shows the 8,192-glyph alien

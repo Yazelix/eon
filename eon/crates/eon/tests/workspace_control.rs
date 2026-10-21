@@ -1807,7 +1807,7 @@ fn stop_accounts_for_late_ready_picker_and_retains_partial_cleanup_owner() {
     fs::write(&fail, "session-2").unwrap();
     let id = generation.file_name().unwrap().to_str().unwrap();
     let failed = invoke(binary, &runtime, &config, &["stop", id, "--json"]);
-    assert_eq!(failed.status.code(), Some(2), "{}", stdout(&failed));
+    assert_eq!(failed.status.code(), Some(1), "{}", stdout(&failed));
     assert!(stdout(&failed).contains("injected stop failure"));
     assert!(
         supervisor.child.try_wait().unwrap().is_none(),
@@ -1960,18 +1960,40 @@ fn relative_configuration_root_is_resolved_once() {
 }
 
 #[test]
-fn missing_supervisor_is_a_structured_workspace_failure() {
+fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
     let root = temporary_directory();
-    let output = invoke(
-        Path::new(env!("CARGO_BIN_EXE_eon")),
-        &root.join("runtime"),
-        &root.join("config"),
-        &["workspace", "--json"],
-    );
-
-    assert_eq!(output.status.code(), Some(2));
-    assert!(stdout(&output).contains("\"code\":\"missing-supervisor\""));
-    assert!(output.stderr.is_empty());
+    let run = |arguments: &[&str]| {
+        invoke(
+            Path::new(env!("CARGO_BIN_EXE_eon")),
+            &root.join("runtime"),
+            &root.join("config"),
+            arguments,
+        )
+    };
+    let unknown_generation = "g1-00000000000000000000000000000000";
+    for (arguments, status, code) in [
+        (&["tab", "close"][..], 2, None),
+        (&["stop", unknown_generation], 3, Some("unknown-generation")),
+        (&["workspace"], 4, Some("missing-supervisor")),
+    ] {
+        let human = run(arguments);
+        assert_eq!(human.status.code(), Some(status), "{arguments:?}");
+        assert!(human.stdout.is_empty(), "{arguments:?}");
+        let json = run(&[arguments, &["--json"]].concat());
+        assert_eq!(json.status.code(), Some(status), "{arguments:?}");
+        let human_error = String::from_utf8_lossy(&human.stderr);
+        match code {
+            Some(code) => {
+                assert!(human_error.starts_with(&format!("error {code}: ")));
+                assert!(stdout(&json).contains(&format!("\"code\":\"{code}\"")));
+                assert!(json.stderr.is_empty());
+            }
+            None => {
+                assert!(human_error.contains("usage: eon "));
+                assert_eq!(json.stderr, human.stderr);
+            }
+        }
+    }
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1983,7 +2005,7 @@ fn invalid_focus_is_rejected_before_supervisor_connection() {
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
 
     let missing = invoke(binary, &runtime, &config, &["workspace", "--json"]);
-    assert_eq!(missing.status.code(), Some(2));
+    assert_eq!(missing.status.code(), Some(4));
     let control = generation_runtime(&runtime).join("eon.sock");
     let too_long = "x".repeat(129);
     let assert_invalid = |id| {
@@ -2290,7 +2312,7 @@ cat >/dev/null
         .arg(&command)
         .output()
         .unwrap();
-    assert_eq!(invalid.status.code(), Some(1));
+    assert_eq!(invalid.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("invalid Eon application identity"));
     assert!(!runtime.join("generations").exists());
 
@@ -2461,7 +2483,7 @@ cat >/dev/null
     );
 
     let workspace = invoke(&eon, &runtime, &config, &["workspace", "--json"]);
-    assert_eq!(workspace.status.code(), Some(2));
+    assert_eq!(workspace.status.code(), Some(1));
     assert!(stdout(&workspace).contains("\"code\":\"workspace-unavailable\""));
     let wrong_mode = invoke(&binary, &runtime, &config, &[]);
     assert!(!wrong_mode.status.success());
@@ -2472,7 +2494,7 @@ cat >/dev/null
         &config,
         &["terminal", "--", "/bin/false"],
     );
-    assert!(!removed.status.success());
+    assert_eq!(removed.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&removed.stderr).contains("usage: eon "));
     let unknown = eon_command(&binary)
         .args(["stop", "g1-00000000000000000000000000000000", "--json"])
@@ -2480,7 +2502,7 @@ cat >/dev/null
         .env("XDG_RUNTIME_DIR", &root)
         .output()
         .unwrap();
-    assert_eq!(unknown.status.code(), Some(2));
+    assert_eq!(unknown.status.code(), Some(3));
     assert!(stdout(&unknown).contains("\"code\":\"unknown-generation\""));
 
     fs::write(&child_exit, "").unwrap();
@@ -2904,7 +2926,7 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     );
     let before = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     let failed = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
-    assert_eq!(failed.status.code(), Some(2));
+    assert_eq!(failed.status.code(), Some(1));
     assert!(stdout(&failed).contains("\"code\":\"session-start\""));
     let after = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert_eq!(stdout(&before), stdout(&after));
@@ -3846,7 +3868,7 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
 
     assert_eq!(
         attempted.status.code(),
-        Some(2),
+        Some(1),
         "stdout={} prompt={prompt}",
         stdout(&attempted)
     );
@@ -4189,7 +4211,7 @@ fn generations_from_another_eonw_are_incompatible_and_not_stopped() {
     );
 
     let stopped = invoke(&binary, &runtime, &config, &["stop", &id, "--json"]);
-    assert_eq!(stopped.status.code(), Some(2), "{}", stdout(&stopped));
+    assert_eq!(stopped.status.code(), Some(1), "{}", stdout(&stopped));
     let stopped: serde_json::Value = serde_json::from_str(stdout(&stopped)).unwrap();
     assert_eq!(stopped["error"]["code"], "stop-unavailable", "{stopped}");
     server.join().unwrap();
@@ -4269,7 +4291,7 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     fs::set_permissions(&unavailable, fs::Permissions::from_mode(0o755)).unwrap();
 
     let previous = invoke(&binary, &runtime, &config, &["stop", "previous", "--json"]);
-    assert_eq!(previous.status.code(), Some(2), "{}", stdout(&previous));
+    assert_eq!(previous.status.code(), Some(1), "{}", stdout(&previous));
     let results: serde_json::Value = serde_json::from_str(stdout(&previous)).unwrap();
     assert_eq!(results.as_array().unwrap().len(), 3);
     assert_eq!(results[0]["error"]["code"], "stop-unavailable");

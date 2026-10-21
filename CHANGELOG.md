@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon` and `eonbase` commands exit with a documented status per failure kind:
+  1 refused or failed, 2 invalid command or arguments, 3 target not found,
+  4 supervisor unreachable, 130 interrupted. Structured failures exited 2 and
+  every other failure 1; scripts that tested for those values need updating.
+  `eon --help` and [Using Eon](docs/USAGE.md#exit-status) list the statuses.
 - `eon` speaks only EONW 12. A generation started by an older build that uses
   an earlier EONW is listed as incompatible and can no longer be inspected or
   stopped by this `eon`; stop it with the build that started it.
