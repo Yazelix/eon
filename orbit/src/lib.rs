@@ -1,7 +1,6 @@
 use std::{
-    fs::File,
     io,
-    os::fd::{FromRawFd, RawFd},
+    os::fd::RawFd,
     time::{Duration, Instant},
 };
 
@@ -11,6 +10,7 @@ mod frame;
 pub mod host;
 mod input;
 mod management;
+mod platform;
 mod pointer;
 mod pty;
 mod socket;
@@ -53,38 +53,6 @@ impl Timer {
     pub(crate) fn deadline(&self) -> Option<Instant> {
         self.at
     }
-}
-
-/// A pipe whose ends close on exec, nonblocking if asked.
-fn pipe(nonblocking: bool) -> io::Result<(File, File)> {
-    let mut fds = [0; 2];
-    #[cfg(target_os = "linux")]
-    {
-        let flags = libc::O_CLOEXEC | if nonblocking { libc::O_NONBLOCK } else { 0 };
-        // SAFETY: pipe2 initializes both descriptors on success.
-        if unsafe { libc::pipe2(fds.as_mut_ptr(), flags) } == -1 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        // SAFETY: pipe initializes both descriptors on success. The host is
-        // single-threaded, so no fork can see them before they close on exec.
-        if unsafe { libc::pipe(fds.as_mut_ptr()) } == -1 {
-            return Err(io::Error::last_os_error());
-        }
-        for fd in fds {
-            // SAFETY: fcntl only changes the flags of the owned descriptors.
-            let status = if nonblocking { libc::O_NONBLOCK } else { 0 };
-            if unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } == -1
-                || unsafe { libc::fcntl(fd, libc::F_SETFL, status) } == -1
-            {
-                return Err(io::Error::last_os_error());
-            }
-        }
-    }
-    // SAFETY: The pipe transferred ownership of both descriptors.
-    Ok(unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) })
 }
 
 #[cfg(test)]

@@ -97,14 +97,17 @@ reduced owned Rust by 44 lines while adding `pty-process`, `rustix`, and
 `linux-raw-sys` to the normal Linux graph. Adopting it remains a separate crate
 decision.
 
-The host's mechanisms hold the Unix calls: [src/pty.rs](../src/pty.rs) the
-PTY, child, process groups and signals, [src/socket.rs](../src/socket.rs) the
-socket path, permissions and peers, and [src/management.rs](../src/management.rs)
-peer credentials and process-start identities. Only pipe creation, the
-death signal of the worker and child, a zero-length send's flags, peer
-credentials and process-start identities diverge by OS
-([BEHAVIOR.md](BEHAVIOR.md#macos-evidence)). The Bend worker sees only facts
-and never a `libc` value.
+One seam, [src/platform.rs](../src/platform.rs), holds the host's Unix calls:
+pipes, polling, termination signals, the PTY and its window size, the worker's
+and child's setup between fork and exec, process-group signals, the
+zero-length send, peer credentials and process-start identities. The
+mechanisms that use them keep their policy: [src/pty.rs](../src/pty.rs) the
+PTY child, [src/socket.rs](../src/socket.rs) the socket path, permissions and
+peers, and [src/management.rs](../src/management.rs) the managed records. Only
+pipe creation, the death signal of the worker and child, a zero-length send's
+flags, peer credentials and process-start identities diverge by OS, all inside
+the seam ([BEHAVIOR.md](BEHAVIOR.md#macos-evidence)). The Bend worker sees
+only facts and never a `libc` value.
 
 The subprocess checks in [`tests/lifecycle.rs`](../tests/lifecycle.rs),
 which run unmodified against this server, synchronize on typed responses,

@@ -1033,7 +1033,9 @@ only Linux gets `PR_SET_PDEATHSIG`, elsewhere the worker exits on its closed
 fact pipe and the child on its closed PTY. macOS reports POLLHUP
 for a client's half-close as well as for its full close, so the host tells
 them apart with a zero-length send, which fails only once the client can no
-longer read, and checks a half-closed client every 100 ms.
+longer read, and checks a half-closed client every 100 ms. Every OS branch
+behind these lives in the host's platform seam,
+[src/platform.rs](../src/platform.rs).
 [build.rs](../build.rs) passes `-Wl,-z,noexecstack` to clang only on Linux.
 
 No macOS proof covers this tree. The last native run was in the bend-orbit

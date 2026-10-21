@@ -4,7 +4,7 @@
 use crate::{
     Step,
     boundary::{FirstMessage, Flags},
-    errno,
+    errno, platform,
 };
 use orbit_protocol::{
     MAX_FRAME_BYTES,
@@ -86,8 +86,7 @@ impl Listener {
     pub(crate) fn open(path: &Path) -> io::Result<Self> {
         let parent = path.parent().ok_or_else(|| errno(libc::EINVAL))?;
         let metadata = fs::symlink_metadata(parent)?;
-        // SAFETY: geteuid has no preconditions.
-        let uid = unsafe { libc::geteuid() };
+        let uid = platform::effective_uid();
         if !metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o7777 != 0o700 {
             return Err(errno(libc::EACCES));
         }
@@ -756,18 +755,21 @@ impl Peer {
     /// write side, and room to write while output is queued. A full close is
     /// reported as a hangup either way.
     pub(crate) fn wait_events(&self) -> i16 {
-        (if self.read_closed { 0 } else { libc::POLLIN })
-            | if self.output.is_empty() {
-                0
-            } else {
-                libc::POLLOUT
-            }
+        (if self.read_closed {
+            0
+        } else {
+            platform::POLLIN
+        }) | if self.output.is_empty() {
+            0
+        } else {
+            platform::POLLOUT
+        }
     }
 
     /// Serves a ready client: a whole request, or its close. Room to write
     /// alone brings nothing; the next wait flushes the output first.
     pub(crate) fn on_ready(&mut self, revents: i16) -> io::Result<Option<ClientEvent>> {
-        if revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) == 0 {
+        if revents & (platform::POLLIN | platform::POLLHUP | platform::POLLERR) == 0 {
             return Ok(None);
         }
         if self.read_closed {
@@ -797,14 +799,7 @@ impl Peer {
     /// macOS reports POLLHUP for either, so a zero-length send asks the
     /// socket: it fails only once the peer can no longer read.
     pub(crate) fn closed_fully(&self) -> bool {
-        #[cfg(target_os = "linux")]
-        let flags = libc::MSG_NOSIGNAL;
-        #[cfg(not(target_os = "linux"))]
-        let flags = 0;
-        // SAFETY: A zero-length send reads nothing from the empty buffer.
-        let sent =
-            unsafe { libc::send(self.stream.as_raw_fd(), [0u8; 1].as_ptr().cast(), 0, flags) };
-        sent == -1 && peer_disconnected(&io::Error::last_os_error())
+        platform::send_nothing(&self.stream).is_err_and(|error| peer_disconnected(&error))
     }
 
     /// Whether the client closed its write side; it may still read.
@@ -1068,14 +1063,14 @@ mod tests {
         // A ready client brings a whole request; room to write alone brings nothing.
         socket.request = None;
         assert_eq!(socket.prepare_wait().unwrap(), ClientState::Open);
-        assert_eq!(socket.wait_events(), libc::POLLIN);
-        assert_eq!(socket.on_ready(libc::POLLOUT).unwrap(), None);
+        assert_eq!(socket.wait_events(), platform::POLLIN);
+        assert_eq!(socket.on_ready(platform::POLLOUT).unwrap(), None);
         let paste = session::encode_client_message(&ClientMessage::Paste(b"x".to_vec())).unwrap();
         peer.write_all(&paste[..5]).unwrap();
-        assert_eq!(socket.on_ready(libc::POLLIN).unwrap(), None);
+        assert_eq!(socket.on_ready(platform::POLLIN).unwrap(), None);
         peer.write_all(&paste[5..]).unwrap();
         assert_eq!(
-            socket.on_ready(libc::POLLIN).unwrap(),
+            socket.on_ready(platform::POLLIN).unwrap(),
             Some(ClientEvent::Request)
         );
         assert_eq!(socket.request, Some(ClientMessage::Paste(b"x".to_vec())));
@@ -1086,16 +1081,16 @@ mod tests {
         socket.request = None;
         peer.shutdown(Shutdown::Write).unwrap();
         assert_eq!(
-            socket.on_ready(libc::POLLIN).unwrap(),
+            socket.on_ready(platform::POLLIN).unwrap(),
             Some(ClientEvent::Closed { full: false })
         );
         assert_eq!(socket.wait_events(), 0);
         assert!(socket.half_closed() && !socket.closed_fully());
-        assert_eq!(socket.on_ready(libc::POLLHUP).unwrap(), None);
+        assert_eq!(socket.on_ready(platform::POLLHUP).unwrap(), None);
         drop(peer);
         assert!(socket.closed_fully());
         assert_eq!(
-            socket.on_ready(libc::POLLHUP).unwrap(),
+            socket.on_ready(platform::POLLHUP).unwrap(),
             Some(ClientEvent::Closed { full: true })
         );
         socket.session = Session::Raw;
@@ -1240,7 +1235,7 @@ mod tests {
             socket.send_server(|| Ok(ServerMessage::Accepted)).unwrap();
         }
         let queued = socket.output.bytes;
-        assert_eq!(socket.wait_events(), libc::POLLIN | libc::POLLOUT);
+        assert_eq!(socket.wait_events(), platform::POLLIN | platform::POLLOUT);
 
         let mut buffer = vec![0; 1 << 20];
         let mut read = 0;
@@ -1443,18 +1438,7 @@ mod tests {
     fn nonreading_observer_converges_on_the_latest_metadata() {
         let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
         let (mut observer, mut peer) = open_metadata_observer();
-        let size: libc::c_int = 4096;
-        // SAFETY: setsockopt reads one integer and changes only the owned test socket.
-        let status = unsafe {
-            libc::setsockopt(
-                observer.stream.as_raw_fd(),
-                libc::SOL_SOCKET,
-                libc::SO_SNDBUF,
-                (&raw const size).cast(),
-                std::mem::size_of_val(&size) as libc::socklen_t,
-            )
-        };
-        assert_eq!(status, 0);
+        platform::set_send_buffer(&observer.stream, 4096).unwrap();
 
         let title = "x".repeat(1000);
         let metadata = |revision| Metadata {

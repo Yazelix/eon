@@ -5,7 +5,7 @@
 //! replaces the record when the run ends. Every path and identity is
 //! checked here; Bend decides every answer (src/management.bend).
 
-use crate::{Timer, boundary::ManagementEvent as Event, errno, socket::Listener};
+use crate::{Timer, boundary::ManagementEvent as Event, errno, platform, socket::Listener};
 use orbit_protocol::management::{
     self as protocol, ClientMessage, EndpointIdentity, Failure, FailureCode, LiveIdentity,
     ObjectIdentity, ProcessOutcome, Record, ServerMessage, TerminationReason, Tombstone,
@@ -14,14 +14,11 @@ use std::{
     ffi::OsStr,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    os::{
-        fd::AsRawFd,
-        unix::{
-            ffi::OsStrExt,
-            fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
-            net::UnixStream,
-            process::ExitStatusExt,
-        },
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+        net::UnixStream,
+        process::ExitStatusExt,
     },
     path::{Path, PathBuf},
     process::ExitStatus,
@@ -124,8 +121,7 @@ impl Prepared {
     /// socket. A launcher's empty retained record is claimed with an
     /// exclusive lock first, so only one run publishes it.
     pub(crate) fn publish(self, presentation: &Path) -> io::Result<Owner> {
-        // SAFETY: geteuid has no preconditions.
-        let uid = unsafe { libc::geteuid() };
+        let uid = platform::effective_uid();
         let identity = LiveIdentity {
             session_id: self.launch.session_id,
             run_id: self.launch.run_id,
@@ -133,7 +129,7 @@ impl Prepared {
             record_generation: protocol::RECORD_GENERATION,
             management_generation: protocol::VERSION,
             process_id: std::process::id(),
-            process_start: process_start_identity()?,
+            process_start: platform::process_start_identity()?,
             uid,
             presentation: endpoint_identity(presentation)?,
             management: endpoint_identity(&self.path)?,
@@ -178,7 +174,7 @@ impl Owner {
         let mut deadline = Timer::default();
         deadline.set(Some(NEGOTIATION_MS));
         self.connection = Some(Connection {
-            peer_uid: peer_uid(&stream)?,
+            peer_uid: platform::peer_uid(&stream)?,
             stream,
             input: Vec::new(),
             output: Vec::new(),
@@ -424,36 +420,6 @@ fn encode(message: &ServerMessage) -> io::Result<Vec<u8>> {
     protocol::encode_server_message(message).map_err(|_| errno(libc::EPROTO))
 }
 
-#[cfg(target_os = "linux")]
-fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
-    // SAFETY: getsockopt fills the zeroed credentials of the owned socket.
-    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
-    let mut length = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
-    if unsafe {
-        libc::getsockopt(
-            stream.as_raw_fd(),
-            libc::SOL_SOCKET,
-            libc::SO_PEERCRED,
-            (&raw mut credentials).cast(),
-            &raw mut length,
-        )
-    } == -1
-    {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(credentials.uid)
-}
-
-#[cfg(target_os = "macos")]
-fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
-    let (mut uid, mut gid) = (0, 0);
-    // SAFETY: getpeereid fills both identities of the owned socket's peer.
-    if unsafe { libc::getpeereid(stream.as_raw_fd(), &raw mut uid, &raw mut gid) } == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(uid)
-}
-
 /// Whether an endpoint is still the exact socket a record names.
 fn endpoint_matches(expected: &EndpointIdentity) -> bool {
     endpoint_identity(Path::new(OsStr::from_bytes(&expected.path)))
@@ -464,43 +430,6 @@ fn artifact_path(socket: &Path, suffix: &str) -> PathBuf {
     let mut path = socket.as_os_str().to_os_string();
     path.push(suffix);
     PathBuf::from(path)
-}
-
-/// The kernel's start time of this process, in clock ticks since boot.
-#[cfg(target_os = "linux")]
-fn process_start_identity() -> io::Result<u64> {
-    let stat = fs::read_to_string("/proc/self/stat")?;
-    stat.rsplit_once(')')
-        .and_then(|(_, fields)| fields.split_whitespace().nth(19))
-        .and_then(|value| value.parse().ok())
-        .ok_or_else(|| errno(libc::EPROTO))
-}
-
-/// The kernel's start time of this process in microseconds, as macOS
-/// reports it.
-#[cfg(target_os = "macos")]
-fn process_start_identity() -> io::Result<u64> {
-    let pid = std::process::id();
-    // SAFETY: proc_pidinfo fills the zeroed record for this process.
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of_val(&info) as libc::c_int;
-    let read = unsafe {
-        libc::proc_pidinfo(
-            pid as libc::c_int,
-            libc::PROC_PIDTBSDINFO,
-            0,
-            (&raw mut info).cast(),
-            size,
-        )
-    };
-    if read != size || info.pbi_pid != pid || info.pbi_start_tvusec >= 1_000_000 {
-        return Err(errno(libc::EPROTO));
-    }
-    info.pbi_start_tvsec
-        .checked_mul(1_000_000)
-        .and_then(|seconds| seconds.checked_add(info.pbi_start_tvusec))
-        .filter(|identity| *identity != 0)
-        .ok_or_else(|| errno(libc::EPROTO))
 }
 
 fn endpoint_identity(path: &Path) -> io::Result<EndpointIdentity> {
@@ -524,8 +453,7 @@ fn validate(metadata: &fs::Metadata, kind: Kind) -> io::Result<()> {
         Kind::Socket => metadata.file_type().is_socket(),
         Kind::Regular => metadata.file_type().is_file(),
     };
-    // SAFETY: geteuid has no preconditions.
-    let uid = unsafe { libc::geteuid() };
+    let uid = platform::effective_uid();
     if !typed || metadata.uid() != uid || metadata.mode() & 0o7777 != 0o600 {
         return Err(errno(libc::EACCES));
     }
@@ -548,8 +476,7 @@ fn record_identity(path: &Path) -> io::Result<ObjectIdentity> {
 fn private_parent(path: &Path) -> io::Result<()> {
     let parent = path.parent().ok_or_else(|| errno(libc::EINVAL))?;
     let metadata = fs::symlink_metadata(parent)?;
-    // SAFETY: geteuid has no preconditions.
-    let uid = unsafe { libc::geteuid() };
+    let uid = platform::effective_uid();
     if !metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o7777 != 0o700 {
         return Err(errno(libc::EACCES));
     }
@@ -591,7 +518,7 @@ impl RecordGuard {
         }
         let mut file = OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .custom_flags(platform::O_CLOEXEC | platform::O_NOFOLLOW | platform::O_NONBLOCK)
             .open(&self.path)?;
         let metadata = file.metadata()?;
         validate(&metadata, Kind::Regular)?;
@@ -631,7 +558,7 @@ fn ready_claim(path: &Path) -> io::Result<Option<(File, ObjectIdentity)>> {
     let file = match OpenOptions::new()
         .read(true)
         .write(true)
-        .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .custom_flags(platform::O_CLOEXEC | platform::O_NOFOLLOW | platform::O_NONBLOCK)
         .open(path)
     {
         Ok(file) => file,
@@ -670,7 +597,7 @@ fn atomic_replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
             .write(true)
             .create_new(true)
             .mode(0o600)
-            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
+            .custom_flags(platform::O_CLOEXEC | platform::O_NOFOLLOW)
             .open(&temporary)?;
         file.write_all(bytes)?;
         fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;

@@ -13,7 +13,8 @@ use crate::{
     frame::viewport_preview,
     input::wheel_direction,
     management::Owner as Management,
-    pty::{Orbit, PtyRead, signal, status_code},
+    platform::{self, signal},
+    pty::{Orbit, PtyRead, status_code},
     socket::{
         ClientEvent, ClientState, Listener, ObserverInput, ObserverSend, Peer, Refusal, Role,
         Selection as PendingSelection, Wheel, peer_disconnected, turn_away,
@@ -27,7 +28,7 @@ use orbit_protocol::session::{
 };
 use std::{
     collections::VecDeque,
-    ffi::OsString,
+    ffi::{OsString, c_int},
     fs::File,
     io::{self, Read, Write},
     os::{
@@ -51,42 +52,24 @@ static TERMINATION_SIGNAL: AtomicI32 = AtomicI32::new(0);
 static SIGNAL_READ: AtomicI32 = AtomicI32::new(-1);
 static SIGNAL_WRITE: AtomicI32 = AtomicI32::new(-1);
 
-extern "C" fn note_termination(number: libc::c_int) {
+extern "C" fn note_termination(number: c_int) {
     TERMINATION_SIGNAL.store(number, Ordering::Relaxed);
-    let wake = SIGNAL_WRITE.load(Ordering::Relaxed);
-    // SAFETY: write is async-signal-safe; a full pipe already wakes the wait.
-    unsafe { libc::write(wake, b"x".as_ptr().cast(), 1) };
+    platform::wake(SIGNAL_WRITE.load(Ordering::Relaxed));
 }
 
 /// A terminated host contains the child and removes the socket pathname.
 fn install_termination_handlers() -> io::Result<()> {
     if SIGNAL_READ.load(Ordering::Relaxed) == -1 {
         // Both ends live for the whole process.
-        let (read, write) = crate::pipe(true)?;
+        let (read, write) = platform::pipe(true)?;
         SIGNAL_READ.store(read.into_raw_fd(), Ordering::Relaxed);
         SIGNAL_WRITE.store(write.into_raw_fd(), Ordering::Relaxed);
     }
     // A session starts with no termination pending.
-    let mut drained = [0u8; 64];
-    // SAFETY: read fills the owned buffer from the nonblocking pipe.
-    while unsafe {
-        libc::read(
-            SIGNAL_READ.load(Ordering::Relaxed),
-            drained.as_mut_ptr().cast(),
-            drained.len(),
-        )
-    } > 0
-    {}
-    for number in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP] {
-        // SAFETY: The handler only writes an atomic integer and one byte to a
-        // pipe.
-        if unsafe { libc::signal(number, note_termination as *const () as libc::sighandler_t) }
-            == libc::SIG_ERR
-        {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    Ok(())
+    platform::drain(SIGNAL_READ.load(Ordering::Relaxed));
+    // SAFETY: The handler only writes an atomic integer and one byte to a
+    // pipe.
+    unsafe { platform::on_termination(note_termination) }
 }
 
 const REAP_DEADLINE: Duration = Duration::from_secs(2);
@@ -220,32 +203,14 @@ struct Bend {
 
 impl Bend {
     fn spawn(worker: &Path, args: &[OsString]) -> io::Result<Self> {
-        let (fact_reader, facts) = crate::pipe(false)?;
-        let (decisions, decision_writer) = crate::pipe(false)?;
+        let (fact_reader, facts) = platform::pipe(false)?;
+        let (decisions, decision_writer) = platform::pipe(false)?;
         let (reader, writer) = (fact_reader.as_raw_fd(), decision_writer.as_raw_fd());
         let mut command = Command::new(worker);
         command.args(args);
-        // SAFETY: Only async-signal-safe fcntl and dup2 run between fork and exec.
+        // SAFETY: Only async-signal-safe calls run between fork and exec.
         unsafe {
-            command.pre_exec(move || {
-                // On Linux the worker dies with the host; elsewhere it exits
-                // when the host's end of its fact pipe closes.
-                #[cfg(target_os = "linux")]
-                if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-                // Move both ends above 4 first, so neither dup2 overwrites the other.
-                let reader = libc::fcntl(reader, libc::F_DUPFD_CLOEXEC, 10);
-                let writer = libc::fcntl(writer, libc::F_DUPFD_CLOEXEC, 10);
-                if reader == -1
-                    || writer == -1
-                    || libc::dup2(reader, 3) == -1
-                    || libc::dup2(writer, 4) == -1
-                {
-                    return Err(io::Error::last_os_error());
-                }
-                Ok(())
-            });
+            command.pre_exec(move || platform::configure_worker(reader, writer));
         }
         let worker = command.spawn()?;
         Ok(Self {
@@ -274,7 +239,7 @@ impl Bend {
                 line.pop();
                 return String::from_utf8(line).map_err(|_| protocol());
             }
-            if poll_fds(&[(pipe, libc::POLLIN)], Some(deadline))?[0] != 0 {
+            if poll_fds(&[(pipe, platform::POLLIN)], Some(deadline))?[0] != 0 {
                 match self.decisions.read(&mut self.chunk) {
                     Ok(0) => return Err(io::Error::from_raw_os_error(libc::EPIPE)),
                     Ok(read) => self.unread.extend_from_slice(&self.chunk[..read]),
@@ -373,35 +338,27 @@ fn poll_fds(fds: &[(RawFd, i16)], deadline: Option<Instant>) -> io::Result<Vec<i
         )
         .unwrap_or(i32::MAX)
     });
-    let mut pollfds: Vec<_> = fds
-        .iter()
-        .copied()
-        .chain([
-            (SIGNAL_READ.load(Ordering::Relaxed), libc::POLLIN),
-            (worker, libc::POLLIN),
-        ])
-        .map(|(fd, events)| libc::pollfd {
-            fd,
-            events,
-            revents: 0,
-        })
-        .collect();
-    // SAFETY: poll reads and writes the owned pollfds.
-    if unsafe { libc::poll(pollfds.as_mut_ptr(), pollfds.len() as libc::nfds_t, timeout) } == -1 {
-        let error = io::Error::last_os_error();
-        if error.kind() == io::ErrorKind::Interrupted {
+    let ready = platform::poll(
+        fds.iter().copied().chain([
+            (SIGNAL_READ.load(Ordering::Relaxed), platform::POLLIN),
+            (worker, platform::POLLIN),
+        ]),
+        timeout,
+    );
+    let mut revents = match ready {
+        Err(error) if error.kind() == io::ErrorKind::Interrupted => {
             return Ok(vec![0; fds.len()]);
         }
-        return Err(error);
-    }
-    if pollfds.pop().is_some_and(|worker| worker.revents != 0) {
+        ready => ready?,
+    };
+    if revents.pop().is_some_and(|worker| worker != 0) {
         return Err(io::Error::from_raw_os_error(libc::EPIPE));
     }
     // A termination signal ends the wait; the pipe stays readable.
-    if pollfds.pop().is_some_and(|signal| signal.revents != 0) {
+    if revents.pop().is_some_and(|signal| signal != 0) {
         return Ok(vec![0; fds.len()]);
     }
-    Ok(pollfds.iter().map(|pollfd| pollfd.revents).collect())
+    Ok(revents)
 }
 
 fn wait_fd(fd: RawFd, events: i16, deadline: Option<Instant>) -> io::Result<()> {
@@ -679,9 +636,9 @@ impl Host {
         {
             return Ok(Some(Fact::Management(event)));
         }
-        let pty_events = libc::POLLIN
+        let pty_events = platform::POLLIN
             | if self.orbit.writes_pending() {
-                libc::POLLOUT
+                platform::POLLOUT
             } else {
                 0
             };
@@ -694,9 +651,9 @@ impl Host {
                 // One request at a time: the next is read once the answer is
                 // written.
                 let events = if connection.writing() {
-                    libc::POLLOUT
+                    platform::POLLOUT
                 } else {
-                    libc::POLLIN
+                    platform::POLLIN
                 };
                 sources.push((
                     Source::ManagementConnection,
@@ -710,7 +667,7 @@ impl Host {
                 sources.push((
                     Source::ManagementListener,
                     management.listener.listener.as_raw_fd(),
-                    libc::POLLIN,
+                    platform::POLLIN,
                 ));
             }
         }
@@ -735,22 +692,22 @@ impl Host {
         }
         timers.push((Source::Hold, self.orbit.hold.deadline()));
         for (peer, deadline) in &self.closing {
-            sources.push((Source::Closing, peer.stream.as_raw_fd(), libc::POLLOUT));
+            sources.push((Source::Closing, peer.stream.as_raw_fd(), platform::POLLOUT));
             timers.push((Source::Closing, deadline.deadline()));
         }
         // The observer is read for its close or a message it may not send,
         // and written while its queue holds output.
         if let Some(observer) = &self.observer {
-            let events = libc::POLLIN
+            let events = platform::POLLIN
                 | if observer.output.is_empty() {
                     0
                 } else {
-                    libc::POLLOUT
+                    platform::POLLOUT
                 };
             sources.push((Source::Observer, observer.stream.as_raw_fd(), events));
         }
         if let Some(peer) = &self.peer {
-            sources.push((Source::Peer, peer.stream.as_raw_fd(), libc::POLLIN));
+            sources.push((Source::Peer, peer.stream.as_raw_fd(), platform::POLLIN));
             timers.push((
                 Source::PeerDeadline,
                 self.peer_deadline.as_ref().and_then(Timer::deadline),
@@ -762,7 +719,7 @@ impl Host {
             sources.push((
                 Source::Listener,
                 self.listener.listener.as_raw_fd(),
-                libc::POLLIN,
+                platform::POLLIN,
             ));
         }
         let fds: Vec<_> = sources
@@ -783,7 +740,7 @@ impl Host {
         let now = Instant::now();
         for &(source, at) in &armed {
             sources.push((source, -1, 0));
-            revents.push(if now >= at { libc::POLLIN } else { 0 });
+            revents.push(if now >= at { platform::POLLIN } else { 0 });
         }
         let Some(index) = next_ready(&revents, self.turn) else {
             return Ok(None);
@@ -799,7 +756,8 @@ impl Host {
             // Writing waits for the next turn's flush; reading takes a request.
             Source::ManagementConnection => {
                 let management = self.management.as_mut().ok_or_else(protocol)?;
-                if revents[index] & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) == 0 {
+                if revents[index] & (platform::POLLIN | platform::POLLHUP | platform::POLLERR) == 0
+                {
                     return Ok(None);
                 }
                 Ok(management.read()?.map(Fact::Management))
@@ -968,7 +926,7 @@ impl Host {
         loop {
             match peer.send_role(Role::Metadata) {
                 Ok(Step::Blocked(fd)) => {
-                    wait_fd(fd, libc::POLLOUT, None)?;
+                    wait_fd(fd, platform::POLLOUT, None)?;
                     terminated()?;
                 }
                 Ok(Step::Done) => {
@@ -1426,7 +1384,7 @@ impl Host {
         let mut client = self.peer.take().ok_or_else(protocol)?;
         client.output_bound = self.bounds.output_bytes as usize;
         while let Step::Blocked(fd) = client.send_role(Role::Interactive)? {
-            wait_fd(fd, libc::POLLOUT, None)?;
+            wait_fd(fd, platform::POLLOUT, None)?;
             terminated()?;
         }
         self.client = Some(client);
@@ -1461,7 +1419,7 @@ impl Host {
                 if Instant::now() >= deadline {
                     break;
                 }
-                wait_fd(fd, libc::POLLOUT, Some(deadline))?;
+                wait_fd(fd, platform::POLLOUT, Some(deadline))?;
             }
         }
         self.finish_observer(status);
@@ -1496,14 +1454,8 @@ impl Host {
             if left.is_zero() {
                 return;
             }
-            let mut writable = libc::pollfd {
-                fd: observer.stream.as_raw_fd(),
-                events: libc::POLLOUT,
-                revents: 0,
-            };
             let timeout = i32::try_from(left.as_millis().max(1)).unwrap_or(i32::MAX);
-            // SAFETY: poll reads and writes one owned pollfd.
-            unsafe { libc::poll(&mut writable, 1, timeout) };
+            let _ = platform::poll([(observer.stream.as_raw_fd(), platform::POLLOUT)], timeout);
             if observer.flush_observer().is_err() {
                 return;
             }
@@ -1534,7 +1486,7 @@ impl Host {
         if self.orbit.child.is_none() || !matches!(self.orbit.try_reap(), Ok(None)) {
             return true;
         }
-        let pid = self.orbit.pid as libc::pid_t;
+        let pid = self.orbit.pid as platform::pid_t;
         let reaped_by = |orbit: &mut Orbit, deadline: Instant| {
             while Instant::now() < deadline {
                 if !matches!(orbit.try_reap(), Ok(None)) {
@@ -1548,17 +1500,16 @@ impl Host {
             let foreground = orbit.foreground_group();
             let child = signal(pid, number);
             if let Some(group) = foreground.filter(|group| *group != pid) {
-                // SAFETY: kill only sends a signal; an absent group is ESRCH.
-                unsafe { libc::kill(-group, number) };
+                platform::signal_group(group, number);
             }
             child
         };
-        if hang_up(&self.orbit, libc::SIGHUP).is_ok()
+        if hang_up(&self.orbit, platform::SIGHUP).is_ok()
             && reaped_by(&mut self.orbit, Instant::now() + Duration::from_millis(500))
         {
             return true;
         }
-        let _ = hang_up(&self.orbit, libc::SIGKILL);
+        let _ = hang_up(&self.orbit, platform::SIGKILL);
         reaped_by(&mut self.orbit, Instant::now() + Duration::from_secs(2))
     }
 }
@@ -1711,7 +1662,7 @@ mod tests {
 
     #[test]
     fn waits_rotate_among_ready_sources() {
-        let ready = [libc::POLLIN, 0, libc::POLLIN, libc::POLLHUP];
+        let ready = [platform::POLLIN, 0, platform::POLLIN, platform::POLLHUP];
         assert_eq!(next_ready(&ready, 0), Some(0));
         assert_eq!(next_ready(&ready, 1), Some(2));
         assert_eq!(next_ready(&ready, 3), Some(3));

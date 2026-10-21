@@ -139,8 +139,7 @@ fn parse_ansi_palette(value: &str) -> Result<[RgbColor; 16], String> {
 /// directory under `$XDG_RUNTIME_DIR`, or `/tmp/yazelix-orbit-UID`. The
 /// listener refuses a live server's pathname, so the two never share one.
 fn default_socket_path() -> Result<PathBuf, String> {
-    // SAFETY: geteuid has no preconditions.
-    let uid = unsafe { libc::geteuid() };
+    let uid = crate::platform::effective_uid();
     let directory = env::var_os("XDG_RUNTIME_DIR").map_or_else(
         || PathBuf::from(format!("/tmp/yazelix-orbit-{uid}")),
         |root| PathBuf::from(root).join("yazelix-orbit"),

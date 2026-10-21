@@ -6,6 +6,7 @@ use crate::{
     errno,
     frame::{FrameExtractor, SCROLLBACK_BUDGET_BYTES, viewport_preview},
     input::encode_input,
+    platform,
     pointer::{Pointer, phase_position},
 };
 use libghostty_vt::{
@@ -31,11 +32,10 @@ use std::{
     fs::File,
     io::{self, Read, Write},
     os::{
-        fd::{AsRawFd, FromRawFd, RawFd},
+        fd::{AsRawFd, RawFd},
         unix::process::CommandExt,
     },
     process::{Child, Command, ExitStatus, Stdio},
-    ptr,
     rc::Rc,
     thread,
     time::Duration,
@@ -127,10 +127,6 @@ impl ClipboardWrites {
         Ok(())
     }
 }
-
-const TIOCSCTTY_REQUEST: libc::c_ulong = libc::TIOCSCTTY as libc::c_ulong;
-
-const TIOCSWINSZ_REQUEST: libc::c_ulong = libc::TIOCSWINSZ as libc::c_ulong;
 
 /// One read of the PTY: the bytes fed to the terminal, its close, or nothing
 /// to read yet.
@@ -332,16 +328,13 @@ impl Orbit {
     }
 
     fn resize(&mut self, size: session::SurfaceSize) -> io::Result<()> {
-        let winsize = libc::winsize {
-            ws_row: size.rows,
-            ws_col: size.cols,
-            ws_xpixel: u16::try_from(size.screen_width).unwrap_or(u16::MAX),
-            ws_ypixel: u16::try_from(size.screen_height).unwrap_or(u16::MAX),
-        };
-        // SAFETY: ioctl writes the size to the owned PTY master.
-        if unsafe { libc::ioctl(self.master.as_raw_fd(), TIOCSWINSZ_REQUEST, &winsize) } == -1 {
-            return Err(io::Error::last_os_error());
-        }
+        platform::set_window_size(
+            self.master.as_raw_fd(),
+            size.cols,
+            size.rows,
+            u16::try_from(size.screen_width).unwrap_or(u16::MAX),
+            u16::try_from(size.screen_height).unwrap_or(u16::MAX),
+        )?;
         self.terminal
             .resize(size.cols, size.rows, size.cell_width, size.cell_height)
             .map_err(|_| errno(libc::EIO))?;
@@ -652,10 +645,8 @@ impl Orbit {
     }
 
     /// The terminal's foreground process group, if it has one.
-    pub(crate) fn foreground_group(&self) -> Option<libc::pid_t> {
-        // SAFETY: tcgetpgrp reads the owned PTY master.
-        let group = unsafe { libc::tcgetpgrp(self.master.as_raw_fd()) };
-        (group > 0).then_some(group)
+    pub(crate) fn foreground_group(&self) -> Option<platform::pid_t> {
+        platform::foreground_group(self.master.as_raw_fd())
     }
 
     /// Whether the primary screen's viewport is above live output.
@@ -675,10 +666,10 @@ impl Orbit {
 
 fn spawn_pty_child(command: &[OsString], cols: u16, rows: u16) -> io::Result<(File, Child)> {
     let (program, arguments) = command.split_first().ok_or_else(|| errno(libc::EINVAL))?;
-    let (master, slave) = open_pty(cols, rows)?;
+    let (master, slave) = platform::open_pty(cols, rows)?;
     let stdin = slave.try_clone()?;
     let stdout = slave.try_clone()?;
-    let parent = std::process::id() as libc::pid_t;
+    let parent = std::process::id() as platform::pid_t;
     let mut command = Command::new(program);
     command
         .args(arguments)
@@ -689,97 +680,10 @@ fn spawn_pty_child(command: &[OsString], cols: u16, rows: u16) -> io::Result<(Fi
         .env("COLORTERM", "truecolor");
     // SAFETY: Only async-signal-safe syscalls execute between fork and exec.
     unsafe {
-        command.pre_exec(move || configure_child(parent));
+        command.pre_exec(move || platform::configure_child(parent));
     }
     let child = command.spawn()?;
     Ok((master, child))
-}
-
-fn open_pty(cols: u16, rows: u16) -> io::Result<(File, File)> {
-    let mut master = -1;
-    let mut slave = -1;
-    let mut size = libc::winsize {
-        ws_row: rows,
-        ws_col: cols,
-        ws_xpixel: 0,
-        ws_ypixel: 0,
-    };
-    // SAFETY: openpty initializes both descriptors on success.
-    if unsafe {
-        libc::openpty(
-            &raw mut master,
-            &raw mut slave,
-            ptr::null_mut(),
-            ptr::null_mut(),
-            &raw mut size,
-        )
-    } == -1
-    {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: Successful openpty transferred ownership of both descriptors.
-    let master = unsafe { File::from_raw_fd(master) };
-    // SAFETY: Successful openpty transferred ownership of both descriptors.
-    let slave = unsafe { File::from_raw_fd(slave) };
-    set_fd_flags(master.as_raw_fd(), libc::O_NONBLOCK)?;
-    set_fd_flags(slave.as_raw_fd(), 0)?;
-    Ok((master, slave))
-}
-
-fn set_fd_flags(fd: i32, status: i32) -> io::Result<()> {
-    // SAFETY: fcntl operates on an owned live descriptor.
-    let old_status = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if old_status == -1 || unsafe { libc::fcntl(fd, libc::F_SETFL, old_status | status) } == -1 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: fcntl operates on an owned live descriptor.
-    let old_descriptor = unsafe { libc::fcntl(fd, libc::F_GETFD) };
-    if old_descriptor == -1
-        || unsafe { libc::fcntl(fd, libc::F_SETFD, old_descriptor | libc::FD_CLOEXEC) } == -1
-    {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-fn configure_child(parent: libc::pid_t) -> io::Result<()> {
-    // SAFETY: These process-control calls have no Rust alias.
-    unsafe {
-        // On Linux the child hears SIGHUP if the host dies; elsewhere the
-        // closed PTY master hangs it up.
-        #[cfg(target_os = "linux")]
-        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGHUP) == -1 {
-            return Err(io::Error::last_os_error());
-        }
-        if libc::getppid() != parent {
-            return Err(io::Error::from_raw_os_error(libc::ESRCH));
-        }
-        if libc::setsid() == -1 || libc::ioctl(libc::STDIN_FILENO, TIOCSCTTY_REQUEST, 0) == -1 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    Ok(())
-}
-
-pub(crate) fn signal(pid: libc::pid_t, signal: i32) -> io::Result<()> {
-    // SAFETY: The child PID remains owned until it is reaped.
-    if unsafe { libc::kill(-pid, signal) } == 0 {
-        return Ok(());
-    }
-    let group_error = io::Error::last_os_error();
-    if group_error.raw_os_error() != Some(libc::ESRCH) {
-        return Err(group_error);
-    }
-    // SAFETY: Before setsid completes, the direct child is the fallback target.
-    if unsafe { libc::kill(pid, signal) } == 0 {
-        return Ok(());
-    }
-    let child_error = io::Error::last_os_error();
-    if child_error.raw_os_error() == Some(libc::ESRCH) {
-        Ok(())
-    } else {
-        Err(child_error)
-    }
 }
 
 /// The child's exit code as Orbit reports it, in Exited and as
@@ -886,7 +790,7 @@ mod tests {
 
         let mut command = Command::new("/bin/true");
         // SAFETY: The hook exercises only the child-side setup path.
-        unsafe { command.pre_exec(|| configure_child(libc::pid_t::MAX)) };
+        unsafe { command.pre_exec(|| platform::configure_child(platform::pid_t::MAX)) };
         assert_eq!(
             command.spawn().unwrap_err().raw_os_error(),
             Some(libc::ESRCH)

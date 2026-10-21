@@ -34,12 +34,12 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 
 ### Platform-specific PTY and local-runtime mechanics
 
-- **Selected shape:** Direct `libc` 0.2.189 calls in the host's mechanisms:
-  [`src/pty.rs`](../src/pty.rs), [`src/socket.rs`](../src/socket.rs),
-  [`src/management.rs`](../src/management.rs) and [`src/lib.rs`](../src/lib.rs)
+- **Selected shape:** Direct `libc` 0.2.189 calls in the host's one platform
+  seam, [`src/platform.rs`](../src/platform.rs); the other modules use `libc`
+  only for errno names
 - **Status:** Selected for ordinary and managed Sessions on x86_64 Linux,
   with the proof status of [ORB-C1](CONTRACTS.md) and [ORB-C13](CONTRACTS.md);
-  the old Orbit's `src/platform.rs` seam was also proved on Apple Silicon macOS,
+  the old Orbit's own `src/platform.rs` seam was also proved on Apple Silicon macOS,
   and [ORB-C14](CONTRACTS.md) records this host's macOS status
 - **Credible alternatives:** Handwritten C ABI with no crate; `pty-process` 0.5.3; `nix`
   0.31.3 with narrow `fs`, `poll`, `process`, `signal`, and `term` features; `portable-pty`
@@ -72,9 +72,9 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 
 ### Linux PTY Session shutdown
 
-- **Selected shape:** Existing direct `libc` 0.2.189 process-group signals and direct-child
-  reaping, in the host's [`src/pty.rs`](../src/pty.rs) and [`src/host.rs`](../src/host.rs)
-  (the old Orbit's `src/platform.rs`)
+- **Selected shape:** Existing direct `libc` 0.2.189 process-group signals in the host's
+  [`src/platform.rs`](../src/platform.rs) and direct-child reaping in
+  [`src/pty.rs`](../src/pty.rs) and [`src/host.rs`](../src/host.rs)
 - **Status:** Selected replacement candidate in `orb-portable-pty-shutdown-ke1`; no
   manifest, feature, normal-graph, helper-service, privilege, namespace, or build change
 - **Credible alternatives:** Retain mandatory cgroup v2; make cgroup cleanup optional; SID
