@@ -25,6 +25,7 @@ starship = true
 zoxide = true
 atuin = true
 carapace = true
+mise = true
 
 [anima]
 enabled = true
@@ -133,7 +134,12 @@ A terminal without an explicit command starts pinned Nushell. Select managed
 Bash with `eon-bash` in `[shell].command`. Any other shell, such as a host
 `zsh` or `fish`, runs as an unmanaged command without Eon's integrations.
 Native user shell configuration loads before Eon's guarded Starship, Zoxide,
-Atuin, and Carapace integrations.
+Atuin, and Carapace integrations. Last, if your PATH has
+[mise](https://mise.jdx.dev), managed Nushell and Bash activate it the way
+`mise activate` does in your own shell, so a project's mise tools and
+environment apply from the first prompt. Eon skips it when mise is missing,
+fails, or your configuration already activates it, and `mise = false` turns
+it off. Eon never installs mise or trusts its configuration for you.
 
 Managed Nushell supports `clip copy` and `clip paste` through the native
 clipboard. Interactive `eon-nu` and default Eon terminals also provide `clc`

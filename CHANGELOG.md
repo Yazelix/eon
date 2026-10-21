@@ -5,16 +5,19 @@ installation, and proven contract changes.
 
 ## Unreleased
 
-- Ctrl+Alt+K/J and `eon pane move up|down` no longer close a popup that
-  covers the tab to reorder the panes behind it. Like sideways moves, they
-  refuse until you close the popup. Alt+K/J still closes it and selects the
-  pane above or below.
+- Managed Nushell and Bash activate the host's mise when it is on PATH, so a
+  project's mise-managed tools and environment work in Eon terminals as in
+  your own shell. Set `[shell] mise = false` to turn it off.
 - Run inside an Eon terminal, `eon pane create`, `pane close`, `pane move` and
   `tab move` act on that terminal's own tab instead of the active one, so an
   agent in a background tab no longer changes the tab you are looking at. Each
   terminal names itself in `EON_TERMINAL`; a command from a terminal that has
   ended or belongs to another generation changes nothing and exits 3. Use
   `env -u EON_TERMINAL eon ...` for the previous behavior.
+- Ctrl+Alt+K/J and `eon pane move up|down` no longer close a popup that
+  covers the tab to reorder the panes behind it. Like sideways moves, they
+  refuse until you close the popup. Alt+K/J still closes it and selects the
+  pane above or below.
 - The Eon Bar shows whole-machine CPU use, such as `CPU 12%`, before the
   clock, updated every 2 seconds. Hover it for details. It hides right after
   the clock when the window is narrow.

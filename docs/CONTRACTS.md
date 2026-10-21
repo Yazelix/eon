@@ -599,8 +599,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - Stable `eon-*` commands expose managed shells and tools outside Eon; one
     child-private PATH exposes accepted unprefixed names inside terminals.
   - Configuration accepts one direct argv command and independent Starship,
-    Zoxide, Atuin, and Carapace booleans. Defaults are `command = ["eon-nu"]`
-    and `true`; each new terminal rereads them without rewriting running shells.
+    Zoxide, Atuin, Carapace, and mise booleans. Defaults are
+    `command = ["eon-nu"]` and `true`; each new terminal rereads them without
+    rewriting running shells.
+  - When mise is enabled and the inherited PATH has a `mise` executable, an
+    interactive managed shell evaluates that host mise's own `mise activate`
+    output after Eon's other integrations, so mise-managed tools and
+    environment resolve per directory from the first prompt. Nushell runs
+    `--execute` startup commands before that prompt. A shell whose own
+    configuration activates mise is left alone.
   - Managed shells load native user configuration before bounded Eon activation.
     Disabled integrations suppress only Eon's hook; existing prompts,
     completers, same-tool hooks, normal Starship discovery, and Atuin policy
@@ -614,13 +621,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Important failures:** Invalid or unreadable configuration, empty command,
   missing artifact, manifest mismatch, or shell launch fails explicitly without
   a replacement terminal. Optional integration failure warns without preventing
-  shell launch. Unavailable native clipboard access reports Nushell's own error.
+  shell launch. A missing or failing host mise is skipped silently; mise reports
+  its own per-project errors, such as an untrusted configuration. Unavailable
+  native clipboard access reports Nushell's own error.
   Eon never mutates global configuration, startup files, aliases, or PATH.
 - **Owner:** Eon supplies defaults, component selection and Nix shell adapters;
   Eon Runtime owns strict configuration and private launch-environment
   enforcement. Shells/tools retain native configuration and behavior.
 - **Boundary:** No global aliases, user-file mutation, prompt/completion schema,
-  shell framework, automatic Direnv/Mise, history/sync policy, plugin surface,
+  shell framework, automatic Direnv, mise installation or trust management,
+  history/sync policy, plugin surface,
   editor replacement, or remote/headless clipboard bridge. Arbitrary argv
   remains unmanaged and `eon run -- COMMAND...` remains the explicit escape
   hatch.
@@ -634,6 +644,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `session_path_contains_one_managed_prefix`,
     `shell_configuration_is_strict_and_defaults_without_a_file` and
     `managed_invocation_names_are_bounded`.
+  - **Mise:** `eon-nf7g` adds to `managed-command-path` a fake host mise that
+    both shells activate, and that each skips when it is missing, fails, or
+    `mise = false`; Nushell's pre_prompt hook and its condition are evaluated
+    outside a REPL. The bead records an installed observation of a real mise
+    in an isolated Eon terminal.
   - **Note:** `eon-8olu` removed the managed Zsh and Fish shells. The
     `shell-environment` check went with them; its Zsh and Fish evidence above
     no longer applies. The remaining checks cover Nushell and Bash launch

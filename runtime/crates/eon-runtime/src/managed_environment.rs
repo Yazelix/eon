@@ -123,6 +123,7 @@ pub struct ShellConfig {
     pub zoxide: bool,
     pub atuin: bool,
     pub carapace: bool,
+    pub mise: bool,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -133,6 +134,7 @@ struct ShellSettings {
     zoxide: Option<bool>,
     atuin: Option<bool>,
     carapace: Option<bool>,
+    mise: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -700,6 +702,7 @@ pub(crate) fn command(
             ("ZOXIDE", shell.zoxide),
             ("ATUIN", shell.atuin),
             ("CARAPACE", shell.carapace),
+            ("MISE", shell.mise),
         ] {
             command.env(format!("EON_SHELL_{name}"), if enabled { "1" } else { "0" });
         }
@@ -734,6 +737,7 @@ fn read_shell_config(root: &Path, defaults: &Defaults) -> Result<ShellConfig, St
         zoxide: settings.zoxide.unwrap_or(base.zoxide),
         atuin: settings.atuin.unwrap_or(base.atuin),
         carapace: settings.carapace.unwrap_or(base.carapace),
+        mise: settings.mise.unwrap_or(base.mise),
     };
     if shell.command.is_empty() || shell.command[0].is_empty() {
         return Err("shell.command must not be empty".into());
@@ -892,17 +896,23 @@ mod tests {
         fs::create_dir(&root).unwrap();
         let default = read_shell_config(&root, &inputs.defaults).unwrap();
         assert_eq!(default.command, ["fixture-shell"]);
-        assert!(default.starship && default.zoxide && default.atuin && default.carapace);
+        assert!(
+            default.starship && default.zoxide && default.atuin && default.carapace && default.mise
+        );
 
         fs::write(
             root.join("config.toml"),
-            "[shell]\ncommand = [\"eon-bash\", \"--norc\"]\nstarship = false\nzoxide = false\natuin = false\ncarapace = false\n",
+            "[shell]\ncommand = [\"eon-bash\", \"--norc\"]\nstarship = false\nzoxide = false\natuin = false\ncarapace = false\nmise = false\n",
         )
         .unwrap();
         let configured = read_shell_config(&root, &inputs.defaults).unwrap();
         assert_eq!(configured.command, ["eon-bash", "--norc"]);
         assert!(
-            !configured.starship && !configured.zoxide && !configured.atuin && !configured.carapace
+            !configured.starship
+                && !configured.zoxide
+                && !configured.atuin
+                && !configured.carapace
+                && !configured.mise
         );
         assert_eq!(integration_mask(&configured, true), 0);
         assert_eq!(integration_mask(&default, false), 15);
@@ -1412,7 +1422,7 @@ keep_alive = false
             command.get_args().map(OsString::from).collect::<Vec<_>>(),
             ["--rcfile", "/managed/bashrc", "--version"].map(OsString::from)
         );
-        for integration in ["STARSHIP", "ZOXIDE", "ATUIN", "CARAPACE"] {
+        for integration in ["STARSHIP", "ZOXIDE", "ATUIN", "CARAPACE", "MISE"] {
             assert_eq!(
                 command_environment(&command, &format!("EON_SHELL_{integration}")),
                 Some(Some(OsStr::new("1")))

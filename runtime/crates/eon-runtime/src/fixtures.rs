@@ -20,6 +20,7 @@ pub(crate) fn inputs() -> Inputs {
                 zoxide: true,
                 atuin: true,
                 carapace: true,
+                mise: true,
             },
             terminal: TerminalConfig {
                 background_opacity: 0.6,

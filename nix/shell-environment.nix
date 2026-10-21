@@ -132,6 +132,31 @@ let
       }
     }
   '';
+  # Host mise, activated as `mise activate nu` prints it. That output is a
+  # module, which Nu loads only from a path known at parse time, so a one-shot
+  # string hook, parsed when it runs, loads it before the first prompt. The
+  # added command runs mise's hook once, so the first command already sees
+  # the directory's tools; mise's own hooks take over from there.
+  nuMise = pkgs.writeText "eon-nu-mise" ''
+    # A used activation defines the command mise; a sourced one, mise_hook.
+    let eon_mise_inactive = {|| which mise mise_hook | where type == custom | is-empty }
+    if ($env.EON_SHELL_MISE? == "1") and (do $eon_mise_inactive) {
+      let activation = try { ^mise activate nu | complete } catch { null }
+      if ($activation != null) and ($activation.exit_code == 0) and ($activation.stdout | is-not-empty) {
+        let apply = if ($activation.stdout | str contains "def --env mise_hook [") {
+          ["export def --env \"eon apply\" [] { mise_hook }", "mise eon apply"]
+        } else {
+          ["", ""]
+        }
+        $env.config.hooks.pre_prompt = (
+          $env.config.hooks.pre_prompt? | default [] | prepend {
+            condition: $eon_mise_inactive
+            code: $"module mise {\n($activation.stdout)\n($apply.0)\n}\nuse mise\n($apply.1)"
+          }
+        )
+      }
+    }
+  '';
 
   bashRc = pkgs.writeText "eon.bashrc" ''
     _eon_shell_init=''${BASH_SOURCE[0]%/*}/init
@@ -163,7 +188,12 @@ let
       fi
       unset _eon_completions
     fi
-    unset _eon_shell_init _eon_default_ps1 _eon_default_ps2
+    # Last, so Eon's Starship still sees only the user's PROMPT_COMMAND.
+    if [[ $EON_SHELL_MISE == 1 ]] && ! declare -F _mise_hook >/dev/null \
+      && _eon_mise=$(type -P mise); then
+      _eon_mise=$("$_eon_mise" activate bash 2>/dev/null) && [[ -n $_eon_mise ]] && eval "$_eon_mise"
+    fi
+    unset _eon_shell_init _eon_default_ps1 _eon_default_ps2 _eon_mise
   '';
 
   shellTree = pkgs.runCommand "eon-shell" { } ''
@@ -183,6 +213,7 @@ let
         fi
       fi
       if ((mask & 8)); then cat ${nuCarapace} >> "$out/nu/$mask/eon.nu"; fi
+      cat ${nuMise} >> "$out/nu/$mask/eon.nu"
     done
   '';
 in
