@@ -9,6 +9,7 @@ accesskit = "=0.24.1"
 accesskit_winit = { version = "=0.33.2", default-features = false, features = ["rwh_06"] }
 eon-workspace-protocol = { path = "../runtime/crates/eon-workspace-protocol" }
 glyphon = "=0.12.0"
+jiff = { version = "=0.2.38", default-features = false, features = ["std", "tz-system", "tzdb-zoneinfo"] }
 orbit-protocol = { path = "../orbit/crates/protocol" }
 pollster = { version = "=1.0.1", default-features = false }
 unicode-script = "=0.5.8"

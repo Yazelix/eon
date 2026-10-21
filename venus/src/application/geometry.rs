@@ -52,6 +52,7 @@ pub(super) fn initial_window_size(
             WorkspaceScene::from_snapshot_with_metadata(
                 snapshot,
                 None,
+                None,
                 size,
                 metrics,
                 0.0,
@@ -236,6 +237,7 @@ mod tests {
                     let workspace = snapshot.map(|s| {
                         WorkspaceScene::from_snapshot_with_metadata(
                             s,
+                            None,
                             None,
                             size,
                             metrics,

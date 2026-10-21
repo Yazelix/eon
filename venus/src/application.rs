@@ -31,7 +31,7 @@ use winit::{
 };
 use yazelix_venus::{
     Accessibility, AccessibilityTarget, CellMetrics, ClipboardEffect, Color, ConnectionState,
-    FontSettings, FontSetup, Hyperlink, InputState, LocalNoticeSource, MAX_LINK_BYTES,
+    FontSettings, FontSetup, Hyperlink, InputState, LocalClock, LocalNoticeSource, MAX_LINK_BYTES,
     MetadataEvent, MetadataTransport, ModelError, PaneMetadata, PresentOutcome, Renderer, Scene,
     SceneRect, SessionModel, ShortcutHintsScene, ShortcutViewerScene, Transport, TransportEvent,
     WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
@@ -56,6 +56,7 @@ use shortcuts::{
 };
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
+const MINUTE: Duration = Duration::from_secs(60);
 const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
 const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(250);
 const MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
@@ -535,6 +536,8 @@ struct Application {
     blink_visible: bool,
     next_blink: Option<Instant>,
     next_animation: Option<Instant>,
+    clock: Option<LocalClock>,
+    next_clock: Option<Instant>,
     window_focused: bool,
     window_occluded: bool,
     workspace_focus: WorkspaceFocus,
@@ -605,6 +608,8 @@ impl Application {
             render_notice: None,
             blink_visible: true,
             next_blink: None,
+            clock: None,
+            next_clock: None,
             next_animation: None,
             window_focused: false,
             window_occluded: false,
@@ -841,6 +846,7 @@ impl Application {
             WorkspaceScene::from_snapshot_with_metadata(
                 snapshot,
                 self.eon_version.as_deref(),
+                self.clock.as_ref(),
                 state.renderer.size(),
                 state.renderer.metrics(),
                 self.tab_scroll,
@@ -1058,6 +1064,7 @@ impl Application {
         Some(WorkspaceScene::from_snapshot_with_metadata(
             snapshot,
             self.eon_version.as_deref(),
+            self.clock.as_ref(),
             state.renderer.size(),
             state.renderer.metrics(),
             tab_scroll,
@@ -2719,6 +2726,7 @@ impl Application {
             None
         };
         let version_hovered = matches!(hovered_hit, Some(WorkspaceHit::Version));
+        let clock_hovered = matches!(hovered_hit, Some(WorkspaceHit::Clock));
         let mut refresh = false;
         let mut presented = false;
         let Some(state) = &mut self.window else {
@@ -2731,6 +2739,7 @@ impl Application {
         state.renderer.set_hovered_header(hovered_header);
         state.renderer.set_quota_hovered(quota_hovered);
         state.renderer.set_version_hovered(version_hovered);
+        state.renderer.set_clock_hovered(clock_hovered);
         state.renderer.set_pressed_header(match self.header_press {
             Some(HeaderPress::Control(control)) => Some(control),
             _ => None,
@@ -3038,6 +3047,7 @@ impl ApplicationHandler<UserEvent> for Application {
                                 | WorkspaceHit::Pane(_)
                                 | WorkspaceHit::Quota(_)
                                 | WorkspaceHit::Version
+                                | WorkspaceHit::Clock
                                 | WorkspaceHit::Control(_),
                             ) => hit,
                             _ => None,
@@ -3248,7 +3258,9 @@ impl ApplicationHandler<UserEvent> for Application {
                             }
                             return;
                         }
-                        Some(WorkspaceHit::Quota(_) | WorkspaceHit::Version) => None,
+                        Some(
+                            WorkspaceHit::Quota(_) | WorkspaceHit::Version | WorkspaceHit::Clock,
+                        ) => None,
                         None => None,
                     };
                     if let Some((focus, id)) = target {
@@ -3541,6 +3553,16 @@ impl ApplicationHandler<UserEvent> for Application {
         }
         self.retry_orbit(now);
         self.retry_column_views(now);
+        if self.workspace_model.snapshot().is_some() && self.next_clock.is_none_or(|due| now >= due)
+        {
+            let reading = read_local_clock();
+            self.next_clock = Some(now + reading.as_ref().map_or(MINUTE, |(_, wait)| *wait));
+            let clock = reading.map(|(clock, _)| clock);
+            if clock != self.clock {
+                self.clock = clock;
+                self.refresh_client_view();
+            }
+        }
         self.drive_selection_autoscroll(now);
         let blinking = std::iter::once(&self.terminal)
             .chain(&self.column_views)
@@ -3568,6 +3590,7 @@ impl ApplicationHandler<UserEvent> for Application {
             [
                 self.next_blink,
                 self.next_animation,
+                self.next_clock,
                 self.terminal.selection_scroll.next,
                 self.terminal.orbit_retry.deadline,
                 self.column_views
@@ -3588,6 +3611,15 @@ impl ApplicationHandler<UserEvent> for Application {
             .map_or(ControlFlow::Wait, ControlFlow::WaitUntil),
         );
     }
+}
+
+/// Reads the local wall clock and the wait until its next minute. An unknown local time zone
+/// yields no clock rather than UTC.
+fn read_local_clock() -> Option<(LocalClock, Duration)> {
+    let now = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::try_system().ok()?);
+    let elapsed = Duration::from_secs(now.second().unsigned_abs().into())
+        + Duration::from_nanos(now.subsec_nanosecond().unsigned_abs().into());
+    Some((LocalClock::new(&now), MINUTE.saturating_sub(elapsed)))
 }
 
 fn update_blink(

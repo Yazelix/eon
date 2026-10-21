@@ -30,6 +30,7 @@ const SCROLLBACK: NodeId = NodeId(10);
 const HINTS: NodeId = NodeId(11);
 const VERSION: NodeId = NodeId(12);
 const CLAUDE_QUOTA: NodeId = NodeId(13);
+const CLOCK: NodeId = NodeId(14);
 // Scene rows are u16, so this range cannot collide with fixed or text-run nodes.
 const WORKSPACE_NODE_START: u64 = 1 << 32;
 const LINK_NODE_START: u64 = 1 << 48;
@@ -229,6 +230,9 @@ impl Snapshot {
             if workspace.version.is_some() {
                 children.push(VERSION);
             }
+            if workspace.clock.is_some() {
+                children.push(CLOCK);
+            }
             if workspace.has_control(WorkspaceHeaderControl::Shortcuts) {
                 children.push(SHORTCUTS);
             }
@@ -348,11 +352,13 @@ impl Snapshot {
                 node.set_bounds(rect(quota.rect));
                 nodes.push((quota_id(quota.provider), node));
             }
-            if let Some(version) = &workspace.version {
-                let mut node = Node::new(Role::Label);
-                node.set_value(version.description.as_str());
-                node.set_bounds(rect(version.rect));
-                nodes.push((VERSION, node));
+            for (id, label) in [(VERSION, &workspace.version), (CLOCK, &workspace.clock)] {
+                if let Some(label) = label {
+                    let mut node = Node::new(Role::Label);
+                    node.set_value(label.description.as_str());
+                    node.set_bounds(rect(label.rect));
+                    nodes.push((id, node));
+                }
             }
             for control in workspace.controls {
                 if control.rect.width <= 0.0 {
@@ -926,6 +932,7 @@ mod tests {
                                 WorkspaceScene::from_snapshot_with_metadata(
                                     &snapshot,
                                     version,
+                                    None,
                                     size,
                                     metrics,
                                     0.0,
@@ -1015,6 +1022,232 @@ mod tests {
                                 assert!(!node.supports_action(Action::Click));
                                 assert!(!node.supports_action(Action::Focus));
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn local_clock_names_minute_date_and_offset() {
+        let at = |hour, minute, offset| {
+            crate::LocalClock::new(
+                &jiff::civil::date(2026, 10, 21)
+                    .at(hour, minute, 59, 999_999_999)
+                    .to_zoned(jiff::tz::TimeZone::fixed(offset))
+                    .unwrap(),
+            )
+        };
+        for (clock, label, description) in [
+            (
+                at(14, 5, jiff::tz::offset(-3)),
+                "14:05",
+                "Local time 14:05, Wednesday 21 October 2026, UTC\u{2212}03:00",
+            ),
+            (
+                at(0, 0, jiff::tz::Offset::UTC),
+                "00:00",
+                "Local time 00:00, Wednesday 21 October 2026, UTC+00:00",
+            ),
+            (
+                at(
+                    23,
+                    59,
+                    jiff::tz::Offset::from_seconds(5 * 3600 + 45 * 60).unwrap(),
+                ),
+                "23:59",
+                "Local time 23:59, Wednesday 21 October 2026, UTC+05:45",
+            ),
+        ] {
+            let workspace = WorkspaceScene::from_snapshot_with_metadata(
+                &WorkspaceSnapshot {
+                    active_tab: "t1".into(),
+                    geometry: PopupGeometry {
+                        side_margin: 8.0,
+                        vertical_margin: 4.0,
+                    },
+                    entries: Vec::new(),
+                    tabs: vec![workspace_tab("t1", &["p1"], "p1")],
+                    codex_quota: None,
+                    claude_quota: None,
+                },
+                None,
+                Some(&clock),
+                PhysicalSize::new(1100, 600),
+                CellMetrics::for_scale(1.0),
+                0.0,
+                0.0,
+                |_| None,
+                |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+                None,
+            );
+            let shown = workspace.clock.unwrap();
+            assert_eq!(shown.label, label);
+            assert_eq!(shown.description, description);
+        }
+    }
+
+    #[test]
+    fn local_clock_yields_first_and_has_no_actions() {
+        let clock = crate::LocalClock::new(
+            &jiff::civil::date(2026, 10, 21)
+                .at(14, 5, 0, 0)
+                .to_zoned(jiff::tz::TimeZone::fixed(jiff::tz::offset(-3)))
+                .unwrap(),
+        );
+        for scale in [1.0, 1.25, 2.0] {
+            let metrics = CellMetrics::for_scale(scale);
+            for logical_width in [100, 320, 700, 1100, 3000] {
+                for tab_count in [1, 10] {
+                    for providers in 0..4 {
+                        let window = || {
+                            vec![CodexQuotaWindow {
+                                duration_minutes: 300,
+                                remaining_percent: 74,
+                                resets_at: None,
+                            }]
+                        };
+                        let snapshot = WorkspaceSnapshot {
+                            active_tab: "t1".into(),
+                            geometry: PopupGeometry {
+                                side_margin: 8.0,
+                                vertical_margin: 4.0,
+                            },
+                            entries: Vec::new(),
+                            tabs: (1..=tab_count)
+                                .map(|n| workspace_tab(&format!("t{n}"), &["p1"], "p1"))
+                                .collect(),
+                            codex_quota: (providers & 1 != 0).then(|| CodexQuota {
+                                state: CodexQuotaState::Fresh,
+                                observed_at: 1,
+                                windows: window(),
+                            }),
+                            claude_quota: (providers & 2 != 0).then(|| ClaudeQuota {
+                                state: ClaudeQuotaState::Fresh,
+                                observed_at: 1,
+                                windows: window(),
+                            }),
+                        };
+                        let project = |logical_width: u32, version, clock| {
+                            WorkspaceScene::from_snapshot_with_metadata(
+                                &snapshot,
+                                version,
+                                clock,
+                                PhysicalSize::new(
+                                    (logical_width as f32 * metrics.scale) as u32,
+                                    600,
+                                ),
+                                metrics,
+                                0.0,
+                                0.0,
+                                |_| None,
+                                |_, text| {
+                                    (
+                                        text.to_owned(),
+                                        text.chars().count() as f32 * 10.0 * metrics.scale,
+                                    )
+                                },
+                                None,
+                            )
+                        };
+                        let full_quotas = project(3000, None, None)
+                            .quotas
+                            .into_iter()
+                            .map(|quota| quota.label)
+                            .collect::<Vec<_>>();
+                        for version in [None, Some("9.8.7")] {
+                            let baseline = project(logical_width, version, None);
+                            let scene = project(logical_width, version, Some(&clock));
+                            assert_eq!(scene.tabs, baseline.tabs);
+                            assert_eq!(scene.tab_viewport, baseline.tab_viewport);
+                            assert_eq!(scene.controls, baseline.controls);
+                            assert_eq!(scene.terminal, baseline.terminal);
+                            assert_eq!(scene.panes, baseline.panes);
+                            assert_eq!(
+                                scene
+                                    .quotas
+                                    .iter()
+                                    .map(|quota| &quota.label)
+                                    .collect::<Vec<_>>(),
+                                baseline
+                                    .quotas
+                                    .iter()
+                                    .map(|quota| &quota.label)
+                                    .collect::<Vec<_>>()
+                            );
+                            assert_eq!(scene.version.is_some(), baseline.version.is_some());
+                            let mut accessible = Snapshot::new(PhysicalSize::new(
+                                (logical_width as f32 * metrics.scale) as u32,
+                                600,
+                            ));
+                            accessible.set_workspace(Some(&scene));
+                            let tree = accessible.tree();
+                            assert_eq!(
+                                tree.nodes.iter().any(|(id, _)| *id == CLOCK),
+                                scene.clock.is_some()
+                            );
+                            let Some(shown) = &scene.clock else {
+                                assert!(logical_width < 3000, "a wide bar shows the clock");
+                                continue;
+                            };
+                            // The clock yields before quota compaction and the version label.
+                            assert_eq!(
+                                scene
+                                    .quotas
+                                    .iter()
+                                    .map(|quota| &quota.label)
+                                    .collect::<Vec<_>>(),
+                                full_quotas.iter().collect::<Vec<_>>()
+                            );
+                            assert_eq!(version.is_some(), scene.version.is_some());
+                            assert_eq!(
+                                shown.rect.width,
+                                5.0 * metrics.width + metrics.padding * 2.0
+                            );
+                            assert!(scene.drag_region.width >= metrics.font_size * 4.0);
+                            assert_eq!(shown.rect.right(), scene.controls[1].rect.left);
+                            let leading = scene.version.as_ref().map_or_else(
+                                || scene.quotas.last().map(|quota| quota.rect),
+                                |version| Some(version.rect),
+                            );
+                            assert_eq!(
+                                leading.map_or(scene.drag_region.right(), SceneRect::right),
+                                shown.rect.left
+                            );
+                            if let Some(quota) = scene.quotas.first() {
+                                assert_eq!(scene.drag_region.right(), quota.rect.left);
+                            }
+                            assert_eq!(
+                                scene.hit_test(
+                                    shown.rect.left + shown.rect.width / 2.0,
+                                    shown.rect.height / 2.0
+                                ),
+                                Some(crate::WorkspaceHit::Clock)
+                            );
+                            let children = node(&tree, WINDOW).children();
+                            let index = children.iter().position(|id| *id == CLOCK).unwrap();
+                            assert_eq!(
+                                children[index - 1],
+                                if version.is_some() {
+                                    VERSION
+                                } else {
+                                    scene
+                                        .quotas
+                                        .last()
+                                        .map_or(NEW_TAB, |quota| quota_id(quota.provider))
+                                }
+                            );
+                            let node = node(&tree, CLOCK);
+                            assert_eq!(node.role(), Role::Label);
+                            assert_eq!(
+                                node.value(),
+                                Some(
+                                    "Local time 14:05, Wednesday 21 October 2026, UTC\u{2212}03:00"
+                                )
+                            );
+                            assert!(!node.supports_action(Action::Click));
+                            assert!(!node.supports_action(Action::Focus));
                         }
                     }
                 }
@@ -1913,6 +2146,7 @@ mod tests {
             WorkspaceScene::from_snapshot_with_metadata(
                 &workspace,
                 None,
+                None,
                 size,
                 metrics,
                 0.0,
@@ -2070,6 +2304,7 @@ mod tests {
                 codex_quota: None,
                 claude_quota: None,
             },
+            None,
             None,
             PhysicalSize::new(800, 600),
             CellMetrics::for_scale(1.0),

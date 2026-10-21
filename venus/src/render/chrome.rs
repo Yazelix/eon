@@ -28,6 +28,7 @@ pub(super) struct HeaderInteraction {
     hovered_header: Option<(WorkspaceFocus, String)>,
     quota_hovered: Option<usize>,
     version_hovered: bool,
+    clock_hovered: bool,
     pressed_header: Option<WorkspaceHeaderControl>,
 }
 
@@ -167,6 +168,10 @@ impl Renderer {
         self.header.version_hovered = hovered;
     }
 
+    pub fn set_clock_hovered(&mut self, hovered: bool) {
+        self.header.clock_hovered = hovered;
+    }
+
     pub fn set_quota_hovered(&mut self, hovered: Option<usize>) {
         self.header.quota_hovered = hovered;
     }
@@ -210,6 +215,10 @@ impl Renderer {
             && let Some(version) = &workspace.version
         {
             (version.description.as_str(), version.rect)
+        } else if self.header.clock_hovered
+            && let Some(clock) = &workspace.clock
+        {
+            (clock.description.as_str(), clock.rect)
         } else if let Some(tab) = hovered_tab {
             (tab.accessible_label(), tab.rect)
         } else if let Some(control) = workspace
@@ -633,22 +642,38 @@ impl Renderer {
                 quota.rect,
             );
         }
-        if let Some(version) = &workspace.version {
-            let width = (version.rect.width - self.metrics.padding * 2.0).max(0.0);
-            self.push_text_clipped(
-                &version.label,
-                version.rect.left + self.metrics.padding,
-                version.rect.top + (version.rect.height - self.metrics.height).max(0.0) / 2.0,
-                width,
-                width,
-                self.metrics.height.min(version.rect.height),
+        for (label, color) in [
+            (
+                &workspace.version,
                 SceneColor {
                     r: 124,
                     g: 196,
                     b: 216,
                 },
+            ),
+            (
+                &workspace.clock,
+                SceneColor {
+                    r: 162,
+                    g: 174,
+                    b: 190,
+                },
+            ),
+        ] {
+            let Some(label) = label else {
+                continue;
+            };
+            let width = (label.rect.width - self.metrics.padding * 2.0).max(0.0);
+            self.push_text_clipped(
+                &label.label,
+                label.rect.left + self.metrics.padding,
+                label.rect.top + (label.rect.height - self.metrics.height).max(0.0) / 2.0,
+                width,
+                width,
+                self.metrics.height.min(label.rect.height),
+                color,
                 DrawStyleKind::Monospace,
-                version.rect,
+                label.rect,
             );
         }
         for control in workspace.controls {
@@ -1104,6 +1129,7 @@ mod tests {
                 };
                 let workspace = WorkspaceScene::from_snapshot_with_metadata(
                     &snapshot,
+                    None,
                     None,
                     PhysicalSize::new(900, 600),
                     renderer.metrics(),

@@ -20,8 +20,8 @@ pub use model::{
 };
 pub use render::{CellMetrics, FontSettings, FontSetup, PresentOutcome, RenderError, Renderer};
 pub use scene::{
-    Color, DrawCell, DrawCursor, DrawRow, DrawStyle, GlyphRun, Hyperlink, PaneMetadata, Scene,
-    ScenePreview, SceneRect, ShortcutGroup, ShortcutHint, ShortcutHintsScene, ShortcutRow,
+    Color, DrawCell, DrawCursor, DrawRow, DrawStyle, GlyphRun, Hyperlink, LocalClock, PaneMetadata,
+    Scene, ScenePreview, SceneRect, ShortcutGroup, ShortcutHint, ShortcutHintsScene, ShortcutRow,
     ShortcutViewerScene, WorkspaceColumn, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit,
     WorkspacePane, WorkspaceScene, WorkspaceTab, workspace_column_width,
 };

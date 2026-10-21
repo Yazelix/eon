@@ -181,6 +181,23 @@ remains one exact pin plus exhaustive consumer matches.
 Orbit's project-owned source is Apache-2.0 under its root license. This
 dependency decision does not establish public-distribution proof.
 
+### Local time zone
+
+- **Selected shape:** jiff 0.2.38 with default features disabled and `std`,
+  `tz-system` and `tzdb-zoneinfo` enabled (`eon-igae.4`, VEN-C27). Linux and
+  macOS compile only jiff and jiff-core. The lockfile also lists jiff-static,
+  behind a `cfg(any())` gate that never builds, and defmt, an optional
+  dependency left disabled. Unlicense or MIT.
+- **Owner consequence:** jiff resolves the system zone from `TZ`, then
+  `/etc/localtime` (by symlink name through the zoneinfo database, else its
+  TZif bytes), and rechecks it after five minutes. Venus asks for the zone
+  without a fallback, so an unknown zone shows no clock rather than UTC.
+- **Rejected:** libc `localtime_r`, because Venus forbids unsafe code; chrono's
+  `Local`, which adds iana-time-zone and its own parser for the same job; and
+  the time crate, which refuses local offsets in multithreaded Unix processes.
+  Remove jiff if Venus drops the clock or the native host gains a safe local
+  time source.
+
 ## Measured comparison
 
 Minimal Rust 2024 scratch binaries were resolved and checked on Rust 1.96.0.

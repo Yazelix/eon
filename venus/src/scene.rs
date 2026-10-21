@@ -270,12 +270,36 @@ pub(crate) struct WorkspaceQuota {
     pub(crate) description: String,
 }
 
-/// One immutable supervising-product label in the workspace header.
+/// One read-only informational label in the workspace header.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct WorkspaceVersion {
+pub(crate) struct WorkspaceLabel {
     pub(crate) rect: SceneRect,
     pub(crate) label: String,
     pub(crate) description: String,
+}
+
+/// One local wall-clock minute shown in the workspace header.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LocalClock {
+    label: String,
+    description: String,
+}
+
+impl LocalClock {
+    #[must_use]
+    pub fn new(now: &jiff::Zoned) -> Self {
+        let label = format!("{:02}:{:02}", now.hour(), now.minute());
+        let offset = now.offset().seconds();
+        let sign = if offset < 0 { '\u{2212}' } else { '+' };
+        let minutes = offset.unsigned_abs() / 60;
+        let description = format!(
+            "Local time {label}, {}, UTC{sign}{:02}:{:02}",
+            now.strftime("%A %-d %B %Y"),
+            minutes / 60,
+            minutes % 60,
+        );
+        Self { label, description }
+    }
 }
 
 /// Native workspace target at one physical point.
@@ -284,6 +308,7 @@ pub enum WorkspaceHit<'a> {
     Tab(&'a str),
     Quota(usize),
     Version,
+    Clock,
     Control(WorkspaceHeaderControl),
     Drag,
     Pane(&'a str),
@@ -608,7 +633,8 @@ pub struct WorkspaceScene {
     pub(crate) header: SceneRect,
     pub(crate) drag_region: SceneRect,
     pub(crate) quotas: Vec<WorkspaceQuota>,
-    pub(crate) version: Option<WorkspaceVersion>,
+    pub(crate) version: Option<WorkspaceLabel>,
+    pub(crate) clock: Option<WorkspaceLabel>,
     pub(crate) controls: [WorkspaceControl; 3],
     pub hints: Option<ShortcutHintsScene>,
     /// The selected column's headers and terminal; `other_columns` holds the rest.
@@ -1005,6 +1031,7 @@ impl WorkspaceScene {
         Self::from_snapshot_with_metadata(
             snapshot,
             None,
+            None,
             size,
             metrics,
             tab_scroll,
@@ -1020,6 +1047,7 @@ impl WorkspaceScene {
     pub fn from_snapshot_with_metadata<'a>(
         snapshot: &Snapshot,
         eon_version: Option<&str>,
+        clock: Option<&LocalClock>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         tab_scroll: f32,
@@ -1186,7 +1214,7 @@ impl WorkspaceScene {
                 quota.rect.left -= width;
                 quota.logo.left -= width;
             }
-            Some(WorkspaceVersion {
+            Some(WorkspaceLabel {
                 rect: SceneRect {
                     left: right - width,
                     width,
@@ -1196,6 +1224,34 @@ impl WorkspaceScene {
                 label,
                 description: format!("Running Eon version {version}"),
             })
+        });
+        // The clock takes spare space last, so it yields before every other header item.
+        let clock = clock
+            .filter(|_| !compact && version.is_some() == eon_version.is_some())
+            .and_then(|clock| {
+                let width = clock.label.len() as f32 * metrics.width + metrics.padding * 2.0;
+                if !width.is_finite() || width + metrics.font_size * 4.0 > drag_region.width {
+                    return None;
+                }
+                drag_region.width -= width;
+                for quota in &mut quotas {
+                    quota.rect.left -= width;
+                    quota.logo.left -= width;
+                }
+                Some(WorkspaceLabel {
+                    rect: SceneRect {
+                        left: controls[1].rect.left - width,
+                        width,
+                        height: tab_height,
+                        top: 0.0,
+                    },
+                    label: clock.label.clone(),
+                    description: clock.description.clone(),
+                })
+            });
+        let version = version.map(|mut version| {
+            version.rect.left -= clock.as_ref().map_or(0.0, |clock| clock.rect.width);
+            version
         });
         let tab_scroll_limit = (tab_end - tab_viewport.width).max(0.0);
         let active = tabs[active_tab].rect;
@@ -1253,6 +1309,7 @@ impl WorkspaceScene {
                 drag_region,
                 quotas,
                 version,
+                clock,
                 controls,
                 hints,
                 panes: Vec::new(),
@@ -1408,6 +1465,7 @@ impl WorkspaceScene {
             drag_region,
             quotas,
             version,
+            clock,
             controls,
             hints,
             panes,
@@ -1482,6 +1540,13 @@ impl WorkspaceScene {
             .is_some_and(|version| version.rect.contains(x, y))
         {
             return Some(WorkspaceHit::Version);
+        }
+        if self
+            .clock
+            .as_ref()
+            .is_some_and(|clock| clock.rect.contains(x, y))
+        {
+            return Some(WorkspaceHit::Clock);
         }
         if self.drag_region.contains(x, y) {
             return Some(WorkspaceHit::Drag);
@@ -2270,6 +2335,7 @@ mod tests {
                 let footer_rect = footer.rect;
                 let with_hints = WorkspaceScene::from_snapshot_with_metadata(
                     &snapshot,
+                    None,
                     None,
                     size,
                     metrics,

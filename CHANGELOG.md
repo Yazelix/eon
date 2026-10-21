@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The Eon Bar shows the local time as a 24-hour `HH:MM` clock beside the
+  Shortcuts and Close buttons. Hover it for the date and UTC offset. It hides
+  first when the window is narrow, and it doesn't appear if Eon can't
+  determine your time zone.
 - `eon` and `eonbase` commands exit with a documented status per failure kind:
   1 refused or failed, 2 invalid command or arguments, 3 target not found,
   4 supervisor unreachable, 130 interrupted. Structured failures exited 2 and

@@ -1690,3 +1690,23 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   review of changed defaults against the changelog and one installed upgrade
   observation in which the previous release's live terminals keep running and
   the new release lists and stops them.
+
+## EON-C29 — Local clock in the Eon Bar
+
+- **Status:** Proven on x86_64 Linux Wayland.
+- **Consumer:** Full-Eon workspace users.
+- **Trigger:** A workspace window is open while the local wall-clock minute
+  changes.
+- **Result:** The Eon Bar shows Venus's VEN-C27 local 24-hour clock, always
+  on, with no Eon configuration.
+- **Important failures:** As VEN-C27: an unknown local time zone shows no
+  clock, and narrow windows hide the clock before every other top-bar item.
+- **Owner:** Eon owns the always-on product choice and composition; Venus owns
+  the clock under VEN-C27.
+- **Boundary:** No setting, EONW or runtime change, 12-hour mode or platform
+  expansion; an on/off or 12-hour setting needs its own decision.
+- **Proof:** `eon-igae.4`
+  - **Environment:** Automated; one isolated installed observation.
+  - **Evidence:** Venus `local_clock_names_minute_date_and_offset` and
+    `local_clock_yields_first_and_has_no_actions`; the installed observation
+    recorded in `eon-igae.4`.

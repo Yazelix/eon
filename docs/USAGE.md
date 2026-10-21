@@ -136,6 +136,9 @@ once they are more than an hour old and disappear after 24 hours. Chips yield
 before tabs and controls under width pressure, and unavailable quota leaves the
 bar unchanged.
 See [quota behavior](CONFIGURATION.md#agent-quota).
+A 24-hour clock sits just before `?` and `×` and shows local time; hover it
+for the date and UTC offset. It hides first when the bar runs short of space,
+and stays hidden if the local time zone can't be determined.
 
 The bottom hints bar starts visible. Alt+Shift+B hides or restores it for this
 window, returning or reserving its space without restarting terminals. Hints

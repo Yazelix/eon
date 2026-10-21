@@ -130,6 +130,18 @@ native comparison: reuse measurement, row priority, hover and static AccessKit
 projection. Claude uses a plain C monogram, without copied brand artwork.
 Provider collection and freshness remain Runtime responsibilities.
 
+### Local clock
+
+VEN-C27 (`eon-igae.4`) compares Waybar's clock module at tag 0.14.0
+(`41de8964f1e3278edf07902ad68ca5e01e7abeeb`, `src/modules/clock.cpp`), which
+sleeps until the next whole interval of wall-clock time (default 60 seconds)
+and formats the moment in the local zone. Venus adopts only the wake at the
+next local minute, computed from the wall clock rather than by adding a fixed
+delay, as one more deadline in its existing event-loop wake list. Waybar's
+thread, locale and format configuration, and calendar tooltip are rejected.
+The clock reuses the version label's spare-space rule and its hover and static
+AccessKit label, and yields before every other Eon Bar item.
+
 ## Rounded pane frames
 
 `ven-pane-stack-chrome-suu` inspects Nova

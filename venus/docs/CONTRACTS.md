@@ -1306,3 +1306,35 @@ re-proved when that platform or feature is next touched.
     the workspace suite.
 - **Open proof:** Pending re-proof in this repository: the installed splat
   icon.
+
+## VEN-C27 — Local clock in the Eon Bar
+
+- **Status:** Proven on native x86_64 Linux Wayland.
+- **Consumer:** One person using a Venus surface controlled by a full Eon
+  workspace.
+- **Trigger:** A workspace surface is presented, or the local wall-clock minute
+  changes.
+- **Result:** One read-only `HH:MM` label in terminal monospace shows local
+  24-hour time in the existing top row, after the quota chips and version label
+  and before Shortcuts and Close. It changes within a second of each minute
+  boundary. Hover and a static AccessKit label name the time, date and UTC
+  offset, such as `Local time 14:05, Wednesday 21 October 2026, UTC−03:00`.
+  The clock uses only spare drag-region space and keeps that region's minimum;
+  it appears only while every quota chip is at full width, so width fitting
+  hides it before the version label, quota compaction, tabs or controls.
+- **Important failures:** An undeterminable local time zone shows no clock,
+  never UTC in its place. A clock-only change does not replace attachments,
+  recenter navigation, cancel scrolling or send an Orbit resize. The clock has
+  no action, focus target or drag behavior. After suspend or a system clock
+  change it corrects within one minute.
+- **Owner:** Venus Scene owns the text and geometry, the application owns the
+  minute wake, and jiff resolves the system time zone from `TZ` or
+  `/etc/localtime`.
+- **Boundary:** No EONW or runtime change, configuration, 12-hour mode,
+  calendar, other time zone, widget framework or platform expansion. Its one
+  dependency is `jiff` (`docs/CRATES.md`).
+- **Proof:** `eon-igae.4`
+  - **Environment:** Automated and installed.
+  - **Evidence:** `local_clock_names_minute_date_and_offset` and
+    `local_clock_yields_first_and_has_no_actions` in the workspace suite; one
+    isolated installed observation recorded in `eon-igae.4`.

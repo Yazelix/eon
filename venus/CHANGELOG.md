@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- VEN-C27: a read-only local 24-hour clock joins the Eon Bar, before Shortcuts
+  and Close. It uses only spare space, yields before every other header item,
+  and adds the jiff dependency for the local time zone (`eon-igae.4`).
 - Venus consumes EONW v12. VEN-C8: Ctrl+Alt+H/L sends one non-repeating
   `MovePaneSideways` for the selected pane, applying Alt+Shift+M's 40-column
   refusal when the move would open a column; moving the active tab moves to

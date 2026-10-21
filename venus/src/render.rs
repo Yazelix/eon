@@ -172,6 +172,8 @@ struct ContentKey {
     header: HeaderInteraction,
     scrollback_label: Option<String>,
     shortcut_viewer_scroll: Option<f32>,
+    /// The clock changes without a new presentation generation.
+    clock: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -846,6 +848,9 @@ impl Renderer {
             header: self.header.clone(),
             scrollback_label: self.terminal.scrollback_label.clone(),
             shortcut_viewer_scroll: shortcut_viewer.map(|viewer| viewer.scroll),
+            clock: workspace
+                .and_then(|workspace| workspace.clock.as_ref())
+                .map(|clock| clock.label.clone()),
         };
         if self.content_key.as_ref() == Some(&key) {
             return false;
@@ -2267,6 +2272,7 @@ mod tests {
             header: HeaderInteraction::default(),
             scrollback_label: None,
             shortcut_viewer_scroll,
+            clock: None,
         };
 
         assert_ne!(key(1, None), key(2, None));
