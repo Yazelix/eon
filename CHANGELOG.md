@@ -39,8 +39,9 @@ installation, and proven contract changes.
   first when the window is narrow, and it doesn't appear if Eon can't
   determine your time zone.
 - `eon` and `eonbase` commands exit with a documented status per failure kind:
-  1 refused or failed, 2 invalid command or arguments, 3 target not found,
-  4 supervisor unreachable, 130 interrupted. Structured failures exited 2 and
+  1 refused or failed, 2 invalid command or arguments, 3 target not found
+  (including an unknown `eon window` ID), 4 supervisor unreachable,
+  130 interrupted. Structured failures exited 2 and
   every other failure 1; scripts that tested for those values need updating.
   `eon --help` and [Using Eon](docs/USAGE.md#exit-status) list the statuses.
 - `eon` speaks only EONW 13. A generation started by an older build that uses

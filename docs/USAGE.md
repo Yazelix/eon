@@ -259,7 +259,7 @@ and exits 3. Other commands ignore `EON_TERMINAL`; run
 | 0 | Success, including a declined Stop confirmation |
 | 1 | The command was understood but refused or failed |
 | 2 | Invalid command or arguments, such as a malformed tab or generation ID |
-| 3 | The named tab, pane, terminal, popup or generation was not found |
+| 3 | The named tab, pane, terminal, popup, generation or window was not found |
 | 4 | The supervisor is not running or did not answer; run `eon` first |
 | 130 | Interrupted with Ctrl+C |
 

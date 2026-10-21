@@ -1995,6 +1995,29 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
             }
         }
     }
+    // An unknown window is missing whether or not the windows directory exists.
+    let windows = root.join("runtime").join("w");
+    for windows_exist in [false, true] {
+        if windows_exist {
+            fs::create_dir_all(&windows).unwrap();
+            for directory in [windows.parent().unwrap(), &windows] {
+                fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+            }
+        }
+        for (arguments, status) in [
+            (&["window", "attach", "0000abcd"][..], 3),
+            (&["window", "stop", "0000abcd", "--json"], 3),
+            (&["window", "attach", "bad/id"], 2),
+        ] {
+            let output = run(arguments);
+            assert_eq!(
+                output.status.code(),
+                Some(status),
+                "{windows_exist} {arguments:?}"
+            );
+            assert!(output.stdout.is_empty(), "{windows_exist} {arguments:?}");
+        }
+    }
     fs::remove_dir_all(root).unwrap();
 }
 

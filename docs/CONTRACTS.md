@@ -683,8 +683,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - `eon` and `eonbase` exit 0 on success, 1 when a command is refused or
     fails, 2 for invalid command lines and argument syntax (including
     `invalid-tab` and `malformed-action`), 3 when a named tab, pane, terminal,
-    popup or generation is missing or stale, 4 when the supervisor is missing
-    or unreachable, and 130 on interrupt, identically with and without
+    popup, generation or window is missing or stale, 4 when the supervisor is
+    missing or unreachable, and 130 on interrupt, identically with and without
     `--json`. The CLI projection derives the status from the failure code.
     Multi-target Stop exits with its largest status; commands that run another
     program pass on its status.
@@ -761,8 +761,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   retired v4 picker opcode is unavailable; Project uses ordinary popup invocation.
   There is no negotiation or adapter.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
-  exit statuses `eon-8mnr.1` (automated tier); calling-terminal targets
-  `eon-8mnr.2` (automated and installed tiers).
+  exit statuses `eon-8mnr.1` and `eon-8mnr.3` (automated tier); calling-terminal
+  targets `eon-8mnr.2` (automated and installed tiers).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,

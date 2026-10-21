@@ -75,10 +75,13 @@ fn selected_window(id: &OsStr) -> Result<PathBuf, Error> {
         return Err(Error::usage(format!("invalid Eon window ID {id:?}")));
     }
     let parent = windows_root();
-    validate_private_directory(&base_runtime_directory("eon"))?;
-    validate_private_directory(&parent)?;
     let root = parent.join(id);
-    validate_private_directory(&root)?;
+    if !private_directory_exists(&base_runtime_directory("eon"), "Eon runtime directory")?
+        || !private_directory_exists(&parent, "Eon windows directory")?
+        || !private_directory_exists(&root, "Eon window")?
+    {
+        return Err(Error::missing(format!("Eon window {id} was not found")));
+    }
     Ok(root)
 }
 
