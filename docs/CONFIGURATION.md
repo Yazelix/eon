@@ -106,22 +106,26 @@ Popup geometry and entries use the same file:
 side_margin = 8
 vertical_margin = 4
 
-[popups.files]
-command = ["eon-yazi"]
-keybinding = "Alt+Shift+F"
-label = "Files"
+[popups.monitor]
+command = ["btop"]
+keybinding = "Alt+Shift+O"
+label = "Monitor"
 keep_alive = true
 ```
 
 Git defaults to `eon-lazygit` on Alt+Shift+J. Agent defaults to the first
 available command among Codex, Grok, OpenCode, Pi, and Claude on Alt+Shift+L.
+Files opens Yazi with Eon's own popup keys on Alt+Shift+Y and reads no Yazi
+configuration of yours. Setting `[popups.files].command` replaces it, for
+example with `["eon-yazi"]`, which reads the `yazi` directory under Eon's
+configuration root.
 Anima defaults to Alt+Shift+A, opens a random animation, and stops when dismissed
 or replaced. Set `[popups.anima].enabled = false` to hide that shortcut; its
 command and transient lifetime are fixed.
-Set `enabled = false` on Git, Agent, or a custom popup to disable it. Project is
-required on Alt+Z. A popup shortcut on the key of a built-in Eon shortcut
-takes that key, and Alt+/ lists the built-in one as overridden. Alt+/ and
-Alt+0 through Alt+9 are reserved and cannot be bound.
+Set `enabled = false` on Git, Agent, Files, or a custom popup to disable
+it. Project is required on Alt+Z. A popup shortcut on the key of a built-in
+Eon shortcut takes that key, and Alt+/ lists the built-in one as overridden.
+Alt+/ and Alt+0 through Alt+9 are reserved and cannot be bound.
 
 Set `EON_CONFIG_HOME` to select another configuration root and `EON_RUNTIME_DIR`
 to select another runtime root. Relative `EON_CONFIG_HOME` values resolve once

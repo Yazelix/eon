@@ -72,6 +72,14 @@ pub(crate) fn inputs() -> Inputs {
                         true,
                     ),
                     (
+                        "files",
+                        "Files",
+                        "KeyY",
+                        ALT | SHIFT,
+                        PopupCommand::Argv(vec!["eon-files".into()]),
+                        true,
+                    ),
+                    (
                         "anima",
                         "Anima",
                         "KeyA",

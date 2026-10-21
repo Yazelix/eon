@@ -119,6 +119,7 @@ one, and clicking another column's terminal selects it.
 | Alt+Z | Open the tab's Project directory picker |
 | Alt+Shift+J | Open or hide the tab's Git popup |
 | Alt+Shift+L | Open or hide the tab's Agent popup |
+| Alt+Shift+Y | Open or hide the tab's Files popup |
 | Alt+Shift+A | Open or dismiss the tab's Anima popup |
 
 ### Eon Bar and tabs
@@ -168,7 +169,11 @@ terminals whose terminal state survives hiding and reopening. When the tab's
 directory changes, a running Agent moves out of its popup into a pane of the
 tab, with its conversation and old directory intact, and the next Alt+Shift+L
 starts a fresh agent in the new directory. Git restarts in the new directory
-the next time you open it. Anima is transient:
+the next time you open it. Files is Yazi at the tab's directory: Tab or Z
+searches recent folders and Enter moves Yazi there, Shift+Tab shows the
+hovered file's details, and every other Yazi key, including file operations,
+works as usual. It keeps its place when the tab's directory changes; quitting Yazi with
+`q` closes it, and the next Alt+Shift+Y opens a fresh one. Anima is transient:
 closing its popup stops playback and returns to the tab.
 
 ### Scrolling and directory picker

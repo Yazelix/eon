@@ -468,7 +468,8 @@ impl Workspace {
             .position(|popup| popup.entry == entry)
         {
             let popup = self.tabs[tab_index].popups[index].clone();
-            if popup.launch_directory != self.tabs[tab_index].directory {
+            // Files keeps its Yazi, and its location, across tab-directory changes.
+            if popup.entry != "files" && popup.launch_directory != self.tabs[tab_index].directory {
                 let candidate = self.popup_candidate(tab_index, &definition, true)?;
                 let launch = self.prepare_launch(tab_index, &candidate, &definition, prepare)?;
                 if let Some(index) = self.displaced_transient(tab_index, Some(&popup.id))? {
@@ -1678,6 +1679,16 @@ mod tests {
                         key: "KeyG".into(),
                     },
                     command: PopupCommand::Argv(vec!["git".into()]),
+                    keep_alive: true,
+                },
+                PopupDefinition {
+                    id: "files".into(),
+                    label: "Files".into(),
+                    shortcut: Shortcut {
+                        modifiers: ALT,
+                        key: "KeyY".into(),
+                    },
+                    command: PopupCommand::Argv(vec!["files".into()]),
                     keep_alive: true,
                 },
             ],
@@ -2951,6 +2962,61 @@ mod tests {
                 )
                 .is_err()
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn files_keeps_its_terminal_across_retargets() {
+        let root = std::env::temp_dir().join(format!("eon-files-{}", std::process::id()));
+        let next = root.join("next");
+        fs::create_dir_all(&next).unwrap();
+        let mut workspace = Workspace::with_recovered_sessions(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: root.join("orbit.sock"),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let invoke = |expected: Option<&str>| Action::InvokePopup {
+            tab: "t1".into(),
+            entry: "files".into(),
+            expected_instance: expected.map(Into::into),
+            intent: InvokeIntent::Toggle,
+        };
+        workspace
+            .dispatch("open", None, invoke(None), prepared, |_| Ok(()))
+            .unwrap();
+        let files = workspace.snapshot().tabs[0].popups[0].clone();
+        workspace
+            .dispatch("hide", None, invoke(Some(&files.id)), prepared, |_| Ok(()))
+            .unwrap();
+        workspace
+            .dispatch(
+                "retarget",
+                None,
+                Action::Workspace(WorkspaceAction::SetTabDirectory {
+                    tab: "t1".into(),
+                    directory: next.as_os_str().as_bytes().to_vec(),
+                }),
+                prepared,
+                |_| Err("retargeting keeps Files".into()),
+            )
+            .unwrap();
+        workspace
+            .dispatch("reopen", None, invoke(Some(&files.id)), prepared, |_| {
+                Err("reopening keeps Files".into())
+            })
+            .unwrap();
+        let tab = &workspace.snapshot().tabs[0];
+        assert_eq!(tab.popups, std::slice::from_ref(&files));
+        assert_eq!(tab.selected_popup.as_ref(), Some(&files.id));
         fs::remove_dir_all(root).unwrap();
     }
 

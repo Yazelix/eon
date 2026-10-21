@@ -461,6 +461,73 @@
         EOF
       '';
 
+      # The Files popup's Yazi: Nova's F+ keys (Yazelix Nova defaults/yazi at cd95fee1)
+      # without its tab-folder and editor actions.
+      filesPopupConfig = pkgs.runCommand "eon-files-popup-config" { } ''
+        mkdir -p "$out/plugins/quick-search.yazi"
+        cat > "$out/keymap.toml" <<'EOF'
+        [mgr]
+        prepend_keymap = [
+          { on = "<Tab>", run = "plugin quick-search", desc = "Search recent folders" },
+          { on = "Z", run = "plugin quick-search", desc = "Search recent folders" },
+          { on = "<BackTab>", run = "spot", desc = "Spot hovered file" },
+          { on = "<S-Tab>", run = "spot", desc = "Spot hovered file" },
+        ]
+        EOF
+        cat > "$out/init.lua" <<'EOF'
+        require("zoxide"):setup({ update_db = true })
+        for id = 1, 6 do
+          Status:children_remove(id, id <= 3 and Status.LEFT or Status.RIGHT)
+        end
+        Status:children_add(function()
+          return tostring(cx.layer) == "mgr" and " Tab/Z Search · Shift+Tab Spot" or ""
+        end, 1000, Status.LEFT)
+        EOF
+        cat > "$out/plugins/quick-search.yazi/main.lua" <<'EOF'
+        -- One move-only search of Zoxide history for Tab and Z.
+        local M = {}
+
+        local cwd = ya.sync(function() return tostring(cx.active.current.cwd) end)
+
+        local function fail(content)
+          ya.notify({ title = "Quick search", content = tostring(content), timeout = 5, level = "error" })
+        end
+
+        function M:entry()
+          local history, err = Command("zoxide"):arg({ "query", "--list", "--exclude", cwd() }):output()
+          if not history then return fail(err) end
+          if not history.status.success then return fail(history.stderr) end
+          if history.stdout == "" then return end
+
+          local permit = ui.hide()
+          local child, spawn_err = Command("fzf")
+            :env("FZF_DEFAULT_OPTS", "--exact --no-sort --cycle --keep-right --info=inline --layout=reverse "
+              .. "--height=100% --border=none --tabstop=1 --exit-0 "
+              .. "--bind=enter:accept-non-empty,ctrl-z:ignore,tab:abort,btab:up --prompt='Go to folder > ' "
+              .. "--footer='Enter Go here · Tab/Esc Browse Yazi' --footer-border=none --color=footer:-1")
+            :env("FZF_DEFAULT_OPTS_FILE", "")
+            :stdin(Command.PIPED)
+            :stdout(Command.PIPED)
+            :stderr(Command.PIPED)
+            :spawn()
+          if child then
+            child:write_all(history.stdout)
+            child:flush()
+          end
+          local output, wait_err
+          if child then output, wait_err = child:wait_with_output() end
+          permit:drop()
+          if not output then return fail(spawn_err or wait_err) end
+          if output.status.code == 130 then return end
+          if not output.status.success then return fail(output.stderr) end
+          local target = output.stdout:gsub("\n$", "")
+          if target ~= "" then ya.emit("cd", { target, raw = true }) end
+        end
+
+        return M
+        EOF
+      '';
+
       eonEnvironment = out: {
         set = {
           EON_ORBIT = "${orbitPackage}/bin/yazelix-orbit";
@@ -472,6 +539,7 @@
           EON_HX = "${helixPackage}/bin/hx";
           EON_YAZI = "${yaziPackage}/bin/yazi";
           EON_DIRECTORY_PICKER_CONFIG = "${directoryPickerConfig}";
+          EON_FILES_CONFIG = "${filesPopupConfig}";
           EON_YA = "${yaziPackage}/bin/ya";
           EON_LAZYGIT = "${lazygitPackage}/bin/lazygit";
           EON_NU_VENDOR_AUTOLOAD = "${out}/libexec/eon/shell/nu";
@@ -542,6 +610,7 @@
             ln -s ${fzfPackage}/bin/fzf "$out/libexec/eon/bin/fzf"
             ln -s ${animaPackage}/bin/anima "$out/libexec/eon/bin/anima"
             ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-directory-picker"
+            ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-files"
             ln -s ${atuinPackage}/bin/atuin "$out/libexec/eon/bin/atuin"
             ln -s ${carapacePackage}/bin/carapace "$out/libexec/eon/bin/carapace"
             cp -r ${shellEnvironment} "$out/libexec/eon/shell"

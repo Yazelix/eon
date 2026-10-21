@@ -198,6 +198,8 @@ pub(crate) enum Tool {
     Bash,
     Helix,
     Yazi,
+    /// The Files popup's Yazi with Eon's packaged popup configuration.
+    Files,
     Ya,
     LazyGit,
 }
@@ -209,6 +211,7 @@ pub(crate) fn tool(invocation: &OsStr) -> Option<Tool> {
         "eon-bash" | "bash" => Some(Tool::Bash),
         "eon-hx" | "hx" => Some(Tool::Helix),
         "eon-yazi" | "yazi" => Some(Tool::Yazi),
+        "eon-files" => Some(Tool::Files),
         "eon-ya" | "ya" => Some(Tool::Ya),
         "eon-lazygit" | "eon-lg" | "lazygit" => Some(Tool::LazyGit),
         _ => None,
@@ -654,7 +657,7 @@ pub(crate) fn command(
         Tool::Nu => &programs.nu,
         Tool::Bash => &programs.bash,
         Tool::Helix => &programs.helix,
-        Tool::Yazi => &programs.yazi,
+        Tool::Yazi | Tool::Files => &programs.yazi,
         Tool::Ya => &programs.ya,
         Tool::LazyGit => &programs.lazygit,
     };
@@ -682,6 +685,12 @@ pub(crate) fn command(
         }
         Tool::Yazi | Tool::Ya => {
             command.env_remove("YAZI_CONFIG_HOME");
+        }
+        Tool::Files => {
+            let files = env::var_os("EON_FILES_CONFIG")
+                .ok_or("the installed Eon package has no Files popup configuration")?;
+            // Yazi prefers PWD even when it disagrees with the terminal's actual CWD.
+            command.env("YAZI_CONFIG_HOME", files).env_remove("PWD");
         }
         Tool::LazyGit => {
             command
@@ -714,7 +723,8 @@ pub(crate) fn command(
         }
     }
     command.args(arguments).env("EON_CONFIG_HOME", config);
-    if shell.is_none() {
+    // Files needs no Eon config root, and the programs Yazi opens keep the user's.
+    if shell.is_none() && tool != Tool::Files {
         command.env("XDG_CONFIG_HOME", config);
     }
     Ok(command)
@@ -1291,7 +1301,7 @@ keep_alive = false
 
     #[test]
     fn managed_invocation_names_are_bounded() {
-        use Tool::{Bash, Helix, LazyGit, Nu, Ya, Yazi};
+        use Tool::{Bash, Files, Helix, LazyGit, Nu, Ya, Yazi};
 
         for (name, expected) in [
             ("eon-nu", Some(Nu)),
@@ -1306,6 +1316,8 @@ keep_alive = false
             ("hx", Some(Helix)),
             ("eon-yazi", Some(Yazi)),
             ("yazi", Some(Yazi)),
+            ("eon-files", Some(Files)),
+            ("files", None),
             ("eon-ya", Some(Ya)),
             ("ya", Some(Ya)),
             ("eon-lazygit", Some(LazyGit)),

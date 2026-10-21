@@ -9,6 +9,13 @@ installation, and proven contract changes.
   and prints one JSON array with each window's ID and its `eon stop all --json`
   results. It used to fail with `invalid Eon window ID "all"`.
 
+- Alt+Shift+Y opens a Files popup: Yazi at the tab's directory that keeps its
+  place while hidden and when the tab's directory changes. Tab or Z searches
+  recent folders and Enter moves Yazi there, Shift+Tab shows the hovered
+  file's details, and file operations such as delete and rename work. A
+  configured `[popups.files]` now customizes this popup, and a custom popup
+  already on Alt+Shift+Y now conflicts with it, so move one of the two.
+
 - Changing a tab's directory with Alt+Z or `eon tab directory` no longer
   restarts a running Agent on the next Alt+Shift+L. The agent moves out of its
   popup into a pane of the tab, with its conversation and old directory intact,

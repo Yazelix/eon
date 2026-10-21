@@ -734,11 +734,19 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   directory. It is the selected, expanded pane when its popup was shown or the
   tab had no panes; otherwise the tab's selection is unchanged. Parking starts
   and stops nothing and cannot fail on terminal or column capacity. The next
-  Agent invocation starts a fresh agent at the new directory. For Git and other
-  keep-alive popups, retargeting changes no process until the next invocation,
-  which stops the exact old terminal before starting a fresh one at the new
-  directory. A stop failure preserves the old instance; a start failure records
-  no replacement.
+  Agent invocation starts a fresh agent at the new directory. Files defaults to
+  Alt+Shift+Y and runs the pinned Yazi at the tab directory with Eon's packaged
+  popup configuration. Tab and Z open one move-only search of Zoxide history:
+  Enter moves Yazi to the selected folder, and Tab or Esc returns to browsing.
+  Shift+Tab spots the hovered file. Every other key keeps Yazi's native
+  behavior, including file operations, and the footer names the search and Spot
+  keys. Files remains live when hidden and keeps its process, location and
+  cursor across tab-directory changes; only after its process exits does the
+  next invocation start a fresh instance at the tab directory. For Git and other
+  keep-alive popups except Files, retargeting changes no process until the next
+  invocation, which stops the exact old terminal before starting a fresh one at
+  the new directory. A stop failure preserves the old instance; a start failure
+  records no replacement.
   Anima defaults to Alt+Shift+A and launches the pinned random native animation
   as a transient popup. A dismissal, replacement, or tab close stops its Orbit
   terminal, restores the prior tab focus, and leaves no hidden animation running.
@@ -772,7 +780,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
   exit statuses `eon-8mnr.1` and `eon-8mnr.3` (automated tier); calling-terminal
   targets `eon-8mnr.2` (automated and installed tiers); Agent parking on
-  retarget `eon-tbn1` (automated and installed tiers).
+  retarget `eon-tbn1` (automated and installed tiers); the Files popup
+  `eon-ecne.1` (automated and installed tiers).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -784,6 +793,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `popup_executable_preflight_uses_the_session_context`,
     `retarget_parks_the_agent_and_restarts_git_only_on_its_next_invocation`,
     `chooser_retarget_parks_a_hidden_agent_as_the_first_pane_of_a_paneless_tab`,
+    `files_keeps_its_terminal_across_retargets`,
     `chooser_result_requires_its_exact_live_invocation`); deadlines and
     failures (`unix_connection_attempt_obeys_timeout`,
     `management_response_obeys_one_deadline_across_partial_reads`,
@@ -805,7 +815,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     with the same process, transcript and input; the next Alt+Shift+L started a
     fresh agent at the new directory; hidden and retargeted through Alt+Z, that
     agent parked collapsed at the column's end with the selection unchanged,
-    and both agents stayed live.
+    and both agents stayed live. Installed `eon-ecne.1` observation on isolated
+    headless Sway: Alt+Shift+Y opened Files at the tab directory with the
+    search and Spot footer, its Yazi reading only the packaged configuration;
+    Tab and Shift+Z searches moved Yazi; after `eon tab directory` the same
+    Yazi process kept its location; `d` trashed a file; and after `q` the next
+    Alt+Shift+Y opened a fresh Yazi at the new directory.
 
 ## EON-C11 — Runtime generations and presentation
 

@@ -53,6 +53,7 @@ Enter for a Zoxide match or Tab to browse with Yazi. A terminal opens there.
 | Alt+K / Alt+J | Previous or next pane |
 | Alt+Shift+L | Agent popup |
 | Alt+Shift+J | Git popup |
+| Alt+Shift+Y | Files popup (Yazi) |
 
 Close the window whenever you like. To come back or end work:
 
