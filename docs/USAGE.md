@@ -213,7 +213,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon windows [--json]` | List independent windows and their generations |
 | `eon window attach ID` | Present one window's current generation after detach |
 | `eon window stop ID [--json]` | Stop only the selected window's terminals |
-| `eon window stop all` | Attempt Stop in every independent window |
+| `eon window stop all [--json]` | Attempt Stop in every independent window |
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
 | `eon generations [--json]` | List validated current and older generations |
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
@@ -241,8 +241,11 @@ these refer to terminals.
 Commands run inside an independent window target that window; commands outside
 one target the default workspace. `eon stop all` covers generations in that
 current namespace. `eon window stop all` covers independent windows and visits
-the caller's window last. Run it outside those terminals when you need its final
-status; stopping its own terminal can terminate the CLI.
+the caller's window last. With `--json` it asks for no confirmation and prints
+one array holding a `{"window": ID, "results": [...]}` object per window, where
+`results` is that window's `eon stop all --json` array. Run it outside those
+terminals when you need its final status; stopping its own terminal can
+terminate the CLI.
 
 Every Eon terminal names itself in `EON_TERMINAL`, an opaque value. Run inside
 an Eon terminal, `pane create`, `pane close`, `pane move` and `tab move` act on

@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon window stop all --json` stops every independent window without asking
+  and prints one JSON array with each window's ID and its `eon stop all --json`
+  results. It used to fail with `invalid Eon window ID "all"`.
+
 - Changing a tab's directory with Alt+Z or `eon tab directory` no longer
   restarts a running Agent on the next Alt+Shift+L. The agent moves out of its
   popup into a pane of the tab, with its conversation and old directory intact,

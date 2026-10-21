@@ -367,7 +367,12 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             Ok(windows::window_action(id, false, false)?)
         }
         [command, action, all] if command == "window" && action == "stop" && all == "all" => {
-            Ok(windows::stop_all_windows()?)
+            Ok(windows::stop_all_windows(false)?)
+        }
+        [command, action, all, flag]
+            if command == "window" && action == "stop" && all == "all" && flag == "--json" =>
+        {
+            Ok(windows::stop_all_windows(true)?)
         }
         [command, action, id] if command == "window" && action == "stop" => {
             Ok(windows::window_action(id, true, false)?)
@@ -446,7 +451,7 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
   {command}window new{reset}                                  Open an independent window
   {command}window attach ID{reset}                            Reopen a window
   {command}window stop ID [--json]{reset}                     End that window's terminals
-  {command}window stop all{reset}                             End every window's terminals
+  {command}window stop all [--json]{reset}                    End every window's terminals
   {command}windows [--json]{reset}                            List independent windows
 
 {heading}Attach & stop{reset}

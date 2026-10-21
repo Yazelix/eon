@@ -1,12 +1,12 @@
 use super::{
     cli::Inputs,
-    control::{Error, write_stdout},
+    control::{Error, failure, write_stdout},
     generation::{current_generation, generation_directory, private_directory_exists},
     supervisor::{
         LaunchMode, SESSION_START_TIMEOUT, base_runtime_directory, prepare_runtime,
         probe_supervisor, request_id, runtime_directory, validate_private_directory,
     },
-    workspace::json_escape,
+    workspace::{failure_json, json_escape},
 };
 use std::{
     collections::hash_map::RandomState,
@@ -190,16 +190,66 @@ pub(super) fn window_action(id: &OsStr, stop: bool, json: bool) -> Result<i32, E
     Ok(status.code().unwrap_or(1))
 }
 
-pub(super) fn stop_all_windows() -> Result<i32, Error> {
+pub(super) fn stop_all_windows(json: bool) -> Result<i32, Error> {
     let current = runtime_directory("eon");
     let mut windows = existing_windows()?;
     windows.sort_by_key(|(_, root)| root == &current);
+    if json {
+        write_stdout("[")?;
+    }
     let mut status = 0;
-    for (id, _) in windows {
-        eprintln!("Stop Eon window {id}:");
-        status = status.max(window_action(OsStr::new(&id), true, false)?);
+    for (index, (id, root)) in windows.into_iter().enumerate() {
+        if json {
+            let (code, results) = stop_window_json(&root);
+            write_stdout(format!(
+                "{}{{\"window\":\"{}\",\"results\":{results}}}",
+                if index == 0 { "" } else { "," },
+                json_escape(&id)
+            ))?;
+            status = status.max(code);
+        } else {
+            eprintln!("Stop Eon window {id}:");
+            status = status.max(window_action(OsStr::new(&id), true, false)?);
+        }
+    }
+    if json {
+        write_stdout("]\n")?;
     }
     Ok(status)
+}
+
+/// Runs the window's `eon stop all --json` and returns its status and result
+/// array, or a `stop-failed` array when it yields none.
+fn stop_window_json(root: &Path) -> (i32, String) {
+    let output = window_command(root).and_then(|mut command| {
+        command
+            .args(["stop", "all", "--json"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::inherit())
+            .output()
+            .map_err(|error| format!("cannot run Eon window action: {error}"))
+    });
+    let (code, detail) = match output {
+        Ok(output) => {
+            let code = output.status.code().unwrap_or(1);
+            let results = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            if serde_json::from_str::<serde_json::Value>(&results)
+                .is_ok_and(|value| value.is_array())
+            {
+                return (code, results);
+            }
+            (
+                code.max(1),
+                format!(
+                    "window Stop ended with {} and no result array",
+                    output.status
+                ),
+            )
+        }
+        Err(error) => (1, error),
+    };
+    let report = failure_json(&failure("stop-failed", detail));
+    (code, format!("[{}]", report.trim_end()))
 }
 
 pub(super) fn list_windows(json: bool) -> Result<i32, String> {

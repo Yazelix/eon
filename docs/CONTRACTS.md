@@ -1510,11 +1510,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon window stop all` covers independent windows and attempts the caller's
   own window last; existing `eon stop all` remains scoped to the caller's
   current runtime namespace. Piped confirmations remain available to later
-  windows, one answer per prompt.
+  windows, one answer per prompt. With `--json`, `eon window stop all` asks for
+  no confirmation and prints one JSON array holding one
+  `{"window": ID, "results": [...]}` object per window, in stop order with the
+  caller's own window last; `results` is that window's `eon stop all --json`
+  result array. It exits with the highest status among those Stops.
 - **Important failures:** Identity collision, unsafe runtime path, failed
   startup, or stale target neither replaces an existing window nor stops or
   retargets its terminals. An uncertain startup retains its ID, process, and
-  private log for inspection instead of killing possible live terminals.
+  private log for inspection instead of killing possible live terminals. A
+  window whose Stop yields no result array is reported with a `stop-failed`
+  failure in its `results`; the remaining windows are still stopped.
 - **Owner:** Eon Runtime owns window identity, namespace and launch/lifecycle
   enforcement; Eon supplies product composition. Venus invokes the exact Eon
   executable supplied by its supervisor and presents one window per process;
@@ -1529,6 +1535,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Evidence:** `new_windows_keep_independent_supervisors_and_stop_by_window_id`
     and Venus `new_window_shortcut_invokes_the_supplied_eon_command`. Installed
     checklist item 10.
+- **JSON batch Stop proof:** `eon-igae.13`; that bead's commit is its revision.
+  - **Environment:** Automated tier; isolated installed tier (private headless
+    Sway, x86_64 Linux).
+  - **Evidence:** The JSON batch in
+    `new_windows_keep_independent_supervisors_and_stop_by_window_id`. Installed:
+    `eon window stop all --json` stopped two windows with one result object
+    each, then reported each stopped window with empty `results`; with no
+    windows it printed `[]`. The `stop-failed` path has no automated check.
 - **Open proof:** Pending re-proof in this repository: the launcher's New Eon
   Window action, and native `eon window stop all` with piped confirmations
   stopping the caller's window last.

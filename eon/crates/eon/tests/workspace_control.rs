@@ -4210,6 +4210,29 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
             < prompts.find(&format!("Stop Eon window {caller}:")).unwrap(),
         "{prompts}"
     );
+
+    let (fourth, fifth) = (open(), open());
+    let caller = fourth.clone().min(fifth.clone());
+    let batch = command()
+        .env("EON_WINDOW_RUNTIME_DIR", runtime.join("w").join(&caller))
+        .args(["window", "stop", "all", "--json"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(batch.status.success(), "{}", stdout(&batch));
+    let results: serde_json::Value = serde_json::from_slice(&batch.stdout).unwrap();
+    let results = results.as_array().unwrap();
+    assert_eq!(results.len(), 5, "{results:?}");
+    assert_eq!(results[4]["window"], caller);
+    for result in results {
+        let window = result["window"].as_str().unwrap();
+        let stopped = result["results"].as_array().unwrap();
+        if window == fourth || window == fifth {
+            assert!(stopped[0]["stopped"]["generation"].is_string(), "{result}");
+        } else {
+            assert!(stopped.is_empty(), "{result}");
+        }
+    }
     let current = generation_runtime(&runtime);
     let current_id = current.file_name().unwrap().to_str().unwrap();
     let stopped = invoke(&binary, &runtime, &config, &["stop", current_id, "--json"]);
