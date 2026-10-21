@@ -26,7 +26,7 @@ pub(crate) struct Serve {
     pub(crate) command: Vec<OsString>,
 }
 
-/// Parses the arguments after the program name, as the old Orbit does: a
+/// Parses the arguments after the program name: a
 /// missing socket is the private default, and a missing command is `$SHELL`,
 /// or `/bin/sh`.
 pub(crate) fn parse(arguments: &[OsString]) -> Result<Serve, String> {
@@ -135,7 +135,7 @@ fn parse_ansi_palette(value: &str) -> Result<[RgbColor; 16], String> {
     Ok(colors)
 }
 
-/// The old Orbit's default: `orbit.sock` in a private `yazelix-orbit`
+/// The default socket: `orbit.sock` in a private `yazelix-orbit`
 /// directory under `$XDG_RUNTIME_DIR`, or `/tmp/yazelix-orbit-UID`. The
 /// listener refuses a live server's pathname, so the two never share one.
 fn default_socket_path() -> Result<PathBuf, String> {

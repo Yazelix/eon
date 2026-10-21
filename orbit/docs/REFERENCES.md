@@ -274,8 +274,8 @@ prerequisite for the current single-session architecture.
   effects and keeps every mechanism in Rust rather than adding owned C.
 - The bend-orbit repository at `e03926274203d78b76f49337e9f6670d2dd6e97d` is
   the comparable implementation Orbit imported: its host and worker protocol
-  ([HOST.md](HOST.md)), its laws, and its differential check against the old
-  Orbit. Its issue history and the ORBF encoder experiment stay there.
+  ([HOST.md](HOST.md)) and its laws. Its issue history and the ORBF encoder
+  experiment stay there.
 
 ## Native client and rendering
 

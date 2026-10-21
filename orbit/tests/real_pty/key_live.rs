@@ -28,7 +28,7 @@ pub fn run() {
     client.quiet(0.3, "a key release moved the viewport");
 
     // A key that writes PTY bytes returns the viewport to live output in one
-    // frame after Accepted, as in the old Orbit.
+    // frame after Accepted.
     client.send(&key('a', KeyAction::Press));
     client.expect(ServerMessage::Accepted);
     let live = client.frame();

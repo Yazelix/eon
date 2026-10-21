@@ -17,7 +17,7 @@ Cargo builds of `yazelix-orbit` run [build.rs](../build.rs), which compiles
 the Bend worker with the pinned Bend compiler (`BEND_SOURCE_DIR`), bun and
 the clang at `BEND_CLANG`; `nix develop` supplies all three.
 
-`nix develop -c eon-test` runs Orbit's unit tests and the old Orbit's
+`nix develop -c eon-test` runs Orbit's unit tests and its
 black-box suite, [tests/lifecycle.rs](../tests/lifecycle.rs), with the rest of
 the workspace in the isolated sandbox that `nix/test-sandbox.nix` defines.
 `nix flake check -L` runs Orbit's Bend proofs, its boundary and terminfo checks

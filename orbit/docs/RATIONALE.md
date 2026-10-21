@@ -397,11 +397,10 @@ grow independently.
 The user chose Bend for Orbit's session policy on 2026-10-19 (`eon-awmq`):
 Bend is young with a high ceiling, and its laws and machine-checked proofs
 bring safety to the decisions that keep a Session alive, admit peers and stop
-the child. The bend-orbit repository developed the shape against the old
-Orbit's contracts, its black-box suite and a differential check, and Orbit
-imported it in `eon-awmq.3`. A Rust host keeps every mechanism the old Orbit
-had, and a Bend worker in its own process decides every answer, so Orbit owns
-no C and the proofs cover a pure step ([HOST.md](HOST.md),
+the child. The bend-orbit repository developed the shape against Orbit's
+contracts and black-box suite, and Orbit imported it in `eon-awmq.3`. A Rust
+host runs every mechanism, and a Bend worker in its own process decides every
+answer, so Orbit owns no C and the proofs cover a pure step ([HOST.md](HOST.md),
 [BEHAVIOR.md](BEHAVIOR.md)). The old single-process Rust server stays at the
 tag `orbit-rust-final` as the rollback.
 

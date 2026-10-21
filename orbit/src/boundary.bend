@@ -99,7 +99,7 @@ type ManagementEvent is Data:
   ManagementEventGone{}
 
 # Why Bend rejects a request with Failure. The host owns each reason's code
-# and the old Orbit's exact text.
+# and exact text.
 type Reason is Data:
   # A vertical request arrived while another is deferred.
   ReasonVerticalBusy{}
@@ -162,13 +162,12 @@ type Fact is Data:
   # The child printed its READY line; peers may connect.
   Started{pid: U32}
   # PTY output was fed to the terminal: one 8 KiB read while a client is
-  # attached, as the old Orbit publishes per read, or reads until the PTY is
-  # empty, up to 512 KiB, while none is.
+  # attached, or reads until the PTY is empty, up to 512 KiB, while none is.
   Output{}
   # The PTY reached end of file while the direct child lives; the host reads and
   # writes it no more and discards queued input. A live child may hold no
   # terminal descriptor for a while; until it exits, EIO only pauses reading for
-  # 10 ms, as in the old Orbit.
+  # 10 ms.
   PtyClosed{}
   # A peer's first message.
   Peer{message: FirstMessage}
@@ -179,8 +178,7 @@ type Fact is Data:
   Closed{full: Bool}
   # The client's output passed its bound.
   Pressured{}
-  # The child was reaped with this exit code: 1 for a signal, as in the old
-  # Orbit.
+  # The child was reaped with this exit code: 1 for a signal.
   Reaped{status: U32}
   # The child was not reaped within two seconds.
   NotReaped{}
@@ -216,7 +214,7 @@ type Fact is Data:
   # A management event (ORB-C13).
   Management{event: ManagementEvent}
   # The direct child exited and was reaped, which the host checks every turn and
-  # at least every 100 ms, as the old Orbit polls it, so a descendant that
+  # at least every 100 ms, so a descendant that
   # holds the PTY open cannot hide the exit. The host first fed the PTY's
   # remaining output, at most four reads, to the terminal; `drained` tells
   # whether any arrived. The PTY is read and written no more.
@@ -233,7 +231,7 @@ type Fact is Data:
   # A return to live output.
   ReturnToLive{}
   # The lease's stop found the child already exited with this exit code, so
-  # the run ends naturally, as in the old Orbit.
+  # the run ends naturally.
   ExitedBeforeStop{status: U32}
 
 # One line from the host: a fact and the flags it carries.
@@ -835,8 +833,8 @@ type Decision is Data:
   Refuse{}
   # Closes the pending peer without an answer.
   Drop{}
-  # Writes Busy to the connection of fact Crowded without waiting, as
-  # the old Orbit does, and closes it; the negotiating peer keeps its turn.
+  # Writes Busy to the connection of fact Crowded without waiting,
+  # and closes it; the negotiating peer keeps its turn.
   TurnAway{}
   # Queues Failure(Protocol) behind the observer's metadata, with "metadata
   # observers cannot send messages" or the decoder's detail, and closes the
@@ -1107,4 +1105,4 @@ def encode(decisions: Decisions()) -> String:
 # The line the worker writes before its first answer, naming the schema it
 # was generated from; the host refuses a worker that names another.
 def schema() -> String:
-  "schema d18d3e73fc7338fb\n"
+  "schema f6742a3f9a02dea8\n"

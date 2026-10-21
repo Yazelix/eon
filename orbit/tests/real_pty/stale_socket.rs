@@ -53,7 +53,7 @@ fn stale() {
     let mut client = Peer::attach(&server.path, 4.0);
     client.frame();
 
-    // A live server's pathname is refused with the old Orbit's messages, and
+    // A live server's pathname is refused with these messages, and
     // that server keeps it: one while another start holds the claim, one
     // once the claim is free.
     let claim = File::open(server.path.parent().expect("parent")).expect("open parent");

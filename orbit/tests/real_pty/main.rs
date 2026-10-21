@@ -1,8 +1,7 @@
 //! The real-PTY checks: each starts the Orbit at `ORBIT_BIN` on
 //! Orbit's command line, drives it through ORBS v13 and management
 //! messages encoded and decoded by the canonical `orbit-protocol` codec, and
-//! checks how the session, its child and its socket end. The differential
-//! check also runs the old Orbit, at `OLD_ORBIT_BIN`, and compares.
+//! checks how the session, its child and its socket end.
 //!
 //! The checks are ignored by default, so `cargo test` stays quick; nix/orbit-checks.nix
 //! runs each as its own check, `real-pty --ignored --exact NAME`. A check's
@@ -31,7 +30,6 @@ checks!(
     descendant_exit,
     detached_exit,
     detached_observer,
-    differential,
     guardian_containment,
     held_attach,
     history,

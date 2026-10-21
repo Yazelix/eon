@@ -12,10 +12,10 @@ Orbit's development and Bend's own sources established.
 Orbit's Bend implementation was developed in the separate bend-orbit
 repository and imported at its revision
 `e03926274203d78b76f49337e9f6670d2dd6e97d`; that repository keeps its history.
-Where this document says the old Orbit, it means the single-process Rust
-server it replaced, kept at the tag `orbit-rust-final`. References of the form
-lj8.N name the issues `borb-orbit-in-bend-lj8.N` in bend-orbit's tracker. The
-imported sensitivity checks, each of which broke the code or a law
+The throughput measurements name the old Orbit: the single-process Rust
+server Orbit replaced, kept at the tag `orbit-rust-final`. References of the
+form lj8.N name the issues `borb-orbit-in-bend-lj8.N` in bend-orbit's
+tracker. The imported sensitivity checks, each of which broke the code or a law
 in a scratch copy to show that a check or proof can fail, ran in bend-orbit
 before the import.
 
@@ -52,7 +52,7 @@ blind to the schema.
 
 ## Command line
 
-`yazelix-orbit` takes the old Orbit's command line:
+`yazelix-orbit` takes this command line:
 
 ```sh
 yazelix-orbit serve [SOCKET] [--management-v1 SESSION_ID RUN_ID COMPONENT_GENERATION]
@@ -60,15 +60,14 @@ yazelix-orbit serve [SOCKET] [--management-v1 SESSION_ID RUN_ID COMPONENT_GENERA
 ```
 
 It runs COMMAND, or `$SHELL`, or `/bin/sh`, as its PTY child, and peers may
-connect as soon as the child starts. Without SOCKET it listens on the old
-Orbit's default, `orbit.sock` in a private `yazelix-orbit` directory under
+connect as soon as the child starts. Without SOCKET it listens on
+`orbit.sock` in a private `yazelix-orbit` directory under
 `$XDG_RUNTIME_DIR` (or `/tmp/yazelix-orbit-UID`). The palette replaces the
 terminal's 16 default ANSI colors, which a palette reset restores. After the
 child exits, the server exits with the child's code, 1 for a child killed by a
 signal, the code `Exited` carries; it prints nothing on success. A bad command
 line or a command that cannot start fails with status 1 and a message
-prefixed `orbit: `. The old Orbit's `client` diagnostic subcommand does not
-exist. The real-PTY command-line and lifecycle
+prefixed `orbit: `. The real-PTY command-line and lifecycle
 checks cover the palette in frames, the child's arguments, exit codes, and
 both failures. The real-PTY palette-reset check has the child override colors
 0, 1 and 200, then send an OSC 104 that names no index: every color returns
@@ -77,7 +76,7 @@ current colors instead of defaults made it fail.
 
 A start replaces a stale socket pathname, a private socket nobody listens on,
 under a lock on its private directory, so one of two racing starts wins
-(ORB-C1). The other fails with status 1 and the old Orbit's message, "socket
+(ORB-C1). The other fails with status 1 and the message "socket
 claim already in progress at PATH" while the lock is held, or "server already
 listening at PATH". The real-PTY stale-socket check replaces a stale pathname,
 gets each message from a start beside the live server, and finds that server
@@ -85,8 +84,8 @@ keeps its pathname and exits with its child's code.
 
 ## Terminal identity
 
-The PTY child gets `TERM=eon` and `COLORTERM=truecolor`, as in the old
-Orbit (ORB-C10). The package carries the compiled `eon` entry, which inherits
+The PTY child gets `TERM=eon` and `COLORTERM=truecolor`
+(ORB-C10). The package carries the compiled `eon` entry, which inherits
 `xterm-256color`, in `share/terminfo`: the flake compiles
 [orbit/terminfo/eon.terminfo](../terminfo/eon.terminfo) with `tic -x`. Nothing
 falls back to another identity, so the launch environment must put that
@@ -103,7 +102,7 @@ after it. With the entry removed, the check failed.
 
 ## Management record
 
-`--management-v1` makes the run managed, as in the old Orbit (ORB-C13).
+`--management-v1` makes the run managed (ORB-C13).
 Each identity has 1 to 128 UTF-8 bytes. Before the child starts, Rust opens a
 private management socket at `SOCKET.management`; at Ready it publishes an
 exact user-owned 0600 live record at `SOCKET.record` naming the three
@@ -116,7 +115,7 @@ and when a termination signal stops the run, a tombstone replaces the live
 record, carrying the natural or explicit reason and the child's exact exit
 code or signal; then both sockets are removed and the record stays. A record
 that is no longer this run's is left alone, and so is a socket pathname that
-another endpoint has replaced, as in the old Orbit: the run still exits
+another endpoint has replaced: the run still exits
 with the child's code.
 
 The real-PTY management-record check decodes the live record with the
@@ -149,7 +148,7 @@ when Rust found the expected identity, the record's exact inode and contents,
 the peer's UID and both sockets all equal to this run's, and fails with
 `InvalidIdentity` and closes otherwise; Status and Stop are answered only
 under the lease, and a request out of place, over 4 KiB, malformed or
-pipelined fails with `InvalidRequest` and closes. As in the old Orbit, a
+pipelined fails with `InvalidRequest` and closes. A
 refused connection keeps the slot until its Failure is written and it closes,
 so a connection meanwhile is Busy. Bend's session holds the slot and whether
 a stop came through the lease, which makes the finish explicit; Rust keeps
@@ -158,7 +157,7 @@ does not stop the run. An accepted Stop begins the reap-gated stop: the host han
 and reaps the child with the bounded shutdown of ORB-C12, the tombstone
 records the explicit stop and the exact signal, the lease hears `Stopped` with
 it, the observer hears the exit, the interactive client closes without
-`Exited`, as in the old Orbit, and the server exits 0. Files and process
+`Exited`, and the server exits 0. Files and process
 metadata never authorize anything.
 
 [LAWS.bend](../LAWS.bend) states, and [PROOF.bend](../PROOF.bend) proves, that over
@@ -207,7 +206,7 @@ over the event list. Thus Bend's pre-reap policy cannot turn a live session
 into `Stopped`, even after repeated or reordered events.
 
 The running paths use that policy. The run ends when the direct child exits,
-not when the PTY closes, as in the old Orbit (ORB-C12): the host checks the
+not when the PTY closes (ORB-C12): the host checks the
 child with `Child::try_wait` every turn and at least every 100 ms, so a
 descendant that holds the PTY open, idle or writing, cannot hide the exit.
 Once the child is reaped, the host feeds the PTY's remaining output, at most
@@ -220,7 +219,7 @@ socket pathname is gone. Nothing signals the descendants after a natural exit;
 a writing one fails once the PTY master closes.
 
 The Bend proof covers its transitions, not the truth of the host's facts or
-the old Orbit's full shutdown contract. The real-PTY checks cover the
+the full ORB-C12 shutdown contract. The real-PTY checks cover the
 connection to Rust and the OS: they receive Exited and confirm that the child
 PID is absent after the server finishes, but they do not observe the child at
 the instant Exited is sent. A one-time sensitivity check changed `BeginStop`
@@ -228,14 +227,14 @@ on an attached session to return `Stopped`; the Bend proof failed, and the
 change was restored.
 
 Linux reports EIO on the PTY master while no process holds the terminal open,
-which a live child may do briefly before reopening `/dev/tty`. As in
-the old Orbit, Rust reports the PTY closed only on end of file or once the
+which a live child may do briefly before reopening `/dev/tty`.
+Rust reports the PTY closed only on end of file or once the
 direct child has exited; until then EIO pauses reading for 10 ms (ORB-C1). A
 PTY that reaches end of file while the child lives, as a portable PTY may, is
 read and written no more: queued input is discarded, a pointer sequence ends,
 every later request fails with `Failure(Terminal)` "PTY is closed" and keeps
 the client, and the run waits for the child's exit. The real-PTY
-descendant-exit check runs the old Orbit's writing-descendant stimulus, a
+descendant-exit check runs a writing descendant, a
 HUP-ignoring job that keeps writing to the PTY after the child exits 3: the
 server exits 3 within three seconds with its socket gone, and the job is gone
 soon after. A managed run whose idle HUP-ignoring job holds the PTY ends
@@ -247,7 +246,7 @@ terminal; its later output reaches the client and it exits with its own status.
 
 ## Observer pressure
 
-An observer send never waits. As in the old Orbit, Rust queues the
+An observer send never waits. Rust queues the
 observer's output under the same bound as the interactive client's and writes
 what its socket takes. Bend publishes metadata only when its title or working
 directory differs from the metadata last queued, which Rust reports; the first
@@ -265,7 +264,7 @@ lifecycle check runs one interactive client beside a nonreading metadata
 observer to completion. This establishes behavior for these checks, not
 general multi-client fairness.
 
-Every stop tells a live observer how the run ended, as the old Orbit does
+Every stop tells a live observer how the run ended
 (ORB-C3): at child exit, at a management Stop, and once a termination signal's
 stop has reaped the child, before the explicit tombstone, the observer gets
 Exited with the child's code, 1 for a signal, behind its queued metadata, and
@@ -282,10 +281,10 @@ or sent it nothing after the signal, made it fail.
 ## Interactive pressure
 
 Rust queues every message to the interactive client and writes only what the
-socket takes, so a slow or stopped client never parks Bend's loop. As in
-the old Orbit, a newer frame replaces queued frames and previews that have
+socket takes, so a slow or stopped client never parks Bend's loop.
+A newer frame replaces queued frames and previews that have
 not started to send, and a newer preview replaces one such preview. Bend sets
-the queue's bound at attachment to the old Orbit's 12,587,045 bytes: one maximum
+the queue's bound at attachment to 12,587,045 bytes: one maximum
 frame, one maximum payload, two headers, and 4 KiB. A message that would pass
 the bound is not queued. The session's next wait reports the pressure, and
 Bend detaches the client (ORB-C7) while the child, listener, and observer keep
@@ -300,8 +299,8 @@ changed titles while that output builds. After 82,000 to 120,000 requests Bend
 detaches the client; a new client then attaches to the same child and receives
 a current frame.
 
-At child exit, Bend gives the interactive client one second, the old
-Orbit's finish timeout, to take its remaining output and Exited, and then closes it
+At child exit, Bend gives the interactive client one second, the
+finish timeout, to take its remaining output and Exited, and then closes it
 without the rest. The real-PTY stopped-client check floods a client that has
 stopped reading; the server finishes about one second after the child exits,
 with the child reaped and the socket pathname removed.
@@ -317,14 +316,14 @@ frame's share made it fail.
 ## PTY input
 
 Client input and the terminal's replies to the child's queries reach the PTY
-through one queue bounded, as in the old Orbit, at one maximum paste plus 16
+through one queue bounded at one maximum paste plus 16
 bytes. libghostty generates each reply, such as the cursor position or device
 attributes, and Rust queues it whether or not a client is attached, so Orbit
 alone answers terminal queries (ORB-C2). Rust accepts input once it is queued
 and writes it as the PTY drains, while the loop keeps reading PTY output, so a
 child that prints what it reads cannot stall the session on a large paste.
 Input that does not fit is refused whole: Bend answers `Failure(Terminal)` and
-ends that attachment, and the child keeps running. As in the old Orbit, a
+ends that attachment, and the child keeps running. A
 client Bend refuses this way, or for a repeated role or a request that fails
 to decode, is closed only once its queued output, the Failure included, is
 written, within the one-second finish bound; its slot is free at once. A
@@ -378,7 +377,7 @@ covers exit before the first attachment, and after a client disconnects. During 
 PTY and the synchronized-output timer, and keeps the observer current. A peer
 that sends no role within Bend's one-second bound is closed unanswered, as
 while attached, and the next connection then negotiates. A connection that
-arrives meanwhile hears Busy at once and is closed, as in the old Orbit. If
+arrives meanwhile hears Busy at once and is closed. If
 the child exits while the peer is silent, Bend closes that
 unnegotiated socket, reaps the child, and removes the listener pathname. The
 same check holds a silent accepted peer connected through child exit and
@@ -425,8 +424,8 @@ made it fail, and so did a three-second watchdog.
 
 Bend keeps the presentation revision, a 64-bit counter held as two U32
 halves in [src/revision.bend](../src/revision.bend), since Bend has no U64. It
-advances the revision once for each change of presented state, as the old
-Orbit does (ORB-C4): a PTY turn that feeds output to the terminal, a resize, a
+advances the revision once for each change of presented state
+(ORB-C4): a PTY turn that feeds output to the terminal, a resize, a
 viewport move, an applied host selection phase or tick, a Cancel, and a
 cleared selection. Each decision that publishes names its revision, which
 Rust stamps on the frame, outcome or metadata, and Bend compares the revision
@@ -451,8 +450,8 @@ frames that carry it.
 
 ## History
 
-libghostty keeps primary history under the 16 MiB byte budget the old Orbit
-uses, and each frame's scroll position comes from libghostty's scrollbar. The
+libghostty keeps primary history under a 16 MiB byte budget, and each
+frame's scroll position comes from libghostty's scrollbar. The
 real-PTY history check prints 20,000 lines and reads the same history rows,
 at the live position, from a reconnected client. The host unit test
 `scroll_position_follows_reflow_eviction_and_clears` follows the frame's
@@ -471,7 +470,7 @@ fewer columns reflows it; reading the direct row one line off made it fail.
 ## Clipboard writes
 
 While an interactive client is attached, Bend has Rust capture the
-terminal's clipboard writes from each PTY turn as the old Orbit does
+terminal's clipboard writes from each PTY turn
 (ORB-C11): one
 nonempty UTF-8 `text/plain` text without NUL, at most 1 MiB, for the
 standard, selection or primary clipboard. Clears, other representations and
@@ -506,7 +505,7 @@ names, whether mouse tracking or alternate-screen mode 1007 routes the wheel
 to the terminal, and whether a synchronized update is open. Bend compares the
 revision with authority and passes the facts, with its own slot, to the pure
 policy in
-[src/vertical.bend](../src/vertical.bend), as the old Orbit orders them: a
+[src/vertical.bend](../src/vertical.bend), in this order: a
 future revision fails, a terminal-routed request is answered at once, and
 otherwise one preview may wait while an update is held; a second fails. Bend
 asks the same policy after every published frame, which resolves the waiting
@@ -527,7 +526,7 @@ policy answers it, so a future revision fails, a terminal-owned wheel gets
 scroll, may wait while an update is held. A lagging revision resolves against
 current authority. Before the viewport moves, Rust checks that the client's
 queue can take an outcome of any size; if not, Bend answers `Failure(Terminal)`
-and the client stays attached, as in the old Orbit. Otherwise libghostty
+and the client stays attached. Otherwise libghostty
 moves the viewport, clamped at the history edges, authority advances once, and
 one `ScrollOutcome` carries the requested and applied rows, the frame, and the
 next window in the scroll's direction. No PTY input is sent, and a host
@@ -551,8 +550,7 @@ moves, Rust checks that the client's queue can take a frame of any size; if
 not, Bend answers `Failure(Terminal)` and the client stays attached. Otherwise
 libghostty moves the viewport to the bottom from any depth, beyond the 1,024
 rows one scroll may move, authority advances once, and one canonical frame
-with `rows_from_live` zero is published. No PTY input is sent, as in
-the old Orbit.
+with `rows_from_live` zero is published. No PTY input is sent.
 
 The real-PTY return-to-live check reaches more than 1,024 rows from live with
 two scroll commits and returns in one frame. It covers deferral during
@@ -566,7 +564,7 @@ The child confirms that the first input it reads is a paste sent after every
 return.
 
 A key that writes PTY bytes also returns a scrolled-back primary viewport to
-live output, as in the old Orbit: Rust reports the key and whether the
+live output: Rust reports the key and whether the
 viewport is above live, and Bend answers Accepted, moves the viewport, and
 publishes the frame, which waits like any other while an update is held. Paste
 and other input, and a key that writes nothing, leave the viewport where it is.
@@ -583,7 +581,7 @@ fail.
 ## Mouse and wheel
 
 Rust encodes mouse input with libghostty's mouse encoder from the terminal's
-modes and the client's surface size, as the old Orbit does, and queues it
+modes and the client's surface size, and queues it
 for the PTY like other input (ORB-C5); while the child tracks no mouse the
 encoder writes nothing and Bend answers Accepted. A physical vertical wheel is
 Bend's to decide (ORB-C8). While mouse tracking, or mode 1007 on the alternate
@@ -644,7 +642,7 @@ that attachment with `Failure(Protocol)`, a malformed first message gets
 `Failure(Protocol)`, an unsupported version gets nothing, and a connection
 that arrives while another peer negotiates is turned away with Busy, which
 Rust writes without waiting before it closes the connection. An observer may
-send nothing: as in the old Orbit, once a whole header arrives from it
+send nothing: once a whole header arrives from it
 Rust reports a message, and Bend answers `Failure(Protocol)` "metadata
 observers cannot send messages", or the decoder's detail for a malformed
 header, and frees the observer slot; Rust closes the observer once the failure
@@ -715,8 +713,8 @@ their delivery.
 
 An attached client's left-pointer sequence (`Selection` Begin, Update and
 Finish) takes one route from its press to its finish or cancel, which Bend
-chooses with the pure policy in [src/selection.bend](../src/selection.bend), as
-the old Orbit does (ORB-C9): host selection when the terminal does not track
+chooses with the pure policy in [src/selection.bend](../src/selection.bend)
+(ORB-C9): host selection when the terminal does not track
 the mouse or Shift is held, and the terminal otherwise. A press from a future
 revision, a press during a sequence, and an update or finish without one fail
 with `Failure(InvalidInput)`. On the host route Rust resolves each position
@@ -730,13 +728,13 @@ when nothing is frozen. On the terminal route each phase reaches the child as a
 left-button mouse event, and a finish names the current revision. `Cancel`
 ends either route and clears the presentation but keeps the copy; a resize or
 viewport move clears the selection, and losing the client also forgets the
-copy. The child's exit ends either route and clears a presented selection, as
-in the old Orbit; when the host reaps the child while the PTY is open, the
+copy. The child's exit ends either route and clears a presented selection;
+when the host reaps the child while the PTY is open, the
 last frame before `Exited` shows it cleared. Bend's session holds the route
 and whether a selection is presented or a copy exists, and Bend decides each
 of these clears; Rust keeps libghostty's gesture and the frozen text.
 
-Presses repeat within 500 ms and one cell width, as in the old Orbit: one press
+Presses repeat within 500 ms and one cell width: one press
 and drag selects cells, two select words with libghostty's default
 boundaries, three select a span delimited only by ASCII space, tab, unwritten
 cells and hard line breaks, and four or more select the logical line; spans
@@ -750,7 +748,7 @@ phase of that sequence fails.
 
 While a host sequence is held on the primary screen, `Selection(AutoscrollUp)`
 from a top-row position extends the same tracked selection one row into
-history, as the old Orbit does: a drag to the top edge enters libghostty's
+history: a drag to the top edge enters libghostty's
 upward autoscroll, one autoscroll tick moves the viewport and the selection,
 authority advances once, and one `ScrollOutcome` carries the applied rows, 0
 at the oldest row, the frame and the next window up. A tick without such a
@@ -776,21 +774,19 @@ The real-PTY selection check refuses a copy, an update and a future press
 before any sequence, selects and copies `HELLO` on the host, refuses a second
 press during it, cancels while keeping the copy, climbs the click ladder from
 `beta/gamma` to `alpha:beta/gamma` to the whole line, ends a host sequence
-when the child enables mouse tracking, sends a sequence to a child
-that tracks the mouse as SGR press and release reports, selects `WORLD` on the
-host with Shift while the child tracks the mouse, and finds the copy gone for
-a new client. The real-PTY selection-tick check refuses a tick without a
-gesture and one away from the top row, defers one during a synchronized update
-and refuses a second, then ticks through all 37 history rows and four more at
-the oldest row, and copies exactly `line 01` to `line 42`. It then commits
-35 rows toward live and finds the presented selection cleared though rows of
-it stay in view, selects again two rows above live and returns to live with
-that selection cleared (ORB-C8); dropping the clear from either move made it
-fail. The real-PTY
-differential check ([Differential comparison](#differential-comparison)) has the child exit while a
-double-click word selection is presented and matches the old Orbit's last frame;
-a `step` that kept the selection at the exit made it fail at the exit step. A
-unit test replays the old Orbit's click-ladder stimulus on a
+when the child enables mouse tracking, sends a sequence to a child that tracks
+the mouse as SGR press and release reports, selects `WORLD` on the host with
+Shift while the child tracks the mouse, and finds the copy gone for a new
+client, which selects `WORLD` again before the child exits: the last frame
+before `Exited` presents no selection, and a `step` that kept the selection at
+the exit made it fail. The real-PTY selection-tick check refuses a tick
+without a gesture and one away from the top row, defers one during a
+synchronized update and refuses a second, then ticks through all 37 history
+rows and four more at the oldest row, and copies exactly `line 01` to
+`line 42`. It then commits 35 rows toward live and finds the presented selection
+cleared though rows of it stay in view, selects again two rows above live and
+returns to live with that selection cleared (ORB-C8); dropping the clear from
+either move made it fail. A unit test replays a click-ladder stimulus on a
 wrapped line with output between each press and release, and checks that
 exactly the copied text's cells are highlighted; giving the third press
 libghostty's native events instead of span events made it fail, and so did
@@ -931,14 +927,14 @@ Bend's decisions, not the truth of Rust's facts or their delivery.
 ## Refused requests
 
 Orbit answers every canonical request. A repeated `Hello` or
-`ObserveMetadata` gets `Failure(Protocol)`, as
-in the old Orbit, and Bend then ends that attachment while the child keeps
+`ObserveMetadata` gets `Failure(Protocol)`,
+and Bend then ends that attachment while the child keeps
 running. A request that fails to decode, such as a scroll distance outside
 -1,024 to 1,024, does the same with the decoder's detail, and a message with
 another ORBS version ends the attachment silently.
 
 A bad first message ends only its peer, whether or not a client is attached,
-and Bend answers it as the old Orbit does: an unsupported ORBS version is
+and Bend answers it: an unsupported ORBS version is
 dropped silently, and a malformed header or a message other than `Hello` or
 `ObserveMetadata` gets `Failure(Protocol)`. Rust discards a refused message's
 payload that has already arrived, so the peer reads the failure rather than a
@@ -951,8 +947,8 @@ then reattaches to the same child.
 
 A fatal Bend exit cannot leak the child or the socket: the worker holds
 neither. The host owns both, watches the worker's decision pipe in every wait,
-and when the worker dies or the host is terminated it stops the child as
-the old Orbit does (ORB-C12): a child that has already exited is reaped
+and when the worker dies or the host is terminated it stops the child
+(ORB-C12): a child that has already exited is reaped
 without a signal; otherwise its process group and the terminal's foreground
 group, when distinct, get SIGHUP, then after 500 ms SIGKILL, with the
 foreground group read again, and the direct child must be reaped within two
@@ -1004,23 +1000,18 @@ wait that ignores signals the second reaps the child only after the deadline
 after a termination signal.
 
 When the worker dies, each attached peer's connection ends with nothing to
-read, as the old Orbit, one process, sends its peers nothing when it
-fails; the old Orbit closes them before it stops the child, and Orbit closes
-them once the child is contained, about 0.5 s after the worker's SIGKILL with
-the HUP-ignoring shell. With the decision pipe left out of the wait the peers
-stay connected, and with the observer told Exited, as after a termination
-signal, the case fails (sensitivity checks).
+read; Orbit closes them once the child is contained, about 0.5 s after the
+worker's SIGKILL with the HUP-ignoring shell. With the decision pipe left out
+of the wait the peers stay connected, and with the observer told Exited, as
+after a termination signal, the case fails (sensitivity checks).
 
-The host's own SIGKILL runs none of its cleanup, as for the old Orbit. The
+The host's own SIGKILL runs none of its cleanup. The
 containment check SIGKILLs the host with both peers attached and a shell child
 that exits on SIGHUP: each peer's connection ends with nothing to read, the
 closed PTY hangs up the child, and on Linux its `PR_SET_PDEATHSIG` sends it
 SIGHUP too, so it is gone within two seconds; the worker dies within two
 seconds, and the socket pathname stays until the next start reclaims it as a
-stale socket and a client reaches the new session. The old Orbit, at Eon
-1d287440, shows the same under the same SIGKILL (lj8.81, observed once by hand, not a check): both
-peers read EOF at once, the child is gone within 0.1 s, and the pathname stays
-until the next start reclaims it. In both servers a child that ignores SIGHUP
+stale socket and a client reaches the new session. A child that ignores SIGHUP
 survives the host's SIGKILL, since no process is left to escalate. The case
 fails when the next start leaves a stale pathname in place, when the child
 loses its death signal and holds the PTY master open, and when the worker loses
@@ -1037,9 +1028,9 @@ The host runs the same loop on Apple Silicon macOS. Its deadlines, the
 synchronized-output watchdog and both negotiation bounds, are instants the
 wait polls until, not timer descriptors; pipes are made close-on-exec with
 `fcntl` where `pipe2` is missing; the management lease reads the peer's UID
-with `getpeereid` and the host's start identity from `proc_pidinfo`, as the old
-Orbit does; and only Linux gets `PR_SET_PDEATHSIG`, elsewhere the worker exits
-on its closed fact pipe and the child on its closed PTY. macOS reports POLLHUP
+with `getpeereid` and the host's start identity from `proc_pidinfo`; and
+only Linux gets `PR_SET_PDEATHSIG`, elsewhere the worker exits on its closed
+fact pipe and the child on its closed PTY. macOS reports POLLHUP
 for a client's half-close as well as for its full close, so the host tells
 them apart with a zero-length send, which fails only once the client can no
 longer read, and checks a half-closed client every 100 ms.
@@ -1049,8 +1040,8 @@ No macOS proof covers this tree. The last native run was in the bend-orbit
 repository at revision b017e4f0, on a Scaleway Mac mini M2 (16 GiB) with macOS
 26.7.1 (25G241), built natively with Rust 1.95.0, zig 0.15.2 and bun 1.3.13.
 There every real-PTY check passed through `cargo test`, 36 of 36, the Rust
-unit tests passed, 24 of 24, `PROOF.bend` printed `ALL PROOFS CHECK`, and the
-old Orbit's `tests/lifecycle.rs`, with its binary lookup redirected, passed 15
+unit tests passed, 24 of 24, `PROOF.bend` printed `ALL PROOFS CHECK`, and
+`tests/lifecycle.rs`, with its binary lookup redirected, passed 15
 of 15; its other three tests are `cfg(target_os = "linux")`. The imported code
 differs from b017e4f0 in its names, its schema digest, its worker lookup and
 its `orbit-protocol` path dependency, so that run is evidence about the
@@ -1063,58 +1054,10 @@ on Linux, using `lsof` elsewhere. macOS applies no read timeout to a peek and
 refuses socket options on a connection its peer has closed, so the harness
 polls before it peeks and ignores a refused timeout.
 
-## Differential comparison
-
-The real-PTY differential check runs the old Orbit and then Orbit on the same
-command line, with the same gated child script,
-[tests/differential-shell.sh](../tests/differential-shell.sh), and the same
-messages from one interactive client and one metadata observer, decodes both
-streams with the canonical codec, and fails at the first step whose messages
-differ. [nix/orbit-checks.nix](../../nix/orbit-checks.nix) builds the old
-Orbit from the flake input `old-orbit`, Eon revision
-`92a0a97c66360033e9a742edd9ef6c95d37c3d2b`, the last commit before the Bend
-import, which the tag `orbit-rust-final` holds. Its `Cargo.lock` and
-libghostty build equal this tree's, so only the two servers' sources differ. The workload
-covers a clipboard write; rich output with attributes, palette and direct
-colors, a hyperlink, wide and combining characters, a working directory and
-history; a paste; a pressed and a released key; a resize; scroll commits, a
-preview and a wheel; a future-revision scroll and preview; return to live; a
-host drag selection with its copy, output under it and Cancel; a click and a
-double-click word selection; and the child's exit while that word selection
-is presented.
-
-Each step waits for its complete answer: one reply, the frame after an
-acceptance, the copy after a selection finish, or `Exited`. Child-output
-steps wait for both a frame and observer metadata with the title the child
-prints last. Then the client must hear nothing for 0.3 s and the observer
-for 0.1 s. The check compares every
-message of each step on both connections, every field of each, frames cell
-by cell and failure texts included, and how each server ends: its status and
-output, the child reaped and the socket pathname removed. It normalizes two
-things and nothing else:
-
-- A run of consecutive frames, or of metadata messages, counts as its last
-  one. How many arrive between two other messages depends on how the PTY
-  reads split the child's output, and a queued frame or metadata message may
-  be replaced by a later one (ORB-C4, ORB-C7, ORB-C3).
-- A revision counts as its relation to the revision compared before it in the
-  same stream: the first, the same, or a later one. Its value counts PTY
-  turns, which the same split decides. Each stream must still be ordered: no
-  revision goes back, and each frame is later than the frame before it.
-
-The check takes the old Orbit from `OLD_ORBIT_BIN`, which the flake sets;
-elsewhere, `cargo build --release --locked -p yazelix-orbit` in a checkout of
-`orbit-rust-final` gives one. With the old Orbit in place of Orbit the check
-also passes, so the normalization covers how the old Orbit's own output
-varies. A host that dropped the first frame Bend
-decided right after an `Accepted`, the resize's frame, made it fail at the
-resize step.
-
 ## Throughput
 
-Orbit and the old Orbit share one command line, so
 [tools/perf/orbit-venus-baseline.sh](../tools/perf/orbit-venus-baseline.sh)
-runs either unchanged.
+runs any server that takes Orbit's command line, the old Orbit included.
 [tools/perf/headless-throughput.rs](../tools/perf/headless-throughput.rs) runs
 that harness's vtebench command without a desktop. Each server runs it
 detached, with no client attached once the benchmark starts, and then again
@@ -1170,10 +1113,9 @@ read at most 8 KiB per turn and publish one frame for each, and vtebench
 writes the same output to both, so bend-orbit's reads are fuller on average,
 likely because each of its turns also waits for a round trip through the
 worker. ORB-C4 orders complete frames without fixing their number, so this is
-no contract difference; the differential check's first normalization covers
-it. The last in-process build (`9ef0e61f`), where Bend called the Rust
-mechanisms through a C adapter, was 15 to 28% faster than the old Orbit on the
-detached scrolling benchmarks in the same conditions. Neither the move to
+no contract difference. The last in-process build (`9ef0e61f`), where Bend
+called the Rust mechanisms through a C adapter, was 15 to 28% faster than the
+old Orbit on the detached scrolling benchmarks in the same conditions. Neither the move to
 libghostty-vt 0.2.2 nor the host's later restructuring explains that
 difference, and bend-orbit did not pursue it. The client does not
 render, so this does not replace the harness run with Venus.
@@ -1228,7 +1170,7 @@ ORB_BASELINE_CPUS=6-11 ORB_BASELINE_GRID="54 90" \
   ([Terminal identity](#terminal-identity)).
 - `orbit-NAME` runs the real-PTY check NAME against the package, for each
   real-PTY check this document names: lifecycle, guardian-containment,
-  delayed-output, differential, request-half-close, detached-exit,
+  delayed-output, request-half-close, detached-exit,
   three-attach, late-observer, detached-observer, synchronized-output,
   held-attach, history, preview, scroll, return-to-live, schema-mismatch,
   paste-flood, terminal-replies, silent-peer, pty-reopen, descendant-exit,
@@ -1252,7 +1194,7 @@ runs for three minutes terminates the servers it started and ends the run.
 Inside `nix develop`, from the repository root, cargo builds the host and
 [build.rs](../build.rs) builds the worker with the pinned Bend compiler and
 clang. The real-PTY checks then run one at a time in `eon-test`'s sandbox,
-which passes `ORBIT_*`, `OLD_ORBIT_BIN` and `MISMATCHED_WORKER` through,
+which passes `ORBIT_*` and `MISMATCHED_WORKER` through,
 against a cargo-built host, which runs its build's worker, and take each child
 script from the source tree:
 
@@ -1278,10 +1220,7 @@ target/boundary target/mismatched/boundary.schema target/mismatched
 export MISMATCHED_WORKER=$PWD/target/mismatched-worker
 ```
 
-The differential check also needs `OLD_ORBIT_BIN`
-([Differential comparison](#differential-comparison)).
-
-The old Orbit's black-box suite, [tests/lifecycle.rs](../tests/lifecycle.rs),
+The black-box suite, [tests/lifecycle.rs](../tests/lifecycle.rs),
 runs unmodified against Orbit with Eon's workspace suites, or alone:
 
 ```sh

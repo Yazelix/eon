@@ -25,7 +25,7 @@ SIGHUP, the host hangs up the child's group and the terminal's foreground group,
 escalates to SIGKILL, reaps the child, and removes the socket pathname. Once a
 signal's stop reaps the child, it gives a live observer the finish bound to
 take Exited with the child's code, writes a managed run's explicit tombstone
-and exits 0, as the old Orbit does; the interactive client closes without
+and exits 0; the interactive client closes without
 Exited. A signal that leaves the child unreaped exits 128 plus the signal, a
 dead worker exits with the worker's status, and after a stalled worker is
 killed the host exits 1. After a natural exit it exits
@@ -59,11 +59,11 @@ quoting both lines.
 
 Client input and libghostty's replies to the child's terminal queries (cursor
 position, device attributes, mode reports) wait for the PTY in one queue,
-bounded at one maximum paste plus 16 bytes, as in the old Orbit. The host
+bounded at one maximum paste plus 16 bytes. The host
 writes it whenever its loop turns and watches the PTY for room while bytes
 remain, so a child that stops reading its input never stops the host from
 reading its output. Input the queue cannot hold is refused whole (`Applied Full`);
-a reply that does not fit fails the session, as in the old Orbit, rather than
+a reply that does not fit fails the session rather than
 send part of an answer.
 
 ## The boundary
@@ -106,7 +106,7 @@ The observer's output waits in a queue under the client's bound. Rust
 reports whether the title or working directory differs from the metadata last
 queued (flag `metadata_changed`) and whether none was queued yet (flag
 `metadata_fresh`); without an observer it reports both, for the one Bend may
-admit. Bend publishes only a change, and, as in the old Orbit, queues an
+admit. Bend publishes only a change, and queues an
 observer's first metadata `ordered`, so it stays, while newer metadata
 replaces queued metadata that has not started, so a slow observer converges
 on the current title and directory. No answer queues metadata twice, and no
@@ -121,20 +121,20 @@ A decision crosses the pipe as one line of numbers, `CODE ARG...`, and the
 worker ends each answer with a line `end`. The host fails the session, as a
 protocol error, on a line that does not decode to a decision. A rejection
 carries a typed reason (`Reject PtyFull`); the host owns each reason's
-Failure code and the old Orbit's exact text for the request it answers
+Failure code and exact text for the request it answers
 (`Reason::failure` in [src/host.rs](../src/host.rs)), so Bend never writes
 one.
 
 Bend keeps the presentation revision as two U32 halves
 ([src/revision.bend](../src/revision.bend)), since it has no U64, and
-advances it once for each change of presented state, as the old Orbit does
+advances it once for each change of presented state
 (ORB-C4). One pass after each decision, `stamp` in
 [src/session.bend](../src/session.bend), owns that rule. A fact the host applied
 before Bend answers advances it first: a PTY turn that fed output to the
 terminal, unless a synchronized update was held at the previous fact, a
 resize, and a host phase or tick that applied. Then each decision that changes
 presented state advances it as it is carried out: a viewport move, and an
-`Unselect` of a presented selection, unless the old Orbit counts the clear with
+`Unselect` of a presented selection, unless the clear counts with
 the change that caused or accompanied it: a resize, a viewport move, output
 that lost the anchor, or the child's exit with drained output. Each decision
 that publishes names the revision it presents, which Rust stamps without
@@ -146,7 +146,7 @@ carries out a decided viewport move even when it finds the client lost
 meanwhile, so the revision never advances without a change.
 
 While an interactive client is attached, the host captures the terminal's
-clipboard writes during each PTY turn, as the old Orbit does (ORB-C11).
+clipboard writes during each PTY turn (ORB-C11).
 Bend turns capture on with `Capture` when it attaches a client and off when
 the client goes; libghostty asks synchronously, so Rust holds the bit. Each
 write must carry exactly one nonempty UTF-8 `text/plain` text without NUL and
@@ -168,7 +168,7 @@ whether a phase may run, and checks each route's room before anything moves.
 Bend decides every clear with `Unselect`, which resets the gesture and clears
 the selection: a Cancel, a
 terminal press, a lost anchor, a closed PTY, a resize, a viewport move,
-losing the client and the child's exit clear it, as in the old Orbit; a
+losing the client and the child's exit clear it; a
 terminal press, losing the client and the child's exit also forget the copy.
 
 Bend's state is explicit: the lifecycle of [src/lifecycle.bend](../src/lifecycle.bend),

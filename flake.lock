@@ -191,23 +191,6 @@
         "type": "github"
       }
     },
-    "old-orbit": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1792449216,
-        "narHash": "sha256-ACRrEPWSBViuhrW8So3rmaPp80w8odlgSpmh459xOPQ=",
-        "owner": "Yazelix",
-        "repo": "eon",
-        "rev": "92a0a97c66360033e9a742edd9ef6c95d37c3d2b",
-        "type": "github"
-      },
-      "original": {
-        "owner": "Yazelix",
-        "repo": "eon",
-        "rev": "92a0a97c66360033e9a742edd9ef6c95d37c3d2b",
-        "type": "github"
-      }
-    },
     "ratconfig": {
       "flake": false,
       "locked": {
@@ -255,7 +238,6 @@
         "helix": "helix",
         "kinestra": "kinestra",
         "nixpkgs": "nixpkgs_2",
-        "old-orbit": "old-orbit",
         "ratconfig": "ratconfig",
         "yazi": "yazi"
       }

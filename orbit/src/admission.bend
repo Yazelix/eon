@@ -39,7 +39,7 @@ type Answer is Data:
 # first message gets Failure(Protocol); an unsupported version gets nothing.
 # A connection that arrives while another peer negotiates is turned away with
 # Busy at once, and an observer that sends a message ends with
-# Failure(Protocol), as in the old Orbit.
+# Failure(Protocol).
 def decide(signal: Signal, interactive: Bool, observer: Bool) -> Answer:
   match signal:
     case Hello{}:

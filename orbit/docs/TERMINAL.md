@@ -116,8 +116,8 @@ repository carries no permanent test target for the rejected reconstruction
 path. Orbit uses no fork, binding extension, compatibility wrapper, second
 terminal engine, or replay fallback.
 
-The focused Orbit terminal conformance cases of the old Orbit's black-box
-suite run under one filter:
+The focused Orbit terminal conformance cases of the black-box suite
+run under one filter:
 
 ```sh
 nix develop -c eon-test -p yazelix-orbit conformance_
@@ -125,8 +125,7 @@ nix develop -c eon-test -p yazelix-orbit conformance_
 
 They cover parser continuation and terminal replies, semantic input and
 resize, and frozen selection copy. The real-PTY checks in
-[BEHAVIOR.md](BEHAVIOR.md) cover reattachment, rich extraction (the
-differential check compares frames cell by cell with the old Orbit's),
+[BEHAVIOR.md](BEHAVIOR.md) cover reattachment, rich extraction,
 viewport routing and retained history. The contract-oriented case inventory
 and assertion policy live in the [contract index](CONTRACTS.md). The checks
 are offline, headless, and pinned to the same libghostty path as the normal
@@ -163,7 +162,7 @@ Publication stays bounded:
   Orbit rejects a whole new input and closes that client.
 
 The real-PTY synchronized-output, three-attach, interactive-pressure,
-slow-observer, paste-flood and differential checks in
+slow-observer, paste-flood and held-attach checks in
 [BEHAVIOR.md](BEHAVIOR.md) cover ordered revisions, rich state, split
 updates, slow clients, input that waits for the PTY, and convergence after
 reattach.

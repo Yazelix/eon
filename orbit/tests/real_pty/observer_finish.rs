@@ -19,7 +19,7 @@ fn observe(path: &std::path::Path) -> Peer {
 pub fn run() {
     // A termination signal reaps the child, tells the observer its code (1
     // for the hangup) before the explicit tombstone, and closes the
-    // interactive client without Exited, as the old Orbit does.
+    // interactive client without Exited.
     {
         let directory = TempDir::new();
         let shell = executable(&directory, "child.sh", "#!/bin/sh\nwhile :; do sleep 1; done\n");

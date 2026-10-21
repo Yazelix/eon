@@ -41,11 +41,11 @@ use std::{
     time::Duration,
 };
 
-/// Client input and terminal replies wait here for the PTY, as in the old
-/// Orbit: one maximum paste plus a bracketed-paste frame.
+/// Client input and terminal replies wait here for the PTY, bounded at
+/// one maximum paste plus a bracketed-paste frame.
 const MAX_PTY_WRITE_BYTES: usize = session::MAX_PASTE_BYTES + 16;
 
-/// The old Orbit's pause before reading a hung-up PTY again.
+/// The pause before reading a hung-up PTY again.
 const PTY_EIO_RETRY_DELAY: Duration = Duration::from_millis(10);
 
 /// Bytes waiting for the PTY: client input and libghostty's replies to the
@@ -74,7 +74,7 @@ impl PtyWrites {
     }
 }
 
-/// The old Orbit's bound on clipboard writes captured in one PTY turn.
+/// The bound on clipboard writes captured in one PTY turn.
 const MAX_CLIPBOARD_WRITES: usize = 64;
 
 /// The terminal's clipboard writes from one PTY turn, captured only while
@@ -155,8 +155,8 @@ pub(crate) struct Orbit {
     reaped: Option<ExitStatus>,
     /// Bytes for the PTY, written as it drains so the host never waits on it.
     pub(crate) writes: PtyWrites,
-    /// A terminal reply did not fit the queue; the session fails, as in
-    /// the old Orbit, rather than drop part of an answer.
+    /// A terminal reply did not fit the queue; the session fails
+    /// rather than drop part of an answer.
     reply_overflow: Rc<Cell<bool>>,
     /// The clipboard writes of the current PTY turn.
     pub(crate) clipboard: Rc<RefCell<ClipboardWrites>>,
@@ -166,8 +166,7 @@ pub(crate) struct Orbit {
 
 impl Orbit {
     /// Spawns the PTY child as the host's direct child. A palette replaces
-    /// the terminal's default ANSI colors, which a reset restores, as in
-    /// the old Orbit.
+    /// the terminal's default ANSI colors, which a reset restores.
     pub(crate) fn spawn(
         command: &[OsString],
         palette: Option<[RgbColor; 16]>,
@@ -275,8 +274,8 @@ impl Orbit {
     /// PTY has closed or has nothing to read.
     /// Linux reports EIO while no process holds the terminal open, which a
     /// live child may do briefly before reopening it, so EIO closes the PTY
-    /// only after the direct child has exited, as in the old Orbit
-    /// (ORB-C1); until then it waits briefly, so a hung-up PTY cannot spin.
+    /// only after the direct child has exited (ORB-C1); until then it waits
+    /// briefly, so a hung-up PTY cannot spin.
     pub(crate) fn read_into(&mut self, data: &mut [u8]) -> io::Result<PtyRead> {
         loop {
             match self.master.read(data) {
@@ -573,8 +572,8 @@ impl Orbit {
     }
 
     /// Moves the viewport one row for a physical wheel that the terminal does
-    /// not own; the outcome carries the frame at `revision`, as in the old
-    /// Orbit. No PTY input is sent.
+    /// not own; the outcome carries the frame at `revision`.
+    /// No PTY input is sent.
     pub(crate) fn wheel(
         &mut self,
         direction: VerticalDirection,
@@ -783,7 +782,7 @@ pub(crate) fn signal(pid: libc::pid_t, signal: i32) -> io::Result<()> {
     }
 }
 
-/// The child's exit code as the old Orbit reports it, in Exited and as
+/// The child's exit code as Orbit reports it, in Exited and as
 /// the server's own status: a child killed by a signal has code 1.
 fn child_code(status: ExitStatus) -> u32 {
     status.code().unwrap_or(1) as u32

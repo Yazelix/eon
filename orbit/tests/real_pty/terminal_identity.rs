@@ -50,7 +50,7 @@ pub fn run() {
     );
     let mut peer = Peer::attach(&server.path, 10.0);
 
-    // The child sees the old Orbit's terminal identity, and only the package's
+    // The child sees Orbit's terminal identity, and only the package's
     // terminfo directory.
     let identity = format!(
         "TERM=eon COLORTERM=truecolor TERMINFO_DIRS={}",

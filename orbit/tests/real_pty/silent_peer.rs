@@ -7,7 +7,7 @@ const PEER_BOUND: f64 = 1.0;
 const MARGIN: f64 = 2.0;
 
 /// A connection that arrives while another peer negotiates hears Busy at
-/// once and is closed, as in the old Orbit (ORB-C3).
+/// once and is closed (ORB-C3).
 fn turned_away(path: &Path) {
     let mut crowded = Peer::connect(path, PEER_BOUND + MARGIN);
     crowded.expect(ServerMessage::Busy);

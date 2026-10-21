@@ -96,10 +96,9 @@ const REAP_DEADLINE: Duration = Duration::from_secs(2);
 /// answer under load took 7 ms.
 const DECISION_DEADLINE: Duration = Duration::from_secs(2);
 /// How long a wait may last before the host checks the direct child again,
-/// as the old Orbit polls it, so a descendant that holds the PTY open
-/// cannot hide the child's exit.
+/// so a descendant that holds the PTY open cannot hide the child's exit.
 const CHILD_POLL: Duration = Duration::from_millis(100);
-/// The old Orbit's bound on the PTY reads drained after the child exits.
+/// The bound on the PTY reads drained after the child exits.
 const MAX_EXIT_PTY_READS: usize = 4;
 /// How often a half-closed client is checked for a full close.
 const CLIENT_PROBE_MS: u32 = 100;
@@ -135,8 +134,8 @@ impl From<Direction> for VerticalDirection {
 }
 
 impl Reason {
-    /// The Failure the old Orbit sends for this reason, in answer to
-    /// `fact`, byte for byte.
+    /// The Failure sent for this reason, in answer to `fact`, byte for
+    /// byte.
     fn failure(self, fact: Fact) -> Failure {
         use FailureCode::{InvalidInput, Protocol, Terminal};
         let (code, detail) = match self {
@@ -482,8 +481,7 @@ fn next_ready(revents: &[i16], turn: usize) -> Option<usize> {
 }
 
 impl Host {
-    /// Opens the listener and spawns the child; peers may connect at once,
-    /// as in the old Orbit.
+    /// Opens the listener and spawns the child; peers may connect at once.
     fn open(bounds: Bounds, serve: Serve) -> io::Result<Self> {
         let listener = Listener::open(&serve.socket)?;
         let prepared = serve
@@ -589,10 +587,10 @@ impl Host {
         }
     }
 
-    /// One fact per PTY turn. An attached client gets a frame per 8 KiB read,
-    /// as in the old Orbit; without one, nobody sees frames, so the host
-    /// drains the PTY, up to 512 KiB, before asking Bend, since each fact
-    /// costs a round trip through the worker.
+    /// One fact per PTY turn. An attached client gets a frame per 8 KiB read;
+    /// without one, nobody sees frames, so the host drains the PTY, up to
+    /// 512 KiB, before asking Bend, since each fact costs a round trip
+    /// through the worker.
     fn read_pty(&mut self) -> io::Result<Option<Fact>> {
         self.orbit.start_turn();
         let turns = if self.client.is_some() { 1 } else { 64 };
@@ -617,8 +615,7 @@ impl Host {
 
     /// The PTY closed after a turn that may have read output. Once the
     /// direct child has exited, the run stops; while it lives, nothing more
-    /// is read or written and the run waits for its exit, as in the old
-    /// Orbit (ORB-C1).
+    /// is read or written and the run waits for its exit (ORB-C1).
     fn pty_closed(&mut self, read: bool) -> io::Result<Fact> {
         self.pty_open = false;
         self.orbit.writes.discard();
@@ -634,8 +631,8 @@ impl Host {
     }
 
     /// The direct child exited: the PTY's remaining output, at most four
-    /// reads, reaches the terminal before the stop, as in the old Orbit,
-    /// so a descendant that keeps writing cannot hold the run open (ORB-C12).
+    /// reads, reaches the terminal before the stop, so a descendant that
+    /// keeps writing cannot hold the run open (ORB-C12).
     fn drain_exited(&mut self) -> io::Result<Fact> {
         self.child_exited = true;
         self.orbit.start_turn();
@@ -989,7 +986,7 @@ impl Host {
     }
 
     /// Classifies the client's request; plain input and resizes are applied
-    /// before Bend answers, as the old Orbit applies them.
+    /// before Bend answers.
     fn request(&mut self) -> io::Result<Option<Fact>> {
         let client = self.client.as_mut().ok_or_else(protocol)?;
         if let Some(refusal) = &client.refused {
@@ -1146,8 +1143,8 @@ impl Host {
     }
 
     /// Ends the attachment after Bend refused it: the client keeps writing
-    /// what it queued, its Failure included, for at most the finish bound, as
-    /// the old Orbit closes it once flushed; the slot is free at once.
+    /// what it queued, its Failure included, for at most the finish bound;
+    /// the slot is free at once.
     fn close_client(&mut self) -> io::Result<()> {
         if let Some(client) = self.client.take() {
             self.close_after_flush(client);
@@ -1409,7 +1406,7 @@ impl Host {
 
     /// Carries out Bend's management stop: the child is hung up and reaped
     /// with the bounded shutdown of ORB-C12. A child that already exited ends
-    /// the run naturally instead, as in the old Orbit.
+    /// the run naturally instead.
     fn stop_explicitly(&mut self) -> io::Result<Fact> {
         if let Some(status) = self.orbit.try_reap()? {
             return Ok(Fact::ExitedBeforeStop { status });
@@ -1450,12 +1447,11 @@ impl Host {
     }
 
     /// Gives the client, then a live observer, Bend's finish bound each to
-    /// take its output and Exited, as the old Orbit finishes a session;
-    /// closes every peer, and removes the socket pathname.
+    /// take its output and Exited; closes every peer, and removes the socket
+    /// pathname.
     fn exit(&mut self, status: u32, explicit: bool) -> io::Result<()> {
         let status = i32::try_from(status).map_err(|_| protocol())?;
-        // After a management stop the client closes without Exited, as in
-        // the old Orbit.
+        // After a management stop the client closes without Exited.
         if explicit {
             self.client = None;
         }
@@ -1529,7 +1525,7 @@ impl Host {
     }
 
     /// After a host failure: hang up the child, escalate to SIGKILL, and reap it.
-    /// As the old Orbit's bounded shutdown (ORB-C12): an exited child is
+    /// The bounded shutdown of ORB-C12: an exited child is
     /// reaped without a signal to its recyclable PID; otherwise the child's
     /// group and a distinct foreground group get SIGHUP, then, after 500 ms,
     /// SIGKILL with the foreground group read again, and the child must be
@@ -1624,7 +1620,7 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
             let number = TERMINATION_SIGNAL.load(Ordering::Relaxed);
             // A termination signal is an explicit stop: once the child is
             // reaped, a live observer hears its exit, and then a managed run's
-            // tombstone records the stop, as in the old Orbit. The interactive
+            // tombstone records the stop. The interactive
             // client closes without Exited.
             if number != 0 && reaped {
                 if let Ok(Some(code)) = host.orbit.try_reap() {
@@ -1648,7 +1644,7 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
                 let _ = bend.worker.wait();
             }
             // A termination signal is an orderly stop: it succeeds once the
-            // child is reaped, as in the old Orbit.
+            // child is reaped.
             if number != 0 {
                 return Ok(if reaped { 0 } else { 128 + number as u32 });
             }

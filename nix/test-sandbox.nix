@@ -62,7 +62,7 @@ pkgs.writeShellApplication {
         CARGO_* | RUST* | NIX_* | PKG_CONFIG* | CC | CXX | AR | AS | LD | NM | \
           OBJCOPY | OBJDUMP | RANLIB | READELF | SIZE | STRINGS | STRIP | \
           GHOSTTY_* | LIBGHOSTTY_* | ZIG_* | BEND_* | FONTCONFIG_FILE | \
-          ORBIT_* | OLD_ORBIT_BIN | MISMATCHED_WORKER | \
+          ORBIT_* | MISMATCHED_WORKER | \
           LANG | LC_ALL | USER | LOGNAME | SOURCE_DATE_EPOCH)
           environment+=(--setenv "$name" "''${entry#*=}")
           ;;

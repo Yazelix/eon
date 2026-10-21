@@ -2,11 +2,11 @@
 
 use crate::errno;
 use libghostty_vt::{
-    Error as GhosttyError, RenderState, Terminal, TerminalOptions,
+    Error as GhosttyError, RenderState, Terminal,
     render::{CellIterator, CursorVisualStyle as GhosttyCursorShape, RowIterator},
     screen::{CellContentTag, CellWide as GhosttyCellWidth, GridRef, Screen as GhosttyScreen},
     style::{RgbColor, Style, StyleColor as GhosttyStyleColor, Underline as GhosttyUnderline},
-    terminal::{Point, PointCoordinate, ScrollViewport},
+    terminal::{Point, PointCoordinate},
 };
 use orbit_protocol::{
     Capabilities, Cell as ProtocolCell, CellStyle, CellWidth, Colors, Cursor, CursorShape,
@@ -16,7 +16,7 @@ use orbit_protocol::{
 };
 use std::io::{self};
 
-// libghostty's max_scrollback is a byte budget (Ghostty Screen.zig), as in the old Orbit.
+// libghostty's max_scrollback is a byte budget (Ghostty Screen.zig).
 pub(crate) const SCROLLBACK_BUDGET_BYTES: usize = 16 * 1024 * 1024;
 
 pub(crate) struct FrameExtractor {
@@ -250,27 +250,6 @@ impl FrameExtractor {
     }
 }
 
-/// The canonical frame of a fresh terminal after `vt`, with the viewport `scroll`
-/// rows above live. Only the differential check's own tests call this.
-#[doc(hidden)]
-pub fn frame_after_vt(
-    cols: u16,
-    rows: u16,
-    vt: &[u8],
-    scroll: isize,
-    revision: u64,
-) -> io::Result<Frame> {
-    let mut terminal = Terminal::new(TerminalOptions {
-        cols,
-        rows,
-        max_scrollback: SCROLLBACK_BUDGET_BYTES,
-    })
-    .map_err(|_| errno(libc::EIO))?;
-    terminal.vt_write(vt);
-    terminal.scroll_viewport(ScrollViewport::Delta(-scroll));
-    FrameExtractor::new()?.frame(revision, &terminal)
-}
-
 /// Up to one viewport of rows beyond the viewport, nearest first, bounded like a frame.
 pub(crate) fn viewport_preview(
     terminal: &Terminal<'static, '_>,
@@ -415,6 +394,7 @@ fn cell_style(style: Style, selected: bool, protected: bool) -> io::Result<CellS
 #[cfg(test)]
 mod tests {
     use super::*;
+    use libghostty_vt::{TerminalOptions, terminal::ScrollViewport};
     use orbit_protocol::session::{self, ServerMessage, VerticalPreview};
 
     #[test]

@@ -64,7 +64,7 @@ fn exits_with_child(
 }
 
 pub fn run() {
-    // The old Orbit's writing-descendant stimulus: a HUP-ignoring job keeps
+    // A writing descendant: a HUP-ignoring job keeps
     // writing to the PTY after the child exits. The server still ends with
     // the child's status, and the job fails once the PTY master closes.
     let directory = TempDir::new();

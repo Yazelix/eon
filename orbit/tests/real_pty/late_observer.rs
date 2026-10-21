@@ -65,7 +65,7 @@ pub fn run() {
     );
 
     // An observer may send nothing: its message is refused with
-    // Failure(Protocol) and it is closed, as in the old Orbit (ORB-C3),
+    // Failure(Protocol) and it is closed (ORB-C3),
     // while the client and the child go on; its slot is free at once.
     observer.send(&ClientMessage::Focus(FocusEvent::Gained));
     observer.failure(FailureCode::Protocol);

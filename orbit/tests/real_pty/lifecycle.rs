@@ -72,7 +72,7 @@ pub fn run() {
     assert!(!path.exists());
 
     // The server exits with its child's code; a child killed by a signal has
-    // code 1, as in the old Orbit.
+    // code 1.
     let bash = bash();
     for (expected, text) in [(0, "exit 0"), (3, "exit 3"), (1, "kill -TERM $$")] {
         let line = server_command(

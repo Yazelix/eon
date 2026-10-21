@@ -136,7 +136,7 @@ pub fn run() {
 
     // A presentation pathname replaced by another endpoint is left in place,
     // and the run still exits with the child's code, removes its management
-    // socket and records the natural exit, as the old Orbit does.
+    // socket and records the natural exit.
     {
         let directory = TempDir::new();
         let gate = Gate::new(&directory, "exit-gate");
@@ -235,7 +235,7 @@ pub fn run() {
         assert_eq!(tombstone.outcome, ProcessOutcome::ExitCode(3), "{tombstone:?}");
     }
 
-    // Identities outside the old Orbit's bounds are refused before anything
+    // Identities outside the bounds are refused before anything
     // starts.
     {
         let directory = TempDir::new();

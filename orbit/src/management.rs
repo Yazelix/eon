@@ -1,4 +1,4 @@
-//! Management of ORB-C13, as the old Orbit keeps it: a private
+//! Management of ORB-C13: a private
 //! management socket beside the presentation socket, an exact 0600 live
 //! record published at Ready through the launcher's ready claim, one
 //! management connection with bounded requests, and a tombstone that
@@ -29,7 +29,7 @@ use std::{
     time::Duration,
 };
 
-/// The old Orbit's bound on a management connection's negotiation and on
+/// The bound on a management connection's negotiation and on
 /// writing the Stopped answer.
 pub(crate) const NEGOTIATION_MS: u32 = 1000;
 
@@ -44,7 +44,7 @@ pub(crate) struct Launch {
 }
 
 impl Launch {
-    /// Checks the old Orbit's bounds: each identity has 1 to 128 UTF-8 bytes.
+    /// Checks the bounds: each identity has 1 to 128 UTF-8 bytes.
     pub(crate) fn new(values: [&OsStr; 3]) -> Result<Self, String> {
         let mut checked = Vec::with_capacity(3);
         for (field, value) in ["Session ID", "run ID", "component generation"]
@@ -476,8 +476,8 @@ fn process_start_identity() -> io::Result<u64> {
         .ok_or_else(|| errno(libc::EPROTO))
 }
 
-/// The kernel's start time of this process in microseconds, as the old
-/// Orbit reads it on macOS.
+/// The kernel's start time of this process in microseconds, as macOS
+/// reports it.
 #[cfg(target_os = "macos")]
 fn process_start_identity() -> io::Result<u64> {
     let pid = std::process::id();

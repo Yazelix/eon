@@ -70,8 +70,7 @@ fn peers(path: &Path) -> (Peer, Peer) {
     (client, observer)
 }
 
-/// The peer's connection ends, at EOF or a reset, with nothing more to read:
-/// the old Orbit sends a peer nothing when it fails.
+/// The peer's connection ends, at EOF or a reset, with nothing more to read.
 fn ended(peer: &mut Peer, who: &str) {
     let (data, _) = peer.read_until_closed(true);
     assert!(
@@ -238,8 +237,8 @@ pub fn run() {
     ended(&mut observer, "the observer");
     probe.finish(137);
 
-    // A killed host, with both peers attached, cleans up nothing itself, as
-    // the old Orbit cannot: the kernel ends each peer's connection and
+    // A killed host, with both peers attached, cleans up nothing itself:
+    // the kernel ends each peer's connection and
     // hangs up the PTY, so a child that exits on SIGHUP is gone, the worker
     // dies with the host, and the socket pathname stays until the next start
     // reclaims it.
@@ -320,7 +319,7 @@ pub fn run() {
     );
 
     // A termination signal is an orderly stop: once the child is reaped, the
-    // host exits 0, as the old Orbit does (ORB-C12).
+    // host exits 0 (ORB-C12).
     let probe = Probe::start("IGNORE_HUP_SHELL", "ignore-hup-shell");
     let _leftovers = Leftovers(vec![probe.child]);
     signal(probe.server.pid(), libc::SIGTERM);

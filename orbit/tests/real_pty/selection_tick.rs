@@ -1,5 +1,4 @@
 use crate::support::*;
-use orbit_protocol::Frame;
 use orbit_protocol::session::{
     ClientMessage, ClipboardLocation, FailureCode, Modifiers, ScrollOutcome, SelectionAction,
     SelectionPosition, ServerMessage,
@@ -34,15 +33,6 @@ fn finished(client: &mut Peer) -> u64 {
         ServerMessage::SelectionFinished { frame_revision } => frame_revision,
         other => panic!("expected SelectionFinished, received {}", brief(&other)),
     }
-}
-
-/// Whether the frame presents a host selection.
-fn selected(frame: &Frame) -> bool {
-    frame
-        .rows
-        .iter()
-        .flat_map(|row| &row.cells)
-        .any(|cell| cell.style.selected)
 }
 
 /// Reads frames until a scroll outcome; returns its requested and applied rows.

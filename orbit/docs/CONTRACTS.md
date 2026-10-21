@@ -57,9 +57,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Boundary:** Persistence across Orbit or machine restart is excluded.
 - **Proof:** the `eon-awmq.3` import commit
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified);
     Apple M2 macOS 26.7.1 native `cargo test --locked -p yazelix-orbit -p
     orbit-protocol` of the previous Rust server at
@@ -94,9 +93,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.1` commit
   for the palette reset
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified)
   - **Evidence:**
     - [`palettes_are_exactly_sixteen_hex_colors`](../src/cli.rs)
@@ -132,9 +130,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   excluded.
 - **Proof:** the `eon-awmq.3` import commit
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified)
   - **Evidence:**
     - [`metadata_observer_is_canonical_read_only_and_reports_changes`](../src/socket.rs)
@@ -167,17 +164,14 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.2` commit
   for held attachment and exact reattachment
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified)
   - **Evidence:**
     - [`orbit-synchronized-output`](../tests/real_pty/synchronized_output.rs)
       holds a split update, bounds it with the watchdog, and releases it at
       child exit.
-    - [`orbit-three-attach`](../tests/real_pty/three_attach.rs) and
-      [`orbit-differential`](../tests/real_pty/differential.rs), which compares
-      every frame with the previous Rust server's
+    - [`orbit-three-attach`](../tests/real_pty/three_attach.rs)
     - [`orbit-held-attach`](../tests/real_pty/held_attach.rs) attaches during
       a held update, whose first frame waits for the release or the watchdog,
       and reattaches to a rich alternate screen with an identical frame.
@@ -214,9 +208,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.1` commit
   for the Kitty release
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified)
   - **Evidence:**
     - [`canonical_input_uses_libghostty_encoding`](../src/input.rs)
@@ -247,17 +240,16 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.2` commit
   for direct rows, width roles, protection and reflow
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified)
   - **Evidence:**
     - [`terminal_frame_uses_the_canonical_protocol_owner`](../src/frame.rs)
     - [`vertical_preview_reads_history_nearest_first`](../src/frame.rs)
     - [`direct_rows_match_rich_canonical_frame_rows`](../src/frame.rs)
-    - [`orbit-differential`](../tests/real_pty/differential.rs) compares rich
-      frames (styles, RGB and palette colors, hyperlink, wide and combining
-      graphemes, working directory, resize) with the previous Rust server's.
+    - [`orbit-held-attach`](../tests/real_pty/held_attach.rs) reads bold, a
+      hyperlink, wide and combining graphemes and the cursor from a real PTY's
+      rich alternate screen, and reattaches to an identical frame.
     - [`orbf_v2_cell_width_topology_is_validated_at_every_acceptance_boundary`](../crates/protocol/src/lib.rs)
     - Canonical ORBF-in-ORBS codec checks in the workspace suite
 
@@ -280,9 +272,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.2` commit
   for the worker's output bound
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified)
   - **Evidence:**
     - [`output_queue_replaces_unstarted_presentations_within_its_bound`](../src/socket.rs)
@@ -366,9 +357,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.3` commit
   for scroll position, selection clearing and granular ticks
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified)
   - **Evidence:**
     - Real-PTY checks [`orbit-history`](../tests/real_pty/history.rs),
@@ -483,9 +473,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.3` commit
   for history, span delimiters, drag-back, highlighted cells and pressure
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified)
   - **Evidence:**
     - [`the_click_ladder_selects_cells_words_spans_and_lines_across_wraps`](../src/pointer.rs)
@@ -498,7 +487,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     - [`orbit-selection`](../tests/real_pty/selection.rs) checks the route,
       Shift, Cancel, the click ladder's frozen text for both copy effects,
       Finish revisions, terminal-routed mouse bytes and client-scoped copy
-      through canonical messages.
+      through canonical messages, and that the child's exit clears a
+      presented selection.
     - [`orbit-selection-tick`](../tests/real_pty/selection_tick.rs) covers more
       than one viewport, synchronized deferral, oldest-edge stop, and exact
       release copy.
@@ -506,7 +496,6 @@ in this repository. Each contract below states the current ORBS v13 behavior.
       a host press for output pressure, leaving no sequence.
     - [`output_that_enables_mouse_tracking_unanchors_the_host_selection`](../src/pointer.rs)
     - [`output_queue_replaces_unstarted_presentations_within_its_bound`](../src/socket.rs)
-    - [`orbit-differential`](../tests/real_pty/differential.rs)
     - Laws [`selection_answers_are_accounted`](../LAWS.bend),
       [`selection_shift_selects_on_the_host`](../LAWS.bend),
       [`selection_future_press_fails`](../LAWS.bend) and
@@ -537,9 +526,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Boundary:** Other distribution formats remain outside this contract's proof.
 - **Proof:** the `eon-awmq.3` import commit
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified)
   - **Evidence:**
     - `orbit-terminfo` checks that the Nix build's `tic`-compiled entry, with
@@ -575,9 +563,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.4` commit
   for clipboard writes under output pressure
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified)
   - **Evidence:**
     - [`src/socket.rs`](../src/socket.rs) ordered bounded output checks
@@ -628,9 +615,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     detached and foreground-group topology remains Linux-proved only.
 - **Proof:** the `eon-awmq.3` import commit
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified);
     the previous Rust server installed as
     `/nix/store/gg71kiz3k854f4xihasr1pwligypznl3-eon-0.1.0` driven
@@ -721,9 +707,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.4` commit
   for untrusted records and runtime directories
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY check
-    including the differential against the old Rust Orbit from Eon
-    `1d287440`); sandboxed `nix develop -c eon-test` (workspace and installer,
+    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
+    check); sandboxed `nix develop -c eon-test` (workspace and installer,
     `tests/lifecycle.rs` unmodified);
     Apple M2 macOS 26.7.1 native `cargo test --locked -p yazelix-orbit -p
     orbit-protocol` of the previous Rust server at
@@ -821,13 +806,11 @@ the normal suite because they do not exercise that terminal engine.
 | `conformance_c5_authoritative_input_modes_and_resize_survive_detach` | Resize plus key, mouse, focus, paste, Kitty-keyboard, mode change, and reattach | The PTY receives terminal-state-aware input once and retains the requested dimensions | Exact PTY bytes and `stty` dimensions | `ORB-C5` |
 | `conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped` | Wide and combining text, viewport movement, reversed selection, detach, alternate-screen output, and resize | Selected presentation is client-scoped while finished copy stays frozen across later terminal mutations | Exact copied Unicode text; semantic selection visibility, scope, and freeze | `ORB-C9` |
 
-The corpus's `conformance_c4_`, `conformance_c6_` and three `conformance_c8_`
-cases were unit tests of the previous Rust server and left with it (tag
-`orbit-rust-final`). The real-PTY checks `orbit-three-attach`,
-`orbit-held-attach`, `orbit-differential`, `orbit-mouse`, `orbit-scroll`,
+ORB-C4, ORB-C6 and ORB-C8 have no corpus case: the real-PTY checks
+`orbit-three-attach`, `orbit-held-attach`, `orbit-mouse`, `orbit-scroll`,
 `orbit-return-to-live` and `orbit-history`, and the host unit test
-`direct_rows_match_rich_canonical_frame_rows`, now exercise those contracts
-with other stimuli; ORB-C8's open proof names what they do not cover.
+`direct_rows_match_rich_canonical_frame_rows`, exercise them; ORB-C8's open
+proof names what they do not cover.
 
 A mismatch is classified from the smallest reproducer: an Orbit regression if
 the adapter or ownership path changed, an upstream behavior change or defect if

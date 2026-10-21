@@ -36,12 +36,6 @@
       url = "github:bendlang/bend/234cb9b950800f20b15feafcb4ce2f43e76e7fae";
       flake = false;
     };
-    # The old Rust Orbit for the differential check: the last commit before
-    # the Bend import, tagged orbit-rust-final.
-    old-orbit = {
-      url = "github:Yazelix/eon/92a0a97c66360033e9a742edd9ef6c95d37c3d2b";
-      flake = false;
-    };
     kinestra = {
       url = "github:Yazelix/kinestra/d1589705677dc001304584150557e67cef67f580";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -58,7 +52,6 @@
       ratconfig,
       ghostty,
       bend,
-      old-orbit,
       kinestra,
     }:
     let
@@ -298,8 +291,7 @@
           '';
         };
       orbitChecks = import ./nix/orbit-checks.nix {
-        inherit pkgs bend orbitPackage ghosttyBuildEnv workspaceCargoLock;
-        oldOrbitSource = old-orbit;
+        inherit pkgs bend orbitPackage;
       };
 
       venusRuntimeLibraries = [

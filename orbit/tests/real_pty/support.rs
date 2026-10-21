@@ -257,6 +257,15 @@ pub fn mentions(frame: &Frame, text: &str) -> bool {
     frame.title.contains(text) || frame.working_directory.contains(text)
 }
 
+/// Whether the frame presents a host selection.
+pub fn selected(frame: &Frame) -> bool {
+    frame
+        .rows
+        .iter()
+        .flat_map(|row| &row.cells)
+        .any(|cell| cell.style.selected)
+}
+
 /// A server message in one line, without a frame's rows.
 pub fn brief(message: &ServerMessage) -> String {
     fn frame(frame: &Frame) -> String {
@@ -552,26 +561,6 @@ impl Peer {
             Ok(_) => panic!("{what}: unexpected {}", brief(&self.receive())),
             Err(error) => panic!("{what}: {error}"),
         }
-    }
-
-    /// Every message that arrives until none has for `quiet` seconds, with
-    /// none cut short; then sets ten-second timeouts.
-    pub fn settle(&mut self, quiet: f64) -> Vec<ServerMessage> {
-        let mut messages = Vec::new();
-        self.set_timeout(quiet);
-        loop {
-            match self.receive_within() {
-                Some(message) => messages.push(message),
-                None if self.pending().is_empty() => break,
-                None => {
-                    self.set_timeout(10.0);
-                    messages.push(self.receive());
-                    self.set_timeout(quiet);
-                }
-            }
-        }
-        self.set_timeout(10.0);
-        messages
     }
 
     /// Reads frames until Exited with this code; returns how many frames came.

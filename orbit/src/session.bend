@@ -80,8 +80,8 @@ def followed(pair: Next(), last: Boundary.Decisions()) -> Next():
   (session, rest) = pair
   (session, then(rest, last))
 
-# As in the old Orbit, a viewport move clears the host selection and keeps
-# the copy; it advances authority itself.
+# A viewport move clears the host selection and keeps the copy; it advances
+# authority itself.
 def moved(decision: Boundary.Decision) -> Boundary.Decisions():
   [Boundary.Unselect{False{}}, decision]
 
@@ -95,7 +95,7 @@ def is_attached(life: Life.Lifecycle) -> Bool:
 # Metadata is queued only when the title or working directory changed since
 # the metadata last queued. The first queued for an observer stays, and later
 # metadata replaces what has not started, so a slow observer converges on the
-# current state, as in the old Orbit.
+# current state.
 def metadata_when(changed: Bool, fresh: Bool) -> Boundary.Decisions():
   match changed:
     case True{}:
@@ -412,7 +412,7 @@ def clipboard_if(writes: Bool) -> Boundary.Decisions():
 # Every PTY read publishes a frame to an attached client, and the observer
 # hears the change with or without one. A read whose clipboard writes passed
 # their bound ends an attached client's attachment instead, without sending any
-# of them, as in the old Orbit; the observer still hears the change. Without
+# of them; the observer still hears the change. Without
 # a client there is no attachment to end.
 def output_writes(overflowed: Bool, +flags: Boundary.Flags, session: Session) -> Next():
   match overflowed:
@@ -470,7 +470,7 @@ def wrote(+published: Bool, +flags: Boundary.Flags, session: Session) -> Next():
       )
 
 # Input the PTY queue cannot hold fails with Failure(Terminal) and ends only
-# this attachment, as in the old Orbit.
+# this attachment.
 def overflowed(session: Session) -> Next():
   match session:
     case Session{life, written, observer, explicit, waiting, pointer, manage}:
@@ -480,7 +480,7 @@ def overflowed(session: Session) -> Next():
       )
 
 # A key that wrote PTY bytes returns a scrolled-back primary viewport to live
-# output and publishes it, as in the old Orbit (ORB-C8).
+# output and publishes it (ORB-C8).
 def returned_live(+flags: Boundary.Flags, session: Session) -> Next():
   match session:
     case Session{life, written, +observer, explicit, waiting, pointer, manage}:
@@ -500,7 +500,7 @@ def keyed(above: Bool, flags: Boundary.Flags, session: Session) -> Next():
 # Plain input was queued for the PTY or a resize was applied: it is accepted,
 # a resize publishes a frame, and either keeps a half-closed client attached
 # for later output. A request that came after the PTY closed fails and keeps
-# the client, as in the old Orbit.
+# the client.
 def applied(
   effect: Boundary.Effect, +flags: Boundary.Flags, session: Session
 ) -> Next():
@@ -510,7 +510,7 @@ def applied(
     case Boundary.EffectWrite{}:
       wrote(False{}, flags, session)
     # A resize ends a sequence on either route and clears the host selection,
-    # keeping the copy, as in the old Orbit; the resize advances authority.
+    # keeping the copy; the resize advances authority.
     case Boundary.EffectResize{}:
       prefixed(
         [Boundary.Unselect{False{}}], wrote(True{}, flags, on_route(Selection.Idle{}, session))
@@ -670,7 +670,7 @@ def viewport_wheel(held: Bool, room: Bool) -> Boundary.Decisions():
           reject(Boundary.ReasonWheelNoRoom{})
 
 # A physical vertical wheel goes to the terminal while mouse tracking or
-# alternate-screen mode 1007 owns it, as in the old Orbit (ORB-C8).
+# alternate-screen mode 1007 owns it (ORB-C8).
 def wheeled(
   routed: Bool, input: Boundary.WheelInput, +flags: Boundary.Flags, session: Session
 ) -> Next():
@@ -1048,9 +1048,8 @@ def exit_cleared(
           prefixed([Boundary.Unselect{False{}}], exit_stop(flags, session))
 
 # The direct child exited and the host reaped it, even while a descendant
-# holds the PTY open (ORB-C12). As in the old Orbit, the exit ends a
-# pointer sequence on either route and clears the host selection and its copy
-# (ORB-C9).
+# holds the PTY open (ORB-C12). The exit ends a pointer sequence on either
+# route and clears the host selection and its copy (ORB-C9).
 def exited(drained: Bool, +flags: Boundary.Flags, session: Session) -> Next():
   match session:
     case Session{life, written, observer, explicit, waiting, pointer, manage}:
@@ -1086,7 +1085,7 @@ def decide(
       output(flags, session)
     # The PTY closed while the direct child lives: nothing more is read or
     # written, a pointer sequence ends, and the run waits for the child's
-    # exit, as in the old Orbit (ORB-C1).
+    # exit (ORB-C1).
     case Boundary.PtyClosed{}:
       ended(session)
     case Boundary.Peer{message}:
@@ -1170,7 +1169,7 @@ def settle(pair: Next()) -> Next():
 
 # Output that left the gesture without an anchor, or newly enabled mouse
 # tracking, ends a host sequence and clears the host selection, keeping the
-# copy, as in the old Orbit; compatible output keeps them. The host notes it
+# copy; compatible output keeps them. The host notes it
 # with the fact that follows the output, and the clear does not advance
 # authority.
 def anchored(
@@ -1186,11 +1185,11 @@ def anchored(
     case False{}:
       settle(decide(fact, flags, future, session))
 
-# Authority advances once for each change of presented state, as the old
-# Orbit does (ORB-C4). A fact the host applied before Bend answers advances
-# it first: a PTY turn that fed output to the terminal, unless a synchronized
-# update was held before it, so the update's frame takes the revision its
-# first turn advanced to; a resize; and a host phase or tick that applied.
+# Authority advances once for each change of presented state (ORB-C4). A
+# fact the host applied before Bend answers advances it first: a PTY turn that
+# fed output to the terminal, unless a synchronized update was held before it,
+# so the update's frame takes the revision its first turn advanced to; a
+# resize; and a host phase or tick that applied.
 def output_advanced(held: Bool, revision: Revision.Revision) -> Revision.Revision:
   match held:
     case True{}:

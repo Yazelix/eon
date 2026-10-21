@@ -15,7 +15,7 @@ fn first_message(path: &Path, data: &[u8]) -> Peer {
     peer
 }
 
-/// Bad first messages end only their peer, as in the old Orbit.
+/// Bad first messages end only their peer.
 fn refusals(path: &Path) {
     // An unsupported version is dropped silently.
     first_message(path, &with_version(&ClientMessage::Hello, 14)).expect_closed();
@@ -60,8 +60,8 @@ pub fn run() {
     first.expect_closed();
     drop(first);
 
-    // A request that fails to decode ends only its attachment, as in
-    // the old Orbit. The encoder refuses zero scroll rows, so the check zeroes
+    // A request that fails to decode ends only its attachment.
+    // The encoder refuses zero scroll rows, so the check zeroes
     // the rows of a canonical scroll.
     let mut malformed = Peer::attach(&server.path, 4.0);
     malformed.frame_with("FIRST a");

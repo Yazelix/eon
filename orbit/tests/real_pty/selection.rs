@@ -121,7 +121,7 @@ pub fn run() {
     client.send(&update(cell(1, 0)));
     client.failure(FailureCode::InvalidInput);
 
-    // The old Orbit's click ladder: a word, a space-delimited span, then the
+    // The click ladder: a word, a space-delimited span, then the
     // logical line, each frozen on release.
     let line = "HELLO WORLD alpha:beta/gamma";
     for (time_ns, expected) in [
@@ -180,11 +180,32 @@ pub fn run() {
 
     // A new attachment starts without the old copy.
     let mut client = Peer::attach(&server.path, 4.0);
-    client.frame();
+    let revision = client.frame().revision;
     client.send(&COPY);
     client.failure(FailureCode::InvalidInput);
+
+    // The child's exit clears a presented selection: the last frame before
+    // Exited shows none.
+    client.send(&begin_at(revision, left(6, 0), Modifiers::SHIFT, 20_000_000_000));
+    client.expect(ServerMessage::Accepted);
+    client.frame();
+    client.send(&finish(right(10, 0), Modifiers::SHIFT));
+    finished(&mut client);
+    let mut last = client.frame();
+    assert!(selected(&last));
+    copied(&mut client, Selection, "WORLD");
     gate.release();
-    client.exited(3);
+    loop {
+        match client.receive() {
+            ServerMessage::Frame(frame) => last = *frame,
+            ServerMessage::Exited { code } => {
+                assert_eq!(code, 3, "exit code");
+                break;
+            }
+            other => panic!("expected a frame or Exited, received {}", brief(&other)),
+        }
+    }
+    assert!(!selected(&last));
     drop(client);
 
     server.passed(3, 10.0);

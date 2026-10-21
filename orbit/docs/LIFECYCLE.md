@@ -106,7 +106,7 @@ credentials and process-start identities diverge by OS
 ([BEHAVIOR.md](BEHAVIOR.md#macos-evidence)). The Bend worker sees only facts
 and never a `libc` value.
 
-The old Orbit's subprocess checks in [`tests/lifecycle.rs`](../tests/lifecycle.rs),
+The subprocess checks in [`tests/lifecycle.rs`](../tests/lifecycle.rs),
 which run unmodified against this server, synchronize on typed responses,
 frames, and PTY state. With bounded timeouts they cover:
 

@@ -13,7 +13,7 @@ printf '\033[?2026h\033]52;s;aGVsZA==\007\033]0;HELD\007'
 gate
 printf '\033[?2026l'
 gate
-# More writes in one read than the old Orbit's bound of 64 end the attachment.
+# More writes in one read than the bound of 64 end the attachment.
 writes=''
 for ((i = 0; i < 300; i++)); do writes+='\033]52;c;eA==\007'; done
 printf "$writes"

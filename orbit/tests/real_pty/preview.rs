@@ -58,7 +58,7 @@ pub fn run() {
     peer.failure(FailureCode::InvalidInput);
     // Mouse tracking enabled inside the held update routes a new request at
     // once, while the deferred one keeps waiting. The update's first output
-    // advanced authority, as in the old Orbit, though its frame is held.
+    // advanced authority, though its frame is held.
     gate.release();
     peer.quiet(0.15, "held output");
     peer.send(&preview(revision, Down));

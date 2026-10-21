@@ -1,8 +1,7 @@
 //! Left-pointer sequences and host selection (ORB-C9). Bend decides each
 //! sequence's route and answers; this module carries out a host phase through
 //! libghostty's tracked gesture APIs, freezes the copied text, keeps the
-//! selection through compatible PTY output, and clears gesture state, as
-//! the old Orbit does.
+//! selection through compatible PTY output, and clears gesture state.
 
 use crate::errno;
 use libghostty_vt::{
@@ -20,14 +19,14 @@ use libghostty_vt::{
 use orbit_protocol::session::{self, SelectionAction, SelectionPosition, SurfaceSize};
 use std::{io, time::Duration};
 
-/// The old Orbit's click repetition interval.
+/// The click repetition interval.
 const CLICK_REPEAT_INTERVAL: Duration = Duration::from_millis(500);
 
 /// What delimits a space-delimited span: ASCII space and tab, besides
 /// unwritten cells and hard line breaks.
 const SPAN_BOUNDARIES: [char; 2] = [' ', '\t'];
 
-/// libghostty's gesture and its events. The old Orbit's click ladder selects
+/// libghostty's gesture and its events. The click ladder selects
 /// cells, words, space-delimited spans and logical lines: libghostty counts
 /// at most three clicks, so the third press uses word events with only space
 /// and tab as boundaries, and a fourth or later press its native line
@@ -196,7 +195,7 @@ impl Pointer {
     }
 
     /// Extends the held host gesture one row toward older history from a
-    /// top-row position, as the old Orbit does: a drag to the top edge
+    /// top-row position: a drag to the top edge
     /// enters upward autoscroll, and one autoscroll tick moves the viewport
     /// and the tracked selection. Reports whether a selection is presented
     /// after it; the gesture and selection are cleared if it fails.

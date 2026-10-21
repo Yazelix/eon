@@ -28,7 +28,7 @@ use std::{
 };
 
 /// Answers a connection that arrived while another peer negotiates with
-/// Busy, written without waiting, and closes it, as the old Orbit does.
+/// Busy, written without waiting, and closes it.
 pub(crate) fn turn_away(mut stream: UnixStream) {
     if let Ok(bytes) = session::encode_server_message(&ServerMessage::Busy) {
         let _ = stream.write_all(&bytes);
@@ -49,7 +49,7 @@ struct SocketGuard {
 
 impl SocketGuard {
     /// Removes the pathname while it is still this socket; an observed
-    /// replacement is left alone without an error, as in the old Orbit.
+    /// replacement is left alone without an error.
     fn unlink_owned(&mut self) -> io::Result<()> {
         let Some((device, inode)) = self.identity else {
             return Ok(());
@@ -91,7 +91,7 @@ impl Listener {
         if !metadata.is_dir() || metadata.uid() != uid || metadata.mode() & 0o7777 != 0o700 {
             return Err(errno(libc::EACCES));
         }
-        // As in the old Orbit, a lock on the private parent serializes
+        // A lock on the private parent serializes
         // concurrent starts, so one claim of a stale pathname wins (ORB-C1).
         let claim = File::open(parent)?;
         claim.try_lock().map_err(|error| match error {
@@ -214,7 +214,7 @@ impl MessageClass {
 }
 
 /// A client's or observer's whole encoded messages, written without blocking.
-/// As in the old Orbit, a newer frame or scroll outcome replaces queued
+/// A newer frame or scroll outcome replaces queued
 /// frames and previews that have not started, a newer preview replaces one such
 /// preview, nothing replaces a scroll outcome, and a newer metadata replaces
 /// queued metadata that has not started. A wheel's viewport outcome counts as
@@ -302,7 +302,7 @@ impl OutputQueue {
 
     /// Whether a host selection phase's answer, frame and, when it finishes,
     /// copied text fit under `bound`, counting the unstarted frames the phase
-    /// supersedes, as the old Orbit checks before a gesture moves.
+    /// supersedes, checked before a gesture moves.
     pub(crate) fn can_push_host_selection(&self, bound: usize, finishing: bool) -> bool {
         let required = if finishing {
             MAX_FRAME_BYTES + session::MAX_COPY_BYTES + 9 + 3 * session::HEADER_BYTES
@@ -423,7 +423,7 @@ pub(crate) enum ObserverInput {
     Quiet,
     Closed,
     /// A message header, or a malformed one, which Bend refuses with
-    /// Failure(Protocol), as the old Orbit does.
+    /// Failure(Protocol).
     Message,
     /// Another ORBS version, dropped without an answer.
     Unsupported,
@@ -542,7 +542,7 @@ impl Peer {
             unreachable!("role request was collected")
         };
         // Role requests have no payload, so a valid header with one is refused
-        // without reading it, as the old Orbit refuses it after reading.
+        // without reading it.
         let decoded = match session::client_message_len(request) {
             Ok(Some(length)) if length > session::HEADER_BYTES => None,
             Ok(_) => Some(session::decode_client_message(request)),
@@ -813,8 +813,8 @@ impl Peer {
     }
 
     /// Reads what the observer sent. Once a whole header has arrived it is a
-    /// message the observer may not send, held for Bend to refuse, as
-    /// the old Orbit refuses it without reading the rest.
+    /// message the observer may not send, held for Bend to refuse
+    /// without reading the rest.
     pub(crate) fn observer_input(&mut self) -> io::Result<ObserverInput> {
         if !matches!(self.session, Session::Attached(Role::Metadata)) {
             return Err(errno(libc::EPROTO));
@@ -868,7 +868,7 @@ impl Peer {
         Ok(())
     }
 
-    /// Discards input that has already arrived, as the old Orbit reads it, so
+    /// Discards input that has already arrived, so
     /// closing with unread input does not reset the peer before it reads its
     /// answer.
     fn discard_input(&mut self) {
@@ -1549,7 +1549,7 @@ mod tests {
         let path = directory.0.join("orbit.sock");
         let listener = Listener::open(&path).unwrap();
         assert_eq!(fs::symlink_metadata(&path).unwrap().mode() & 0o777, 0o600);
-        // A loser names the cause and the path, as the old Orbit does.
+        // A loser names the cause and the path.
         let message = |result: io::Result<Listener>| result.err().unwrap().to_string();
         assert_eq!(
             message(Listener::open(&path)),

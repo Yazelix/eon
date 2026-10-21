@@ -127,7 +127,7 @@ def is_leased(slot: Slot) -> Bool:
       False{}
 
 # The slot after Rust carries out the answer: a refused connection holds the
-# slot until it closes, as in the old Orbit, a busy one never took the slot,
+# slot until it closes, a busy one never took the slot,
 # and a stop keeps the lease until the run ends.
 def after(answer: Answer, signal: Signal, slot: Slot) -> Slot:
   match answer:

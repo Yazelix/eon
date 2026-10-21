@@ -12,7 +12,7 @@ import ./session.bend as Session
 # at start: the finish bound, the pending-peer bound and the
 # synchronized-output bound in milliseconds, and the interactive client's
 # output bound in bytes (one maximum frame, one maximum payload, two headers
-# and 4 KiB, as in the old Orbit).
+# and 4 KiB).
 def bounds() -> String:
   Boundary.schema() ++ Boundary.encode([Boundary.Bounds{1000, 1000, 1000, 12587045}])
 

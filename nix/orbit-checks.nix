@@ -1,15 +1,11 @@
 # Orbit's checks (orbit/docs/DEVELOPMENT.md): the Bend laws, the generated
 # boundary, the terminfo entry, and the real-PTY checks. Each real-PTY check
 # runs one test of the package's real-PTY test binary (orbit/tests/real_pty)
-# against the package; the differential check also runs the old Rust Orbit,
-# built from oldOrbitSource.
+# against the package.
 {
   pkgs,
   bend,
   orbitPackage,
-  ghosttyBuildEnv,
-  workspaceCargoLock,
-  oldOrbitSource,
 }:
 let
   inherit (pkgs) lib;
@@ -36,26 +32,6 @@ let
       ../orbit/proof
       bendFiles
     ];
-  };
-
-  # The old Rust Orbit. Its suite needs host tools, as it did in Eon's package.
-  oldOrbit = pkgs.rustPlatform.buildRustPackage {
-    pname = "yazelix-orbit-old";
-    version = "0.1.0";
-    src = oldOrbitSource;
-    cargoLock = workspaceCargoLock // {
-      lockFile = "${oldOrbitSource}/Cargo.lock";
-    };
-    cargoBuildFlags = [
-      "--package"
-      "yazelix-orbit"
-    ];
-    doCheck = false;
-    nativeBuildInputs = [ pkgs.zig_0_15.hook ];
-    inherit (ghosttyBuildEnv) LIBGHOSTTY_VT_SYS_CPU GHOSTTY_SOURCE_DIR GHOSTTY_ZIG_SYSTEM_DIR;
-    dontUseZigBuild = true;
-    dontUseZigCheck = true;
-    dontUseZigInstall = true;
   };
 
   # A worker generated from the schema plus one flag, compiled as
@@ -131,12 +107,6 @@ let
       };
     }
     { name = "delayed-output"; variable = "DELAY_SHELL"; }
-    {
-      name = "differential";
-      variable = "DIFF_SHELL";
-      timeout = "120s";
-      env.OLD_ORBIT_BIN = "${oldOrbit}/bin/yazelix-orbit";
-    }
     {
       name = "request-half-close";
       env.ORBIT_BASH = bash;
