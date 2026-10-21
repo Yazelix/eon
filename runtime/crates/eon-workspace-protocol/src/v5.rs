@@ -8,102 +8,14 @@ pub use super::v2::{
     MAX_DIRECTORY_BYTES, MAX_TABS, Pane, Runtime, Stopped, declared_message_len,
 };
 pub use super::v3::Action as WorkspaceAction;
+pub use super::v12::{
+    ALT, CTRL, InvokeIntent, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_KEY_BYTES, MAX_LABEL_BYTES,
+    MAX_SESSIONS, PROJECT_ENTRY, Popup, PopupEntry, PopupGeometry, PopupTarget, SHIFT, SUPER,
+    Shortcut,
+};
 
 pub const VERSION: u16 = 5;
-pub const MAX_ENTRIES: usize = 32;
-pub const MAX_ENTRY_ID_BYTES: usize = 64;
-pub const MAX_LABEL_BYTES: usize = 128;
-pub const MAX_KEY_BYTES: usize = 16;
-pub const MAX_SESSIONS: usize = v2::MAX_PANES;
-pub const PROJECT_ENTRY: &str = "project";
-pub const SHIFT: u8 = 1;
-pub const CTRL: u8 = 2;
-pub const ALT: u8 = 4;
-pub const SUPER: u8 = 8;
 pub type Result<T> = std::result::Result<T, Error>;
-
-/// Canonical physical key names, independent of keyboard layout or display text.
-/// KeyA..KeyZ, Digit0..Digit9, F1..F24 and the named keys in `validate` are supported.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct Shortcut {
-    pub modifiers: u8,
-    pub key: String,
-}
-
-impl Shortcut {
-    /// Validate normalized wire syntax. The config owner also checks collisions
-    /// against fixed workspace/native bindings before publishing the catalog.
-    pub fn validate(&self) -> Result<()> {
-        let key = self.key.as_str();
-        let valid_key = match key.as_bytes() {
-            [b'K', b'e', b'y', b'A'..=b'Z'] | [b'D', b'i', b'g', b'i', b't', b'0'..=b'9'] => true,
-            _ => {
-                key.strip_prefix('F')
-                    .and_then(|n| n.parse::<u8>().ok())
-                    .is_some_and(|n| (1..=24).contains(&n) && key == format!("F{n}"))
-                    || matches!(
-                        key,
-                        "Escape"
-                            | "Tab"
-                            | "Enter"
-                            | "Backspace"
-                            | "Space"
-                            | "Insert"
-                            | "Delete"
-                            | "Home"
-                            | "End"
-                            | "PageUp"
-                            | "PageDown"
-                            | "ArrowLeft"
-                            | "ArrowRight"
-                            | "ArrowUp"
-                            | "ArrowDown"
-                            | "Backquote"
-                            | "Backslash"
-                            | "BracketLeft"
-                            | "BracketRight"
-                            | "Comma"
-                            | "Equal"
-                            | "Minus"
-                            | "Period"
-                            | "Quote"
-                            | "Semicolon"
-                            | "Slash"
-                    )
-            }
-        };
-        if self.modifiers == 0
-            || self.modifiers & !(SHIFT | CTRL | ALT | SUPER) != 0
-            || !valid_key
-            || (self.modifiers == CTRL && matches!(key, "KeyC" | "Backslash"))
-        {
-            return Err(Error::InvalidValue { field: "shortcut" });
-        }
-        Ok(())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PopupEntry {
-    pub id: String,
-    pub label: String,
-    pub shortcut: Shortcut,
-}
-
-/// One live instance. A replacement receives a fresh id and endpoint.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Popup {
-    pub id: String,
-    pub entry: String,
-    pub session: String,
-    pub endpoint: Vec<u8>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PopupGeometry {
-    pub side_margin: f32,
-    pub vertical_margin: f32,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tab {
@@ -123,19 +35,6 @@ pub struct Snapshot {
     pub geometry: PopupGeometry,
     pub entries: Vec<PopupEntry>,
     pub tabs: Vec<Tab>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PopupTarget {
-    pub tab: String,
-    pub instance: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InvokeIntent {
-    Toggle,
-    /// A visible but unfocused popup receives focus instead of being hidden.
-    Focus,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

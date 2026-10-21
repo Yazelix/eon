@@ -12,21 +12,10 @@ pub use super::v7::{
     declared_message_len,
 };
 
+pub use super::v12::{ClaudeQuota, ClaudeQuotaState};
+
 pub const VERSION: u16 = 8;
 pub type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ClaudeQuotaState {
-    Fresh,
-    Stale,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ClaudeQuota {
-    pub state: ClaudeQuotaState,
-    pub observed_at: u64,
-    pub windows: Vec<QuotaWindow>,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {

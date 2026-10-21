@@ -1,33 +1,20 @@
 //! Eon-owned values and bounded EONW v2 codec for local workspace clients.
 
-use std::{collections::HashSet, fmt, str};
+use std::collections::HashSet;
+
+pub use super::v12::{
+    Availability, Direction, Error, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
+    MAX_DIRECTORY_BYTES, MAX_TABS, Pane, Runtime, Stopped, declared_message_len,
+};
+pub(crate) use super::v12::{
+    Decoder, Encoder, FAILURE, MAX_ENDPOINT_BYTES, MAX_ID_BYTES, REQUEST, SNAPSHOT, decode_failure,
+    encode_failure, frame_version, identity, nonempty, unframe_version, validate_directory,
+    validate_endpoint,
+};
+use super::v12::{MAX_COMPONENT_REPORT_BYTES, MAX_VERSION_BYTES, RUNTIME, STOPPED};
 
 pub const VERSION: u16 = 2;
-pub const HEADER_BYTES: usize = 12;
-const MAGIC: &[u8; 4] = b"EONW";
-const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
-pub(crate) const MAX_ID_BYTES: usize = 128;
-pub(crate) const MAX_ENDPOINT_BYTES: usize = 4096;
-const MAX_VERSION_BYTES: usize = 128;
-const MAX_COMPONENT_REPORT_BYTES: usize = 32 * 1024;
-pub const MAX_DETAIL_BYTES: usize = 1024;
-pub const MAX_TABS: usize = 64;
-pub const MAX_PANES: usize = 256;
-pub const MAX_DIRECTORY_BYTES: usize = 4096;
-
-pub(crate) const REQUEST: u8 = 1;
-pub(crate) const SNAPSHOT: u8 = 129;
-pub(crate) const FAILURE: u8 = 130;
-const RUNTIME: u8 = 131;
-const STOPPED: u8 = 132;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Direction {
-    Left,
-    Right,
-    Up,
-    Down,
-}
+pub const MAX_PANES: usize = super::v12::MAX_SESSIONS;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
@@ -50,14 +37,6 @@ pub struct Request {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Pane {
-    pub id: String,
-    pub session: String,
-    pub endpoint: Vec<u8>,
-    pub live: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Tab {
     pub id: String,
     pub directory: Vec<u8>,
@@ -76,93 +55,6 @@ pub enum Response {
     Snapshot(Snapshot),
     Failure(Failure),
 }
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Failure {
-    pub code: String,
-    pub detail: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Availability {
-    pub available: bool,
-    pub reason: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Runtime {
-    pub generation: String,
-    pub eon_version: String,
-    pub workspace_protocol: u16,
-    pub component_report: String,
-    pub sessions: Vec<String>,
-    pub attach: Availability,
-    pub stop: Availability,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Stopped {
-    pub generation: String,
-    pub sessions: Vec<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LifecycleResponse {
-    Runtime(Runtime),
-    Stopped(Stopped),
-    Failure(Failure),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Error {
-    InvalidMagic,
-    UnsupportedVersion { version: u16 },
-    InvalidFlags { value: u8 },
-    MessageTooLarge { size: usize },
-    Truncated,
-    TrailingBytes { count: usize },
-    InvalidKind { value: u8 },
-    InvalidTag { field: &'static str, value: u8 },
-    InvalidUtf8 { field: &'static str },
-    InvalidValue { field: &'static str },
-    FieldTooLong { field: &'static str, length: usize },
-    InvalidSnapshot { field: &'static str },
-}
-
-impl fmt::Display for Error {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidMagic => formatter.write_str("invalid EONW message magic"),
-            Self::UnsupportedVersion { version } => {
-                write!(formatter, "unsupported EONW version {version}")
-            }
-            Self::InvalidFlags { value } => write!(formatter, "invalid EONW flags {value:#x}"),
-            Self::MessageTooLarge { size } => write!(
-                formatter,
-                "EONW message is {size} bytes; maximum is {MAX_MESSAGE_BYTES}"
-            ),
-            Self::Truncated => formatter.write_str("truncated EONW message"),
-            Self::TrailingBytes { count } => {
-                write!(formatter, "EONW message has {count} trailing bytes")
-            }
-            Self::InvalidKind { value } => write!(formatter, "invalid EONW message kind {value}"),
-            Self::InvalidTag { field, value } => {
-                write!(formatter, "invalid EONW {field} tag {value}")
-            }
-            Self::InvalidUtf8 { field } => write!(formatter, "EONW {field} is not UTF-8"),
-            Self::InvalidValue { field } => write!(formatter, "invalid EONW {field}"),
-            Self::FieldTooLong { field, length } => {
-                write!(formatter, "EONW {field} is too long: {length} bytes")
-            }
-            Self::InvalidSnapshot { field } => {
-                write!(formatter, "invalid EONW snapshot {field}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for Error {}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -371,21 +263,6 @@ pub(crate) fn decode_lifecycle_response_version(
     Ok(response)
 }
 
-/// Returns the bounded length declared by a complete EONW header.
-pub fn declared_message_len(header: &[u8]) -> Result<usize> {
-    if header.len() < HEADER_BYTES {
-        return Err(Error::Truncated);
-    }
-    let payload_len = u32::from_le_bytes(header[8..12].try_into().unwrap()) as usize;
-    let size = HEADER_BYTES
-        .checked_add(payload_len)
-        .ok_or(Error::MessageTooLarge { size: usize::MAX })?;
-    if size > MAX_MESSAGE_BYTES {
-        return Err(Error::MessageTooLarge { size });
-    }
-    Ok(size)
-}
-
 pub(crate) fn encode_workspace(encoder: &mut Encoder, active_tab: &str, tabs: &[Tab]) {
     encoder.string(active_tab);
     encoder.count(tabs.len());
@@ -438,19 +315,6 @@ pub(crate) fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(String, Vec
         });
     }
     Ok((active_tab, tabs))
-}
-
-pub(crate) fn validate_directory(directory: &[u8]) -> Result<()> {
-    if directory.is_empty() || directory.contains(&0) {
-        return Err(Error::InvalidValue { field: "directory" });
-    }
-    if directory.len() > MAX_DIRECTORY_BYTES {
-        return Err(Error::FieldTooLong {
-            field: "directory",
-            length: directory.len(),
-        });
-    }
-    Ok(())
 }
 
 fn validate_snapshot(snapshot: &Snapshot) -> Result<()> {
@@ -591,203 +455,12 @@ fn decode_availability(decoder: &mut Decoder<'_>, field: &'static str) -> Result
     })
 }
 
-pub(crate) fn validate_endpoint(endpoint: &[u8], field: &'static str) -> Result<()> {
-    if endpoint.is_empty() {
-        return Err(Error::InvalidSnapshot { field });
-    }
-    if endpoint.len() > MAX_ENDPOINT_BYTES {
-        return Err(Error::FieldTooLong {
-            field,
-            length: endpoint.len(),
-        });
-    }
-    Ok(())
-}
-
-pub(crate) fn encode_failure(encoder: &mut Encoder, failure: &Failure) -> Result<()> {
-    identity("failure code", &failure.code)?;
-    nonempty("failure detail", &failure.detail, MAX_DETAIL_BYTES)?;
-    encoder.string(&failure.code);
-    encoder.string(&failure.detail);
-    Ok(())
-}
-
-pub(crate) fn decode_failure(decoder: &mut Decoder<'_>) -> Result<Failure> {
-    let code = decoder.string("failure code", MAX_ID_BYTES)?;
-    identity("failure code", &code)?;
-    let detail = decoder.string("failure detail", MAX_DETAIL_BYTES)?;
-    nonempty("failure detail", &detail, MAX_DETAIL_BYTES)?;
-    Ok(Failure { code, detail })
-}
-
-pub(crate) fn identity(field: &'static str, value: &str) -> Result<()> {
-    nonempty(field, value, MAX_ID_BYTES)?;
-    if !value
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-    {
-        return Err(Error::InvalidValue { field });
-    }
-    Ok(())
-}
-
-pub(crate) fn nonempty(field: &'static str, value: &str, maximum: usize) -> Result<()> {
-    if value.len() > maximum {
-        return Err(Error::FieldTooLong {
-            field,
-            length: value.len(),
-        });
-    }
-    if value.is_empty() {
-        return Err(Error::InvalidValue { field });
-    }
-    Ok(())
-}
-
 fn frame(kind: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
     frame_version(VERSION, kind, payload)
 }
 
-pub(crate) fn frame_version(version: u16, kind: u8, payload: Vec<u8>) -> Result<Vec<u8>> {
-    let size = HEADER_BYTES + payload.len();
-    if size > MAX_MESSAGE_BYTES {
-        return Err(Error::MessageTooLarge { size });
-    }
-    let mut message = Vec::with_capacity(size);
-    message.extend_from_slice(MAGIC);
-    message.extend_from_slice(&version.to_le_bytes());
-    message.push(kind);
-    message.push(0);
-    message.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    message.extend_from_slice(&payload);
-    Ok(message)
-}
-
 fn unframe(bytes: &[u8]) -> Result<(u8, &[u8])> {
     unframe_version(bytes, VERSION)
-}
-
-pub(crate) fn unframe_version(bytes: &[u8], expected_version: u16) -> Result<(u8, &[u8])> {
-    if bytes.len() > MAX_MESSAGE_BYTES {
-        return Err(Error::MessageTooLarge { size: bytes.len() });
-    }
-    if bytes.len() < HEADER_BYTES {
-        return Err(Error::Truncated);
-    }
-    if &bytes[..4] != MAGIC {
-        return Err(Error::InvalidMagic);
-    }
-    let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-    if version != expected_version {
-        return Err(Error::UnsupportedVersion { version });
-    }
-    if bytes[7] != 0 {
-        return Err(Error::InvalidFlags { value: bytes[7] });
-    }
-    let declared = declared_message_len(bytes)?;
-    if bytes.len() < declared {
-        return Err(Error::Truncated);
-    }
-    if bytes.len() > declared {
-        return Err(Error::TrailingBytes {
-            count: bytes.len() - declared,
-        });
-    }
-    Ok((bytes[6], &bytes[HEADER_BYTES..]))
-}
-
-#[derive(Default)]
-pub(crate) struct Encoder {
-    pub(crate) bytes: Vec<u8>,
-}
-
-impl Encoder {
-    pub(crate) fn byte(&mut self, value: u8) {
-        self.bytes.push(value);
-    }
-
-    pub(crate) fn count(&mut self, value: usize) {
-        let value = u16::try_from(value).expect("validated EONW count");
-        self.number(value);
-    }
-
-    pub(crate) fn number(&mut self, value: u16) {
-        self.bytes.extend_from_slice(&value.to_le_bytes());
-    }
-
-    pub(crate) fn string(&mut self, value: &str) {
-        self.raw(value.as_bytes());
-    }
-
-    pub(crate) fn raw(&mut self, value: &[u8]) {
-        let length = u16::try_from(value.len()).expect("validated EONW field length");
-        self.bytes.extend_from_slice(&length.to_le_bytes());
-        self.bytes.extend_from_slice(value);
-    }
-}
-
-pub(crate) struct Decoder<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl<'a> Decoder<'a> {
-    pub(crate) fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
-    }
-
-    pub(crate) fn byte(&mut self) -> Result<u8> {
-        Ok(self.take(1)?[0])
-    }
-
-    pub(crate) fn count(&mut self, field: &'static str, maximum: usize) -> Result<usize> {
-        let value = self.number()? as usize;
-        if value > maximum {
-            return Err(Error::InvalidSnapshot { field });
-        }
-        Ok(value)
-    }
-
-    pub(crate) fn number(&mut self) -> Result<u16> {
-        let bytes = self.take(2)?;
-        Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
-    }
-
-    pub(crate) fn string(&mut self, field: &'static str, maximum: usize) -> Result<String> {
-        str::from_utf8(self.raw(field, maximum)?)
-            .map(str::to_owned)
-            .map_err(|_| Error::InvalidUtf8 { field })
-    }
-
-    pub(crate) fn raw(&mut self, field: &'static str, maximum: usize) -> Result<&'a [u8]> {
-        let bytes = self.take(2)?;
-        let length = u16::from_le_bytes([bytes[0], bytes[1]]) as usize;
-        if length > maximum {
-            return Err(Error::FieldTooLong { field, length });
-        }
-        self.take(length)
-    }
-
-    fn take(&mut self, length: usize) -> Result<&'a [u8]> {
-        let end = self.offset.checked_add(length).ok_or(Error::Truncated)?;
-        let value = self.bytes.get(self.offset..end).ok_or(Error::Truncated)?;
-        self.offset = end;
-        Ok(value)
-    }
-
-    pub(crate) fn rest(self) -> &'a [u8] {
-        &self.bytes[self.offset..]
-    }
-
-    pub(crate) fn finish(self) -> Result<()> {
-        if self.offset == self.bytes.len() {
-            Ok(())
-        } else {
-            Err(Error::TrailingBytes {
-                count: self.bytes.len() - self.offset,
-            })
-        }
-    }
 }
 
 #[cfg(test)]

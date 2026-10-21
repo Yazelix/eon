@@ -7,24 +7,9 @@ pub use super::v2::{
     MAX_DIRECTORY_BYTES, MAX_PANES, MAX_TABS, Pane, Runtime, Stopped, Tab, declared_message_len,
 };
 
-pub const VERSION: u16 = 3;
+pub use super::v12::WorkspaceAction as Action;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Action {
-    Inspect,
-    InspectRuntime,
-    InspectPresentation,
-    Present { workspace: bool },
-    CreateTab,
-    CreatePane,
-    FocusId(String),
-    Focus(Direction),
-    Move(Direction),
-    CloseTab { tab: String },
-    Stop { generation: String },
-    SetTabDirectory { tab: String, directory: Vec<u8> },
-    PickTabDirectory,
-}
+pub const VERSION: u16 = 3;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Request {

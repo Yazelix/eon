@@ -4,47 +4,11 @@
 //! snapshot of its flattened panes, so every v9 rule still applies.
 
 pub use super::v9::*;
+pub use super::v12::{Column, MAX_COLUMNS, Response, Snapshot, Tab};
 use super::{v2, v6, v9};
 
 pub const VERSION: u16 = 10;
-pub const MAX_COLUMNS: usize = 4;
 const CREATE_COLUMN: u8 = 22;
-
-/// One accordion of panes; `expanded` names the pane it shows.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Column {
-    pub panes: Vec<Pane>,
-    pub expanded: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Tab {
-    pub id: String,
-    pub directory: Vec<u8>,
-    pub pending: bool,
-    /// The focused pane: one column's expanded pane.
-    pub selected_pane: Option<String>,
-    /// Retained when another tab is active; not native keyboard-focus state.
-    pub selected_popup: Option<String>,
-    pub columns: Vec<Column>,
-    pub popups: Vec<Popup>,
-}
-
-impl Tab {
-    pub fn panes(&self) -> impl Iterator<Item = &Pane> {
-        self.columns.iter().flat_map(|column| &column.panes)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct Snapshot {
-    pub active_tab: String,
-    pub geometry: PopupGeometry,
-    pub entries: Vec<PopupEntry>,
-    pub tabs: Vec<Tab>,
-    pub codex_quota: Option<CodexQuota>,
-    pub claude_quota: Option<ClaudeQuota>,
-}
 
 impl Snapshot {
     pub fn check_popup_action(&self, action: &Action) -> Result<()> {
@@ -53,12 +17,6 @@ impl Snapshot {
             action => flatten(self).check_popup_action(&v9_action(action)),
         }
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Response {
-    Snapshot(Snapshot),
-    Failure(Failure),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

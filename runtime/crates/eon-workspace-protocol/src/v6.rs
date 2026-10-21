@@ -12,31 +12,10 @@ pub use super::v5::{
     Request, SHIFT, SUPER, Shortcut, Tab, WorkspaceAction,
 };
 
+pub use super::v12::{CodexQuota, CodexQuotaState, CodexQuotaWindow, MAX_CODEX_QUOTA_WINDOWS};
+
 pub const VERSION: u16 = 6;
-pub const MAX_CODEX_QUOTA_WINDOWS: usize = 2;
 pub type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CodexQuotaState {
-    Fresh,
-    Stale,
-    Blocked,
-    Unknown,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CodexQuotaWindow {
-    pub duration_minutes: u32,
-    pub remaining_percent: u8,
-    pub resets_at: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CodexQuota {
-    pub state: CodexQuotaState,
-    pub observed_at: u64,
-    pub windows: Vec<CodexQuotaWindow>,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
