@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v13::{
+use eon_workspace_protocol::v14::{
     self as workspace, Action as WorkspaceAction, Request as WorkspaceRequest,
     Response as WorkspaceResponse,
 };
@@ -60,7 +60,7 @@ pub enum WorkspaceEvent {
     Unavailable(String),
 }
 
-/// Bounded semantic-action handle for EONW v13.
+/// Bounded semantic-action handle for EONW v14.
 pub struct WorkspaceTransport {
     actions: mpsc::SyncSender<WorkspaceAction>,
     events: Arc<WorkspaceEventQueue>,
@@ -713,7 +713,7 @@ fn protocol_loss(error: session::Error) -> TransportEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v13::{
+    use eon_workspace_protocol::v14::{
         InvokeIntent, Pane, Popup, PopupEntry, Shortcut, Snapshot, Tab,
     };
     use orbit_protocol::{
@@ -1383,7 +1383,7 @@ mod tests {
                 id: "t1".into(),
                 directory: b"/tmp/eon".to_vec(),
                 selected_pane: Some("pane-1".into()),
-                columns: vec![eon_workspace_protocol::v13::Column {
+                columns: vec![eon_workspace_protocol::v14::Column {
                     panes: vec![Pane {
                         id: "pane-1".into(),
                         session: "session-1".into(),
@@ -1393,7 +1393,7 @@ mod tests {
                     expanded: "pane-1".into(),
                 }],
             }],
-            geometry: eon_workspace_protocol::v13::PopupGeometry {
+            geometry: eon_workspace_protocol::v14::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1418,7 +1418,7 @@ mod tests {
             id: "t2".into(),
             directory: b"/tmp/nova".to_vec(),
             selected_pane: Some("pane-2".into()),
-            columns: vec![eon_workspace_protocol::v13::Column {
+            columns: vec![eon_workspace_protocol::v14::Column {
                 panes: vec![Pane {
                     id: "pane-2".into(),
                     session: "session-2".into(),

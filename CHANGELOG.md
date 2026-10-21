@@ -13,6 +13,10 @@ installation, and proven contract changes.
   and prints one JSON array with each window's ID and its `eon stop all --json`
   results. It used to fail with `invalid Eon window ID "all"`.
 
+- Enter on a text file in the Files popup opens it in a new Helix pane at the
+  tab's directory and hides Files; Enter on a folder moves into it. `eon edit
+  -- FILE` does the same from any Eon terminal.
+
 - Alt+Enter in the Files popup sets the tab's directory to the hovered folder,
   or Yazi's current one, without moving Yazi; in its search it uses the
   selected result. Popup terminals carry their tab's identity in `EON_TAB`.
@@ -75,7 +79,7 @@ installation, and proven contract changes.
   130 interrupted. Structured failures exited 2 and
   every other failure 1; scripts that tested for those values need updating.
   `eon --help` and [Using Eon](docs/USAGE.md#exit-status) list the statuses.
-- `eon` speaks only EONW 13. A generation started by an older build that uses
+- `eon` speaks only EONW 14. A generation started by an older build that uses
   an earlier EONW is listed as incompatible and can no longer be inspected or
   stopped by this `eon`; stop it with the build that started it.
 - `eon claude-statusline` is gone; Claude quota has come from CodexBar since

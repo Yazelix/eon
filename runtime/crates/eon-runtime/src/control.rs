@@ -2,7 +2,7 @@ use super::{
     supervisor::{LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id},
     workspace,
 };
-use eon_workspace_protocol::v13::{
+use eon_workspace_protocol::v14::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,

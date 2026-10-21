@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v13::{
+use eon_workspace_protocol::v14::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
@@ -2609,9 +2609,22 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     let venus = root.join("venus");
     managed_orbit_executable(&orbit);
     executable(&venus, "#!/bin/sh\nexit 0\n");
+    // A stand-in Helix for `eon edit`, first on the supervisor's PATH.
+    let editor = root.join("editor");
+    fs::create_dir(&editor).unwrap();
+    executable(&editor.join("hx"), "#!/bin/sh\nexit 0\n");
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    let child = eon_command(&binary)
+    let mut command = eon_command(&binary);
+    let path = command
+        .get_envs()
+        .find_map(|(name, value)| (name == "PATH").then_some(value))
+        .flatten()
+        .unwrap()
+        .to_owned();
+    let path = std::iter::once(editor).chain(std::env::split_paths(&path));
+    let child = command
+        .env("PATH", std::env::join_paths(path).unwrap())
         .arg("run")
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
@@ -2692,6 +2705,34 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     let closed = from(&caller, &["pane", "close", "p3", "--json"]);
     assert!(closed.status.success(), "{}", stdout(&closed));
     assert!(!stdout(&closed).contains("\"id\":\"p3\""));
+
+    // `eon edit` opens a relative file from the caller's directory in Helix,
+    // in a new pane beside the calling terminal.
+    let edited = eon_command(&binary)
+        .args(["edit", "--json", "--", "notes.txt"])
+        .current_dir(&root)
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_TERMINAL", &caller)
+        .output()
+        .unwrap();
+    assert!(edited.status.success(), "{}", stdout(&edited));
+    let snapshot = inspect("after-edit");
+    assert_eq!(snapshot.tabs[0].selected_pane.as_deref(), Some("p4"));
+    let pane = &snapshot.tabs[0].columns[0].panes[1];
+    assert_eq!(pane.id, "p4");
+    let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
+    let orbit_arguments = fs::read(format!(
+        "/proc/{}/cmdline",
+        live_identity(endpoint).process_id
+    ))
+    .unwrap();
+    let file = root.join("notes.txt");
+    assert!(
+        orbit_arguments.ends_with(&[b"hx\0", file.as_os_str().as_bytes(), b"\0"].concat()),
+        "{}",
+        String::from_utf8_lossy(&orbit_arguments)
+    );
 
     fs::write(&stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);

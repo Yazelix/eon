@@ -496,7 +496,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v13 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v14 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -690,7 +690,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     program pass on its status.
   - Every Eon terminal's environment carries `EON_TERMINAL`, an opaque value
     naming that terminal's exact Orbit run; the supervisor's other children
-    never inherit one. When set, it makes `pane create`, `pane close
+    never inherit one. When set, it makes `pane create`, `edit`, `pane close
     PANE`, `pane move` and `tab move` act on that terminal's tab instead of the
     active tab: `pane create` adds to the caller's column, the moves move the
     caller's own pane or tab, and `pane close` resolves PANE in the caller's
@@ -701,12 +701,18 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     run outside Eon terminals, ignore it. Every popup terminal's environment
     also carries `EON_TAB`, the `tN` identity of the tab that owned it when it
     started.
+  - `eon edit [--json] -- FILE` opens FILE in the packaged Helix in a new
+    pane, as `pane create` would for the same caller, with the tab directory
+    as its working directory. A relative FILE resolves against the caller's
+    working directory. The editor's argv is runtime policy and does not cross
+    EONW.
 - **Important failures:** A caller that names no live terminal of the
   addressed supervisor (ended, closed, from another generation or window,
   empty, or malformed) changes nothing and exits 3 (`unknown-caller`), with no fallback
   to the active tab. In a tab without panes, a popup caller's `pane move`
   refuses, and so does its `pane create` when dismissing that popup would end
-  the tab's last terminal; both change nothing and exit 1. Malformed, oversized, incompatible, unavailable,
+  the tab's last terminal; both change nothing and exit 1. An unavailable
+  editor changes nothing and exits 1. Malformed, oversized, incompatible, unavailable,
   rejected, timed-out, partially read, or response-lost operations fail within
   the shared bound without reconstructing hidden state or reviving completed
   Stop. Accepted Stop names affected live terminals, sends canonical Stop through
@@ -715,14 +721,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v13 and accepted Orbit management operations.
+- **Consumes:** Current EONW v14 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content, or direct child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v13 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v14 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -740,16 +746,20 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Alt+Shift+Y and runs the pinned Yazi at the tab directory with Eon's packaged
   popup configuration. Tab and Z open one move-only search of Zoxide history:
   Enter moves Yazi to the selected folder, and Tab or Esc returns to browsing.
-  Shift+Tab spots the hovered file. Every other key keeps Yazi's native
-  behavior, including file operations, and the footer names the search and Spot
-  keys. Files remains live when hidden and keeps its process, location and
-  cursor across tab-directory changes; only after its process exits does the
+  Shift+Tab spots the hovered file. Enter on a hovered folder enters it; every
+  other key, including Enter on files, keeps Yazi's native behavior, including
+  file operations, and the footer names the search and Spot keys. Files
+  remains live when hidden and keeps its process, location and cursor across
+  tab-directory changes; only after its process exits does the
   next invocation start a fresh instance at the tab directory. In Files,
   Alt+Enter sets the owning tab's directory, as `eon tab directory` with its
   `EON_TAB` would, to the hovered folder, else Yazi's current folder, or in
   search to the selected result; Yazi does not move. It refuses when that tab
   no longer lists the popup, as after a supervisor recovery. A notification
-  reports the result, and a failure changes nothing. The footers name Alt+Enter. For
+  reports the result, and a failure changes nothing. The footers name Alt+Enter.
+  In Files, Yazi's edit opener runs `eon edit`, so Enter on a text file opens
+  it in a new Helix pane and hides the popup. Enter on a folder enters it,
+  and other file types keep Yazi's default openers. For
   Git and other keep-alive popups except Files, retargeting changes no process
   until the next invocation, which stops the exact old terminal before starting
   a fresh one at the new directory. A stop failure preserves the old instance;
@@ -789,7 +799,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   targets `eon-8mnr.2` (automated and installed tiers); Agent parking on
   retarget `eon-tbn1` (automated and installed tiers); the Files popup
   `eon-ecne.1` (automated and installed tiers); `EON_TAB` and Files Alt+Enter
-  `eon-ecne.4` (automated and installed tiers).
+  `eon-ecne.4` (automated and installed tiers); `eon edit` and Files Enter
+  `eon-ecne.2` (automated and installed tiers).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -802,6 +813,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `retarget_parks_the_agent_and_restarts_git_only_on_its_next_invocation`,
     `chooser_retarget_parks_a_hidden_agent_as_the_first_pane_of_a_paneless_tab`,
     `files_keeps_its_terminal_across_retargets`,
+    `files_edits_a_file_in_a_new_helix_pane_of_its_tab`,
     `orbit_uses_configured_argv_only_for_default_sessions`,
     `chooser_result_requires_its_exact_live_invocation`); deadlines and
     failures (`unix_connection_attempt_obeys_timeout`,
@@ -813,7 +825,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     (`messages_keep_their_wire_bytes`,
     `callers_act_in_their_own_tab_without_changing_the_active_tab`,
     `a_transient_popup_caller_never_removes_its_paneless_tab`,
-    `commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing`).
+    `commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing`,
+    `edit_parser_sends_one_absolute_opaque_file`).
     Installed checklist items 3 and 4 (`eon workspace` against the window;
     Project, Git, Agent and Anima popups). Installed `eon-8mnr.2` observation on
     isolated headless Sway: from a terminal in an inactive tab, `eon pane create`
@@ -834,7 +847,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     a search result set tab t1's directory without moving Yazi; Alt+Enter on a
     search with no match changed nothing quietly; after a supervisor kill and
     recovery, Alt+Enter in the recovered Files Yazi refused and changed
-    nothing.
+    nothing. Installed `eon-ecne.2` observation on isolated headless Sway:
+    in Files, Enter on a folder entered it; Enter on a text file opened a new
+    selected pane running the packaged Helix on that file at the tab
+    directory and hid Files, which reopened at the same place.
 
 ## EON-C11 — Runtime generations and presentation
 

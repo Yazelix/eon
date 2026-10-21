@@ -11,6 +11,8 @@
   function and modifier keys) outside the numpad replaces the physical key for
   terminal input and Venus's own key handling; letter, digit, punctuation and
   numpad keys stay physical (`eon-venus-keysym-named-keys-chnh`).
+- Venus consumes EONW v14, which adds a file-edit request that Venus never
+  sends (`eon-ecne.2`).
 - Venus consumes EONW v13, whose requests may name a calling terminal; Venus
   sends none, so its actions keep targeting the active tab (`eon-8mnr.2`).
 - VEN-C28, VEN-C27, VEN-C25: a read-only `RAM  43%` label, from

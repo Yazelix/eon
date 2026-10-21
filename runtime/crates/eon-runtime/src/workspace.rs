@@ -1,5 +1,5 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v13::{
+use eon_workspace_protocol::v14::{
     Action, Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS,
     MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
     PopupEntry as SnapshotEntry, PopupTarget, Side, Snapshot, Tab as SnapshotTab, WorkspaceAction,
@@ -14,6 +14,8 @@ use std::{
 };
 
 const MAX_RECENT_REQUESTS: usize = 256;
+/// The packaged Helix on Eon's terminal PATH, which `eon edit` runs.
+const EDITOR: &str = "hx";
 
 pub(crate) fn is_directory_picker_session(id: &str) -> bool {
     id.strip_prefix("directory-picker-")
@@ -275,7 +277,7 @@ impl Workspace {
 
     /// Applies one action. `caller` names the issuing terminal's session, whose
     /// tab and pane replace the active tab and its selection as the implicit
-    /// target of pane create and move actions and tab moves.
+    /// target of pane create, edit and move actions and tab moves.
     pub(crate) fn dispatch(
         &mut self,
         request_id: &str,
@@ -292,7 +294,8 @@ impl Workspace {
                 (self.target_tab(caller)?.0, None)
             }
             Action::Workspace(WorkspaceAction::CreatePane | WorkspaceAction::Move(_))
-            | Action::MovePaneSideways(_) => {
+            | Action::MovePaneSideways(_)
+            | Action::Edit { .. } => {
                 let (target, pane) = self.target_tab(caller)?;
                 (target, pane.map(|pane| self.select(target, pane)))
             }
@@ -356,6 +359,15 @@ impl Workspace {
                     .map_err(|detail| action_error("session-start", detail))?;
             }
             Action::MovePaneSideways(side) => self.move_pane_sideways(target, side)?,
+            Action::Edit { file } => {
+                self.require_established(target)?;
+                let argv = prepare(
+                    &PopupCommand::Argv(vec![EDITOR.into(), OsString::from_vec(file)]),
+                    &self.tabs[target].directory,
+                )
+                .map_err(|detail| action_error("edit-command", detail))?;
+                self.create_pane(target, called, LaunchCommand::Tool(argv), &mut operate)?;
+            }
         }
         Ok(())
     }
@@ -382,13 +394,7 @@ impl Workspace {
             }
             WorkspaceAction::CreateTab => self.create_tab(prepare, operate)?,
             WorkspaceAction::CreatePane => {
-                self.require_established(target)?;
-                if called {
-                    self.require_surviving_dismissal(target)?;
-                }
-                let target = self.dismiss_for_pane_action(target, operate)?;
-                self.start_pane(target, operate)
-                    .map_err(|detail| action_error("session-start", detail))?;
+                self.create_pane(target, called, LaunchCommand::Pane, operate)?
             }
             WorkspaceAction::FocusId(id) => self.focus_id(&id, operate)?,
             WorkspaceAction::Focus(direction) => self.focus_direction(direction, operate)?,
@@ -398,6 +404,23 @@ impl Workspace {
             }
         }
         Ok(())
+    }
+
+    fn create_pane(
+        &mut self,
+        target: usize,
+        called: bool,
+        command: LaunchCommand,
+        operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
+    ) -> Result<(), Failure> {
+        self.require_established(target)?;
+        if called {
+            self.require_surviving_dismissal(target)?;
+        }
+        let target = self.dismiss_for_pane_action(target, operate)?;
+        let directory = self.tabs[target].directory.clone();
+        self.start_pane_in(target, &directory, false, command, operate)
+            .map_err(|detail| action_error("session-start", detail))
     }
 
     fn create_tab(
@@ -858,7 +881,7 @@ impl Workspace {
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
         let directory = self.tabs[tab_index].directory.clone();
-        self.start_pane_in(tab_index, &directory, true, operate)
+        self.start_pane_in(tab_index, &directory, true, LaunchCommand::Pane, operate)
     }
 
     fn start_pane_at(
@@ -867,7 +890,7 @@ impl Workspace {
         directory: &Path,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
-        self.start_pane_in(tab_index, directory, false, operate)
+        self.start_pane_in(tab_index, directory, false, LaunchCommand::Pane, operate)
     }
 
     /// Starts a pane in the selected column, or in a new column right of it.
@@ -876,6 +899,7 @@ impl Workspace {
         tab_index: usize,
         directory: &Path,
         new_column: bool,
+        command: LaunchCommand,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
         self.check_session_capacity()?;
@@ -896,7 +920,7 @@ impl Workspace {
         operate(SessionOperation::Start {
             session: pane.session.clone(),
             directory: directory.to_path_buf(),
-            command: LaunchCommand::Pane,
+            command,
             tab: None,
         })?;
         self.next_pane += 1;
@@ -1587,13 +1611,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v13::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v14::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v13::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v13::ALT, "Alt"),
-        (eon_workspace_protocol::v13::SHIFT, "Shift"),
-        (eon_workspace_protocol::v13::SUPER, "Super"),
+        (eon_workspace_protocol::v14::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v14::ALT, "Alt"),
+        (eon_workspace_protocol::v14::SHIFT, "Shift"),
+        (eon_workspace_protocol::v14::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1646,7 +1670,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v13::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v14::{ALT, PopupGeometry, Shortcut};
 
     fn catalog() -> PopupCatalog {
         PopupCatalog {
@@ -1768,8 +1792,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v13::encode_response(
-            &eon_workspace_protocol::v13::Response::Snapshot(after),
+        eon_workspace_protocol::v14::encode_response(
+            &eon_workspace_protocol::v14::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -3034,6 +3058,95 @@ mod tests {
     }
 
     #[test]
+    fn files_edits_a_file_in_a_new_helix_pane_of_its_tab() {
+        let root = std::env::temp_dir().join(format!("eon-edit-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut workspace = Workspace::with_recovered_sessions(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: root.join("orbit.sock"),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        workspace
+            .dispatch(
+                "open",
+                None,
+                Action::InvokePopup {
+                    tab: "t1".into(),
+                    entry: "files".into(),
+                    expected_instance: None,
+                    intent: InvokeIntent::Toggle,
+                },
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        let files = workspace.snapshot().tabs[0].popups[0].clone();
+        let edit = || Action::Edit {
+            file: b"/src/\xff.rs".to_vec(),
+        };
+
+        // An unavailable editor changes nothing.
+        let before = workspace.snapshot();
+        let failure = workspace
+            .dispatch(
+                "missing",
+                Some(&files.session),
+                edit(),
+                |_, _| Err("no hx".into()),
+                |_| Err("nothing starts".into()),
+            )
+            .unwrap_err();
+        assert_eq!(failure.code, "edit-command");
+        assert_eq!(workspace.snapshot(), before);
+
+        let mut started = Vec::new();
+        workspace
+            .dispatch(
+                "edit",
+                Some(&files.session),
+                edit(),
+                prepared,
+                |operation| {
+                    started.push(operation);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let [
+            SessionOperation::Start {
+                directory,
+                command: LaunchCommand::Tool(argv),
+                tab: None,
+                ..
+            },
+        ] = started.as_slice()
+        else {
+            panic!("one editor pane starts: {started:?}");
+        };
+        assert_eq!(directory, &root);
+        assert_eq!(
+            argv,
+            &["hx".into(), OsString::from_vec(b"/src/\xff.rs".to_vec())]
+        );
+        // The editor is the tab's selected pane, and Files is hidden but kept.
+        let tab = &workspace.snapshot().tabs[0];
+        assert_eq!(tab.panes().count(), 2);
+        assert_eq!(tab.selected_pane.as_deref(), Some("p2"));
+        assert_eq!(tab.popups, std::slice::from_ref(&files));
+        assert_eq!(tab.selected_popup, None);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn chooser_retarget_parks_a_hidden_agent_as_the_first_pane_of_a_paneless_tab() {
         let root = std::env::temp_dir().join(format!("eon-park-{}", std::process::id()));
         let next = root.join("next");
@@ -3155,8 +3268,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v13::encode_response(
-            &eon_workspace_protocol::v13::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v14::encode_response(
+            &eon_workspace_protocol::v14::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 

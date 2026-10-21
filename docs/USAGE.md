@@ -173,11 +173,13 @@ tab, with its conversation and old directory intact, and the next Alt+Shift+L
 starts a fresh agent in the new directory. Git restarts in the new directory
 the next time you open it. Files is Yazi at the tab's directory: Tab or Z
 searches recent folders and Enter moves Yazi there, Shift+Tab shows the
-hovered file's details, and every other Yazi key, including file operations,
-works as usual. It keeps its place when the tab's directory changes; quitting Yazi with
+hovered file's details, Enter on a folder moves into it, and every other Yazi
+key, including file operations, works as usual. It keeps its place when the tab's directory changes; quitting Yazi with
 `q` closes it, and the next Alt+Shift+Y opens a fresh one. Alt+Enter sets the
 tab's directory to the hovered folder, or Yazi's current one, without moving
-Yazi; in search it uses the selected result. Anima is transient:
+Yazi; in search it uses the selected result. Enter on a text file opens it in
+a new Helix pane beside your work and hides Files, one pane per selected file;
+other files keep Yazi's default openers. Anima is transient:
 closing its popup stops playback and returns to the tab.
 
 ### Scrolling and directory picker
@@ -234,6 +236,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
 | `eon pane create [--json]` | Create a pane in the active tab's selected column, or in the calling pane's column |
+| `eon edit [--json] -- FILE` | Open FILE in Helix in a new pane, placed as `pane create` places it, at the tab's directory |
 | `eon pane close PANE [--json]` | Close a pane of the active tab, or of the calling terminal's tab, stopping its terminal |
 | `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |
 | `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
@@ -257,7 +260,7 @@ terminals when you need its final status; stopping its own terminal can
 terminate the CLI.
 
 Every Eon terminal names itself in `EON_TERMINAL`, an opaque value. Run inside
-an Eon terminal, `pane create`, `pane close`, `pane move` and `tab move` act on
+an Eon terminal, `pane create`, `edit`, `pane close`, `pane move` and `tab move` act on
 that terminal's own tab rather than the active one: a pane adds the new pane to
 its own column and moves itself, and a popup acts for its tab's selected pane.
 The active tab and desktop focus stay where they are. When the terminal has

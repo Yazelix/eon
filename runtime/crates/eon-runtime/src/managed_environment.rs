@@ -9,7 +9,7 @@ use std::{
     process::Command,
 };
 
-use eon_workspace_protocol::v13::{
+use eon_workspace_protocol::v14::{
     ALT, CTRL, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry, SHIFT, SUPER,
     Shortcut,
 };
@@ -586,7 +586,7 @@ pub(crate) fn prepare_popup_command(
         PopupCommand::Argv(argv) => {
             if !popup_executable(&argv[0], session_bin, directory)? {
                 return Err(format!(
-                    "popup executable {:?} is unavailable on Eon's terminal PATH",
+                    "executable {:?} is unavailable on Eon's terminal PATH",
                     argv[0]
                 ));
             }
@@ -689,7 +689,8 @@ pub(crate) fn command(
         Tool::Files => {
             let files = env::var_os("EON_FILES_CONFIG")
                 .ok_or("the installed Eon package has no Files popup configuration")?;
-            // Its Alt+Enter calls this same Eon build to set the popup's tab directory.
+            // Its Alt+Enter and edit opener call this same Eon build, to set the
+            // popup's tab directory and to open files in Helix panes.
             let eon = env::current_exe()
                 .map_err(|error| format!("cannot find the running Eon executable: {error}"))?;
             // Yazi prefers PWD even when it disagrees with the terminal's actual CWD.

@@ -16,7 +16,7 @@ use super::{
     windows,
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::v13::{
+use eon_workspace_protocol::v14::{
     Action, Direction, Failure, PopupTarget, Response, Side, VERSION, WorkspaceAction, valid_caller,
 };
 use std::{
@@ -25,7 +25,7 @@ use std::{
     fs,
     io::{IsTerminal, Write},
     os::unix::{
-        ffi::OsStrExt,
+        ffi::{OsStrExt, OsStringExt},
         process::{CommandExt, ExitStatusExt},
     },
     path::{Path, PathBuf},
@@ -403,6 +403,7 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             if command == "workspace"
                 || command == "tab"
                 || command == "pane"
+                || command == "edit"
                 || command == "focus" =>
         {
             let (action, json) = parse_control_arguments(&arguments)?;
@@ -466,6 +467,7 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
   {command}tab directory TAB [--json] -- DIRECTORY{reset}     Set the tab's launch directory
   {command}tab move left|right [--json]{reset}                Move the active tab
   {command}pane create [--json]{reset}                        Add a pane to the active tab
+  {command}edit [--json] -- FILE{reset}                       Open FILE in Helix in a new pane
   {command}pane close PANE [--json]{reset}                    Close a pane of the active tab
   {command}pane move up|down|left|right [--json]{reset}       Move the selected pane
   {command}focus ID|left|right|up|down [--json]{reset}        Focus by ID or navigate
@@ -655,6 +657,7 @@ fn calling_terminal(action: &Action) -> Result<Option<String>, Failure> {
         Action::Workspace(WorkspaceAction::CreatePane | WorkspaceAction::Move(_))
             | Action::MovePaneSideways(_)
             | Action::ClosePane { .. }
+            | Action::Edit { .. }
     ) {
         return Ok(None);
     }
@@ -675,6 +678,9 @@ fn calling_terminal(action: &Action) -> Result<Option<String>, Failure> {
 
 fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Error> {
     if let Some(action) = parse_tab_directory_arguments(arguments)? {
+        return Ok(action);
+    }
+    if let Some(action) = parse_edit_arguments(arguments)? {
         return Ok(action);
     }
     let mut json = false;
@@ -750,10 +756,35 @@ fn parse_tab_directory_arguments(arguments: &[OsString]) -> Result<Option<(Actio
     )))
 }
 
+/// `edit [--json] -- FILE`, with a relative FILE resolved against the
+/// caller's working directory.
+fn parse_edit_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>, Error> {
+    let (file, json) = match arguments {
+        [command, separator, file] if command == "edit" && separator == "--" => (file, false),
+        [command, flag, separator, file]
+            if command == "edit" && flag == "--json" && separator == "--" =>
+        {
+            (file, true)
+        }
+        [command, ..] if command == "edit" => return Err(Error::usage(EON_USAGE)),
+        _ => return Ok(None),
+    };
+    if file.is_empty() {
+        return Err(Error::usage("eon edit needs a file"));
+    }
+    let file = std::path::absolute(file)
+        .map_err(|error| Error::from(format!("cannot resolve {file:?}: {error}")))?;
+    Ok(Some((
+        Action::Edit {
+            file: file.into_os_string().into_vec(),
+        },
+        json,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::ffi::OsStringExt;
 
     #[test]
     fn tab_directory_parser_preserves_one_opaque_path_argument() {
@@ -785,6 +816,41 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn edit_parser_sends_one_absolute_opaque_file() {
+        let file = OsString::from_vec(b"/tmp/eon-\xff".to_vec());
+        assert_eq!(
+            parse_control_arguments(&["edit".into(), "--json".into(), "--".into(), file]).unwrap(),
+            (
+                Action::Edit {
+                    file: b"/tmp/eon-\xff".to_vec(),
+                },
+                true,
+            )
+        );
+        let (Action::Edit { file }, false) =
+            parse_control_arguments(&["edit", "--", "a.txt"].map(Into::into)).unwrap()
+        else {
+            panic!("edit parses as Edit");
+        };
+        assert_eq!(
+            OsString::from_vec(file),
+            env::current_dir().unwrap().join("a.txt").into_os_string()
+        );
+        for arguments in [
+            &["edit", "a.txt"][..],
+            &["edit", "--"],
+            &["edit", "--", ""],
+            &["edit", "--", "a", "b"],
+        ] {
+            let arguments: Vec<OsString> = arguments.iter().map(Into::into).collect();
+            assert!(
+                parse_control_arguments(&arguments).is_err(),
+                "{arguments:?}"
+            );
+        }
     }
 
     #[test]

@@ -475,13 +475,21 @@
         EOF
       '';
 
-      # The Files popup's Yazi: Nova's F+ keys (Yazelix Nova defaults/yazi at cd95fee1)
-      # without its editor actions.
+      # The Files popup's Yazi: Nova's F+ keys (Yazelix Nova defaults/yazi at cd95fee1),
+      # with files opening in a new Helix pane instead of Nova's managed editor.
       filesPopupConfig = pkgs.runCommand "eon-files-popup-config" { } ''
-        mkdir -p "$out/plugins/quick-search.yazi" "$out/plugins/tab-folder.yazi"
+        mkdir -p "$out/plugins/quick-search.yazi" "$out/plugins/tab-folder.yazi" "$out/plugins/smart-enter.yazi"
+        cat > "$out/yazi.toml" <<'EOF'
+        # Text files open through `eon edit`; a failure stays on screen until Enter.
+        [opener]
+        edit = [
+          { run = '"$EON_FILES_CLI" edit -- %s1 >/dev/null || { printf "Press Enter to return to Files"; read _; }', block = true, desc = "Edit in a new Helix pane", for = "unix" },
+        ]
+        EOF
         cat > "$out/keymap.toml" <<'EOF'
         [mgr]
         prepend_keymap = [
+          { on = "<Enter>", run = "plugin smart-enter", desc = "Enter the hovered folder, else open as usual" },
           { on = "<Tab>", run = "plugin quick-search", desc = "Search recent folders" },
           { on = "Z", run = "plugin quick-search", desc = "Search recent folders" },
           { on = "<BackTab>", run = "spot", desc = "Spot hovered file" },
@@ -497,6 +505,17 @@
         Status:children_add(function()
           return tostring(cx.layer) == "mgr" and " Alt+Enter Set tab folder · Tab/Z Search · Shift+Tab Spot" or ""
         end, 1000, Status.LEFT)
+        EOF
+        cat > "$out/plugins/smart-enter.yazi/main.lua" <<'EOF'
+        --- @sync entry
+        -- Yazi's open rules would edit a folder; Enter moves into a hovered one
+        -- instead and otherwise opens as usual (after yazi-rs/plugins smart-enter).
+        return {
+          entry = function()
+            local hovered = cx.active.current.hovered
+            ya.emit(hovered and hovered.cha.is_dir and "enter" or "open", {})
+          end,
+        }
         EOF
         cat > "$out/plugins/quick-search.yazi/main.lua" <<'EOF'
         -- One search of Zoxide history for Tab and Z: Enter moves Yazi, Alt+Enter sets the tab folder.
