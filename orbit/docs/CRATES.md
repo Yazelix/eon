@@ -1,8 +1,7 @@
 # Orbit crate decisions
 
 Orbit, Venus, Eon and Eon Runtime commit hashes from before 2026-10-14 in this
-file refer to the private pre-consolidation archive. They record history, not
-proof in this repository; the contract indexes own current proof status.
+file identify revisions outside this repository: history, not proof.
 Upstream project revisions keep their usual meaning.
 
 This is the durable index of direct and architecture-shaping crate decisions.

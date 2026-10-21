@@ -262,8 +262,8 @@ generation. Workspace and lifecycle state cross process boundaries only through
 EONW for Eon clients; canonical Orbit management records and leases remain the
 private child-lifecycle boundary. Nix resolves the canonical component graph and
 injects paths without becoming a runtime owner. A subsystem review includes its
-direct callers and consumers; a separate repository integration review
-reconciles invariants that cross these boundaries.
+direct callers and consumers; a repository-wide integration review reconciles
+invariants that cross these boundaries.
 
 ## Runtime library boundary
 

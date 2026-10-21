@@ -1,10 +1,5 @@
 # Session protocol
 
-Orbit, Venus, Eon and Eon Runtime commit hashes from before 2026-10-14 in this
-file refer to the private pre-consolidation archive. They record history, not
-proof in this repository; the contract indexes own current proof status.
-Upstream project revisions keep their usual meaning.
-
 ORBS carries exact-version session messages. ORBF carries complete terminal
 frames inside those messages; [`orbit-protocol`](../crates/protocol) owns both
 codecs.
@@ -41,7 +36,7 @@ then checks typed values, truncation, and trailing bytes.
 The session layer embeds canonical ORBF frames without interpreting them again.
 Copy and gesture cancellation remain explicit; terminal authority stays in Orbit.
 
-## Contract and version history
+## Contract
 
 Orbit keeps a real terminal process and the sole authoritative libghostty state
 alive independently of its graphical client. One local input-capable client
@@ -50,30 +45,15 @@ attachment, the input-capable client receives a coherent complete structured
 presentation frame at one revision followed by later frame revisions in order.
 The observer receives only live title, working directory, revision, and
 lifecycle metadata. The client sends semantic input for Orbit to encode against
-authoritative terminal state. The initial contract covers surviving client and
+authoritative terminal state. The contract covers surviving client and
 observer exits and disconnections while Orbit continues running; it does not
 cover Orbit or machine restarts.
 
-The first accepted integration, before consolidation, used Venus source
-`e5e37a3df119ee2bcfa2493a2ce5a46307493732` with canonical ORBF v1 over
-ORBS v6 at exact Orbit proof `780f5d746175b4a9b71df57c51ed4bfcc4c4c375`. Eon source
-`10c402b3754d600a6bb0a0da0de2ff6d1d4feca3` composes that accepted pair;
-Eonova source `92acf64e8c43531bd4c5d639bdfa99b717dfe5b3` consumes the resulting Eon
-runtime. That pre-consolidation x86_64 Linux evidence
-covered same-boot recovery, owner-routed Stop, and native Wayland delivery to the
-primary selection. Ordinary clipboard delivery, Wayland without data-control,
-broader compositors, and macOS Venus/Eon composition remain unproved. No
-adapter, feature probe, dual-version support, or compatibility window exists.
-
-Later exact revisions changed the same boundary without a compatibility
-window:
-
-| Version | Accepted source | Change |
-|---|---|---|
-| ORBS v7 | `baf8aa28dcaa50484cd221aa7730defedc2356bb` | Expanded one-row preview to a bounded row window. |
-| ORBS v8 | `d9b22eb294f8f42b4f49324fd5467eab239c2917` | Replaced client-authored viewport cells with bounded pointer positions and press time. |
-| ORBS v9 | `aed0bcb7e9ad08c8e3e086c7dad0a0eb3ef16672` | Moved terminal/host left-pointer routing into Orbit; Shift bypasses mouse capture. Release and explicit copy target distinct clipboards. |
-| ORBS v10 | `59975e9176f5caf8b78dc3273e88d9ecbb75dc3f` | Finish reports its exact presentation revision for rapid pointer sequences. |
+ORBS and ORBF are exact-version: no adapter, feature probe, dual-version
+support, or compatibility window exists. [CHANGELOG.md](../CHANGELOG.md)
+records accepted wire changes from ORBS v13 on, [CRATES.md](CRATES.md) and
+[TERMINAL.md](TERMINAL.md) keep the source revisions of earlier versions, and
+the [contract index](CONTRACTS.md) owns proof status.
 
 ### Replication boundary
 
