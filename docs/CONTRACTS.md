@@ -745,9 +745,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Result:**
   - Eon and eonbase use separate runtime namespaces and default to their exact
     current generation.
-  - Generation identity combines immutable runtime/EONW source and build
-    inputs with Eon assembly/default/validator/graph/Cargo/Nix-generated inputs;
-    each generation owns one private directory. Store/profile paths, mutable
+  - Generation identity is Runtime's `g1-` hash of Eon's source-tree digest,
+    which covers runtime/EONW source and build inputs and Eon
+    assembly/default/validator/graph/Cargo/Nix-generated inputs; each
+    generation owns one private directory. Store/profile paths, mutable
     configuration, PIDs and live state do not define identity.
   - Older live generations that speak the current EONW remain discoverable,
     presentable when compatible, and stoppable through their own supervisor;
@@ -798,12 +799,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
   identity, presentation compatibility window, remote runtime, plugin API, service-manager
   requirement, or automatic eviction.
-- **Assembly boundary:** The `eon-runtime` generation owner consumes immutable
-  runtime/EONW bytes and Eon's source-tree digest, which includes
-  generated-command inputs. Exact presentation checks remain;
-  retain the prior executable to reattach incompatible old work. See
-  [generation inputs](ARCHITECTURE.md#defaults-overrides-and-generation) and
-  [cutover acceptance](ARCHITECTURE.md#acceptance-boundaries).
+- **Assembly boundary:** The `eon-runtime` generation owner hashes Eon's
+  source-tree digest, which includes runtime/EONW source and generated-command
+  inputs. Exact presentation checks remain; retain the prior executable to
+  reattach incompatible old work. See
+  [generation inputs](ARCHITECTURE.md#defaults-overrides-and-generation).
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `generation_identity_is_stable_bounded_and_namespaced`,

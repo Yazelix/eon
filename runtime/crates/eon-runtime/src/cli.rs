@@ -38,7 +38,7 @@ const EONBASE_USAGE: &str = "usage: eonbase [--no-decorations] [--application-id
 pub struct Inputs {
     pub version: &'static str,
     pub component_report: Result<String, String>,
-    pub assembly: &'static [&'static [u8]],
+    pub assembly: &'static [u8],
     pub defaults: managed_environment::Defaults,
     pub orbit: PathBuf,
     pub venus: PathBuf,

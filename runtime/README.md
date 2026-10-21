@@ -37,11 +37,12 @@ report, opaque executable paths, and immutable assembly contribution. The
 runtime has no dependency on Eon, its component graph, validator, product
 defaults, assets or Nix expressions.
 
-Runtime combines its own immutable runtime/EONW bytes with the supplied assembly
-contribution to compute one `g1-` generation, which Orbit terminal records carry as their
-component generation. Mutable configuration, live state and store/profile paths
-do not become generation identity. Orbit remains the
-terminal owner; Venus remains the native presentation owner.
+Runtime hashes the supplied assembly contribution into one `g1-` generation,
+which Orbit terminal records carry as their component generation. The
+contribution must cover the runtime and EONW source, as Eon's source-tree
+digest does. Mutable configuration, live state and store/profile paths do not
+become generation identity. Orbit remains the terminal owner; Venus remains the
+native presentation owner.
 
 When an acquired Orbit dies without a final result, Runtime validates the dead
 process and original Live record before retiring its exact residue. Healthy
@@ -75,24 +76,17 @@ provider resets, including stale observations. Only v12 remains: the CLI
 inspects and stops supervisors that use it, lists any other as incompatible,
 and presentation remains bound to the original exact executable.
 
-## Package provenance
+## Packages
 
-The crates were transferred unchanged from Eon's pre-consolidation history at
-`e431d7583c84ff574054d2edf556e9827114987e` (runtime subtree
-`3dcfef6bf31758233f2a33eb31d5184ebeae9843`, EONW subtree
-`8409c419a3496d6f01eeef65295f5d95b943313e`), including manifests and unit
-tests. That history is kept in a private archive; [NOTICE](NOTICE) records the
-same source. Runtime depends on the in-tree Orbit protocol crate.
-
-Runtime and codec have separate package manifests and version owners.
+Runtime and codec have separate package manifests and version owners. Runtime
+depends on the in-tree Orbit protocol crate.
 
 EONW's complete package is its Cargo manifest, `src/lib.rs` and
 `src/v12.rs`. It has no external dependencies, feature declarations,
 build script or workspace-inherited settings.
 
-Eon's `eon-runtime-producer-68hq` holds the accepted transfer revision and
-verification evidence. Runtime evolution has one owner here; Eon owns product
-composition and installed-product proof.
+Runtime evolution has one owner here; Eon owns product composition and
+installed-product proof.
 
 ## Development
 
@@ -110,11 +104,11 @@ defines.
 Tests use independent supplied inputs. Eon's actual executable integration
 tests stay with Eon in `eon/crates/eon/tests`.
 The composed product is proved on x86_64 Linux native Wayland; Apple Silicon
-macOS remains unproved for Eon. This transfer expands no platform support.
+macOS remains unproved for Eon.
 
 ## License
 
-[Apache-2.0](LICENSE). [NOTICE](NOTICE) records the immutable transfer source.
+[Apache-2.0](LICENSE), with the attribution in [NOTICE](NOTICE).
 Eon assets and their unrelated third-party notices are not part of this source
 library.
 
@@ -125,10 +119,9 @@ artifacts.
 
 | Surface | Lines |
 |---|---:|
-| Rust source and tests | 14,578 |
+| Rust source and tests | 13,601 |
 | Cargo manifests | 24 |
 | Agent guidelines | 37 |
-| README | 129 |
+| README | 127 |
 | License and notice | 209 |
-| Repository ignore rules | 1 |
-| **Total** | **14,978** |
+| **Total** | **13,998** |

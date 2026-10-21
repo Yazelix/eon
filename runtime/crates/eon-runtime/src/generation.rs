@@ -24,35 +24,16 @@ use std::{
 
 pub(super) fn current_generation(inputs: &Inputs) -> Result<String, String> {
     inputs.component_report()?;
-    let mut sources: Vec<&[u8]> = vec![
-        include_bytes!("lib.rs"),
-        include_bytes!("../Cargo.toml"),
-        include_bytes!("cli.rs"),
-        include_bytes!("quota.rs"),
-        include_bytes!("control.rs"),
-        include_bytes!("generation.rs"),
-        include_bytes!("managed_environment.rs"),
-        include_bytes!("sessions.rs"),
-        include_bytes!("supervisor.rs"),
-        include_bytes!("workspace.rs"),
-        include_bytes!("windows.rs"),
-        include_bytes!("../../eon-workspace-protocol/src/lib.rs"),
-        include_bytes!("../../eon-workspace-protocol/src/v12.rs"),
-        include_bytes!("../../eon-workspace-protocol/Cargo.toml"),
-    ];
-    sources.extend_from_slice(inputs.assembly);
-    Ok(generation_id(&sources))
+    Ok(generation_id(inputs.assembly))
 }
 
-fn generation_id(inputs: &[&[u8]]) -> String {
+fn generation_id(input: &[u8]) -> String {
     const OFFSET: u128 = 0x6c62272e07bb014262b821756295c58d;
     const PRIME: u128 = 0x0000000001000000000000000000013b;
     let mut hash = OFFSET;
-    for input in inputs {
-        for byte in (input.len() as u64).to_le_bytes().iter().chain(*input) {
-            hash ^= u128::from(*byte);
-            hash = hash.wrapping_mul(PRIME);
-        }
+    for byte in input {
+        hash ^= u128::from(*byte);
+        hash = hash.wrapping_mul(PRIME);
     }
     format!("g1-{hash:032x}")
 }
@@ -675,9 +656,9 @@ mod tests {
 
     #[test]
     fn generation_identity_is_stable_bounded_and_namespaced() {
-        let first = generation_id(&[b"ab".as_slice(), b"c".as_slice()]);
-        assert_eq!(first, generation_id(&[b"ab".as_slice(), b"c".as_slice()]));
-        assert_ne!(first, generation_id(&[b"a".as_slice(), b"bc".as_slice()]));
+        let first = generation_id(b"abc");
+        assert_eq!(first, generation_id(b"abc"));
+        assert_ne!(first, generation_id(b"abd"));
         assert!(valid_generation(&first));
         assert!(!valid_generation("legacy"));
         assert!(!valid_generation("g1-0123456789ABCDEF0123456789ABCDEF"));
@@ -692,7 +673,7 @@ mod tests {
         let mut inputs = crate::fixtures::inputs();
         let first = current_generation(&inputs).unwrap();
         assert_eq!(first, current_generation(&inputs).unwrap());
-        inputs.assembly = &[b"changed-assembly"];
+        inputs.assembly = b"changed-assembly";
         assert_ne!(first, current_generation(&inputs).unwrap());
     }
 

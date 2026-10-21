@@ -11,7 +11,7 @@ pub(crate) fn inputs() -> Inputs {
         version: "fixture-product",
         component_report: Ok("fixture-components".into()),
         codexbar: "missing-fixture-codexbar".into(),
-        assembly: &[b"fixture-assembly"],
+        assembly: b"fixture-assembly",
         defaults: Defaults {
             show_version: true,
             shell: ShellConfig {

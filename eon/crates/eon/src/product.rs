@@ -6,11 +6,10 @@ use eon_workspace_protocol::v12::{ALT, PopupGeometry, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     const MANIFEST: &str = include_str!("../../../../components/eon-alpha-v3.json");
-    const ASSEMBLY: &[&[u8]] = &[env!("EON_WORKSPACE_DIGEST").as_bytes()];
     Inputs {
         version: env!("CARGO_PKG_VERSION"),
         component_report: eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string()),
-        assembly: ASSEMBLY,
+        assembly: env!("EON_WORKSPACE_DIGEST").as_bytes(),
         defaults: Defaults {
             show_version: true,
             shell: ShellConfig {

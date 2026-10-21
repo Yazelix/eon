@@ -196,8 +196,8 @@ Paths below are relative to the repository root.
 ### Generation lifecycle
 
 - **Owning surfaces:** `runtime/crates/eon-runtime/src/generation.rs`
-- **Owns:** One generation identity combining runtime/EONW bytes with the supplied
-  assembly contribution, generation-directory projection, bounded discovery
+- **Owns:** One generation identity hashing the supplied assembly contribution,
+  generation-directory projection, bounded discovery
   and classification, list output, explicit attachment selection, and validated owner-routed
   stop initiation
 - **Does not own:** EONW transport, Orbit terminal lifecycle, component launch, topology, or
@@ -269,23 +269,19 @@ reconciles invariants that cross these boundaries.
 
 **Status: in-tree composition on x86_64 Linux native Wayland.** Eon and
 eonbase build Eon Runtime, EONW, Orbit and Venus from this workspace.
-`eon-runtime-cutover-y1wy` and `eon-runtime-extraction-l4wh` record the earlier
-external composition.
 
 Eon's actual executable and Nix packager consume the in-tree runtime library and
-codec. Invocation must preserve existing Eon/eonbase commands,
-errors, configuration, terminal authority and generation isolation. Invalid
-graph or package inputs fail at their existing required boundary. The extraction
-adds an in-process Rust library, with no additional daemon or IPC boundary.
+codec as an in-process Rust library, with no daemon or IPC boundary between
+them. Invalid graph or package inputs fail at their required boundary.
 
 ### Ownership and invocation
 
 | Owner | Responsibility |
 |---|---|
 | Eon | Product contracts/version/default values, actual executable and exit/error mapping, canonical component graph and `eon-manifest`, assets, component selection, Nix translation and distribution |
-| `eon-runtime` | Existing `cli`, `quota`, `control`, `generation`, `managed_environment`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
+| `eon-runtime` | The `cli`, `quota`, `control`, `generation`, `managed_environment`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
 | `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v12 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
-| Orbit and Venus | Their existing terminal and native-client authority |
+| Orbit and Venus | Their terminal and native-client authority |
 
 Eon calls one concrete library entry point. Runtime handles invocation selection,
 CLI projection and managed dispatch; Eon's real `main` retains process exit
@@ -300,7 +296,7 @@ pair.
 | Fallible validated component facts | The sole graph validator's report |
 | Concrete defaults | Chosen shell/terminal/Anima settings, popup definitions/margins, palette, program fallbacks and Agent preference order |
 | Immutable assembly contribution | Eon's source-tree digest; see [In-tree package selection](#in-tree-package-selection) |
-| Opaque launch inputs | Existing component/program paths and environment/configuration projection, preserving current resolution and override order |
+| Opaque launch inputs | Component/program paths and environment/configuration projection, in their resolution and override order |
 
 Eon may precompute graph validation without effects and pass its result.
 Runtime consumes a failure only where the current command needs the graph,
@@ -312,28 +308,28 @@ Source dependencies run from Eon to the library and selected Orbit/Venus
 artifacts, from runtime to Orbit's canonical protocol, and from Venus to Orbit's
 protocol and EONW. The library has no Eon dependency, graph, validator or
 reverse source include. Its unit tests use independent, test-only input data;
-the real Eon executable keeps its unchanged process integration tests.
+the real Eon executable keeps its process integration tests.
 `eon-runtime` builds and tests without the Eon crates.
 
 ### Defaults, overrides and generation
 
 Eon supplies chosen default values; runtime parses and validates user overrides.
 An absent config file, section or field inherits those supplied defaults.
-Explicit values retain their current meaning, including false values and empty
+Explicit values keep their meaning, including false values and empty
 collections where accepted. Runtime preserves unknown-field rejection, popup
 constraints and validation bounds. It reads shell config for each new implicit
 shell terminal and terminal config when opening or reopening a surface; it
 does not cache mutable config in the immutable assembly inputs.
 
 Deadlines, framing limits, grammar, permissions, identity checks and native
-admission bounds remain runtime/child constraints. Moving defaults does not
+admission bounds remain runtime/child constraints. Supplied defaults do not
 turn those limits into product tuning options or introduce another parser.
 
-One runtime generation owner combines its immutable runtime/EONW source and
-relevant build inputs with Eon's supplied assembly contribution. Both owners'
-production changes remain covered, including generated shell adapters and
-private command projection. Identical inputs yield stable `g1-` identity;
-runtime, defaults or generated-command changes select a different generation.
+Runtime owns the generation algorithm and its `g1-` format, and hashes only
+the assembly contribution Eon supplies: a digest of the source tree that covers
+runtime and EONW source, defaults, generated shell adapters and private command
+projection. Identical inputs yield stable `g1-` identity; a change to any of
+them selects a different generation.
 Source relocation may change identity. Store/profile paths, mutable config,
 PIDs and live state do not enter it; normal runtime use evaluates no Nix.
 
@@ -355,30 +351,6 @@ selects a new generation.
 Orbit terminal records carry the runtime's generation ID as their component
 generation. Mutable configuration, store and profile paths never enter the
 digest.
-
-### Acceptance boundaries
-
-The runtime library and its cutover were accepted through these boundaries.
-
-| Boundary | Cheapest falsifier and implementation owner |
-|---|---|
-| Defaults/config/preflight | Actual parser/launch effects with supplied non-default values and absent/partial overrides; invalid graph creates no runtime owner/socket/child. `eon-runtime-product-inputs-1dbd` |
-| Library/version/generation | Real Eon process suite, unequal library/product versions, stable-input identity and runtime-only A/B with fixed codec/Venus. `eon-runtime-seam-2tes` |
-| Composed activation | Locked Rust and both Nix products accept runtime-only A/B with fixed Venus/codec; installed old/new generations retain owner authority. `eon-runtime-cutover-y1wy` |
-
-Cutover refreshes the named profile elements without restarting live work.
-Old generations that use the current EONW remain discoverable and
-owner-stoppable; one with another EONW version is listed as incompatible.
-New-client Present still requires exact current EONW and component-report
-equality; added package records can make old presentation incompatible.
-Retain the exact prior executable/artifact to reattach old work.
-A new bare launch selects the new generation; extraction promises no automatic
-adoption or same-generation migration.
-
-Installed acceptance, source removal and profile refresh stay together.
-Record exact sources/artifacts/environment/result/phase before
-claiming runtime proof. Nix-only Linux Wayland remains the accepted platform;
-the approved unproved Darwin and distribution-graduation gates are unchanged.
 
 ## Composition unit
 
