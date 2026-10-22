@@ -35,14 +35,8 @@ impl DiagnosticLog {
     /// Opens this supervisor's log in `$XDG_STATE_HOME/eon/logs`; a log that cannot
     /// be created is reported on stderr and leaves the supervisor without one.
     pub(super) fn open(generation: &str, mode: &str) -> Arc<Self> {
-        let directory = nonempty_environment_path("XDG_STATE_HOME")
-            .filter(|path| path.is_absolute())
-            .or_else(|| {
-                nonempty_environment_path("HOME")
-                    .filter(|path| path.is_absolute())
-                    .map(|home| home.join(".local/state"))
-            })
-            .map(|state| state.join("eon/logs"))
+        let directory = state_directory()
+            .map(|state| state.join("logs"))
             .ok_or_else(|| "neither XDG_STATE_HOME nor HOME is an absolute path".to_string());
         Self::open_in(directory, generation, mode)
     }
@@ -135,6 +129,18 @@ impl DiagnosticLog {
             }
         }
     }
+}
+
+/// Eon's directory in `$XDG_STATE_HOME`, or in `~/.local/state` without it.
+pub(super) fn state_directory() -> Option<PathBuf> {
+    nonempty_environment_path("XDG_STATE_HOME")
+        .filter(|path| path.is_absolute())
+        .or_else(|| {
+            nonempty_environment_path("HOME")
+                .filter(|path| path.is_absolute())
+                .map(|home| home.join(".local/state"))
+        })
+        .map(|state| state.join("eon"))
 }
 
 fn create(directory: &Path, generation: &str) -> Result<Sink, String> {

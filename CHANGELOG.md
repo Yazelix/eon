@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A newly started Eon window shows the last Codex and Claude quota readings
+  until its own read succeeds, instead of no quota chips. Eon keeps each
+  provider's last good reading in `$XDG_STATE_HOME/eon/quota`, shared by all
+  your Eon windows; it turns `old` and disappears on the usual schedule.
+
 - Alt+Shift+M opens a Commands popup: search a list of Eon commands, such
   as new tab, move tab, list generations or stop older generations, and press
   Enter to run one for that tab. Each line shows the `eon` command it runs.

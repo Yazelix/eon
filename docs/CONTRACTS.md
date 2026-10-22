@@ -1746,17 +1746,23 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   (VEN-C26), with provider periods, optional resets and observation time.
   Claude needs no status-line setup. No reset is invented for an idle window.
 - **Ownership:** Pinned CodexBar owns provider collection and credential access;
-  Runtime owns bounded subprocesses, validation and freshness; canonical EONW
-  permits absent resets; Venus consumes typed facts through its existing chip
-  owners. Eon owns exact Nix composition.
+  Runtime owns bounded subprocesses, validation, freshness and the stored
+  readings; canonical EONW permits absent resets; Venus consumes typed facts
+  through its existing chip owners. Eon owns exact Nix composition.
 - **Failure policy:** Each read has a ten-second deadline and 64 KiB output cap.
   A failed read keeps retained data unchanged; age alone marks it old after one
   hour. Readings disappear after 24 hours and windows at their reset.
   Successful missing quota clears prior facts. Invalid, future, estimated or
   unsupported facts never become zero usage. Provider failures are independent.
+  Retained data outlives the supervisor: each successful read replaces one
+  stored reading per provider, shared by every Eon generation of the user, and
+  a provider that starts reading shows that stored reading until its own read
+  succeeds. A stored reading that is unreadable, malformed, dated in the future
+  or in another format version is ignored, never shown as zero usage.
 - **Boundary:** One selected account per provider, Linux Wayland and Nix only.
   Explicit sources avoid browser fallback, interactive login and model turns.
-  No credential, identity, raw output or billing data enters EONW or Eon logs.
+  No credential, identity, raw output or billing data enters EONW, Eon logs or
+  the stored readings.
   Sign-out is not detected: CodexBar reports it as a failed read, so the last
   reading ages like any other (Lucca, 2026-10-16). Blocked/unknown labels are
   not guaranteed.
@@ -1793,6 +1799,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     and by one isolated installed observation recorded in that bead: a hidden
     provider is never called, a provider first shown on reopen reads at once,
     and hiding every chip stops every read; that bead's commit is its revision.
+    Stored readings that outlive the supervisor
+    (`eon-eon-quota-survives-restart-dfof`) are proved by
+    `stored_readings_outlive_the_supervisor_and_bad_ones_are_ignored` and by
+    one isolated installed observation recorded in that bead: a supervisor
+    whose every read fails with Claude's rate-limit error shows the Codex and
+    Claude readings an earlier supervisor stored; that bead's commit is its
+    revision.
 - **Open proof:** Pending re-proof in this repository: real installed Codex and
   Claude windows with reset details on hover; on an installed surface, a
   controlled source failure leaving a recent reading unchanged and a retained

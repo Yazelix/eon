@@ -96,7 +96,8 @@ percentage, then hide quota chips one by one, the one closest to the tabs
 first, before tabs and controls.
 
 Eon reads a provider's quota only while `[bar] widgets` lists its chip, checked
-when a window opens or reopens. A chip listed again appears after its
+when a window opens or reopens. A chip listed again shows its provider's
+stored reading at once, if there is one, and otherwise appears after its
 provider's next read.
 
 Codex refreshes at least one minute apart and Claude at least five minutes
@@ -104,6 +105,11 @@ apart, also after a failed read or a chip shown again. A failed read keeps the l
 disappear after 24 hours. Each supplied reset expires its own window. Missing
 facts do not mean zero usage. Sign-out is not detected; the last reading ages
 like any other and disappears after 24 hours.
+
+Each provider's last good reading is also stored in `$XDG_STATE_HOME/eon/quota`
+(`~/.local/state/eon/quota` by default), shared by all your Eon windows, so a
+newly started window shows it until its own read succeeds. The stored reading
+holds only windows, remaining percentages, resets and when they were read.
 
 Claude needs no status-line setup.
 
