@@ -72,7 +72,10 @@ eon stop all
 
 `eon stop` shows the generation's live terminal identities and asks for
 confirmation. Closing a window is therefore detach; stopping a generation ends
-its terminals. Previous generations that use the current EONW can be stopped
+its terminals. To end every terminal in the window you are in, open Commands
+(Alt+Shift+M) and choose Quit this window: it runs `eon stop` for that window's
+generation, with the same confirmation, and stops only that window.
+Previous generations that use the current EONW can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
 A generation from a build with another EONW version is listed as incompatible;
 stop it with the build that started it.
@@ -186,7 +189,7 @@ other files keep Yazi's default openers. Anima is transient:
 closing its popup stops playback and returns to the tab.
 
 Commands lists Eon commands you can search and run: new tab, pane or
-window, close or move the tab, show the workspace, windows,
+window, close or move the tab, quit this window, show the workspace, windows,
 generations, versions or config path, stop older generations, and command
 help. Each line shows the `eon` command it runs. Enter runs it from the popup
 for that tab, with the command's own checks and Stop's confirmation. New pane

@@ -104,7 +104,8 @@ enum RunnerOutput {
 
 /// The Commands popup's curated list. Each entry runs an existing `eon` command as the popup's
 /// caller, so the CLI keeps owning validation, targets and confirmations. `TAB` stands for the
-/// popup's own tab. Pane moves are absent because Eon refuses them while a popup is open.
+/// popup's own tab and `GENERATION` for its window's generation. Pane moves are absent because Eon
+/// refuses them while a popup is open.
 const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
     use RunnerOutput::{Close, Keep};
     &[
@@ -112,6 +113,7 @@ const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
         ("New pane", &["pane", "create"], Close),
         ("New window", &["window", "new"], Close),
         ("Close tab", &["tab", "close", "TAB"], Close),
+        ("Quit this window", &["stop", "GENERATION"], Close),
         ("Move tab left", &["tab", "move", "left"], Close),
         ("Move tab right", &["tab", "move", "right"], Close),
         ("Show workspace", &["workspace"], Keep),
@@ -124,10 +126,26 @@ const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
     ]
 };
 
-fn runner_arguments<'a>(arguments: &[&'a str], tab: &'a str) -> Vec<&'a str> {
+fn runner_arguments<'a>(arguments: &[&'a str], tab: &'a str, generation: &'a str) -> Vec<&'a str> {
     arguments
         .iter()
-        .map(|argument| if *argument == "TAB" { tab } else { argument })
+        .map(|argument| match *argument {
+            "TAB" => tab,
+            "GENERATION" => generation,
+            _ => argument,
+        })
+        .collect()
+}
+
+/// The picker's lines: index, label and the exact `eon` command each runs.
+fn runner_list(tab: &str, generation: &str) -> String {
+    RUNNER_COMMANDS
+        .iter()
+        .enumerate()
+        .map(|(index, (label, arguments, _))| {
+            let command = runner_arguments(arguments, tab, generation).join(" ");
+            format!("{index}\t{label:<24}eon {command}\n")
+        })
         .collect()
 }
 
@@ -147,14 +165,8 @@ fn command_runner(inputs: &Inputs) -> i32 {
 
 fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> {
     let tab = env::var(TAB_VARIABLE).map_err(|_| "runs only in an Eon popup".to_string())?;
-    let list: String = RUNNER_COMMANDS
-        .iter()
-        .enumerate()
-        .map(|(index, (label, arguments, _))| {
-            let command = runner_arguments(arguments, &tab).join(" ");
-            format!("{index}\t{label:<24}eon {command}\n")
-        })
-        .collect();
+    let generation = current_generation(inputs)?;
+    let list = runner_list(&tab, &generation);
     let mut picker = packaged_fzf("Command > ", "Enter Run · Esc/Ctrl+C Cancel")
         .args(["--delimiter=\t", "--with-nth=2.."])
         .stdin(Stdio::piped())
@@ -187,7 +199,7 @@ fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> 
         .and_then(|index| index.trim().parse::<usize>().ok())
         .and_then(|index| RUNNER_COMMANDS.get(index))
         .ok_or("command picker returned an invalid selection")?;
-    let arguments = runner_arguments(arguments, &tab)
+    let arguments = runner_arguments(arguments, &tab, &generation)
         .into_iter()
         .map(OsString::from)
         .collect();
@@ -946,9 +958,19 @@ mod tests {
 
     #[test]
     fn command_runner_workspace_entries_parse_as_eon_commands() {
+        let generation = "g1-0123456789abcdef0123456789abcdef";
+        assert!(
+            runner_list("t2", generation)
+                .lines()
+                .any(|line| line
+                    .ends_with(&format!("Quit this window        eon stop {generation}")))
+        );
         for (label, arguments, _) in RUNNER_COMMANDS {
-            let arguments = runner_arguments(arguments, "t2");
-            assert!(!arguments.contains(&"TAB"), "{label}");
+            let arguments = runner_arguments(arguments, "t2", generation);
+            assert!(
+                !arguments.contains(&"TAB") && !arguments.contains(&"GENERATION"),
+                "{label}"
+            );
             if ["workspace", "tab", "pane"].contains(&arguments[0]) {
                 let arguments: Vec<OsString> = arguments.into_iter().map(OsString::from).collect();
                 assert!(parse_control_arguments(&arguments).is_ok(), "{label}");

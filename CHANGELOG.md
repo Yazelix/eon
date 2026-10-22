@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Commands (Alt+Shift+M) has a Quit this window entry. It runs `eon stop` for
+  the window you are in, lists that window's live terminals and asks first;
+  answering yes ends them all and closes the window, and anything else changes
+  nothing. In an independent window it stops only that window.
+
 - A new Eon window that starts slowly on a busy machine now gets 30 seconds
   to become ready instead of 5, so Eon no longer closes it with
   `cannot admit Eon Desktop presentation: EAGAIN`. If it still is not ready,
