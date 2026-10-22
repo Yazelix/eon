@@ -78,6 +78,18 @@ pkgs.writeShellApplication {
         --chdir "$root" -- "$@"
     }
 
+    # Eon Runtime's lease tests run the Orbit at ORBIT_BIN: this workspace's,
+    # unless the caller names another.
+    if [ -z "''${ORBIT_BIN:-}" ]; then
+      sandbox cargo build --locked --offline --package yazelix-orbit
+      target=''${CARGO_TARGET_DIR:-''${CARGO_BUILD_TARGET_DIR:-target}}
+      case $target in
+        /*) ;;
+        *) target=$root/$target ;;
+      esac
+      environment+=(--setenv ORBIT_BIN "$target/debug/yazelix-orbit")
+    fi
+
     if [ "$#" -gt 0 ]; then
       sandbox cargo test --locked --offline "$@"
     else

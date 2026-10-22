@@ -10,7 +10,7 @@ use super::{
 use eon_workspace_protocol::v15::MAX_SESSIONS;
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LiveIdentity,
-    ObjectIdentity, ProcessOutcome, Record as ManagementRecord,
+    ObjectIdentity, ProcessOutcome, ProgramStatus, Record as ManagementRecord,
     ServerMessage as ManagementServerMessage, TerminationReason, Tombstone,
 };
 use std::{
@@ -521,6 +521,8 @@ fn acquire_management(
         record_object: candidate.record,
         identity: candidate.identity,
         lease: stream,
+        program_status: None,
+        stop_sent: false,
         child: None,
         finished: None,
     })
@@ -778,7 +780,11 @@ pub(super) struct RunningSession {
     record: PathBuf,
     record_object: ObjectIdentity,
     identity: LiveIdentity,
+    /// This Runtime is the lease's one reader and keeps at most one request
+    /// in flight on it (EON-C31 Polling).
     lease: UnixStream,
+    program_status: Option<ProgramStatusRequest>,
+    stop_sent: bool,
     child: Option<Child>,
     finished: Option<SessionEnd>,
 }
@@ -787,6 +793,159 @@ pub(super) struct RunningSession {
 enum SessionEnd {
     Managed(TerminationReason, ProcessOutcome),
     OwnerLost,
+}
+
+/// A `ProgramStatus` request in flight on a lease: the request bytes not yet
+/// written, the reply bytes read so far, and the poller's deadline.
+struct ProgramStatusRequest {
+    unsent: Vec<u8>,
+    reply: Vec<u8>,
+    deadline: Instant,
+}
+
+enum ReplyProgress {
+    Complete,
+    WouldBlock,
+    Closed,
+}
+
+/// Writes what remains of the request, then reads the reply without reading
+/// past its end. A lease that ends or fails reports `Closed`, which the EOF
+/// probe owns.
+fn advance_program_status(
+    lease: &mut UnixStream,
+    request: &mut ProgramStatusRequest,
+) -> Result<ReplyProgress, String> {
+    while !request.unsent.is_empty() {
+        match lease.write(&request.unsent) {
+            Ok(0) => return Ok(ReplyProgress::Closed),
+            Ok(written) => drop(request.unsent.drain(..written)),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                return Ok(ReplyProgress::WouldBlock);
+            }
+            Err(_) => return Ok(ReplyProgress::Closed),
+        }
+    }
+    loop {
+        let length = management::server_message_len(&request.reply)
+            .map_err(|error| format!("invalid terminal program status result: {error}"))?
+            .unwrap_or(management::HEADER_BYTES);
+        let start = request.reply.len();
+        if start == length {
+            return Ok(ReplyProgress::Complete);
+        }
+        request.reply.resize(length, 0);
+        let read = lease.read(&mut request.reply[start..]);
+        request.reply.truncate(start + *read.as_ref().unwrap_or(&0));
+        match read {
+            Ok(0) => return Ok(ReplyProgress::Closed),
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                return Ok(ReplyProgress::WouldBlock);
+            }
+            Err(_) => return Ok(ReplyProgress::Closed),
+        }
+    }
+}
+
+/// What one read of a `ProgramStatus` request found. Busy ends the request; a
+/// passed deadline or an ended lease leaves it in flight, so later reads keep
+/// draining it and return its reply if it comes, while `send_program_status`
+/// sends no other until then. The EOF probe owns an ended lease.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the attention poller reads program status from eon-agent-sidebar-yx8.6 on"
+    )
+)]
+pub(super) enum ProgramStatusRead {
+    /// No reply yet, before the deadline.
+    Pending,
+    /// No reply by the deadline, a Busy refusal (EON-C31), an ended lease, or
+    /// no request in flight.
+    Missed,
+    Reply(ProgramStatus),
+}
+
+/// Sends a `ProgramStatus` request without blocking, unless one is already in
+/// flight, a Stop was sent, or the run ended. Returns whether it sent one.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the attention poller reads program status from eon-agent-sidebar-yx8.6 on"
+    )
+)]
+pub(super) fn send_program_status(
+    session: &mut RunningSession,
+    deadline: Instant,
+) -> Result<bool, String> {
+    if session.is_finished() || session.stop_sent || session.program_status.is_some() {
+        return Ok(false);
+    }
+    let unsent = management::encode_client_message(&ManagementClientMessage::ProgramStatus)
+        .map_err(|error| format!("cannot encode terminal program status request: {error}"))?;
+    let request = session.program_status.insert(ProgramStatusRequest {
+        unsent,
+        reply: Vec::new(),
+        deadline,
+    });
+    advance_program_status(&mut session.lease, request)?;
+    Ok(true)
+}
+
+/// Reads the in-flight `ProgramStatus` reply without blocking.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the attention poller reads program status from eon-agent-sidebar-yx8.6 on"
+    )
+)]
+pub(super) fn read_program_status(
+    session: &mut RunningSession,
+) -> Result<ProgramStatusRead, String> {
+    let Some(request) = &mut session.program_status else {
+        return Ok(ProgramStatusRead::Missed);
+    };
+    match advance_program_status(&mut session.lease, request)? {
+        ReplyProgress::Complete => {}
+        ReplyProgress::WouldBlock if Instant::now() < request.deadline => {
+            return Ok(ProgramStatusRead::Pending);
+        }
+        ReplyProgress::WouldBlock | ReplyProgress::Closed => {
+            return Ok(ProgramStatusRead::Missed);
+        }
+    }
+    let reply = std::mem::take(&mut request.reply);
+    session.program_status = None;
+    match management::decode_server_message(&reply) {
+        Ok(ManagementServerMessage::ProgramStatus(status)) => Ok(ProgramStatusRead::Reply(status)),
+        Ok(ManagementServerMessage::Busy) => Ok(ProgramStatusRead::Missed),
+        Ok(_) => Err("terminal returned the wrong program status result".into()),
+        Err(error) => Err(format!("invalid terminal program status result: {error}")),
+    }
+}
+
+/// Advances the in-flight `ProgramStatus` reply without blocking and discards
+/// it once whole, so a Stop written next is never pipelined behind the request
+/// and its answer is never read as the reply. Returns whether nothing remains
+/// in flight.
+fn drain_program_status(session: &mut RunningSession) -> Result<bool, String> {
+    let Some(request) = &mut session.program_status else {
+        return Ok(true);
+    };
+    match advance_program_status(&mut session.lease, request)? {
+        ReplyProgress::Complete => {
+            session.program_status = None;
+            Ok(true)
+        }
+        ReplyProgress::WouldBlock => Ok(false),
+        ReplyProgress::Closed => Err("terminal ended before answering program status".into()),
+    }
 }
 
 impl RunningSession {
@@ -1195,12 +1354,22 @@ pub(super) fn session_finished(session: &mut RunningSession) -> Result<Option<i3
     let end = if let Some(end) = session.finished {
         end
     } else {
-        match session.lease.read(&mut [0]) {
-            Ok(0) => {}
-            Ok(_) => return Err("terminal sent an unsolicited management result".into()),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
-            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => return Ok(None),
-            Err(_) => {}
+        // An in-flight reply's bytes belong to its request; only bytes after
+        // it are unsolicited.
+        let progress = match &mut session.program_status {
+            Some(request) => advance_program_status(&mut session.lease, request)?,
+            None => ReplyProgress::Complete,
+        };
+        match progress {
+            ReplyProgress::Complete => match session.lease.read(&mut [0]) {
+                Ok(0) => {}
+                Ok(_) => return Err("terminal sent an unsolicited management result".into()),
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => return Ok(None),
+                Err(_) => {}
+            },
+            ReplyProgress::WouldBlock => return Ok(None),
+            ReplyProgress::Closed => {}
         }
         wait_and_finalize_tombstone(
             session,
@@ -1222,22 +1391,53 @@ pub(super) fn stop_managed_sessions(
     let deadline = Instant::now() + timeout;
     let request = management::encode_client_message(&ManagementClientMessage::Stop)
         .map_err(|error| format!("cannot encode terminal stop: {error}"))?;
-    let mut writes = Vec::with_capacity(sessions.len());
-    for session in sessions.iter_mut().filter(|session| !session.is_finished()) {
-        let result = (|| {
-            let remaining = operation_timeout(deadline, "terminal stop")?;
-            session
-                .lease
-                .set_nonblocking(false)
-                .and_then(|()| session.lease.set_write_timeout(Some(remaining)))
-                .map_err(|error| format!("cannot bound terminal stop: {error}"))?;
-            session
-                .lease
-                .write_all(&request)
-                .map_err(|error| format!("cannot send terminal stop: {error}"))
-        })();
-        writes.push(result);
+    let write_stop = |session: &mut RunningSession| {
+        let remaining = operation_timeout(deadline, "terminal stop")?;
+        session
+            .lease
+            .set_nonblocking(false)
+            .and_then(|()| session.lease.set_write_timeout(Some(remaining)))
+            .map_err(|error| format!("cannot bound terminal stop: {error}"))?;
+        session.stop_sent = true;
+        session
+            .lease
+            .write_all(&request)
+            .map_err(|error| format!("cannot send terminal stop: {error}"))
+    };
+    // Each lease gets Stop once its in-flight reply is drained, so a silent
+    // terminal delays only its own Stop.
+    let mut writes = sessions
+        .iter()
+        .filter(|session| !session.is_finished())
+        .map(|_| None)
+        .collect::<Vec<Option<Result<(), String>>>>();
+    loop {
+        for (session, write) in sessions
+            .iter_mut()
+            .filter(|session| !session.is_finished())
+            .zip(&mut writes)
+            .filter(|(_, write)| write.is_none())
+        {
+            *write = match drain_program_status(session) {
+                Ok(true) => Some(write_stop(session)),
+                Ok(false) => continue,
+                Err(error) => Some(Err(error)),
+            };
+        }
+        if writes.iter().all(Option::is_some) {
+            break;
+        }
+        if Instant::now() >= deadline {
+            for write in writes.iter_mut().filter(|write| write.is_none()) {
+                *write = Some(Err(
+                    "terminal did not answer program status before stop".into()
+                ));
+            }
+            break;
+        }
+        thread::sleep(Duration::from_millis(1));
     }
+    let writes = writes.into_iter().flatten();
 
     let mut errors = Vec::new();
     for (session, write) in sessions
@@ -1333,9 +1533,9 @@ pub(super) fn stop_managed_sessions(
 mod tests {
     use super::{
         EndpointIdentity, LiveIdentity, ManagementRecord, ObjectIdentity, ProcessOutcome,
-        RunningSession, TerminationReason, Tombstone, is_directory_picker_endpoint,
-        managed_session_number, management, orbit_command, read_management_response,
-        session_number, stop_managed_sessions, unix_connect_with_timeout,
+        ProgramStatusRead, RunningSession, TerminationReason, Tombstone,
+        is_directory_picker_endpoint, managed_session_number, management, orbit_command,
+        read_management_response, session_number, stop_managed_sessions, unix_connect_with_timeout,
     };
     use crate::supervisor::temporary_directory;
     use orbit_protocol::management::ServerMessage as ManagementServerMessage;
@@ -1416,6 +1616,8 @@ mod tests {
             record_object: super::object_identity(&fs::symlink_metadata(&record).unwrap()),
             identity,
             lease,
+            program_status: None,
+            stop_sent: false,
             child: None,
             finished: None,
         };
@@ -1764,6 +1966,8 @@ mod tests {
                 record,
                 identity,
                 lease,
+                program_status: None,
+                stop_sent: false,
                 child: None,
                 finished: None,
             });
@@ -1787,6 +1991,173 @@ mod tests {
             let flags = unsafe { libc::fcntl(session.lease.as_raw_fd(), libc::F_GETFL) };
             assert_ne!(flags & libc::O_NONBLOCK, 0);
         }
+        assert!(
+            !super::send_program_status(&mut sessions[0], Instant::now()).unwrap(),
+            "polled a lease with a Stop pending"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A real Orbit run of `script`, leased by this Runtime. Orbit is the one
+    /// at `ORBIT_BIN`, which eon-test and the eon package's check set.
+    fn leased_orbit(root: &Path, script: &str) -> RunningSession {
+        fs::set_permissions(root, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut inputs = crate::fixtures::inputs();
+        inputs.orbit = std::env::var_os("ORBIT_BIN")
+            .expect("ORBIT_BIN names the Orbit to run")
+            .into();
+        super::start_orbit(
+            &inputs,
+            root,
+            &root.join("orbit.sock"),
+            "session-1",
+            "component-1",
+            root,
+            &["sh".into(), "-c".into(), script.into()],
+            None,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .unwrap()
+    }
+
+    /// Requests program status and reads the reply as the poller does.
+    fn poll(session: &mut RunningSession) -> management::ProgramStatus {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        assert!(super::send_program_status(session, deadline).unwrap());
+        loop {
+            match super::read_program_status(session).unwrap() {
+                ProgramStatusRead::Pending => thread::sleep(Duration::from_millis(1)),
+                ProgramStatusRead::Reply(status) => return status,
+                ProgramStatusRead::Missed => panic!("program status missed its deadline"),
+            }
+        }
+    }
+
+    #[test]
+    fn eof_probe_and_stop_never_misread_an_in_flight_program_status_reply() {
+        let root = temporary_directory();
+        let mut session = leased_orbit(
+            &root,
+            "printf '\\033]7501;state=working:id=w\\007'; exec sleep 30",
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while poll(&mut session).records.is_empty() {
+            assert!(Instant::now() < deadline, "Orbit never reported the record");
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        // The whole reply is waiting on the lease, unread, when the EOF probe
+        // runs.
+        session
+            .lease
+            .write_all(
+                &management::encode_client_message(&management::ClientMessage::ProgramStatus)
+                    .unwrap(),
+            )
+            .unwrap();
+        session.program_status = Some(super::ProgramStatusRequest {
+            unsent: Vec::new(),
+            reply: Vec::new(),
+            deadline: Instant::now() + Duration::from_secs(2),
+        });
+        let mut readable = libc::pollfd {
+            fd: session.lease.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: readable is one valid pollfd for this test-owned lease.
+        assert_eq!(unsafe { libc::poll(&mut readable, 1, 2000) }, 1);
+        assert_eq!(super::session_finished(&mut session).unwrap(), None);
+        let ProgramStatusRead::Reply(status) = super::read_program_status(&mut session).unwrap()
+        else {
+            panic!("the EOF probe lost the in-flight reply");
+        };
+        assert_eq!(status.records[0].id, "w");
+
+        // A Stop right behind a request waits for its reply first.
+        assert!(super::send_program_status(&mut session, Instant::now()).unwrap());
+        assert_eq!(
+            stop_managed_sessions(std::slice::from_mut(&mut session), Duration::from_secs(5))
+                .unwrap(),
+            ["session-1"]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_silent_terminal_delays_only_its_own_stop() {
+        let roots = [temporary_directory(), temporary_directory()];
+        let mut sessions = roots
+            .iter()
+            .map(|root| leased_orbit(root, "exec sleep 30"))
+            .collect::<Vec<_>>();
+        let silent = sessions[0].child.as_ref().unwrap().id() as i32;
+        // SAFETY: signals the test-owned Orbit process.
+        assert_eq!(unsafe { libc::kill(silent, libc::SIGSTOP) }, 0);
+        assert!(super::send_program_status(&mut sessions[0], Instant::now()).unwrap());
+        assert!(stop_managed_sessions(&mut sessions, Duration::from_secs(1)).is_err());
+        assert!(
+            sessions[1].is_finished(),
+            "the silent terminal blocked another's Stop"
+        );
+        assert!(!sessions[0].is_finished());
+
+        // Its lease survived the missed reply and still stops it.
+        // SAFETY: signals the test-owned Orbit process.
+        assert_eq!(unsafe { libc::kill(silent, libc::SIGCONT) }, 0);
+        assert_eq!(
+            stop_managed_sessions(&mut sessions[..1], Duration::from_secs(5)).unwrap(),
+            ["session-1"]
+        );
+        for root in roots {
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    // A debug Orbit takes about 100 s per turn of a flood, so this measures the
+    // packaged Orbit at ORBIT_BIN, as the eon package's check does.
+    #[test]
+    #[ignore = "measures a release Orbit at ORBIT_BIN"]
+    fn stop_waits_only_orbit_answer_time_for_an_in_flight_reply_under_pty_load() {
+        let root = temporary_directory();
+        // The flood starts once the lease is held.
+        let mut session = leased_orbit(
+            &root,
+            "printf '\\033]7501;state=working:id=load\\007'\n\
+             while [ ! -e flood ]; do sleep 0.01; done\n\
+             exec yes",
+        );
+        fs::write(root.join("flood"), "").unwrap();
+        thread::sleep(Duration::from_millis(100));
+        let mut delays = Vec::new();
+        for _ in 0..100 {
+            assert!(super::send_program_status(&mut session, Instant::now()).unwrap());
+            let started = Instant::now();
+            while !super::drain_program_status(&mut session).unwrap() {
+                assert!(started.elapsed() < Duration::from_secs(5), "no reply");
+            }
+            delays.push(started.elapsed());
+            thread::sleep(Duration::from_millis(10));
+        }
+        delays.sort();
+        let (median, p99, max) = (delays[50], delays[98], delays[99]);
+        // Straight to stderr, which the test harness does not capture, so the
+        // package check's log keeps the distribution.
+        writeln!(
+            std::io::stderr(),
+            "Stop's wait for an in-flight reply under PTY load: median {median:?}, p99 {p99:?}, max {max:?}"
+        )
+        .unwrap();
+        // Orbit targets an answer within 250 ms, and the 2 s worker-stall
+        // bound caps each worker exchange behind it (ORB-C15).
+        assert!(median < Duration::from_millis(250), "median {median:?}");
+        assert!(max < Duration::from_secs(2), "max {max:?}");
+        assert!(super::send_program_status(&mut session, Instant::now()).unwrap());
+        assert_eq!(
+            stop_managed_sessions(std::slice::from_mut(&mut session), Duration::from_secs(5))
+                .unwrap(),
+            ["session-1"]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

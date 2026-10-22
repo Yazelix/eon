@@ -671,6 +671,10 @@
             "eon-runtime"
           ];
           dontUseCargoParallelTests = true;
+          # Eon Runtime's lease tests run this Orbit, including the ignored one
+          # that measures it under PTY load.
+          ORBIT_BIN = "${orbitPackage}/bin/yazelix-orbit";
+          checkFlags = [ "--include-ignored" ];
           preCheck = lib.optionalString pkgs.stdenv.isLinux ''
             # Keep ephemeral lifecycle state off the builder's disk journal.
             eonTestBuildTmpdir="$TMPDIR"
