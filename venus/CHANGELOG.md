@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C2: when Shift is the only held modifier and Space carries other text,
+  such as `"` composed from a dead key under `us+intl`, Venus reports Shift as
+  consumed, so a program using the kitty keyboard protocol without report-all
+  receives the text rather than Shift+Space; Linux dead keys and compose
+  sequences from the locale's compose table are accepted (`eon-e2vl`).
 - VEN-C28: the CPU and RAM labels put one space between name and value
   (`CPU 12%`) and center it in a chip that keeps the width of `CPU 100%`, in
   place of padding the value to four cells (`eon-igae.14.4`).

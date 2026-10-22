@@ -809,8 +809,11 @@ fn layout_metadata(
     text: Option<&str>,
     key: Key,
 ) -> (Option<char>, Modifiers) {
-    let Key::Character(unshifted_text) = key else {
-        return (None, Modifiers::empty());
+    // Space carries text that a dead key composes, so it has unshifted text too.
+    let unshifted_text = match key {
+        Key::Character(text) => text,
+        Key::Named(NamedKey::Space) => " ".into(),
+        _ => return (None, Modifiers::empty()),
     };
     // Other modifiers can also produce layout text, so infer only Shift by itself.
     let consumed = if modifiers == Modifiers::SHIFT
@@ -1087,6 +1090,17 @@ mod tests {
             ),
             (None, Modifiers::empty())
         );
+        // us+intl: Shift held from a dead key through Space composes text.
+        for (text, expected) in [("\"", Modifiers::SHIFT), (" ", Modifiers::empty())] {
+            assert_eq!(
+                layout_metadata(
+                    Modifiers::SHIFT,
+                    Some(text),
+                    Key::Named(winit::keyboard::NamedKey::Space),
+                ),
+                (Some(' '), expected)
+            );
+        }
     }
 
     #[test]

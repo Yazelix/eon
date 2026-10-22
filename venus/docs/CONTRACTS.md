@@ -260,7 +260,12 @@ re-proved when that platform or feature is next touched.
   key; otherwise it uses the physical key, so letter, digit, punctuation and
   numpad keys stay physical. Venus's terminal input and its own named-key
   actions (focus return, chrome traversal, the shortcut viewer, header
-  activation) use the resolved key.
+  activation) use the resolved key. When Shift is the only held modifier and
+  a key's text differs from its unshifted text, Venus reports Shift as
+  consumed by that text. Space's unshifted text is a space, so Space finishing
+  a dead key with Shift held, such as `"` under `us+intl`, reports its text
+  with Shift consumed; a program using the kitty keyboard protocol without
+  report-all receives the text, not Shift+Space.
 - **Important failures:** Invalid, stale, unsettled, or non-presented geometry
   cannot reach Orbit; capture and focus transitions withdraw obsolete input.
 - **Owner:** Venus native input and geometry owners; Orbit encodes terminal
@@ -270,11 +275,14 @@ re-proved when that platform or feature is next touched.
   shortcuts stay layout-independent, and keymaps that place letters on
   unrelated keycodes (some virtual keyboards) remain unsupported for chords.
   Physical mixed-monitor hardware and broader Linux Wayland compositor
-  behavior remain manual quality surfaces. On macOS, only VEN-C16's Kotoeri
-  Roman-to-kanji IME path is accepted; held-key repeat, dead keys, and other IMEs
-  remain unaccepted. Physical trackpad gesture quality remains with VEN-C7.
+  behavior remain manual quality surfaces. On Linux, dead keys and compose
+  sequences from the locale's compose table are accepted. On macOS, only
+  VEN-C16's Kotoeri Roman-to-kanji IME path is accepted; held-key repeat, dead
+  keys, and other IMEs remain unaccepted. Physical trackpad gesture quality
+  remains with VEN-C7.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, with the
-  `eon-venus-keysym-named-keys-chnh` commit for named-key resolution
+  `eon-venus-keysym-named-keys-chnh` commit for named-key resolution and the
+  `eon-e2vl` commit for Linux dead keys and the Shift-consumed rule
   - **Environment:** Automated and installed.
   - **Evidence:** `maps_layout_independent_physical_keys`,
     `ime_distinguishes_committed_rejected_and_state_only_text`,
@@ -296,7 +304,16 @@ re-proved when that platform or feature is next touched.
     key) and wtype's own keymap, a raw-mode pane received Escape, Return, Tab,
     BackSpace and Up as `033`, `\r`, `\t`, `177` and `ESC [ A`, that Escape
     closed the shortcut viewer, and Alt+Shift+T opened a tab under the US
-    layout and `caps:swapescape`.
+    layout and `caps:swapescape`; for dead keys and the Shift-consumed rule,
+    `derives_layout_metadata_without_a_keyboard_map` in the Venus suite, and
+    an installed observation of tree `85e094d0e9f0aa1cc120d36579b7387ee7f63613`
+    (`/nix/store/qp01mka6i8xicnc6wfxczyb2qcygvlsp-eon-0.1.1`) on x86_64
+    Linux, private headless Sway 1.12 with a wdotool 0.5.3 `us+intl` keymap:
+    after `CSI >1u`, the pane echoed `"`, `'`, `~`, `` ` ``, `é`, `ã` and
+    `ä` for Shift+dead key then Shift+Space, dead key then Space, and dead key
+    then a letter, plain Shift+Space still sent `ESC[32;2u`, nushell's legacy
+    prompt received the same characters, Alt+Shift+T opened a tab and Ctrl+C
+    cleared the prompt. Multi_key (Compose-key) sequences were not exercised.
 - **Open proof:** Pending re-proof in this repository: installed pointer
   input, selection and paste (dogfood item 9), the ignored native
   input-between-frames regression, native IME preedit/commit, Orca reader focus

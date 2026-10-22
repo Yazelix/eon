@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Under dead-key layouts such as `us+intl`, `"`, `~` or `^` composed on Space
+  with Shift still held now reaches programs that use the kitty keyboard
+  protocol without its report-all mode, such as Claude Code. It used to arrive
+  as Shift+Space and type nothing.
+
 - `[bar] widgets` chooses which Eon Bar widgets show and in what order, from
   `codex_quota`, `claude_quota`, `cpu`, `ram`, `clock` and `version`, when a
   window opens or reopens. Omitting it keeps today's bar. It replaces
