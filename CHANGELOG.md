@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A quota chip left out of `[bar] widgets` also stops Eon reading that
+  provider's quota through CodexBar, from the next window open or reopen.
+
 - Under dead-key layouts such as `us+intl`, `"`, `~` or `^` composed on Space
   with Shift still held now reaches programs that use the kitty keyboard
   protocol without its report-all mode, such as Claude Code. It used to arrive

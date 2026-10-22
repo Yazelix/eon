@@ -129,6 +129,7 @@ impl Provider {
         provider: &'static str,
         interval: Duration,
         timeout: Duration,
+        last_read: Arc<Mutex<Option<Instant>>>,
     ) -> Self {
         let quota = Arc::new(Mutex::new(None));
         let shared = Arc::clone(&quota);
@@ -136,8 +137,22 @@ impl Provider {
         let worker = thread::Builder::new()
             .name(format!("eon-{provider}-quota"))
             .spawn(move || {
+                // Reads are spaced from the end of the last one, also across a restarted worker.
+                let since = last_read.lock().ok().and_then(|last| *last);
+                if let Some(wait) = since.and_then(|since| interval.checked_sub(since.elapsed()))
+                    && !matches!(
+                        stopped.recv_timeout(wait),
+                        Err(mpsc::RecvTimeoutError::Timeout)
+                    )
+                {
+                    return;
+                }
                 loop {
-                    let reading = match fetch(&program, provider, timeout, &stopped) {
+                    let fetched = fetch(&program, provider, timeout, &stopped);
+                    if let Ok(mut last) = last_read.lock() {
+                        *last = Some(Instant::now());
+                    }
+                    let reading = match fetched {
                         Ok(None) => break,
                         Ok(Some(bytes)) => epoch_seconds()
                             .ok_or(())
@@ -180,29 +195,65 @@ impl Drop for Provider {
     }
 }
 
+/// One provider's worker while its chip is shown, and the end of its last read, which outlives
+/// the worker.
+struct Slot {
+    provider: &'static str,
+    widget: &'static str,
+    interval: Duration,
+    last_read: Arc<Mutex<Option<Instant>>>,
+    worker: Option<Provider>,
+}
+
+impl Slot {
+    fn snapshot(&self) -> Option<CodexQuota> {
+        self.worker.as_ref()?.snapshot()
+    }
+}
+
 pub(crate) struct Quotas {
-    codex: Provider,
-    claude: Provider,
+    program: PathBuf,
+    codex: Slot,
+    claude: Slot,
 }
 
 impl Quotas {
-    pub(crate) fn start(program: &Path) -> Self {
-        Self::start_every(program, Duration::from_secs(1))
+    pub(crate) fn start(program: &Path, widgets: &[&str]) -> Self {
+        Self::start_every(program, Duration::from_secs(1), widgets)
     }
 
     /// Reads Codex every 60 units and Claude every 300, whatever the outcome (EON-C27).
-    fn start_every(program: &Path, unit: Duration) -> Self {
-        let start = |provider, units| {
-            Provider::start(
-                program.to_path_buf(),
-                provider,
-                unit * units,
-                Duration::from_secs(10),
-            )
+    fn start_every(program: &Path, unit: Duration, widgets: &[&str]) -> Self {
+        let slot = |provider, widget, units| Slot {
+            provider,
+            widget,
+            interval: unit * units,
+            last_read: Arc::default(),
+            worker: None,
         };
-        Self {
-            codex: start("codex", 60),
-            claude: start("claude", 300),
+        let mut quotas = Self {
+            program: program.to_path_buf(),
+            codex: slot("codex", "codex_quota", 60),
+            claude: slot("claude", "claude_quota", 300),
+        };
+        quotas.show(widgets);
+        quotas
+    }
+
+    /// Polls exactly the providers whose chips `[bar] widgets` lists (EON-C27).
+    pub(crate) fn show(&mut self, widgets: &[&str]) {
+        for slot in [&mut self.codex, &mut self.claude] {
+            if !widgets.contains(&slot.widget) {
+                slot.worker = None;
+            } else if slot.worker.is_none() {
+                slot.worker = Some(Provider::start(
+                    self.program.clone(),
+                    slot.provider,
+                    slot.interval,
+                    Duration::from_secs(10),
+                    Arc::clone(&slot.last_read),
+                ));
+            }
         }
     }
 
@@ -439,7 +490,7 @@ mod tests {
         let started = Instant::now();
         assert!(fetch(&program, "claude", Duration::from_millis(50), &stopped).is_err());
         assert!(started.elapsed() < Duration::from_secs(1));
-        let quotas = Quotas::start(&program);
+        let quotas = Quotas::start(&program, &["codex_quota", "claude_quota"]);
         let deadline = Instant::now() + Duration::from_secs(2);
         while quotas.codex.snapshot().is_none() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(10));
@@ -457,6 +508,7 @@ mod tests {
             "codex",
             Duration::from_millis(20),
             Duration::from_secs(1),
+            Arc::default(),
         );
         *provider.quota.lock().unwrap() = Some(quota);
         // Several 20 ms intervals of failed reads leave a recent reading fresh.
@@ -514,15 +566,28 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         let unit = Duration::from_millis(20);
-        let quotas = Quotas::start_every(&program, unit);
+        let mut quotas = Quotas::start_every(&program, unit, &["codex_quota", "claude_quota"]);
         let deadline = Instant::now() + unit * 1000;
         while gaps("claude").is_empty() && Instant::now() < deadline {
             thread::sleep(Duration::from_millis(5));
         }
+        // Hidden briefly and shown again, Claude still waits 300 units from its last read.
+        quotas.show(&["codex_quota"]);
+        thread::sleep(unit * 100);
+        quotas.show(&["codex_quota", "claude_quota"]);
+        let deadline = Instant::now() + unit * 1000;
+        while gaps("claude").len() < 2 && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(5));
+        }
+        // With every chip hidden, no provider is read, though Codex was due every 60 units.
+        quotas.show(&[]);
+        let reads = fs::read_dir(&log).unwrap().count();
+        thread::sleep(unit * 100);
+        assert_eq!(fs::read_dir(&log).unwrap().count(), reads);
         drop(quotas);
         let claude = gaps("claude");
         assert!(
-            claude.len() == 1 && claude[0] >= unit * 300,
+            claude.len() == 2 && claude.iter().all(|gap| *gap >= unit * 300),
             "Claude read gaps {claude:?}"
         );
         // The upper bound leaves 60 units of slack for process startup under load.

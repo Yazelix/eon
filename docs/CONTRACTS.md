@@ -1696,10 +1696,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Proven on x86_64 Linux by the automated tier; installed quota
   observation is pending re-proof in this repository.
-- **Consumer, trigger and result:** Full Eon starts independent, noninteractive
-  CodexBar CLI reads for Codex (`--source cli`) and Claude (`--source oauth`).
-  Codex reads start at least one minute apart and Claude reads at least five
-  minutes apart, including after a failed read; reads run off workspace I/O.
+- **Consumer, trigger and result:** Full Eon reads quota through independent,
+  noninteractive CodexBar CLI calls for Codex (`--source cli`) and Claude
+  (`--source oauth`) only while `[bar] widgets` (EON-C32) lists that
+  provider's chip. The list is checked whenever a window opens or reopens: a
+  newly listed provider starts reading, and a newly unlisted one stops, ending
+  any read in progress, and drops its last reading. Codex reads start at least
+  one minute apart and Claude reads at least five minutes apart, including
+  after a failed read and across a stop and restart; reads run off workspace
+  I/O.
   The existing native chips show every supplied supported window and remaining
   percentage, with provider periods, optional resets and observation time.
   Claude needs no status-line setup. No reset is invented for an idle window.
@@ -1745,7 +1750,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `workers_isolate_failure_and_bound_output_timeout_and_shutdown`; that
     bead's commit is its revision. The Claude cadence change (`eon-flf4`) is
     proved by `claude_waits_300_units_after_a_failed_read_while_codex_reads_every_60`;
-    that bead's commit is its revision.
+    that bead's commit is its revision. Reading only the providers whose chips
+    `[bar] widgets` lists (`eon-igae.14.3`) is proved by the same test, extended
+    to hide and show chips (a chip shown again keeps its provider's spacing),
+    and by one isolated installed observation recorded in that bead: a hidden
+    provider is never called, a provider first shown on reopen reads at once,
+    and hiding every chip stops every read; that bead's commit is its revision.
 - **Open proof:** Pending re-proof in this repository: real installed Codex and
   Claude windows with reset details on hover; on an installed surface, a
   controlled source failure leaving a recent reading unchanged and a retained
@@ -1899,8 +1909,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   hover and accessibility under VEN-C29.
 - **Boundary:** No per-widget option, configurable hiding priority, new
   widget, live reload, settings UI, EONW change or platform expansion. Leaving
-  out a quota chip only hides it; Runtime still polls that provider until
-  `eon-igae.14.3`.
+  out a quota chip also stops Runtime reading that provider (EON-C27).
 - **Proof:** `eon-igae.14.2`
   - **Environment:** Automated; one isolated installed observation.
   - **Evidence:** `version_badge_uses_supervising_product_and_visibility_at_each_launch`

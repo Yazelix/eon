@@ -226,10 +226,7 @@ pub(super) fn launch_current(
     };
     let config = configuration_directory()?;
     let terminal = managed_environment::terminal_presentation(&config, &inputs.defaults)?;
-    if mode == LaunchMode::Workspace {
-        // Each window reads the list again; this only rejects a bad one before any terminal starts.
-        managed_environment::bar_widgets(&config, &inputs.defaults)?;
-    }
+    let bar_widgets = window_bar_widgets(mode, &config, inputs)?;
     let popups = (mode == LaunchMode::Workspace)
         .then(|| managed_environment::popup_catalog(&config, &inputs.defaults))
         .transpose()?;
@@ -243,6 +240,7 @@ pub(super) fn launch_current(
         inputs,
         &config,
         terminal,
+        &bar_widgets,
         popups,
         startup_animation,
         lifecycle_lock,
@@ -352,15 +350,30 @@ pub(super) fn present_at(
     }
 }
 
+/// The `[bar] widgets` list for one window open, which both its bar and the quota readers follow;
+/// a terminal window has no bar.
+fn window_bar_widgets(
+    mode: LaunchMode,
+    config: &Path,
+    inputs: &Inputs,
+) -> Result<Vec<&'static str>, String> {
+    match mode {
+        LaunchMode::Workspace => managed_environment::bar_widgets(config, &inputs.defaults),
+        LaunchMode::Terminal => Ok(Vec::new()),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn venus_command(
     inputs: &Inputs,
     config: &Path,
     socket: &Path,
     mode: LaunchMode,
     terminal: &managed_environment::TerminalConfig,
+    bar_widgets: &[&str],
     application_id: &str,
     decorations: bool,
-) -> Result<Command, String> {
+) -> Command {
     let mut command = Command::new(&inputs.venus);
     command
         .env_remove(TERMINAL_VARIABLE)
@@ -408,11 +421,10 @@ fn venus_command(
         }
     }
     if mode == LaunchMode::Workspace {
-        let widgets = managed_environment::bar_widgets(config, &inputs.defaults)?;
-        if widgets.contains(&"version") {
+        if bar_widgets.contains(&"version") {
             command.arg("--eon-version").arg(inputs.version);
         }
-        command.arg("--bar-items").arg(widgets.join(","));
+        command.arg("--bar-items").arg(bar_widgets.join(","));
         if let Ok(executable) = env::current_exe() {
             command.env("EON_NEW_WINDOW_EXECUTABLE", executable);
         }
@@ -423,7 +435,7 @@ fn venus_command(
     }
     command.arg(socket);
     command.env("EON_CONFIG_HOME", config);
-    Ok(command)
+    command
 }
 
 struct PresentationProcess {
@@ -632,6 +644,7 @@ fn supervise(
     inputs: &Inputs,
     config: &Path,
     terminal: managed_environment::TerminalConfig,
+    bar_widgets: &[&str],
     popups: Option<managed_environment::PopupCatalog>,
     startup_animation: Option<managed_environment::StartupAnimation>,
     lifecycle_lock: fs::File,
@@ -709,9 +722,10 @@ fn supervise(
             &presentation_socket,
             mode,
             &terminal,
+            bar_widgets,
             application_id,
             decorations,
-        )?;
+        );
         Some(PresentationProcess::start(
             command, true, snapshot, deadline,
         )?)
@@ -786,20 +800,26 @@ fn supervise(
         initial_child,
         initial_status: None,
         stopping: false,
-        quotas: (mode == LaunchMode::Workspace).then(|| quota::Quotas::start(&inputs.codexbar)),
+        quotas: (mode == LaunchMode::Workspace)
+            .then(|| quota::Quotas::start(&inputs.codexbar, bar_widgets)),
     };
     let presentation = match admitted {
         Some(venus) => Ok(venus),
-        None => venus_command(
-            inputs,
-            config,
-            &presentation_socket,
-            mode,
-            &terminal,
-            application_id,
-            decorations,
-        )
-        .and_then(|command| PresentationProcess::start(command, false, None, deadline)),
+        None => PresentationProcess::start(
+            venus_command(
+                inputs,
+                config,
+                &presentation_socket,
+                mode,
+                &terminal,
+                bar_widgets,
+                application_id,
+                decorations,
+            ),
+            false,
+            None,
+            deadline,
+        ),
     };
     state.venus = match presentation {
         Ok(venus) => Some(venus),
@@ -1404,15 +1424,20 @@ fn dispatch_control_request(
                 };
                 let terminal =
                     managed_environment::terminal_presentation(config, &inputs.defaults)?;
+                let bar_widgets = window_bar_widgets(mode, config, inputs)?;
                 let command = venus_command(
                     inputs,
                     config,
                     &socket,
                     mode,
                     &terminal,
+                    &bar_widgets,
                     &state.application_id,
                     state.decorations,
-                )?;
+                );
+                if let Some(quotas) = &mut state.quotas {
+                    quotas.show(&bar_widgets);
+                }
                 state.venus = Some(PresentationProcess::start(
                     command,
                     terminal.requires_startup_admission(),
@@ -1614,7 +1639,7 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 mod tests {
     use super::{
         LaunchMode, effective_uid, prepare_configuration, prepare_runtime, temporary_directory,
-        venus_command, xdg_path,
+        venus_command, window_bar_widgets, xdg_path,
     };
     use std::{
         ffi::OsString,
@@ -1720,10 +1745,10 @@ mod tests {
                 Path::new("/runtime.sock"),
                 mode,
                 &inputs.defaults.terminal,
+                &window_bar_widgets(mode, &root, inputs).unwrap(),
                 "eon",
                 true,
-            )
-            .unwrap();
+            );
             let args = command.get_args().collect::<Vec<_>>();
             args.windows(2)
                 .filter(|args| args[0] == flag)
@@ -1797,17 +1822,9 @@ mod tests {
                 every_read,
                 "{source:?}"
             );
-            let failure = venus_command(
-                &inputs,
-                &root,
-                Path::new("/runtime.sock"),
-                LaunchMode::Workspace,
-                &inputs.defaults.terminal,
-                "eon",
-                true,
-            )
-            .unwrap_err();
+            let failure = window_bar_widgets(LaunchMode::Workspace, &root, &inputs).unwrap_err();
             assert!(failure.contains(error), "{source:?}: {failure}");
+            assert!(window_bar_widgets(LaunchMode::Terminal, &root, &inputs).is_ok());
         }
         fs::remove_dir_all(root).unwrap();
     }
@@ -1838,10 +1855,10 @@ rows = 30
                 Path::new("/orbit.sock"),
                 mode,
                 &terminal,
+                inputs.defaults.bar_widgets,
                 "eon",
                 true,
-            )
-            .unwrap();
+            );
             let args = command
                 .get_args()
                 .map(|value| value.to_str().unwrap())
@@ -1889,10 +1906,10 @@ rows = 30
                     Path::new("/runtime.sock"),
                     mode,
                     &terminal,
+                    inputs.defaults.bar_widgets,
                     "eon",
                     true,
-                )
-                .unwrap();
+                );
                 let args = command.get_args().collect::<Vec<_>>();
                 assert!(
                     args.windows(2)
@@ -1919,10 +1936,10 @@ rows = 30
                     Path::new("/runtime.sock"),
                     mode,
                     &terminal,
+                    inputs.defaults.bar_widgets,
                     "eon",
                     true,
-                )
-                .unwrap();
+                );
                 let args = command.get_args().collect::<Vec<_>>();
                 let expected = if source.is_empty() { "2" } else { "3" };
                 assert!(
@@ -1944,10 +1961,10 @@ rows = 30
                 Path::new("/runtime.sock"),
                 LaunchMode::Workspace,
                 &terminal,
+                inputs.defaults.bar_widgets,
                 "eon",
                 true,
             )
-            .unwrap()
             .get_args()
             .all(|argument| argument != "--cursor-trail-color")
         );
@@ -1973,10 +1990,10 @@ rows = 30
                     Path::new("/runtime.sock"),
                     mode,
                     &terminal,
+                    inputs.defaults.bar_widgets,
                     "eon",
                     true,
-                )
-                .unwrap();
+                );
                 let args = command.get_args().collect::<Vec<_>>();
                 let values = args
                     .windows(2)
@@ -2021,10 +2038,10 @@ rows = 30
             socket,
             LaunchMode::Workspace,
             &terminal_presentation(0.88, true),
+            inputs.defaults.bar_widgets,
             "eon",
             true,
-        )
-        .unwrap();
+        );
         assert_eq!(
             workspace.get_args().map(OsString::from).collect::<Vec<_>>(),
             [
@@ -2049,10 +2066,10 @@ rows = 30
             Path::new("/runtime/orbit.sock"),
             LaunchMode::Terminal,
             &terminal_presentation(1.0, false),
+            inputs.defaults.bar_widgets,
             "eonbase",
             true,
-        )
-        .unwrap();
+        );
         for command in [&workspace, &terminal] {
             let environment = command.get_envs().collect::<Vec<_>>();
             assert!(environment.iter().all(|(key, _)| *key != "XDG_CONFIG_HOME"));
@@ -2078,10 +2095,10 @@ rows = 30
             Path::new("/runtime/orbit.sock"),
             LaunchMode::Terminal,
             &terminal_presentation(0.0, true),
+            inputs.defaults.bar_widgets,
             "eonova",
             false,
-        )
-        .unwrap();
+        );
         assert_eq!(
             undecorated
                 .get_args()
