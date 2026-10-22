@@ -854,13 +854,6 @@ fn advance_program_status(
 /// passed deadline or an ended lease leaves it in flight, so later reads keep
 /// draining it and return its reply if it comes, while `send_program_status`
 /// sends no other until then. The EOF probe owns an ended lease.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the attention poller reads program status from eon-agent-sidebar-yx8.6 on"
-    )
-)]
 pub(super) enum ProgramStatusRead {
     /// No reply yet, before the deadline.
     Pending,
@@ -872,13 +865,6 @@ pub(super) enum ProgramStatusRead {
 
 /// Sends a `ProgramStatus` request without blocking, unless one is already in
 /// flight, a Stop was sent, or the run ended. Returns whether it sent one.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the attention poller reads program status from eon-agent-sidebar-yx8.6 on"
-    )
-)]
 pub(super) fn send_program_status(
     session: &mut RunningSession,
     deadline: Instant,
@@ -898,13 +884,6 @@ pub(super) fn send_program_status(
 }
 
 /// Reads the in-flight `ProgramStatus` reply without blocking.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the attention poller reads program status from eon-agent-sidebar-yx8.6 on"
-    )
-)]
 pub(super) fn read_program_status(
     session: &mut RunningSession,
 ) -> Result<ProgramStatusRead, String> {
@@ -956,6 +935,10 @@ impl RunningSession {
 
     pub(super) fn is_finished(&self) -> bool {
         self.finished.is_some()
+    }
+
+    pub(super) fn run_id(&self) -> &str {
+        &self.identity.run_id
     }
 
     /// Whether this live terminal is the one an `EON_TERMINAL` value names.
@@ -1537,7 +1520,7 @@ pub(super) fn stop_managed_sessions(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{
         EndpointIdentity, LiveIdentity, ManagementRecord, ObjectIdentity, ProcessOutcome,
         ProgramStatusRead, RunningSession, TerminationReason, Tombstone,
@@ -2007,7 +1990,7 @@ mod tests {
 
     /// A real Orbit run of `script`, leased by this Runtime. Orbit is the one
     /// at `ORBIT_BIN`, which eon-test and the eon package's check set.
-    fn leased_orbit(root: &Path, script: &str) -> RunningSession {
+    pub(crate) fn leased_orbit(root: &Path, script: &str) -> RunningSession {
         fs::set_permissions(root, fs::Permissions::from_mode(0o700)).unwrap();
         let mut inputs = crate::fixtures::inputs();
         inputs.orbit = std::env::var_os("ORBIT_BIN")
@@ -2025,6 +2008,11 @@ mod tests {
             Instant::now() + Duration::from_secs(5),
         )
         .unwrap()
+    }
+
+    /// The process id of a leased Orbit this test started.
+    pub(crate) fn orbit_pid(session: &RunningSession) -> i32 {
+        session.child.as_ref().unwrap().id() as i32
     }
 
     /// Requests program status and reads the reply as the poller does.
@@ -2098,7 +2086,7 @@ mod tests {
             .iter()
             .map(|root| leased_orbit(root, "exec sleep 30"))
             .collect::<Vec<_>>();
-        let silent = sessions[0].child.as_ref().unwrap().id() as i32;
+        let silent = orbit_pid(&sessions[0]);
         // SAFETY: signals the test-owned Orbit process.
         assert_eq!(unsafe { libc::kill(silent, libc::SIGSTOP) }, 0);
         assert!(super::send_program_status(&mut sessions[0], Instant::now()).unwrap());

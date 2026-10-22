@@ -290,7 +290,7 @@ them. Invalid graph or package inputs fail at their required boundary.
 | Owner | Responsibility |
 |---|---|
 | Eon | Product contracts/version/default values, actual executable and exit/error mapping, canonical component graph and `eon-manifest`, assets, component selection, Nix translation and distribution |
-| `eon-runtime` | The `cli`, `quota`, `control`, `generation`, `managed_environment`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
+| `eon-runtime` | The `attention`, `cli`, `quota`, `control`, `generation`, `managed_environment`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
 | `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v17 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
 | Orbit and Venus | Their terminal and native-client authority |
 

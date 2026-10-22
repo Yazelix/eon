@@ -1,4 +1,5 @@
 use super::{
+    attention::{self, Attention},
     cli::Inputs,
     control::{
         ControlListener, ControlResponse, EndpointFailure, EndpointFailureKind, SocketIdentity,
@@ -887,6 +888,7 @@ fn supervise(
         stopping: false,
         quotas: (mode == LaunchMode::Workspace)
             .then(|| quota::Quotas::start(&inputs.codexbar, bar_widgets)),
+        attention: (mode == LaunchMode::Workspace).then(Attention::new),
         log: Arc::clone(log),
     };
     let presentation = match admitted {
@@ -948,6 +950,10 @@ fn supervise(
                 }
             }
 
+            if !state.stopping {
+                state.follow_attention();
+            }
+
             if control_listener.accept(|request| {
                 dispatch_control_request(request, &mut state, inputs, config, runtime, generation)
             })? {
@@ -982,6 +988,8 @@ struct SupervisorState {
     initial_status: Option<i32>,
     stopping: bool,
     quotas: Option<quota::Quotas>,
+    /// Full Eon only; eonbase has no poller (EON-C31).
+    attention: Option<Attention>,
     log: Arc<DiagnosticLog>,
 }
 
@@ -994,6 +1002,18 @@ impl SupervisorState {
             }
             snapshot
         })
+    }
+
+    /// Follows focus, then polls program status, between control requests
+    /// and never inside one (EON-C31).
+    fn follow_attention(&mut self) {
+        let (Some(attention), Some(workspace)) = (&mut self.attention, &self.workspace) else {
+            return;
+        };
+        let (targets, focus) = attention::targets(&workspace.snapshot());
+        attention.observe(focus, self.venus.is_some());
+        attention.poll(&targets, &mut self.sessions, Instant::now());
+        attention.retain(&targets, &self.sessions);
     }
 }
 

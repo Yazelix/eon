@@ -229,7 +229,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   second terminal/rendering owner.
 - **Assembly boundary:** `eon/crates/eon/src/product.rs` owns concrete product
   inputs; Eon invokes the in-tree runtime and codec crates. Eon Runtime in
-  `runtime/` owns the nine runtime mechanisms, parsing, validation, mutable
+  `runtime/` owns the ten runtime mechanisms, parsing, validation, mutable
   state and canonical EONW. Eon retains assembly, defaults,
   graph, distribution and process exit handling. The
   [runtime boundary](ARCHITECTURE.md#runtime-library-boundary) records the
@@ -2025,6 +2025,218 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `ram_use_rejects_bad_readings_instead_of_showing_zero` and
     `readings_yield_after_the_clock_and_have_no_actions`; the installed
     observations recorded in `eon-cpu-widget-eon-bar-acxs` and `eon-igae.3`.
+
+## EON-C31 — Agent attention
+
+- **Status:** Planned. Approved by Lucca on 2026-10-21 (draft 15 on
+  `eon-agent-sidebar-yx8.1`, which records decisions D1–D11 and Q1–Q8, every Q
+  with its recommendation). `eon-agent-sidebar-yx8.6` implements the Runtime
+  model; `eon-agent-sidebar-yx8.7` carries it over EONW.
+- **Consumer:** One person supervising coding agents across the tabs of one full-Eon window.
+  eonbase has no poller and no sidebar; its `sidebar` is `Off`.
+- **Trigger:**
+  - the attention poller's timer fires;
+  - focus moves to a pane or popup;
+  - a Venus attaches;
+  - an attention action arrives: `FocusAttention`, `NextAttention`, `PreviousAttention` or
+    `ToggleSidebar`.
+- **Result:**
+  - **Polling.** A Runtime attention poller runs off the request path, on its own timer, at no
+    more than 2 Hz.
+    - It polls only pane and popup terminals, never directory-picker sessions.
+    - It polls peers concurrently, each with a 250 ms deadline.
+    - Each lease has exactly one reader and at most one request in flight. The EOF probe and
+      Stop first drain or await an in-flight `ProgramStatus` reply, so no reply is ever read as
+      an unsolicited or stop result.
+    - Replies are tagged by type, so a late reply can never be mistaken for a Stop result.
+    - A slow poll never drops or replaces a lease.
+    - A Stop or EOF probe that waits for an in-flight reply is delayed by Orbit's answer time:
+      normally well under 250 ms, and at most two worker exchanges plus host turn scheduling.
+      There is no new failure path. `eon-agent-sidebar-yx8.10` asserts this under PTY load.
+    - A Busy refusal counts as a missed poll deadline.
+    - A peer that misses the poll deadline only goes stale. Its lease stays as it is.
+    - A lease with a Stop pending is not polled.
+    - Inspect and actions read only the poller's latest cached result and never wait on a peer.
+  - **Stale.** A missed deadline keeps the last good result, which avoids flicker.
+    - Once a terminal's last good result is older than 3 s, its attention is marked stale. It is
+      shown in its last state, dimmed, with "status stale" in its accessible name, and it stays
+      in the Alt+G queue.
+    - Stale clears on the next good reply.
+    - When the run ends or the target is removed, the attention is removed.
+  - **Identity and time.** State is keyed by the exact Orbit run ID plus record `id`.
+    - A new run starts empty.
+    - A reply whose update sequence is lower than the cached one for the same run is discarded.
+    - On first sight of a (run, `id`, change sequence), the Runtime fixes the change time on its
+      own monotonic clock: receipt time minus the change age. Polls never move that time, so
+      queue keys and row ages stay stable across polls, and ages from different terminals share
+      one clock.
+  - **Raise.** Attention meaning is derived here, not in Orbit. A record *raises* at its change
+    sequence in these cases:
+    - it changes into `done` or `error`, including being created in them;
+    - it changes into `idle` from `working`, as D4 decided.
+
+    An `idle` from `blocked` (for example, a declined permission prompt) does not raise **[Q6]**.
+    - An `idle` from `done` keeps the cached raise of that `done`. If the Runtime never saw the
+      `done`, the `idle` raises at its own change sequence.
+    - An `idle` from `error` does not raise: the program has moved on.
+    - Same-state re-reports never raise.
+    - An `idle` raised from `working` covers Codex 0.163, which has no `done`. It also counts an
+      interrupted turn as finished, which D4 accepted.
+  - **Normalization.** Each record maps to one state, in this priority order:
+
+    | State | Source |
+    | --- | --- |
+    | needs input | `blocked`, with its `kind` |
+    | error | `error` whose raise is unseen |
+    | finished | `done`, or a raised `idle`, whose raise is unseen |
+    | working | `working`, with `progress` |
+    | idle | any other `idle`; or `done`/`error`/raised `idle` whose raise has been seen |
+    | unavailable | an Agent popup with no records |
+
+  - **Seen.** Seen is keyed by (run, `id`, raise). A raise becomes seen when a Venus is attached
+    and its exact terminal is the focused target (the selected pane of the active tab, or the
+    shown popup) at one of these moments:
+    - focus arrives on that terminal, including via `FocusAttention` to a terminal that
+      already has focus;
+    - a new raise arrives while that terminal is focused;
+    - a Venus attaches while that terminal is focused.
+
+    A focus action applies seen to the raise cached when the action was handled, and a poll in
+    flight cannot undo it. Needs input is never cleared by viewing.
+  - **Rollup.** A tab's rollup is the highest-priority state among its terminals. A stale
+    terminal counts with its last state, and its badge is dimmed.
+  - **Sidebar visibility [Q3].** The Runtime keeps one value per window: `Open` (the default),
+    `Closed`, or `Off` (when `[sidebar] enabled = false`).
+    - The value lives in memory while the supervisor runs, so it survives detach and reattach.
+      It resets to `Open` after a supervisor restart.
+    - `ToggleSidebar` flips `Open` and `Closed`. A toggle, rather than a set, cannot race a stale
+      snapshot. In `Off` it is a no-op.
+  - **The next EONW version** (amends EON-C10; `eon-agent-sidebar-yx8.7` fixes its number) adds:
+    - an optional `attention` on `Pane` and `Popup`, holding:
+      - `state`: the *normalized* EON-C31 state of the terminal's most urgent record, one of
+        needs input, error, finished, working, idle or unavailable. Venus never normalizes,
+        and seen is already folded into this state;
+      - from that record: kind, progress, `app`, `title` and `msg`;
+      - its `changed_at`, as wall-clock Unix milliseconds. The Runtime computes it once from its
+        fixed change time, so the snapshot does not change as time passes, and Venus computes
+        the age shown;
+      - the stale flag;
+      - the count of other records.
+
+      For unavailable, only `state` is present.
+
+      Its bounds are those of the ORB-C15 reply: `app` ≤ 32, `title` ≤ 96 and `msg` ≤ 256
+      bytes. A whole snapshot still fits the 2 MiB frame.
+    - `attention_rollup` on `Tab`;
+    - `sidebar` (`Open | Closed | Off`) on `Snapshot`;
+    - the actions `ToggleSidebar`, `FocusAttention { tab, target }`, `NextAttention` and
+      `PreviousAttention`;
+    - **CLI JSON.** It carries exactly three things (Q8):
+      - `attention: { state, app }` on panes and popups;
+      - `attention_rollup` on tabs;
+      - `sidebar` on the snapshot.
+
+      It leaves out `kind`, `progress`, `title`, `msg`, `changed_at`, the stale flag and the
+      record count. That version ships in 1.0, because `eon-agent-sidebar-yx8.9` gates
+      eon-igae.7, .8 and .11, so EON-C28 freezes exactly these fields.
+      - A program inside an Eon terminal can run `eon workspace`, so it can read every
+        terminal's attention `state` and `app`. `title` and `msg` never appear through `eon
+        workspace`, though
+        any same-UID process can read them over raw EONW (Q8). The spec says
+        records are never sent back, so this is a third deviation **[Q8]**.
+  - **FocusAttention** is what sidebar rows send. It goes to the exact pane or popup under the
+    covered-target rule. Rows do not use `FocusId`, because `FocusId` dismisses a shown popup.
+    - Its target names the exact pane id, or the exact popup instance (the `expected_instance`
+      used by `InvokePopup`).
+    - A stale target is rejected as an EONW action rejection, with no fallback, as EON-C10
+      target safety requires. Venus shows it as a VEN-C8 notice.
+  - **NextAttention and PreviousAttention.**
+    - **The queue** holds every terminal whose most urgent record is needs input, an unseen
+      error, or finished. Its total order is:
+      1. class: needs input, then error, then finished;
+      2. the fixed change time, oldest first (for needs input, the time it entered `blocked`;
+         otherwise the raise's time);
+      3. tab position;
+      4. terminal position.
+    - **The cursor.** The Runtime keeps one cursor per window: the order key of the last jump
+      target.
+      - `NextAttention` goes to the first entry whose key is greater than the cursor, wrapping
+        to the smallest key. `PreviousAttention` does the reverse.
+      - The cursor advances even when the jump only selected a tab.
+      - The cursor keeps working after its entry leaves the queue, so repeated presses walk
+        every entry.
+      - **Reset [Q7].** The cursor resets, so the next press starts at the front of the queue,
+        in two cases:
+        - focus moves by any other means;
+        - an entry of a higher class than the cursor's appears, for example a needs input
+          while the cursor sits on a finished entry.
+
+        This keeps D9's rule that the most urgent work comes first.
+    - Seen raises leave the queue.
+    - An empty queue is EON-C10's unchanged-snapshot no-op.
+  - **Covered-target rule.** It applies to `FocusAttention` and both queue actions, for pane and
+    popup targets alike. If the target's tab is showing a popup that is not the target:
+    - a keep-alive popup is hidden (it survives), and then the target is focused or shown;
+    - a transient popup (one whose dismissal stops its terminal, EON-C10), or a
+      pending directory picker, is left alone. The action only selects the tab and never stops a
+      terminal.
+  - **Configuration.** `[sidebar] enabled = true` is the default. Setting it to `false` sets
+    `sidebar` to `Off`:
+    - Venus shows no sidebar;
+    - Alt+Shift+H is unbound;
+    - tab markers always show.
+- **Important failures:**
+  - **No attention.** Before its first good reply, a peer gives no attention. A terminal without
+    records also gives none, except an Agent popup, which gives unavailable, including before its
+    first good reply. After the first good
+    reply, slowness only makes a peer stale. The poller never guesses a state.
+  - **Failures stay contained.** A poll failure never blocks Inspect or actions. It delays Stop
+    by at most Orbit's answer time for one in-flight request (see Polling).
+  - **Removed targets.** A removed pane or popup's records disappear with it.
+  - **Restarts.**
+    - A supervisor restart or recovery loses the seen bits and visibility, so `done` and `error`
+      records reappear unseen. This is accepted for 1.0.
+    - A provider that restarts in the same pane replaces its records with new reports.
+  - **Leftover idle records.** An agent killed by SIGKILL in a shell pane can leave an `idle`
+    record, which shows as an idle row until the run ends or the record is replaced. The spec
+    allows dropping `idle` on exit, but keeping it lets a finish raise. This is accepted for 1.0.
+  - **Finishes that vanish with their record.** An unseen finish disappears with its record in
+    these cases:
+    - Claude Code clears its records on exit, and Codex clears its record on exit, on suspend,
+      and when it hands the terminal to another program such as an editor;
+    - in the Agent popup the agent is the PTY child, so its exit ends the Orbit run, and its
+      `done` and `error` records end with the run, even though the spec says they survive
+      process exit;
+    - the ProgramStatus reply holds about 7 records, so a terminal with 7 or more `blocked`,
+      `error` or `done` records (Claude subagents, for example) can crowd out a raised `idle`
+      from the reply. That finish never shows.
+
+    All three are accepted for 1.0. In the first two the user is usually interacting with that
+    terminal; the third needs an unusual number of records.
+  - **Window focus.** Eon does not know desktop window focus, so a raise in the focused terminal
+    counts as seen even while the window sits behind another app. This is accepted under D5.
+  - **Detached windows.** While no Venus is attached, nothing becomes seen. The supervisor knows
+    this because it holds the control stream (VEN-C14).
+  - **Older generations.** The new `eon` treats a still-running generation of the previous EONW
+    version as incompatible, exactly as it has since eon-igae.12.4. Nothing changes here.
+    `eon-agent-sidebar-yx8.7`'s rollout follows igae.12.4's precedent.
+  - **No side effects.** Status changes never change focus, open the sidebar, raise the window or
+    send terminal input.
+- **Owner:**
+  - **Eon Runtime** owns the poller, raise, normalization, seen, rollup, the queue and cursor,
+    sidebar visibility and `[sidebar]` configuration.
+  - **Orbit** owns the records and their neutral facts.
+  - **Venus** owns presentation and hiding for width (VEN-C30).
+- **Consumes:** ORB-C15, ORB-C13 generation 2, EON-C8 topology, and EON-C10 (the next EONW
+  version, still request and response, with no event stream).
+- **Boundary:**
+  - no hooks and no edits to agent configuration;
+  - no provider parsing; the Runtime passes `app` through unchanged, and Venus maps it for
+    display (VEN-C30);
+  - no notifications or sound (eon-iwmz consumes this later);
+  - no agent launching, orchestration or worktrees;
+  - agents under tmux report nothing; this is documented.
+- **Proof:** None yet.
 
 ## EON-C32 — Eon Bar items and order
 
