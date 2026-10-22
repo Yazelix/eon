@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Alt+Shift+M opens a Commands popup: search a list of Eon commands, such
+  as new tab, move tab, list generations or stop older generations, and press
+  Enter to run one for that tab. Each line shows the `eon` command it runs.
+  A custom popup already on Alt+Shift+M now collides with it: move one of
+  them with `keybinding`, or set `[popups.commands].enabled = false`.
+
 - Alt+Shift+Z zooms the selected pane: its column fills the tab while the
   other columns' terminals keep running out of sight, and the tab's pill gains
   `· zoom`. Pressing it again restores the columns as they were; selecting
@@ -12,9 +18,6 @@ installation, and proven contract changes.
   Shortcut help lists it, as do the bottom hints when there is room. Alt+Shift+Z no longer reaches
   terminal programs in a full Eon window; a popup configured on that key takes
   it in place of zoom.
-
-- Ctrl+Alt+M creates a column, in place of Alt+Shift+M, which now reaches
-  the terminal program.
 
 - The Eon Bar shows Claude's quota as two chips, one for the five-hour window
   and one for the seven-day window, in place of one chip showing both. In a
@@ -183,12 +186,12 @@ installation, and proven contract changes.
   other slow work, or that stops a terminal before starting one, can still
   exceed the six seconds.
 - A tab can show up to four columns side by side, each a pane stack with its
-  own live terminal. Alt+Shift+M opens a column right of the selected one with
+  own live terminal. Ctrl+Alt+M opens a column right of the selected one with
   a new pane in the tab's directory; Alt+M adds a pane to the selected column;
   Alt+H/L move between columns and on into the previous or next tab; clicking
   another column's terminal selects it; closing a column's last pane removes
   the column. Eon refuses another column when one would be narrower than 40
-  terminal columns. Alt+Shift+M no longer reaches terminal programs in a full
+  terminal columns. Ctrl+Alt+M no longer reaches terminal programs in a full
   Eon workspace.
 - Pane frames draw each column as its own rounded card, with an even 8-pixel
   gap around and between the cards; popups and the Project picker draw as one

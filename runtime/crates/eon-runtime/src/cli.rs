@@ -8,7 +8,7 @@ use super::{
         stop_generations, valid_generation,
     },
     managed_environment,
-    sessions::TERMINAL_VARIABLE,
+    sessions::{TAB_VARIABLE, TERMINAL_VARIABLE},
     supervisor::{
         LaunchMode, configuration_directory, launch_current, prepare_configuration,
         prepare_generation_runtime, runtime_directory,
@@ -81,6 +81,7 @@ pub fn run(inputs: Inputs) -> (&'static str, Result<i32, Error>) {
     }
     match Path::new(&invocation).file_name().and_then(OsStr::to_str) {
         Some("eonbase") => ("eonbase", execute_eonbase(&inputs, arguments)),
+        Some("eon-commands") => ("eon-commands", Ok(command_runner(&inputs))),
         // Other names stay Eon: Nix's wrapped executable relaunches itself under its own file
         // name for independent windows.
         _ => match managed_environment::tool(&invocation) {
@@ -91,6 +92,113 @@ pub fn run(inputs: Inputs) -> (&'static str, Result<i32, Error>) {
             None => ("eon", execute(&inputs, arguments)),
         },
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RunnerOutput {
+    /// The popup closes once the command succeeds.
+    Close,
+    /// The popup waits for Enter so its output stays readable.
+    Keep,
+}
+
+/// The Commands popup's curated list. Each entry runs an existing `eon` command as the popup's
+/// caller, so the CLI keeps owning validation, targets and confirmations. `TAB` stands for the
+/// popup's own tab. Pane moves are absent because Eon refuses them while a popup is open.
+const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
+    use RunnerOutput::{Close, Keep};
+    &[
+        ("New tab", &["tab", "create"], Close),
+        ("New pane", &["pane", "create"], Close),
+        ("New window", &["window", "new"], Close),
+        ("Close tab", &["tab", "close", "TAB"], Close),
+        ("Move tab left", &["tab", "move", "left"], Close),
+        ("Move tab right", &["tab", "move", "right"], Close),
+        ("Show workspace", &["workspace"], Keep),
+        ("List windows", &["windows"], Keep),
+        ("List generations", &["generations"], Keep),
+        ("Stop older generations", &["stop", "previous"], Keep),
+        ("Show versions", &["versions"], Keep),
+        ("Show config path", &["config-path"], Keep),
+        ("Show command help", &["--help"], Keep),
+    ]
+};
+
+fn runner_arguments<'a>(arguments: &[&'a str], tab: &'a str) -> Vec<&'a str> {
+    arguments
+        .iter()
+        .map(|argument| if *argument == "TAB" { tab } else { argument })
+        .collect()
+}
+
+/// Runs the Commands popup and keeps a listing or any failure on screen until Enter.
+fn command_runner(inputs: &Inputs) -> i32 {
+    let (status, kept) = pick_and_run_command(inputs).unwrap_or_else(|error| {
+        eprintln!("eon-commands: {error}");
+        (1, RunnerOutput::Keep)
+    });
+    if kept == RunnerOutput::Keep || status != 0 {
+        print!("\nPress Enter to close");
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stdin().read_line(&mut String::new());
+    }
+    status
+}
+
+fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> {
+    let tab = env::var(TAB_VARIABLE).map_err(|_| "runs only in an Eon popup".to_string())?;
+    let list: String = RUNNER_COMMANDS
+        .iter()
+        .enumerate()
+        .map(|(index, (label, arguments, _))| {
+            let command = runner_arguments(arguments, &tab).join(" ");
+            format!("{index}\t{label:<24}eon {command}\n")
+        })
+        .collect();
+    let mut picker = packaged_fzf("Command > ", "Enter Run · Esc/Ctrl+C Cancel")
+        .args(["--delimiter=\t", "--with-nth=2.."])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("cannot launch packaged command picker: {error}"))?;
+    picker
+        .stdin
+        .take()
+        .expect("command picker stdin is piped")
+        .write_all(list.as_bytes())
+        .map_err(|error| format!("cannot list commands: {error}"))?;
+    let output = picker
+        .wait_with_output()
+        .map_err(|error| format!("cannot read the command picker: {error}"))?;
+    match output.status.code() {
+        Some(0) => {}
+        // No match, Escape and Ctrl+C all cancel.
+        Some(1 | 130) => return Ok((0, RunnerOutput::Close)),
+        _ => {
+            return Err(format!(
+                "packaged command picker exited with status {}",
+                output.status
+            ));
+        }
+    }
+    let (_, arguments, kept) = String::from_utf8_lossy(&output.stdout)
+        .split('\t')
+        .next()
+        .and_then(|index| index.trim().parse::<usize>().ok())
+        .and_then(|index| RUNNER_COMMANDS.get(index))
+        .ok_or("command picker returned an invalid selection")?;
+    let arguments = runner_arguments(arguments, &tab)
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+    let status = match execute(inputs, arguments) {
+        Ok(status) => status,
+        Err(error) => {
+            eprintln!("eon: {}", error.message);
+            i32::from(error.status)
+        }
+    };
+    Ok((status, *kept))
 }
 
 fn startup_anima(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
@@ -161,6 +269,27 @@ fn play_startup_anima(inputs: &Inputs, style: &OsStr, seconds: u64) -> Result<()
     result
 }
 
+/// The packaged fzf with the look the Project picker and Commands share, ignoring the
+/// user's own fzf options.
+fn packaged_fzf(prompt: &str, footer: &str) -> Command {
+    let mut fzf = Command::new("fzf");
+    fzf.args([
+        "--bind=ctrl-z:ignore,btab:up",
+        "--cycle",
+        "--info=inline",
+        "--layout=reverse",
+        "--border=none",
+        "--footer-border=none",
+        "--color=footer:-1",
+    ])
+    .arg(format!("--prompt={prompt}"))
+    .arg(format!("--footer={footer}"))
+    .env_remove("FZF_DEFAULT_OPTS")
+    .env_remove("FZF_DEFAULT_OPTS_FILE")
+    .stderr(Stdio::inherit());
+    fzf
+}
+
 fn directory_picker(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
     let [socket, tab, instance] = arguments.as_slice() else {
         return Err("usage: eon-directory-picker EON_SOCKET TAB POPUP".into());
@@ -185,34 +314,25 @@ fn directory_picker(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, St
             .stdout(Stdio::piped())
             .spawn()
             .map_err(|error| format!("cannot launch packaged directory history: {error}"))?;
-        let output = Command::new("fzf")
-            .args([
-                "--exact",
-                "--no-sort",
-                "--bind=ctrl-z:ignore,btab:up",
-                "--cycle",
-                "--keep-right",
-                "--info=inline",
-                "--layout=reverse",
-                "--tabstop=1",
-                "--border=none",
-                "--expect=tab",
-                "--print0",
-                "--prompt=Quick search > ",
-                "--footer=Enter Use directory · Tab Browse folders · Esc/Ctrl+C Cancel",
-                "--footer-border=none",
-                "--color=footer:-1",
-            ])
-            .env_remove("FZF_DEFAULT_OPTS")
-            .env_remove("FZF_DEFAULT_OPTS_FILE")
-            .stdin(
-                history
-                    .stdout
-                    .take()
-                    .expect("directory history stdout is piped"),
-            )
-            .stderr(Stdio::inherit())
-            .output();
+        let output = packaged_fzf(
+            "Quick search > ",
+            "Enter Use directory · Tab Browse folders · Esc/Ctrl+C Cancel",
+        )
+        .args([
+            "--exact",
+            "--no-sort",
+            "--keep-right",
+            "--tabstop=1",
+            "--expect=tab",
+            "--print0",
+        ])
+        .stdin(
+            history
+                .stdout
+                .take()
+                .expect("directory history stdout is piped"),
+        )
+        .output();
         // No quick-search exit needs more input, including early Enter and Tab.
         let history_stopped = history.kill().is_ok();
         let history_status = history
@@ -785,6 +905,18 @@ fn parse_edit_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_runner_workspace_entries_parse_as_eon_commands() {
+        for (label, arguments, _) in RUNNER_COMMANDS {
+            let arguments = runner_arguments(arguments, "t2");
+            assert!(!arguments.contains(&"TAB"), "{label}");
+            if ["workspace", "tab", "pane"].contains(&arguments[0]) {
+                let arguments: Vec<OsString> = arguments.into_iter().map(OsString::from).collect();
+                assert!(parse_control_arguments(&arguments).is_ok(), "{label}");
+            }
+        }
+    }
 
     #[test]
     fn tab_directory_parser_preserves_one_opaque_path_argument() {

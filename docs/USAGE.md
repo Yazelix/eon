@@ -122,6 +122,7 @@ one, and clicking another column's terminal selects it.
 | Alt+Shift+L | Open or hide the tab's Agent popup |
 | Alt+Shift+Y | Open or hide the tab's Files popup |
 | Alt+Shift+A | Open or dismiss the tab's Anima popup |
+| Alt+Shift+M | Open or dismiss the tab's Commands popup |
 
 ### Eon Bar and tabs
 
@@ -183,6 +184,16 @@ Yazi; in search it uses the selected result. Enter on a text file opens it in
 a new Helix pane beside your work and hides Files, one pane per selected file;
 other files keep Yazi's default openers. Anima is transient:
 closing its popup stops playback and returns to the tab.
+
+Commands lists Eon commands you can search and run: new tab, pane or
+window, close or move the tab, show the workspace, windows,
+generations, versions or config path, stop older generations, and command
+help. Each line shows the `eon` command it runs. Enter runs it from the popup
+for that tab, with the command's own checks and Stop's confirmation. New pane
+closes the popup first, as Alt+M does, and the pane joins the tab's selected
+column. Other actions close the popup when they succeed; listings, stopping
+older generations and failures stay until you press Enter. Esc closes it
+without running anything.
 
 ### Scrolling and directory picker
 

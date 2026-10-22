@@ -789,6 +789,20 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Anima defaults to Alt+Shift+A and launches the pinned random native animation
   as a transient popup. A dismissal, replacement, or tab close stops its Orbit
   terminal, restores the prior tab focus, and leaves no hidden animation running.
+  Commands defaults to Alt+Shift+M and runs a transient fzf list of existing
+  `eon` commands: tab, pane and window creation, closing or moving the popup's
+  own tab, the workspace, window and generation listings, `stop
+  previous`, `versions`, `config-path` and `--help`. Each line names the
+  command it runs. Enter runs it in the popup's terminal, with that
+  terminal's `EON_TERMINAL` and `EON_TAB`: pane creation and tab moves act for
+  the popup's tab under the caller rules above, closing names `EON_TAB`, and
+  every command keeps the CLI's own validation, targets and Stop
+  confirmation; it adds no EONW action. A successful action
+  ends the popup; a listing, `stop previous`, or a failure reported while the
+  popup is still open, waits for Enter. New pane dismisses the popup before it
+  starts the pane, as Alt+M does, so a failure after that dismissal is not
+  shown. Esc, Ctrl+C or no match runs nothing. The entry follows the existing
+  popup catalog rules, so a configured popup on the same key is a collision.
 - **Configuration:** `[popup]` owns finite side and vertical margins, defaulting
   to 8 and 4 logical pixels. `[popups.<id>]` owns direct argv, physical shortcut,
   label, enabled state and keep-alive lifetime. Only Agent accepts `"auto"`.
