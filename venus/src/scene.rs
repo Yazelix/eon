@@ -217,8 +217,11 @@ fn tab_labels(index: usize, tab_count: usize, directory: &[u8]) -> (String, Stri
     )
 }
 
+/// The widest tab pill: it fits the viewport after the pills' left inset and keeps one tab gap
+/// before the viewport's end.
 pub(crate) fn tab_max_width(metrics: CellMetrics, viewport_width: f32) -> f32 {
-    (metrics.font_size * 17.5).min((viewport_width - metrics.padding * 2.0 / 3.0).max(1.0))
+    (metrics.font_size * 17.5)
+        .min((viewport_width - card_gap(metrics) - metrics.padding / 3.0).max(1.0))
 }
 
 /// One fixed action in the native Eon workspace header.
@@ -848,8 +851,12 @@ fn workspace_header_geometry(
     [WorkspaceControl; 3],
 ) {
     let width = size.width as f32;
-    let identity_width =
-        metrics.width + metrics.padding * 2.0 + tab_gap(metrics, tab_height) * 2.0 + 1.0;
+    // One identity pill after its full-height left inset, plus the gap that follows it.
+    let identity_width = metrics.width
+        + metrics.padding * 2.0
+        + card_gap(metrics)
+        + tab_gap(metrics, tab_height)
+        + 1.0;
     let minimum_tabs = (width * 0.4)
         .min(metrics.font_size * 4.0)
         .max(identity_width.min((width - metrics.width * 3.0).max(0.0)));
@@ -3011,6 +3018,14 @@ mod tests {
         assert!(narrow.tab_scroll_limit() > 0.0);
         assert_eq!(narrow.controls[0].rect.left, narrow.tab_viewport.right());
         assert_eq!(narrow.drag_region.width, 0.0);
+        // The narrowest strip keeps the gap after its first pill, apart from New tab.
+        assert_eq!(
+            narrow.hit_test(
+                narrow.tabs[0].rect.right() + 1.0,
+                narrow.tab_viewport.height / 2.0
+            ),
+            None
+        );
         let scrolled = WorkspaceScene::from_snapshot(
             &snapshot,
             PhysicalSize::new(100, 600),
