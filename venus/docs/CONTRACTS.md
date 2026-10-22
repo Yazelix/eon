@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v2 / ORBS v13 through the
-in-tree `orbit-protocol` crate and canonical EONW v16 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v17 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version.
@@ -823,12 +823,14 @@ re-proved when that platform or feature is next touched.
 
 - **Status:** Proved
 - **Consumer:** One Eon-supervised Venus process.
-- **Trigger:** A complete private Present command, control EOF, or terminal read
-  failure.
+- **Trigger:** A complete private Present command, control EOF, terminal read
+  failure, or an EONW `Ended` reply.
 - **Result:** Present preserves process and terminal attachment while requesting
   presentation of the existing native window; control loss exits through the
   native event loop, releases attachments, and leaves Orbit live; replacement
-  may retry transient Busy while the old client releases.
+  may retry transient Busy while the old client releases. An EONW `Ended`
+  reply, which answers a close that stopped the window's last terminal, exits
+  the same way, leaving no Orbit terminal of that generation.
 - **Important failures:** Malformed or partial commands do not present; standalone
   Busy remains terminal; Present followed by EOF preserves exact Present-then-
   Exit ordering.
@@ -845,7 +847,9 @@ re-proved when that platform or feature is next touched.
     `only_supervised_orbit_busy_is_retryable` in the workspace suite; dogfood
     checklist items 1 and 2.
 - **Open proof:** Pending re-proof in this repository: native Present of an
-  existing window that preserves its process and terminal attachment.
+  existing window that preserves its process and terminal attachment. Native
+  exit on an EONW `Ended` reply is pending
+  `eon-prove-close-and-detach-batch-bf8t`.
 
 ## VEN-C15 — Compositor-owned background blur
 

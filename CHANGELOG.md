@@ -5,6 +5,17 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Closing the last tab now quits its window, like closing any other tab
+  stops that tab's terminals: Alt+Shift+W, the bar's `×`, Alt+W on the last
+  pane, `eon tab close` and `eon pane close` all work on it, where they used
+  to refuse. Closing the window itself still keeps everything running. Run
+  from a terminal, `eon tab close` and `eon pane close` ask first, listing the
+  terminals that will stop, unless `[workspace] warning_close_last_tab = false`
+  or `--json`; the window's own controls do not ask yet. This changes the
+  workspace protocol to EONW 17: the updated `eon` cannot manage windows
+  started by an earlier build, so stop the ones you no longer need with the
+  old `eon` first.
+
 - `eon pane create --no-focus`, with or without `-- COMMAND`, adds the pane
   without taking focus: the tab's selected pane stays selected and a popup
   you run it from, such as Agent, stays open. An agent can start other agents
@@ -152,7 +163,7 @@ installation, and proven contract changes.
   130 interrupted. Structured failures exited 2 and
   every other failure 1; scripts that tested for those values need updating.
   `eon --help` and [Using Eon](docs/USAGE.md#exit-status) list the statuses.
-- `eon` speaks only EONW 16. A generation started by an older build that uses
+- `eon` speaks only EONW 17. A generation started by an older build that uses
   an earlier EONW is listed as incompatible and can no longer be inspected or
   stopped by this `eon`; stop it with the build that started it.
 - `eon claude-statusline` is gone; Claude quota has come from CodexBar since

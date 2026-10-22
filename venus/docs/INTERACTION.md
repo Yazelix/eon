@@ -61,8 +61,8 @@ the empty region between tabs and controls drags an undecorated window.
 | Alt+M | Create a pane in the selected column |
 | Ctrl+Alt+M | Create a column right of the selected one |
 | Alt+Shift+Z | Zoom the selected column across the tab, or restore the columns |
-| Alt+W | Close the selected pane, except the final tab's last pane |
-| Alt+Shift+W | Close the active non-final tab |
+| Alt+W | Close the selected pane; the final tab's last pane quits the window |
+| Alt+Shift+W | Close the active tab; closing the final tab quits the window |
 | Alt+Shift+N | Open an independent Eon window when supervised by Eon |
 | Alt+Z | Open Project; Eon supplies other popup shortcuts |
 | Alt+/ | Open or close Shortcuts |

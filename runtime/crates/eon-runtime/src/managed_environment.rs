@@ -9,7 +9,7 @@ use std::{
     process::Command,
 };
 
-use eon_workspace_protocol::v16::{
+use eon_workspace_protocol::v17::{
     ALT, CTRL, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry, SHIFT, SUPER,
     Shortcut,
 };
@@ -27,6 +27,7 @@ struct EonConfig {
     terminal: TerminalSettings,
     bar: BarSettings,
     anima: AnimationSettings,
+    workspace: WorkspaceSettings,
     popup: PopupSettings,
     popups: BTreeMap<String, PopupEntrySettings>,
 }
@@ -37,6 +38,8 @@ pub struct Defaults {
     pub shell: ShellConfig,
     pub terminal: TerminalConfig,
     pub anima: StartupAnimation,
+    /// Whether closing the final tab, which quits its window, asks first.
+    pub warning_close_last_tab: bool,
     pub popups: PopupCatalog,
     pub custom_popup_keep_alive: bool,
     pub ansi_palette: &'static str,
@@ -90,6 +93,12 @@ struct AnimationSettings {
     enabled: Option<bool>,
     style: Option<String>,
     duration_seconds: Option<u64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct WorkspaceSettings {
+    warning_close_last_tab: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -269,6 +278,13 @@ pub(crate) fn startup_animation(
         return Err("anima.duration_seconds must be from 1 through 30".into());
     }
     Ok(anima.enabled.then_some(anima))
+}
+
+pub(crate) fn warning_close_last_tab(root: &Path, defaults: &Defaults) -> Result<bool, String> {
+    Ok(read_config(root)?
+        .workspace
+        .warning_close_last_tab
+        .unwrap_or(defaults.warning_close_last_tab))
 }
 
 pub(crate) fn terminal_presentation(
@@ -818,7 +834,7 @@ mod tests {
     use super::{
         ManagedPrograms, PopupCommand, Tool, command as managed_command, integration_mask,
         popup_catalog, prepare_popup_command, prepend_path, read_shell_config, startup_animation,
-        terminal_presentation, tool,
+        terminal_presentation, tool, warning_close_last_tab,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -972,6 +988,34 @@ mod tests {
                     .contains(expected)
             );
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn final_tab_warning_reads_its_setting_and_rejects_non_booleans() {
+        let inputs = crate::fixtures::inputs();
+        let root = std::env::temp_dir().join(format!(
+            "eon-managed-environment-test-{}-workspace",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        assert!(warning_close_last_tab(&root, &inputs.defaults).unwrap());
+        fs::write(
+            root.join("config.toml"),
+            "[workspace]\nwarning_close_last_tab = false\n",
+        )
+        .unwrap();
+        assert!(!warning_close_last_tab(&root, &inputs.defaults).unwrap());
+        fs::write(
+            root.join("config.toml"),
+            "[workspace]\nwarning_close_last_tab = 'no'\n",
+        )
+        .unwrap();
+        assert!(
+            warning_close_last_tab(&root, &inputs.defaults)
+                .unwrap_err()
+                .contains("warning_close_last_tab")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

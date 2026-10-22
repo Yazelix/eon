@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Venus consumes EONW v17, whose `Ended` reply answers a close that stopped
+  the window's last terminal; Venus exits on it as on control loss
+  (`eon-final-tab-close-ends-window-fwnp`).
 - VEN-C8: Alt+Shift+Z toggles window-local zoom of the selected column across
   the tab's cards; hidden columns stay attached at their column size, and a
   change of the active tab, column count or selected column ends the zoom

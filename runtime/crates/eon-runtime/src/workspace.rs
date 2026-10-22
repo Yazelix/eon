@@ -1,5 +1,5 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v16::{
+use eon_workspace_protocol::v17::{
     Action, Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS,
     MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
     PopupEntry as SnapshotEntry, PopupTarget, Side, Snapshot, Tab as SnapshotTab, WorkspaceAction,
@@ -851,13 +851,13 @@ impl Workspace {
                 format!("tab {id} is not the active tab"),
             ));
         }
-        if self.tabs.len() == 1 {
-            return Err(action_error(
-                "unavailable",
-                "the final tab cannot be closed",
-            ));
-        }
-        let sessions = self.tabs[index]
+        let sessions = self.tab_sessions(index);
+        self.remember(request_id);
+        Ok(sessions)
+    }
+
+    fn tab_sessions(&self, index: usize) -> Vec<String> {
+        self.tabs[index]
             .panes()
             .map(|pane| pane.session.id.clone())
             .chain(
@@ -866,19 +866,19 @@ impl Workspace {
                     .iter()
                     .map(|popup| popup.session.id.clone()),
             )
-            .collect();
-        self.remember(request_id);
-        Ok(sessions)
+            .collect()
     }
 
     /// Validates closing one pane of the caller's tab, else of the active tab,
-    /// and names its terminal.
+    /// and names the terminals to stop: the pane's, and when it is the final
+    /// tab's last pane, every terminal of that tab, since the close ends the
+    /// window.
     pub(crate) fn prepare_close_pane(
         &mut self,
         request_id: &str,
         caller: Option<&str>,
         id: &str,
-    ) -> Result<String, Failure> {
+    ) -> Result<Vec<String>, Failure> {
         self.reject_duplicate(request_id)?;
         let tab_index = self.target_tab(caller)?.0;
         let tab = &self.tabs[tab_index];
@@ -906,15 +906,13 @@ impl Workspace {
                 "close the popup before closing a pane",
             ));
         }
-        if self.tabs.len() == 1 && tab.panes().count() == 1 {
-            return Err(action_error(
-                "unavailable",
-                "the final pane cannot be closed",
-            ));
-        }
-        let session = tab.columns[column].panes[pane].session.id.clone();
+        let sessions = if self.tabs.len() == 1 && tab.panes().count() == 1 {
+            self.tab_sessions(tab_index)
+        } else {
+            vec![tab.columns[column].panes[pane].session.id.clone()]
+        };
         self.remember(request_id);
-        Ok(session)
+        Ok(sessions)
     }
 
     fn start_pane(
@@ -1663,13 +1661,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v16::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v17::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v16::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v16::ALT, "Alt"),
-        (eon_workspace_protocol::v16::SHIFT, "Shift"),
-        (eon_workspace_protocol::v16::SUPER, "Super"),
+        (eon_workspace_protocol::v17::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v17::ALT, "Alt"),
+        (eon_workspace_protocol::v17::SHIFT, "Shift"),
+        (eon_workspace_protocol::v17::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1722,7 +1720,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v16::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v17::{ALT, PopupGeometry, Shortcut};
 
     fn catalog() -> PopupCatalog {
         PopupCatalog {
@@ -1844,8 +1842,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v16::encode_response(
-            &eon_workspace_protocol::v16::Response::Snapshot(after),
+        eon_workspace_protocol::v17::encode_response(
+            &eon_workspace_protocol::v17::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -2205,9 +2203,12 @@ mod tests {
             workspace.dispatch(id, None, action, prepared, ok).unwrap()
         };
         let close = |workspace: &mut Workspace, id: &str, pane: &str| {
-            let session = workspace.prepare_close_pane(id, None, pane)?;
-            workspace.session_ended(&session, SessionEnd::Closed, ok)?;
-            Ok::<_, Failure>(session)
+            let sessions = workspace.prepare_close_pane(id, None, pane)?;
+            let [session] = sessions.as_slice() else {
+                panic!("a non-final pane close stops only its pane");
+            };
+            workspace.session_ended(session, SessionEnd::Closed, ok)?;
+            Ok::<_, Failure>(session.clone())
         };
         let refused = |workspace: &mut Workspace, id: &str, pane: &str| {
             let before = workspace.snapshot();
@@ -2216,10 +2217,6 @@ mod tests {
             failure
         };
 
-        assert_eq!(
-            refused(&mut workspace, "x1", "p1").detail,
-            "the final pane cannot be closed"
-        );
         request(&mut workspace, "c1", Action::CreateColumn);
         request(
             &mut workspace,
@@ -2283,6 +2280,24 @@ mod tests {
         let snapshot = workspace.snapshot();
         assert_eq!(snapshot.tabs.len(), 1);
         assert_eq!(snapshot.active_tab, "t1");
+
+        // The final tab's last pane ends the window, so its hidden popup stops too.
+        let popup = snapshot.tabs[0].popups[0].clone();
+        request(
+            &mut workspace,
+            "a2",
+            Action::InvokePopup {
+                tab: "t1".into(),
+                entry: "agent".into(),
+                expected_instance: Some(popup.id),
+                intent: InvokeIntent::Toggle,
+            },
+        );
+        assert_eq!(workspace.snapshot().tabs[0].selected_popup, None);
+        assert_eq!(
+            workspace.prepare_close_pane("x8", None, "p1").unwrap(),
+            ["session-1".to_owned(), popup.session]
+        );
     }
 
     #[test]
@@ -2383,11 +2398,14 @@ mod tests {
         );
 
         // Closing resolves the pane in the caller's tab, not the active one.
-        let session = workspace
+        let [session] = &workspace
             .prepare_close_pane("x1", Some("session-1"), &created[1])
-            .unwrap();
+            .unwrap()[..]
+        else {
+            panic!("a non-final pane close stops only its pane");
+        };
         workspace
-            .session_ended(&session, SessionEnd::Closed, |_| Ok(()))
+            .session_ended(session, SessionEnd::Closed, |_| Ok(()))
             .unwrap();
         assert_eq!(panes(&workspace, "t1").0, ["p1"]);
 
@@ -3500,8 +3518,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v16::encode_response(
-            &eon_workspace_protocol::v16::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v17::encode_response(
+            &eon_workspace_protocol::v17::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 

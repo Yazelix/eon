@@ -9,7 +9,7 @@ use super::supervisor::{
     try_lock_supervisor_lifecycle, validate_private_directory,
 };
 use super::workspace::json_escape;
-use eon_workspace_protocol::v16::{
+use eon_workspace_protocol::v17::{
     Action, Availability, LifecycleResponse, Stopped, WorkspaceAction,
 };
 use std::{
@@ -559,7 +559,7 @@ pub(super) fn stop_generation(
     }
 }
 
-fn read_stop_confirmation() -> Result<String, String> {
+pub(super) fn read_stop_confirmation() -> Result<String, String> {
     let mut answer = Vec::new();
     loop {
         let mut byte = 0u8;

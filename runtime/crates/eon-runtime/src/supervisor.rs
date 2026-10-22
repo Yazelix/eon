@@ -15,8 +15,8 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, Workspace},
 };
-use eon_workspace_protocol::v16::{
-    Action, Availability, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
+use eon_workspace_protocol::v17::{
+    Action, Availability, Ended, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
     Stopped, VERSION, WorkspaceAction,
 };
 use std::{
@@ -515,7 +515,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v16::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v17::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -930,7 +930,10 @@ fn supervise(
                 reap_finished_sessions(&mut state, inputs, config)?;
             }
 
-            if state.sessions.is_empty() {
+            // An incomplete Stop keeps its owner for a retry, even with no
+            // tracked terminal left, such as a final close whose untracked
+            // runs could not be acquired.
+            if state.sessions.is_empty() && !state.stopping {
                 return Ok(state.initial_status.unwrap_or(0));
             }
 
@@ -1076,7 +1079,9 @@ fn close_workspace_tab(
     state: &mut SupervisorState,
     inputs: &Inputs,
     config: &Path,
-) -> Result<Snapshot, Failure> {
+    runtime: &Path,
+    generation: &str,
+) -> Result<Response, Failure> {
     let started = Instant::now();
     let result: Result<(), Failure> = (|| {
         reap_finished_sessions(state, inputs, config)
@@ -1091,21 +1096,7 @@ fn close_workspace_tab(
             "closing tab {tab}: stopping {}",
             sessions.join(", ")
         ));
-        for id in sessions {
-            let natural_status = stop_owned_session(&mut state.sessions, &id)
-                .map_err(|detail| failure("tab-close-failed", format!("{id}: {detail}")))?;
-            state
-                .workspace
-                .as_mut()
-                .expect("workspace close retains its owner")
-                .session_ended(&id, SessionEnd::Closed, |_| {
-                    Err("closing a tab cannot start a replacement terminal".into())
-                })?;
-            if id == "session-1" && natural_status.is_some() {
-                state.initial_status = natural_status;
-            }
-        }
-        Ok(())
+        stop_closed_sessions(state, sessions, "tab-close-failed")
     })();
     let elapsed = started.elapsed().as_millis();
     state.log.record(&match &result {
@@ -1116,9 +1107,7 @@ fn close_workspace_tab(
         ),
     });
     result?;
-    Ok(state
-        .workspace_snapshot()
-        .expect("tab close retains a non-final workspace"))
+    closed_response(state, runtime, generation, "tab-close-failed")
 }
 
 fn close_workspace_pane(
@@ -1127,7 +1116,9 @@ fn close_workspace_pane(
     state: &mut SupervisorState,
     inputs: &Inputs,
     config: &Path,
-) -> Result<Snapshot, Failure> {
+    runtime: &Path,
+    generation: &str,
+) -> Result<Response, Failure> {
     reap_finished_sessions(state, inputs, config)
         .map_err(|detail| failure("pane-close-failed", detail))?;
     let caller = caller_session(state, inputs, config, request)?;
@@ -1135,22 +1126,83 @@ fn close_workspace_pane(
         .workspace
         .as_mut()
         .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
-    let id = workspace.prepare_close_pane(&request.id, caller.as_deref(), pane)?;
-    let natural_status = stop_owned_session(&mut state.sessions, &id)
-        .map_err(|detail| failure("pane-close-failed", format!("{id}: {detail}")))?;
-    state
-        .workspace
-        .as_mut()
-        .expect("pane close retains its owner")
-        .session_ended(&id, SessionEnd::Closed, |_| {
-            Err("closing a pane cannot start a replacement terminal".into())
-        })?;
-    if id == "session-1" && natural_status.is_some() {
-        state.initial_status = natural_status;
+    let sessions = workspace.prepare_close_pane(&request.id, caller.as_deref(), pane)?;
+    stop_closed_sessions(state, sessions, "pane-close-failed")?;
+    closed_response(state, runtime, generation, "pane-close-failed")
+}
+
+/// Stops a close's terminals one at a time and prunes each confirmed end, so
+/// a failed stop leaves every remaining terminal represented.
+fn stop_closed_sessions(
+    state: &mut SupervisorState,
+    sessions: Vec<String>,
+    code: &str,
+) -> Result<(), Failure> {
+    for id in sessions {
+        let natural_status = stop_owned_session(&mut state.sessions, &id)
+            .map_err(|detail| failure(code, format!("{id}: {detail}")))?;
+        state
+            .workspace
+            .as_mut()
+            .expect("workspace close retains its owner")
+            .session_ended(&id, SessionEnd::Closed, |_| {
+                Err("a close cannot start a replacement terminal".into())
+            })?;
+        if id == "session-1" && natural_status.is_some() {
+            state.initial_status = natural_status;
+        }
     }
-    Ok(state
-        .workspace_snapshot()
-        .expect("pane close retains a nonempty workspace"))
+    Ok(())
+}
+
+/// A close that stopped the window's last terminal ends its generation, and
+/// leaves no workspace to snapshot. As Stop does, it first stops any run of
+/// the generation that no tab tracks, such as a picker that became ready
+/// after its start timed out; failing that, it fails as Stop does.
+fn closed_response(
+    state: &mut SupervisorState,
+    runtime: &Path,
+    generation: &str,
+    code: &str,
+) -> Result<Response, Failure> {
+    if !state.sessions.is_empty() {
+        return Ok(Response::Snapshot(
+            state
+                .workspace_snapshot()
+                .expect("a close keeps the workspace owner"),
+        ));
+    }
+    stop_generation_sessions(state, runtime, LaunchMode::Workspace)
+        .map_err(|detail| failure(code, detail))?;
+    Ok(Response::Ended(Ended {
+        generation: generation.into(),
+    }))
+}
+
+/// Stops every run of this generation, including runs no tab tracks, and
+/// names them. The supervisor refuses other requests from here on, and a
+/// complete stop leaves it no terminal.
+fn stop_generation_sessions(
+    state: &mut SupervisorState,
+    runtime: &Path,
+    mode: LaunchMode,
+) -> Result<Vec<String>, String> {
+    state.stopping = true;
+    let deadline = Instant::now() + SESSION_START_TIMEOUT;
+    let untracked = acquire_generation_sessions(
+        runtime,
+        mode,
+        &state.component_generation,
+        &state.sessions,
+        deadline,
+    )?;
+    state.sessions.extend(untracked);
+    let stopped = stop_managed_sessions(
+        &mut state.sessions,
+        deadline.saturating_duration_since(Instant::now()),
+    )?;
+    state.sessions.clear();
+    Ok(stopped)
 }
 
 /// The live terminal session a request's `EON_TERMINAL` caller names; a
@@ -1587,27 +1639,11 @@ fn dispatch_control_request(
                     false,
                 );
             }
-            state.stopping = true;
-            let deadline = Instant::now() + SESSION_START_TIMEOUT;
-            let result = acquire_generation_sessions(
-                runtime,
-                mode,
-                &state.component_generation,
-                &state.sessions,
-                deadline,
-            )
-            .and_then(|untracked| {
-                state.sessions.extend(untracked);
-                stop_managed_sessions(
-                    &mut state.sessions,
-                    deadline.saturating_duration_since(Instant::now()),
-                )
-            });
+            let result = stop_generation_sessions(state, runtime, mode);
             let shutdown = result.is_ok();
             let response = match result {
                 Ok(mut sessions) => {
                     sessions.retain(|session| !workspace::is_directory_picker_session(session));
-                    state.sessions.clear();
                     LifecycleResponse::Stopped(Stopped {
                         generation: generation.into(),
                         sessions,
@@ -1621,23 +1657,15 @@ fn dispatch_control_request(
             id,
             action: Action::Workspace(WorkspaceAction::CloseTab { tab }),
             ..
-        } => match close_workspace_tab(&id, &tab, state, inputs, config) {
-            Ok(snapshot) => (
-                ControlResponse::Workspace(Response::Snapshot(snapshot)),
-                false,
-            ),
-            Err(error) => (ControlResponse::Workspace(Response::Failure(error)), false),
-        },
+        } => closed(close_workspace_tab(
+            &id, &tab, state, inputs, config, runtime, generation,
+        )),
         Request {
             action: Action::ClosePane { ref pane },
             ..
-        } => match close_workspace_pane(&request, pane, state, inputs, config) {
-            Ok(snapshot) => (
-                ControlResponse::Workspace(Response::Snapshot(snapshot)),
-                false,
-            ),
-            Err(error) => (ControlResponse::Workspace(Response::Failure(error)), false),
-        },
+        } => closed(close_workspace_pane(
+            &request, pane, state, inputs, config, runtime, generation,
+        )),
         request => {
             if state.workspace.is_none() {
                 return (
@@ -1702,6 +1730,13 @@ fn dispatch_control_request(
     }
 }
 
+/// A close reply; one that ended the generation shuts the supervisor down.
+fn closed(result: Result<Response, Failure>) -> (ControlResponse, bool) {
+    let response = result.unwrap_or_else(Response::Failure);
+    let ended = matches!(response, Response::Ended(_));
+    (ControlResponse::Workspace(response), ended)
+}
+
 fn runtime_status(
     inputs: &Inputs,
     generation: &str,
@@ -1764,7 +1799,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v16::{
+        use eon_workspace_protocol::v17::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::{

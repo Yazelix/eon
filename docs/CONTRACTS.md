@@ -461,24 +461,33 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `eon pane move`, `eon pane create` and `eon pane close` act on the calling
     terminal's tab and pane instead of the active tab and its selected pane
     ([EON-C10](#eon-c10--typed-workspace-control)).
-  - Closing names the expected active `tN` and requires another live tab. A
-    non-final pending tab first stops its exact picker, then disappears and
-    restores its prior tab. Eon stops the tab's pane and popup terminals one at
-    a time and prunes each
+  - Closing names the expected active `tN`. A non-final pending tab first
+    stops its exact picker, then disappears and restores its prior tab. Eon
+    stops the tab's pane and popup terminals one at a time and prunes each
     confirmed end through the normal terminal-exit owner. Complete success
     removes the tab with the same deterministic focus rule as natural exit.
     If a later stop fails, no later terminal is stopped, the action reports
     failure, and every remaining live terminal stays represented in the
     partially pruned tab. A terminal that ended naturally during the request is
     reconciled and pruned as an exit rather than reported as a successful Stop.
+    Closing the final tab ends the window. Eon stops its pane and popup
+    terminals as above, then, as Stop does, any run of the generation that no
+    tab tracks; once every stop is confirmed it ends the generation, as when
+    the last terminal exits. The reply is EONW `Ended`, and Venus then exits.
+    A failed tab stop keeps the window
+    and its remaining terminals, as a partial close does; a failed stop of an
+    untracked run fails as Stop does. `[workspace] warning_close_last_tab`,
+    true by default, makes the CLI ask first (EON-C10); the window's close
+    controls do not ask yet.
     Venus maps Alt+Shift+W directly to this stable-target action; lowercase
     Ctrl+W remains terminal input.
   - Closing a pane names a `pN` in the active tab, or in the calling
     terminal's tab under EON-C10. Eon stops that pane's
     terminal and prunes the confirmed end through the normal terminal-exit
     owner, so its column, its tab and focus follow the ended-terminal rules
-    below. The final tab's last pane cannot be closed, and closing is
-    unavailable while a popup or picker covers the tab. A failed stop reports
+    below. Closing the final tab's last pane ends the window as final-tab
+    close does, stopping that tab's popups with it. Closing is unavailable
+    while a popup or picker covers the tab. A failed stop reports
     failure and keeps the pane; a terminal that ended naturally during the
     request is reconciled as an exit. Venus maps Alt+W directly to the
     selected pane without a mode; `eon pane close PANE` sends the same EONW
@@ -495,12 +504,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - New current-generation full Eon surfaces omit the redundant native title
     bar while retaining the selected terminal title for compositor semantics.
 - **Important failures:** Unknown or stale identity, a close target other than
-  the active tab, final-tab close, a pane outside the active or calling tab, the final
-  tab's last pane, pane close under a popup or picker, creating a fifth column,
+  the active tab, a pane outside the active or calling tab,
+  pane close under a popup or picker, creating a fifth column,
   durable close in the picker-bound tab,
   invalid transition, unavailable endpoint, duplicate identity, or partial
   recovery leaves accepted topology unchanged. A repeated request ID never
   repeats a stop, and a replay naming a removed tab cannot close its successor.
+  A final close never ends the generation until every terminal stop is
+  confirmed, and a repeated request ID never ends it twice.
   Picker-stop failure changes no topology; durable partial-stop behavior is the
   explicit result above. Exhausted pane numbers fail before terminal start;
   unknown or repeated terminal-exit notices remove nothing; losing a view never
@@ -510,7 +521,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v16 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v17 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -535,7 +546,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `pane_metadata_label_is_bounded_safe_and_has_honest_fallbacks`,
     `workspace_accessibility_order_matches_tabs_then_one_expanded_pane`).
     Installed checklist items 3 and 4.
-- **Open proof:** Columns (`eon-splits-opwv`): runtime topology and EONW v10
+- **Open proof:** Final tab and final pane close, ending the window, are
+  covered by `closing_the_final_tab_ends_the_window_and_its_terminals`,
+  `delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`
+  and `pane_close_targets_the_active_tab_and_prunes_like_an_exit`; installed
+  proof is pending `eon-prove-close-and-detach-batch-bf8t`.
+  Columns (`eon-splits-opwv`): runtime topology and EONW v10
   are covered by `columns_hold_accordions_traverse_into_tabs_and_collapse_on_exit`,
   `create_column_in_a_popup_only_tab_never_overfills_a_neighbor`,
   `column_moves_stay_in_their_column_popups_skip_columns_and_the_cli_reports_positions`
@@ -747,6 +763,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     becomes the tab's only, selected pane, and a shown popup still stays shown.
     Without `--no-focus`, `pane create` selects the new pane and dismisses the
     tab's popup, as above.
+  - `eon tab close TAB` and `eon pane close PANE` may name the final tab or
+    its last pane, which ends the window (EON-C8). When
+    `[workspace] warning_close_last_tab` is true, its default, and stdin is a
+    terminal, the CLI first lists the terminals that will stop and asks, as
+    `eon stop` does; `--json` never asks, and neither does the CLI when the
+    setting is false. Run from a terminal, a close that cannot first inspect
+    the workspace fails without closing. A final close prints that the
+    generation ended, or with `--json` `{"ended":{"generation":...}}`, and
+    exits 0. The caller's own
+    terminal may end with it, as with Stop. Eon rejects a non-boolean
+    `warning_close_last_tab` with the rest of `config.toml`.
 - **Important failures:** A caller that names no live terminal of the
   addressed supervisor (ended, closed, from another generation or window,
   empty, or malformed) changes nothing and exits 3 (`unknown-caller`), with no fallback
@@ -766,14 +793,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v16 and accepted Orbit management operations.
+- **Consumes:** Current EONW v17 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content, or direct child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v16 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v17 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -819,8 +846,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   names the command it runs. Enter runs it in the popup's terminal, with that
   terminal's `EON_TERMINAL` and `EON_TAB`: pane creation and tab moves act for
   the popup's tab under the caller rules above, closing names `EON_TAB`, and
-  every command keeps the CLI's own validation, targets and Stop
-  confirmation; it adds no EONW action. A successful action
+  every command keeps the CLI's own validation, targets and Stop and
+  final-close confirmations; it adds no EONW action. A successful action
   ends the popup; a listing, `stop previous`, or a failure reported while the
   popup is still open, waits for Enter. "Quit this window" runs `eon stop <this
   window's generation>` and keeps Stop's confirmation listing of live
@@ -933,6 +960,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     exactly `sh -c <script>` at the tab directory. The same caller's default
     `eon pane create --json` then selected the new p3 and dismissed the
     popup.
+- **Open proof:** `eon tab close` and `eon pane close` on the final tab, with
+  their question on a terminal, are pending
+  `eon-prove-close-and-detach-batch-bf8t`.
 
 ## EON-C11 — Runtime generations and presentation
 
@@ -1377,8 +1407,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - Accepting a valid choice atomically commits the tab directory and starts
     exactly one first `pN` terminal there. Dismissing a pending picker keeps
     the tab and starts its first pane at that tab's validated starting directory.
-    Explicitly closing a non-final pending tab stops its picker and removes
-    that tab without starting a pane.
+    Explicitly closing a pending tab stops its picker and removes that tab
+    without starting a pane; when it is the final tab, the close ends the
+    window (EON-C8).
   - Alt+Z keeps the existing explicit retarget behavior after a tab has panes;
     it never changes or restarts a running pane.
   - Current EONW v7 exposes Project as a popup endpoint bound to one live
@@ -1402,7 +1433,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     allow pane creation, pane focus by direction or identity, pane/tab movement,
     explicit directory updates, and stable-target close. These actions preserve
     the picker's binding and terminal. Mutations of the picker-bound tab remain
-    blocked except directory acceptance and closing its non-final pending tab;
+    blocked except directory acceptance and closing its pending tab;
     that close stops the transient terminal before removing the tab. Dismissing
     a background pending picker starts that tab's first pane while leaving
     the selected tab in focus. Explicit tab close selects the nearest
@@ -1411,7 +1442,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     their own popup while another picker remains live elsewhere. EONW v7 permits
     multiple pending tabs, each retaining its exact Project picker across switches;
     CreateTab always creates a distinct tab. Alt+Shift+W closes the selected
-    non-final pending tab and stops only its picker.
+    pending tab and stops only its picker, ending the window when it is the
+    final tab.
 - **Important failures:** Unresolvable or invalid home, or a failed new-tab
   picker launch, creates no tab. Invalid selection never commits its path;
   duplicate or stale results cannot mutate another tab or its terminals.
@@ -1419,9 +1451,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   and attempts the first pane at the pending tab's starting directory.
   If that pane cannot start, report the error and remove only the unstartable
   tab; other tabs and terminals remain.
-  Left/right with only one live tab succeeds unchanged; final-tab close remains
-  unavailable. A duplicate close cannot stop the picker twice or remove another
-  tab.
+  Left/right with only one live tab succeeds unchanged. A duplicate close
+  cannot stop the picker twice or remove another tab.
   Invalid Anima settings fail before a fresh workspace starts. Missing, failed,
   or timed-out playback reports a short diagnostic and continues to the picker.
 - **Owner:** Eon supplies picker/default policy and packaged commands; Eon

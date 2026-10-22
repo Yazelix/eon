@@ -31,6 +31,9 @@ mise = true
 enabled = true
 style = "random"
 duration_seconds = 3
+
+[workspace]
+warning_close_last_tab = true
 ```
 
 `[bar] widgets` chooses which Eon Bar widgets show and their order, left to
@@ -79,6 +82,11 @@ keys to dismiss it immediately. `enabled = false` skips startup playback;
 1–30. Anima owns its style names; run `eon anima --help` to see them. A failed
 animation continues to the picker. Attachment, recovery, later tabs, and
 eonbase do not play the startup animation.
+
+Closing the last tab quits its window and stops its terminals.
+`warning_close_last_tab = true`, the default, makes `eon tab close` and
+`eon pane close` ask first when run from a terminal, listing the terminals that
+will stop; `--json` never asks. The window's own close controls do not ask yet.
 
 ## Agent quota
 

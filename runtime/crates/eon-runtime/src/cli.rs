@@ -1,11 +1,11 @@
 use super::{
     control::{
-        ControlResponse, EndpointFailureKind, Error, failure, report_failure, send_action,
-        send_action_from, write_stdout,
+        ControlResponse, EndpointFailure, EndpointFailureKind, Error, failure, report_failure,
+        send_action, send_action_from, write_stdout,
     },
     generation::{
-        attach_generation, current_generation, generations_command, stop_generation,
-        stop_generations, valid_generation,
+        attach_generation, current_generation, generations_command, read_stop_confirmation,
+        stop_generation, stop_generations, valid_generation,
     },
     managed_environment,
     sessions::{TAB_VARIABLE, TERMINAL_VARIABLE},
@@ -14,9 +14,9 @@ use super::{
         prepare_generation_runtime, runtime_directory,
     },
     windows,
-    workspace::{human as human_output, json as json_output},
+    workspace::{human as human_output, json as json_output, json_escape},
 };
-use eon_workspace_protocol::v16::{
+use eon_workspace_protocol::v17::{
     Action, Direction, Failure, PopupTarget, Response, Side, VERSION, WorkspaceAction, valid_caller,
 };
 use std::{
@@ -400,8 +400,8 @@ fn directory_picker(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, St
             "cannot retarget tab: {}: {}",
             failure.code, failure.detail
         )),
-        Ok(ControlResponse::Lifecycle(_)) => {
-            Err("Eon returned a lifecycle result for the directory picker".into())
+        Ok(ControlResponse::Workspace(Response::Ended(_)) | ControlResponse::Lifecycle(_)) => {
+            Err("Eon returned the wrong result for the directory picker".into())
         }
         Err(error) => Err(format!("cannot retarget tab: {}", error.detail)),
     }
@@ -595,7 +595,7 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
 {heading}Tabs & panes{reset}
   {command}workspace [--json]{reset}                          Inspect the workspace
   {command}tab create [--json]{reset}                         Choose a directory for a new tab
-  {command}tab close TAB [--json]{reset}                      Close the active non-final tab
+  {command}tab close TAB [--json]{reset}                      Close the active tab
   {command}tab directory TAB [--json] -- DIRECTORY{reset}     Set the tab's launch directory
   {command}tab move left|right [--json]{reset}                Move the active tab
   {command}pane create [--json] [--no-focus]{reset}           Add a pane to the active tab
@@ -619,7 +619,7 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
 Closing a window detaches. Stop ends its terminals.
 Inside Eon, tab move and pane commands act on the calling terminal's tab.
 With --no-focus, either pane create keeps the selected pane and any popup.
-Where shown, {command}--json{reset} prints JSON and skips Stop confirmation.
+Where shown, {command}--json{reset} prints JSON and skips confirmation.
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
 4 Eon unreachable, 130 interrupted.
 ",
@@ -750,22 +750,38 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
         Ok(caller) => caller,
         Err(error) => return report_failure(&error, json),
     };
+    let final_close = if !json && std::io::stdin().is_terminal() {
+        match final_close_terminals(&socket, &action) {
+            Ok(terminals) => terminals,
+            Err(error) => return report_failure(&error, json),
+        }
+    } else {
+        None
+    };
+    if let Some(terminals) = final_close
+        && managed_environment::warning_close_last_tab(
+            &configuration_directory()?,
+            &inputs.defaults,
+        )?
+    {
+        eprint!(
+            "Close the last tab? This quits the window and stops {} terminal{} [{}]. [y/N] ",
+            terminals.len(),
+            if terminals.len() == 1 { "" } else { "s" },
+            terminals.join(", ")
+        );
+        let answer = read_stop_confirmation()?;
+        if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
+            write_stdout("cancelled; the window stays open\n")?;
+            return Ok(0);
+        }
+    }
     let response = match send_action_from(&socket, caller, action) {
         Ok(response) => response,
         Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
             return report_failure(&failure("malformed-action", error.detail), json);
         }
-        Err(error) => {
-            let code = if error.kind == EndpointFailureKind::Dead {
-                "missing-supervisor"
-            } else {
-                "supervisor-unavailable"
-            };
-            return report_failure(
-                &failure(code, format!("{}; run `eon` first", error.detail)),
-                json,
-            );
-        }
+        Err(error) => return report_failure(&unreachable_supervisor(error), json),
     };
     match response {
         ControlResponse::Workspace(Response::Snapshot(snapshot)) => {
@@ -777,10 +793,74 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
             Ok(0)
         }
         ControlResponse::Workspace(Response::Failure(failure)) => report_failure(&failure, json),
+        ControlResponse::Workspace(Response::Ended(ended)) => {
+            write_stdout(if json {
+                format!(
+                    "{{\"ended\":{{\"generation\":\"{}\"}}}}\n",
+                    json_escape(&ended.generation)
+                )
+            } else {
+                format!("ended generation {}; its window closed\n", ended.generation)
+            })?;
+            Ok(0)
+        }
         ControlResponse::Lifecycle(_) => {
             Err("Eon supervisor returned a lifecycle result for a workspace action".into())
         }
     }
+}
+
+fn unreachable_supervisor(error: EndpointFailure) -> Failure {
+    let code = if error.kind == EndpointFailureKind::Dead {
+        "missing-supervisor"
+    } else {
+        "supervisor-unavailable"
+    };
+    failure(code, format!("{}; run `eon` first", error.detail))
+}
+
+/// The terminals a tab or pane close would stop when it closes the final tab,
+/// labelled by pane identity and popup entry, and `None` for any other action.
+/// A close that cannot inspect the workspace first fails rather than skip the
+/// question.
+fn final_close_terminals(socket: &Path, action: &Action) -> Result<Option<Vec<String>>, Failure> {
+    if !matches!(
+        action,
+        Action::Workspace(WorkspaceAction::CloseTab { .. }) | Action::ClosePane { .. }
+    ) {
+        return Ok(None);
+    }
+    let snapshot = match send_action(socket, Action::Workspace(WorkspaceAction::Inspect)) {
+        Ok(ControlResponse::Workspace(Response::Snapshot(snapshot))) => snapshot,
+        Ok(ControlResponse::Workspace(Response::Failure(failure))) => return Err(failure),
+        Ok(_) => {
+            return Err(failure(
+                "unrepresentable-state",
+                "Eon returned the wrong result for workspace inspection",
+            ));
+        }
+        Err(error) => return Err(unreachable_supervisor(error)),
+    };
+    let [tab] = snapshot.tabs.as_slice() else {
+        return Ok(None);
+    };
+    let last = match action {
+        Action::Workspace(WorkspaceAction::CloseTab { tab: id }) => *id == tab.id,
+        // Runtime refuses a pane close under a popup, so it is not asked about.
+        Action::ClosePane { pane } => {
+            let mut panes = tab.panes();
+            tab.selected_popup.is_none()
+                && panes.next().is_some_and(|only| only.id == *pane)
+                && panes.next().is_none()
+        }
+        _ => false,
+    };
+    Ok(last.then(|| {
+        tab.panes()
+            .map(|pane| pane.id.clone())
+            .chain(tab.popups.iter().map(|popup| popup.entry.clone()))
+            .collect()
+    }))
 }
 
 /// The terminal an action that targets the active tab acts for instead: the

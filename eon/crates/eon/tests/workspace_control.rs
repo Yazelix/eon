@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v16::{
+use eon_workspace_protocol::v17::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
@@ -1613,14 +1613,6 @@ cat >/dev/null
     );
     assert!(closed.status.success(), "{}", stdout(&closed));
     assert!(stdout(&closed).contains("\"active_tab\":\"t4\""));
-    assert!(matches!(
-        workspace_action(
-            &control,
-            "close-final-tab",
-            Action::CloseTab { tab: "t4".into() },
-        ),
-        Response::Failure(failure) if failure.code == "unavailable"
-    ));
 
     fs::write(&selection, "cancel").unwrap();
     let before_cancel = match workspace_action(&control, "home-tab", Action::CreateTab) {
@@ -2979,11 +2971,10 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         close_third(),
         Response::Failure(failure) if failure.code == "duplicate-request"
     ));
+    // The final tab's last pane ends the window; stdin is not a terminal, so it does not ask.
     let final_pane = invoke(&binary, &runtime, &config, &["pane", "close", "p1"]);
-    assert!(!final_pane.status.success());
-    assert!(String::from_utf8_lossy(&final_pane.stderr).contains("final pane"));
-
-    fs::write(&stop, "").unwrap();
+    assert!(final_pane.status.success(), "{}", stdout(&final_pane));
+    assert!(stdout(&final_pane).starts_with("ended generation "));
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!control.exists());
     fs::remove_dir_all(root).unwrap();
@@ -3313,6 +3304,75 @@ fn session_exit_prunes_the_workspace_and_the_last_exit_closes_eon() {
         assert!(!control.exists());
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[test]
+fn closing_the_final_tab_ends_the_window_and_its_terminals() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let venus_pid = root.join("venus.pid");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(
+        &venus,
+        "#!/bin/sh\nprintf '%s' \"$$\" > \"$EON_TEST_VENUS_PID\"\ncat >/dev/null\n",
+    );
+
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = eon_command(&binary)
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_VENUS_PID", &venus_pid)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess { child, stop };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for(&control);
+    wait_for(&venus_pid);
+    let pane = invoke(&binary, &runtime, &config, &["pane", "create", "--json"]);
+    assert!(pane.status.success(), "{}", stdout(&pane));
+    let terminals = ["orbit.sock", "session-2.sock"]
+        .map(|endpoint| live_identity(&generation.join(endpoint)).process_id);
+
+    let closed = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["tab", "close", "t1", "--json"],
+    );
+    assert!(closed.status.success(), "{}", stdout(&closed));
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    assert_eq!(
+        stdout(&closed),
+        format!("{{\"ended\":{{\"generation\":\"{generation_id}\"}}}}\n")
+    );
+    wait_for_successful_exit(&mut supervisor.child);
+    assert!(!control.exists());
+    for terminal in terminals {
+        wait_for_process_removal(terminal, "a final close left an Orbit terminal running");
+    }
+    let pid: i32 = fs::read_to_string(&venus_pid).unwrap().parse().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    // SAFETY: signal 0 performs existence/permission checking without sending a signal.
+    while unsafe { libc::kill(pid, 0) } == 0 {
+        assert!(
+            Instant::now() < deadline,
+            "a final close left Venus running"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

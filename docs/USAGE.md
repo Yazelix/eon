@@ -48,7 +48,8 @@ highlighted folder and F1 shows its keys. New tabs start in your home directory.
 a terminal there, keeping the tab. Close the tab with Alt+Shift+W if you no
 longer want it. The initial workspace uses the directory where Eon was launched.
 
-A terminal starts after choosing a directory or dismissing the picker. Closing the Eon window detaches
+A terminal starts after choosing a directory or dismissing the picker. Closing the last
+tab quits the window and stops its terminals. Closing the Eon window instead detaches
 the desktop without stopping its terminals or PTY commands. Reconnect with:
 
 ```sh
@@ -117,8 +118,8 @@ one, and clicking another column's terminal selects it.
 | Alt+M | Create a pane in the selected column |
 | Ctrl+Alt+M | Create a column right of the selected one, up to four per tab |
 | Alt+Shift+Z | Zoom the selected pane across the tab, hiding the other columns, or restore them; moving to another column or tab also restores them |
-| Alt+W | Close the selected pane, stopping its terminal; not the final tab's last pane |
-| Alt+Shift+W | Close the active non-final tab |
+| Alt+W | Close the selected pane, stopping its terminal; the final tab's last pane quits the window |
+| Alt+Shift+W | Close the active tab; closing the final tab quits the window |
 | Alt+Shift+N | Open an independent Eon window (also the desktop launcher's **New Eon Window** action) |
 | Alt+Z | Open the tab's Project directory picker |
 | Alt+Shift+J | Open or hide the tab's Git popup |
@@ -130,7 +131,7 @@ one, and clicking another column's terminal selects it.
 ### Eon Bar and tabs
 
 The top row is the native Eon Bar. Its `+`, `?`, and `×` controls create
-a tab, open Shortcuts, and close the active non-final tab. The empty space
+a tab, open Shortcuts, and close the active tab. The empty space
 between the scrollable tabs and those controls moves the undecorated window;
 tabs, controls, pane headers, and terminal content remain ordinary targets.
 Pinned CodexBar CLI supplies read-only Codex and Claude quota from their local
@@ -192,7 +193,7 @@ Commands lists Eon commands you can search and run: new tab, pane or
 window, close or move the tab, quit this window, show the workspace, windows,
 generations, versions or config path, stop older generations, and command
 help. Each line shows the `eon` command it runs. Enter runs it from the popup
-for that tab, with the command's own checks and Stop's confirmation. New pane
+for that tab, with the command's own checks and confirmations. New pane
 closes the popup first, as Alt+M does, and the pane joins the tab's selected
 column. Other actions close the popup when they succeed; listings, stopping
 older generations and failures stay until you press Enter. Esc closes it
@@ -248,13 +249,13 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon stop all [--json]` | Attempt every non-dead generation, including current |
 | `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping |
 | `eon tab create [--json]` | Create a distinct pending tab with its directory picker, even while another picker is open |
-| `eon tab close TAB [--json]` | Close the expected active non-final tab |
+| `eon tab close TAB [--json]` | Close the expected active tab; the final tab quits the window, asking first from a terminal |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
 | `eon pane create [--json] [--no-focus]` | Create a pane in the active tab's selected column, or in the calling pane's column; with `--no-focus`, the tab's selected pane and any shown popup stay as they are |
 | `eon pane create [--json] [--no-focus] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, at the tab's directory, with `--no-focus` as above; refused with exit 1 outside an Eon terminal |
 | `eon edit [--json] -- FILE` | Open FILE in Helix in a new pane, placed as `pane create` places it, at the tab's directory |
-| `eon pane close PANE [--json]` | Close a pane of the active tab, or of the calling terminal's tab, stopping its terminal |
+| `eon pane close PANE [--json]` | Close a pane of the active tab, or of the calling terminal's tab, stopping its terminal; the final tab's last pane quits the window, asking first from a terminal |
 | `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |
 | `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
@@ -292,7 +293,7 @@ and exits 3. Other commands ignore `EON_TERMINAL`; run
 
 | Status | Meaning |
 |---:|---|
-| 0 | Success, including a declined Stop confirmation |
+| 0 | Success, including a declined Stop or close confirmation |
 | 1 | The command was understood but refused or failed |
 | 2 | Invalid command or arguments, such as a malformed tab or generation ID |
 | 3 | The named tab, pane, terminal, popup, generation or window was not found |

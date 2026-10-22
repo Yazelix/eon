@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v16 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v17 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -6,7 +6,7 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 16;
+pub const VERSION: u16 = 17;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -37,6 +37,7 @@ const SNAPSHOT: u8 = 129;
 const FAILURE: u8 = 130;
 const RUNTIME: u8 = 131;
 const STOPPED: u8 = 132;
+const ENDED: u8 = 133;
 
 const INVOKE_POPUP: u8 = 19;
 const DISMISS_POPUP: u8 = 20;
@@ -321,6 +322,14 @@ pub struct Snapshot {
 pub enum Response {
     Snapshot(Snapshot),
     Failure(Failure),
+    /// A tab or pane close stopped the window's last terminal and ended its
+    /// generation, so no workspace remains to snapshot.
+    Ended(Ended),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ended {
+    pub generation: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -804,6 +813,11 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             encode_failure(&mut payload, failure)?;
             FAILURE
         }
+        Response::Ended(ended) => {
+            identity("generation", &ended.generation)?;
+            payload.string(&ended.generation);
+            ENDED
+        }
     };
     frame(kind, payload.bytes)
 }
@@ -815,6 +829,14 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         let failure = decode_failure(&mut decoder)?;
         decoder.finish()?;
         return Ok(Response::Failure(failure));
+    }
+    if kind == ENDED {
+        let ended = Ended {
+            generation: decoder.string("generation", MAX_ID_BYTES)?,
+        };
+        identity("generation", &ended.generation)?;
+        decoder.finish()?;
+        return Ok(Response::Ended(ended));
     }
     if kind != SNAPSHOT {
         return Err(Error::InvalidKind { value: kind });
@@ -1867,14 +1889,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57100001000a00000002007231001202007431",
+                "454f4e57110001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57100001001000000002007231000c0200743104002f746d70",
+                "454f4e57110001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -1883,36 +1905,36 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571000010015000000020072310013020074310300676974010200753101",
+                "454f4e571100010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e571000010014000000020072310015020074310200753104002f746d70",
+                "454f4e571100010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e571000010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571100010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57100001000a00000002007231001702007032",
+                "454f4e57110001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571000010006000000020072310019",
+                "454f4e571100010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57100001000e00000002007231001a06002f746d702f61",
+                "454f4e57110001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57100001001000000002007231001b00020002006878010061",
+                "454f4e57110001001000000002007231001b00020002006878010061",
             ),
         ] {
             let request = Request {
@@ -1932,7 +1954,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57100001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e57110001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -2002,7 +2024,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5710008100b20000000100020002000100010000000200743100000041",
+                    "454f4e5711008100b20000000100020002000100010000000200743100000041",
                     "000080400100030067697403004769740404004b65794701000200743104002f",
                     "746d700001020070330102007531030002007031030073703103002f70310102",
                     "007032030073703203002f70320102007033030073703303002f703301010002",
@@ -2010,7 +2032,13 @@ mod tests {
                     "00002a01f40100000000000001015a000000000000000100602700000700",
                 ),
             ),
-            (failure, "454f4e57100082000a00000004006275737902006e6f"),
+            (failure, "454f4e57110082000a00000004006275737902006e6f"),
+            (
+                Response::Ended(Ended {
+                    generation: "g1".into(),
+                }),
+                "454f4e57110085000400000002006731",
+            ),
         ] {
             let bytes = encode_response(&response).unwrap();
             assert_eq!(hex(&bytes), expected, "{response:?}");
@@ -2035,7 +2063,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e571000830026000000020067310500302e392e30100002006f6b010002",
+                    "454f4e571100830026000000020067310500302e392e30110002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -2044,7 +2072,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571000840006000000020067310000",
+                "454f4e571100840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -2116,6 +2144,14 @@ mod tests {
         assert_eq!(
             decode_lifecycle_response(&state),
             Err(Error::InvalidKind { value: SNAPSHOT })
+        );
+        let ended = encode_response(&Response::Ended(Ended {
+            generation: "g1".into(),
+        }))
+        .unwrap();
+        assert_eq!(
+            decode_lifecycle_response(&ended),
+            Err(Error::InvalidKind { value: ENDED })
         );
         let failure = Failure {
             code: "busy".into(),
