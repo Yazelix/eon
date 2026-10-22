@@ -11,7 +11,14 @@ pub(crate) fn inputs() -> Inputs {
         component_report: eon_manifest::version_report(MANIFEST).map_err(|error| error.to_string()),
         assembly: env!("EON_WORKSPACE_DIGEST").as_bytes(),
         defaults: Defaults {
-            show_version: true,
+            bar_widgets: &[
+                "codex_quota",
+                "claude_quota",
+                "cpu",
+                "ram",
+                "clock",
+                "version",
+            ],
             shell: ShellConfig {
                 command: vec!["eon-nu".into()],
                 starship: true,

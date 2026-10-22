@@ -226,6 +226,10 @@ pub(super) fn launch_current(
     };
     let config = configuration_directory()?;
     let terminal = managed_environment::terminal_presentation(&config, &inputs.defaults)?;
+    if mode == LaunchMode::Workspace {
+        // Each window reads the list again; this only rejects a bad one before any terminal starts.
+        managed_environment::bar_widgets(&config, &inputs.defaults)?;
+    }
     let popups = (mode == LaunchMode::Workspace)
         .then(|| managed_environment::popup_catalog(&config, &inputs.defaults))
         .transpose()?;
@@ -404,9 +408,11 @@ fn venus_command(
         }
     }
     if mode == LaunchMode::Workspace {
-        if managed_environment::show_version(config, &inputs.defaults)? {
+        let widgets = managed_environment::bar_widgets(config, &inputs.defaults)?;
+        if widgets.contains(&"version") {
             command.arg("--eon-version").arg(inputs.version);
         }
+        command.arg("--bar-items").arg(widgets.join(","));
         if let Ok(executable) = env::current_exe() {
             command.env("EON_NEW_WINDOW_EXECUTABLE", executable);
         }
@@ -1707,61 +1713,101 @@ mod tests {
         let mut inputs = crate::fixtures::inputs();
         inputs.version = "9.8.7-alpha.2+proof";
         let root = temporary_directory();
-        for (source, visible) in [
-            ("", true),
-            ("[bar]\nshow_version = false\n", false),
-            ("[bar]\nshow_version = true\n", true),
+        let launch_input = |inputs: &crate::Inputs, mode: LaunchMode, flag: &str| {
+            let command = venus_command(
+                inputs,
+                &root,
+                Path::new("/runtime.sock"),
+                mode,
+                &inputs.defaults.terminal,
+                "eon",
+                true,
+            )
+            .unwrap();
+            let args = command.get_args().collect::<Vec<_>>();
+            args.windows(2)
+                .filter(|args| args[0] == flag)
+                .map(|args| args[1].to_owned())
+                .collect::<Vec<_>>()
+        };
+        for (source, widgets, visible) in [
+            ("", "codex_quota,claude_quota,cpu,ram,clock,version", true),
+            (
+                "[bar]\nwidgets = ['clock', 'version', 'ram']\n",
+                "clock,version,ram",
+                true,
+            ),
+            (
+                "[bar]\nwidgets = ['cpu', 'codex_quota']\n",
+                "cpu,codex_quota",
+                false,
+            ),
+            ("[bar]\nwidgets = []\n", "", false),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
-            for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
-                let command = venus_command(
-                    &inputs,
-                    &root,
-                    Path::new("/runtime.sock"),
-                    mode,
-                    &inputs.defaults.terminal,
-                    "eon",
-                    true,
-                )
-                .unwrap();
-                let args = command.get_args().collect::<Vec<_>>();
-                let versions = args
-                    .windows(2)
-                    .filter(|args| args[0] == "--eon-version")
-                    .map(|args| args[1])
-                    .collect::<Vec<_>>();
-                if visible && mode == LaunchMode::Workspace {
-                    assert_eq!(versions, [inputs.version]);
-                } else {
-                    assert!(versions.is_empty());
-                }
+            assert_eq!(
+                launch_input(&inputs, LaunchMode::Workspace, "--bar-items"),
+                [widgets]
+            );
+            let versions = launch_input(&inputs, LaunchMode::Workspace, "--eon-version");
+            if visible {
+                assert_eq!(versions, [inputs.version]);
+            } else {
+                assert!(versions.is_empty());
+            }
+            for flag in ["--bar-items", "--eon-version"] {
+                assert!(launch_input(&inputs, LaunchMode::Terminal, flag).is_empty());
             }
         }
-        inputs.defaults.show_version = false;
+        inputs.defaults.bar_widgets = &["ram", "clock"];
         fs::write(root.join("config.toml"), "[bar]\n").unwrap();
-        assert!(!crate::managed_environment::show_version(&root, &inputs.defaults).unwrap());
-        for source in [
-            "[bar]\nshow_version = 'false'\n",
-            "[bar]\nshow_version = 0\n",
-            "[bar]\nshow_version = true\nshow_version = false\n",
-            "[bar]\nunknown = true\n",
+        assert_eq!(
+            launch_input(&inputs, LaunchMode::Workspace, "--bar-items"),
+            ["ram,clock"]
+        );
+        // Names are checked only where the bar launches; malformed input fails every read.
+        for (source, error, every_read) in [
+            (
+                "[bar]\nwidgets = ['gpu']\n",
+                "unknown widget \"gpu\"",
+                false,
+            ),
+            (
+                "[bar]\nwidgets = ['RAM']\n",
+                "unknown widget \"RAM\"",
+                false,
+            ),
+            (
+                "[bar]\nwidgets = ['ram', 'ram']\n",
+                "repeats \"ram\"",
+                false,
+            ),
+            ("[bar]\nwidgets = [1]\n", "invalid type", true),
+            ("[bar]\nwidgets = 'ram'\n", "invalid type", true),
+            (
+                "[bar]\nshow_version = false\n",
+                "replaced by bar.widgets",
+                true,
+            ),
+            ("[bar]\nunknown = true\n", "unknown field", true),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
-            assert!(
-                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).is_err()
+            assert_eq!(
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).is_err(),
+                every_read,
+                "{source:?}"
             );
-            assert!(
-                venus_command(
-                    &inputs,
-                    &root,
-                    Path::new("/runtime.sock"),
-                    LaunchMode::Workspace,
-                    &inputs.defaults.terminal,
-                    "eon",
-                    true
-                )
-                .is_err()
-            );
+            let failure = venus_command(
+                &inputs,
+                &root,
+                Path::new("/runtime.sock"),
+                LaunchMode::Workspace,
+                &inputs.defaults.terminal,
+                "eon",
+                true,
+            )
+            .unwrap_err();
+            assert!(failure.contains(error), "{source:?}: {failure}");
         }
         fs::remove_dir_all(root).unwrap();
     }
@@ -1965,7 +2011,7 @@ rows = 30
         inputs.orbit = "/managed/orbit".into();
         inputs.venus = "/managed/venus".into();
         inputs.managed.shell_bin = None;
-        inputs.defaults.show_version = false;
+        inputs.defaults.bar_widgets = &["cpu"];
         let config = Path::new("/config/eon");
         let socket = Path::new("/runtime/eon.sock");
 
@@ -1987,6 +2033,8 @@ rows = 30
                 "--background-opacity",
                 "0.88",
                 "--background-blur",
+                "--bar-items",
+                "cpu",
                 "--pane-frames",
                 "true",
                 "--workspace",

@@ -21,9 +21,10 @@ Popup configuration rejects Alt+Slash, reserved for the shortcut viewer, and
 Alt+0 through Alt+9, reserved for tab positions, before creating workspace
 state. A popup on the key of any other native binding takes that key.
 
-The optional native version label uses the supervising product version. Runtime
-parses `[bar] show_version` against the assembly-supplied default when opening
-or reopening a workspace presentation; hiding it omits the version launch input.
+Runtime parses `[bar] widgets` against the assembly-supplied widget names when
+opening or reopening a workspace presentation and passes the list to Venus
+unchanged; the version launch input, which carries the supervising product
+version, goes only when the list names `version`.
 
 Later tabs begin in the current user's native home directory, validated before
 creation. Dismissing a pending Project picker keeps the tab and starts its first

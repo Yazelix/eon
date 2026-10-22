@@ -70,7 +70,7 @@ The supervising Eon may pass `--eon-version VERSION` to identify its running
 product. Absence hides the native label; the input is workspace-only, at most
 128 ASCII letters/digits or `.`, `-`, `+`, and starts with a digit. It is an
 immutable launch fact, not a lookup of the installed executable or Venus version.
-Eon owns the `[bar] show_version` preference. Narrow layouts hide the full label
+Eon owns the `[bar] widgets` preference. Narrow layouts hide the full label
 when there is insufficient spare header space.
 
 The supervising Eon may also pass `--bar-items ITEM,...` to choose which Eon

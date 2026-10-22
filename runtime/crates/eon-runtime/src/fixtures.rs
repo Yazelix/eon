@@ -13,7 +13,14 @@ pub(crate) fn inputs() -> Inputs {
         codexbar: "missing-fixture-codexbar".into(),
         assembly: b"fixture-assembly",
         defaults: Defaults {
-            show_version: true,
+            bar_widgets: &[
+                "codex_quota",
+                "claude_quota",
+                "cpu",
+                "ram",
+                "clock",
+                "version",
+            ],
             shell: ShellConfig {
                 command: vec!["fixture-shell".into()],
                 starship: true,

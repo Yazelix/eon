@@ -5,7 +5,7 @@
 
 ```toml
 [bar]
-show_version = true
+widgets = ["codex_quota", "claude_quota", "cpu", "ram", "clock", "version"]
 
 [terminal]
 background_opacity = 0.80
@@ -33,10 +33,16 @@ style = "random"
 duration_seconds = 3
 ```
 
-The full-Eon top bar shows `EON <version>` by default. Set
-`[bar] show_version = false` to hide the complete label when a window next
-opens or reopens. The version belongs to its running supervisor; updating the
-installation does not change it. Narrow windows hide the label automatically.
+`[bar] widgets` chooses which Eon Bar widgets show and their order, left to
+right between the tabs and the Shortcuts and Close buttons: the Codex and
+Claude quota chips, CPU and RAM use, the local clock and `EON <version>`. Each
+name appears at most once. A widget left out doesn't show, `widgets = []`
+leaves only the tabs and buttons, and omitting the key shows all six in the
+order above. The list applies when a window next opens or reopens, and an
+unknown or repeated name is a configuration error. Narrow windows hide the
+clock first, then RAM, CPU and the version, then shorten the quota chips,
+whatever the order. The version belongs to its running supervisor; updating
+the installation does not change it.
 
 Omitting `cursor_trail_color` chooses a random color that lasts as long as the
 running workspace, so `eon attach` reopens with the same color; a new workspace

@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `[bar] widgets` chooses which Eon Bar widgets show and in what order, from
+  `codex_quota`, `claude_quota`, `cpu`, `ram`, `clock` and `version`, when a
+  window opens or reopens. Omitting it keeps today's bar. It replaces
+  `[bar] show_version`, which now fails with an error that names
+  `bar.widgets`: in place of `show_version = false`, list the widgets you
+  want without `version`.
+
 - Terminals run on Ghostty `8c425a7bd`: cursor positioning in origin mode
   and DECRQM reports follow upstream fixes, and terminals answer DECXCPR
   queries.

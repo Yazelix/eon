@@ -1659,11 +1659,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Consumer:** Full-Eon workspace users.
 - **Trigger:** A workspace window opens or reopens.
 - **Result:** The native top bar shows a read-only `EON <version>` label in regular terminal
-  monospace and softened cyan from the supervisor serving that window. `[bar] show_version = false` hides the
-  complete label; omission inherits Eon's `true` default. Settings apply when
-  opening/reopening a presentation. Updating an installation cannot relabel a
-  running supervisor. When visible, the badge precedes shortcut help and close
-  remains last.
+  monospace and softened cyan from the supervisor serving that window. It shows
+  when `[bar] widgets` lists `version`, as the default does, at the place the
+  list gives it (EON-C32); leaving `version` out hides the complete label.
+  Settings apply when opening/reopening a presentation. Updating an
+  installation cannot relabel a running supervisor. Shortcut help and close
+  stay last.
 - **Important failures:** Missing identity produces no badge; invalid launch identity is
   rejected. Narrow layouts hide secondary information before required controls
   and the active tab lose their reserved space. Invalid configuration fails
@@ -1671,17 +1672,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon supplies product version/default and exact composition; Runtime
   parses configuration and supplies immutable supervised launch inputs; Venus
   owns native rendering, width fitting, hover and static accessibility.
-- **Boundary:** One badge and one boolean; no widget system, polling,
-  EONW change, channel/build-ID promise, settings UI or platform expansion.
+- **Boundary:** One badge; no polling, EONW change, channel/build-ID promise,
+  settings UI or platform expansion.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `version_badge_uses_supervising_product_and_visibility_at_each_launch`;
     Venus `eon_version_is_bounded_workspace_identity` and
     `version_label_uses_only_spare_space_and_has_no_actions`. Installed
     checklist item 6 shows `EON 0.1.0`.
-- **Open proof:** Pending re-proof in this repository: `show_version`
-  false/true on reopen, narrow hiding, scale 1.25, header order with shortcut
-  help and close, and a supervisor whose version differs from its client. No
+- **Open proof:** Pending re-proof in this repository: narrow hiding, scale
+  1.25, header order with shortcut help and close, and a supervisor whose
+  version differs from its client. No
   performance, macOS, screen-reader workflow or Nix-free delivery claim.
 
 ## EON-C26 — Passive Claude quota in the Eon Bar
@@ -1838,14 +1839,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Consumer:** Full-Eon workspace users.
 - **Trigger:** A workspace window is open while the local wall-clock minute
   changes.
-- **Result:** The Eon Bar shows Venus's VEN-C27 local 24-hour clock, always
-  on, with no Eon configuration.
+- **Result:** The Eon Bar shows Venus's VEN-C27 local 24-hour clock when
+  `[bar] widgets` lists `clock`, as the default does (EON-C32).
 - **Important failures:** As VEN-C27: an unknown local time zone shows no
   clock, and narrow windows hide the clock before every other top-bar item.
-- **Owner:** Eon owns the always-on product choice and composition; Venus owns
-  the clock under VEN-C27.
-- **Boundary:** No setting, EONW or runtime change, 12-hour mode or platform
-  expansion; an on/off or 12-hour setting needs its own decision.
+- **Owner:** Eon owns the default and composition; Venus owns the clock under
+  VEN-C27.
+- **Boundary:** No setting beyond EON-C32's list, EONW change, 12-hour mode or
+  platform expansion; a 12-hour setting needs its own decision.
 - **Proof:** `eon-igae.4`
   - **Environment:** Automated; one isolated installed observation.
   - **Evidence:** Venus `local_clock_names_minute_date_and_offset` and
@@ -1857,15 +1858,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Status:** Proven on x86_64 Linux Wayland.
 - **Consumer:** Full-Eon workspace users on x86_64 Linux.
 - **Trigger:** A workspace window is open.
-- **Result:** The Eon Bar shows Venus's VEN-C28 whole-machine CPU and RAM
-  labels, always on, with no Eon configuration.
+- **Result:** The Eon Bar shows Venus's VEN-C28 whole-machine CPU label when
+  `[bar] widgets` lists `cpu` and its RAM label when the list has `ram`, as
+  the default does for both (EON-C32).
 - **Important failures:** As VEN-C28: an unreadable reading shows no label
   rather than 0%, and narrow windows hide the RAM label right after the clock,
   then the CPU label.
-- **Owner:** Eon owns the always-on product choice and composition; Venus owns
-  sampling and the labels under VEN-C28.
-- **Boundary:** No setting, EONW or runtime change; an on/off setting needs its
-  own decision.
+- **Owner:** Eon owns the default and composition; Venus owns sampling and the
+  labels under VEN-C28.
+- **Boundary:** No setting beyond EON-C32's list, and no EONW change.
 - **Proof:** `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`
   - **Environment:** Automated; isolated installed observations.
   - **Evidence:** Venus `cpu_use_counts_iowait_idle_and_guest_once`,
@@ -1874,3 +1875,36 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `ram_use_rejects_bad_readings_instead_of_showing_zero` and
     `readings_yield_after_the_clock_and_have_no_actions`; the installed
     observations recorded in `eon-cpu-widget-eon-bar-acxs` and `eon-igae.3`.
+
+## EON-C32 — Eon Bar items and order
+
+- **Status:** Proven on x86_64 Linux Wayland.
+- **Consumer:** Full-Eon workspace users.
+- **Trigger:** A workspace window opens or reopens.
+- **Result:** `[bar] widgets` is an ordered list of unique names from
+  `codex_quota`, `claude_quota`, `cpu`, `ram`, `clock` and `version`. The Eon
+  Bar shows the listed widgets left to right in that order, between the drag
+  region and Shortcuts and Close (VEN-C29). A widget left out doesn't show,
+  and `widgets = []` leaves only tabs and controls. Omitting the key shows all
+  six in that order. A listed widget without data still shows nothing, as its
+  own contract says. Narrow windows keep the fixed hiding priority of VEN-C29
+  whatever the order.
+- **Important failures:** An unknown or repeated name, a non-string entry, a
+  value that is not a list, or a leftover `[bar] show_version` (removed before
+  1.0, with an error that names `bar.widgets`) fails through the existing
+  startup and replacement handling, preserving live terminals.
+- **Owner:** Eon owns the setting, its names and the default. Runtime parses
+  and validates it and passes it to Venus unchanged as `--bar-items`, with
+  `--eon-version` only when `version` is listed. Venus owns placement, fitting,
+  hover and accessibility under VEN-C29.
+- **Boundary:** No per-widget option, configurable hiding priority, new
+  widget, live reload, settings UI, EONW change or platform expansion. Leaving
+  out a quota chip only hides it; Runtime still polls that provider until
+  `eon-igae.14.3`.
+- **Proof:** `eon-igae.14.2`
+  - **Environment:** Automated; one isolated installed observation.
+  - **Evidence:** `version_badge_uses_supervising_product_and_visibility_at_each_launch`
+    and `invalid_presentation_configuration_precedes_supervisor_generation_and_children`;
+    the installed observation recorded in `eon-igae.14.2`: a reordered list
+    without `cpu` on window open, a leftover `show_version` refused on reattach
+    with live terminals kept, and the corrected list on the next reattach.

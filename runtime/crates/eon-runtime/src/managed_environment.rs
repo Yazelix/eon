@@ -32,7 +32,8 @@ struct EonConfig {
 }
 
 pub struct Defaults {
-    pub show_version: bool,
+    /// Every Eon Bar widget name, in the order shown when `[bar] widgets` is omitted.
+    pub bar_widgets: &'static [&'static str],
     pub shell: ShellConfig,
     pub terminal: TerminalConfig,
     pub anima: StartupAnimation,
@@ -52,14 +53,35 @@ pub struct StartupAnimation {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 struct BarSettings {
-    show_version: Option<bool>,
+    widgets: Option<Vec<String>>,
+    #[serde(deserialize_with = "removed_show_version")]
+    show_version: (),
 }
 
-pub(crate) fn show_version(root: &Path, defaults: &Defaults) -> Result<bool, String> {
-    Ok(read_config(root)?
-        .bar
-        .show_version
-        .unwrap_or(defaults.show_version))
+fn removed_show_version<'de, D: serde::Deserializer<'de>>(_: D) -> Result<(), D::Error> {
+    Err(serde::de::Error::custom(
+        "bar.show_version is replaced by bar.widgets; list \"version\" there to show the version",
+    ))
+}
+
+pub(crate) fn bar_widgets(root: &Path, defaults: &Defaults) -> Result<Vec<&'static str>, String> {
+    let Some(names) = read_config(root)?.bar.widgets else {
+        return Ok(defaults.bar_widgets.to_vec());
+    };
+    let mut widgets = Vec::with_capacity(names.len());
+    for name in names {
+        let Some(&widget) = defaults.bar_widgets.iter().find(|widget| **widget == name) else {
+            return Err(format!(
+                "bar.widgets has unknown widget {name:?}; use {}",
+                defaults.bar_widgets.join(", ")
+            ));
+        };
+        if widgets.contains(&widget) {
+            return Err(format!("bar.widgets repeats {name:?}"));
+        }
+        widgets.push(widget);
+    }
+    Ok(widgets)
 }
 
 #[derive(Debug, Default, Deserialize)]
