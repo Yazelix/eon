@@ -787,6 +787,149 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   the same macOS gap under `EON-C7` in
   [`docs/CONTRACTS.md`](../../docs/CONTRACTS.md).
 
+## ORB-C15 — Program status records
+
+- **Status:** Planned. Approved on 2026-10-21 (draft 15 on
+  `eon-agent-sidebar-yx8.1`). `eon-agent-sidebar-yx8.4` stores the records
+  and decides their lifetime; `eon-agent-sidebar-yx8.5` serves the
+  `ProgramStatus` reply.
+- **Consumer:**
+  - a program in an Orbit terminal that speaks the Program Status Protocol
+    (OSC 7501, rev 0.4), such as Claude Code 2.1.295 or later, or Codex 0.163
+    or later;
+  - Eon Runtime, which reads the records through management (ORB-C13).
+- **Trigger:**
+  - PTY output carries the probe `OSC 7501 ; ? ST` or a report
+    `OSC 7501 ; pairs ST`;
+  - an OSC 133 `A` prompt mark arrives;
+  - the PTY foreground process group changes;
+  - the child exits;
+  - RIS arrives, which libghostty reports as a program-status clear with an
+    empty id;
+  - a management `ProgramStatus` request arrives.
+- **Result:**
+  - **Probe.** While Orbit sets libghostty's program-status callback and its
+    PTY write callback, the library answers the probe. The answer is written
+    before the reply to a DA1 query that follows the probe.
+  - **Deviations from spec rev 0.4.** There are three:
+    - the foreground-group drop under Lifetime, which is not a spec event;
+    - child exit ends the Orbit run, so `done` and `error` records end with
+      it, although the spec says they survive process exit (EON-C31 accepts
+      this);
+    - CLI read-back, which EON-C31 covers.
+  - **Reports.** Everything else follows spec rev 0.4:
+    - An unknown key, or a malformed pair, is skipped; the rest of the report
+      applies.
+    - Orbit discards the whole report if any of these holds:
+      - it breaks a spec limit: a key over 16 bytes; `msg` over 2732 encoded
+        or 2048 decoded bytes; `title` over 256 encoded or 192 decoded bytes;
+        `app` over 32 bytes; `id` over 128 bytes, a segment over 32, or more
+        than 8 levels;
+      - a base64 value fails to decode;
+      - the decoded `title` or `msg` contains control characters;
+      - the `id` is invalid (Orbit never falls back to the root record);
+      - `state` is missing or unknown.
+    - Some invalid values are treated as absent and do not discard the
+      report: an `app` with characters outside its set, an unknown `kind`,
+      and an out-of-range `progress`.
+    - Orbit disarms bidi-override and invisible format characters.
+    - A valid report replaces the record with its `id`; an absent `id` means
+      the root record. A record holds `state`
+      (`idle | working | done | blocked | error`), `kind` (blocked only),
+      `progress`, `app`, `title` and `msg`. A record without `app` inherits
+      the `app` of its nearest ancestor when Orbit answers.
+    - OSC 7501 is the sole source of program status, so no precedence among
+      sources applies.
+  - **Clearing.** `state=clear:id=X` removes X and every record beneath it.
+    `state=clear` with no `id` removes all records, and so does RIS.
+  - **Neutral per-record facts.** Orbit derives no attention meaning.
+    - **Update sequence.** One counter per terminal increases by one on each
+      accepted report, clear and lifetime drop, so the Runtime sees removals.
+    - **Change sequence.** The update sequence at which the record's state
+      last changed. Creating a record counts as a change; a same-state
+      re-report keeps it.
+    - **Previous state.** The state before that change, or none for a newly
+      created record.
+    - **Ages.** The Orbit-monotonic ages, in milliseconds, of the last update
+      and of the last state change.
+  - **Lifetime.** Orbit removes `working` and `blocked` records on any of
+    these:
+    - the child exits, which ends the run and every record with it;
+    - an OSC 133 `A` prompt mark arrives;
+    - the PTY foreground process group changes to the child's own group from
+      a different group.
+      - This applies only on terminals that have never sent OSC 133 `A`. The
+        latch is permanent, so one nested `nu` in a Bash pane turns the rule
+        off for the rest of that run. This is accepted for 1.0.
+      - It is edge-triggered. It is sampled at the start of each PTY read,
+        before that read's bytes are processed, and on each `ProgramStatus`
+        request. A report in the same read therefore comes after the edge and
+        survives it.
+      - A popup tool that is the child never triggers it while it keeps the
+        foreground group.
+      - With prompt marks (Nushell emits them natively), a shell script that
+        reports its own work (`status working; rsync …; status done`) keeps
+        its record until the prompt.
+      - Without prompt marks (Eon's managed Bash today),
+        `status working; make; make test` loses its `working` record when a
+        job returns to the shell. Sampling can miss a short return, so this
+        happens unpredictably. This is accepted for 1.0; shipping OSC 133 for
+        Bash is a follow-up.
+
+    Lifetime drops apply in byte-stream order: a prompt mark or foreground
+    edge drops only the `working` and `blocked` records that exist at that
+    point in the stream, and a report after it, even in the same PTY read,
+    survives. `done`, `error` and `idle` records remain until the program
+    replaces or clears them, or the run ends. Orbit uses no expiry and no
+    heartbeat. The spec forbids requiring re-sends and leaves to the terminal
+    when to stop showing `done` or `error`; EON-C31 decides that.
+  - **ProgramStatus reply.** One request gets one reply of at most 4 KiB. It
+    carries the record count, the terminal's latest update sequence, and the
+    count of records omitted for size, and as many records as fit in a
+    neutral fill order: first `blocked`, `error` and `done`, most recent
+    change first; then every other record, most recent change first. Each
+    record carries its full `id`, `state`, `kind`, `progress`, `app`
+    (32 bytes or less), `title` (96 or less) and `msg` (256 or less), its
+    update sequence, change sequence, previous state and both ages. Orbit
+    truncates only `title` and `msg`, at UTF-8 boundaries.
+- **Important failures:**
+  - Orbit ignores any report over 4096 bytes.
+  - Past 256 records, Orbit evicts the least-recently-updated one.
+  - Status work never blocks PTY reading. A report causes no frame or
+    metadata publication beyond what the PTY read that carried it already
+    causes (ORB-C4 unchanged).
+- **Owner:**
+  - The Rust host owns raw observation and mechanism
+    ([HOST.md](HOST.md#what-rust-holds)): it parses reports through
+    libghostty, stores records with their neutral facts, applies the spec's
+    eviction, and assembles reply content by the fixed fill order.
+  - The Bend worker decides from one-line numeric facts:
+    - whether a prompt mark or foreground-group edge drops the `working` and
+      `blocked` records;
+    - whether to answer a `ProgramStatus` request or refuse it with Busy. It
+      never defers. Orbit targets an answer within 250 ms. The worker-stall
+      bound ([HOST.md](HOST.md#processes-and-pipes)) caps each fact and
+      decision exchange at 2 s, and an answer needs at most two exchanges: a
+      foreground-edge drop decision, then the answer. Host turn scheduling
+      can add to that. A stalled worker ends that terminal's run, as it does
+      for every exchange. The Runtime's own 250 ms poll deadline covers a
+      miss: a miss keeps the last good result, and attention becomes stale
+      only after 3 s without a good reply.
+
+    Bend also holds the state its decisions read: whether the terminal has
+    ever sent OSC 133 `A`, and the last sampled foreground group
+    ([src/status.bend](../src/status.bend)). The host keeps no session state
+    that Bend decides from.
+  - The program owns what its report means.
+- **Consumes:** libghostty-vt with its program-status and semantic-prompt
+  options; ORB-C2's terminal authority.
+- **Boundary:** No inference from the screen, process names or elapsed
+  silence; no change to ORBS or ORB-C3; no event stream, no reading back by
+  the program in Orbit, and no notifications; no OSC 9, 99 or 777 handling; no
+  records across Orbit restarts. Portability is neutral: `tcgetpgrp` and the
+  PTY are POSIX, and macOS stays deferred.
+- **Proof:** Not proved.
+
 ## Focused terminal conformance corpus
 
 The current corpus groups three accepted tests in

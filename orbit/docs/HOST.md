@@ -157,6 +157,19 @@ sends them before the frame of the same turn, even while a synchronized update
 holds that frame, and answers a turn that passed the bound with `Detach`,
 sending none of them.
 
+The host keeps the program status records of ORB-C15
+([src/status.rs](../src/status.rs)). libghostty parses each OSC 7501 report,
+enforces the specification's limits and answers the support probe; Rust
+collects the turn's accepted reports, clears and primary prompt starts in
+stream order. Before each read of a PTY turn the host samples the PTY's
+foreground process group, and a sample that differs from the turn's first
+ends the turn, so fact `Output` carries the sample that held for all of the
+turn's output and whether the turn carried a prompt mark. Bend leads its
+answer with `StatusLifetime`, which the host carries out: the foreground
+return's drop first, then the turn's events in order, with a drop at each
+prompt mark. Whether the terminal has ever sent a prompt mark, and the last
+sample, live in Bend ([src/status.bend](../src/status.bend)).
+
 Bend's session holds the pointer sequence's route, whether a host selection
 is presented, and whether a finished host sequence froze a copy. Rust keeps
 libghostty's gesture and the frozen text, reports whether each host phase or
@@ -219,7 +232,8 @@ none holds session state that Bend decides from.
   surface size, a terminal reply that overflowed, the turn's clipboard writes
   and their overflow, a lost gesture anchor, the frozen copy's text (Bend holds
   only its presence), the title and working directory last queued for the
-  observer, a client's half-close, its unread bytes and
+  observer, the turn's program status events and the program status records
+  with their neutral facts, a client's half-close, its unread bytes and
   negotiation phase, the identity a managed run publishes, a management peer's
   UID, and the containment fixture's fault.
 - Carry-out scratch, held only while Bend decides the current fact: the

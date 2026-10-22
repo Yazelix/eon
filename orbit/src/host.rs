@@ -547,14 +547,20 @@ impl Host {
     /// One fact per PTY turn. An attached client gets a frame per 8 KiB read;
     /// without one, nobody sees frames, so the host drains the PTY, up to
     /// 512 KiB, before asking Bend, since each fact costs a round trip
-    /// through the worker.
+    /// through the worker. The foreground group is sampled before each read,
+    /// and a change ends the turn, so the turn's sample held for all of its
+    /// output (ORB-C15).
     fn read_pty(&mut self) -> io::Result<Option<Fact>> {
         self.orbit.start_turn();
         let turns = if self.client.is_some() { 1 } else { 64 };
+        let foreground = self.orbit.foreground();
         let mut data = [0; 8192];
         let mut read = false;
         let mut closed = false;
         for _ in 0..turns {
+            if read && self.orbit.foreground() != foreground {
+                break;
+            }
             match self.orbit.read_into(&mut data)? {
                 PtyRead::Bytes(_) => read = true,
                 PtyRead::Closed => {
@@ -564,27 +570,33 @@ impl Host {
                 PtyRead::Blocked(_) => break,
             }
         }
+        let output = read.then(|| Fact::Output {
+            foreground,
+            marks: self.orbit.status_marks(),
+        });
         if closed {
-            return self.pty_closed(read).map(Some);
+            return self.pty_closed(output).map(Some);
         }
-        Ok(read.then_some(Fact::Output))
+        Ok(output)
     }
 
     /// The PTY closed after a turn that may have read output. Once the
     /// direct child has exited, the run stops; while it lives, nothing more
     /// is read or written and the run waits for its exit (ORB-C1).
-    fn pty_closed(&mut self, read: bool) -> io::Result<Fact> {
+    fn pty_closed(&mut self, output: Option<Fact>) -> io::Result<Fact> {
         self.pty_open = false;
         self.orbit.writes.discard();
         if self.orbit.try_reap()?.is_some() {
             self.child_exited = true;
-            return Ok(Fact::ChildExited { drained: read });
+            return Ok(Fact::ChildExited {
+                drained: output.is_some(),
+            });
         }
-        if !read {
+        let Some(output) = output else {
             return Ok(Fact::PtyClosed);
-        }
+        };
         self.queued.push_back(Fact::PtyClosed);
-        Ok(Fact::Output)
+        Ok(output)
     }
 
     /// The direct child exited: the PTY's remaining output, at most four
@@ -1270,6 +1282,7 @@ impl Host {
                 Decision::Accepted => self.send(|_| Ok(ServerMessage::Accepted))?,
                 Decision::Clipboard => self.send_clipboard()?,
                 Decision::Capture { on } => self.orbit.capture_clipboard(on),
+                Decision::StatusLifetime { edge, marks } => self.orbit.apply_status(edge, marks),
                 Decision::Detach => self.drop_client()?,
                 Decision::Dismiss => self.close_client()?,
                 Decision::Reject(reason) => {
@@ -1626,6 +1639,7 @@ pub(crate) fn built_worker_output_bound() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::boundary::Foreground;
 
     /// The deadline judges only an incomplete answer: one the worker already
     /// wrote, or whose lines were already read, is accepted after it, as when
@@ -1658,6 +1672,66 @@ mod tests {
         );
         streaming.worker.kill().unwrap();
         streaming.worker.wait().unwrap();
+    }
+
+    /// The built worker leads each PTY turn's answer with the program status
+    /// lifetime of ORB-C15 and carries its tracker from turn to turn.
+    #[test]
+    fn the_worker_leads_each_output_with_its_status_lifetime() {
+        fn lifetime(bend: &mut Bend, foreground: Foreground, marks: bool) -> (bool, bool) {
+            let decisions = bend
+                .ask(Fact::Output { foreground, marks }, Flags::default())
+                .unwrap();
+            let lifetimes: Vec<_> = decisions
+                .iter()
+                .filter_map(|decision| match *decision {
+                    Decision::StatusLifetime { edge, marks } => Some((edge, marks)),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                matches!(decisions[0], Decision::StatusLifetime { .. }) && lifetimes.len() == 1,
+                "{decisions:?}"
+            );
+            lifetimes[0]
+        }
+        let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
+        let mut bend = Bend::spawn(
+            Path::new(env!("ORBIT_BUILT_WORKER")),
+            &["--threads".into(), "1".into()],
+        )
+        .unwrap();
+        bend.bounds().unwrap();
+        bend.ask(Fact::Started { pid: 1 }, Flags::default())
+            .unwrap();
+        // The child leads its foreground at the start, so its own group drops
+        // nothing until another group has led.
+        assert_eq!(
+            lifetime(&mut bend, Foreground::Child, false),
+            (false, false)
+        );
+        assert_eq!(
+            lifetime(&mut bend, Foreground::Other, false),
+            (false, false)
+        );
+        // A sample that finds no group keeps the last one.
+        assert_eq!(
+            lifetime(&mut bend, Foreground::Unknown, false),
+            (false, false)
+        );
+        assert_eq!(lifetime(&mut bend, Foreground::Child, false), (true, false));
+        assert_eq!(
+            lifetime(&mut bend, Foreground::Child, false),
+            (false, false)
+        );
+        // A prompt mark drops, and from then on a return does not.
+        assert_eq!(lifetime(&mut bend, Foreground::Other, true), (false, true));
+        assert_eq!(
+            lifetime(&mut bend, Foreground::Child, false),
+            (false, false)
+        );
+        bend.worker.kill().unwrap();
+        bend.worker.wait().unwrap();
     }
 
     #[test]

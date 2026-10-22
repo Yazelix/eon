@@ -163,11 +163,25 @@ enum ManagementEvent
   # The connection closed, was refused, or outlived its one-second bound.
   7 Gone
 
+# Which process group the host found in the PTY's foreground when the PTY
+# turn began, before it fed the turn's output to the terminal (ORB-C15).
+enum Foreground
+  # None: the terminal has no foreground group, or the host could not ask.
+  0 Unknown
+  # The direct child's own group.
+  1 Child
+  # Another group.
+  2 Other
+
 # The child printed its READY line; peers may connect.
 fact 0 Started pid:u32
 # PTY output was fed to the terminal: one 8 KiB read while a client is
-# attached, or reads until the PTY is empty, up to 512 KiB, while none is.
-fact 1 Output
+# attached, or reads until the PTY is empty, up to 512 KiB, while none is. The
+# host samples the foreground group before each read and ends the turn early
+# when it changes, so `foreground` held at the start of every read of the
+# turn. `marks` tells whether the output carried a primary prompt start
+# (OSC 133 A, or N or P without another prompt kind).
+fact 1 Output foreground:Foreground marks:bool
 # The PTY reached end of file while the direct child lives; the host reads and
 # writes it no more and discards queued input. A live child may hold no
 # terminal descriptor for a while; until it exits, EIO only pauses reading for
@@ -410,3 +424,9 @@ decision 38 Retick x:u32 y:u32
 # Captures the terminal's clipboard writes from the next PTY turn on when
 # `on`, and refuses them otherwise (ORB-C11).
 decision 39 Capture on:bool
+# Applies the PTY turn's program status reports and clears to the records in
+# stream order (ORB-C15). When `edge`, it first drops the working and blocked
+# records, before any of the turn's output; when `marks`, it drops the
+# working and blocked records that exist at each of the turn's prompt marks,
+# so a report after a mark survives it.
+decision 40 StatusLifetime edge:bool marks:bool

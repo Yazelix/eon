@@ -113,6 +113,18 @@ pub(crate) enum ManagementEvent {
     Gone = 7,
 }
 
+/// Which process group the host found in the PTY's foreground when the PTY
+/// turn began, before it fed the turn's output to the terminal (ORB-C15).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Foreground {
+    /// None: the terminal has no foreground group, or the host could not ask.
+    Unknown = 0,
+    /// The direct child's own group.
+    Child = 1,
+    /// Another group.
+    Other = 2,
+}
+
 /// Why Bend rejects a request with Failure. The host owns each reason's code
 /// and exact text.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -245,8 +257,12 @@ pub(crate) enum Fact {
     /// The child printed its READY line; peers may connect.
     Started { pid: u32 },
     /// PTY output was fed to the terminal: one 8 KiB read while a client is
-    /// attached, or reads until the PTY is empty, up to 512 KiB, while none is.
-    Output,
+    /// attached, or reads until the PTY is empty, up to 512 KiB, while none is. The
+    /// host samples the foreground group before each read and ends the turn early
+    /// when it changes, so `foreground` held at the start of every read of the
+    /// turn. `marks` tells whether the output carried a primary prompt start
+    /// (OSC 133 A, or N or P without another prompt kind).
+    Output { foreground: Foreground, marks: bool },
     /// The PTY reached end of file while the direct child lives; the host reads and
     /// writes it no more and discards queued input. A live child may hold no
     /// terminal descriptor for a while; until it exits, EIO only pauses reading for
@@ -324,7 +340,9 @@ impl Fact {
         let word = flags.word();
         match self {
             Self::Started { pid } => format!("0 {word} {pid}\n"),
-            Self::Output => format!("1 {word}\n"),
+            Self::Output { foreground, marks } => {
+                format!("1 {word} {} {}\n", foreground as u32, u32::from(marks))
+            }
             Self::PtyClosed => format!("2 {word}\n"),
             Self::Peer(message) => format!("3 {word} {}\n", message as u32),
             Self::Applied(effect) => format!("4 {word} {}\n", effect as u32),
@@ -372,7 +390,7 @@ fn halves(revision: u64) -> String {
 
 /// The line the worker writes before its first answer, naming the schema
 /// it was generated from; the host refuses a worker that names another.
-pub(crate) const SCHEMA: &str = "schema f6742a3f9a02dea8";
+pub(crate) const SCHEMA: &str = "schema 53fffd3429ca6009";
 
 /// The line that ends each of the worker's answers.
 pub(crate) const END: &str = "end";
@@ -510,6 +528,12 @@ pub(crate) enum Decision {
     /// Captures the terminal's clipboard writes from the next PTY turn on when
     /// `on`, and refuses them otherwise (ORB-C11).
     Capture { on: bool },
+    /// Applies the PTY turn's program status reports and clears to the records in
+    /// stream order (ORB-C15). When `edge`, it first drops the working and blocked
+    /// records, before any of the turn's output; when `marks`, it drops the
+    /// working and blocked records that exist at each of the turn's prompt marks,
+    /// so a report after a mark survives it.
+    StatusLifetime { edge: bool, marks: bool },
 }
 
 type Words<'a> = std::str::Split<'a, char>;
@@ -658,6 +682,10 @@ impl Decision {
             },
             39 => Self::Capture {
                 on: flag(&mut words)?,
+            },
+            40 => Self::StatusLifetime {
+                edge: flag(&mut words)?,
+                marks: flag(&mut words)?,
             },
             _ => return None,
         };

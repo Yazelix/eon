@@ -25,19 +25,27 @@ pub fn run() {
             ("ORBIT_REPLIES", &answers),
         ],
     );
-    // The terminal answers the child's cursor-position query while no client
-    // is attached: Orbit, not a client, owns terminal replies.
+    // The terminal answers the child's cursor-position query and its program
+    // status probe while no client is attached: Orbit, not a client, owns
+    // terminal replies.
     let deadline = Instant::now() + seconds(10.0);
-    while !answers.exists() || !replies(&answers).contains_key("detached") {
+    while !answers.exists() || !replies(&answers).contains_key("probe") {
         assert!(
             Instant::now() < deadline,
-            "the detached query got no answer line"
+            "the detached queries got no answer line"
         );
         assert!(server.alive(), "server exited before the child asked");
         sleep(0.05);
     }
     let got = replies(&answers);
     assert_eq!(got["detached"], "$'\\E[2;1'", "{got:?}");
+    // The program status probe is answered before the device attributes
+    // query that follows it (ORB-C15).
+    let probe = &got["probe"];
+    let answer = "$'\\E]7501;?:states=idle,working,done,blocked,error\
+                  :kinds=permission,question,auth\\E\\\\\\E[?";
+    assert!(probe.starts_with(answer), "{got:?}");
+    assert!(probe.ends_with("c'"), "{got:?}");
 
     let mut client = Peer::attach(&server.path, 10.0);
     gate.release();

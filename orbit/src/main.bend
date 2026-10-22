@@ -4,6 +4,7 @@ import ./selection.bend as Selection
 import ./management.bend as Management
 import ./boundary.bend as Boundary
 import ./session.bend as Session
+import ./status.bend as Status
 
 # The Bend worker: serve reads the host's facts and writes step's decisions
 # (src/session.bend) through Base File effects on the two pipes of docs/HOST.md.
@@ -109,7 +110,7 @@ def started_serving(pair: File & Result<&1, &1, U32 & String, Unit>, input: File
           Life.Detached{0}, False{}, False{}, False{}, Session.Clear{},
           Session.Pointer{Selection.Idle{}, False{}, False{}}, Management.Free{}
         },
-        Session.Shown{Session.unstamped(), False{}}
+        Session.Shown{Session.unstamped(), False{}}, Status.start()
       }
     )
 

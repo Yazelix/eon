@@ -497,6 +497,70 @@ none of them. Ignoring the queue's bound made it fail, and so did keeping
 each turn's writes for later turns. Letting only ordered messages past the
 bound did not: the frame queued behind them still overflowed it.
 
+## Program status
+
+Rust keeps one record per id for the OSC 7501 program status reports the
+terminal accepts (ORB-C15), with libghostty's discard rules: a sequence over
+4096 bytes, an unknown state, a value that fails to decode or an invalid id
+discards a report, while an unknown key or malformed pair is skipped and an
+unknown kind or out-of-range progress reads as absent. A report replaces its
+record; a clear removes the id and every record beneath it, and a clear
+without an id, or RIS, removes them all. A report without an id is about the
+root record, while an explicitly empty id is invalid. Past 256 records, a new
+one evicts the record updated longest ago. Each record keeps the update
+sequence and time of its last report and of its last state change, which a
+same-state report keeps, and the state before that change; the terminal's
+update sequence advances on each report and clear, and on each drop that
+removes a record. Titles and messages lose Unicode format characters, such as
+bidi overrides and zero-width spaces, and a record without an app shows its
+nearest ancestor's.
+[`drops_apply_in_stream_order`](../src/status.rs),
+`records_keep_neutral_facts`, `clears_remove_subtrees_and_reset_removes_all`,
+`apps_inherit_and_text_is_disarmed`,
+`eviction_keeps_the_most_recently_updated` and
+`libghostty_enforces_the_report_rules` feed real libghostty terminals.
+
+Each PTY turn's fact `Output` carries the foreground group sampled before its
+first read and whether its output carried a primary prompt start; a different
+sample before a later read ends the turn. Bend answers with `StatusLifetime`
+first. A prompt mark drops the `working` and `blocked` records that exist at
+that point in the stream. On a terminal that has never sent a prompt mark, a
+sample that finds the child's own group after one that found another drops
+them before the turn's output, once per return; a sample that finds no group
+keeps the last one. The laws `status_prompt_marks_drop`,
+`status_foreground_returns_drop`, `status_foreground_drops_once`,
+`status_unknown_samples_keep_the_last` and
+`status_prompt_marks_end_foreground_drops` state this
+([src/status.bend](../src/status.bend)), and `drops_apply_in_stream_order`
+checks that the host applies the drops in stream order; applying the
+foreground drop after the turn's output made it fail, and so did dropping at
+the end of a marked turn instead of at its mark.
+[`the_worker_leads_each_output_with_its_status_lifetime`](../src/host.rs)
+sends `Output` facts to the built worker and checks the `StatusLifetime`
+that leads each answer as the tracker moves; passing no marks in `step`,
+and keeping the starting tracker, each made it fail.
+`a_pty_childs_reports_reach_the_records` runs a shell with job control in a
+real PTY: its reports and prompt mark reach the records through `Orbit`'s
+callbacks, and the samples find the shell's group, then a foreground job's,
+then the shell's again. A sensitivity check
+for each law broke the policy in a scratch copy and made its proof fail:
+ignoring marks, ignoring the latch, dropping at every sample that finds the
+child, forgetting the last sample when none is found, never setting the
+latch, and resetting the latch when another group leads.
+
+The real-PTY terminal-replies check has the child send the support probe and
+then a device attributes query before any client attaches: the probe's answer,
+naming the accepted states and kinds, arrives before the device attributes
+reply.
+
+Inside an isolated Orbit on 2026-10-21, Claude Code 2.1.303 sent the probe
+and then a device attributes query, received the probe's answer first, and
+reported `idle` before its first prompt, then `working` and `done`, each with
+`app=claude-code` and ended by BEL; it sent no `idle` after `done`. Codex
+0.163.0 sent no probe and reported `idle`, `working` and `idle` with
+`app=codex`, ended by ST, and never `done`. `real_agent_reports_keep_their_records`
+feeds those reports.
+
 ## Vertical preview
 
 An attached client can ask for a read-only `PreviewVertical` from a frame

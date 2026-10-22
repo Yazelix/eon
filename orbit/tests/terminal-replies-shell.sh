@@ -12,6 +12,15 @@ query() {
 }
 # Before any client attaches.
 query detached $'\033[6n' R
+# The program status probe, then device attributes, read up to the end of
+# the device attributes answer (ORB-C15).
+printf '\033]7501;?\033\\\033[c'
+reply=
+while IFS= read -r -s -n 1 -t 5 character; do
+  reply+=$character
+  [[ $reply == *$'\033[?'*c ]] && break
+done
+printf 'probe %q\n' "$reply" >> "$ORBIT_REPLIES"
 until IFS= read -r _ < "$ORBIT_REPLY_GATE"; do :; done
 # With a client attached.
 query position $'\033[6n' R

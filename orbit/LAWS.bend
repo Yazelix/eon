@@ -7,6 +7,7 @@ import ./src/management.bend as Management
 import ./src/revision.bend as Revision
 import ./src/boundary.bend as Boundary
 import ./src/session.bend as Session
+import ./src/status.bend as Status
 
 law detach_preserves_pid:
   for pid: U32
@@ -81,6 +82,89 @@ law management_stop_needs_the_lease:
 law revision_next_is_ahead:
   for r: Revision.Revision
   {Revision.ahead(Revision.next(r), r) == Bool.not(Revision.is_last(r)) : Bool}
+
+# The program status lifetime of ORB-C15 (../eon/orbit/docs/CONTRACTS.md), as
+# src/status.bend decides it for each PTY turn.
+
+def marks_drop(decision: Boundary.Decision) -> Bool:
+  match decision:
+    case Boundary.StatusLifetime{edge, marks}:
+      marks
+    case _:
+      False{}
+
+def edge_drops(decision: Boundary.Decision) -> Bool:
+  match decision:
+    case Boundary.StatusLifetime{edge, marks}:
+      edge
+    case _:
+      False{}
+
+def returns(foreground: Boundary.Foreground) -> Bool:
+  match foreground:
+    case Boundary.ForegroundChild{}:
+      True{}
+    case _:
+      False{}
+
+# One PTY turn as the policy hears it.
+type Turn is Data:
+  Turn{foreground: Boundary.Foreground, marks: Bool}
+
+# Whether any of the turns drops at its foreground sample.
+def edges(turns: List<&2, Turn>, +tracker: Status.Tracker) -> Bool:
+  match turns:
+    case Nil{}:
+      False{}
+    case Con{turn, rest}:
+      match turn:
+        case Turn{+foreground, +marks}:
+          Bool.or(
+            edge_drops(Status.lifetime(tracker, foreground, marks)),
+            edges(rest, Status.after(tracker, foreground, marks))
+          )
+
+# A turn's prompt marks always drop the working and blocked records; a turn
+# without one drops nothing at a mark.
+law status_prompt_marks_drop:
+  for tracker: Status.Tracker
+  for foreground: Boundary.Foreground
+  for marks: Bool
+  {marks_drop(Status.lifetime(tracker, foreground, marks)) == marks : Bool}
+
+# A turn drops them at its foreground sample exactly when the terminal has
+# never sent a prompt mark and the sample finds the child's own group while
+# the last sample that found a group found another.
+law status_foreground_returns_drop:
+  for marked: Bool
+  for child: Bool
+  for foreground: Boundary.Foreground
+  for marks: Bool
+  {edge_drops(Status.lifetime(Status.Tracker{marked, child}, foreground, marks)) == Bool.and(Bool.not(marked), Bool.and(Bool.not(child), returns(foreground))) : Bool}
+
+# The drop is edge-triggered: a sample that finds the child's group right
+# after one that found it drops nothing.
+law status_foreground_drops_once:
+  for tracker: Status.Tracker
+  for first: Bool
+  for marks: Bool
+  {edge_drops(Status.lifetime(Status.after(tracker, Boundary.ForegroundChild{}, first), Boundary.ForegroundChild{}, marks)) == False{} : Bool}
+
+# A sample that finds no group keeps the last sample, and a prompt mark sets
+# the latch.
+law status_unknown_samples_keep_the_last:
+  for marked: Bool
+  for child: Bool
+  for marks: Bool
+  {Status.after(Status.Tracker{marked, child}, Boundary.ForegroundUnknown{}, marks) == Status.Tracker{Bool.or(marked, marks), child} : Status.Tracker}
+
+# After a turn with a prompt mark, no later turn of the run drops at its
+# foreground sample.
+law status_prompt_marks_end_foreground_drops:
+  for turns: List<&2, Turn>
+  for tracker: Status.Tracker
+  for foreground: Boundary.Foreground
+  {edges(turns, Status.after(tracker, foreground, True{})) == False{} : Bool}
 
 # The lifecycle automaton of ORB-C1, C3 and C12 (../eon/orbit/docs/CONTRACTS.md),
 # checked against step's decisions and kept apart from the policy.
@@ -350,7 +434,7 @@ def live(
     case Boundary.Tick{state, x, y}:
       from_client(moves, client, observer)
     # Output may end an attachment whose clipboard writes overflowed.
-    case Boundary.Output{}:
+    case Boundary.Output{foreground, marks}:
       match client:
         case True{}:
           may_end(moves, observer)
@@ -429,7 +513,7 @@ def check(phase: Phase, fact: Boundary.Fact, moves: List<&2, Move>) -> Phase:
 # The phase a session state starts the automaton in.
 def phase(state: Session.State) -> Phase:
   match state:
-    case Session.State{session, shown}:
+    case Session.State{session, shown, status}:
       match session:
         case Session.Session{life, written, observer, explicit, waiting, pointer, manage}:
           match life:
@@ -1328,7 +1412,7 @@ def fact_advance(
   fact: Boundary.Fact, held: Bool, revision: Revision.Revision
 ) -> Revision.Revision:
   match fact:
-    case Boundary.Output{}:
+    case Boundary.Output{foreground, marks}:
       fed(held, revision)
     case Boundary.ChildExited{drained}:
       match drained:
@@ -1417,7 +1501,7 @@ def viewed(
 # The view a session state starts the automaton in.
 def view(state: Session.State) -> View:
   match state:
-    case Session.State{session, shown}:
+    case Session.State{session, shown, status}:
       match session:
         case Session.Session{life, written, observer, explicit, waiting, pointer, manage}:
           match life:
@@ -1627,7 +1711,7 @@ def lease_check(
 # The lease state a session state starts the automaton in.
 def lease(state: Session.State) -> Lease:
   match state:
-    case Session.State{session, shown}:
+    case Session.State{session, shown, status}:
       match session:
         case Session.Session{life, written, observer, explicit, waiting, pointer, manage}:
           match life:

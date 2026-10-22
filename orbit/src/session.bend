@@ -6,6 +6,7 @@ import ./selection.bend as Selection
 import ./management.bend as Management
 import ./revision.bend as Revision
 import ./boundary.bend as Boundary
+import ./status.bend as Status
 
 # The session policy of the C-free host (docs/HOST.md). The host reports one
 # fact per event with its flags, and step answers it with typed decisions
@@ -44,10 +45,11 @@ type Session is Data:
 type Shown is Data:
   Shown{revision: Revision.Revision, held: Bool}
 
-# Bend's whole state: the session that decides, and the revision that the
-# stamp after each decision advances.
+# Bend's whole state: the session that decides, the revision that the
+# stamp after each decision advances, and the program status lifetime tracker
+# of ORB-C15 (src/status.bend).
 type State is Data:
-  State{session: Session, shown: Shown}
+  State{session: Session, shown: Shown, status: Status.Tracker}
 
 # The next state and the decisions that carry it out.
 def Next() -> Type:
@@ -1081,7 +1083,7 @@ def decide(
   match fact:
     case Boundary.Started{pid}:
       started(pid, session)
-    case Boundary.Output{}:
+    case Boundary.Output{foreground, marks}:
       output(flags, session)
     # The PTY closed while the direct child lives: nothing more is read or
     # written, a pointer sequence ends, and the run waits for the child's
@@ -1224,7 +1226,7 @@ def fact_advanced(
   fact: Boundary.Fact, held: Bool, revision: Revision.Revision
 ) -> Revision.Revision:
   match fact:
-    case Boundary.Output{}:
+    case Boundary.Output{foreground, marks}:
       output_advanced(held, revision)
     case Boundary.ChildExited{drained}:
       drained_advanced(drained, held, revision)
@@ -1320,28 +1322,52 @@ def held_after(decisions: Boundary.Decisions(), held: Bool) -> Bool:
 
 def stamped(
   +revision: Revision.Revision, held: Bool, +decisions: List<&2, Boundary.Decision>,
-  session: Session
+  status: Status.Tracker, session: Session
 ) -> Stepped():
   (
-    State{session, Shown{stamped_revision(decisions, revision), held_after(decisions, held)}},
+    State{
+      session, Shown{stamped_revision(decisions, revision), held_after(decisions, held)}, status
+    },
     stamp(decisions, revision)
   )
 
-def begun(+revision: Revision.Revision, held: Bool, pair: Next()) -> Stepped():
+def begun(
+  +revision: Revision.Revision, held: Bool, lifetime: Boundary.Decisions(),
+  status: Status.Tracker, pair: Next()
+) -> Stepped():
   (session, decisions) = pair
-  stamped(revision, held, decisions, session)
+  stamped(revision, held, then(lifetime, decisions), status, session)
 
 def presented(
-  +fact: Boundary.Fact, +flags: Boundary.Flags, shown: Shown, session: Session
+  +fact: Boundary.Fact, +flags: Boundary.Flags, shown: Shown, lifetime: Boundary.Decisions(),
+  status: Status.Tracker, session: Session
 ) -> Stepped():
   match shown:
     case Shown{+revision, held}:
       begun(
-        fact_advanced(fact, held, revision), Boundary.held(flags),
+        fact_advanced(fact, held, revision), Boundary.held(flags), lifetime, status,
         anchored(Boundary.unanchored(flags), fact, flags, future_of(fact, revision), session)
       )
 
+# A PTY turn's program status lifetime (ORB-C15) leads its decisions and moves
+# the tracker; every other fact keeps the tracker.
+def lifetime_of(
+  fact: Boundary.Fact, +status: Status.Tracker
+) -> Status.Tracker & Boundary.Decisions():
+  match fact:
+    case Boundary.Output{+foreground, +marks}:
+      (Status.after(status, foreground, marks), [Status.lifetime(status, foreground, marks)])
+    case _:
+      (status, Nil{})
+
+def tracked(
+  pair: Status.Tracker & Boundary.Decisions(), +fact: Boundary.Fact, +flags: Boundary.Flags,
+  shown: Shown, session: Session
+) -> Stepped():
+  (status, lifetime) = pair
+  presented(fact, flags, shown, lifetime, status, session)
+
 def step(+fact: Boundary.Fact, +flags: Boundary.Flags, state: State) -> Stepped():
   match state:
-    case State{session, shown}:
-      presented(fact, flags, shown, session)
+    case State{session, shown, status}:
+      tracked(lifetime_of(fact, status), fact, flags, shown, session)

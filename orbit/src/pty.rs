@@ -2,12 +2,13 @@
 
 use crate::{
     Timer,
-    boundary::{Effect, TickState},
+    boundary::{Effect, Foreground, TickState},
     errno,
     frame::{FrameExtractor, SCROLLBACK_BUDGET_BYTES, viewport_preview},
     input::encode_input,
     platform,
     pointer::{Pointer, phase_position},
+    status::{Records, Turn},
 };
 use libghostty_vt::{
     Terminal,
@@ -158,6 +159,10 @@ pub(crate) struct Orbit {
     pub(crate) clipboard: Rc<RefCell<ClipboardWrites>>,
     /// libghostty's gesture and the frozen copy.
     pub(crate) pointer: Pointer,
+    /// The program status events of the current PTY turn.
+    status_turn: Rc<RefCell<Turn>>,
+    /// The program status records (ORB-C15).
+    pub(crate) status: Records,
 }
 
 impl Orbit {
@@ -201,6 +206,15 @@ impl Orbit {
                 write.reply(result, false);
             })
             .map_err(|_| errno(libc::EIO))?;
+        // Setting the callback also makes libghostty answer the OSC 7501
+        // support probe through the PTY write callback, in stream order.
+        let status_turn = Rc::new(RefCell::new(Turn::default()));
+        let (reports, prompts) = (Rc::clone(&status_turn), Rc::clone(&status_turn));
+        terminal
+            .on_program_status(move |_, report| reports.borrow_mut().report(report))
+            .map_err(|_| errno(libc::EIO))?
+            .on_semantic_prompt(move |_, event| prompts.borrow_mut().prompt(event))
+            .map_err(|_| errno(libc::EIO))?;
         let extractor = FrameExtractor::new()?;
         let hold = Timer::default();
         let (master, child) = spawn_pty_child(command, cols, rows)?;
@@ -230,15 +244,30 @@ impl Orbit {
             reply_overflow,
             clipboard,
             pointer: Pointer::default(),
+            status_turn,
+            status: Records::default(),
         })
     }
 
-    /// Starts a PTY turn: no clipboard write from an earlier turn is retained
-    /// or replayed.
+    /// Starts a PTY turn: no clipboard write or program status event from an
+    /// earlier turn is retained or replayed.
     pub(crate) fn start_turn(&self) {
         let mut clipboard = self.clipboard.borrow_mut();
         clipboard.writes.clear();
         clipboard.overflowed = false;
+        self.status_turn.take();
+    }
+
+    /// Whether the current PTY turn carried a prompt mark.
+    pub(crate) fn status_marks(&self) -> bool {
+        self.status_turn.borrow().marks()
+    }
+
+    /// Applies the current PTY turn's program status events as Bend's
+    /// `StatusLifetime` decides.
+    pub(crate) fn apply_status(&mut self, edge: bool, marks: bool) {
+        let turn = self.status_turn.take();
+        self.status.apply(turn, edge, marks);
     }
 
     /// Captures the terminal's clipboard writes from the next PTY turn on, or
@@ -648,6 +677,16 @@ impl Orbit {
     /// The terminal's foreground process group, if it has one.
     pub(crate) fn foreground_group(&self) -> Option<platform::pid_t> {
         platform::foreground_group(self.master.as_raw_fd())
+    }
+
+    /// Whether the direct child's own group leads the terminal's foreground,
+    /// another group does, or none (ORB-C15).
+    pub(crate) fn foreground(&self) -> Foreground {
+        match self.foreground_group() {
+            None => Foreground::Unknown,
+            Some(group) if u32::try_from(group) == Ok(self.pid) => Foreground::Child,
+            Some(_) => Foreground::Other,
+        }
     }
 
     /// Whether the primary screen's viewport is above live output.

@@ -9,6 +9,7 @@ import ./src/revision.bend as Revision
 import ./proof/word.bend as Words
 import ./src/session.bend as Session
 import ./src/boundary.bend as Boundary
+import ./src/status.bend as Status
 import ./proof/step.bend as Step
 import ./proof/view.bend as Views
 import ./proof/lease.bend as Leases
@@ -662,6 +663,56 @@ def Laws.revision_next_is_ahead(r):
     case Revision.Revision{+high, +low}:
       carried_ahead(U32.is_eq(low, 4294967295), high, low)({==})
 
+def Laws.status_prompt_marks_drop(tracker, foreground, marks):
+  match tracker:
+    case Status.Tracker{marked, child}:
+      {==}
+
+def Laws.status_foreground_returns_drop(marked, child, foreground, marks):
+  match foreground:
+    case Boundary.ForegroundUnknown{}:
+      {==}
+    case Boundary.ForegroundChild{}:
+      {==}
+    case Boundary.ForegroundOther{}:
+      {==}
+
+def Laws.status_foreground_drops_once(tracker, first, marks):
+  match tracker:
+    case Status.Tracker{marked, child}:
+      match marked first:
+        case True{} True{}:
+          {==}
+        case True{} False{}:
+          {==}
+        case False{} True{}:
+          {==}
+        case False{} False{}:
+          {==}
+
+def Laws.status_unknown_samples_keep_the_last(marked, child, marks):
+  {==}
+
+# Once the latch is set, no turn drops at its sample and the latch stays set.
+def latched_edges(turns: List<&2, Laws.Turn>, child: Bool) ->
+  {Laws.edges(turns, Status.Tracker{True{}, child}) == False{} : Bool}:
+  match turns:
+    case Nil{}:
+      {==}
+    case Con{turn, rest}:
+      match turn:
+        case Laws.Turn{+foreground, +marks}:
+          latched_edges(rest, Status.sampled(child, foreground))
+
+def Laws.status_prompt_marks_end_foreground_drops(turns, tracker, foreground):
+  match tracker:
+    case Status.Tracker{marked, child}:
+      match marked:
+        case True{}:
+          latched_edges(turns, Status.sampled(child, foreground))
+        case False{}:
+          latched_edges(turns, Status.sampled(child, foreground))
+
 # The lifecycle automaton of ORB-C1, C3 and C12 over the whole step. Once the
 # host leaves its fact order the automaton is Outside and stays there.
 def outside_kept(lines: List<&2, Boundary.Line>, +state: Session.State) ->
@@ -707,7 +758,7 @@ def Laws.lifecycle_follows_its_contracts(lines, state):
   match lines:
     case Nil{}:
       match state:
-        case Session.State{session, shown}:
+        case Session.State{session, shown, status}:
           match session:
             case Session.Session{life, written, observer, explicit, waiting, pointer, manage}:
               match life:
@@ -773,7 +824,7 @@ def Laws.scrolling_and_selection_follow_their_contracts(lines, state):
   match lines:
     case Nil{}:
       match state:
-        case Session.State{session, shown}:
+        case Session.State{session, shown, status}:
           match session:
             case Session.Session{life, written, observer, explicit, waiting, pointer, manage}:
               match life:
@@ -851,7 +902,7 @@ def Laws.management_follows_its_contract(lines, state):
   match lines:
     case Nil{}:
       match state:
-        case Session.State{session, shown}:
+        case Session.State{session, shown, status}:
           match session:
             case Session.Session{life, written, observer, explicit, waiting, pointer, manage}:
               match life:

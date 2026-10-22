@@ -33,8 +33,9 @@ const USAGE: &str = "usage: step-proof LAW BEND2_MAIN_TS [FACT,...]
 LAW is lifecycle, view or management. BEND2_MAIN_TS is bend2/main.ts of the
 Bend that flake.nix pins. JOBS (default 8) checks that many facts at once.";
 
-const MODULES: [(&str, &str); 8] = [
+const MODULES: [(&str, &str); 9] = [
     ("session", "Session"),
+    ("status", "Status"),
     ("boundary", "Boundary"),
     ("lifecycle", "Orbit"),
     ("admission", "Admission"),
@@ -47,7 +48,10 @@ const MODULES: [(&str, &str); 8] = [
 // The facts of src/boundary.schema, with names for their fields.
 const FACTS: [(&str, &[(&str, &str)]); 27] = [
     ("Started", &[("pid", "U32")]),
-    ("Output", &[]),
+    (
+        "Output",
+        &[("foreground", "Boundary.Foreground"), ("marks", "Bool")],
+    ),
     ("PtyClosed", &[]),
     ("Peer", &[("message", "Boundary.FirstMessage")]),
     ("Applied", &[("effect", "Boundary.Effect")]),
@@ -102,7 +106,7 @@ const FACTS: [(&str, &[(&str, &str)]); 27] = [
 const SESSION: [&str; 7] = [
     "life", "written", "observer", "explicit", "waiting", "pointer", "manage",
 ];
-const STATE: [(&str, &str); 10] = [
+const STATE: [(&str, &str); 11] = [
     ("life", "Orbit.Lifecycle"),
     ("observer", "Bool"),
     ("waiting", "Session.Waiting"),
@@ -110,6 +114,7 @@ const STATE: [(&str, &str); 10] = [
     ("written", "Bool"),
     ("explicit", "Bool"),
     ("manage", "Management.Slot"),
+    ("tracker", "Status.Tracker"),
     ("revision", "Revision.Revision"),
     ("was", "Bool"),
     ("future", "Bool"),
@@ -379,10 +384,21 @@ impl Ctx {
         let fact_text = fact_term(fact);
         let flags = flags_term();
         let session = session_term();
-        let state = format!("Session.State{{{session}, Session.Shown{{revision, was}}}}");
+        let state =
+            format!("Session.State{{{session}, Session.Shown{{revision, was}}, tracker}}");
+        // A PTY turn's program status lifetime leads its decisions and moves
+        // the tracker; every other fact keeps it.
+        let (lifetime, tracked) = if fact == "Output" {
+            (
+                "[Status.lifetime(tracker, foreground, marks)]",
+                "Status.after(tracker, foreground, marks)",
+            )
+        } else {
+            ("Nil{}", "tracker")
+        };
         let step = format!(
-            "Session.begun(Session.fact_advanced({fact_text}, was, revision), held, \
-             Session.anchored(unanchored, {fact_text}, {flags}, future, {session}))"
+            "Session.begun(Session.fact_advanced({fact_text}, was, revision), held, {lifetime}, \
+             {tracked}, Session.anchored(unanchored, {fact_text}, {flags}, future, {session}))"
         );
         self.statement(&fact_text, &state, &step, &flags, "future")
     }
@@ -1132,7 +1148,7 @@ fn dispatcher(ctx: &Ctx) -> String {
             )
         ),
         "  match state:".into(),
-        "    case Session.State{session, shown}:".into(),
+        "    case Session.State{session, shown, tracker}:".into(),
         "      match session:".into(),
         format!("        case {session}:"),
     ];

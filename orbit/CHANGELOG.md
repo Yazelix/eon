@@ -37,6 +37,15 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   change is compatible for Venus, Eon Runtime and Eon. Terminal behavior
   follows upstream: cursor positioning in origin mode and DECRQM reports
   take Ghostty's fixes, and Orbit answers DECXCPR queries.
+- ORB-C15 enters the index as Planned. Orbit answers the OSC 7501 program
+  status probe, so programs such as Claude Code 2.1.295 or later start
+  reporting, and it keeps each terminal's reports as records whose working
+  and blocked ones a prompt mark or a return to the child's foreground group
+  drops (`eon-agent-sidebar-yx8.4`). Nothing reads the records yet;
+  management serves them from `eon-agent-sidebar-yx8.5`. The worker boundary
+  gains fact fields and a decision, which Orbit's host and worker ship
+  together, so the ORBS v13 and ORBF v2 wire and every consumer are
+  unaffected.
 
 ## Before this repository
 

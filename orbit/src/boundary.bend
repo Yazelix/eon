@@ -98,6 +98,16 @@ type ManagementEvent is Data:
   # The connection closed, was refused, or outlived its one-second bound.
   ManagementEventGone{}
 
+# Which process group the host found in the PTY's foreground when the PTY
+# turn began, before it fed the turn's output to the terminal (ORB-C15).
+type Foreground is Data:
+  # None: the terminal has no foreground group, or the host could not ask.
+  ForegroundUnknown{}
+  # The direct child's own group.
+  ForegroundChild{}
+  # Another group.
+  ForegroundOther{}
+
 # Why Bend rejects a request with Failure. The host owns each reason's code
 # and exact text.
 type Reason is Data:
@@ -162,8 +172,12 @@ type Fact is Data:
   # The child printed its READY line; peers may connect.
   Started{pid: U32}
   # PTY output was fed to the terminal: one 8 KiB read while a client is
-  # attached, or reads until the PTY is empty, up to 512 KiB, while none is.
-  Output{}
+  # attached, or reads until the PTY is empty, up to 512 KiB, while none is. The
+  # host samples the foreground group before each read and ends the turn early
+  # when it changes, so `foreground` held at the start of every read of the
+  # turn. `marks` tells whether the output carried a primary prompt start
+  # (OSC 133 A, or N or P without another prompt kind).
+  Output{foreground: Foreground, marks: Bool}
   # The PTY reached end of file while the direct child lives; the host reads and
   # writes it no more and discards queued input. A live child may hold no
   # terminal descriptor for a while; until it exits, EIO only pauses reading for
@@ -483,6 +497,17 @@ def decode_management_event(arg: U32) -> Maybe<&2, ManagementEvent>:
     case _:
       None{}
 
+def decode_foreground(arg: U32) -> Maybe<&2, Foreground>:
+  match arg:
+    case 0:
+      Some{ForegroundUnknown{}}
+    case 1:
+      Some{ForegroundChild{}}
+    case 2:
+      Some{ForegroundOther{}}
+    case _:
+      None{}
+
 def fact_started(args: List<&2, String>) -> Maybe<&2, Fact>:
   match args:
     case Con{a0, Nil{}}:
@@ -494,8 +519,13 @@ def fact_started(args: List<&2, String>) -> Maybe<&2, Fact>:
 
 def fact_output(args: List<&2, String>) -> Maybe<&2, Fact>:
   match args:
-    case Nil{}:
-      Some{Output{}}
+    case Con{a0, Con{a1, Nil{}}}:
+      do Maybe<&2, Fact>:
+        foreground_word : U32 <- U32.read(a0)
+        foreground : Foreground <- decode_foreground(foreground_word)
+        marks_word : U32 <- U32.read(a1)
+        marks : Bool <- decode_bool(marks_word)
+        return Output{foreground, marks}
     case _:
       None{}
 
@@ -936,6 +966,12 @@ type Decision is Data:
   # Captures the terminal's clipboard writes from the next PTY turn on when
   # `on`, and refuses them otherwise (ORB-C11).
   Capture{on: Bool}
+  # Applies the PTY turn's program status reports and clears to the records in
+  # stream order (ORB-C15). When `edge`, it first drops the working and blocked
+  # records, before any of the turn's output; when `marks`, it drops the
+  # working and blocked records that exist at each of the turn's prompt marks,
+  # so a report after a mark survives it.
+  StatusLifetime{edge: Bool, marks: Bool}
 
 def encode_bool(value: Bool) -> String:
   match value:
@@ -1089,6 +1125,8 @@ def encode_decision(decision: Decision) -> String:
       "38" ++ " " ++ U32.show(x) ++ " " ++ U32.show(y) ++ "\n"
     case Capture{on}:
       "39" ++ " " ++ encode_bool(on) ++ "\n"
+    case StatusLifetime{edge, marks}:
+      "40" ++ " " ++ encode_bool(edge) ++ " " ++ encode_bool(marks) ++ "\n"
 
 # One answer: decisions, carried out in order.
 def Decisions() -> Type:
@@ -1105,4 +1143,4 @@ def encode(decisions: Decisions()) -> String:
 # The line the worker writes before its first answer, naming the schema it
 # was generated from; the host refuses a worker that names another.
 def schema() -> String:
-  "schema f6742a3f9a02dea8\n"
+  "schema 53fffd3429ca6009\n"
