@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The Eon Bar shows Claude's quota as two chips, one for the five-hour window
+  and one for the seven-day window, in place of one chip showing both. In a
+  narrow window, quota chips now disappear starting with the one closest to
+  the tabs.
+
 - Each Eon or eonbase supervisor writes a diagnostic log to
   `$XDG_STATE_HOME/eon/logs` (`~/.local/state/eon/logs` by default): when the
   window starts and exits, its exit code or signal, its error output with a

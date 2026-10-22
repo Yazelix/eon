@@ -140,7 +140,7 @@ Composed activation requires an exact v14 Venus consumer.
 
 The optional Claude observation adds only bounded presentation facts. Under
 EON-C27, pinned CodexBar collects it; Runtime owns bounded subprocesses,
-validation, observation age and expiry, and Venus owns its native chip.
+validation, observation age and expiry, and Venus owns its native chips.
 Credential contents, account identity and raw provider output stay
 outside EONW and Venus.
 

@@ -1705,8 +1705,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   one minute apart and Claude reads at least five minutes apart, including
   after a failed read and across a stop and restart; reads run off workspace
   I/O.
-  The existing native chips show every supplied supported window and remaining
-  percentage, with provider periods, optional resets and observation time.
+  The native chips show every supplied supported window and remaining
+  percentage, Codex's in one chip and Claude's in one chip per window
+  (VEN-C26), with provider periods, optional resets and observation time.
   Claude needs no status-line setup. No reset is invented for an idle window.
 - **Ownership:** Pinned CodexBar owns provider collection and credential access;
   Runtime owns bounded subprocesses, validation and freshness; canonical EONW

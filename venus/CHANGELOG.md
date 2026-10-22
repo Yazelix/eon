@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C26: Claude gets one read-only chip per reported window, five-hour then
+  seven-day, each with its own label, hover and accessible node; under width
+  pressure, after compaction, quota chips disappear starting with the one
+  closest to the tabs, in place of the trailing one
+  (`eon-claude-chip-split-u3ik`).
 - VEN-C2: when Shift is the only held modifier and Space carries other text,
   such as `"` composed from a dead key under `us+intl`, Venus reports Shift as
   consumed, so a program using the kitty keyboard protocol without report-all

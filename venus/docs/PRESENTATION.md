@@ -19,12 +19,13 @@ order, selection, and popups; Venus draws the visible scene.
   the lowest-remaining window, then disappears before tabs or controls lose
   space. Stale, blocked, and unknown states remain explicit; hover gives human
   time.
-- Claude facts show the Claude splat with elapsed/total window positions and
-  remaining percentages, like Codex; a window without a reset shows no
-  position. Hover and accessibility name Claude and say how far into each
-  window the observation is, or that its reset time is unavailable. Both chips
-  condense, then trailing optional chips disappear before tabs, controls or
-  dragging lose space. `old` stays visible for stale facts. Missing facts and transport loss remove the affected chips.
+- Claude facts show one chip per window, five-hour then seven-day, each with
+  the Claude splat, its elapsed/total window position and remaining
+  percentage, like Codex; a window without a reset shows no position. Hover
+  and accessibility name Claude and that window, and say how far into it the
+  observation is, or that its reset time is unavailable. Chips condense, then
+  disappear one by one, the one closest to the tabs first, before tabs,
+  controls or dragging lose space. `old` stays visible for stale facts. Missing facts and transport loss remove the affected chips.
 
 ### Panes and popups
 

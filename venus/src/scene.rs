@@ -290,6 +290,8 @@ impl QuotaProvider {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct WorkspaceQuota {
     pub(crate) provider: QuotaProvider,
+    /// The one window, in minutes, that a per-window Claude chip shows; Codex's chip shows all.
+    pub(crate) window: Option<u32>,
     pub(crate) rect: SceneRect,
     pub(crate) logo: SceneRect,
     pub(crate) label: String,
@@ -1154,43 +1156,60 @@ impl WorkspaceScene {
         let quota_texts = bar
             .items
             .iter()
-            .filter_map(|item| match item {
-                BarItem::CodexQuota => snapshot.codex_quota.as_ref().map(|quota| {
-                    (
-                        QuotaProvider::Codex,
-                        quota_text(
+            .flat_map(|item| match item {
+                BarItem::CodexQuota => snapshot
+                    .codex_quota
+                    .iter()
+                    .map(|quota| {
+                        (
                             QuotaProvider::Codex,
-                            quota.state,
-                            quota.observed_at,
-                            &quota.windows,
-                        ),
-                    )
-                }),
-                BarItem::ClaudeQuota => snapshot.claude_quota.as_ref().map(|quota| {
-                    (
-                        QuotaProvider::Claude,
-                        quota_text(
-                            QuotaProvider::Claude,
-                            match quota.state {
-                                ClaudeQuotaState::Fresh => CodexQuotaState::Fresh,
-                                ClaudeQuotaState::Stale => CodexQuotaState::Stale,
-                            },
-                            quota.observed_at,
-                            &quota.windows,
-                        ),
-                    )
-                }),
-                _ => None,
+                            None,
+                            quota_text(
+                                QuotaProvider::Codex,
+                                quota.state,
+                                quota.observed_at,
+                                &quota.windows,
+                            ),
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                // Claude gets one chip per window, five-hour then seven-day.
+                BarItem::ClaudeQuota => snapshot
+                    .claude_quota
+                    .iter()
+                    .flat_map(|quota| {
+                        let state = match quota.state {
+                            ClaudeQuotaState::Fresh => CodexQuotaState::Fresh,
+                            ClaudeQuotaState::Stale => CodexQuotaState::Stale,
+                        };
+                        let mut windows = quota.windows.iter().collect::<Vec<_>>();
+                        windows.sort_by_key(|window| window.duration_minutes);
+                        windows.into_iter().map(move |window| {
+                            (
+                                QuotaProvider::Claude,
+                                Some(window.duration_minutes),
+                                quota_text(
+                                    QuotaProvider::Claude,
+                                    state,
+                                    quota.observed_at,
+                                    std::slice::from_ref(window),
+                                ),
+                            )
+                        })
+                    })
+                    .collect(),
+                _ => Vec::new(),
             })
             .collect::<Vec<_>>();
         let quota_padding = metrics.padding * 2.0 + metrics.font_size + metrics.padding / 2.0;
         let mut measure_quotas = |compact| {
             quota_texts
                 .iter()
-                .map(|(provider, (wide, short, description))| {
+                .map(|(provider, window, (wide, short, description))| {
                     let (label, width) = header_text(None, if compact { short } else { wide });
                     WorkspaceQuota {
                         provider: *provider,
+                        window: *window,
                         rect: SceneRect {
                             width: width + quota_padding,
                             ..SceneRect::default()
@@ -1220,7 +1239,8 @@ impl WorkspaceScene {
                 break geometry;
             }
             if compact {
-                quotas.pop();
+                // The chip closest to the tabs yields first.
+                quotas.remove(0);
             } else {
                 quotas = measure_quotas(true);
                 compact = true;
@@ -1350,13 +1370,15 @@ impl WorkspaceScene {
             {
                 label.rect.left = left;
                 left = label.rect.right();
-            } else if let Some(quota) = quotas
-                .iter_mut()
-                .find(|quota| quota.provider.item() == *item)
-            {
-                quota.rect.left = left;
-                quota.logo.left = left + metrics.padding;
-                left = quota.rect.right();
+            } else {
+                for quota in quotas
+                    .iter_mut()
+                    .filter(|quota| quota.provider.item() == *item)
+                {
+                    quota.rect.left = left;
+                    quota.logo.left = left + metrics.padding;
+                    left = quota.rect.right();
+                }
             }
         }
         let [(_, cpu), (_, ram), (_, clock), (_, version)] = labels;

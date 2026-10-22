@@ -41,7 +41,8 @@ leaves only the tabs and buttons, and omitting the key shows all six in the
 order above. The list applies when a window next opens or reopens, and an
 unknown or repeated name is a configuration error. Narrow windows hide the
 clock first, then RAM, CPU and the version, then shorten the quota chips,
-whatever the order. The version belongs to its running supervisor; updating
+whatever the order; then quota chips disappear one by one, the one closest to
+the tabs first. The version belongs to its running supervisor; updating
 the installation does not change it.
 
 Omitting `cursor_trail_color` chooses a random color that lasts as long as the
@@ -87,10 +88,12 @@ OAuth credentials. Explicit sources avoid browser fallback and model prompts.
 Eon does not change provider settings or manage accounts. CodexBar owns credential
 selection and its local authentication/cache mechanisms.
 
-Both available five-hour and seven-day windows appear by default. Only reported
-windows appear; an idle Claude window can lack a reset time. Hover and accessible
-labels report that absence. Narrow windows may condense to the lower remaining
-percentage or hide optional chips before tabs and controls.
+Codex shows its available five-hour and seven-day windows in one chip; Claude
+shows one chip per available window. Only reported windows appear; an idle
+Claude window can lack a reset time. Hover and accessible labels report that
+absence. Narrow windows may condense Codex's chip to its lower remaining
+percentage, then hide quota chips one by one, the one closest to the tabs
+first, before tabs and controls.
 
 Eon reads a provider's quota only while `[bar] widgets` lists its chip, checked
 when a window opens or reopens. A chip listed again appears after its

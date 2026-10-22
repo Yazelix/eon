@@ -126,4 +126,4 @@ eonterm.com's Features page into `assets/demo/features/`, as web-encoded MP4
 clips and WebP stills. The clips and the Eon Bar still show the live Codex and
 Claude quota chips, so sign in to both first. The recorder reads those logins
 in place through `CODEX_HOME` and `CLAUDE_CONFIG_DIR`. A Claude rate limit
-hides or ages that chip, so re-record when it clears.
+hides or ages those chips, so re-record when it clears.

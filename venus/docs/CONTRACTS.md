@@ -1328,23 +1328,26 @@ re-proved when that platform or feature is next touched.
 - **Status:** Proven on x86_64 Linux by the automated tier; native quota
   rendering is pending re-proof in this repository. Installed Eon composition
   remains Eon's responsibility.
-- **Trigger and result:** A complete canonical EONW v8 snapshot supplies an
-  optional Claude observation. Venus shows a read-only Claude chip with
-  the available five-hour/seven-day remaining percentages, each led by its
-  elapsed position such as `3d2h/7d` when Claude reports a reset, as Codex's
-  chip does; a window without a reset shows no position. Hover and a static
-  accessible label name Claude, every window, freshness and how far into each
-  window the observation is, or that its reset time is unavailable. Stale text
-  retains `old` even in compact presentation.
+- **Trigger and result:** A complete canonical EONW snapshot supplies an
+  optional Claude observation. Venus shows one read-only Claude chip per window
+  Claude reports, five-hour then seven-day. Each chip has the Claude splat and
+  that window's remaining percentage, led by its elapsed position such as
+  `3d2h/7d` when Claude reports a reset, as on Codex's chip; a window without a
+  reset shows no position. Each chip's hover and static accessible label name
+  Claude, that window, freshness and how far into the window the observation
+  is, or that its reset time is unavailable. Stale text keeps `old` on every
+  chip, even in compact presentation.
 - **Ownership:** Runtime alone supplies source facts, age and invalidation.
-  Venus uses its existing Scene, renderer, hover and AccessKit owners. Both
-  provider chips remain in the existing row; full labels become compact, then
-  trailing optional chips disappear before required tabs, controls or drag
-  space. Codex's mark, labels and provider policy remain unchanged.
-- **Failure:** Absent facts have no geometry or accessible node. Workspace
+  Venus uses its existing Scene, renderer, hover and AccessKit owners. All
+  provider chips stay in the existing row. Full labels become compact, then
+  chips disappear one by one, the one closest to the tabs first, before
+  required tabs, controls or drag space. Codex's mark, labels and provider
+  policy remain unchanged.
+- **Failure:** Absent facts, and any window Claude does not report, have no
+  chip, gap or accessible node. Workspace
   transport loss removes both observations while keeping the last useful
   topology. Quota-only changes do not replace attachments, scroll positions or
-  navigation. Neither chip has an action or keyboard focus target.
+  navigation. No quota chip has an action or keyboard focus target.
 - **Consumes:** Canonical EONW quota fields; the in-tree Orbit codec stays
   unchanged.
 - **Boundary:** `eon-claude-quota-eon-bar-zm5f` owns this slice. No
@@ -1354,9 +1357,12 @@ re-proved when that platform or feature is next touched.
   - **Environment:** Automated.
   - **Evidence:** `two_provider_chips_share_layout_without_losing_identity_or_freshness`
     and `quota_icons_preserve_transparency_and_shape_across_scales` in the
-    workspace suite.
+    workspace suite. One chip per Claude window and the closest-to-the-tabs
+    falling order (`eon-claude-chip-split-u3ik`) are proved by the updated
+    `two_provider_chips_share_layout_without_losing_identity_or_freshness`;
+    that bead's commit is its revision.
 - **Open proof:** Pending re-proof in this repository: the installed Claude
-  chip beside Codex, native stale,
+  chips beside Codex, native stale,
   Claude-only and transport-loss states, and AT-SPI provider labels. The
   elapsed-position labels (`eon-claude-chip-position-iubd`) are proved by the
   automated tier only; their installed view is pending.

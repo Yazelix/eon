@@ -630,7 +630,7 @@ fn features(r: &mut Recorder) -> Result<()> {
         })?;
         r.sleep(Duration::from_millis(1000))
     })?;
-    // The top row alone shows tabs, both quota chips and the running version.
+    // The top row alone shows tabs, the quota chips and the running version.
     let bar = file("eon-bar.png");
     r.exec(
         r.command("ffmpeg")

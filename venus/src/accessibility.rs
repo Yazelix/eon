@@ -3,6 +3,7 @@ use crate::{
     WorkspaceHeaderControl, WorkspaceScene,
     scene::{
         AccessiblePosition, AccessibleRow, AccessibleSelection, AccessibleText, QuotaProvider,
+        WorkspaceQuota,
     },
 };
 use accesskit::{
@@ -29,10 +30,11 @@ const QUOTA: NodeId = NodeId(9);
 const SCROLLBACK: NodeId = NodeId(10);
 const HINTS: NodeId = NodeId(11);
 const VERSION: NodeId = NodeId(12);
-const CLAUDE_QUOTA: NodeId = NodeId(13);
+const CLAUDE_FIVE_HOUR_QUOTA: NodeId = NodeId(13);
 const CLOCK: NodeId = NodeId(14);
 const CPU: NodeId = NodeId(15);
 const RAM: NodeId = NodeId(16);
+const CLAUDE_SEVEN_DAY_QUOTA: NodeId = NodeId(17);
 // Scene rows are u16, so this range cannot collide with fixed or text-run nodes.
 const WORKSPACE_NODE_START: u64 = 1 << 32;
 const LINK_NODE_START: u64 = 1 << 48;
@@ -230,7 +232,7 @@ impl Snapshot {
             let mut items = workspace
                 .quotas
                 .iter()
-                .map(|quota| (quota.rect.left, quota_id(quota.provider)))
+                .map(|quota| (quota.rect.left, quota_id(quota)))
                 .chain(
                     [
                         (CPU, &workspace.cpu),
@@ -361,7 +363,7 @@ impl Snapshot {
                 node.set_value(quota.accessible_label.as_str());
                 node.set_description(quota.description.as_str());
                 node.set_bounds(rect(quota.rect));
-                nodes.push((quota_id(quota.provider), node));
+                nodes.push((quota_id(quota), node));
             }
             for (id, label) in [
                 (CPU, &workspace.cpu),
@@ -748,10 +750,11 @@ fn allocate_workspace_id(ids: &mut HashMap<String, NodeId>, next_id: &mut u64, i
     *next_id = following_id;
 }
 
-fn quota_id(provider: QuotaProvider) -> NodeId {
-    match provider {
-        QuotaProvider::Codex => QUOTA,
-        QuotaProvider::Claude => CLAUDE_QUOTA,
+fn quota_id(quota: &WorkspaceQuota) -> NodeId {
+    match (quota.provider, quota.window) {
+        (QuotaProvider::Codex, _) => QUOTA,
+        (QuotaProvider::Claude, Some(10080)) => CLAUDE_SEVEN_DAY_QUOTA,
+        (QuotaProvider::Claude, _) => CLAUDE_FIVE_HOUR_QUOTA,
     }
 }
 
@@ -1262,10 +1265,7 @@ mod tests {
                             let index = children.iter().position(|id| *id == CLOCK).unwrap();
                             assert_eq!(
                                 children[index - 1],
-                                scene
-                                    .quotas
-                                    .last()
-                                    .map_or(NEW_TAB, |quota| quota_id(quota.provider))
+                                scene.quotas.last().map_or(NEW_TAB, quota_id)
                             );
                             assert_eq!(children[index + 1] == VERSION, version.is_some());
                             let node = node(&tree, CLOCK);
@@ -1422,7 +1422,7 @@ mod tests {
                 let tree = accessible.tree();
                 let children = node(&tree, WINDOW).children();
                 let index = children.iter().position(|id| *id == CPU).unwrap();
-                assert_eq!(children[index - 1], quota_id(scene.quotas[0].provider));
+                assert_eq!(children[index - 1], quota_id(&scene.quotas[0]));
                 assert_eq!(
                     children[index..index + labels.len()],
                     labels.iter().map(|(id, _)| *id).collect::<Vec<_>>()[..]
@@ -1546,10 +1546,10 @@ mod tests {
             children[start..start + 6],
             [
                 CLOCK,
-                quota_id(claude.provider),
+                quota_id(claude),
                 VERSION,
                 CPU,
-                quota_id(codex.provider),
+                quota_id(codex),
                 SHORTCUTS
             ]
         );
@@ -1759,11 +1759,26 @@ mod tests {
     #[test]
     fn two_provider_chips_share_layout_without_losing_identity_or_freshness() {
         use eon_workspace_protocol::v14::{ClaudeQuota, ClaudeQuotaState};
+        let five_hour = CodexQuotaWindow {
+            duration_minutes: 300,
+            remaining_percent: 98,
+            resets_at: Some(4000),
+        };
+        let seven_day = CodexQuotaWindow {
+            duration_minutes: 10080,
+            remaining_percent: 100,
+            resets_at: Some(100000),
+        };
+        // EONW may carry Claude's windows in either order, or only one of them.
+        let claude_windows = [vec![seven_day.clone(), five_hour], vec![seven_day]];
         for state in [ClaudeQuotaState::Fresh, ClaudeQuotaState::Stale] {
-            for providers in 0..4 {
-                for scale in [1.0, 1.25, 2.0] {
-                    for width in [1800, 700, 450, 180, 100] {
-                        let size = PhysicalSize::new(width, 600);
+            let (suffix, freshness) = match state {
+                ClaudeQuotaState::Fresh => ("", "fresh"),
+                ClaudeQuotaState::Stale => (" old", "stale"),
+            };
+            for windows in &claude_windows {
+                for providers in 0..4 {
+                    for scale in [1.0, 1.25, 2.0] {
                         let metrics = CellMetrics::for_scale(scale);
                         let snapshot = WorkspaceSnapshot {
                             active_tab: "t1".into(),
@@ -1789,27 +1804,16 @@ mod tests {
                                     },
                                 ],
                             }),
-                            claude_quota: (providers & 2 != 0).then_some(ClaudeQuota {
+                            claude_quota: (providers & 2 != 0).then(|| ClaudeQuota {
                                 state,
                                 observed_at: 1000,
-                                windows: vec![
-                                    CodexQuotaWindow {
-                                        duration_minutes: 300,
-                                        remaining_percent: 98,
-                                        resets_at: Some(4000),
-                                    },
-                                    CodexQuotaWindow {
-                                        duration_minutes: 10080,
-                                        remaining_percent: 100,
-                                        resets_at: Some(100000),
-                                    },
-                                ],
+                                windows: windows.clone(),
                             }),
                         };
-                        let project = |snapshot: &WorkspaceSnapshot| {
+                        let project = |snapshot: &WorkspaceSnapshot, width| {
                             WorkspaceScene::from_snapshot(
                                 snapshot,
-                                size,
+                                PhysicalSize::new(width, 600),
                                 metrics,
                                 0.0,
                                 0.0,
@@ -1821,87 +1825,132 @@ mod tests {
                                 },
                             )
                         };
-                        let workspace = project(&snapshot);
-                        let mut absent = snapshot.clone();
-                        absent.codex_quota = None;
-                        absent.claude_quota = None;
-                        let baseline = project(&absent);
-                        assert_eq!(
-                            workspace.terminal, baseline.terminal,
-                            "quota does not resize the terminal"
-                        );
-                        let mut accessible = Snapshot::new(size);
-                        accessible.set_workspace(Some(&workspace));
-                        let update = accessible.tree();
-                        if width == 1800 {
-                            assert_eq!(
-                                workspace.quotas.len(),
-                                (providers as u32).count_ones() as usize
-                            );
-                        }
-                        if width <= 180 || providers == 0 {
-                            assert!(workspace.quotas.is_empty());
-                        }
-                        if providers == 3 && scale == 1.0 {
-                            if width == 700 {
-                                assert_eq!(workspace.quotas.len(), 2);
-                            }
-                            if width == 450 {
-                                assert_eq!(workspace.quotas.len(), 1);
-                            }
-                        }
-                        let mut children = vec![TAB_LIST, NEW_TAB];
-                        for (index, quota) in workspace.quotas.iter().enumerate() {
-                            let id = quota_id(quota.provider);
-                            children.push(id);
-                            let node = node(&update, id);
-                            assert_eq!(node.value(), Some(quota.accessible_label.as_str()));
-                            assert_eq!(node.bounds(), Some(rect(quota.rect)));
-                            assert!(!node.supports_action(Action::Click));
-                            assert!(!node.supports_action(Action::Focus));
-                            assert_eq!(
-                                workspace.hit_test(
-                                    quota.rect.left + quota.rect.width / 2.0,
-                                    quota.rect.height / 2.0
-                                ),
-                                Some(crate::WorkspaceHit::Quota(index))
-                            );
-                            assert!(quota.rect.left >= workspace.drag_region.right());
-                            assert!(quota.rect.right() <= workspace.controls[1].rect.left + 0.01);
-                            if let Some(next) = workspace.quotas.get(index + 1) {
-                                assert!(quota.rect.right() <= next.rect.left + 0.01);
-                            }
-                            if quota.provider == QuotaProvider::Claude {
-                                assert!(
-                                    quota.description.contains(
-                                        "5h window: 98% remaining; observed 4h10m into 5h."
-                                    )
-                                );
-                                assert!(quota.description.contains(
-                                    "7d window: 100% remaining; observed 5d20h into 7d."
-                                ));
-                                assert_eq!(
-                                    quota.label.contains("old"),
-                                    state == ClaudeQuotaState::Stale
-                                );
-                                if width == 1800 && scale == 1.0 {
-                                    assert!(quota.label.contains("4h10m/5h 98% · 5d20h/7d 100%"));
-                                }
-                                if width == 700 && scale == 1.0 && providers == 3 {
-                                    assert!(quota.label.contains("4h10m/5h 98%"));
-                                    assert!(!quota.label.contains("7d"));
-                                }
-                            }
-                        }
-                        children.extend([SHORTCUTS, CLOSE_TAB, PANE_PANEL]);
-                        assert_eq!(node(&update, WINDOW).children(), children);
-                        assert!(workspace.tab_viewport.width > 0.0);
-                        assert!(
+                        let identities = |workspace: &WorkspaceScene| {
                             workspace
-                                .controls
+                                .quotas
                                 .iter()
-                                .all(|control| control.rect.right() <= width as f32 + 0.01)
-                        );
+                                .map(|quota| (quota.provider, quota.window))
+                                .collect::<Vec<_>>()
+                        };
+                        // Codex keeps one chip; Claude has one per window, five-hour first.
+                        let mut expected = Vec::new();
+                        if providers & 1 != 0 {
+                            expected.push((QuotaProvider::Codex, None));
+                        }
+                        if providers & 2 != 0 {
+                            for minutes in [300, 10080] {
+                                if windows
+                                    .iter()
+                                    .any(|window| window.duration_minutes == minutes)
+                                {
+                                    expected.push((QuotaProvider::Claude, Some(minutes)));
+                                }
+                            }
+                        }
+                        assert_eq!(identities(&project(&snapshot, 1800)), expected);
+                        for width in [1800, 800, 700, 450, 180, 100] {
+                            let size = PhysicalSize::new(width, 600);
+                            let workspace = project(&snapshot, width);
+                            let mut absent = snapshot.clone();
+                            absent.codex_quota = None;
+                            absent.claude_quota = None;
+                            assert_eq!(
+                                workspace.terminal,
+                                project(&absent, width).terminal,
+                                "quota does not resize the terminal"
+                            );
+                            // Chips fall one by one, the one closest to the tabs first.
+                            let shown = identities(&workspace);
+                            assert_eq!(shown, expected[expected.len() - shown.len()..]);
+                            if width <= 180 || providers == 0 {
+                                assert!(shown.is_empty());
+                            }
+                            let mut accessible = Snapshot::new(size);
+                            accessible.set_workspace(Some(&workspace));
+                            let update = accessible.tree();
+                            let mut children = vec![TAB_LIST, NEW_TAB];
+                            for (index, quota) in workspace.quotas.iter().enumerate() {
+                                let id = quota_id(quota);
+                                children.push(id);
+                                let node = node(&update, id);
+                                assert_eq!(node.value(), Some(quota.accessible_label.as_str()));
+                                assert_eq!(node.bounds(), Some(rect(quota.rect)));
+                                assert!(!node.supports_action(Action::Click));
+                                assert!(!node.supports_action(Action::Focus));
+                                assert_eq!(
+                                    workspace.hit_test(
+                                        quota.rect.left + quota.rect.width / 2.0,
+                                        quota.rect.height / 2.0
+                                    ),
+                                    Some(crate::WorkspaceHit::Quota(index))
+                                );
+                                assert!(quota.rect.left >= workspace.drag_region.right());
+                                assert!(
+                                    quota.rect.right() <= workspace.controls[1].rect.left + 0.01
+                                );
+                                if let Some(next) = workspace.quotas.get(index + 1) {
+                                    assert!(quota.rect.right() <= next.rect.left + 0.01);
+                                }
+                                if quota.provider != QuotaProvider::Claude {
+                                    continue;
+                                }
+                                // A Claude chip shows and describes only its own window, and
+                                // compacting leaves it as it is.
+                                let (label, detail, other) = if quota.window == Some(300) {
+                                    (
+                                        "4h10m/5h 98%",
+                                        "5h window: 98% remaining; observed 4h10m into 5h.",
+                                        "7d",
+                                    )
+                                } else {
+                                    (
+                                        "5d20h/7d 100%",
+                                        "7d window: 100% remaining; observed 5d20h into 7d.",
+                                        "5h",
+                                    )
+                                };
+                                assert_eq!(quota.label, format!("{label}{suffix}"));
+                                assert_eq!(
+                                    quota.accessible_label,
+                                    format!("Claude {label}{suffix}")
+                                );
+                                assert_eq!(
+                                    quota.description,
+                                    format!("Claude quota state: {freshness}. {detail}")
+                                );
+                                assert!(!quota.description.contains(other));
+                            }
+                            children.extend([SHORTCUTS, CLOSE_TAB, PANE_PANEL]);
+                            assert_eq!(node(&update, WINDOW).children(), children);
+                            assert!(workspace.tab_viewport.width > 0.0);
+                            assert!(
+                                workspace
+                                    .controls
+                                    .iter()
+                                    .all(|control| control.rect.right() <= width as f32 + 0.01)
+                            );
+                            // Codex compacts first, then its chip and the five-hour chip fall.
+                            if providers == 3
+                                && windows.len() == 2
+                                && scale == 1.0
+                                && state == ClaudeQuotaState::Fresh
+                            {
+                                let labels = workspace
+                                    .quotas
+                                    .iter()
+                                    .map(|quota| quota.label.as_str())
+                                    .collect::<Vec<_>>();
+                                match width {
+                                    800 => assert_eq!(
+                                        labels,
+                                        ["6d18h/7d 42%", "4h10m/5h 98%", "5d20h/7d 100%"]
+                                    ),
+                                    700 => assert_eq!(labels, ["4h10m/5h 98%", "5d20h/7d 100%"]),
+                                    450 => assert_eq!(labels, ["5d20h/7d 100%"]),
+                                    _ => {}
+                                }
+                            }
+                        }
                     }
                 }
             }
