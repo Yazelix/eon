@@ -26,6 +26,7 @@ pub(super) enum NativeShortcutAction {
     ToggleHints,
     ToggleZoom,
     NewWindow,
+    Detach,
     FocusTabPosition,
     Focus(WorkspaceDirection),
     Move(WorkspaceDirection),
@@ -271,6 +272,13 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
     ),
     NativeShortcut::key(
         "Host",
+        "Detach: close the window, keep terminals running",
+        KeyCode::KeyD,
+        ALT_SHIFT,
+        NativeShortcutAction::Detach,
+    ),
+    NativeShortcut::key(
+        "Host",
         "Show or close shortcuts",
         KeyCode::Slash,
         session::Modifiers::ALT,
@@ -427,6 +435,19 @@ pub(super) fn native_key_shortcut_for(
     })
 }
 
+/// The detach chord's label, unless a configured popup takes its key.
+pub(super) fn detach_chord(entries: &[PopupEntry]) -> Option<String> {
+    FIXED_SHORTCUTS
+        .iter()
+        .find(|shortcut| shortcut.action == NativeShortcutAction::Detach)
+        .filter(|shortcut| {
+            shortcut
+                .overriding_popup(NATIVE_PLATFORM, entries)
+                .is_none()
+        })
+        .map(|shortcut| shortcut.trigger.display_label_for(NATIVE_PLATFORM))
+}
+
 pub(super) fn native_pointer_shortcut(
     button: MouseButton,
     modifiers: session::Modifiers,
@@ -526,6 +547,7 @@ pub(super) fn shortcut_hints_for(
             Action::Move(Left | Right) => ("move tab", 3),
             Action::Move(Up | Down) | Action::MovePaneSideways(_) => ("move pane", 3),
             Action::NewWindow => ("new window", 3),
+            Action::Detach => ("detach", 2),
             Action::ReturnToTerminal if focus != WorkspaceFocus::Terminal => ("terminal", 0),
             Action::TraverseChrome(Left | Right) if focus == WorkspaceFocus::Tabs => ("tabs", 1),
             Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Panes => ("panes", 1),

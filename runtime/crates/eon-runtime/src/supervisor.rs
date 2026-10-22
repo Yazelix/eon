@@ -388,6 +388,7 @@ fn venus_command(
     bar_widgets: &[&str],
     application_id: &str,
     decorations: bool,
+    warning_close_last_tab: bool,
 ) -> Command {
     let mut command = Command::new(&inputs.venus);
     command
@@ -446,6 +447,8 @@ fn venus_command(
         command
             .arg("--pane-frames")
             .arg(terminal.pane_frames.to_string())
+            .arg("--warning-close-last-tab")
+            .arg(warning_close_last_tab.to_string())
             .arg("--workspace");
     }
     command.arg(socket);
@@ -738,6 +741,8 @@ fn supervise(
     if mode == LaunchMode::Workspace {
         workspace::validate_initial_directory(&launch_directory)?;
     }
+    let warning_close_last_tab =
+        managed_environment::warning_close_last_tab(config, &inputs.defaults)?;
     let popup_catalog = popups.unwrap_or_else(|| managed_environment::PopupCatalog {
         geometry: inputs.defaults.popups.geometry,
         entries: Vec::new(),
@@ -806,6 +811,7 @@ fn supervise(
             bar_widgets,
             application_id,
             decorations,
+            warning_close_last_tab,
         );
         Some(PresentationProcess::start(
             command,
@@ -903,6 +909,7 @@ fn supervise(
                 bar_widgets,
                 application_id,
                 decorations,
+                warning_close_last_tab,
             ),
             false,
             None,
@@ -1619,6 +1626,7 @@ fn dispatch_control_request(
                     &bar_widgets,
                     &state.application_id,
                     state.decorations,
+                    managed_environment::warning_close_last_tab(config, &inputs.defaults)?,
                 );
                 if let Some(quotas) = &mut state.quotas {
                     quotas.show(&bar_widgets);
@@ -1978,6 +1986,7 @@ mod tests {
                 &window_bar_widgets(mode, &root, inputs).unwrap(),
                 "eon",
                 true,
+                true,
             );
             let args = command.get_args().collect::<Vec<_>>();
             args.windows(2)
@@ -2088,6 +2097,7 @@ rows = 30
                 inputs.defaults.bar_widgets,
                 "eon",
                 true,
+                true,
             );
             let args = command
                 .get_args()
@@ -2139,6 +2149,7 @@ rows = 30
                     inputs.defaults.bar_widgets,
                     "eon",
                     true,
+                    true,
                 );
                 let args = command.get_args().collect::<Vec<_>>();
                 assert!(
@@ -2169,6 +2180,7 @@ rows = 30
                     inputs.defaults.bar_widgets,
                     "eon",
                     true,
+                    true,
                 );
                 let args = command.get_args().collect::<Vec<_>>();
                 let expected = if source.is_empty() { "2" } else { "3" };
@@ -2193,6 +2205,7 @@ rows = 30
                 &terminal,
                 inputs.defaults.bar_widgets,
                 "eon",
+                true,
                 true,
             )
             .get_args()
@@ -2222,6 +2235,7 @@ rows = 30
                     &terminal,
                     inputs.defaults.bar_widgets,
                     "eon",
+                    true,
                     true,
                 );
                 let args = command.get_args().collect::<Vec<_>>();
@@ -2271,6 +2285,7 @@ rows = 30
             inputs.defaults.bar_widgets,
             "eon",
             true,
+            false,
         );
         assert_eq!(
             workspace.get_args().map(OsString::from).collect::<Vec<_>>(),
@@ -2284,6 +2299,8 @@ rows = 30
                 "cpu",
                 "--pane-frames",
                 "true",
+                "--warning-close-last-tab",
+                "false",
                 "--workspace",
                 "/runtime/eon.sock",
             ]
@@ -2298,6 +2315,7 @@ rows = 30
             &terminal_presentation(1.0, false),
             inputs.defaults.bar_widgets,
             "eonbase",
+            true,
             true,
         );
         for command in [&workspace, &terminal] {
@@ -2328,6 +2346,7 @@ rows = 30
             inputs.defaults.bar_widgets,
             "eonova",
             false,
+            true,
         );
         assert_eq!(
             undecorated

@@ -1,5 +1,5 @@
 use crate::{
-    Color as SceneColor, DrawRow, DrawStyle, Scene, ScenePreview, SceneRect, ShortcutViewerScene,
+    Color as SceneColor, DialogScene, DrawRow, DrawStyle, Scene, ScenePreview, SceneRect,
     WorkspaceFocus, WorkspaceScene,
     scene::{inset_sides, pane_chrome_rect},
 };
@@ -171,7 +171,8 @@ struct ContentKey {
     hyperlink: Option<(u16, u16)>,
     header: HeaderInteraction,
     scrollback_label: Option<String>,
-    shortcut_viewer_scroll: Option<f32>,
+    /// The whole dialog, since its rows and kind change without a new generation.
+    dialog: Option<DialogScene>,
     /// CPU and RAM use and the clock change without a new presentation generation. RAM keys on
     /// its description, whose total the hover shows and the label does not.
     cpu: Option<String>,
@@ -663,7 +664,7 @@ impl Renderer {
         scroll_offset: f32,
         workspace: Option<&WorkspaceScene>,
         columns: &[Option<&Scene>],
-        shortcut_viewer: Option<&ShortcutViewerScene>,
+        dialog: Option<&DialogScene>,
         workspace_focus: WorkspaceFocus,
         status: &str,
         blink_visible: bool,
@@ -677,14 +678,14 @@ impl Renderer {
             scroll_offset,
             workspace,
             columns,
-            shortcut_viewer,
+            dialog,
             workspace_focus,
             status,
             blink_visible,
             preedit,
             generation,
         );
-        if scroll_offset == 0.0 && shortcut_viewer.is_none() {
+        if scroll_offset == 0.0 && dialog.is_none() {
             self.rebuild_dynamic_cursor(scene, workspace, blink_visible);
         } else {
             self.reset_cursor_animation();
@@ -832,7 +833,7 @@ impl Renderer {
         scroll_offset: f32,
         workspace: Option<&WorkspaceScene>,
         columns: &[Option<&Scene>],
-        shortcut_viewer: Option<&ShortcutViewerScene>,
+        dialog: Option<&DialogScene>,
         workspace_focus: WorkspaceFocus,
         status: &str,
         blink_visible: bool,
@@ -853,7 +854,7 @@ impl Renderer {
             hyperlink: self.terminal.hyperlink,
             header: self.header.clone(),
             scrollback_label: self.terminal.scrollback_label.clone(),
-            shortcut_viewer_scroll: shortcut_viewer.map(|viewer| viewer.scroll),
+            dialog: dialog.cloned(),
             cpu: workspace
                 .and_then(|workspace| workspace.cpu.as_ref())
                 .map(|cpu| cpu.label.clone()),
@@ -1226,8 +1227,8 @@ impl Renderer {
                 DrawStyleKind::Status(Wrap::WordOrGlyph),
             );
         }
-        if let Some(shortcut_viewer) = shortcut_viewer {
-            self.build_shortcut_viewer(shortcut_viewer, &mut rectangles);
+        if let Some(dialog) = dialog {
+            self.build_dialog(dialog, &mut rectangles);
         }
         self.cursor_vertex_boundary = cursor_vertex_boundary;
         self.upload_vertices(&rectangles.bytes);
@@ -2294,7 +2295,7 @@ mod tests {
 
     #[test]
     fn content_cache_separates_generations_and_viewer_state() {
-        let key = |generation, shortcut_viewer_scroll| ContentKey {
+        let key = |generation, dialog| ContentKey {
             generation,
             column_revisions: vec![Some(4), None],
             scroll_offset: 0.0,
@@ -2305,15 +2306,44 @@ mod tests {
             hyperlink: None,
             header: HeaderInteraction::default(),
             scrollback_label: None,
-            shortcut_viewer_scroll,
+            dialog,
             cpu: None,
             ram: None,
             clock: None,
         };
 
+        let dialog = |kind, scroll| {
+            Some(DialogScene::new(
+                kind,
+                vec![crate::ShortcutGroup::new(
+                    "Host",
+                    (0..32)
+                        .map(|index| crate::ShortcutRow::new("Alt+Z", format!("Entry {index}")))
+                        .collect(),
+                )],
+                PhysicalSize::new(320, 180),
+                CellMetrics::for_scale(1.0),
+                scroll,
+            ))
+        };
+        let viewer = |scroll| dialog(crate::DialogKind::Shortcuts, scroll);
         assert_ne!(key(1, None), key(2, None));
-        assert_ne!(key(1, None), key(1, Some(0.0)));
-        assert_ne!(key(1, Some(0.0)), key(1, Some(1.0)));
+        assert_ne!(key(1, None), key(1, viewer(0.0)));
+        assert_ne!(key(1, viewer(0.0)), key(1, viewer(1.0)));
+        // The prompt replaces the viewer's text at the same scroll.
+        assert_ne!(
+            key(1, viewer(0.0)),
+            key(
+                1,
+                dialog(
+                    crate::DialogKind::CloseLastTab {
+                        terminals: 32,
+                        detach: None,
+                    },
+                    0.0,
+                ),
+            )
+        );
         // Another column's frame repaints without a new selected-terminal generation.
         assert_ne!(
             key(1, None),

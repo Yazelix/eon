@@ -31,10 +31,10 @@ use winit::{
 };
 use yazelix_venus::{
     Accessibility, AccessibilityTarget, BarItem, CellMetrics, ClipboardEffect, Color,
-    ConnectionState, CpuTimes, CpuUse, EonBar, FontSettings, FontSetup, Hyperlink, InputState,
-    LocalClock, LocalNoticeSource, MAX_LINK_BYTES, MetadataEvent, MetadataTransport, ModelError,
-    PaneMetadata, PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel,
-    ShortcutHintsScene, ShortcutViewerScene, Transport, TransportEvent, WorkspaceEvent,
+    ConnectionState, CpuTimes, CpuUse, DialogKind, DialogScene, EonBar, FontSettings, FontSetup,
+    Hyperlink, InputState, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, MetadataEvent,
+    MetadataTransport, ModelError, PaneMetadata, PresentOutcome, RamUse, Renderer, Scene,
+    SceneRect, SessionModel, ShortcutHintsScene, Transport, TransportEvent, WorkspaceEvent,
     WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene,
     WorkspaceTransport, active_popup, validate_copy_uri, validate_open_uri,
 };
@@ -51,10 +51,10 @@ use geometry::{
 use scroll::{PendingViewportRequest, SelectionAutoscroll, TerminalScroll, finish_scroll_failure};
 
 use shortcuts::{
-    NativeShortcutAction, NativeShortcutTrigger, copy_paste_modifiers, native_key_shortcut,
-    native_key_shortcut_for, native_pointer_shortcut, paste_shortcut, popup_shortcut,
-    shortcut_groups, shortcut_hints_for, sideways_move_opens_column, tab_shortcut_index,
-    workspace_shortcut,
+    NativeShortcutAction, NativeShortcutTrigger, copy_paste_modifiers, detach_chord,
+    native_key_shortcut, native_key_shortcut_for, native_pointer_shortcut, paste_shortcut,
+    popup_shortcut, shortcut_groups, shortcut_hints_for, sideways_move_opens_column,
+    tab_shortcut_index, workspace_shortcut,
 };
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -413,6 +413,28 @@ struct ShortcutViewerState {
     scroll: f32,
 }
 
+/// A final close the prompt holds until Enter sends it.
+#[derive(Debug)]
+struct ClosePrompt {
+    tab: String,
+    action: WorkspaceAction,
+    scroll: f32,
+}
+
+impl ClosePrompt {
+    /// Whether the snapshot still holds the tab, and the pane, that the close names.
+    fn names_live_target(&self, snapshot: &eon_workspace_protocol::v17::Snapshot) -> bool {
+        snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == self.tab)
+            .is_some_and(|tab| match &self.action {
+                WorkspaceAction::ClosePane { pane } => tab.panes().any(|live| live.id == *pane),
+                _ => true,
+            })
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum ShortcutViewerCommand {
     Toggle,
@@ -519,6 +541,8 @@ struct Application {
     workspace_focus: WorkspaceFocus,
     header_press: Option<HeaderPress>,
     shortcut_viewer: ShortcutViewerState,
+    warning_close_last_tab: bool,
+    close_prompt: Option<ClosePrompt>,
     hints_visible: bool,
     hints: Option<ShortcutHintsScene>,
     zoom: Option<ZoomTarget>,
@@ -539,6 +563,7 @@ impl Application {
             startup_admission,
             decorations,
             pane_frames,
+            warning_close_last_tab,
             eon_version,
             bar_items,
             background_opacity,
@@ -599,6 +624,8 @@ impl Application {
             workspace_focus: WorkspaceFocus::Terminal,
             header_press: None,
             shortcut_viewer: ShortcutViewerState::default(),
+            warning_close_last_tab,
+            close_prompt: None,
             hints_visible: true,
             hints: None,
             zoom: None,
@@ -792,7 +819,7 @@ impl Application {
         }
         let position = (self.window_focused
             && !self.window_occluded
-            && !self.shortcut_viewer.open
+            && !self.dialog_open()
             && self.terminal.model.is_attached()
             && self.terminal.deferred_selection.is_empty()
             && matches!(self.terminal.selection_gate, SelectionGate::Ready)
@@ -868,10 +895,39 @@ impl Application {
             .map_or(&[][..], |snapshot| snapshot.entries.as_slice())
     }
 
-    fn shortcut_viewer_scene(&self) -> Option<ShortcutViewerScene> {
+    /// Whether a dialog takes input from the workspace and terminal.
+    fn dialog_open(&self) -> bool {
+        self.shortcut_viewer.open || self.close_prompt.is_some()
+    }
+
+    /// The open dialog: the close prompt, else the shortcut viewer.
+    fn dialog_scene(&self) -> Option<DialogScene> {
+        let Some(prompt) = &self.close_prompt else {
+            return self.shortcut_viewer_scene();
+        };
+        let state = self.window.as_ref()?;
+        let snapshot = self.workspace_model.snapshot()?;
+        let tab = snapshot.tabs.iter().find(|tab| tab.id == prompt.tab)?;
+        Some(DialogScene::close_last_tab(
+            tab,
+            &snapshot.entries,
+            |endpoint| {
+                self.metadata_observers
+                    .get(endpoint)
+                    .map(|observer| &observer.metadata)
+            },
+            detach_chord(&snapshot.entries),
+            state.renderer.size(),
+            state.renderer.metrics(),
+            prompt.scroll,
+        ))
+    }
+
+    fn shortcut_viewer_scene(&self) -> Option<DialogScene> {
         let state = self.window.as_ref()?;
         self.shortcut_viewer.open.then(|| {
-            ShortcutViewerScene::new(
+            DialogScene::new(
+                DialogKind::Shortcuts,
                 shortcut_groups(self.popup_entries()),
                 state.renderer.size(),
                 state.renderer.metrics(),
@@ -884,19 +940,104 @@ impl Application {
         if self.shortcut_viewer.open == open || open && self.workspace_model.snapshot().is_none() {
             return;
         }
-        let was_terminal_focused = terminal_focused(self.window_focused, self.workspace_focus)
-            && !self.shortcut_viewer.open;
+        self.change_dialog(|app| {
+            app.shortcut_viewer.open = open;
+            app.shortcut_viewer.scroll = 0.0;
+        });
+    }
+
+    /// Opens or closes a dialog, reporting the terminal's focus change with it.
+    fn change_dialog(&mut self, change: impl FnOnce(&mut Self)) {
+        let was_terminal_focused =
+            terminal_focused(self.window_focused, self.workspace_focus) && !self.dialog_open();
         self.cancel_terminal_scroll();
         self.cancel_pointer_sequence();
-        self.shortcut_viewer.open = open;
-        self.shortcut_viewer.scroll = 0.0;
+        change(self);
         let is_terminal_focused =
-            terminal_focused(self.window_focused, self.workspace_focus) && !open;
+            terminal_focused(self.window_focused, self.workspace_focus) && !self.dialog_open();
         let message = self.input.terminal_focus(is_terminal_focused);
         if was_terminal_focused != is_terminal_focused {
             self.send(message);
         }
         self.refresh_client_view();
+    }
+
+    /// Alt+Shift+D detaches from any workspace state, as a compositor close request does.
+    fn handle_detach_key(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        event: &winit::event::KeyEvent,
+    ) -> bool {
+        let detaches = self.workspace_model.snapshot().is_some()
+            && native_key_shortcut(
+                event.physical_key,
+                self.input.modifiers(),
+                self.popup_entries(),
+            )
+            .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::Detach);
+        // Any other key, including a repeat another handler captured, passes on.
+        if !detaches
+            || !self
+                .input
+                .consumes_shortcut(event.physical_key, event.state, event.repeat, true)
+        {
+            return false;
+        }
+        if shortcut_is_ready(event.state, event.repeat) {
+            event_loop.exit();
+        }
+        true
+    }
+
+    /// While the close prompt is open, Enter sends its close, Escape dismisses it, the
+    /// viewer's navigation keys scroll it, and other keys reach nothing.
+    fn handle_close_prompt_key(&mut self, event: &winit::event::KeyEvent) -> bool {
+        if self.close_prompt.is_none()
+            || !self
+                .input
+                .consumes_shortcut(event.physical_key, event.state, event.repeat, true)
+        {
+            return false;
+        }
+        let PhysicalKey::Code(code) = event.physical_key else {
+            return true;
+        };
+        if event.state != ElementState::Pressed {
+            return true;
+        }
+        let modifiers = self.input.modifiers();
+        match close_prompt_answer(code, modifiers).filter(|_| !event.repeat) {
+            Some(quit) => {
+                let mut prompt = None;
+                self.change_dialog(|app| prompt = app.close_prompt.take());
+                if quit && let Some(prompt) = prompt {
+                    self.send_close(prompt);
+                }
+            }
+            None => {
+                if let Some(command) = shortcut_viewer_command(true, code, modifiers, event.repeat)
+                {
+                    self.scroll_dialog_by(command);
+                }
+            }
+        }
+        true
+    }
+
+    /// Sends the prompt's close. A tab created meanwhile is active, and Eon closes only in
+    /// the active tab, so the named tab is focused first.
+    fn send_close(&mut self, prompt: ClosePrompt) {
+        let inactive = self
+            .workspace_model
+            .snapshot()
+            .is_some_and(|snapshot| snapshot.active_tab != prompt.tab);
+        if !inactive
+            || self.queue_workspace(WorkspaceAction::Workspace(CommonAction::FocusId(
+                prompt.tab,
+            )))
+        {
+            self.queue_workspace(prompt.action);
+        }
     }
 
     fn handle_shortcut_viewer_key(&mut self, event: &winit::event::KeyEvent) -> bool {
@@ -935,45 +1076,60 @@ impl Application {
                     self.set_shortcut_viewer(!self.shortcut_viewer.open)
                 }
                 Some(ShortcutViewerCommand::Close) => self.set_shortcut_viewer(false),
-                Some(ShortcutViewerCommand::ScrollLines(lines)) => {
-                    let height = self
-                        .window
-                        .as_ref()
-                        .map_or(0.0, |state| state.renderer.metrics().height);
-                    self.scroll_shortcut_viewer(lines * height)
-                }
-                Some(ShortcutViewerCommand::ScrollPages(pages)) => {
-                    let height = self
-                        .shortcut_viewer_scene()
-                        .map_or(0.0, |viewer| viewer.content.height);
-                    self.scroll_shortcut_viewer(pages * height)
-                }
-                Some(ShortcutViewerCommand::Start) => {
-                    self.shortcut_viewer.scroll = 0.0;
-                    self.refresh_client_view();
-                }
-                Some(ShortcutViewerCommand::End) => {
-                    if let Some(viewer) = self.shortcut_viewer_scene() {
-                        self.shortcut_viewer.scroll = viewer.max_scroll;
-                        self.refresh_client_view();
-                    }
-                }
+                Some(command) => self.scroll_dialog_by(command),
                 None => {}
             }
         }
         true
     }
 
-    fn scroll_shortcut_viewer(&mut self, pixels: f32) {
+    /// The open dialog's scroll: the close prompt's, else the shortcut viewer's.
+    fn dialog_scroll(&mut self) -> &mut f32 {
+        match &mut self.close_prompt {
+            Some(prompt) => &mut prompt.scroll,
+            None => &mut self.shortcut_viewer.scroll,
+        }
+    }
+
+    fn scroll_dialog_by(&mut self, command: ShortcutViewerCommand) {
+        match command {
+            ShortcutViewerCommand::ScrollLines(lines) => {
+                let height = self
+                    .window
+                    .as_ref()
+                    .map_or(0.0, |state| state.renderer.metrics().height);
+                self.scroll_dialog(lines * height)
+            }
+            ShortcutViewerCommand::ScrollPages(pages) => {
+                let height = self
+                    .dialog_scene()
+                    .map_or(0.0, |dialog| dialog.content.height);
+                self.scroll_dialog(pages * height)
+            }
+            ShortcutViewerCommand::Start => {
+                *self.dialog_scroll() = 0.0;
+                self.refresh_client_view();
+            }
+            ShortcutViewerCommand::End => {
+                if let Some(dialog) = self.dialog_scene() {
+                    *self.dialog_scroll() = dialog.max_scroll;
+                    self.refresh_client_view();
+                }
+            }
+            ShortcutViewerCommand::Toggle | ShortcutViewerCommand::Close => {}
+        }
+    }
+
+    fn scroll_dialog(&mut self, pixels: f32) {
         if !pixels.is_finite() {
             return;
         }
-        let Some(viewer) = self.shortcut_viewer_scene() else {
+        let Some(dialog) = self.dialog_scene() else {
             return;
         };
-        let scroll = (viewer.scroll + pixels).clamp(0.0, viewer.max_scroll);
-        if self.shortcut_viewer.scroll != scroll {
-            self.shortcut_viewer.scroll = scroll;
+        let scroll = (dialog.scroll + pixels).clamp(0.0, dialog.max_scroll);
+        if *self.dialog_scroll() != scroll {
+            *self.dialog_scroll() = scroll;
             self.refresh_client_view();
         }
     }
@@ -1115,15 +1271,15 @@ impl Application {
         if self.workspace_focus == focus {
             return;
         }
-        let was_focused = terminal_focused(self.window_focused, self.workspace_focus)
-            && !self.shortcut_viewer.open;
+        let was_focused =
+            terminal_focused(self.window_focused, self.workspace_focus) && !self.dialog_open();
         self.cancel_terminal_scroll();
         self.workspace_focus = focus;
         self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
         // Focus changes hints and controls, not the terminal's presented geometry.
         self.presentation.content_changed();
-        let is_focused = terminal_focused(self.window_focused, self.workspace_focus)
-            && !self.shortcut_viewer.open;
+        let is_focused =
+            terminal_focused(self.window_focused, self.workspace_focus) && !self.dialog_open();
         if was_focused != is_focused {
             if !is_focused {
                 self.cancel_pointer_sequence();
@@ -1514,6 +1670,16 @@ impl Application {
         if self.zoom.is_some() && !self.zoomed() {
             self.zoom = None;
         }
+        // The prompt closes with its target or the workspace connection.
+        if self.close_prompt.as_ref().is_some_and(|prompt| {
+            unavailable
+                || !self
+                    .workspace_model
+                    .snapshot()
+                    .is_some_and(|snapshot| prompt.names_live_target(snapshot))
+        }) {
+            self.change_dialog(|app| app.close_prompt = None);
+        }
         if self.window.is_none() || self.initial_scale_pending {
             if snapshot_changed {
                 self.reveal_workspace_selection();
@@ -1648,7 +1814,7 @@ impl Application {
         };
         match workspace_header_action(control, &active_tab) {
             WorkspaceHeaderAction::Workspace(action) => {
-                self.send_workspace(action);
+                self.request_workspace(WorkspaceAction::Workspace(action));
             }
             WorkspaceHeaderAction::ToggleShortcuts => {
                 self.set_shortcut_viewer(!self.shortcut_viewer.open);
@@ -1672,6 +1838,30 @@ impl Application {
                     state.renderer.metrics(),
                 )
             })
+    }
+
+    /// Queues a presented action, unless it would close the final tab while the warning is
+    /// on: then the close prompt holds it, and nothing is queued yet.
+    fn request_workspace(&mut self, action: WorkspaceAction) -> bool {
+        if !self.presentation.has_presented_geometry() {
+            return false;
+        }
+        if self.warning_close_last_tab
+            && let Some(tab) = self
+                .workspace_model
+                .snapshot()
+                .and_then(|snapshot| final_close_tab(snapshot, &action))
+        {
+            self.change_dialog(|app| {
+                app.close_prompt = Some(ClosePrompt {
+                    tab,
+                    action,
+                    scroll: 0.0,
+                })
+            });
+            return false;
+        }
+        self.queue_workspace(action)
     }
 
     fn queue_workspace(&mut self, action: WorkspaceAction) -> bool {
@@ -1828,7 +2018,7 @@ impl Application {
                         return true;
                     }
                     let popup = matches!(action, WorkspaceAction::InvokePopup { .. });
-                    if self.queue_workspace(action) && popup {
+                    if self.request_workspace(action) && popup {
                         self.set_workspace_focus(WorkspaceFocus::Terminal);
                     }
                 }
@@ -2169,7 +2359,7 @@ impl Application {
     fn link_surface_available(&self, unshifted: bool) -> bool {
         self.window_focused
             && !self.window_occluded
-            && !self.shortcut_viewer.open
+            && !self.dialog_open()
             && self.workspace_focus == WorkspaceFocus::Terminal
             && self.workspace_model.notice().is_none()
             && !self
@@ -2416,11 +2606,11 @@ impl Application {
         let link_generation = self.link_scene().map(|(_, identity)| identity.generation);
         let status = self.status();
         let workspace = self.workspace_scene();
-        let shortcut_viewer = self.shortcut_viewer_scene();
+        let dialog = self.dialog_scene();
         let scrollback_label = self.scrollback_label(workspace.as_ref());
         let scrollback_rect = self.scrollback_rect(workspace.as_ref());
         let workspace_focus = self.workspace_focus;
-        let ime_allowed = shortcut_viewer.is_none()
+        let ime_allowed = dialog.is_none()
             && ime_allowed(
                 self.window_focused,
                 workspace_focus,
@@ -2453,7 +2643,7 @@ impl Application {
         }
         state.window.set_ime_allowed(ime_allowed);
         state.window.set_cursor(
-            if shortcut_viewer.is_none()
+            if dialog.is_none()
                 && (self.links.focus.is_some()
                     || scrollback_rect.is_some_and(|rect| {
                         self.links.pointer_inside
@@ -2469,7 +2659,7 @@ impl Application {
             &mut state.adapter,
             self.terminal.model.scene(),
             workspace.as_ref(),
-            shortcut_viewer.as_ref(),
+            dialog.as_ref(),
             workspace_focus,
             &status,
             scrollback_label.as_deref(),
@@ -2808,7 +2998,7 @@ impl Application {
         };
         let preedit = self.input.preedit();
         let workspace = self.workspace_scene();
-        let shortcut_viewer = self.shortcut_viewer_scene();
+        let dialog = self.dialog_scene();
         let workspace_focus = self.workspace_focus;
         let candidate = self.presentation_candidate(workspace.as_ref());
         let kinetic_active = self.terminal.terminal_scroll.velocity != 0.0;
@@ -2818,7 +3008,7 @@ impl Application {
         let scrollback_label = self.visible_scrollback_label(workspace.as_ref());
         let prior_scrollback_target = self.scrollback_rect(workspace.as_ref());
         let highlighted_link = shown.as_ref().map(|link| (link.row, link.column));
-        let hovered_hit = (shortcut_viewer.is_none()
+        let hovered_hit = (dialog.is_none()
             && self.window_focused
             && self.links.pointer_inside
             && !self.input.pointer_busy())
@@ -2874,7 +3064,7 @@ impl Application {
                 &self.column_views,
                 workspace.as_ref(),
             ),
-            shortcut_viewer.as_ref(),
+            dialog.as_ref(),
             workspace_focus,
             status,
             self.blink_visible,
@@ -2934,7 +3124,7 @@ impl Application {
                         &mut state.adapter,
                         self.terminal.model.scene(),
                         workspace.as_ref(),
-                        shortcut_viewer.as_ref(),
+                        dialog.as_ref(),
                         workspace_focus,
                         notice,
                         scrollback_label.as_deref(),
@@ -2997,6 +3187,7 @@ impl ApplicationHandler<UserEvent> for Application {
     ) {
         let workspace = self.workspace_scene();
         let workspace_focus = self.workspace_focus;
+        let dialog_open = self.dialog_open();
         let candidate = self.presentation_candidate(workspace.as_ref());
         let presentation_current = self.presentation.has_presented_geometry();
         let presented_revision = self.presentation.presented_revision();
@@ -3074,7 +3265,7 @@ impl ApplicationHandler<UserEvent> for Application {
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.cancel_terminal_scroll();
                 self.input.set_modifiers(modifiers.state());
-                if !self.shortcut_viewer.open {
+                if !dialog_open {
                     self.inspect_pointer_link();
                 }
             }
@@ -3091,6 +3282,8 @@ impl ApplicationHandler<UserEvent> for Application {
                 if self
                     .input
                     .suppresses_retired_key(event.physical_key, event.state, event.repeat)
+                    || self.handle_detach_key(event_loop, &event)
+                    || self.handle_close_prompt_key(&event)
                     || self.handle_shortcut_viewer_key(&event)
                     || self.handle_link_copy(event.physical_key, event.state, event.repeat)
                     || self.handle_workspace_key(&event)
@@ -3124,7 +3317,7 @@ impl ApplicationHandler<UserEvent> for Application {
             }
             WindowEvent::Ime(event) => {
                 self.cancel_terminal_scroll();
-                let allowed = !self.shortcut_viewer.open
+                let allowed = !dialog_open
                     && ime_allowed(
                         self.window_focused,
                         workspace_focus,
@@ -3151,13 +3344,13 @@ impl ApplicationHandler<UserEvent> for Application {
                 }
                 let message = self.input.native_focus(
                     focused,
-                    terminal_focused(focused, workspace_focus) && !self.shortcut_viewer.open,
+                    terminal_focused(focused, workspace_focus) && !dialog_open,
                 );
                 self.send(message);
                 self.refresh_client_view();
             }
             WindowEvent::CursorMoved { position, .. } => {
-                if self.shortcut_viewer.open {
+                if dialog_open {
                     self.terminal.selection_scroll.cancel();
                     self.cursor = position;
                     self.links.pointer_inside = true;
@@ -3276,7 +3469,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 if button == MouseButton::Left {
                     self.terminal.selection_scroll.cancel();
                 }
-                if self.shortcut_viewer.open {
+                if dialog_open {
                     return;
                 }
                 if button_state == ElementState::Pressed {
@@ -3432,7 +3625,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 }
             }
             WindowEvent::MouseWheel { delta, phase, .. } => {
-                if self.shortcut_viewer.open {
+                if dialog_open {
                     let metrics = state.renderer.metrics();
                     let pixels = match delta {
                         MouseScrollDelta::LineDelta(_, vertical) => {
@@ -3440,7 +3633,7 @@ impl ApplicationHandler<UserEvent> for Application {
                         }
                         MouseScrollDelta::PixelDelta(position) => -position.y as f32,
                     };
-                    self.scroll_shortcut_viewer(pixels);
+                    self.scroll_dialog(pixels);
                     return;
                 }
                 if self.input.is_selecting() {
@@ -4091,6 +4284,38 @@ fn accessibility_workspace_focus(
     queue(CommonAction::FocusId(id)).then_some(focus)
 }
 
+/// The tab a close would end the window with: the only tab, closed whole or through its
+/// last pane. Runtime refuses a pane close under a popup, so that close is not asked about.
+fn final_close_tab(
+    snapshot: &eon_workspace_protocol::v17::Snapshot,
+    action: &WorkspaceAction,
+) -> Option<String> {
+    let [tab] = snapshot.tabs.as_slice() else {
+        return None;
+    };
+    let last = match action {
+        WorkspaceAction::Workspace(CommonAction::CloseTab { tab: id }) => *id == tab.id,
+        WorkspaceAction::ClosePane { pane } => {
+            let mut panes = tab.panes();
+            tab.selected_popup.is_none()
+                && panes.next().is_some_and(|only| only.id == *pane)
+                && panes.next().is_none()
+        }
+        _ => false,
+    };
+    last.then(|| tab.id.clone())
+}
+
+/// The close prompt's answer to a key: Enter quits, Escape cancels.
+fn close_prompt_answer(code: KeyCode, modifiers: session::Modifiers) -> Option<bool> {
+    match code {
+        _ if modifiers != session::Modifiers::empty() => None,
+        KeyCode::Enter => Some(true),
+        KeyCode::Escape => Some(false),
+        _ => None,
+    }
+}
+
 fn shortcut_viewer_command(
     open: bool,
     code: KeyCode,
@@ -4410,6 +4635,112 @@ mod tests {
             endpoint: b"/tmp/popup.sock".to_vec(),
         }];
         snapshot.tabs[0].selected_popup = Some("u1".into());
+    }
+
+    #[test]
+    fn close_prompt_asks_only_for_a_window_ending_close() {
+        use orbit_protocol::session::Modifiers;
+
+        let pane = |id: &str| Pane {
+            id: id.into(),
+            session: format!("session-{id}"),
+            endpoint: id.as_bytes().to_vec(),
+            live: true,
+        };
+        let tab = |id: &str, panes: &[&str]| Tab {
+            id: id.into(),
+            directory: b"/tmp".to_vec(),
+            pending: false,
+            selected_pane: panes.first().map(|pane| (*pane).into()),
+            selected_popup: None,
+            columns: vec![eon_workspace_protocol::v17::Column {
+                panes: panes.iter().map(|id| pane(id)).collect(),
+                expanded: panes
+                    .first()
+                    .map_or_else(String::new, |pane| (*pane).into()),
+            }],
+            popups: vec![],
+        };
+        let snapshot = |tabs| Snapshot {
+            active_tab: "t1".into(),
+            geometry: eon_workspace_protocol::v17::PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: vec![],
+            tabs,
+            codex_quota: None,
+            claude_quota: None,
+        };
+        let close_tab =
+            |id: &str| WorkspaceAction::Workspace(CommonAction::CloseTab { tab: id.into() });
+        let close_pane = |id: &str| WorkspaceAction::ClosePane { pane: id.into() };
+
+        let one = snapshot(vec![tab("t1", &["p1"])]);
+        assert_eq!(final_close_tab(&one, &close_tab("t1")), Some("t1".into()));
+        assert_eq!(final_close_tab(&one, &close_pane("p1")), Some("t1".into()));
+        assert_eq!(final_close_tab(&one, &close_tab("t2")), None);
+        assert_eq!(
+            final_close_tab(
+                &one,
+                &WorkspaceAction::Workspace(CommonAction::Focus(WorkspaceDirection::Left))
+            ),
+            None
+        );
+        // Runtime refuses a pane close under a popup, so it is not asked about.
+        let mut covered = one.clone();
+        show_test_popup(&mut covered);
+        assert_eq!(final_close_tab(&covered, &close_pane("p1")), None);
+        assert_eq!(
+            final_close_tab(&covered, &close_tab("t1")),
+            Some("t1".into())
+        );
+        let stacked = snapshot(vec![tab("t1", &["p1", "p2"])]);
+        assert_eq!(final_close_tab(&stacked, &close_pane("p1")), None);
+        let two = snapshot(vec![tab("t1", &["p1"]), tab("t2", &["p2"])]);
+        assert_eq!(final_close_tab(&two, &close_tab("t1")), None);
+        assert_eq!(final_close_tab(&two, &close_pane("p1")), None);
+
+        // The prompt keeps its close while the named tab and pane live, even when a tab appears.
+        let prompt = |action| ClosePrompt {
+            tab: "t1".into(),
+            action,
+            scroll: 0.0,
+        };
+        assert!(prompt(close_tab("t1")).names_live_target(&two));
+        assert!(prompt(close_pane("p1")).names_live_target(&two));
+        assert!(!prompt(close_pane("p1")).names_live_target(&snapshot(vec![tab("t1", &["p2"])])));
+        assert!(!prompt(close_tab("t1")).names_live_target(&snapshot(vec![tab("t2", &["p2"])])));
+
+        assert_eq!(
+            close_prompt_answer(KeyCode::Enter, Modifiers::empty()),
+            Some(true)
+        );
+        assert_eq!(
+            close_prompt_answer(KeyCode::Escape, Modifiers::empty()),
+            Some(false)
+        );
+        assert_eq!(close_prompt_answer(KeyCode::Enter, Modifiers::SHIFT), None);
+        assert_eq!(close_prompt_answer(KeyCode::KeyY, Modifiers::empty()), None);
+
+        // Alt+Shift+D detaches unless a configured popup takes the key.
+        let detach = PhysicalKey::Code(KeyCode::KeyD);
+        let files = [PopupEntry {
+            id: "files".into(),
+            label: "Files".into(),
+            shortcut: Shortcut {
+                modifiers: eon_workspace_protocol::v17::ALT | eon_workspace_protocol::v17::SHIFT,
+                key: "KeyD".into(),
+            },
+        }];
+        assert_eq!(
+            native_key_shortcut_for(NATIVE_PLATFORM, detach, ALT_SHIFT, &[])
+                .map(|shortcut| shortcut.action),
+            Some(NativeShortcutAction::Detach)
+        );
+        assert!(native_key_shortcut_for(NATIVE_PLATFORM, detach, ALT_SHIFT, &files).is_none());
+        assert!(detach_chord(&[]).is_some());
+        assert_eq!(detach_chord(&files), None);
     }
 
     #[test]

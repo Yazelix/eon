@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- VEN-C8: a final close from Alt+Shift+W, the Eon Bar's Close tab or Alt+W
+  first shows a native "Close the last tab?" alert dialog listing the tab's
+  panes and popups; Enter sends the close and Escape dismisses it. The new
+  `--warning-close-last-tab true|false` launch argument, true by default,
+  turns it off. VEN-C14: Alt+Shift+D detaches like a compositor close request.
+  VEN-C20/VEN-C24: Shortcuts and the footer list Alt+Shift+D
+  (`eon-final-close-prompt-and-detach-key-m798`).
 - VEN-C3, VEN-C4: when Venus's bounded Orbit event queue is full, Venus stops
   reading from Orbit until its event loop drains the queue, in place of
   dropping the attachment with `Orbit event queue exceeded its bounded

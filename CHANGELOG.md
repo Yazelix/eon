@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Closing the last tab from the window now asks first: Alt+Shift+W, the bar's
+  `×` and Alt+W on the last pane show "Close the last tab?" with the
+  terminals that will stop. Enter quits, Escape cancels. The new Alt+Shift+D
+  closes the window and keeps everything running, as closing the window does;
+  `eon attach` brings it back. It works from any state, the prompt included,
+  and appears in Shortcuts and the footer hints. `[workspace]
+  warning_close_last_tab = false` skips the prompt.
+
 - `eon workspace --json` prints tab directories and terminal endpoints as
   strings, such as `"directory":"/home/you/project"`, instead of arrays of
   byte values. A path that is not valid UTF-8 still prints as a byte array.
@@ -29,10 +37,9 @@ installation, and proven contract changes.
   to refuse. Closing the window itself still keeps everything running. Run
   from a terminal, `eon tab close` and `eon pane close` ask first, listing the
   terminals that will stop, unless `[workspace] warning_close_last_tab = false`
-  or `--json`; the window's own controls do not ask yet. This changes the
-  workspace protocol to EONW 17: the updated `eon` cannot manage windows
-  started by an earlier build, so stop the ones you no longer need with the
-  old `eon` first.
+  or `--json`. This changes the workspace protocol to EONW 17: the updated
+  `eon` cannot manage windows started by an earlier build, so stop the ones
+  you no longer need with the old `eon` first.
 
 - `eon pane create --no-focus`, with or without `-- COMMAND`, adds the pane
   without taking focus: the tab's selected pane stays selected and a popup

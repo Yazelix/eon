@@ -642,7 +642,18 @@ re-proved when that platform or feature is next touched.
     Venus applies Ctrl+Alt+M's 40-terminal-column refusal. Alt+Shift+W sends one
     non-repeating close naming the snapshot's active stable `tN`; Alt+W sends
     one EONW v11 close naming the active tab's selected `pN` and is consumed
-    without an action when the tab has none. Venus consumes
+    without an action when the tab has none. Both may target the final tab and
+    its last pane. Such a final close, when the `--warning-close-last-tab`
+    launch argument is true (its default), first shows the EON-C8 prompt, which
+    Venus owns: Enter sends the held close, first focusing its tab if another
+    tab became active, Escape dismisses it, Alt+Shift+D detaches, the wheel and
+    the viewer's navigation keys scroll a long list, and other keys and pointer
+    input reach nothing while it is open.
+    The prompt closes itself when its named tab or pane leaves the snapshot or
+    the workspace becomes unavailable; it is an AccessKit alert dialog. When the
+    argument is false, the close is sent at once. Alt+Shift+D is a
+    non-repeating key that detaches by the same path as a compositor close
+    request (VEN-C14). Venus consumes
     each exact press and matching release without forwarding either to the
     selected terminal. Ctrl+T, Ctrl+Shift+W, and lowercase Ctrl+W remain terminal
     input, and none of these shortcuts enters a mode.
@@ -704,6 +715,13 @@ re-proved when that platform or feature is next touched.
   dogfood of the built package on a private headless Sway
   (`eon-close-pane-onwi` slice B, 1280x720) showed the `close pane` hint and
   the refusal notice.
+  Final close (`eon-final-close-prompt-and-detach-key-m798`): the prompt's
+  trigger, key answers and Alt+Shift+D mapping by
+  `close_prompt_asks_only_for_a_window_ending_close`, its scene and AccessKit
+  projection by `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space`
+  and `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog`, and the
+  launch argument by `pane_frame_option_is_a_strict_single_boolean`; installed
+  proof is pending `eon-prove-close-and-detach-batch-bf8t`.
   Sideways pane moves (`eon-sideways-pane-moves-k9ca`): the Ctrl+Alt+H/L and
   Ctrl+Alt+Shift+H/L mappings and the edge-column predicate by
   `direct_workspace_shortcuts_use_stable_eon_actions` and
@@ -842,13 +860,14 @@ re-proved when that platform or feature is next touched.
 - **Status:** Proved
 - **Consumer:** One Eon-supervised Venus process.
 - **Trigger:** A complete private Present command, control EOF, terminal read
-  failure, or an EONW `Ended` reply.
+  failure, Alt+Shift+D, a compositor close request, or an EONW `Ended` reply.
 - **Result:** Present preserves process and terminal attachment while requesting
   presentation of the existing native window; control loss exits through the
   native event loop, releases attachments, and leaves Orbit live; replacement
-  may retry transient Busy while the old client releases. An EONW `Ended`
-  reply, which answers a close that stopped the window's last terminal, exits
-  the same way, leaving no Orbit terminal of that generation.
+  may retry transient Busy while the old client releases. Alt+Shift+D and the
+  compositor close request both detach; an EONW `Ended` reply, which answers a
+  close that stopped the window's last terminal, exits like control loss,
+  leaving no Orbit terminal of that generation.
 - **Important failures:** Malformed or partial commands do not present; standalone
   Busy remains terminal; Present followed by EOF preserves exact Present-then-
   Exit ordering.
@@ -866,7 +885,7 @@ re-proved when that platform or feature is next touched.
     checklist items 1 and 2.
 - **Open proof:** Pending re-proof in this repository: native Present of an
   existing window that preserves its process and terminal attachment. Native
-  exit on an EONW `Ended` reply is pending
+  exit on an EONW `Ended` reply and the Alt+Shift+D detach are pending
   `eon-prove-close-and-detach-batch-bf8t`.
 
 ## VEN-C15 — Compositor-owned background blur
@@ -1083,7 +1102,8 @@ re-proved when that platform or feature is next touched.
   refreshing, scrolling, and closing send no terminal bytes or workspace
   action; matching releases remain captured and prior terminal/chrome focus is
   restored on dismissal. The title, subtitle, and first group heading occupy
-  separate readable vertical space.
+  separate readable vertical space. The fixed bindings include Alt+Shift+D,
+  listed as "Detach: close the window, keep terminals running".
 - **Important failures:** Repeated toggle events do not oscillate the viewer.
   Workspace loss, empty or maximum-size catalogs, long labels, resize, scale,
   focus loss, and tiny surfaces retain local dismissal and clipped, scrollable
@@ -1112,7 +1132,8 @@ re-proved when that platform or feature is next touched.
     without a second window, and Alt+/ listed `Open new Eon window (overridden
     by Files)`.
 - **Open proof:** Pending re-proof in this repository: AT-SPI dialog traversal
-  and tiny-surface clipping.
+  and tiny-surface clipping. The Alt+Shift+D row is pending
+  `eon-prove-close-and-detach-batch-bf8t`.
 
 ## VEN-C21 — Native Eon Bar workspace header
 
@@ -1128,7 +1149,8 @@ re-proved when that platform or feature is next touched.
   New tab follows the rightmost tab when tabs fit and stays at the tab-region
   edge during overflow. Keyboard shortcuts (when VEN-C24 requires the fallback)
   and active-tab Close remain trailing
-  controls. The buttons use the existing CreateTab and exact-active-tab CloseTab
+  controls. Close tab is available on the final tab and goes through the same
+  VEN-C8 final-close prompt as Alt+Shift+W. The buttons use the existing CreateTab and exact-active-tab CloseTab
   EONW actions and the existing local VEN-C20 viewer. Their tooltips and
   accessible names are
   `New tab — Alt+Shift+T`, `Keyboard shortcuts — Alt+/`, and
@@ -1173,6 +1195,7 @@ re-proved when that platform or feature is next touched.
     installed observation is pending.
 - **Open proof:** Pending re-proof in this repository: compositor window drag
   from the empty header region, narrow-width captures, and AT-SPI header order.
+  Close tab on the final tab is pending `eon-prove-close-and-detach-batch-bf8t`.
 
 ## VEN-C22 — Codex quota fact chip
 

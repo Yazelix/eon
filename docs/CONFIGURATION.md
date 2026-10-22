@@ -86,7 +86,10 @@ eonbase do not play the startup animation.
 Closing the last tab quits its window and stops its terminals.
 `warning_close_last_tab = true`, the default, makes `eon tab close` and
 `eon pane close` ask first when run from a terminal, listing the terminals that
-will stop; `--json` never asks. The window's own close controls do not ask yet.
+will stop; `--json` never asks. In the window, Alt+Shift+W, the bar's `×` and
+Alt+W on the last pane show a prompt listing the same terminals: Enter quits,
+Escape cancels, and Alt+Shift+D keeps them running instead. With `false`, both
+close at once. The window reads the setting when it starts.
 
 ## Agent quota
 

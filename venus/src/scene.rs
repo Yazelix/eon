@@ -4,7 +4,7 @@ use crate::{
     render::CellMetrics,
 };
 use eon_workspace_protocol::v17::{
-    ALT, ClaudeQuotaState, CodexQuotaState, PopupEntry, QuotaWindow, SHIFT, Snapshot,
+    ALT, ClaudeQuotaState, CodexQuotaState, Pane, PopupEntry, QuotaWindow, SHIFT, Snapshot, Tab,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, Rgb, Row, Screen, StyleColor, Underline,
@@ -135,6 +135,15 @@ fn pane_label(id: &str, live: bool, metadata: &PaneMetadata) -> String {
         home.as_deref().map(Path::new),
     ));
     format!("{id}  {working_directory}")
+}
+
+/// The label a pane's header shows.
+fn header_label<'a>(pane: &Pane, metadata: impl Fn(&[u8]) -> Option<&'a PaneMetadata>) -> String {
+    pane_label(
+        &pane.id,
+        pane.live,
+        metadata(&pane.endpoint).unwrap_or(&PaneMetadata::Unavailable),
+    )
 }
 
 fn local_working_directory(value: &str) -> &str {
@@ -614,9 +623,58 @@ impl ShortcutGroup {
     }
 }
 
-/// Bounded geometry for the one native shortcut dialog.
+/// What the one native dialog shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DialogKind {
+    Shortcuts,
+    /// The final-close prompt: how many terminals the close stops, and the detach chord
+    /// unless a popup takes it.
+    CloseLastTab {
+        terminals: usize,
+        detach: Option<String>,
+    },
+}
+
+impl DialogKind {
+    #[must_use]
+    pub(crate) fn title(&self) -> &'static str {
+        match self {
+            Self::Shortcuts => "Shortcuts",
+            Self::CloseLastTab { .. } => "Close the last tab?",
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn subtitle(&self) -> Cow<'static, str> {
+        match self {
+            Self::Shortcuts => "Eon surface · physical keys".into(),
+            Self::CloseLastTab { terminals, .. } => format!(
+                "This quits the window and stops {terminals} terminal{}.",
+                if *terminals == 1 { "" } else { "s" }
+            )
+            .into(),
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn footer(&self) -> Vec<String> {
+        match self {
+            Self::Shortcuts => vec!["Wheel or ↑↓ to scroll · Esc or Alt+/ to close".into()],
+            Self::CloseLastTab { detach, .. } => std::iter::once("Enter Quit · Esc Cancel".into())
+                .chain(
+                    detach
+                        .iter()
+                        .map(|chord| format!("{chord} keeps it running instead")),
+                )
+                .collect(),
+        }
+    }
+}
+
+/// Bounded geometry for the one native dialog: the shortcut viewer or the final-close prompt.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ShortcutViewerScene {
+pub struct DialogScene {
+    pub(crate) kind: DialogKind,
     pub bounds: SceneRect,
     pub(crate) title: SceneRect,
     pub(crate) subtitle: SceneRect,
@@ -626,9 +684,12 @@ pub struct ShortcutViewerScene {
     pub max_scroll: f32,
 }
 
-impl ShortcutViewerScene {
+impl DialogScene {
+    /// Shortcuts fill the window's height; the prompt fits its content. A group without a
+    /// title has no heading.
     #[must_use]
     pub fn new(
+        kind: DialogKind,
         mut groups: Vec<ShortcutGroup>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
@@ -638,13 +699,35 @@ impl ShortcutViewerScene {
         let height = size.height as f32;
         let margin = metrics.padding.min(width / 12.0).min(height / 12.0);
         let dialog_width = (metrics.font_size * 54.0).min(width - margin * 2.0);
+        let heading_height = metrics.height * 1.4;
+        let row_height = metrics.height * 2.25;
+        let group_gap = metrics.height * 0.6;
+        let content_height = groups.iter().fold(0.0, |height, group| {
+            let heading = if group.title.is_empty() {
+                0.0
+            } else {
+                heading_height
+            };
+            height + heading + row_height * group.rows.len() as f32 + group_gap
+        });
+        let available = height - margin * 2.0;
+        let footer_lines = kind.footer().len() as f32;
+        let padding_for = |width: f32| metrics.padding.min(width / 8.0);
+        let dialog_height = match kind {
+            DialogKind::Shortcuts => available,
+            DialogKind::CloseLastTab { .. } => (padding_for(dialog_width)
+                + metrics.height * 3.0
+                + content_height
+                + metrics.height * (footer_lines + 0.75))
+                .min(available),
+        };
         let bounds = SceneRect {
             left: ((width - dialog_width) / 2.0).max(0.0),
-            top: margin.max(0.0),
+            top: (margin + (available - dialog_height) / 2.0).max(0.0),
             width: dialog_width,
-            height: height - margin * 2.0,
+            height: dialog_height,
         };
-        let padding = metrics.padding.min(bounds.width / 8.0);
+        let padding = padding_for(bounds.width);
         let title = SceneRect {
             left: bounds.left + padding,
             top: bounds.top + padding,
@@ -656,7 +739,7 @@ impl ShortcutViewerScene {
             height: metrics.height,
             ..title
         };
-        let footer_height = (metrics.height * 1.75).min(bounds.height / 3.0);
+        let footer_height = (metrics.height * (footer_lines + 0.75)).min(bounds.height / 3.0);
         let content_top =
             (subtitle.bottom() + metrics.height * 0.5).min(bounds.bottom() - footer_height);
         let content = SceneRect {
@@ -664,23 +747,22 @@ impl ShortcutViewerScene {
             height: bounds.bottom() - footer_height - content_top,
             ..title
         };
-        let heading_height = metrics.height * 1.4;
-        let row_height = metrics.height * 2.25;
-        let group_gap = metrics.height * 0.6;
-        let content_height = groups.iter().fold(0.0, |height, group| {
-            height + heading_height + row_height * group.rows.len() as f32 + group_gap
-        });
         let max_scroll = (content_height - content.height).max(0.0);
         let scroll = scroll.clamp(0.0, max_scroll);
         let mut top = content.top - scroll;
         for group in &mut groups {
+            let height = if group.title.is_empty() {
+                0.0
+            } else {
+                heading_height
+            };
             group.heading = SceneRect {
                 left: content.left,
                 top,
                 width: content.width,
-                height: heading_height,
+                height,
             };
-            top += heading_height;
+            top += height;
             for row in &mut group.rows {
                 row.rect = SceneRect {
                     left: content.left,
@@ -693,6 +775,7 @@ impl ShortcutViewerScene {
             top += group_gap;
         }
         Self {
+            kind,
             bounds,
             title,
             subtitle,
@@ -701,6 +784,45 @@ impl ShortcutViewerScene {
             scroll,
             max_scroll,
         }
+    }
+
+    /// The final-close prompt for `tab`: its panes by header label, then its popups by
+    /// entry label.
+    #[must_use]
+    pub fn close_last_tab<'a>(
+        tab: &Tab,
+        entries: &[PopupEntry],
+        metadata: impl Fn(&[u8]) -> Option<&'a PaneMetadata>,
+        detach: Option<String>,
+        size: PhysicalSize<u32>,
+        metrics: CellMetrics,
+        scroll: f32,
+    ) -> Self {
+        let rows = tab
+            .panes()
+            .map(|pane| ShortcutRow::new("Pane", header_label(pane, &metadata)))
+            .chain(tab.popups.iter().map(|popup| {
+                ShortcutRow::new(
+                    "Popup",
+                    entries
+                        .iter()
+                        .find(|entry| entry.id == popup.entry)
+                        .expect("EONW validates popup entries")
+                        .label
+                        .as_str(),
+                )
+            }))
+            .collect::<Vec<_>>();
+        Self::new(
+            DialogKind::CloseLastTab {
+                terminals: rows.len(),
+                detach,
+            },
+            vec![ShortcutGroup::new("", rows)],
+            size,
+            metrics,
+            scroll,
+        )
     }
 }
 
@@ -1587,10 +1709,7 @@ impl WorkspaceScene {
                 .iter()
                 .enumerate()
                 .map(|(position, pane)| {
-                    let label = metadata(&pane.endpoint).map_or_else(
-                        || pane_label(&pane.id, pane.live, &PaneMetadata::Unavailable),
-                        |metadata| pane_label(&pane.id, pane.live, metadata),
-                    );
+                    let label = header_label(pane, &metadata);
                     WorkspacePane {
                         id: pane.id.clone(),
                         live: pane.live,
@@ -3600,8 +3719,15 @@ mod tests {
                     (f64::from(width) * scale) as u32,
                     (f64::from(height) * scale) as u32,
                 );
-                let start = ShortcutViewerScene::new(groups.clone(), size, metrics, -100.0);
-                let end = ShortcutViewerScene::new(groups.clone(), size, metrics, f32::MAX);
+                let start =
+                    DialogScene::new(DialogKind::Shortcuts, groups.clone(), size, metrics, -100.0);
+                let end = DialogScene::new(
+                    DialogKind::Shortcuts,
+                    groups.clone(),
+                    size,
+                    metrics,
+                    f32::MAX,
+                );
 
                 assert_eq!(start.scroll, 0.0);
                 assert!(end.max_scroll > 0.0);
@@ -3626,12 +3752,94 @@ mod tests {
         }
 
         let metrics = CellMetrics::for_scale(1.0);
-        let tiny = ShortcutViewerScene::new(Vec::new(), PhysicalSize::new(1, 1), metrics, 0.0);
+        let tiny = DialogScene::new(
+            DialogKind::Shortcuts,
+            Vec::new(),
+            PhysicalSize::new(1, 1),
+            metrics,
+            0.0,
+        );
         assert!(tiny.bounds.right() <= 1.0 && tiny.bounds.bottom() <= 1.0);
         assert!(
             tiny.content.right() <= tiny.bounds.right()
                 && tiny.content.bottom() <= tiny.bounds.bottom()
         );
         assert!(tiny.content.height >= 0.0);
+
+        // The close prompt fits its rows: header labels, then popup entry labels.
+        let pane = |id: &str| Pane {
+            id: id.into(),
+            session: format!("session-{id}"),
+            endpoint: id.as_bytes().to_vec(),
+            live: true,
+        };
+        let tab = Tab {
+            id: "t1".into(),
+            directory: b"/tmp".to_vec(),
+            pending: false,
+            selected_pane: Some("p1".into()),
+            selected_popup: None,
+            columns: vec![eon_workspace_protocol::v17::Column {
+                panes: vec![pane("p1"), pane("p2")],
+                expanded: "p1".into(),
+            }],
+            popups: vec![eon_workspace_protocol::v17::Popup {
+                id: "u1".into(),
+                entry: "agent".into(),
+                session: "popup-session".into(),
+                endpoint: b"/tmp/popup.sock".to_vec(),
+            }],
+        };
+        let entries = [PopupEntry {
+            id: "agent".into(),
+            label: "Agent".into(),
+            shortcut: eon_workspace_protocol::v17::Shortcut {
+                modifiers: ALT | SHIFT,
+                key: "KeyL".into(),
+            },
+        }];
+        let size = PhysicalSize::new(960, 600);
+        let prompt = |detach| {
+            DialogScene::close_last_tab(&tab, &entries, |_| None, detach, size, metrics, 0.0)
+        };
+        let asked = prompt(Some("Alt+Shift+D".into()));
+        let panes = tab.panes().count();
+        assert_eq!(
+            asked.kind,
+            DialogKind::CloseLastTab {
+                terminals: panes + 1,
+                detach: Some("Alt+Shift+D".into()),
+            }
+        );
+        let rows = &asked.groups[0].rows;
+        assert_eq!(rows.len(), panes + 1);
+        assert!(rows[..panes].iter().all(|row| row.shortcut == "Pane"));
+        assert_eq!(rows[0].action, "p1 unavailable");
+        assert_eq!(
+            (rows[panes].shortcut.as_str(), rows[panes].action.as_str()),
+            ("Popup", "Agent")
+        );
+        assert_eq!(asked.groups[0].heading.height, 0.0);
+        assert_eq!(asked.max_scroll, 0.0);
+        assert!(rows[panes].rect.bottom() <= asked.content.bottom());
+        assert!(asked.bounds.height < size.height as f32 / 2.0);
+        assert_eq!(asked.kind.footer().len(), 2);
+        // Without the detach chord the prompt drops its hint line and shrinks.
+        let taken = prompt(None);
+        assert_eq!(taken.kind.footer(), ["Enter Quit · Esc Cancel"]);
+        assert!(taken.bounds.height < asked.bounds.height);
+        // A list taller than the window scrolls within the prompt.
+        let crowded = DialogScene::close_last_tab(
+            &tab,
+            &entries,
+            |_| None,
+            None,
+            PhysicalSize::new(320, 180),
+            metrics,
+            f32::MAX,
+        );
+        assert!(crowded.max_scroll > 0.0);
+        assert_eq!(crowded.scroll, crowded.max_scroll);
+        assert!(crowded.bounds.bottom() <= 180.0);
     }
 }

@@ -1,12 +1,12 @@
 //! Eon workspace chrome drawing: tabs, pane headers, Eon Bar controls and quota chips, the
-//! header tooltip and the shortcut viewer, plus the pointer state that highlights them.
+//! header tooltip and the native dialog, plus the pointer state that highlights them.
 
 use super::{
     CellMetrics, DEFAULT_BACKGROUND, DrawStyleKind, PlacedText, RectangleBatch, Renderer,
     SceneColor, shaping,
 };
 use crate::{
-    SceneRect, ShortcutViewerScene, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
+    DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{QuotaProvider, inset_sides, pane_chrome_rect},
 };
 use glyphon::{
@@ -322,11 +322,7 @@ impl Renderer {
         );
     }
 
-    pub(super) fn build_shortcut_viewer(
-        &mut self,
-        viewer: &ShortcutViewerScene,
-        rectangles: &mut RectangleBatch,
-    ) {
+    pub(super) fn build_dialog(&mut self, viewer: &DialogScene, rectangles: &mut RectangleBatch) {
         let first = self.text.len();
         let padding = self.metrics.padding.min(viewer.bounds.width / 8.0);
         rectangles.clip = None;
@@ -359,7 +355,7 @@ impl Renderer {
         ));
 
         self.push_text_clipped(
-            "Shortcuts",
+            viewer.kind.title(),
             viewer.title.left,
             viewer.title.top,
             viewer.title.width,
@@ -374,7 +370,7 @@ impl Renderer {
             viewer.bounds,
         );
         self.push_text_clipped(
-            "Eon surface · physical keys",
+            &viewer.kind.subtitle(),
             viewer.subtitle.left,
             viewer.subtitle.top,
             viewer.subtitle.width,
@@ -390,24 +386,30 @@ impl Renderer {
         );
 
         rectangles.clip = Some(viewer.content);
-        let key_width = (self.metrics.font_size * 15.0).min(viewer.content.width * 0.4);
+        let key_cells = match viewer.kind {
+            DialogKind::Shortcuts => 15.0,
+            DialogKind::CloseLastTab { .. } => 6.0,
+        };
+        let key_width = (self.metrics.font_size * key_cells).min(viewer.content.width * 0.4);
         let gap = padding.min(self.metrics.width);
         for group in &viewer.groups {
-            self.push_text_clipped(
-                &group.title,
-                group.heading.left,
-                group.heading.top,
-                group.heading.width,
-                group.heading.width,
-                group.heading.height,
-                SceneColor {
-                    r: 126,
-                    g: 231,
-                    b: 185,
-                },
-                DrawStyleKind::PopupLabel,
-                viewer.content,
-            );
+            if !group.title.is_empty() {
+                self.push_text_clipped(
+                    &group.title,
+                    group.heading.left,
+                    group.heading.top,
+                    group.heading.width,
+                    group.heading.width,
+                    group.heading.height,
+                    SceneColor {
+                        r: 126,
+                        g: 231,
+                        b: 185,
+                    },
+                    DrawStyleKind::PopupLabel,
+                    viewer.content,
+                );
+            }
             for row in &group.rows {
                 self.push_text_clipped(
                     &row.shortcut,
@@ -479,21 +481,23 @@ impl Renderer {
             );
         }
         rectangles.clip = None;
-        self.push_text_clipped(
-            "Wheel or ↑↓ to scroll · Esc or Alt+/ to close",
-            viewer.content.left,
-            viewer.content.bottom() + self.metrics.height * 0.35,
-            viewer.content.width,
-            viewer.content.width,
-            self.metrics.height,
-            SceneColor {
-                r: 162,
-                g: 174,
-                b: 190,
-            },
-            DrawStyleKind::PopupLabel,
-            viewer.bounds,
-        );
+        for (index, line) in viewer.kind.footer().iter().enumerate() {
+            self.push_text_clipped(
+                line,
+                viewer.content.left,
+                viewer.content.bottom() + self.metrics.height * (0.35 + index as f32),
+                viewer.content.width,
+                viewer.content.width,
+                self.metrics.height,
+                SceneColor {
+                    r: 162,
+                    g: 174,
+                    b: 190,
+                },
+                DrawStyleKind::PopupLabel,
+                viewer.bounds,
+            );
+        }
     }
 
     pub(super) fn build_workspace(

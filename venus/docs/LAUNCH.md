@@ -88,6 +88,11 @@ Missing, duplicate or invalid boolean values fail before window creation.
 Standalone and popup presentation have no pane frames; popups retain their own
 rounded card outline. This is a startup option; Eon owns persistent product configuration.
 
+Pass `--warning-close-last-tab false` to send a final-tab close at once instead
+of first showing the close prompt (VEN-C8). The default is `true`. Missing,
+duplicate or invalid boolean values fail before window creation. Eon passes its
+`[workspace] warning_close_last_tab` setting on every workspace launch.
+
 Workspace mode opens the EONW transport first and waits for its accepted
 snapshot before attaching its terminal endpoint. The first snapshot may select
 a popup or have no visible terminal; no initial Orbit endpoint, durable pane,

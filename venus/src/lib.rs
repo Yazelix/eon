@@ -21,9 +21,9 @@ pub use model::{
 };
 pub use render::{CellMetrics, FontSettings, FontSetup, PresentOutcome, RenderError, Renderer};
 pub use scene::{
-    BarItem, Color, DrawCell, DrawCursor, DrawRow, DrawStyle, EonBar, GlyphRun, Hyperlink,
-    LocalClock, PaneMetadata, Scene, ScenePreview, SceneRect, ShortcutGroup, ShortcutHint,
-    ShortcutHintsScene, ShortcutRow, ShortcutViewerScene, WorkspaceColumn, WorkspaceFocus,
+    BarItem, Color, DialogKind, DialogScene, DrawCell, DrawCursor, DrawRow, DrawStyle, EonBar,
+    GlyphRun, Hyperlink, LocalClock, PaneMetadata, Scene, ScenePreview, SceneRect, ShortcutGroup,
+    ShortcutHint, ShortcutHintsScene, ShortcutRow, WorkspaceColumn, WorkspaceFocus,
     WorkspaceHeaderControl, WorkspaceHit, WorkspacePane, WorkspaceScene, WorkspaceTab,
     validate_copy_uri, validate_open_uri, workspace_column_width,
 };

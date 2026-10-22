@@ -477,8 +477,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     A failed tab stop keeps the window
     and its remaining terminals, as a partial close does; a failed stop of an
     untracked run fails as Stop does. `[workspace] warning_close_last_tab`,
-    true by default, makes the CLI ask first (EON-C10); the window's close
-    controls do not ask yet.
+    true by default, makes the CLI ask first (EON-C10) and makes a final close
+    from Alt+Shift+W, the bar's Close tab button or Alt+W first show a Venus
+    prompt: "Close the last tab? This quits the window and stops N
+    terminals." It lists the tab's panes and popups by title from the current
+    snapshot, then "Enter Quit · Esc Cancel", then the hint line "Alt+Shift+D
+    keeps it running instead", which is left out while a popup takes
+    Alt+Shift+D (EON-C20); Alt+Shift+D works while the prompt is open. If
+    the snapshot gains a tab while the prompt is open, Enter closes only the
+    named tab and the window stays. When the setting is false, a final close
+    quits at once. Venus receives the setting as a launch argument (VEN-C8).
+    Closing the window itself, or Alt+Shift+D, detaches without asking.
     Venus maps Alt+Shift+W directly to this stable-target action; lowercase
     Ctrl+W remains terminal input.
   - Closing a pane names a `pN` in the active tab, or in the calling
@@ -549,7 +558,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Open proof:** Final tab and final pane close, ending the window, are
   covered by `closing_the_final_tab_ends_the_window_and_its_terminals`,
   `delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`
-  and `pane_close_targets_the_active_tab_and_prunes_like_an_exit`; installed
+  and `pane_close_targets_the_active_tab_and_prunes_like_an_exit`; the
+  Venus prompt and its launch argument by
+  `close_prompt_asks_only_for_a_window_ending_close`,
+  `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space`,
+  `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog`,
+  `pane_frame_option_is_a_strict_single_boolean` and
+  `venus_receives_workspace_endpoint_only_in_workspace_mode`; installed
   proof is pending `eon-prove-close-and-detach-batch-bf8t`.
   Columns (`eon-splits-opwv`): runtime topology and EONW v10
   are covered by `columns_hold_accordions_traverse_into_tabs_and_collapse_on_exit`,
@@ -1580,7 +1595,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   readable vertical space at normal and compact window sizes. A configured
   popup shortcut on the key of any other fixed binding takes that key; the
   fixed binding is unbound while that configuration is active, and the viewer
-  lists it as overridden by the popup.
+  lists it as overridden by the popup. The fixed bindings include
+  Alt+Shift+D, listed as "Detach: close the window, keep terminals running".
 - **Important failures:** Eon rejects configured popup shortcuts on Alt+Slash
   or positional Alt+0 through Alt+9, a reserved set no 1.x release enlarges,
   before workspace mutation.
@@ -1613,8 +1629,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     by Files)`.
 - **Open proof:** Pending re-proof in this repository: header spacing at
   compact sizes, rebound and disabled popup rows, and AT-SPI projection on an
-  installed surface. No eonbase, fractional-scale, screen-reader workflow,
-  wider compositor, non-systemd, macOS or direct-distribution proof is added.
+  installed surface. The Alt+Shift+D row is pending
+  `eon-prove-close-and-detach-batch-bf8t`. No eonbase, fractional-scale,
+  screen-reader workflow, wider compositor, non-systemd, macOS or
+  direct-distribution proof is added.
 
 ## EON-C21 — Native workspace header
 
@@ -1627,7 +1645,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   height. Eon-authored tab identity and action policy feed Venus's tab-first
   responsive layout, New tab beside the rightmost tab or pinned at the
   tab-region edge during overflow, Shortcuts when EON-C24 needs its fallback,
-  and active-tab Close,
+  and active-tab Close, which is available on the final tab and goes through
+  the final-close prompt (EON-C8),
   shortcut tooltips, visible keyboard focus, AccessKit buttons, and bounded
   compositor-owned window dragging. The existing CreateTab and exact active
   CloseTab actions and local VEN-C20 viewer remain their sole behavior owners.
@@ -1658,7 +1677,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Open proof:** Pending re-proof in this repository: real compositor window
   dragging, eight-tab overflow, narrow widths and AT-SPI order on an installed
   surface. AT-SPI tree order is not a screen-reader workflow; macOS and wider
-  platform coverage remain open.
+  platform coverage remain open. Close tab on the final tab is pending
+  `eon-prove-close-and-detach-batch-bf8t`.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
@@ -1748,6 +1768,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   focus. Alt+/ and the complete modal viewer remain available. F6 stays in full
   help and keyboard navigation, without a footer hint.
   Project is omitted from hints; Alt+Z and its full-help entry remain available.
+  Alt+Shift+D has the hint "detach", derived like the others.
 - **Important failures:** The toggle is captured once per press, without repeat
   or release leakage. Visibility changes preserve focus, selected identities
   and live terminals; normal resizing is their only terminal effect. Popup
@@ -1777,7 +1798,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     observation is pending.
 - **Open proof:** Pending re-proof in this repository: footer placement below
   the cards across widths, fractional scales and minimum fonts on an installed
-  surface. No performance, macOS or screen-reader workflow claim.
+  surface. No performance, macOS or screen-reader workflow claim. The detach
+  hint is covered by `shortcut_hints_follow_bindings_catalog_and_native_focus`;
+  its installed observation is pending `eon-prove-close-and-detach-batch-bf8t`.
 
 ## EON-C25 — Running Eon version badge
 

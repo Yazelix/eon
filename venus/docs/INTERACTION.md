@@ -64,6 +64,7 @@ the empty region between tabs and controls drags an undecorated window.
 | Alt+W | Close the selected pane; the final tab's last pane quits the window |
 | Alt+Shift+W | Close the active tab; closing the final tab quits the window |
 | Alt+Shift+N | Open an independent Eon window when supervised by Eon |
+| Alt+Shift+D | Detach: close the window, keep terminals running |
 | Alt+Z | Open Project; Eon supplies other popup shortcuts |
 | Alt+/ | Open or close Shortcuts |
 | Alt+Shift+B | Show or hide the bottom shortcut hints |

@@ -50,7 +50,8 @@ longer want it. The initial workspace uses the directory where Eon was launched.
 
 A terminal starts after choosing a directory or dismissing the picker. Closing the last
 tab quits the window and stops its terminals. Closing the Eon window instead detaches
-the desktop without stopping its terminals or PTY commands. Reconnect with:
+the desktop without stopping its terminals or PTY commands. Alt+Shift+D does the
+same from the keyboard. Reconnect with:
 
 ```sh
 eon attach
@@ -121,6 +122,7 @@ one, and clicking another column's terminal selects it.
 | Alt+W | Close the selected pane, stopping its terminal; the final tab's last pane quits the window |
 | Alt+Shift+W | Close the active tab; closing the final tab quits the window |
 | Alt+Shift+N | Open an independent Eon window (also the desktop launcher's **New Eon Window** action) |
+| Alt+Shift+D | Detach: close the window, keep terminals running |
 | Alt+Z | Open the tab's Project directory picker |
 | Alt+Shift+J | Open or hide the tab's Git popup |
 | Alt+Shift+L | Open or hide the tab's Agent popup |
