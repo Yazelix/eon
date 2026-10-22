@@ -1024,6 +1024,10 @@ fn eon_command(binary: &Path) -> Command {
     let mut command = Command::new(binary);
     command
         .env("HOME", std::env::temp_dir())
+        .env(
+            "XDG_STATE_HOME",
+            std::env::temp_dir().join("eon-test-state"),
+        )
         .env_remove("EON_SESSION_BIN")
         .env("PATH", std::env::join_paths(path).unwrap());
     command
@@ -1635,6 +1639,18 @@ cat >/dev/null
     assert!(
         matches!(workspace_action(&control, "close-home-tab", Action::CloseTab { tab: "t5".into() }), Response::Snapshot(snapshot) if snapshot.tabs.len() == 1)
     );
+    let supervisor_log = fs::read_dir(std::env::temp_dir().join("eon-test-state/eon/logs"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.to_string_lossy()
+                .ends_with(&format!("-{}.log", supervisor.child.id()))
+        })
+        .unwrap();
+    let supervisor_log = fs::read_to_string(supervisor_log).unwrap();
+    assert!(supervisor_log.contains("tab t1 close failed after"));
+    assert!(supervisor_log.contains("injected stop failure"));
+    assert!(supervisor_log.contains("closed tab t5 in"));
 
     fs::remove_file(&release).unwrap();
     assert!(

@@ -331,6 +331,12 @@ composition.
 - **A workspace command reports a missing supervisor:** run `eon`, then retry.
 - **The window closed but commands remain:** this is detach behavior. Use
   `eon attach` to return or `eon stop GENERATION` to end them.
+- **A window closed on its own:** each Eon or eonbase supervisor keeps a log
+  in `$XDG_STATE_HOME/eon/logs` (`~/.local/state/eon/logs` by default), named
+  `GENERATION-SECONDS-PID.log`. It records when the window started and how it
+  exited, with its error output and any crash backtrace, when terminals exit on
+  their own, and how long each tab close took. Eon keeps the newest 20 logs
+  plus those of running supervisors, and stops a log at 1 MiB.
 - **A replacement window rejects configuration:** fix `config.toml` and run
   `eon attach`; the existing terminals remain alive.
 - **Graphics fail outside native Wayland or on unproved hardware:** that

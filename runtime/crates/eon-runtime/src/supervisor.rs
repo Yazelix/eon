@@ -5,6 +5,7 @@ use super::{
         connect_control, failure, probe_launch_mode, probe_presentable_runtime, send_action_on,
         socket_identity,
     },
+    diagnostics::DiagnosticLog,
     generation::{current_generation, generation_directory},
     managed_environment::{self, nonempty_environment_path},
     quota,
@@ -31,8 +32,11 @@ use std::{
     },
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::atomic::{AtomicU64, Ordering},
-    thread,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    thread::{self, JoinHandle},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -224,34 +228,42 @@ pub(super) fn launch_current(
             Err(error) => return Err(error.detail),
         }
     };
-    let config = configuration_directory()?;
-    let terminal = managed_environment::terminal_presentation(&config, &inputs.defaults)?;
-    let bar_widgets = window_bar_widgets(mode, &config, inputs)?;
-    let popups = (mode == LaunchMode::Workspace)
-        .then(|| managed_environment::popup_catalog(&config, &inputs.defaults))
-        .transpose()?;
-    let startup_animation = (mode == LaunchMode::Workspace)
-        .then(|| managed_environment::startup_animation(&config, &inputs.defaults))
-        .transpose()?
-        .flatten();
-    prepare_generation_runtime(&root, &generation)?;
-    prepare_configuration(&config)?;
-    supervise(
-        inputs,
-        &config,
-        terminal,
-        &bar_widgets,
-        popups,
-        startup_animation,
-        lifecycle_lock,
-        &runtime,
-        child,
-        &generation,
-        mode,
-        application_id,
-        decorations,
-    )
-    .or_else(|error| {
+    let log = DiagnosticLog::open(&generation, mode.name());
+    let result = (|| {
+        let config = configuration_directory()?;
+        let terminal = managed_environment::terminal_presentation(&config, &inputs.defaults)?;
+        let bar_widgets = window_bar_widgets(mode, &config, inputs)?;
+        let popups = (mode == LaunchMode::Workspace)
+            .then(|| managed_environment::popup_catalog(&config, &inputs.defaults))
+            .transpose()?;
+        let startup_animation = (mode == LaunchMode::Workspace)
+            .then(|| managed_environment::startup_animation(&config, &inputs.defaults))
+            .transpose()?
+            .flatten();
+        prepare_generation_runtime(&root, &generation)?;
+        prepare_configuration(&config)?;
+        supervise(
+            inputs,
+            &config,
+            terminal,
+            &bar_widgets,
+            popups,
+            startup_animation,
+            lifecycle_lock,
+            &runtime,
+            child,
+            &generation,
+            mode,
+            application_id,
+            decorations,
+            &log,
+        )
+    })();
+    log.record(&match &result {
+        Ok(code) => format!("supervisor exited with status {code}"),
+        Err(error) => format!("supervisor failed: {error}"),
+    });
+    result.or_else(|error| {
         if attach_existing && fs::symlink_metadata(&socket).is_ok() {
             attach_competing_supervisor(inputs, &socket, &runtime, &generation, mode, &error)
         } else {
@@ -441,6 +453,9 @@ fn venus_command(
 struct PresentationProcess {
     child: Child,
     control: UnixStream,
+    log: Arc<DiagnosticLog>,
+    relay: Option<JoinHandle<()>>,
+    reported: bool,
 }
 
 impl PresentationProcess {
@@ -449,6 +464,7 @@ impl PresentationProcess {
         admission: bool,
         snapshot: Option<Snapshot>,
         deadline: Instant,
+        log: &Arc<DiagnosticLog>,
     ) -> Result<Self, String> {
         let (control, input) = UnixStream::pair()
             .map_err(|error| format!("cannot create Eon Desktop presentation control: {error}"))?;
@@ -462,13 +478,29 @@ impl PresentationProcess {
                 "EON_VENUS_PRESENTATION_CONTROL",
                 if admission { "stdin-ready-v1" } else { "stdin" },
             )
-            .stdin(Stdio::from(OwnedFd::from(input)));
-        let child = command
+            .stdin(Stdio::from(OwnedFd::from(input)))
+            .stderr(Stdio::piped());
+        if env::var_os("RUST_BACKTRACE").is_none() {
+            command.env("RUST_BACKTRACE", "1");
+        }
+        let mut child = command
             .spawn()
             .map_err(|error| format!("cannot launch Eon Desktop: {error}"))?;
         // Command retains its Stdio handles; release them so child exit yields EOF.
         drop(command);
-        let mut process = Self { child, control };
+        log.record(&format!("Eon Desktop started: pid {}", child.id()));
+        let stderr = child.stderr.take().expect("Eon Desktop stderr is piped");
+        let mut process = Self {
+            child,
+            control,
+            log: Arc::clone(log),
+            relay: None,
+            reported: false,
+        };
+        process.relay = Some(
+            log.relay(stderr)
+                .map_err(|error| format!("cannot relay Eon Desktop diagnostics: {error}"))?,
+        );
         if admission {
             let result = (|| {
                 let timeout = || {
@@ -530,6 +562,28 @@ impl PresentationProcess {
         Ok(process)
     }
 
+    /// Reports whether Eon Desktop has exited, recording how once.
+    fn exited(&mut self) -> Result<bool, String> {
+        let status = self
+            .child
+            .try_wait()
+            .map_err(|error| format!("cannot observe Eon Desktop: {error}"))?;
+        if let Some(status) = status
+            && !self.reported
+        {
+            self.reported = true;
+            // Let the relay copy Eon Desktop's last output ahead of its exit line.
+            if let Some(relay) = self.relay.take() {
+                let deadline = Instant::now() + Duration::from_secs(1);
+                while !relay.is_finished() && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
+            self.log.record(&format!("Eon Desktop exited: {status}"));
+        }
+        Ok(status.is_some())
+    }
+
     fn present(&self) -> Result<(), String> {
         (&self.control)
             .write_all(b"present\n")
@@ -545,6 +599,7 @@ impl Drop for PresentationProcess {
             thread::sleep(Duration::from_millis(25));
         }
         stop(&mut self.child);
+        let _ = self.exited();
     }
 }
 
@@ -654,6 +709,7 @@ fn supervise(
     mode: LaunchMode,
     application_id: &str,
     decorations: bool,
+    log: &Arc<DiagnosticLog>,
 ) -> Result<i32, String> {
     let _lifecycle_lock = lifecycle_lock;
     let launch_directory = env::current_dir()
@@ -727,7 +783,7 @@ fn supervise(
             decorations,
         );
         Some(PresentationProcess::start(
-            command, true, snapshot, deadline,
+            command, true, snapshot, deadline, log,
         )?)
     } else {
         None
@@ -802,6 +858,7 @@ fn supervise(
         stopping: false,
         quotas: (mode == LaunchMode::Workspace)
             .then(|| quota::Quotas::start(&inputs.codexbar, bar_widgets)),
+        log: Arc::clone(log),
     };
     let presentation = match admitted {
         Some(venus) => Ok(venus),
@@ -819,6 +876,7 @@ fn supervise(
             false,
             None,
             deadline,
+            log,
         ),
     };
     state.venus = match presentation {
@@ -849,12 +907,12 @@ fn supervise(
 
             if reap_presentation(&mut state, inputs, config)? && !state.stopping {
                 match mode {
-                    LaunchMode::Workspace => eprintln!(
+                    LaunchMode::Workspace => log.note(&format!(
                         "Eon Desktop exited; terminals remain active. Run `eon attach {generation}` to reconnect."
-                    ),
-                    LaunchMode::Terminal => eprintln!(
+                    )),
+                    LaunchMode::Terminal => log.note(&format!(
                         "Eon Desktop exited; terminal remains active. Run `eonbase attach {generation}` to reconnect."
-                    ),
+                    )),
                 }
             }
 
@@ -892,6 +950,7 @@ struct SupervisorState {
     initial_status: Option<i32>,
     stopping: bool,
     quotas: Option<quota::Quotas>,
+    log: Arc<DiagnosticLog>,
 }
 
 impl SupervisorState {
@@ -906,11 +965,14 @@ impl SupervisorState {
     }
 }
 
-fn report_session_end(result: Result<(), Failure>) -> Result<(), String> {
+fn report_session_end(result: Result<(), Failure>, log: &DiagnosticLog) -> Result<(), String> {
     match result {
         Err(error) if error.code == "session-start" => {
             // A failed picker fallback must not tear down other tabs' terminals.
-            eprintln!("Cannot start the tab's first pane: {}", error.detail);
+            log.note(&format!(
+                "Cannot start the tab's first pane: {}",
+                error.detail
+            ));
             Ok(())
         }
         result => result.map_err(|error| error.detail),
@@ -926,6 +988,15 @@ fn reap_finished_sessions(
     while index < state.sessions.len() {
         if let Some(code) = session_finished(&mut state.sessions[index])? {
             let session = state.sessions.remove(index);
+            state.log.record(&format!(
+                "terminal {} ended with status {code}{}",
+                session.id,
+                if session.owner_lost() {
+                    "; Orbit exited without publishing a terminal result"
+                } else {
+                    ""
+                }
+            ));
             if let Some(workspace) = &mut state.workspace {
                 let component_generation = &state.component_generation;
                 let sessions = &mut state.sessions;
@@ -942,7 +1013,7 @@ fn reap_finished_sessions(
                             None,
                         )
                     });
-                report_session_end(result)?;
+                report_session_end(result, &state.log)?;
             }
             if session.id == "session-1" {
                 state.initial_status = Some(code);
@@ -977,29 +1048,45 @@ fn close_workspace_tab(
     inputs: &Inputs,
     config: &Path,
 ) -> Result<Snapshot, Failure> {
-    reap_finished_sessions(state, inputs, config)
-        .map_err(|detail| failure("tab-close-failed", detail))?;
-    let sessions = state
-        .workspace
-        .as_mut()
-        .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?
-        .prepare_close_tab(request_id, tab)?;
-
-    for id in sessions {
-        let natural_status = stop_owned_session(&mut state.sessions, &id)
-            .map_err(|detail| failure("tab-close-failed", format!("{id}: {detail}")))?;
-        state
+    let started = Instant::now();
+    let result: Result<(), Failure> = (|| {
+        reap_finished_sessions(state, inputs, config)
+            .map_err(|detail| failure("tab-close-failed", detail))?;
+        let sessions = state
             .workspace
             .as_mut()
-            .expect("workspace close retains its owner")
-            .session_ended(&id, SessionEnd::Closed, |_| {
-                Err("closing a tab cannot start a replacement terminal".into())
-            })?;
-        if id == "session-1" && natural_status.is_some() {
-            state.initial_status = natural_status;
-        }
-    }
+            .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?
+            .prepare_close_tab(request_id, tab)?;
 
+        state.log.record(&format!(
+            "closing tab {tab}: stopping {}",
+            sessions.join(", ")
+        ));
+        for id in sessions {
+            let natural_status = stop_owned_session(&mut state.sessions, &id)
+                .map_err(|detail| failure("tab-close-failed", format!("{id}: {detail}")))?;
+            state
+                .workspace
+                .as_mut()
+                .expect("workspace close retains its owner")
+                .session_ended(&id, SessionEnd::Closed, |_| {
+                    Err("closing a tab cannot start a replacement terminal".into())
+                })?;
+            if id == "session-1" && natural_status.is_some() {
+                state.initial_status = natural_status;
+            }
+        }
+        Ok(())
+    })();
+    let elapsed = started.elapsed().as_millis();
+    state.log.record(&match &result {
+        Ok(()) => format!("closed tab {tab} in {elapsed} ms"),
+        Err(error) => format!(
+            "tab {tab} close failed after {elapsed} ms: {}",
+            error.detail
+        ),
+    });
+    result?;
     Ok(state
         .workspace_snapshot()
         .expect("tab close retains a non-final workspace"))
@@ -1172,6 +1259,7 @@ fn cancel_transient_popups(
             workspace,
             sessions,
             initial_child,
+            log,
             ..
         } = state;
         let result = workspace
@@ -1188,7 +1276,7 @@ fn cancel_transient_popups(
                     None,
                 )
             });
-        report_session_end(result)?;
+        report_session_end(result, log)?;
     }
     Ok(())
 }
@@ -1213,11 +1301,7 @@ fn reap_presentation(
     config: &Path,
 ) -> Result<bool, String> {
     let exited = match state.venus.as_mut() {
-        Some(process) => process
-            .child
-            .try_wait()
-            .map_err(|error| format!("cannot observe Eon Desktop: {error}"))?
-            .is_some(),
+        Some(process) => process.exited()?,
         None => false,
     };
     if exited {
@@ -1443,6 +1527,7 @@ fn dispatch_control_request(
                     terminal.requires_startup_admission(),
                     state.workspace_snapshot(),
                     Instant::now() + SESSION_START_TIMEOUT,
+                    &state.log,
                 )?);
                 Ok(())
             });
@@ -1638,8 +1723,8 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        LaunchMode, effective_uid, prepare_configuration, prepare_runtime, temporary_directory,
-        venus_command, window_bar_widgets, xdg_path,
+        DiagnosticLog, LaunchMode, effective_uid, prepare_configuration, prepare_runtime,
+        temporary_directory, venus_command, window_bar_widgets, xdg_path,
     };
     use std::{
         ffi::OsString,
@@ -1690,6 +1775,7 @@ mod tests {
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
         let received = root.join("snapshot");
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
         let mut command = Command::new("/bin/sh");
         command.args([
             "-c",
@@ -1701,6 +1787,7 @@ mod tests {
             true,
             Some(snapshot.clone()),
             Instant::now() + Duration::from_secs(2),
+            &log,
         )
         .unwrap();
         assert_eq!(fs::read(received).unwrap(), expected);
@@ -1715,10 +1802,71 @@ mod tests {
                 true,
                 Some(snapshot),
                 started + Duration::from_millis(300),
+                &log,
             )
             .is_err()
         );
         assert!(started.elapsed() < Duration::from_secs(1));
+        let log = fs::read_dir(root.join("logs"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert!(
+            fs::read_to_string(log)
+                .unwrap()
+                .contains("Eon Desktop exited: signal: 9 (SIGKILL)")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn diagnostic_log_keeps_presentation_stderr_and_exit_signal() {
+        use std::{
+            process::Command,
+            thread,
+            time::{Duration, Instant},
+        };
+
+        let root = temporary_directory();
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace");
+        let mut command = Command::new("/bin/sh");
+        command.args([
+            "-c",
+            "echo \"panicked: backtrace=$RUST_BACKTRACE\" >&2; kill -KILL $$",
+        ]);
+        let mut process = super::PresentationProcess::start(
+            command,
+            false,
+            None,
+            Instant::now() + Duration::from_secs(2),
+            &log,
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !process.exited().unwrap() {
+            assert!(Instant::now() < deadline);
+            thread::sleep(Duration::from_millis(10));
+        }
+        drop(process);
+        let path = fs::read_dir(root.join("logs"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let text = fs::read_to_string(path).unwrap();
+        let backtrace = std::env::var("RUST_BACKTRACE").unwrap_or_else(|_| "1".into());
+        let output = text
+            .find(&format!("panicked: backtrace={backtrace}\n"))
+            .expect(&text);
+        let exit = text
+            .find("Eon Desktop exited: signal: 9 (SIGKILL)")
+            .expect(&text);
+        assert!(text.contains("Eon Desktop started: pid "), "{text}");
+        assert!(output < exit, "{text}");
+        assert_eq!(text.matches("Eon Desktop exited").count(), 1, "{text}");
         fs::remove_dir_all(root).unwrap();
     }
 

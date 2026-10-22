@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Each Eon or eonbase supervisor writes a diagnostic log to
+  `$XDG_STATE_HOME/eon/logs` (`~/.local/state/eon/logs` by default): when the
+  window starts and exits, its exit code or signal, its error output with a
+  crash backtrace, terminals that exit on their own, tab-close timing, and the
+  supervisor's own errors. A window launched from the desktop used to leave no
+  record of why it closed. Eon keeps the newest 20 logs plus those of running
+  supervisors, at most 1 MiB each.
+
 - A quota chip left out of `[bar] widgets` also stops Eon reading that
   provider's quota through CodexBar, from the next window open or reopen.
 

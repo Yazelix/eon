@@ -2,6 +2,7 @@
 
 mod cli;
 mod control;
+mod diagnostics;
 mod generation;
 mod managed_environment;
 mod quota;

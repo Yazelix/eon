@@ -790,6 +790,11 @@ enum SessionEnd {
 }
 
 impl RunningSession {
+    /// Whether Orbit exited without publishing this terminal's result.
+    pub(super) fn owner_lost(&self) -> bool {
+        matches!(self.finished, Some(SessionEnd::OwnerLost))
+    }
+
     pub(super) fn is_finished(&self) -> bool {
         self.finished.is_some()
     }
