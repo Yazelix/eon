@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Ctrl+Alt+M creates a column, in place of Alt+Shift+M, which now reaches
+  the terminal program.
+
 - The Eon Bar shows Claude's quota as two chips, one for the five-hour window
   and one for the seven-day window, in place of one chip showing both. In a
   narrow window, quota chips now disappear starting with the one closest to

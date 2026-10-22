@@ -1222,7 +1222,7 @@ keep_alive = false
             "Ctrl+Shift+O",
             "Alt+Shift+N",
             "Alt+Shift+B",
-            "Alt+Shift+M",
+            "Ctrl+Alt+M",
             "Alt+W",
             "Alt+M",
             "Ctrl+Alt+Shift+H",

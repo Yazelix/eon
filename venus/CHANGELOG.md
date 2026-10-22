@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- VEN-C8: Ctrl+Alt+M sends `CreateColumn`, with the same 40-terminal-column
+  refusal, in place of Alt+Shift+M (`eon-0ka6`).
 - VEN-C26: Claude gets one read-only chip per reported window, five-hour then
   seven-day, each with its own label, hover and accessible node; under width
   pressure, after compaction, quota chips disappear starting with the one

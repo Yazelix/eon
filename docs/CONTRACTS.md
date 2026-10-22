@@ -426,7 +426,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - Creating a column adds a column immediately right of the selected column,
     holding one new pane in the tab's launch directory, and selects it; in a
     tab without columns it acts exactly as creating a pane. Venus maps
-    Alt+Shift+M to it and, in a tab with one to three columns, refuses it with
+    Ctrl+Alt+M to it and, in a tab with one to three columns, refuses it with
     a notice when a column would get fewer than 40 terminal columns. Alt+M adds
     a pane to the selected column.
   - Moving the tab left/right swaps the active tab with exactly one adjacent
@@ -525,7 +525,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   are covered by `columns_hold_accordions_traverse_into_tabs_and_collapse_on_exit`,
   `create_column_in_a_popup_only_tab_never_overfills_a_neighbor`,
   `column_moves_stay_in_their_column_popups_skip_columns_and_the_cli_reports_positions`
-  and the v10 codec tests; Venus layout, the Alt+Shift+M mapping and the 40-column
+  and the v10 codec tests; Venus layout, the create-column mapping and the 40-column
   threshold by `columns_sit_side_by_side_and_keep_the_selected_column_primary`,
   `direct_workspace_shortcuts_use_stable_eon_actions` and
   `each_column_keeps_forty_terminal_columns`; isolated installed dogfood on a

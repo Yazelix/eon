@@ -59,7 +59,7 @@ the empty region between tabs and controls drags an undecorated window.
 | Ctrl+Alt+Shift+H / Ctrl+Alt+Shift+L | Move the active tab |
 | Alt+Shift+T | Request a pending tab |
 | Alt+M | Create a pane in the selected column |
-| Alt+Shift+M | Create a column right of the selected one |
+| Ctrl+Alt+M | Create a column right of the selected one |
 | Alt+W | Close the selected pane, except the final tab's last pane |
 | Alt+Shift+W | Close the active non-final tab |
 | Alt+Shift+N | Open an independent Eon window when supervised by Eon |

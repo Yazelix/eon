@@ -188,7 +188,7 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         "Tabs and panes",
         "Create column",
         KeyCode::KeyM,
-        ALT_SHIFT,
+        CTRL_ALT,
         NativeShortcutAction::CreateColumn,
     ),
     NativeShortcut::key(
@@ -835,7 +835,7 @@ mod tests {
         assert_eq!(
             workspace_shortcut(
                 KeyCode::KeyM,
-                Modifiers::ALT.union(Modifiers::SHIFT),
+                Modifiers::CTRL.union(Modifiers::ALT),
                 &[],
                 "t2",
                 Some("p3"),

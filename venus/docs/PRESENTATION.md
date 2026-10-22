@@ -38,7 +38,7 @@ Selection, hover, and keyboard focus have distinct fills or outlines.
 Visible headers pair Eon's opaque pane
 identity with Orbit's working directory. Home displays `~`, and its descendants
 use `~/`; without `HOME`, paths stay absolute. Every column's expanded pane
-presents live; only the selected pane receives input. Alt+Shift+M adds
+presents live; only the selected pane receives input. Ctrl+Alt+M adds
 another column unless one would get fewer than 40 terminal columns.
 
 A fresh workspace or tab can begin with a Project popup and no pane. Tool popups

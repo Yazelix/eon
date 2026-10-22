@@ -541,7 +541,7 @@ re-proved when that platform or feature is next touched.
     forwarding the click; the wheel over another column does nothing.
     Accessibility lists each column's panes left to right and exposes
     terminal text only for the selected column.
-  - Alt+Shift+M sends one non-repeating `CreateColumn`. In a tab with one to
+  - Ctrl+Alt+M sends one non-repeating `CreateColumn`. In a tab with one to
     three columns, Venus refuses it locally with a rejected-action notice when
     one more column, at the current window width, would leave a column fewer
     than 40 terminal columns wide; with four, Eon's capacity refusal applies.
@@ -606,7 +606,7 @@ re-proved when that platform or feature is next touched.
     tab; Ctrl+Alt+K/J does the same for its selected pane within its column, and
     Ctrl+Alt+H/L sends one EONW v12 sideways move of that pane into the
     neighbouring column. When that move would open a column at the tab's edge,
-    Venus applies Alt+Shift+M's 40-terminal-column refusal. Alt+Shift+W sends one
+    Venus applies Ctrl+Alt+M's 40-terminal-column refusal. Alt+Shift+W sends one
     non-repeating close naming the snapshot's active stable `tN`; Alt+W sends
     one EONW v11 close naming the active tab's selected `pN` and is consumed
     without an action when the tab has none. Venus consumes

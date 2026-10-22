@@ -112,7 +112,7 @@ one, and clicking another column's terminal selects it.
 | Ctrl+Alt+Shift+H / Ctrl+Alt+Shift+L | Move the active tab |
 | Alt+Shift+T | Create a tab through the directory picker |
 | Alt+M | Create a pane in the selected column |
-| Alt+Shift+M | Create a column right of the selected one, up to four per tab |
+| Ctrl+Alt+M | Create a column right of the selected one, up to four per tab |
 | Alt+W | Close the selected pane, stopping its terminal; not the final tab's last pane |
 | Alt+Shift+W | Close the active non-final tab |
 | Alt+Shift+N | Open an independent Eon window (also the desktop launcher's **New Eon Window** action) |
