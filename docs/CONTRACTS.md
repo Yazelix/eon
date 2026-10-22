@@ -711,8 +711,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     and exact opaque Orbit endpoint bytes. Lifecycle results carry generation,
     component/protocol identity, live terminals, and owner-authored attach/stop
     availability.
-  - CLI JSON emits opaque directories and endpoints as ordered byte arrays
-    without changing EONW. Each connection carries one length-delimited request
+  - CLI JSON emits each directory and endpoint as a JSON string when its bytes
+    are valid UTF-8, and otherwise as an ordered byte array, without changing
+    EONW. Each connection carries one length-delimited request
     and response and does not use EOF as framing.
   - The shared 2 MiB frame ceiling admits every snapshot valid at EONW's field
     and workspace-count bounds.
@@ -893,7 +894,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-ecne.4` (automated and installed tiers); `eon edit` and Files Enter
   `eon-ecne.2` (automated and installed tiers); `pane create -- COMMAND`
   `eon-n6ga` (automated and installed tiers); `pane create --no-focus`
-  `eon-zhjj` (automated and installed tiers).
+  `eon-zhjj` (automated and installed tiers); UTF-8 paths as JSON strings
+  `eon-readable-windows-and-child-notices-jf6f` (automated and installed
+  tiers).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -923,7 +926,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `edit_parser_sends_one_absolute_opaque_file`,
     `command_pane_parser_passes_the_argv_through`,
     `command_panes_bound_their_argv`,
-    `unfocused_panes_keep_the_selection_and_the_shown_popup`).
+    `unfocused_panes_keep_the_selection_and_the_shown_popup`); CLI JSON paths
+    (`json_paths_are_strings_unless_their_bytes_are_not_utf8`,
+    `launch_directory_can_disappear_after_the_initial_session_starts`).
     Installed checklist items 3 and 4 (`eon workspace` against the window;
     Project, Git, Agent and Anima popups). Installed `eon-8mnr.2` observation on
     isolated headless Sway: from a terminal in an inactive tab, `eon pane create`
@@ -959,7 +964,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     p1 still selected and the Agent popup still shown; its Orbit child ran
     exactly `sh -c <script>` at the tab directory. The same caller's default
     `eon pane create --json` then selected the new p3 and dismissed the
-    popup.
+    popup. Installed `eon-readable-windows-and-child-notices-jf6f`
+    observation on isolated headless Sway: `eon workspace --json` printed the
+    tab directory and each pane endpoint as JSON strings; human `eon windows`
+    printed the independent window's generation as `eon generations` does,
+    with `--json` unchanged.
 - **Open proof:** `eon tab close` and `eon pane close` on the final tab, with
   their question on a terminal, are pending
   `eon-prove-close-and-detach-batch-bf8t`.

@@ -3017,16 +3017,7 @@ fn launch_directory_can_disappear_after_the_initial_session_starts() {
 
     let snapshot = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert!(snapshot.status.success());
-    assert!(stdout(&snapshot).contains(&format!(
-        "\"directory\":[{}]",
-        launch
-            .as_os_str()
-            .as_bytes()
-            .iter()
-            .map(u8::to_string)
-            .collect::<Vec<_>>()
-            .join(",")
-    )));
+    assert!(stdout(&snapshot).contains(&format!("\"directory\":\"{}\"", launch.to_str().unwrap())));
 
     fs::write(&stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);
@@ -4343,6 +4334,10 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     assert!(listed.status.success());
     assert!(stdout(&listed).contains(&format!("\"id\":\"{first}\"")));
     assert!(stdout(&listed).contains(&format!("\"id\":\"{second}\"")));
+    let human = invoke(&binary, &runtime, &config, &["windows"]);
+    assert!(human.status.success());
+    assert!(stdout(&human).contains(&format!("window {first}\n  current ")));
+    assert!(!stdout(&human).contains("\"generations\""));
 
     let stopped = invoke(
         &binary,

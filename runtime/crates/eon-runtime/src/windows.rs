@@ -259,8 +259,12 @@ pub(super) fn list_windows(json: bool) -> Result<i32, String> {
         String::new()
     };
     for (index, (id, root)) in existing_windows()?.iter().enumerate() {
-        let listing = window_command(root)?
-            .args(["generations", "--json"])
+        let mut command = window_command(root)?;
+        command.arg("generations");
+        if json {
+            command.arg("--json");
+        }
+        let listing = command
             .output()
             .map_err(|error| format!("cannot inspect Eon window {id}: {error}"))?;
         if !listing.status.success() {
@@ -281,7 +285,10 @@ pub(super) fn list_windows(json: bool) -> Result<i32, String> {
                 generations.trim()
             ));
         } else {
-            output.push_str(&format!("window {id}\n{generations}"));
+            output.push_str(&format!("window {id}\n"));
+            for line in generations.lines() {
+                output.push_str(&format!("  {line}\n"));
+            }
         }
     }
     if json {

@@ -1541,9 +1541,9 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
             output.push(',');
         }
         output.push_str(&format!(
-            "{{\"id\":\"{}\",\"directory\":[{}],\"pending\":{},\"selected_pane\":",
+            "{{\"id\":\"{}\",\"directory\":{},\"pending\":{},\"selected_pane\":",
             json_escape(&tab.id),
-            json_bytes(&tab.directory),
+            json_path(&tab.directory),
             tab.pending
         ));
         json_option(&mut output, tab.selected_pane.as_deref());
@@ -1555,12 +1555,12 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
                 output.push(',');
             }
             output.push_str(&format!(
-                "{{\"id\":\"{}\",\"column\":{},\"expanded\":{},\"session\":\"{}\",\"endpoint\":[{}],\"live\":{}}}",
+                "{{\"id\":\"{}\",\"column\":{},\"expanded\":{},\"session\":\"{}\",\"endpoint\":{},\"live\":{}}}",
                 json_escape(&pane.id),
                 column + 1,
                 expanded,
                 json_escape(&pane.session),
-                json_bytes(&pane.endpoint),
+                json_path(&pane.endpoint),
                 pane.live
             ));
         }
@@ -1570,9 +1570,9 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
                 output.push(',');
             }
             output.push_str(&format!(
-                "{{\"id\":\"{}\",\"entry\":\"{}\",\"session\":\"{}\",\"endpoint\":[{}],\"chosen\":{}}}",
+                "{{\"id\":\"{}\",\"entry\":\"{}\",\"session\":\"{}\",\"endpoint\":{},\"chosen\":{}}}",
                 json_escape(&popup.id), json_escape(&popup.entry), json_escape(&popup.session),
-                json_bytes(&popup.endpoint), tab.selected_popup.as_deref() == Some(&popup.id)
+                json_path(&popup.endpoint), tab.selected_popup.as_deref() == Some(&popup.id)
             ));
         }
         output.push_str("]}");
@@ -1691,12 +1691,19 @@ fn json_option(output: &mut String, value: Option<&str>) {
     }
 }
 
-fn json_bytes(bytes: &[u8]) -> String {
-    bytes
-        .iter()
-        .map(u8::to_string)
-        .collect::<Vec<_>>()
-        .join(",")
+/// UTF-8 paths become JSON strings; other paths keep their exact bytes as an array.
+fn json_path(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(path) => format!("\"{}\"", json_escape(path)),
+        Err(_) => format!(
+            "[{}]",
+            bytes
+                .iter()
+                .map(u8::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+    }
 }
 
 pub(crate) fn json_escape(value: &str) -> String {
@@ -1721,6 +1728,12 @@ pub(crate) fn json_escape(value: &str) -> String {
 mod tests {
     use super::*;
     use eon_workspace_protocol::v17::{ALT, PopupGeometry, Shortcut};
+
+    #[test]
+    fn json_paths_are_strings_unless_their_bytes_are_not_utf8() {
+        assert_eq!(json_path(b"/home/a \"b\""), "\"/home/a \\\"b\\\"\"");
+        assert_eq!(json_path(b"/tmp/\xff"), "[47,116,109,112,47,255]");
+    }
 
     fn catalog() -> PopupCatalog {
         PopupCatalog {

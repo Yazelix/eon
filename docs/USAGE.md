@@ -268,6 +268,9 @@ run `eon` first.
 Eon calls Orbit-backed instances terminals in human output.
 JSON retains the technical `session` / `sessions` fields and `session-N` IDs;
 these refer to terminals.
+`eon workspace --json` prints each tab `directory` and terminal `endpoint` as a
+string when the path is valid UTF-8, and otherwise as an array of the path's
+byte values.
 Commands run inside an independent window target that window; commands outside
 one target the default workspace. `eon stop all` covers generations in that
 current namespace. `eon window stop all` covers independent windows and visits

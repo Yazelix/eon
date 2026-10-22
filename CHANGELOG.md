@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon workspace --json` prints tab directories and terminal endpoints as
+  strings, such as `"directory":"/home/you/project"`, instead of arrays of
+  byte values. A path that is not valid UTF-8 still prints as a byte array.
+  Human `eon windows` prints each window's generations as `eon generations`
+  does, instead of their JSON. A terminal whose command fails as it starts
+  reports `terminal command exited with status N during startup`, and the
+  window's notice wraps onto up to three lines instead of being cut off at the
+  window's edge.
+
 - A pane no longer shows `Orbit connection lost: Orbit event queue exceeded
   its bounded capacity` when a program prints a large burst while you scroll.
   Venus waits for its screen to catch up and then shows the latest output.

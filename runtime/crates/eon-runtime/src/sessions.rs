@@ -1055,10 +1055,17 @@ pub(super) fn start_orbit(
                     );
                 }
                 Some(RecordSnapshot {
-                    record: ManagementRecord::Tombstone(_),
+                    record: ManagementRecord::Tombstone(tombstone),
                     ..
                 }) => {
-                    return Err("terminal ended before its management lease was acquired".into());
+                    return Err(match tombstone.outcome {
+                        ProcessOutcome::ExitCode(code) => {
+                            format!("terminal command exited with status {code} during startup")
+                        }
+                        ProcessOutcome::Signal(signal) => {
+                            format!("terminal command was ended by signal {signal} during startup")
+                        }
+                    });
                 }
                 None => {
                     if let Some(status) = orbit

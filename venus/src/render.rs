@@ -354,6 +354,7 @@ pub struct Renderer {
     text_overlay: Option<(usize, TextBounds)>,
     text: Vec<PlacedText>,
     content_key: Option<ContentKey>,
+    notice_lines: usize,
     terminal: TerminalLayer,
     header: HeaderInteraction,
     cursor_tail: Option<(SceneColor, SceneColor, f32)>,
@@ -385,7 +386,8 @@ impl Renderer {
             * if self.terminal.hyperlink.is_some() {
                 3.0
             } else {
-                1.5
+                // Wrapped status lines are 1.25 rows tall, with an eighth of a row above and below.
+                self.notice_lines as f32 * 1.25 + 0.25
             };
         let bottom = self.config.height as f32 - height - self.metrics.height * 0.5;
         let link_bottom = self.terminal.hyperlink.map(|(row, _)| {
@@ -572,6 +574,7 @@ impl Renderer {
             text_overlay: None,
             text: Vec::new(),
             content_key: None,
+            notice_lines: 1,
             terminal: TerminalLayer {
                 hyperlink: None,
                 scrollback_label: None,
@@ -1405,7 +1408,46 @@ impl Renderer {
         rectangles: &mut RectangleBatch,
         workspace: Option<&WorkspaceScene>,
     ) {
+        const MAX_NOTICE_LINES: usize = 3;
+        let hyperlink = self.terminal.hyperlink.is_some();
+        // Lay the text out first: its wrapped line count sizes the notice.
+        let notice = self.text.len();
+        self.push_text(
+            status,
+            self.metrics.padding * 2.0,
+            0.0,
+            self.config.width as f32 - self.metrics.padding * 4.0,
+            self.metrics.height
+                * if hyperlink {
+                    2.7
+                } else {
+                    1.25 * MAX_NOTICE_LINES as f32
+                },
+            SceneColor {
+                r: 245,
+                g: 192,
+                b: 94,
+            },
+            if hyperlink {
+                DrawStyleKind::Monospace
+            } else {
+                DrawStyleKind::Status(Wrap::WordOrGlyph)
+            },
+        );
+        self.notice_lines = if hyperlink {
+            1
+        } else {
+            self.text[notice]
+                .buffer
+                .layout_runs()
+                .count()
+                .clamp(1, MAX_NOTICE_LINES)
+        };
         let rect = self.notice_rect(workspace);
+        let text = &mut self.text[notice];
+        text.top += rect.top + self.metrics.height * if hyperlink { 0.3 } else { 0.125 };
+        text.bound_top = rect.top.floor() as i32;
+        text.bottom = rect.bottom().ceil() as i32;
         if self
             .terminal
             .scrollback_rect
@@ -1414,7 +1456,7 @@ impl Renderer {
             self.terminal.scrollback_rect = None;
         }
         // Text is drawn after rectangles; clip underlying rows out of this overlay.
-        for text in &mut self.text {
+        for text in &mut self.text[..notice] {
             if text.top < rect.top {
                 text.bottom = text.bottom.min(rect.top as i32);
             } else {
@@ -1432,23 +1474,6 @@ impl Renderer {
                 b: 18,
             },
             0.96,
-        );
-        self.push_text(
-            status,
-            self.metrics.padding * 2.0,
-            rect.top + self.metrics.height * 0.3,
-            self.config.width as f32 - self.metrics.padding * 4.0,
-            rect.height - self.metrics.height * 0.3,
-            SceneColor {
-                r: 245,
-                g: 192,
-                b: 94,
-            },
-            if self.terminal.hyperlink.is_some() {
-                DrawStyleKind::Monospace
-            } else {
-                DrawStyleKind::Status(Wrap::None)
-            },
         );
     }
 
