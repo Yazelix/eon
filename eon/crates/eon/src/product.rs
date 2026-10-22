@@ -2,7 +2,7 @@ use eon_runtime::{
     Defaults, Inputs, ManagedPrograms, PopupCatalog, PopupCommand, PopupDefinition, ShellConfig,
     StartupAnimation, TerminalConfig,
 };
-use eon_workspace_protocol::v15::{ALT, PopupGeometry, SHIFT, Shortcut};
+use eon_workspace_protocol::v16::{ALT, PopupGeometry, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     const MANIFEST: &str = include_str!("../../../../components/eon-v4.json");

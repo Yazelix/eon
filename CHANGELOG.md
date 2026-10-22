@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon pane create --no-focus`, with or without `-- COMMAND`, adds the pane
+  without taking focus: the tab's selected pane stays selected and a popup
+  you run it from, such as Agent, stays open. An agent can start other agents
+  in panes while you keep working with it. Without `--no-focus`, the new pane
+  is selected as before. This changes the workspace protocol to EONW 16:
+  the updated `eon` cannot manage windows started by an earlier build, so
+  stop the ones you no longer need with the old `eon` first.
+
 - Commands (Alt+Shift+M) has a Quit this window entry. It runs `eon stop` for
   the window you are in, lists that window's live terminals and asks first;
   answering yes ends them all and closes the window, and anything else changes
@@ -144,7 +152,7 @@ installation, and proven contract changes.
   130 interrupted. Structured failures exited 2 and
   every other failure 1; scripts that tested for those values need updating.
   `eon --help` and [Using Eon](docs/USAGE.md#exit-status) list the statuses.
-- `eon` speaks only EONW 15. A generation started by an older build that uses
+- `eon` speaks only EONW 16. A generation started by an older build that uses
   an earlier EONW is listed as incompatible and can no longer be inspected or
   stopped by this `eon`; stop it with the build that started it.
 - `eon claude-statusline` is gone; Claude quota has come from CodexBar since

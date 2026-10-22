@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v15::{
+use eon_workspace_protocol::v16::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
@@ -1450,7 +1450,11 @@ cat >/dev/null
     assert!(!initial_picker.exists());
     assert!(!artifact_path(&initial_picker, ".record").exists());
 
-    let created = workspace_action(&control, "pane-after-picker", Action::CreatePane);
+    let created = workspace_action(
+        &control,
+        "pane-after-picker",
+        Action::CreatePane { focus: true },
+    );
     assert!(
         matches!(&created, Response::Snapshot(snapshot) if snapshot.tabs[0].panes().count() == 2),
         "pane creation after picker failed: {created:?}"
@@ -1845,7 +1849,7 @@ fn stop_accounts_for_late_ready_picker_and_retains_partial_cleanup_owner() {
         stdout(&inventory)
     );
     assert!(matches!(
-        workspace_action(&control, "blocked", Action::CreatePane),
+        workspace_action(&control, "blocked", Action::CreatePane { focus: true }),
         Response::Failure(_)
     ));
     let retried = invoke(binary, &runtime, &config, &["stop", id, "--json"]);
@@ -2798,6 +2802,17 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
         "{}",
         String::from_utf8_lossy(&orbit_arguments)
     );
+
+    // With `--no-focus`, the pane joins the caller's column and the selection
+    // stays.
+    let unfocused = from(
+        &caller,
+        &["pane", "create", "--no-focus", "--json", "--", "hx"],
+    );
+    assert!(unfocused.status.success(), "{}", stdout(&unfocused));
+    let snapshot = inspect("after-unfocused");
+    assert_eq!(snapshot.tabs[0].selected_pane.as_deref(), Some("p5"));
+    assert_eq!(snapshot.tabs[0].columns[0].panes[3].id, "p6");
 
     fs::write(&stop, "").unwrap();
     wait_for_successful_exit(&mut supervisor.child);

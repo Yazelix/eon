@@ -35,6 +35,8 @@
   function and modifier keys) outside the numpad replaces the physical key for
   terminal input and Venus's own key handling; letter, digit, punctuation and
   numpad keys stay physical (`eon-venus-keysym-named-keys-chnh`).
+- Venus consumes EONW v16, which adds a focus flag to both pane-create
+  requests; Venus always sends a focused pane (`eon-zhjj`).
 - Venus consumes EONW v15, which adds a command-pane request that Venus never
   sends (`eon-n6ga`).
 - Venus consumes EONW v14, which adds a file-edit request that Venus never

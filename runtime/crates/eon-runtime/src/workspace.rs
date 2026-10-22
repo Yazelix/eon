@@ -1,5 +1,5 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v15::{
+use eon_workspace_protocol::v16::{
     Action, Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS,
     MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
     PopupEntry as SnapshotEntry, PopupTarget, Side, Snapshot, Tab as SnapshotTab, WorkspaceAction,
@@ -293,7 +293,7 @@ impl Workspace {
             Action::Workspace(WorkspaceAction::Move(Direction::Left | Direction::Right)) => {
                 (self.target_tab(caller)?.0, None)
             }
-            Action::Workspace(WorkspaceAction::CreatePane | WorkspaceAction::Move(_))
+            Action::Workspace(WorkspaceAction::CreatePane { .. } | WorkspaceAction::Move(_))
             | Action::MovePaneSideways(_)
             | Action::Edit { .. }
             | Action::CreateCommandPane { .. } => {
@@ -302,8 +302,14 @@ impl Workspace {
             }
             _ => (self.active, None),
         };
+        let focus = !matches!(
+            action,
+            Action::Workspace(WorkspaceAction::CreatePane { focus: false })
+                | Action::CreateCommandPane { focus: false, .. }
+        );
         let result = self.apply(action, target, caller.is_some(), &mut prepare, &mut operate);
-        if result.is_err()
+        // An unfocused pane leaves the tab's selection as it was.
+        if (result.is_err() || !focus)
             && let Some(previous) = previous
         {
             self.restore(previous);
@@ -341,7 +347,7 @@ impl Workspace {
             // A tab without columns gains its first one exactly as a new pane would.
             Action::CreateColumn if self.tabs[self.active].columns.is_empty() => self
                 .dispatch_workspace(
-                    WorkspaceAction::CreatePane,
+                    WorkspaceAction::CreatePane { focus: true },
                     self.active,
                     false,
                     &mut prepare,
@@ -367,9 +373,15 @@ impl Workspace {
                     &self.tabs[target].directory,
                 )
                 .map_err(|detail| action_error("edit-command", detail))?;
-                self.create_pane(target, called, LaunchCommand::Tool(argv), &mut operate)?;
+                self.create_pane(
+                    target,
+                    called,
+                    true,
+                    LaunchCommand::Tool(argv),
+                    &mut operate,
+                )?;
             }
-            Action::CreateCommandPane { argv } => {
+            Action::CreateCommandPane { argv, focus } => {
                 if !called {
                     return Err(action_error(
                         "caller-required",
@@ -382,7 +394,13 @@ impl Workspace {
                     &self.tabs[target].directory,
                 )
                 .map_err(|detail| action_error("pane-command", detail))?;
-                self.create_pane(target, called, LaunchCommand::Tool(argv), &mut operate)?;
+                self.create_pane(
+                    target,
+                    called,
+                    focus,
+                    LaunchCommand::Tool(argv),
+                    &mut operate,
+                )?;
             }
         }
         Ok(())
@@ -409,8 +427,8 @@ impl Workspace {
                 ));
             }
             WorkspaceAction::CreateTab => self.create_tab(prepare, operate)?,
-            WorkspaceAction::CreatePane => {
-                self.create_pane(target, called, LaunchCommand::Pane, operate)?
+            WorkspaceAction::CreatePane { focus } => {
+                self.create_pane(target, called, focus, LaunchCommand::Pane, operate)?
             }
             WorkspaceAction::FocusId(id) => self.focus_id(&id, operate)?,
             WorkspaceAction::Focus(direction) => self.focus_direction(direction, operate)?,
@@ -422,21 +440,38 @@ impl Workspace {
         Ok(())
     }
 
+    /// Adds a pane to the target tab's selected column. A focused pane is
+    /// selected and dismisses the tab's popup; an unfocused one joins its
+    /// column collapsed, unless it is the first pane of a tab without panes.
     fn create_pane(
         &mut self,
         target: usize,
         called: bool,
+        focus: bool,
         command: LaunchCommand,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         self.require_established(target)?;
-        if called {
-            self.require_surviving_dismissal(target)?;
-        }
-        let target = self.dismiss_for_pane_action(target, operate)?;
-        let directory = self.tabs[target].directory.clone();
+        let target = if focus {
+            if called {
+                self.require_surviving_dismissal(target)?;
+            }
+            self.dismiss_for_pane_action(target, operate)?
+        } else {
+            target
+        };
+        let tab = &self.tabs[target];
+        let directory = tab.directory.clone();
+        let kept = tab
+            .selected_column
+            .filter(|_| !focus)
+            .map(|column| (column, tab.columns[column].expanded));
         self.start_pane_in(target, &directory, false, command, operate)
-            .map_err(|detail| action_error("session-start", detail))
+            .map_err(|detail| action_error("session-start", detail))?;
+        if let Some((column, expanded)) = kept {
+            self.tabs[target].columns[column].expanded = expanded;
+        }
+        Ok(())
     }
 
     fn create_tab(
@@ -1366,7 +1401,8 @@ impl Workspace {
         previous
     }
 
-    /// Restores a selection after the caller's action failed.
+    /// Restores a selection after the caller's action failed or added an
+    /// unfocused pane.
     fn restore(&mut self, previous: Selection) {
         let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == previous.tab) else {
             return;
@@ -1627,13 +1663,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v15::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v16::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v15::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v15::ALT, "Alt"),
-        (eon_workspace_protocol::v15::SHIFT, "Shift"),
-        (eon_workspace_protocol::v15::SUPER, "Super"),
+        (eon_workspace_protocol::v16::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v16::ALT, "Alt"),
+        (eon_workspace_protocol::v16::SHIFT, "Shift"),
+        (eon_workspace_protocol::v16::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1686,7 +1722,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v15::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v16::{ALT, PopupGeometry, Shortcut};
 
     fn catalog() -> PopupCatalog {
         PopupCatalog {
@@ -1808,8 +1844,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v15::encode_response(
-            &eon_workspace_protocol::v15::Response::Snapshot(after),
+        eon_workspace_protocol::v16::encode_response(
+            &eon_workspace_protocol::v16::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -1877,7 +1913,7 @@ mod tests {
         // without panes has nothing to move: both change nothing.
         let before = workspace.snapshot();
         for action in [
-            WorkspaceAction::CreatePane,
+            WorkspaceAction::CreatePane { focus: true },
             WorkspaceAction::Move(Direction::Down),
         ] {
             let failure = workspace
@@ -1892,7 +1928,100 @@ mod tests {
             assert_eq!(failure.code, "unavailable");
             assert_eq!(workspace.snapshot(), before);
         }
+
+        // An unfocused pane dismisses nothing, so it becomes the tab's first,
+        // selected pane under its still-shown popup.
+        workspace
+            .dispatch(
+                "unfocused",
+                Some(&caller),
+                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+                prepared,
+                ok,
+            )
+            .unwrap();
+        let snapshot = workspace.snapshot();
+        let tab = &snapshot.tabs[1];
+        assert_eq!(tab.panes().count(), 1);
+        assert_eq!(
+            tab.selected_pane,
+            tab.columns[0].panes.first().map(|pane| pane.id.clone())
+        );
+        assert_eq!(tab.selected_popup, before.tabs[1].selected_popup);
+        assert_eq!(snapshot.active_tab, "t1");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn unfocused_panes_keep_the_selection_and_the_shown_popup() {
+        let mut workspace = Workspace::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let mut request = |id: &str, caller: Option<&str>, action| {
+            workspace
+                .dispatch(id, caller, action, prepared, |_| Ok(()))
+                .unwrap();
+            workspace.snapshot()
+        };
+        let command = |focus| Action::CreateCommandPane {
+            argv: vec![b"claude".to_vec()],
+            focus,
+        };
+        request(
+            "p2",
+            None,
+            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
+        );
+
+        // From the unselected p1, the pane joins the column collapsed.
+        let snapshot = request("p3", Some("session-1"), command(false));
+        let tab = &snapshot.tabs[0];
+        let panes = tab.panes().map(|pane| pane.id.as_str()).collect::<Vec<_>>();
+        assert_eq!(panes, ["p1", "p2", "p3"]);
+        assert_eq!(tab.selected_pane.as_deref(), Some("p2"));
+
+        // From a shown popup, the popup stays shown over the same selection.
+        let snapshot = request(
+            "agent",
+            None,
+            Action::InvokePopup {
+                tab: "t1".into(),
+                entry: "agent".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Toggle,
+            },
+        );
+        let popup = snapshot.tabs[0].popups[0].clone();
+        for (id, action) in [
+            ("p4", command(false)),
+            (
+                "p5",
+                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+            ),
+        ] {
+            let tab = request(id, Some(&popup.session), action).tabs.remove(0);
+            assert_eq!(tab.panes().last().map(|pane| pane.id.as_str()), Some(id));
+            assert_eq!(tab.selected_pane.as_deref(), Some("p2"));
+            assert_eq!(tab.selected_popup.as_deref(), Some(popup.id.as_str()));
+        }
+
+        // Focused, the same caller's pane is selected and the popup dismissed.
+        let tab = request("p6", Some(&popup.session), command(true))
+            .tabs
+            .remove(0);
+        assert_eq!(tab.selected_pane.as_deref(), Some("p6"));
+        assert_eq!(tab.selected_popup, None);
     }
 
     #[test]
@@ -1942,7 +2071,7 @@ mod tests {
         request(
             &mut workspace,
             "c2",
-            Action::Workspace(WorkspaceAction::CreatePane),
+            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
         )
         .unwrap();
         assert_eq!(
@@ -2095,7 +2224,7 @@ mod tests {
         request(
             &mut workspace,
             "c2",
-            Action::Workspace(WorkspaceAction::CreatePane),
+            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
         );
         assert_eq!(close(&mut workspace, "x2", "p3").unwrap(), "session-3");
         assert_eq!(
@@ -2212,7 +2341,7 @@ mod tests {
             &mut workspace,
             "c1",
             Some("session-1"),
-            Action::Workspace(WorkspaceAction::CreatePane),
+            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
         )
         .unwrap();
         let (created, selected) = panes(&workspace, "t1");
@@ -2227,7 +2356,7 @@ mod tests {
             .dispatch(
                 "c-fails",
                 Some("session-1"),
-                Action::Workspace(WorkspaceAction::CreatePane),
+                Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
                 prepared,
                 |_| Err("start failed".into()),
             )
@@ -2308,7 +2437,7 @@ mod tests {
             &mut workspace,
             "c2",
             Some(&agent),
-            Action::Workspace(WorkspaceAction::CreatePane),
+            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
         )
         .unwrap();
         assert_eq!(panes(&workspace, "t2").0.len(), active.0.len() + 1);
@@ -2320,7 +2449,7 @@ mod tests {
             &mut workspace,
             "c3",
             Some("session-99"),
-            Action::Workspace(WorkspaceAction::CreatePane),
+            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
         )
         .unwrap_err();
         assert_eq!(failure.code, "unknown-caller");
@@ -2376,7 +2505,12 @@ mod tests {
                 .collect::<Vec<_>>();
             (columns, tab.selected_pane.clone().unwrap())
         };
-        workspace_action(&mut workspace, "p", WorkspaceAction::CreatePane).unwrap();
+        workspace_action(
+            &mut workspace,
+            "p",
+            WorkspaceAction::CreatePane { focus: true },
+        )
+        .unwrap();
 
         // A stacked pane past the outer column opens a new column there.
         sideways(&mut workspace, "r1", Side::Right).unwrap();
@@ -2397,7 +2531,12 @@ mod tests {
         workspace_action(&mut workspace, "f1", WorkspaceAction::FocusId("p1".into())).unwrap();
         sideways(&mut workspace, "r3", Side::Right).unwrap();
         workspace_action(&mut workspace, "f2", WorkspaceAction::FocusId("p2".into())).unwrap();
-        workspace_action(&mut workspace, "p3", WorkspaceAction::CreatePane).unwrap();
+        workspace_action(
+            &mut workspace,
+            "p3",
+            WorkspaceAction::CreatePane { focus: true },
+        )
+        .unwrap();
         workspace_action(&mut workspace, "f3", WorkspaceAction::FocusId("p2".into())).unwrap();
         workspace_action(&mut workspace, "f4", WorkspaceAction::FocusId("p1".into())).unwrap();
         assert_eq!(
@@ -2483,7 +2622,7 @@ mod tests {
         )
         .unwrap();
         for (id, action) in [
-            ("stack", WorkspaceAction::CreatePane),
+            ("stack", WorkspaceAction::CreatePane { focus: true }),
             ("other-tab", WorkspaceAction::CreateTab),
             ("select", WorkspaceAction::FocusId("t1".into())),
         ] {
@@ -2576,7 +2715,12 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         request(&mut workspace, "c1", Action::CreateColumn).unwrap();
-        workspace_action(&mut workspace, "p", WorkspaceAction::CreatePane).unwrap();
+        workspace_action(
+            &mut workspace,
+            "p",
+            WorkspaceAction::CreatePane { focus: true },
+        )
+        .unwrap();
 
         // Moving a pane in the second column reorders only that column.
         workspace_action(&mut workspace, "m1", WorkspaceAction::Move(Direction::Up)).unwrap();
@@ -3182,6 +3326,7 @@ mod tests {
         .unwrap();
         let command = || Action::CreateCommandPane {
             argv: vec![b"claude".to_vec(), b"prime \xff".to_vec()],
+            focus: true,
         };
         let before = workspace.snapshot();
 
@@ -3355,8 +3500,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v15::encode_response(
-            &eon_workspace_protocol::v15::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v16::encode_response(
+            &eon_workspace_protocol::v16::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 

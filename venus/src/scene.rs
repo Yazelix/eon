@@ -3,7 +3,7 @@ use crate::{
     model::{active_popup, presented_panes},
     render::CellMetrics,
 };
-use eon_workspace_protocol::v15::{
+use eon_workspace_protocol::v16::{
     ALT, ClaudeQuotaState, CodexQuotaState, PopupEntry, QuotaWindow, SHIFT, Snapshot,
 };
 use orbit_protocol::{
@@ -2592,7 +2592,7 @@ mod tests {
 
     #[test]
     fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
-        use eon_workspace_protocol::v15::{
+        use eon_workspace_protocol::v16::{
             ALT, Pane, Popup, PopupEntry, PopupGeometry, Shortcut, Tab,
         };
 
@@ -2616,7 +2616,7 @@ mod tests {
                 pending: false,
                 selected_pane: Some("p1".into()),
                 selected_popup: None,
-                columns: vec![eon_workspace_protocol::v15::Column {
+                columns: vec![eon_workspace_protocol::v16::Column {
                     panes: vec![Pane {
                         id: "p1".into(),
                         session: "session-1".into(),
@@ -2683,7 +2683,7 @@ mod tests {
         for index in 2..=3 {
             columns.tabs[0]
                 .columns
-                .push(eon_workspace_protocol::v15::Column {
+                .push(eon_workspace_protocol::v16::Column {
                     panes: vec![Pane {
                         id: format!("p{index}"),
                         session: format!("session-{}", index + 1),
@@ -2910,7 +2910,7 @@ mod tests {
 
     #[test]
     fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
-        use eon_workspace_protocol::v15::{Pane, PopupGeometry, Tab};
+        use eon_workspace_protocol::v16::{Pane, PopupGeometry, Tab};
 
         let snapshot = Snapshot {
             active_tab: "t2".into(),
@@ -2926,7 +2926,7 @@ mod tests {
                     pending: false,
                     selected_pane: Some(format!("p{index}")),
                     selected_popup: None,
-                    columns: vec![eon_workspace_protocol::v15::Column {
+                    columns: vec![eon_workspace_protocol::v16::Column {
                         panes: vec![Pane {
                             id: format!("p{index}"),
                             session: format!("s{index}"),

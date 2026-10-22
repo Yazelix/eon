@@ -510,7 +510,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v15 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v16 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -740,15 +740,23 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     terminal of the addressed supervisor. That check states intent, not
     security: the socket is private to the user, whose processes can already
     run any command and read terminal identities.
+  - `eon pane create --no-focus [--json]`, with or without `-- COMMAND`, adds
+    the same pane in the same place but takes no focus: the tab's selected
+    column and pane stay as they were, a shown popup stays shown, and the new
+    pane joins the end of its column collapsed. In a tab without panes it
+    becomes the tab's only, selected pane, and a shown popup still stays shown.
+    Without `--no-focus`, `pane create` selects the new pane and dismisses the
+    tab's popup, as above.
 - **Important failures:** A caller that names no live terminal of the
   addressed supervisor (ended, closed, from another generation or window,
   empty, or malformed) changes nothing and exits 3 (`unknown-caller`), with no fallback
   to the active tab. In a tab without panes, a popup caller's `pane move`
-  refuses, and so does its `pane create` when dismissing that popup would end
-  the tab's last terminal; both change nothing and exit 1. An unavailable
-  editor changes nothing and exits 1. An empty COMMAND is a usage error
-  (exit 2); a command pane requested without a calling terminal, or whose
-  program is missing or not executable, changes nothing and exits 1.
+  refuses, and so does its `pane create` without `--no-focus` when dismissing
+  that popup would end the tab's last terminal; both change nothing and
+  exit 1. An unavailable editor changes nothing and exits 1. An empty
+  COMMAND is a usage error (exit 2); a command pane requested without a
+  calling terminal, or whose program is missing or not executable, changes
+  nothing and exits 1.
   Malformed, oversized, incompatible, unavailable,
   rejected, timed-out, partially read, or response-lost operations fail within
   the shared bound without reconstructing hidden state or reviving completed
@@ -758,14 +766,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v15 and accepted Orbit management operations.
+- **Consumes:** Current EONW v16 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content, or direct child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v15 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v16 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -857,7 +865,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-ecne.1` (automated and installed tiers); `EON_TAB` and Files Alt+Enter
   `eon-ecne.4` (automated and installed tiers); `eon edit` and Files Enter
   `eon-ecne.2` (automated and installed tiers); `pane create -- COMMAND`
-  `eon-n6ga` (automated and installed tiers).
+  `eon-n6ga` (automated and installed tiers); `pane create --no-focus`
+  `eon-zhjj` (automated and installed tiers).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -886,7 +895,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing`,
     `edit_parser_sends_one_absolute_opaque_file`,
     `command_pane_parser_passes_the_argv_through`,
-    `command_panes_bound_their_argv`).
+    `command_panes_bound_their_argv`,
+    `unfocused_panes_keep_the_selection_and_the_shown_popup`).
     Installed checklist items 3 and 4 (`eon workspace` against the window;
     Project, Git, Agent and Anima popups). Installed `eon-8mnr.2` observation on
     isolated headless Sway: from a terminal in an inactive tab, `eon pane create`
@@ -915,7 +925,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     -- sh -c ...` without a calling terminal exited 1 with `caller-required`;
     as the first pane's `EON_TERMINAL` it added selected pane p2 in that
     column, whose Orbit child ran exactly `sh -c <script>` at the tab
-    directory and showed the script's output.
+    directory and showed the script's output. Installed `eon-zhjj`
+    observation on isolated headless Sway with a stub Agent provider: as the
+    shown Agent popup's `EON_TERMINAL`, `eon pane create --no-focus --json --
+    sh -c ...` exited 0 and added p2 collapsed at the end of p1's column, with
+    p1 still selected and the Agent popup still shown; its Orbit child ran
+    exactly `sh -c <script>` at the tab directory. The same caller's default
+    `eon pane create --json` then selected the new p3 and dismissed the
+    popup.
 
 ## EON-C11 — Runtime generations and presentation
 

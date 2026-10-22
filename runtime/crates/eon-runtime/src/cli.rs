@@ -16,7 +16,7 @@ use super::{
     windows,
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::v15::{
+use eon_workspace_protocol::v16::{
     Action, Direction, Failure, PopupTarget, Response, Side, VERSION, WorkspaceAction, valid_caller,
 };
 use std::{
@@ -598,7 +598,7 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
   {command}tab close TAB [--json]{reset}                      Close the active non-final tab
   {command}tab directory TAB [--json] -- DIRECTORY{reset}     Set the tab's launch directory
   {command}tab move left|right [--json]{reset}                Move the active tab
-  {command}pane create [--json]{reset}                        Add a pane to the active tab
+  {command}pane create [--json] [--no-focus]{reset}           Add a pane to the active tab
   {command}pane create [--json] -- COMMAND...{reset}          Run COMMAND in a new pane
   {command}edit [--json] -- FILE{reset}                       Open FILE in Helix in a new pane
   {command}pane close PANE [--json]{reset}                    Close a pane of the active tab
@@ -618,6 +618,7 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
 
 Closing a window detaches. Stop ends its terminals.
 Inside Eon, tab move and pane commands act on the calling terminal's tab.
+With --no-focus, either pane create keeps the selected pane and any popup.
 Where shown, {command}--json{reset} prints JSON and skips Stop confirmation.
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
 4 Eon unreachable, 130 interrupted.
@@ -787,7 +788,7 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
 fn calling_terminal(action: &Action) -> Result<Option<String>, Failure> {
     if !matches!(
         action,
-        Action::Workspace(WorkspaceAction::CreatePane | WorkspaceAction::Move(_))
+        Action::Workspace(WorkspaceAction::CreatePane { .. } | WorkspaceAction::Move(_))
             | Action::MovePaneSideways(_)
             | Action::ClosePane { .. }
             | Action::Edit { .. }
@@ -820,7 +821,7 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
     if let Some(action) = parse_command_pane_arguments(arguments)? {
         return Ok(action);
     }
-    let mut json = false;
+    let (mut json, mut focus) = (false, true);
     let mut values = Vec::new();
     for argument in arguments {
         let argument = argument
@@ -831,11 +832,18 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
                 return Err(Error::usage(EON_USAGE));
             }
             json = true;
+        } else if argument == "--no-focus" {
+            if !focus {
+                return Err(Error::usage(EON_USAGE));
+            }
+            focus = false;
         } else {
             values.push(argument);
         }
     }
     let action = match values.as_slice() {
+        ["pane", "create"] => Action::Workspace(WorkspaceAction::CreatePane { focus }),
+        _ if !focus => return Err(Error::usage(EON_USAGE)),
         ["workspace"] => Action::Workspace(WorkspaceAction::Inspect),
         ["tab", "create"] => Action::Workspace(WorkspaceAction::CreateTab),
         ["tab", "close", tab] => {
@@ -843,7 +851,6 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
         }
         ["tab", "move", "left"] => Action::Workspace(WorkspaceAction::Move(Direction::Left)),
         ["tab", "move", "right"] => Action::Workspace(WorkspaceAction::Move(Direction::Right)),
-        ["pane", "create"] => Action::Workspace(WorkspaceAction::CreatePane),
         ["pane", "close", pane] => Action::ClosePane {
             pane: (*pane).into(),
         },
@@ -919,25 +926,28 @@ fn parse_edit_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>
     )))
 }
 
-/// `pane create [--json] -- COMMAND [ARGS...]`; every argument after `--`
-/// passes through unchanged as the new pane's argv.
+/// `pane create [--json] [--no-focus] -- COMMAND [ARGS...]`, flags in either
+/// order; every argument after `--` passes through unchanged as the new pane's
+/// argv.
 fn parse_command_pane_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>, Error> {
-    let (json, argv) = match arguments {
-        [command, operation, separator, argv @ ..]
-            if command == "pane" && operation == "create" && separator == "--" =>
-        {
-            (false, argv)
-        }
-        [command, operation, flag, separator, argv @ ..]
-            if command == "pane"
-                && operation == "create"
-                && flag == "--json"
-                && separator == "--" =>
-        {
-            (true, argv)
-        }
-        _ => return Ok(None),
+    let [command, operation, rest @ ..] = arguments else {
+        return Ok(None);
     };
+    if command != "pane" || operation != "create" {
+        return Ok(None);
+    }
+    let Some(separator) = rest.iter().position(|argument| argument == "--") else {
+        return Ok(None);
+    };
+    let (mut json, mut focus) = (false, true);
+    for flag in &rest[..separator] {
+        match flag.to_str() {
+            Some("--json") if !json => json = true,
+            Some("--no-focus") if focus => focus = false,
+            _ => return Ok(None),
+        }
+    }
+    let argv = &rest[separator + 1..];
     if argv.first().is_none_or(|program| program.is_empty()) {
         return Err(Error::usage("eon pane create -- needs a command"));
     }
@@ -947,6 +957,7 @@ fn parse_command_pane_arguments(arguments: &[OsString]) -> Result<Option<(Action
                 .iter()
                 .map(|argument| argument.as_bytes().to_vec())
                 .collect(),
+            focus,
         },
         json,
     )))
@@ -1027,16 +1038,66 @@ mod tests {
             (
                 Action::CreateCommandPane {
                     argv: vec![b"claude".to_vec(), b"prime \xff".to_vec(), b"--".to_vec()],
+                    focus: true,
                 },
                 true,
             )
         );
-        for arguments in [&["pane", "create", "--"][..], &["pane", "create", "--", ""]] {
+        let parse = |arguments: &[&str]| {
             let arguments: Vec<OsString> = arguments.iter().map(Into::into).collect();
-            assert!(
-                parse_control_arguments(&arguments).is_err(),
-                "{arguments:?}"
-            );
+            parse_control_arguments(&arguments)
+        };
+        let unfocused = Action::Workspace(WorkspaceAction::CreatePane { focus: false });
+        for (arguments, expected) in [
+            (
+                &["pane", "create"][..],
+                (
+                    Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
+                    false,
+                ),
+            ),
+            (
+                &["pane", "create", "--no-focus"],
+                (unfocused.clone(), false),
+            ),
+            (
+                &["pane", "create", "--no-focus", "--json"],
+                (unfocused.clone(), true),
+            ),
+            (
+                &["pane", "create", "--json", "--no-focus"],
+                (unfocused.clone(), true),
+            ),
+            (
+                &["pane", "--json", "create"],
+                (
+                    Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
+                    true,
+                ),
+            ),
+            (&["--no-focus", "pane", "create"], (unfocused, false)),
+            (
+                &["pane", "create", "--no-focus", "--", "sh"],
+                (
+                    Action::CreateCommandPane {
+                        argv: vec![b"sh".to_vec()],
+                        focus: false,
+                    },
+                    false,
+                ),
+            ),
+        ] {
+            assert_eq!(parse(arguments).unwrap(), expected, "{arguments:?}");
+        }
+        for arguments in [
+            &["pane", "create", "--"][..],
+            &["pane", "create", "--", ""],
+            &["pane", "create", "--no-focus", "--no-focus"],
+            &["pane", "create", "--json", "--json", "--", "sh"],
+            &["pane", "create", "sh"],
+            &["workspace", "--no-focus"],
+        ] {
+            assert!(parse(arguments).is_err(), "{arguments:?}");
         }
     }
 
