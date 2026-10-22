@@ -731,6 +731,8 @@ pub struct WorkspaceScene {
     active_tab_scroll: f32,
     selected_pane_scroll: f32,
     popup_label: Option<String>,
+    /// The active tab's column count while its selected column is zoomed across every card.
+    zoomed: Option<usize>,
 }
 
 /// Width of each of `count` equal column cards in a window `width` wide, after the card gap
@@ -1130,8 +1132,38 @@ impl WorkspaceScene {
         tab_scroll: f32,
         pane_scroll: f32,
         metadata: impl Fn(&[u8]) -> Option<&'a PaneMetadata>,
+        header_text: impl FnMut(Option<&str>, &str) -> (String, f32),
+        hints: Option<ShortcutHintsScene>,
+    ) -> Self {
+        Self::from_snapshot_with_zoom(
+            snapshot,
+            bar,
+            size,
+            metrics,
+            tab_scroll,
+            pane_scroll,
+            metadata,
+            header_text,
+            hints,
+            false,
+        )
+    }
+
+    /// The scene with `zoom` laying out only the selected column, across every card, when the
+    /// active tab has more than one column and no popup covers it.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_snapshot_with_zoom<'a>(
+        snapshot: &Snapshot,
+        bar: EonBar<'_>,
+        size: PhysicalSize<u32>,
+        metrics: CellMetrics,
+        tab_scroll: f32,
+        pane_scroll: f32,
+        metadata: impl Fn(&[u8]) -> Option<&'a PaneMetadata>,
         mut header_text: impl FnMut(Option<&str>, &str) -> (String, f32),
         hints: Option<ShortcutHintsScene>,
+        zoom: bool,
     ) -> Self {
         let width = size.width as f32;
         let height = size.height as f32;
@@ -1265,14 +1297,19 @@ impl WorkspaceScene {
             .iter()
             .position(|tab| tab.id == snapshot.active_tab)
             .expect("EONW validates the active tab");
+        let zoomed = zoom && active_popup(snapshot).is_none() && active.columns.len() > 1;
         let mut tab_end = inset;
         let mut tabs: Vec<_> = snapshot
             .tabs
             .iter()
             .enumerate()
             .map(|(index, tab)| {
-                let (label, accessible_label) =
+                let (mut label, mut accessible_label) =
                     tab_labels(index, snapshot.tabs.len(), &tab.directory);
+                if zoomed && index == active_tab {
+                    label.push_str(" · zoom");
+                    accessible_label.push_str(", zoomed");
+                }
                 let (label, text_width) = header_text(Some(&tab.id), &label);
                 let tab_width = (text_width.ceil() + metrics.padding * 2.0)
                     .clamp((metrics.font_size * 4.0).min(max_tab_width), max_tab_width);
@@ -1479,6 +1516,7 @@ impl WorkspaceScene {
                         .label
                         .clone()
                 }),
+                zoomed: None,
             };
         }
 
@@ -1501,9 +1539,18 @@ impl WorkspaceScene {
             minimum_terminal(metrics, metrics.height).min(maximum_terminal_height);
         let mut selected_layout = None;
         let mut other_columns = Vec::with_capacity(count - 1);
-        for (index, column) in active.columns.iter().enumerate() {
-            let left = pane_viewport.left + index as f32 * (column_width + column_gap);
-            let column_width = if index + 1 == count {
+        // Zoom lays out the selected column alone, taking every card's width.
+        let slots = if zoomed { 1 } else { count };
+        for (slot, (index, column)) in active
+            .columns
+            .iter()
+            .enumerate()
+            .skip(if zoomed { selected_column } else { 0 })
+            .take(slots)
+            .enumerate()
+        {
+            let left = pane_viewport.left + slot as f32 * (column_width + column_gap);
+            let column_width = if slot + 1 == slots {
                 (pane_viewport.right() - left).max(0.0)
             } else {
                 column_width
@@ -1616,6 +1663,7 @@ impl WorkspaceScene {
             active_tab_scroll,
             selected_pane_scroll,
             popup_label: None,
+            zoomed: zoomed.then_some(count),
         }
     }
 
@@ -1624,9 +1672,21 @@ impl WorkspaceScene {
         self.card_radius
     }
 
-    /// Every column's headers left to right, each flagged when it is the selected column.
+    /// While zoomed, the active tab's column count; `selected_column` is the zoomed one.
+    #[must_use]
+    pub fn zoomed_columns(&self) -> Option<usize> {
+        self.zoomed
+    }
+
+    /// Every laid-out column's headers left to right, each flagged when it is the selected
+    /// column.
     pub fn column_panes(&self) -> impl Iterator<Item = (&[WorkspacePane], bool)> {
-        let selected = (!self.panes.is_empty()).then_some(self.selected_column);
+        let selected = (!self.panes.is_empty()).then(|| {
+            self.other_columns
+                .iter()
+                .filter(|column| column.index < self.selected_column)
+                .count()
+        });
         let mut others = self.other_columns.iter();
         (0..self.other_columns.len() + usize::from(selected.is_some())).map(move |index| {
             if Some(index) == selected {

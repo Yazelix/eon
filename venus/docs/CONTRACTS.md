@@ -511,8 +511,8 @@ re-proved when that platform or feature is next touched.
 - **Status:** Partially proved
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
-  durable topology or a workspace action changes tab, pane, focus, order,
-  lifetime, liveness, endpoint, or metadata.
+  durable topology, a workspace action changes tab, pane, focus, order,
+  lifetime, liveness, endpoint, or metadata, or the user toggles zoom.
 - **Result:**
   - Venus materializes ordered horizontal tabs and lays the active tab's one to
     four columns side by side at equal widths, the last taking the remainder.
@@ -532,11 +532,11 @@ re-proved when that platform or feature is next touched.
     an underline; keyboard focus adds a rounded outline. Pane shell navigation
     does not rename or resize tabs.
   - Every visible live pane endpoint has one bounded read-only metadata observer.
-  - While no popup covers the tab, each column's live expanded pane is an Orbit
-    attachment resized to its own column. Keyboard input, IME, the cursor
-    trail, selection, links, the scrollback pill and status notices belong to
-    the selected column; other columns draw a static cursor over their own
-    terminal background. A left press on another column's terminal sends
+  - While no popup covers the tab, and except as zoom below hides columns,
+    each column's live expanded pane is an Orbit attachment resized to its
+    own column. Keyboard input, IME, the cursor trail, selection, links, the
+    scrollback pill and status notices belong to the selected column; other
+    columns draw a static cursor over their own terminal background. A left press on another column's terminal sends
     `FocusId` for its expanded pane and focuses the terminal without
     forwarding the click; the wheel over another column does nothing.
     Accessibility lists each column's panes left to right and exposes
@@ -547,6 +547,21 @@ re-proved when that platform or feature is next touched.
     than 40 terminal columns wide; with four, Eon's capacity refusal applies.
     Shrinking the window later narrows existing columns without removing
     them.
+  - Alt+Shift+Z toggles window-local zoom of the active tab's selected column
+    once per press and sends no workspace action. While zoomed, Scene lays out
+    only that column, its card spanning the area all of the tab's cards cover
+    at unchanged heights; the other columns' attachments stay open at their last
+    column size and are not resized, drawn, hit-tested or listed to
+    accessibility. An accepted snapshot that changes the active tab, its
+    column count or its selected column ends the zoom, and unzooming sizes
+    every column for the current window again, resizing only where that size
+    changed. The active tab's label gains ` · zoom` and its accessible name
+    `, zoomed`; the pane panel is named `Zoomed column N of M` and lists only
+    the zoomed column's panes. In a one-column tab the key is consumed with a
+    rejected-action notice. While a popup covers the tab it is consumed
+    without effect; the popup hides the zoomed layout and its marker, and both
+    return when the popup hides. A current Eon
+    popup on the key takes it (VEN-C20).
   - Pane frames draw each column's pane stack as its own card: a 1-pixel
     rounded border around the column's headers and expanded terminal. Scene
     owns one card gap (8 logical pixels at default typography), which is also
@@ -689,7 +704,14 @@ re-proved when that platform or feature is next touched.
   (`eon-gv1r`, whose commit is the revision) is covered by
   `popup_outer_chrome_reuses_the_pane_stack_rectangle` at default and small
   typography, the original tiny-window cases in the scene tests above, and
-  isolated captures. Pending
+  isolated captures. Zoom (`eon-zoom-selected-pane-e2pv`, whose commit is the
+  revision) is covered by `zoom_names_the_tab_column_count_and_selected_column`,
+  the zoomed scene in `columns_sit_side_by_side_and_keep_the_selected_column_primary`
+  and `zoomed_tab_names_the_zoom_and_lists_only_its_column`; isolated dogfood of the built package on a private headless Sway
+  (1280x720) zoomed the second of two columns, showed the `· zoom` pill, sent
+  typed input to the zoomed terminal, kept a counter in the hidden column
+  printing (8 before, 24 after), restored both columns on Alt+Shift+Z, and
+  ended the zoom on Alt+H. Pending
   re-proof in this repository: the ignored native long-label header regression and reader
   announcement of a workspace failure notice.
 

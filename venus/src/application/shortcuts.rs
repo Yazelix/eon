@@ -24,6 +24,7 @@ pub(super) fn paste_shortcut(
 pub(super) enum NativeShortcutAction {
     ToggleViewer,
     ToggleHints,
+    ToggleZoom,
     NewWindow,
     FocusTabPosition,
     Focus(WorkspaceDirection),
@@ -211,6 +212,13 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         KeyCode::KeyW,
         session::Modifiers::ALT,
         NativeShortcutAction::ClosePane,
+    ),
+    NativeShortcut::key(
+        "Tabs and panes",
+        "Zoom selected pane or restore columns",
+        KeyCode::KeyZ,
+        ALT_SHIFT,
+        NativeShortcutAction::ToggleZoom,
     ),
     NativeShortcut::key(
         "Tabs and panes",
@@ -514,6 +522,7 @@ pub(super) fn shortcut_hints_for(
             Action::FocusTabPosition => ("tab", 3),
             Action::CloseTab => ("close tab", 3),
             Action::ClosePane => ("close pane", 3),
+            Action::ToggleZoom => ("zoom", 3),
             Action::Move(Left | Right) => ("move tab", 3),
             Action::Move(Up | Down) | Action::MovePaneSideways(_) => ("move pane", 3),
             Action::NewWindow => ("new window", 3),

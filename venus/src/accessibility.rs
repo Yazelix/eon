@@ -412,15 +412,16 @@ impl Snapshot {
             }
 
             let mut panel = Node::new(Role::TabPanel);
-            panel.set_label(
-                workspace
-                    .popup_label()
-                    .unwrap_or(if workspace.panes.is_empty() {
-                        "Empty tab"
-                    } else {
-                        "Active tab panes"
-                    }),
-            );
+            let zoomed = workspace
+                .zoomed_columns()
+                .map(|count| format!("Zoomed column {} of {count}", workspace.selected_column + 1));
+            panel.set_label(workspace.popup_label().or(zoomed.as_deref()).unwrap_or(
+                if workspace.panes.is_empty() {
+                    "Empty tab"
+                } else {
+                    "Active tab panes"
+                },
+            ));
             panel.set_orientation(Orientation::Vertical);
             panel.set_bounds(rect(workspace.pane_viewport));
             panel.set_clips_children();
@@ -2745,6 +2746,49 @@ mod tests {
         assert_eq!(node(&update, pane_2).is_expanded(), Some(true));
         assert_eq!(node(&update, CONTENT).bounds(), Some(terminal_bounds));
         assert_eq!(update.focus, pane_2);
+    }
+
+    #[test]
+    fn zoomed_tab_names_the_zoom_and_lists_only_its_column() {
+        let mut tab = workspace_tab("t1", &["p1"], "p1");
+        tab.selected_pane = Some("p2".into());
+        let mut column = tab.columns[0].clone();
+        column.panes[0].id = "p2".into();
+        column.expanded = "p2".into();
+        tab.columns.push(column);
+        let workspace = WorkspaceScene::from_snapshot_with_zoom(
+            &WorkspaceSnapshot {
+                active_tab: "t1".into(),
+                tabs: vec![tab],
+                geometry: eon_workspace_protocol::v14::PopupGeometry {
+                    side_margin: 8.0,
+                    vertical_margin: 4.0,
+                },
+                entries: Vec::new(),
+                codex_quota: None,
+                claude_quota: None,
+            },
+            EonBar::default(),
+            PhysicalSize::new(800, 600),
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_| None,
+            |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+            None,
+            true,
+        );
+        let mut snapshot = Snapshot::new(PhysicalSize::new(800, 600));
+        snapshot.set_workspace(Some(&workspace));
+        let update = snapshot.tree();
+        let panel = node(&update, PANE_PANEL);
+        assert_eq!(panel.label(), Some("Zoomed column 2 of 2"));
+        assert_eq!(panel.children(), &[snapshot.pane_ids["p2"], CONTENT]);
+        assert!(!snapshot.pane_ids.contains_key("p1"));
+        assert_eq!(
+            node(&update, snapshot.tab_ids["t1"]).label(),
+            Some("Tab 1 of 1  /tmp/t1, zoomed")
+        );
     }
 
     #[test]

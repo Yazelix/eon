@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Alt+Shift+Z zooms the selected pane: its column fills the tab while the
+  other columns' terminals keep running out of sight, and the tab's pill gains
+  `· zoom`. Pressing it again restores the columns as they were; selecting
+  another column or tab, or adding or removing a column, also ends the zoom.
+  Shortcut help lists it, as do the bottom hints when there is room. Alt+Shift+Z no longer reaches
+  terminal programs in a full Eon window; a popup configured on that key takes
+  it in place of zoom.
+
 - Ctrl+Alt+M creates a column, in place of Alt+Shift+M, which now reaches
   the terminal program.
 

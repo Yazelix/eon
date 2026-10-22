@@ -360,16 +360,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Consumer:** One local Eon workspace user.
 - **Trigger:** Launch, create or close a tab, create or close a pane, create a
   column, traverse focus, reorder the active tab or selected pane, move the
-  selected pane into a neighbouring column, receive
+  selected pane into a neighbouring column, zoom the selected pane, receive
   terminal exit, or recover accepted same-boot runs.
 - **Result:**
   - A workspace contains horizontal tabs. Each established tab with panes
     holds an ordered row of one to four columns (pending and popup-only tabs
     hold none); each column is a vertical accordion of panes with exactly
     one expanded pane. Each pane views an independent persistent terminal.
-    Every column's expanded pane is visible at once; exactly one of them is the
-    tab's selected pane and receives keyboard input. A one-column tab behaves
-    as a single accordion.
+    Unless the tab is zoomed, every column's expanded pane is visible at once;
+    exactly one of them is the tab's selected pane and receives keyboard
+    input. A one-column tab behaves as a single accordion.
   - Tabs use stable `tN` identities. Each tab header shows its number plus the
     directory leaf or `/` derived from Eon's authoritative launch directory;
     actions retain `tN`, and accessibility includes full launch-path context. Venus
@@ -429,6 +429,20 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Ctrl+Alt+M to it and, in a tab with one to three columns, refuses it with
     a notice when a column would get fewer than 40 terminal columns. Alt+M adds
     a pane to the selected column.
+  - Zooming shows the selected pane's column alone across the area all of the
+    tab's cards cover, its headers and terminal at full width; the other columns'
+    terminals keep running, hidden. Venus maps Alt+Shift+Z to it as transient
+    window state that no workspace action, EONW field or attachment carries.
+    Zoom ends with any change of the active tab, its column count or its
+    selected column, so Alt+H/L unzooms and then moves, while pane traversal,
+    Alt+M and moves within the zoomed column keep it. Toggling again restores
+    the same columns, widths and selection at the current window size. A
+    one-column tab refuses
+    it with a notice; while a popup or picker covers the tab it does nothing,
+    and a popup over a zoomed tab keeps its usual geometry. The active tab's
+    pill and accessible name mark the zoom while it shows, not while a popup
+    covers it. Like other fixed bindings, a popup configured on the key takes
+    it. Venus owns zoom state, geometry, rendering, input and accessibility.
   - Moving the tab left/right swaps the active tab with exactly one adjacent
     tab; moving up/down swaps the selected pane with exactly one adjacent pane
     in the selected column. Moving the selected pane sideways places it in the
@@ -585,6 +599,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   the 40-column notice for a third column, refused a move under the Git popup
   with the rejected-action notice, and moved a tab left and back with
   Ctrl+Alt+Shift+H/L.
+  Zoom (`eon-zoom-selected-pane-e2pv`, whose commit is the revision): Venus
+  `zoom_names_the_tab_column_count_and_selected_column`, the zoomed scene in
+  `columns_sit_side_by_side_and_keep_the_selected_column_primary` and
+  `zoomed_tab_names_the_zoom_and_lists_only_its_column`; isolated dogfood of the built package on a private headless Sway
+  (1280x720) zoomed the second of two columns, showed the `· zoom` pill, sent
+  typed input to the zoomed terminal, kept a counter in the hidden column
+  printing (8 before, 24 after), restored both columns on Alt+Shift+Z, and
+  ended the zoom on Alt+H.
   Installed AT-SPI labels and broader reader use remain open. These checks do not establish uninterrupted picker rendering,
   fractional-scale, wider compositor or non-systemd coverage.
 

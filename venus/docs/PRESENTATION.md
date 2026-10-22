@@ -38,7 +38,8 @@ Selection, hover, and keyboard focus have distinct fills or outlines.
 Visible headers pair Eon's opaque pane
 identity with Orbit's working directory. Home displays `~`, and its descendants
 use `~/`; without `HOME`, paths stay absolute. Every column's expanded pane
-presents live; only the selected pane receives input. Ctrl+Alt+M adds
+presents live, unless Alt+Shift+Z zooms the selected column across the tab;
+only the selected pane receives input. Ctrl+Alt+M adds
 another column unless one would get fewer than 40 terminal columns.
 
 A fresh workspace or tab can begin with a Project popup and no pane. Tool popups
@@ -76,8 +77,9 @@ Each Eon workspace pane references an independent Orbit Session. Venus keeps
 the EONW connection for workspace state
 and actions, one presentation connection to the selected popup or to each
 column's expanded pane, and one read-only
-metadata observer for each visible live pane. Hidden and offline Sessions have no
-Venus observer and remain alive independently.
+metadata observer for each visible live pane. Sessions in hidden tabs and offline
+Sessions have no Venus observer and remain alive independently; the columns a
+zoom hides keep their observers and connections.
 
 Terminal accessibility text and selection come from the same accepted Scene.
 Atomic units retain their terminal columns, and AccessKit projects their

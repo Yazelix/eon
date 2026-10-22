@@ -493,6 +493,7 @@ struct Application {
     shortcut_viewer: ShortcutViewerState,
     hints_visible: bool,
     hints: Option<ShortcutHintsScene>,
+    zoom: Option<ZoomTarget>,
     tab_texts: HashMap<String, (String, f32)>,
     quota_widths: HashMap<String, f32>,
     tab_scroll: f32,
@@ -572,6 +573,7 @@ impl Application {
             shortcut_viewer: ShortcutViewerState::default(),
             hints_visible: true,
             hints: None,
+            zoom: None,
             tab_texts: HashMap::new(),
             quota_widths: HashMap::new(),
             tab_scroll: 0.0,
@@ -797,7 +799,7 @@ impl Application {
     fn workspace_scene(&self) -> Option<WorkspaceScene> {
         let state = self.window.as_ref()?;
         self.workspace_model.snapshot().map(|snapshot| {
-            WorkspaceScene::from_snapshot_with_metadata(
+            WorkspaceScene::from_snapshot_with_zoom(
                 snapshot,
                 EonBar {
                     items: &self.bar_items,
@@ -822,8 +824,14 @@ impl Application {
                     )
                 },
                 self.hints.clone(),
+                self.zoomed(),
             )
         })
+    }
+
+    /// Whether the zoom still names the active tab, its column count and its selected column.
+    fn zoomed(&self) -> bool {
+        self.zoom.is_some() && self.workspace_model.snapshot().and_then(zoom_target) == self.zoom
     }
 
     fn popup_entries(&self) -> &[PopupEntry] {
@@ -1013,6 +1021,7 @@ impl Application {
         tab_scroll: f32,
         pane_scroll: f32,
     ) -> Option<WorkspaceScene> {
+        let zoom = self.zoomed();
         let state = self.window.as_mut()?;
         let snapshot = self.workspace_model.snapshot()?;
         self.hints = self.hints_visible.then(|| {
@@ -1026,7 +1035,7 @@ impl Application {
         });
         self.tab_texts.clear();
         self.quota_widths.clear();
-        Some(WorkspaceScene::from_snapshot_with_metadata(
+        Some(WorkspaceScene::from_snapshot_with_zoom(
             snapshot,
             EonBar {
                 items: &self.bar_items,
@@ -1054,6 +1063,7 @@ impl Application {
                 fitted
             },
             self.hints.clone(),
+            zoom,
         ))
     }
 
@@ -1100,6 +1110,38 @@ impl Application {
         self.cancel_terminal_scroll();
         self.cancel_pointer_sequence();
         self.hints_visible = !self.hints_visible;
+        self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
+        self.presentation.invalidate();
+        self.send_resize();
+        self.refresh_client_view();
+    }
+
+    /// Zoom the active tab's selected column across the tab, or restore its columns. Other
+    /// columns keep their attachments at their column size while hidden.
+    fn toggle_zoom(&mut self) {
+        let Some(snapshot) = self.workspace_model.snapshot() else {
+            return;
+        };
+        let has_columns = snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == snapshot.active_tab)
+            .is_some_and(|tab| !tab.columns.is_empty());
+        if active_popup(snapshot).is_some() || !has_columns {
+            return;
+        }
+        let Some(target) = zoom_target(snapshot) else {
+            if self
+                .workspace_model
+                .reject_action("Nothing to zoom: this tab has one column.")
+            {
+                self.refresh_client_view();
+            }
+            return;
+        };
+        self.zoom = (!self.zoomed()).then_some(target);
+        self.cancel_terminal_scroll();
+        self.cancel_pointer_sequence();
         self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
         self.presentation.invalidate();
         self.send_resize();
@@ -1440,6 +1482,10 @@ impl Application {
                 (self.workspace_model.mark_unavailable(detail), false)
             }
         };
+        // Any change of the active tab, its column count or its selected column ends zoom.
+        if self.zoom.is_some() && !self.zoomed() {
+            self.zoom = None;
+        }
         if self.window.is_none() || self.initial_scale_pending {
             if snapshot_changed {
                 self.reveal_workspace_selection();
@@ -1668,6 +1714,8 @@ impl Application {
             fixed.is_some_and(|shortcut| shortcut.action == NativeShortcutAction::NewWindow);
         let toggles_hints =
             fixed.is_some_and(|shortcut| shortcut.action == NativeShortcutAction::ToggleHints);
+        let toggles_zoom =
+            fixed.is_some_and(|shortcut| shortcut.action == NativeShortcutAction::ToggleZoom);
         // Alt+W stays an Eon chord even when the active tab has no pane to close.
         let closes_pane =
             fixed.is_some_and(|shortcut| shortcut.action == NativeShortcutAction::ClosePane);
@@ -1716,6 +1764,7 @@ impl Application {
             event.repeat,
             opens_window
                 || toggles_hints
+                || toggles_zoom
                 || cycles_focus
                 || returns_to_terminal
                 || tab_index.is_some()
@@ -1727,6 +1776,8 @@ impl Application {
                     self.open_new_window();
                 } else if toggles_hints && !event.repeat {
                     self.toggle_hints();
+                } else if toggles_zoom && !event.repeat {
+                    self.toggle_zoom();
                 } else if cycles_focus && !event.repeat {
                     self.set_workspace_focus(match focus {
                         WorkspaceFocus::Terminal => WorkspaceFocus::Tabs,
@@ -3691,6 +3742,23 @@ fn retry_is_allowed(
     !workspace || selected.is_some_and(|(endpoint, live)| live && active == Some(endpoint))
 }
 
+/// The active tab, its column count and its selected column: what a zoom names. A tab with
+/// fewer than two columns has nothing to zoom.
+type ZoomTarget = (String, usize, usize);
+
+fn zoom_target(snapshot: &eon_workspace_protocol::v14::Snapshot) -> Option<ZoomTarget> {
+    let tab = snapshot
+        .tabs
+        .iter()
+        .find(|tab| tab.id == snapshot.active_tab)?;
+    let selected = tab.selected_pane.as_ref()?;
+    let column = tab
+        .columns
+        .iter()
+        .position(|column| column.expanded == *selected)?;
+    (tab.columns.len() > 1).then(|| (tab.id.clone(), tab.columns.len(), column))
+}
+
 /// Live panes of the active tab, except endpoints whose presentation attachment is not
 /// established; none while a popup covers the tab.
 fn visible_metadata_endpoints(
@@ -4244,6 +4312,74 @@ mod tests {
             endpoint: b"/tmp/popup.sock".to_vec(),
         }];
         snapshot.tabs[0].selected_popup = Some("u1".into());
+    }
+
+    #[test]
+    fn zoom_names_the_tab_column_count_and_selected_column() {
+        let pane = |id: &str| Pane {
+            id: id.into(),
+            session: format!("session-{id}"),
+            endpoint: id.as_bytes().to_vec(),
+            live: true,
+        };
+        let column = |panes: &[&str]| eon_workspace_protocol::v14::Column {
+            panes: panes.iter().map(|id| pane(id)).collect(),
+            expanded: panes[0].into(),
+        };
+        let tab = |id: &str, selected: &str, columns| Tab {
+            pending: false,
+            selected_popup: None,
+            popups: Vec::new(),
+            id: id.into(),
+            directory: b"/tmp/eon".to_vec(),
+            selected_pane: Some(selected.into()),
+            columns,
+        };
+        let snapshot = |active: &str, tabs| Snapshot {
+            active_tab: active.into(),
+            tabs,
+            geometry: eon_workspace_protocol::v14::PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            codex_quota: None,
+            claude_quota: None,
+        };
+        let two = |selected| {
+            snapshot(
+                "t1",
+                vec![
+                    tab("t1", selected, vec![column(&["p1"]), column(&["p2"])]),
+                    tab("t2", "p9", vec![column(&["p8"]), column(&["p9"])]),
+                ],
+            )
+        };
+        let zoom = zoom_target(&two("p2"));
+        assert_eq!(zoom, Some(("t1".into(), 2, 1)));
+        // A new pane in the zoomed column, or a popup over it, keeps the zoom.
+        let mut grown = two("p2");
+        grown.tabs[0].columns[1].panes.push(pane("p3"));
+        assert_eq!(zoom_target(&grown), zoom);
+        let mut covered = two("p2");
+        covered.tabs[0].selected_popup = Some("u1".into());
+        assert_eq!(zoom_target(&covered), zoom);
+        // Another selected column, column count or active tab ends it.
+        assert_ne!(zoom_target(&two("p1")), zoom);
+        let mut wider = two("p2");
+        wider.tabs[0].columns.push(column(&["p4"]));
+        assert_ne!(zoom_target(&wider), zoom);
+        let mut other_tab = two("p2");
+        other_tab.active_tab = "t2".into();
+        assert_ne!(zoom_target(&other_tab), zoom);
+        // One column has nothing to zoom.
+        assert_eq!(
+            zoom_target(&snapshot(
+                "t1",
+                vec![tab("t1", "p1", vec![column(&["p1"])])]
+            )),
+            None
+        );
     }
 
     #[test]

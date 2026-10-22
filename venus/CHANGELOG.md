@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C8: Alt+Shift+Z toggles window-local zoom of the selected column across
+  the tab's cards; hidden columns stay attached at their column size, and a
+  change of the active tab, column count or selected column ends the zoom
+  (`eon-zoom-selected-pane-e2pv`).
 - VEN-C8: Ctrl+Alt+M sends `CreateColumn`, with the same 40-terminal-column
   refusal, in place of Alt+Shift+M (`eon-0ka6`).
 - VEN-C26: Claude gets one read-only chip per reported window, five-hour then

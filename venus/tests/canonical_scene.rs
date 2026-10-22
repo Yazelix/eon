@@ -9,8 +9,8 @@ use orbit_protocol::{
 };
 use winit::dpi::PhysicalSize;
 use yazelix_venus::{
-    CellMetrics, ClipboardEffect, ConnectionState, LocalNoticeSource, ModelError, ScenePreview,
-    SessionModel, WorkspaceHit, WorkspaceScene,
+    CellMetrics, ClipboardEffect, ConnectionState, EonBar, LocalNoticeSource, ModelError,
+    ScenePreview, SessionModel, WorkspaceHit, WorkspaceScene,
 };
 
 #[test]
@@ -1206,4 +1206,69 @@ fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
             .chain(narrow.other_columns.iter().map(|column| column.terminal))
             .all(|terminal| terminal.width >= 34.0)
     );
+
+    // Zoom lays out only the selected column, across every card's width at the same height;
+    // the hidden columns take no space, hits or headers.
+    let zoomed = |snapshot: &Snapshot| {
+        WorkspaceScene::from_snapshot_with_zoom(
+            snapshot,
+            EonBar::default(),
+            size,
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_| None,
+            |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+            None,
+            true,
+        )
+    };
+    let zoom = zoomed(&snapshot);
+    assert_eq!(zoom.zoomed_columns(), Some(3));
+    assert_eq!(zoom.selected_column, 1);
+    assert!(zoom.other_columns.is_empty());
+    assert_eq!(zoom.pane_viewport, scene.pane_viewport);
+    assert_eq!(zoom.terminal.left, 8.0);
+    assert_eq!(zoom.terminal.right(), size.width as f32 - 8.0);
+    assert_eq!(
+        (zoom.terminal.top, zoom.terminal.height),
+        (scene.terminal.top, scene.terminal.height)
+    );
+    assert_eq!(
+        zoom.column_panes()
+            .map(|(panes, selected)| (panes.len(), panes[0].id.as_str(), selected))
+            .collect::<Vec<_>>(),
+        [(1, "p3", true)]
+    );
+    assert_eq!(zoom.panes[0].rect.width, zoom.terminal.width);
+    assert!(matches!(
+        zoom.hit_test(inside.left + 5.0, inside.top + 5.0),
+        Some(WorkspaceHit::Terminal)
+    ));
+    assert!(zoom.tabs[0].rect.width > scene.tabs[0].rect.width);
+
+    // One column or a popup leaves nothing to zoom.
+    let mut single = snapshot.clone();
+    single.tabs[0].columns.drain(..1);
+    single.tabs[0].columns.pop();
+    assert_eq!(zoomed(&single).zoomed_columns(), None);
+    let mut popup = snapshot.clone();
+    popup.entries.push(eon_workspace_protocol::v14::PopupEntry {
+        id: "git".into(),
+        label: "Git".into(),
+        shortcut: eon_workspace_protocol::v14::Shortcut {
+            modifiers: eon_workspace_protocol::v14::ALT,
+            key: "KeyG".into(),
+        },
+    });
+    popup.tabs[0]
+        .popups
+        .push(eon_workspace_protocol::v14::Popup {
+            id: "u1".into(),
+            entry: "git".into(),
+            session: "session-git".into(),
+            endpoint: b"/run/eon/git.sock".to_vec(),
+        });
+    popup.tabs[0].selected_popup = Some("u1".into());
+    assert_eq!(zoomed(&popup).zoomed_columns(), None);
 }
