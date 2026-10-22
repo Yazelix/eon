@@ -58,8 +58,7 @@ impl CpuUse {
         }
         let percent = (u128::from(busy) * 200 + u128::from(total)) / (u128::from(total) * 2);
         Some(Self {
-            // Padded to the width of `CPU 100%`, so the header never shifts as the value changes.
-            label: format!("CPU {:>4}", format!("{percent}%")),
+            label: format!("CPU {percent}%"),
             description: format!("CPU use {percent}%, all cores, over the last 2 seconds"),
         })
     }
@@ -102,8 +101,7 @@ impl RamUse {
         }
         let percent = (u128::from(used) * 200 + u128::from(total)) / (u128::from(total) * 2);
         Some(Self {
-            // Padded to the width of `RAM 100%`, so the header never shifts as the value changes.
-            label: format!("RAM {:>4}", format!("{percent}%")),
+            label: format!("RAM {percent}%"),
             description: format!(
                 "RAM use {percent}% of {:.1} GiB",
                 total as f64 / f64::from(1 << 20)
@@ -127,7 +125,7 @@ mod tests {
         // 30 busy (10 of it steal) and 70 idle (20 of it iowait); guest moves but is not counted.
         let later = times("cpu  115 0 5 850 120 0 0 10 90 90\n");
         let shown = CpuUse::between(earlier, later).unwrap();
-        assert_eq!(shown.label, "CPU  30%");
+        assert_eq!(shown.label, "CPU 30%");
         assert_eq!(
             shown.description,
             "CPU use 30%, all cores, over the last 2 seconds"
@@ -135,9 +133,9 @@ mod tests {
         // Whole percentages round to nearest, from 0 to 100.
         let at = |busy, idle| times(&format!("cpu {busy} 0 0 {idle} 0 0 0 0"));
         for (busy, idle, label) in [
-            (0, 3, "CPU   0%"),
-            (1, 199, "CPU   1%"),
-            (2, 1, "CPU  67%"),
+            (0, 3, "CPU 0%"),
+            (1, 199, "CPU 1%"),
+            (2, 1, "CPU 67%"),
             (5, 0, "CPU 100%"),
         ] {
             assert_eq!(
@@ -177,13 +175,13 @@ mod tests {
              MemAvailable:   18677760 kB\nCached:         9000000 kB\n",
         )
         .unwrap();
-        assert_eq!(shown.label, "RAM  43%");
+        assert_eq!(shown.label, "RAM 43%");
         assert_eq!(shown.description, "RAM use 43% of 31.3 GiB");
         // Whole percentages round to nearest, from 0 to 100.
         for (total, available, label) in [
-            (3, 3, "RAM   0%"),
-            (200, 199, "RAM   1%"),
-            (3, 1, "RAM  67%"),
+            (3, 3, "RAM 0%"),
+            (200, 199, "RAM 1%"),
+            (3, 1, "RAM 67%"),
             (3, 0, "RAM 100%"),
         ] {
             let meminfo = format!("MemTotal: {total} kB\nMemAvailable: {available} kB\n");

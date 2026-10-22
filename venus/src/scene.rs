@@ -1285,6 +1285,8 @@ impl WorkspaceScene {
         // then the version label. The readings also need every quota chip at full width.
         let shown = |item| bar.items.contains(&item);
         let reading = |item| !compact && shown(item);
+        // CPU and RAM keep the width of `CPU 100%`, so the header never shifts as they change.
+        let readings = "CPU 100%".len();
         let mut labels = [
             bar.version
                 .filter(|_| shown(BarItem::Version))
@@ -1292,24 +1294,25 @@ impl WorkspaceScene {
                     (
                         format!("EON {version}"),
                         format!("Running Eon version {version}"),
+                        0,
                     )
                 }),
             bar.cpu
                 .filter(|_| reading(BarItem::Cpu))
-                .map(|cpu| (cpu.label.clone(), cpu.description.clone())),
+                .map(|cpu| (cpu.label.clone(), cpu.description.clone(), readings)),
             bar.ram
                 .filter(|_| reading(BarItem::Ram))
-                .map(|ram| (ram.label.clone(), ram.description.clone())),
+                .map(|ram| (ram.label.clone(), ram.description.clone(), readings)),
             bar.clock
                 .filter(|_| reading(BarItem::Clock))
-                .map(|clock| (clock.label.clone(), clock.description.clone())),
+                .map(|clock| (clock.label.clone(), clock.description.clone(), 0)),
         ]
         .map(|label| {
-            label.map(|(label, description)| WorkspaceLabel {
+            label.map(|(label, description, cells)| WorkspaceLabel {
                 rect: SceneRect {
                     // Every label is ASCII (launch validation bounds the version), and
                     // rendering uses terminal cell spacing.
-                    width: label.len() as f32 * metrics.width + metrics.padding * 2.0,
+                    width: label.len().max(cells) as f32 * metrics.width + metrics.padding * 2.0,
                     height: tab_height,
                     ..SceneRect::default()
                 },

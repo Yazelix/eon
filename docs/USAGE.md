@@ -137,8 +137,8 @@ once they are more than an hour old and disappear after 24 hours. Chips yield
 before tabs and controls under width pressure, and unavailable quota leaves the
 bar unchanged.
 See [quota behavior](CONFIGURATION.md#agent-quota).
-After the quota chips, `CPU  12%` shows whole-machine CPU use over the last 2
-seconds and `RAM  43%` shows whole-machine memory in use; hover them for
+After the quota chips, `CPU 12%` shows whole-machine CPU use over the last 2
+seconds and `RAM 43%` shows whole-machine memory in use; hover them for
 details. A 24-hour clock follows and shows local time; hover it for the date
 and UTC offset, and it stays hidden if the local time zone can't be
 determined. The `EON <version>` label sits at the edge, just before `?` and

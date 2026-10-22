@@ -1368,9 +1368,9 @@ mod tests {
                 assert_eq!(scene.quotas.len(), full_quotas.len());
                 assert_eq!(scene.quotas[0].label, full_quotas[0].label);
                 assert_eq!(version.is_some(), scene.version.is_some());
-                assert_eq!(shown_cpu.label, "CPU  12%");
+                assert_eq!(shown_cpu.label, "CPU 12%");
                 if let Some(shown_ram) = &scene.ram {
-                    assert_eq!(shown_ram.label, "RAM  43%");
+                    assert_eq!(shown_ram.label, "RAM 43%");
                 }
                 // The readings follow the quota chips in order, and the version label sits at
                 // the edge before Shortcuts and Close.
@@ -1387,12 +1387,16 @@ mod tests {
                 for (id, label) in &labels {
                     assert_eq!(label.rect.left, left);
                     left = label.rect.right();
-                    if *id != VERSION {
-                        assert_eq!(
-                            label.rect.width,
-                            label.label.len() as f32 * metrics.width + metrics.padding * 2.0
-                        );
-                    }
+                    // CPU and RAM keep the width of `CPU 100%`; the clock fits its text.
+                    let cells = match *id {
+                        CPU | RAM => "CPU 100%".len(),
+                        CLOCK => label.label.len(),
+                        _ => continue,
+                    };
+                    assert_eq!(
+                        label.rect.width,
+                        cells as f32 * metrics.width + metrics.padding * 2.0
+                    );
                 }
                 assert_eq!(left, scene.controls[1].rect.left);
                 assert!(scene.drag_region.width >= metrics.font_size * 4.0);

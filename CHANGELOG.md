@@ -55,8 +55,8 @@ installation, and proven contract changes.
   covers the tab to reorder the panes behind it. Like sideways moves, they
   refuse until you close the popup. Alt+K/J still closes it and selects the
   pane above or below.
-- The Eon Bar shows whole-machine CPU and memory use, such as `CPU  12%` and
-  `RAM  43%`, before the clock, updated every 2 seconds. Hover them for
+- The Eon Bar shows whole-machine CPU and memory use, such as `CPU 12%` and
+  `RAM 43%`, before the clock, updated every 2 seconds. Hover them for
   details. When the window is narrow, RAM hides right after the clock, then
   CPU. The readings and the clock sit on rounded chips like the quota chips,
   and the `EON <version>` label moves to the edge, just before `?` and `×`.

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- VEN-C28: the CPU and RAM labels put one space between name and value
+  (`CPU 12%`) and center it in a chip that keeps the width of `CPU 100%`, in
+  place of padding the value to four cells (`eon-igae.14.4`).
 - VEN-C29: an optional workspace-only `--bar-items` launch input sets the
   order of the Eon Bar's quota chips, CPU and RAM labels, clock and version
   label, and leaves out the items it does not name; Venus does not read or
@@ -20,7 +23,7 @@
   sends (`eon-ecne.2`).
 - Venus consumes EONW v13, whose requests may name a calling terminal; Venus
   sends none, so its actions keep targeting the active tab (`eon-8mnr.2`).
-- VEN-C28, VEN-C27, VEN-C25: a read-only `RAM  43%` label, from
+- VEN-C28, VEN-C27, VEN-C25: a read-only `RAM 43%` label, from
   `/proc/meminfo` on the CPU label's 2-second wake, joins the Eon Bar after
   the CPU label and yields right after the clock. The CPU and RAM labels and
   the clock take the quota chips' rounded fill, and the version label moves

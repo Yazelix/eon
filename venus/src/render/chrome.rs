@@ -681,9 +681,11 @@ impl Renderer {
                 rectangles.push_rounded(visual, visual.height / 2.0, chip);
             }
             let width = (label.rect.width - self.metrics.padding * 2.0).max(0.0);
+            // A label narrower than its chip sits in the middle; every label is ASCII in cells.
+            let slack = (width - label.label.len() as f32 * self.metrics.width).max(0.0);
             self.push_text_clipped(
                 &label.label,
-                label.rect.left + self.metrics.padding,
+                label.rect.left + self.metrics.padding + slack / 2.0,
                 label.rect.top + (label.rect.height - self.metrics.height).max(0.0) / 2.0,
                 width,
                 width,

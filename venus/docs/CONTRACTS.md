@@ -1420,11 +1420,12 @@ re-proved when that platform or feature is next touched.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace on Linux.
 - **Trigger:** A workspace surface is presented, and every 2 seconds after.
-- **Result:** Two read-only labels in terminal monospace, `CPU  12%` then
-  `RAM  43%`, sit in the existing top row, by default (VEN-C29) after the
-  quota chips and before the clock, each on the quota chips' rounded fill and
-  padded to the width of `CPU 100%` with the value right-aligned. The CPU label shows whole-machine
-  CPU use over the last 2 seconds as a whole percentage from `/proc/stat`; it
+- **Result:** Two read-only labels in terminal monospace, `CPU 12%` then
+  `RAM 43%`, sit in the existing top row, by default (VEN-C29) after the
+  quota chips and before the clock, each on the quota chips' rounded fill.
+  Each chip keeps the width of `CPU 100%` whatever the value, with its text
+  centered, so neighbouring items never shift. The CPU label shows
+  whole-machine CPU use over the last 2 seconds as a whole percentage from `/proc/stat`; it
   first appears one interval after the surface opens. The RAM label shows
   whole-machine memory use, MemTotal minus MemAvailable over MemTotal from
   `/proc/meminfo`, as a whole percentage read on the same wake; it appears with
@@ -1447,7 +1448,7 @@ re-proved when that platform or feature is next touched.
   `/proc/meminfo` on Linux.
 - **Boundary:** No EONW or runtime change, configuration, per-core view, swap,
   per-process or GPU memory, history, graph, dependency or platform expansion.
-- **Proof:** `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`
+- **Proof:** `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`, `eon-igae.14.4`
   - **Environment:** Automated and installed.
   - **Evidence:** `cpu_use_counts_iowait_idle_and_guest_once`,
     `cpu_use_rejects_bad_readings_instead_of_showing_zero`,
@@ -1455,7 +1456,8 @@ re-proved when that platform or feature is next touched.
     `ram_use_rejects_bad_readings_instead_of_showing_zero` and
     `readings_yield_after_the_clock_and_have_no_actions` in the Venus suite;
     isolated installed observations recorded in
-    `eon-cpu-widget-eon-bar-acxs` and `eon-igae.3`.
+    `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3` and `eon-igae.14.4`, the last
+    for the one-space label centered in its fixed-width chip.
 
 ## VEN-C29 — Eon Bar item order
 
