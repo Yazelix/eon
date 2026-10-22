@@ -116,17 +116,22 @@ re-proved when that platform or feature is next touched.
   targets the opener accepts are detected, and a target touching any OSC 8 cell
   is not, so the explicit link wins. Each row segment of a wrapped target is one
   target with the full URI. The hovered link is highlighted and its escaped
-  target is shown with Open and Copy actions. Linux uses `Ctrl+click` and
+  target is shown with Open and Copy actions. The highlight and hint are derived
+  from the frame being presented, so a target that stays under a still pointer
+  stays highlighted while output arrives. Linux uses `Ctrl+click` and
   `Ctrl+Shift+C`; macOS uses `Command+click` and `Command+C`. When a current Eon
   popup takes the Copy key under VEN-C20, the hint omits Copy and that key
   invokes the popup; the AccessKit Copy button remains. Opening requires a press
-  and release on the same current presented target. Copy uses the current
-  hovered target unless terminal selection retains precedence. AccessKit exposes
-  each current visible target as an Open link followed by a Copy button, both
-  using the native Click action. Ordinary terminal clicks, input and selection
-  retain their owners.
-- **Failures:** Revision, attachment, geometry, presentation, focus, occlusion,
-  or scroll changes retire link actions. A captured release without Ctrl is
+  and release on the same target: the same URI over the same cells, presented
+  at both; output revisions between them keep the press, and every other change
+  in Failures retires it. Copy uses the current hovered target unless terminal
+  selection retains precedence. AccessKit exposes each current visible target as
+  an Open link followed by a Copy button, both using the native Click action.
+  Ordinary terminal clicks, input and selection retain their owners.
+- **Failures:** Attachment, geometry, presentation, focus, occlusion, or scroll
+  changes retire link actions. An output revision keeps a target that stays
+  over the same cells with the same URI and retires any other; the hovered
+  target is re-derived in the new frame. A captured release without Ctrl is
   consumed without activation. Opening accepts at most 4096 bytes of ASCII
   HTTP/HTTPS URI syntax with a host and without credentials. Copy accepts bounded
   target text without control characters. Unsupported or malformed targets,
@@ -159,6 +164,11 @@ re-proved when that platform or feature is next touched.
     `explicit_links_and_non_uri_cells_bound_plain_text_links` in the Venus
     suite; one isolated installed hover and Ctrl+click observation on headless
     Sway recorded in `eon-nlcy`.
+  - **Steady-under-output evidence (`eon-1u9e`):** the link steps of the
+    ignored `live_output_keeps_application_input_admitted_before_repaint` on a
+    private headless Sway; one isolated installed observation on headless Sway
+    recorded in `eon-1u9e`: hover and hint stay steady while a pane redraws
+    every 50 ms, and a Ctrl+click held across that output dispatches the URI.
   - **Override evidence (`eon-igae.10`):**
     `configured_popups_take_fixed_bindings_except_reserved_keys`; the installed
     observation is pending.

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C5: the link highlight and hint are derived from the frame being
+  presented, so output no longer blinks them while the pointer rests on a
+  link, and a `Ctrl+click` press survives output revisions that keep the same
+  URI over the same cells, in place of every revision retiring both
+  (`eon-1u9e`).
 - Venus consumes EONW v17, whose `Ended` reply answers a close that stopped
   the window's last terminal; Venus exits on it as on control loss
   (`eon-final-tab-close-ends-window-fwnp`).

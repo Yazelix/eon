@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A link under a still pointer stays highlighted, with its Open and Copy
+  hint, while the terminal prints output, for example while an agent streams.
+  `Ctrl+click` on it also opens it during such output, as long as the link
+  stays in place.
+
 - Closing the last tab now quits its window, like closing any other tab
   stops that tab's terminals: Alt+Shift+W, the bar's `×`, Alt+W on the last
   pane, `eon tab close` and `eon pane close` all work on it, where they used

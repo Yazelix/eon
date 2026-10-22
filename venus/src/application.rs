@@ -129,6 +129,8 @@ struct PresentationIdentity {
 #[derive(Debug, Default)]
 struct PresentationState {
     generation: u64,
+    /// Counts invalidations; output revisions keep it, so a link target survives them.
+    epoch: u64,
     presented: Option<PresentationIdentity>,
 }
 
@@ -149,6 +151,10 @@ impl PresentationState {
 
     fn invalidate(&mut self) {
         self.content_changed();
+        self.epoch = self
+            .epoch
+            .checked_add(1)
+            .expect("presentation epoch exhausted");
         self.unpublish();
     }
 
@@ -213,19 +219,41 @@ fn link_copy_shortcut(
         && current
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A link target: its URI over the same cells within one presentation epoch.
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct LinkFocus {
-    identity: PresentationIdentity,
+    epoch: u64,
     row: u16,
     column: u16,
+    columns: u16,
+    uri: String,
+}
+
+impl LinkFocus {
+    fn find<'a>(&self, scene: &'a Scene, epoch: u64) -> Option<Hyperlink<'a>> {
+        scene.hyperlink_at(self.row, self.column).filter(|link| {
+            epoch == self.epoch
+                && (link.row, link.column, link.columns) == (self.row, self.column, self.columns)
+                && link.uri == self.uri
+        })
+    }
+}
+
+/// A captured link press; once its target leaves the scene it only consumes the release.
+#[derive(Clone)]
+enum LinkPress {
+    Live(LinkFocus),
+    Retired,
 }
 
 #[derive(Default)]
 struct LinkInteraction {
     focus: Option<LinkFocus>,
+    /// The target highlighted in the last presented frame.
+    shown: Option<LinkFocus>,
     unshifted: bool,
     pointer_inside: bool,
-    pressed: Option<LinkFocus>,
+    pressed: Option<LinkPress>,
     notice: Option<String>,
 }
 
@@ -2151,12 +2179,40 @@ impl Application {
             && unshifted
     }
 
+    /// The latest scene with links on screen or due in the next frame, which output may replace.
+    fn visible_link_scene(&self, unshifted: bool) -> Option<&Scene> {
+        let workspace = self.workspace_scene();
+        (self.link_surface_available(unshifted)
+            && self
+                .presentation_candidate(workspace.as_ref())
+                .revision
+                .is_some())
+        .then(|| self.terminal.model.scene())
+        .flatten()
+    }
+
+    fn visible_link(&self, unshifted: bool) -> Option<Hyperlink<'_>> {
+        let scene = self.visible_link_scene(unshifted)?;
+        self.links
+            .focus
+            .as_ref()?
+            .find(scene, self.presentation.epoch)
+    }
+
     fn focused_link(&self) -> Option<Hyperlink<'_>> {
-        let focus = self.links.focus?;
-        let (scene, identity) = self.link_scene()?;
-        (focus.identity == identity)
-            .then(|| scene.hyperlink_at(focus.row, focus.column))
-            .flatten()
+        self.visible_link(self.links.unshifted)
+    }
+
+    /// Whether a target the latest scene holds is on screen: that scene is presented, or the
+    /// presented frame highlighted the target.
+    fn presented(&self, target: &LinkFocus) -> bool {
+        self.link_scene().is_some() || self.links.shown.as_ref() == Some(target)
+    }
+
+    /// The focused target, while presented and still in the latest scene.
+    fn current_link(&self) -> Option<Hyperlink<'_>> {
+        let link = self.focused_link()?;
+        self.presented(self.links.focus.as_ref()?).then_some(link)
     }
 
     fn link_viewport(&self) -> Option<(SceneRect, SceneRect)> {
@@ -2173,11 +2229,11 @@ impl Application {
         }
     }
 
-    fn pointer_link(&self) -> Option<LinkFocus> {
+    fn pointer_link(&self, unshifted: bool) -> Option<LinkFocus> {
         if !self.links.pointer_inside || self.input.pointer_busy() {
             return None;
         }
-        let (scene, identity) = self.link_scene()?;
+        let scene = self.visible_link_scene(unshifted)?;
         let state = self.window.as_ref()?;
         let workspace = self.workspace_scene();
         let (origin, visible) = self.link_viewport()?;
@@ -2187,7 +2243,7 @@ impl Application {
             return None;
         }
         let metrics = state.renderer.metrics();
-        if !self.status().is_empty()
+        if !self.status_for(unshifted).is_empty()
             && state
                 .renderer
                 .notice_rect(workspace.as_ref())
@@ -2206,29 +2262,39 @@ impl Application {
         }
         let link = scene.hyperlink_at(row as u16, column as u16)?;
         Some(LinkFocus {
-            identity,
+            epoch: self.presentation.epoch,
             row: link.row,
             column: link.column,
+            columns: link.columns,
+            uri: link.uri.into_owned(),
         })
     }
 
-    fn inspect_pointer_link(&mut self) {
-        if self.links.pressed.is_some() {
-            return;
+    /// Re-derives the hovered target from the visible scene, returning whether it changed.
+    fn hover_link(&mut self, unshifted: bool) -> bool {
+        if matches!(self.links.pressed, Some(LinkPress::Live(_))) {
+            return false;
         }
-        let focus = self.pointer_link();
-        if self.links.focus != focus {
-            self.links.focus = focus;
-            self.links.notice = None;
+        let focus = self.pointer_link(unshifted);
+        if self.links.focus == focus {
+            return false;
+        }
+        self.links.focus = focus;
+        self.links.notice = None;
+        true
+    }
+
+    fn inspect_pointer_link(&mut self) {
+        if self.hover_link(self.links.unshifted) {
             self.refresh_client_view();
         }
     }
 
-    fn link_status(&self) -> Option<String> {
+    fn link_status(&self, unshifted: bool) -> Option<String> {
         if let Some(notice) = &self.links.notice {
             return Some(notice.clone());
         }
-        let link = self.focused_link()?;
+        let link = self.visible_link(unshifted)?;
         if link.uri.len() > MAX_LINK_BYTES {
             return Some(format!(
                 "Link target exceeds {MAX_LINK_BYTES} bytes; opening and copying are disabled."
@@ -2244,7 +2310,7 @@ impl Application {
             .model
             .scene()
             .is_some_and(Scene::has_selected_content);
-        let current = self.focused_link().is_some();
+        let current = self.current_link().is_some();
         let recognized =
             link_copy_shortcut(key, modifiers, self.popup_entries(), selected, current);
         if !self.input.consumes_shortcut(key, state, repeat, recognized) {
@@ -2258,7 +2324,7 @@ impl Application {
     }
 
     fn activate_link(&mut self, copy: bool) {
-        let Some(uri) = self.focused_link().map(|link| link.uri.into_owned()) else {
+        let Some(uri) = self.current_link().map(|link| link.uri.into_owned()) else {
             return;
         };
         self.activate_uri(uri, copy);
@@ -2303,12 +2369,14 @@ impl Application {
         if state == ElementState::Released
             && let Some(pressed) = self.links.pressed.take()
         {
-            let released = self.pointer_link();
-            if released == Some(pressed) && opens_link {
-                self.links.focus = Some(pressed);
+            let released = self.pointer_link(self.links.unshifted);
+            let activate = opens_link
+                && matches!(&pressed, LinkPress::Live(target)
+                    if released.as_ref() == Some(target) && self.presented(target));
+            self.links.focus = released;
+            if activate {
                 self.activate_link(false);
             } else {
-                self.links.focus = released;
                 self.links.notice = None;
             }
             self.refresh_client_view();
@@ -2316,9 +2384,13 @@ impl Application {
         }
         if state == ElementState::Pressed {
             self.links.pressed = None;
-            if opens_link && let Some(focus) = self.pointer_link() {
-                self.links.focus = Some(focus);
-                self.links.pressed = Some(focus);
+            if opens_link
+                && let Some(focus) = self
+                    .pointer_link(self.links.unshifted)
+                    .filter(|focus| self.presented(focus))
+            {
+                self.links.focus = Some(focus.clone());
+                self.links.pressed = Some(LinkPress::Live(focus));
                 self.refresh_client_view();
                 return true;
             }
@@ -2332,6 +2404,14 @@ impl Application {
         }
         if self.links.focus.is_some() && self.focused_link().is_none() {
             self.links.focus = None;
+        }
+        if let Some(LinkPress::Live(target)) = &self.links.pressed
+            && self
+                .visible_link_scene(self.links.unshifted)
+                .and_then(|scene| target.find(scene, self.presentation.epoch))
+                .is_none()
+        {
+            self.links.pressed = Some(LinkPress::Retired);
         }
         let link_generation = self.link_scene().map(|(_, identity)| identity.generation);
         let status = self.status();
@@ -2634,6 +2714,10 @@ impl Application {
     }
 
     fn status(&self) -> String {
+        self.status_for(self.links.unshifted)
+    }
+
+    fn status_for(&self, unshifted: bool) -> String {
         if let Some(notice) = &self.render_notice {
             return notice.clone();
         }
@@ -2650,7 +2734,7 @@ impl Application {
         ) {
             return notice.to_owned();
         }
-        if links_available && let Some(status) = self.link_status() {
+        if links_available && let Some(status) = self.link_status(unshifted) {
             return status;
         }
         if self.initial_scale_pending {
@@ -2705,11 +2789,21 @@ impl Application {
         {
             self.reset_cursor_animation();
         }
+        let scroll_offset = self.window.as_ref().map_or(0.0, |state| {
+            self.terminal.terminal_scroll.offset(
+                self.terminal.model.scroll_preview(),
+                f64::from(state.renderer.metrics().height),
+            )
+        });
+        let unshifted = scroll_offset == 0.0;
+        // The frame drawn now carries its own hover, so output does not blink the highlight.
+        let hover_changed = self.hover_link(unshifted);
+        let shown = self.visible_link(unshifted).and(self.links.focus.clone());
         let owned_status;
         let status = if let Some(notice) = self.render_notice.as_deref() {
             notice
         } else {
-            owned_status = self.status();
+            owned_status = self.status_for(unshifted);
             owned_status.as_str()
         };
         let preedit = self.input.preedit();
@@ -2717,19 +2811,13 @@ impl Application {
         let shortcut_viewer = self.shortcut_viewer_scene();
         let workspace_focus = self.workspace_focus;
         let candidate = self.presentation_candidate(workspace.as_ref());
-        let scroll_offset = self.window.as_ref().map_or(0.0, |state| {
-            self.terminal.terminal_scroll.offset(
-                self.terminal.model.scroll_preview(),
-                f64::from(state.renderer.metrics().height),
-            )
-        });
         let kinetic_active = self.terminal.terminal_scroll.velocity != 0.0;
         let link_generation = (candidate.revision.is_some()
-            && self.link_surface_available(scroll_offset == 0.0))
+            && self.link_surface_available(unshifted))
         .then_some(candidate.generation);
         let scrollback_label = self.visible_scrollback_label(workspace.as_ref());
         let prior_scrollback_target = self.scrollback_rect(workspace.as_ref());
-        let highlighted_link = self.focused_link().map(|link| (link.row, link.column));
+        let highlighted_link = shown.as_ref().map(|link| (link.row, link.column));
         let hovered_hit = (shortcut_viewer.is_none()
             && self.window_focused
             && self.links.pointer_inside
@@ -2805,7 +2893,8 @@ impl Application {
                         self.terminal.pending_viewport,
                     );
                 }
-                self.links.unshifted = scroll_offset == 0.0;
+                self.links.unshifted = unshifted;
+                self.links.shown = shown;
                 state.accessibility.present_links(
                     &mut state.adapter,
                     self.terminal.model.scene(),
@@ -2857,7 +2946,7 @@ impl Application {
                 }
             }
         }
-        if refresh {
+        if refresh || hover_changed {
             self.refresh_client_view();
         }
         if presented {
@@ -4963,34 +5052,97 @@ mod tests {
                     f64::from(workspace.terminal.left + metrics.padding + metrics.width * 1.5),
                     f64::from(workspace.terminal.top + metrics.padding + metrics.height * 0.5),
                 );
-                assert!(app.pointer_link().is_none(), "unpresented target is inert");
+                app.input
+                    .set_modifiers(winit::keyboard::ModifiersState::CONTROL);
+                app.inspect_pointer_link();
+                assert!(
+                    app.focused_link().is_some() && app.current_link().is_none(),
+                    "unpresented target is inert"
+                );
+                assert!(
+                    !app.handle_link_button(ElementState::Pressed, MouseButton::Left),
+                    "an unpresented target cannot capture a press"
+                );
+                let highlighted = |app: &Application| {
+                    app.links.shown.as_ref().map(|link| (link.row, link.column))
+                };
                 app.render();
                 assert_eq!(app.focused_link().unwrap().uri, "https://example.com/6");
+                assert_eq!(highlighted(app), Some((0, 0)));
+                // Output that keeps the target over the same cells keeps its
+                // hover, hint and captured click, frame after frame.
+                let kept = "file:///kept-across-output";
+                app.handle_transport(linked_frame(7, kept));
                 app.render();
-                app.links.pressed = app.links.focus;
-                app.handle_transport(linked_frame(7, "https://example.com/7"));
-                assert!(app.focused_link().is_none());
-                app.render();
+                assert!(app.handle_link_button(ElementState::Pressed, MouseButton::Left));
+                for revision in 8..11 {
+                    app.handle_transport(linked_frame(revision, kept));
+                    assert!(app.status().contains(kept), "output must not hide the hint");
+                    app.render();
+                    assert_eq!(
+                        highlighted(app),
+                        Some((0, 0)),
+                        "output must not blink the hover"
+                    );
+                }
                 assert!(app.handle_link_button(ElementState::Released, MouseButton::Left));
+                assert_eq!(
+                    app.links.notice.as_deref(),
+                    Some("Only HTTP and HTTPS links can be opened. Copy other targets explicitly."),
+                    "a click across output revisions must activate its kept target"
+                );
+                // A target replaced by output retires its press for good, even
+                // when it returns before the next frame.
+                let press = |app: &mut Application, state| {
+                    assert!(app.handle_link_button(state, MouseButton::Left));
+                };
+                press(app, ElementState::Pressed);
+                app.handle_transport(linked_frame(11, "file:///replaced"));
+                assert!(app.focused_link().is_none());
+                app.handle_transport(linked_frame(12, kept));
+                press(app, ElementState::Released);
                 assert!(
-                    app.link_opener.is_none(),
+                    app.link_opener.is_none() && app.links.notice.is_none(),
                     "a captured click cannot cross a frame replacement"
                 );
-                assert_eq!(app.focused_link().unwrap().uri, "https://example.com/7");
+                assert_eq!(app.focused_link().unwrap().uri, kept);
+                // The hover follows a successor while the retired press is held.
                 app.render();
-                assert_eq!(app.focused_link().unwrap().uri, "https://example.com/7");
-                app.handle_transport(linked_frame(8, "file:///modifier-mismatch"));
+                press(app, ElementState::Pressed);
+                app.handle_transport(linked_frame(13, "file:///successor"));
                 app.render();
-                let link = app.links.focus;
+                assert_eq!(app.focused_link().unwrap().uri, "file:///successor");
+                assert_eq!(highlighted(app), Some((0, 0)));
+                press(app, ElementState::Released);
+                assert!(app.links.notice.is_none());
+                // A presentation change retires a press over an unchanged target.
+                press(app, ElementState::Pressed);
+                app.presentation.invalidate();
+                app.render();
+                press(app, ElementState::Released);
+                assert!(
+                    app.links.notice.is_none(),
+                    "a presentation change retires a captured press"
+                );
+                app.handle_transport(linked_frame(14, ""));
+                app.render();
+                assert_eq!(
+                    highlighted(app),
+                    None,
+                    "an overwritten target loses its hover"
+                );
+                app.handle_transport(linked_frame(15, "file:///modifier-mismatch"));
+                app.render();
+                let link = app.links.focus.clone().map(LinkPress::Live);
                 app.input
                     .set_modifiers(winit::keyboard::ModifiersState::empty());
-                app.links.pressed = link;
+                app.links.pressed = link.clone();
                 assert!(app.handle_link_button(ElementState::Released, MouseButton::Left));
                 assert!(
                     app.links.notice.is_none(),
                     "a link release without Ctrl must not activate its target"
                 );
-                app.links.pressed = link;
+                app.links.pressed = link.clone();
                 app.window_event(
                     event_loop,
                     id,
@@ -5004,14 +5156,14 @@ mod tests {
                     app.links.pressed.is_none(),
                     "scroll input must retire a captured link press immediately"
                 );
-                app.links.pressed = link;
+                app.links.pressed = link.clone();
                 app.cursor = PhysicalPosition::new(0.0, 0.0);
                 assert!(!app.handle_link_button(ElementState::Pressed, MouseButton::Left));
                 assert!(
                     app.links.pressed.is_none(),
                     "a fresh ordinary press must retire a missed link release"
                 );
-                app.links.pressed = link;
+                app.links.pressed = link.clone();
                 app.set_workspace_focus(WorkspaceFocus::Panes);
                 assert!(
                     app.links.pressed.is_none(),
@@ -5024,7 +5176,7 @@ mod tests {
                 )
                 .unwrap();
                 let TransportEvent::Server(ServerMessage::Frame(mut scrolled)) =
-                    linked_frame(9, "")
+                    linked_frame(16, "")
                 else {
                     unreachable!()
                 };
@@ -5051,7 +5203,7 @@ mod tests {
                     usize::from(size.rows)
                 ];
                 let mut tick_frame = scrolled.clone();
-                tick_frame.revision = 10;
+                tick_frame.revision = 17;
                 tick_frame.scroll_position.rows_from_live = 13;
                 tick_frame.scroll_position.history_rows = 13;
                 app.handle_transport(TransportEvent::Server(ServerMessage::Frame(scrolled)));
@@ -5069,7 +5221,7 @@ mod tests {
                     }))
                 );
                 assert!(!app.send(ClientMessage::ScrollVertical {
-                    frame_revision: 9,
+                    frame_revision: 16,
                     rows: -1
                 }));
                 assert_eq!(
@@ -5163,7 +5315,7 @@ mod tests {
                     "the pill sends one semantic action after the tick"
                 );
                 assert!(app.send(ClientMessage::ScrollVertical {
-                    frame_revision: 10,
+                    frame_revision: 17,
                     rows: -1
                 }));
                 assert!(
@@ -5186,7 +5338,7 @@ mod tests {
                 );
                 assert_eq!(returns(), 1, "return follows the rejected scroll batch");
                 assert!(app.send(ClientMessage::ScrollVertical {
-                    frame_revision: 10,
+                    frame_revision: 17,
                     rows: -1
                 }));
                 assert!(
@@ -5215,7 +5367,7 @@ mod tests {
                 // Hold the writer in its encoding-error wake so Full cannot race a dequeue.
                 transport
                     .send(ClientMessage::ScrollVertical {
-                        frame_revision: 10,
+                        frame_revision: 17,
                         rows: 0,
                     })
                     .unwrap();
@@ -5230,7 +5382,7 @@ mod tests {
                 assert_eq!(admission, Err(yazelix_venus::SendError::Full));
                 let requests = [
                     ClientMessage::ScrollVertical {
-                        frame_revision: 10,
+                        frame_revision: 17,
                         rows: -1,
                     },
                     ClientMessage::Selection(SelectionAction::AutoscrollUp {
@@ -5268,7 +5420,7 @@ mod tests {
                 }
                 app.terminal.transport = Some(original_transport);
                 let snapshot = app.workspace_model.snapshot().unwrap().clone();
-                app.links.pressed = link;
+                app.links.pressed = link.clone();
                 app.handle_workspace(WorkspaceEvent::Unavailable("offline".into()));
                 assert_eq!(app.presented_revision(), None);
                 assert!(
@@ -5439,7 +5591,7 @@ mod tests {
                 app.set_orbit_attachment(Some(b"replacement".to_vec()), false);
                 assert!(app.status().contains("selected Eon pane is offline"));
                 assert_eq!(app.presented_revision(), None);
-                assert!(app.pointer_link().is_none());
+                assert!(app.pointer_link(app.links.unshifted).is_none());
                 let mut empty = app.workspace_model.snapshot().unwrap().clone();
                 empty.active_tab = empty.tabs[0].id.clone();
                 show_test_popup(&mut empty);
