@@ -41,6 +41,8 @@ use std::{
 };
 
 pub(super) const SESSION_START_TIMEOUT: Duration = Duration::from_secs(5);
+/// Bounds Venus startup admission, which a busy machine can slow well past session start.
+pub(super) const PRESENTATION_ADMISSION_TIMEOUT: Duration = Duration::from_secs(30);
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
 
 pub(super) fn request_id() -> String {
@@ -463,9 +465,10 @@ impl PresentationProcess {
         mut command: Command,
         admission: bool,
         snapshot: Option<Snapshot>,
-        deadline: Instant,
+        timeout: Duration,
         log: &Arc<DiagnosticLog>,
     ) -> Result<Self, String> {
+        let deadline = Instant::now() + timeout;
         let (control, input) = UnixStream::pair()
             .map_err(|error| format!("cannot create Eon Desktop presentation control: {error}"))?;
         if admission {
@@ -502,12 +505,13 @@ impl PresentationProcess {
                 .map_err(|error| format!("cannot relay Eon Desktop diagnostics: {error}"))?,
         );
         if admission {
+            let not_ready = || format!("Venus was not ready within {timeout:?}");
             let result = (|| {
-                let timeout = || {
+                let time_left = || {
                     deadline
                         .checked_duration_since(Instant::now())
                         .filter(|duration| !duration.is_zero())
-                        .ok_or("timed out waiting for native startup admission")
+                        .ok_or_else(not_ready)
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
@@ -517,7 +521,7 @@ impl PresentationProcess {
                     while !remaining.is_empty() {
                         process
                             .control
-                            .set_write_timeout(Some(timeout()?))
+                            .set_write_timeout(Some(time_left()?))
                             .map_err(|error| error.to_string())?;
                         match process.control.write(remaining) {
                             Ok(0) => {
@@ -526,6 +530,14 @@ impl PresentationProcess {
                             Ok(count) => remaining = &remaining[count..],
                             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
                                 continue;
+                            }
+                            Err(error)
+                                if matches!(
+                                    error.kind(),
+                                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                                ) =>
+                            {
+                                return Err(not_ready());
                             }
                             Err(error) => return Err(error.to_string()),
                         }
@@ -536,12 +548,20 @@ impl PresentationProcess {
                 while !remaining.is_empty() {
                     process
                         .control
-                        .set_read_timeout(Some(timeout()?))
+                        .set_read_timeout(Some(time_left()?))
                         .map_err(|error| error.to_string())?;
                     match process.control.read(remaining) {
                         Ok(0) => return Err("Venus closed before native startup admission; see its diagnostic in the supervisor output".into()),
                         Ok(count) => remaining = &mut remaining[count..],
                         Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                        Err(error)
+                            if matches!(
+                                error.kind(),
+                                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                            ) =>
+                        {
+                            return Err(not_ready());
+                        }
                         Err(error) => return Err(error.to_string()),
                     }
                 }
@@ -717,12 +737,16 @@ fn supervise(
     if mode == LaunchMode::Workspace {
         workspace::validate_initial_directory(&launch_directory)?;
     }
-    let deadline = Instant::now() + SESSION_START_TIMEOUT;
     let popup_catalog = popups.unwrap_or_else(|| managed_environment::PopupCatalog {
         geometry: inputs.defaults.popups.geometry,
         entries: Vec::new(),
     });
-    let (mut sessions, recovered_picker) = recover_sessions(runtime, mode, generation, deadline)?;
+    let (mut sessions, recovered_picker) = recover_sessions(
+        runtime,
+        mode,
+        generation,
+        Instant::now() + SESSION_START_TIMEOUT,
+    )?;
     let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
     let initial_endpoint = runtime.join("orbit.sock");
     let initial_session_id = "session-1";
@@ -783,7 +807,11 @@ fn supervise(
             decorations,
         );
         Some(PresentationProcess::start(
-            command, true, snapshot, deadline, log,
+            command,
+            true,
+            snapshot,
+            PRESENTATION_ADMISSION_TIMEOUT,
+            log,
         )?)
     } else {
         None
@@ -803,7 +831,8 @@ fn supervise(
             &launch_directory,
             &initial_child,
             None,
-            deadline,
+            // Starts after admission, which may have used most of its own deadline.
+            Instant::now() + SESSION_START_TIMEOUT,
         )?);
         initial_child.clear();
     }
@@ -875,7 +904,7 @@ fn supervise(
             ),
             false,
             None,
-            deadline,
+            PRESENTATION_ADMISSION_TIMEOUT,
             log,
         ),
     };
@@ -1526,7 +1555,7 @@ fn dispatch_control_request(
                     command,
                     terminal.requires_startup_admission(),
                     state.workspace_snapshot(),
-                    Instant::now() + SESSION_START_TIMEOUT,
+                    PRESENTATION_ADMISSION_TIMEOUT,
                     &state.log,
                 )?);
                 Ok(())
@@ -1786,7 +1815,7 @@ mod tests {
             command,
             true,
             Some(snapshot.clone()),
-            Instant::now() + Duration::from_secs(2),
+            Duration::from_secs(2),
             &log,
         )
         .unwrap();
@@ -1796,15 +1825,18 @@ mod tests {
         let mut command = Command::new("/bin/sh");
         command.args(["-c", "exec sleep 10"]);
         let started = Instant::now();
-        assert!(
-            super::PresentationProcess::start(
-                command,
-                true,
-                Some(snapshot),
-                started + Duration::from_millis(300),
-                &log,
-            )
-            .is_err()
+        let error = super::PresentationProcess::start(
+            command,
+            true,
+            Some(snapshot),
+            Duration::from_millis(300),
+            &log,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            error,
+            "cannot admit Eon Desktop presentation: Venus was not ready within 300ms"
         );
         assert!(started.elapsed() < Duration::from_secs(1));
         let log = fs::read_dir(root.join("logs"))
@@ -1836,14 +1868,9 @@ mod tests {
             "-c",
             "echo \"panicked: backtrace=$RUST_BACKTRACE\" >&2; kill -KILL $$",
         ]);
-        let mut process = super::PresentationProcess::start(
-            command,
-            false,
-            None,
-            Instant::now() + Duration::from_secs(2),
-            &log,
-        )
-        .unwrap();
+        let mut process =
+            super::PresentationProcess::start(command, false, None, Duration::from_secs(2), &log)
+                .unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
         while !process.exited().unwrap() {
             assert!(Instant::now() < deadline);

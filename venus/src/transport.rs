@@ -319,10 +319,9 @@ fn run_workspace(
 }
 
 /// Eon answers an action that starts a terminal only after Orbit is Ready, within its shared
-/// five-second start deadline. Like Eon's own control clients, wait that deadline plus one second,
-/// so one slow but successful terminal start does not read as workspace loss; an action queued
-/// behind other slow work, or one that stops a terminal before starting another, can still exceed
-/// it.
+/// five-second start deadline. Wait that deadline plus one second, so one slow but successful
+/// terminal start does not read as workspace loss; an action queued behind other slow work, or one
+/// that stops a terminal before starting another, can still exceed it.
 const WORKSPACE_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(6);
 
 fn workspace_exchange(

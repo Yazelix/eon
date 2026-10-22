@@ -1166,8 +1166,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   ended untracked direct children before retiring their canonical records.
   During failed cleanup, it still reaps an exited presentation child without
   changing the workspace or launching replacement terminals.
-  Stop's result read timeout allows one preceding five-second operation plus
-  five-second cleanup and a one-second margin; excessive queues can still fail.
+  Stop's result read timeout allows one preceding thirty-five-second startup
+  (thirty-second presentation admission, then a five-second first terminal
+  start) plus five-second cleanup and a one-second margin; excessive queues can
+  still fail.
 - **Owner:** Eon Runtime generation/recovery enforcement, bounded enumeration,
   projection, lease collection, deadline, EONW ordering, retained launch claim,
   and exact residue; Orbit `ORB-C13` owns live identity, Ready, lease, terminal state,
@@ -1463,8 +1465,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     current settings without replacing Orbit or its PTY; live Venus keeps its
     snapshot.
   - The authoritative startup workspace Snapshot transfer and native readiness
-    share one absolute five-second deadline, including large snapshots. Ordinary
-    Present messages retain their 250 ms write timeout.
+    share one absolute thirty-second deadline, including large snapshots, so a
+    busy machine does not close a slow but healthy window. A missed deadline
+    reports that Venus was not ready within it. Ordinary Present messages retain
+    their 250 ms write timeout.
 - **Important failures:** Eon Runtime rejects malformed configuration with field
   diagnostics before children. Venus admits fonts and actual initial native
   geometry before any new terminal or user command. Rejected, lost or timed-out

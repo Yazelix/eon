@@ -304,7 +304,8 @@ fn anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dis
         stop: stop.clone(),
     };
     wait_for(&venus_started);
-    thread::sleep(Duration::from_millis(100));
+    // Admission outlasts session start, so a slow native startup is not killed.
+    thread::sleep(Duration::from_secs(6));
     assert!(!startup_started.exists() && !picker_started.exists());
     fs::write(&venus_ready, "ready").unwrap();
     wait_for(&startup_started);
@@ -2096,10 +2097,15 @@ fn rejected_native_startup_creates_no_session_in_either_product() {
             &venus,
             &format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$EON_TEST_VENUS_LOG\"\n{response}\n"),
         );
+        // A silent Venus uses the whole admission deadline, so one product covers it.
+        let silent = response.starts_with("exec");
         for (binary, args) in [
             (eon, vec!["run", "--", "/bin/false"]),
             (eonbase.as_path(), vec!["--", "/bin/false"]),
-        ] {
+        ]
+        .into_iter()
+        .take(if silent { 1 } else { 2 })
+        {
             let started = Instant::now();
             let output = eon_command(binary)
                 .args(args)
@@ -2113,8 +2119,7 @@ fn rejected_native_startup_creates_no_session_in_either_product() {
                 .unwrap();
             assert!(!output.status.success());
             assert!(
-                started.elapsed()
-                    < Duration::from_secs(if response.starts_with("exec") { 7 } else { 4 }),
+                started.elapsed() < Duration::from_secs(if silent { 32 } else { 4 }),
                 "startup rejection did not finish within its bound"
             );
             assert!(
@@ -2126,6 +2131,7 @@ fn rejected_native_startup_creates_no_session_in_either_product() {
                 stderr.contains("cannot admit Eon Desktop presentation"),
                 "{stderr}"
             );
+            assert!(!silent || stderr.contains("Venus was not ready within 30s"));
             assert!(
                 fs::read_to_string(&venus_log)
                     .unwrap()
@@ -2311,6 +2317,7 @@ case "$*" in
 esac
 if test ! -e "$EON_TEST_VENUS_LOG"; then
   test ! -e "$EON_TEST_ORBIT_LOG" || exit 97
+  sleep 6
 fi
 printf ready-v1
 printf '%s|%s|%s\n' "$$" "$EON_VENUS_PRESENTATION_CONTROL" "$*" >> "$EON_TEST_VENUS_LOG"
@@ -2372,6 +2379,8 @@ cat >/dev/null
     let generation = generation_runtime(&runtime);
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     wait_for(&generation.join("eon.sock"));
+    // The first Venus admits after session start's five seconds; its terminal still starts.
+    thread::sleep(Duration::from_secs(6));
     wait_for(&venus_log);
     wait_for(&child_pid);
     let initial_venus: u32 = fs::read_to_string(&venus_log)

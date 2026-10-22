@@ -1,5 +1,8 @@
 use super::{
-    supervisor::{LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id},
+    supervisor::{
+        LaunchMode, PRESENTATION_ADMISSION_TIMEOUT, SESSION_START_TIMEOUT, effective_uid,
+        request_id,
+    },
     workspace,
 };
 use eon_workspace_protocol::v15::{
@@ -19,7 +22,11 @@ use std::{
     time::Duration,
 };
 
-const CONTROL_TIMEOUT: Duration = SESSION_START_TIMEOUT.saturating_add(Duration::from_secs(1));
+// A reply can wait behind one in-flight operation, the longest being startup: presentation
+// admission, then the first terminal's start.
+const CONTROL_TIMEOUT: Duration = PRESENTATION_ADMISSION_TIMEOUT
+    .saturating_add(SESSION_START_TIMEOUT)
+    .saturating_add(Duration::from_secs(1));
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum EndpointFailureKind {

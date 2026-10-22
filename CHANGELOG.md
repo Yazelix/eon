@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A new Eon window that starts slowly on a busy machine now gets 30 seconds
+  to become ready instead of 5, so Eon no longer closes it with
+  `cannot admit Eon Desktop presentation: EAGAIN`. If it still is not ready,
+  the error says so: `Venus was not ready within 30s`. While it starts,
+  `eon` commands wait for it rather than timing out.
+
 - `eon pane create -- COMMAND [ARGS...]`, run from an Eon terminal, opens a
   new pane in its column running COMMAND, for example
   `eon pane create -- claude "prime, then continue eon-123"`. The command runs
@@ -192,11 +198,10 @@ installation, and proven contract changes.
   stay reachable only through that `eonterm` executable until stopped. Its
   default window application ID is `eonbase`.
 - The window waits up to six seconds, instead of two, for Eon to answer a
-  workspace action, matching Eon's own commands. Opening a popup or pane whose
-  terminal starts slowly on a busy machine, within Eon's five-second start
-  limit, no longer flashes Eon as unavailable. An action that waits behind
-  other slow work, or that stops a terminal before starting one, can still
-  exceed the six seconds.
+  workspace action. Opening a popup or pane whose terminal starts slowly on a
+  busy machine, within Eon's five-second start limit, no longer flashes Eon as
+  unavailable. An action that waits behind other slow work, or that stops a
+  terminal before starting one, can still exceed the six seconds.
 - A tab can show up to four columns side by side, each a pane stack with its
   own live terminal. Ctrl+Alt+M opens a column right of the selected one with
   a new pane in the tab's directory; Alt+M adds a pane to the selected column;
