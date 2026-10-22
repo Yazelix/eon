@@ -13,9 +13,10 @@ Implement only a chosen outcome.
 Never silently add features, migrations, repositories, or planning items.
 Preserve user inputs and artifacts; replace or delete an exact target only when
 required, else write a distinct result. State consequential assumptions; stop
-when a missing scope choice would materially change the result. Recommend and
-justify an answer to every choice. “Finish” adds persistence, not authority.
-Report out-of-scope findings unless the user chose a durable home.
+when a missing scope choice would materially change the result. Put every
+pending choice in one numbered list, each with a recommendation and its reason.
+“Finish” adds persistence, not authority. Report out-of-scope findings unless
+the user chose a durable home.
 
 ## AP-CONTRACT-001 — Contract-driven changes
 
@@ -181,6 +182,14 @@ force-push, rewrite published history, or create a branch without authority.
 Verify intended diff before commit and remote state after push. Roll back with a
 reviewed revert unless local policy says otherwise.
 
+## AP-PERF-001 — Measured performance work
+
+Before redesigning for speed, fix a representative workload, record a
+baseline, and measure where the time goes; intuition often picks the wrong
+spot. Performance claims need that workload and environment, the baseline, a
+correctness oracle, and a distribution or bound. Keep negative results that
+constrain them.
+
 ## AP-CI-001 — Bounded continuous integration
 
 Before hosted automation, name its contract and why local proof is
@@ -190,49 +199,27 @@ job. Record when to expand, reduce, or remove. Confidence must justify its
 financial, latency, security, and maintenance costs, including private minutes
 and storage.
 
-## AP-ORCHESTRATOR-001 — Thin orchestrator ownership
+## AP-DELIVERY-001 — Installed artifact and fresh-session proof
 
-An orchestrator owns composition, lifecycle policy, compatibility selection,
-and user defaults, not child mechanisms or state. Consume pinned child artifacts
-through explicit contracts; keep translation narrow; reject copies, hidden
-forks, and duplicate schemas. Expose startup, shutdown, update, and partial
-failure policy, and test with substitutes when a child is unavailable.
+Source checks do not prove delivery. For packaging/install/activation/
+interaction changes, build exact candidate through delivery path;
+record artifact/environment/commands/result; activate without checkout/stale
+fallback; verify identity; dogfood from a fresh session. Narrow unexercised
+claims. Compilation is not install proof; scripts are not dogfood.
 
-## AP-FRONTIER-001 — One active integration frontier
+Composition proof covers an unchanged embedded artifact only when recording
+exact identity and exercising relied-on behavior. Repeat inner proof for
+distinct install/activation or failure isolation.
 
-When greenfield components integrate, keep one boundary under active
-architectural change when practical. Stabilize the others with released
-artifacts, fixtures, adapters, or interchangeable projects. Dogfood the active
-frontier through a real vertical slice and move it only after contract and
-failure evidence. Parallel work may continue behind stable integration
-contracts.
+## AP-PROMOTION-001 — Exact-revision channel promotion
 
-## AP-PORTABILITY-001 — Portable core with explicit platform seams
+Release channels are ordered references over one linear history; the consumer
+declares order, evidence, authority, and the development channel where every
+change originates. Promotion-only channels fast-forward to the exact verified
+revision in their predecessor. No direct channel commits, merges, cross-channel
+cherry-picks, published rebases, force-pushes, or skipped stages.
 
-Keep multi-OS contracts and state neutral; isolate system APIs, processes,
-paths, packaging, and events. Evaluate targets before foundational runtime,
-graphics, filesystem, or transport choices. Prove behavior on each platform,
-not by compilation; name unsupported targets.
-
-## AP-PERF-001 — Measured performance claims
-
-Performance claims need a measured bottleneck, a fixed workload and
-environment, a baseline, a correctness oracle, and a distribution or bound.
-Keep negative results that constrain them.
-
-## AP-TERMINAL-001 — Terminal state authority
-
-One component owns terminal parsing, grid, modes, scrollback, selection,
-graphics, title, and process attachment; others consume versioned projections,
-never a second emulator. Define replication as raw bytes, checkpoints plus
-tails, structured frames, or another contract. Cover reconnect, resize,
-alternate screen, partial input, and slow consumers; test semantic attachment
-equivalence, not visuals alone.
-
-## AP-FAILURE-001 — Designed lifecycle and failure semantics
-
-Long-lived sessions and services define start, attach/detach, crash/restart,
-shutdown, version mismatch, abandonment; bound queues, memory, retries,
-timeouts, and slow-consumer impact. Own cancellation and idempotent cleanup;
-persist only required recovery state. Test deterministic failures when
-practical; dogfood other process/platform cases.
+Require target-channel delivery evidence, no known critical or high-severity
+regression, and explicit authority for user-facing promotion. Roll back with a
+development-channel revert, then verify and promote normally. Promotion changes
+exposure, not proof.
