@@ -63,7 +63,7 @@ Venus                   -> native presentation, interaction, client failure UX
 Orbit                   -> PTYs, terminal state, session lifetime, wire authority
 ```
 
-Venus consumes EONW v14 through the in-tree `eon-workspace-protocol` 0.1.0
+Venus consumes EONW v15 through the in-tree `eon-workspace-protocol` 0.1.0
 crate. Eon supplies popup definitions,
 commands and geometry defaults. The runtime validates configuration and owns
 live workspace and popup state, Session mappings, and provider quota collection

@@ -9,7 +9,7 @@ use super::supervisor::{
     try_lock_supervisor_lifecycle, validate_private_directory,
 };
 use super::workspace::json_escape;
-use eon_workspace_protocol::v14::{
+use eon_workspace_protocol::v15::{
     Action, Availability, LifecycleResponse, Stopped, WorkspaceAction,
 };
 use std::{

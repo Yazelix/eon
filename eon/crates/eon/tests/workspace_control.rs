@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v14::{
+use eon_workspace_protocol::v15::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
@@ -2748,6 +2748,44 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
     let file = root.join("notes.txt");
     assert!(
         orbit_arguments.ends_with(&[b"hx\0", file.as_os_str().as_bytes(), b"\0"].concat()),
+        "{}",
+        String::from_utf8_lossy(&orbit_arguments)
+    );
+
+    // `eon pane create -- COMMAND` runs its exact argv beside the caller, and
+    // is refused outside an Eon terminal.
+    let command = ["pane", "create", "--json", "--", "hx", "two words"];
+    let uncalled = eon_command(&binary)
+        .args(command)
+        .env_remove("EON_TERMINAL")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .output()
+        .unwrap();
+    assert_eq!(uncalled.status.code(), Some(1), "{}", stdout(&uncalled));
+    assert!(stdout(&uncalled).contains("caller-required"));
+    assert_eq!(inspect("after-uncalled"), snapshot);
+    let ran = eon_command(&binary)
+        .args(command)
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_TERMINAL", &caller)
+        .output()
+        .unwrap();
+    assert!(ran.status.success(), "{}", stdout(&ran));
+    assert!(stdout(&ran).contains(r#""selected_pane":"p5""#));
+    let snapshot = inspect("after-command");
+    assert_eq!(snapshot.tabs[0].selected_pane.as_deref(), Some("p5"));
+    let pane = &snapshot.tabs[0].columns[0].panes[2];
+    assert_eq!(pane.id, "p5");
+    let endpoint = Path::new(OsStr::from_bytes(&pane.endpoint));
+    let orbit_arguments = fs::read(format!(
+        "/proc/{}/cmdline",
+        live_identity(endpoint).process_id
+    ))
+    .unwrap();
+    assert!(
+        orbit_arguments.ends_with(b"hx\0two words\0"),
         "{}",
         String::from_utf8_lossy(&orbit_arguments)
     );

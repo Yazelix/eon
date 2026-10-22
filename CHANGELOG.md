@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon pane create -- COMMAND [ARGS...]`, run from an Eon terminal, opens a
+  new pane in its column running COMMAND, for example
+  `eon pane create -- claude "prime, then continue eon-123"`. The command runs
+  exactly as given, with no shell. This changes the workspace protocol to
+  EONW 15: the updated `eon` cannot manage windows started by an earlier
+  build, so stop the ones you no longer need with the old `eon` first.
+
 - A newly started Eon window shows the last Codex and Claude quota readings
   until its own read succeeds, instead of no quota chips. Eon keeps each
   provider's last good reading in `$XDG_STATE_HOME/eon/quota`, shared by all
@@ -126,7 +133,7 @@ installation, and proven contract changes.
   130 interrupted. Structured failures exited 2 and
   every other failure 1; scripts that tested for those values need updating.
   `eon --help` and [Using Eon](docs/USAGE.md#exit-status) list the statuses.
-- `eon` speaks only EONW 14. A generation started by an older build that uses
+- `eon` speaks only EONW 15. A generation started by an older build that uses
   an earlier EONW is listed as incompatible and can no longer be inspected or
   stopped by this `eon`; stop it with the build that started it.
 - `eon claude-statusline` is gone; Claude quota has come from CodexBar since

@@ -249,6 +249,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
 | `eon pane create [--json]` | Create a pane in the active tab's selected column, or in the calling pane's column |
+| `eon pane create [--json] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, at the tab's directory; refused with exit 1 outside an Eon terminal |
 | `eon edit [--json] -- FILE` | Open FILE in Helix in a new pane, placed as `pane create` places it, at the tab's directory |
 | `eon pane close PANE [--json]` | Close a pane of the active tab, or of the calling terminal's tab, stopping its terminal |
 | `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |

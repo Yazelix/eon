@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v14 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v15 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -6,7 +6,7 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 14;
+pub const VERSION: u16 = 15;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -24,6 +24,8 @@ pub const MAX_ENTRY_ID_BYTES: usize = 64;
 pub const MAX_LABEL_BYTES: usize = 128;
 pub const MAX_KEY_BYTES: usize = 16;
 pub const MAX_CODEX_QUOTA_WINDOWS: usize = 2;
+pub const MAX_COMMAND_ARGUMENTS: usize = 256;
+pub const MAX_COMMAND_ARGUMENT_BYTES: usize = 32 * 1024;
 pub const PROJECT_ENTRY: &str = "project";
 pub const SHIFT: u8 = 1;
 pub const CTRL: u8 = 2;
@@ -44,6 +46,7 @@ const CLOSE_PANE: u8 = 23;
 const MOVE_PANE_LEFT: u8 = 24;
 const MOVE_PANE_RIGHT: u8 = 25;
 const EDIT: u8 = 26;
+const CREATE_COMMAND_PANE: u8 = 27;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
@@ -126,6 +129,11 @@ pub enum Action {
     /// `CreatePane` adds one; the editor is runtime policy.
     Edit {
         file: Vec<u8>,
+    },
+    /// Run an exact argv, with no shell, in a new pane, as `CreatePane` adds
+    /// one. The runtime accepts it only from a calling terminal.
+    CreateCommandPane {
+        argv: Vec<Vec<u8>>,
     },
 }
 
@@ -498,6 +506,14 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             payload.byte(EDIT);
             payload.raw(file);
         }
+        Action::CreateCommandPane { argv } => {
+            validate_command(argv)?;
+            payload.byte(CREATE_COMMAND_PANE);
+            payload.count(argv.len());
+            for argument in argv {
+                payload.raw(argument);
+            }
+        }
     }
     frame(REQUEST, payload.bytes)
 }
@@ -573,6 +589,17 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
         EDIT => Some(Action::Edit {
             file: decoder.raw("file", MAX_DIRECTORY_BYTES)?.to_vec(),
         }),
+        CREATE_COMMAND_PANE => {
+            let count = decoder.count("command", MAX_COMMAND_ARGUMENTS)?;
+            let argv = (0..count)
+                .map(|_| {
+                    Ok(decoder
+                        .raw("command argument", MAX_COMMAND_ARGUMENT_BYTES)?
+                        .to_vec())
+                })
+                .collect::<Result<_>>()?;
+            Some(Action::CreateCommandPane { argv })
+        }
         _ => None,
     };
     if let Some(action) = action {
@@ -581,6 +608,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
         match &action {
             Action::ClosePane { pane } => identity("pane id", pane)?,
             Action::Edit { file } => validate_file(file)?,
+            Action::CreateCommandPane { argv } => validate_command(argv)?,
             _ => (),
         }
         return Ok(Request { id, caller, action });
@@ -697,7 +725,8 @@ fn validate_popup_action(action: &Action) -> Result<()> {
         | Action::CreateColumn
         | Action::ClosePane { .. }
         | Action::MovePaneSideways(_)
-        | Action::Edit { .. } => (),
+        | Action::Edit { .. }
+        | Action::CreateCommandPane { .. } => (),
     }
     Ok(())
 }
@@ -1401,6 +1430,29 @@ fn validate_file(file: &[u8]) -> Result<()> {
     Ok(())
 }
 
+fn validate_command(argv: &[Vec<u8>]) -> Result<()> {
+    if argv.len() > MAX_COMMAND_ARGUMENTS {
+        return Err(Error::InvalidValue { field: "command" });
+    }
+    if argv.first().is_none_or(|program| program.is_empty()) {
+        return Err(Error::InvalidValue { field: "command" });
+    }
+    for argument in argv {
+        if argument.contains(&0) {
+            return Err(Error::InvalidValue {
+                field: "command argument",
+            });
+        }
+        if argument.len() > MAX_COMMAND_ARGUMENT_BYTES {
+            return Err(Error::FieldTooLong {
+                field: "command argument",
+                length: argument.len(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn validate_directory(directory: &[u8]) -> Result<()> {
     if directory.is_empty() || directory.contains(&0) {
         return Err(Error::InvalidValue { field: "directory" });
@@ -1771,6 +1823,29 @@ mod tests {
     }
 
     #[test]
+    fn command_panes_bound_their_argv() {
+        let request = |argv| Request {
+            id: "r1".into(),
+            caller: None,
+            action: Action::CreateCommandPane { argv },
+        };
+        let largest = request(vec![vec![b'a'; MAX_COMMAND_ARGUMENT_BYTES]]);
+        let bytes = encode_request(&largest).unwrap();
+        assert_eq!(decode_request(&bytes).unwrap(), largest);
+        assert_eq!(
+            encode_request(&request(vec![vec![b'a'; MAX_COMMAND_ARGUMENT_BYTES + 1]])),
+            Err(Error::FieldTooLong {
+                field: "command argument",
+                length: MAX_COMMAND_ARGUMENT_BYTES + 1,
+            })
+        );
+        assert_eq!(
+            encode_request(&request(vec![b"a".to_vec(); MAX_COMMAND_ARGUMENTS + 1])),
+            Err(Error::InvalidValue { field: "command" })
+        );
+    }
+
+    #[test]
     fn messages_keep_their_wire_bytes() {
         let target = PopupTarget {
             tab: "t1".into(),
@@ -1779,14 +1854,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e570e0001000a00000002007231001202007431",
+                "454f4e570f0001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e570e0001001000000002007231000c0200743104002f746d70",
+                "454f4e570f0001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -1795,29 +1870,35 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e570e00010015000000020072310013020074310300676974010200753101",
+                "454f4e570f00010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e570e00010014000000020072310015020074310200753104002f746d70",
+                "454f4e570f00010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e570e00010006000000020072310016"),
+            (Action::CreateColumn, "454f4e570f00010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e570e0001000a00000002007231001702007032",
+                "454f4e570f0001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e570e00010006000000020072310019",
+                "454f4e570f00010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e570e0001000e00000002007231001a06002f746d702f61",
+                "454f4e570f0001000e00000002007231001a06002f746d702f61",
+            ),
+            (
+                Action::CreateCommandPane {
+                    argv: vec![b"hx".to_vec(), b"a".to_vec()],
+                },
+                "454f4e570f0001000f00000002007231001b020002006878010061",
             ),
         ] {
             let request = Request {
@@ -1837,7 +1918,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e570e0001001500000002007231010d0073657373696f6e2d322e392d3102",
+            "454f4e570f0001001500000002007231010d0073657373696f6e2d322e392d3102",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -1907,7 +1988,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e570e008100b20000000100020002000100010000000200743100000041",
+                    "454f4e570f008100b20000000100020002000100010000000200743100000041",
                     "000080400100030067697403004769740404004b65794701000200743104002f",
                     "746d700001020070330102007531030002007031030073703103002f70310102",
                     "007032030073703203002f70320102007033030073703303002f703301010002",
@@ -1915,7 +1996,7 @@ mod tests {
                     "00002a01f40100000000000001015a000000000000000100602700000700",
                 ),
             ),
-            (failure, "454f4e570e0082000a00000004006275737902006e6f"),
+            (failure, "454f4e570f0082000a00000004006275737902006e6f"),
         ] {
             let bytes = encode_response(&response).unwrap();
             assert_eq!(hex(&bytes), expected, "{response:?}");
@@ -1940,7 +2021,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e570e00830026000000020067310500302e392e300e0002006f6b010002",
+                    "454f4e570f00830026000000020067310500302e392e300f0002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -1949,7 +2030,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e570e00840006000000020067310000",
+                "454f4e570f00840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -2102,7 +2183,7 @@ mod tests {
         }
 
         // Neither side accepts what the other would reject.
-        let invalid: [(&str, Action, &[u8], &str); 14] = [
+        let invalid: [(&str, Action, &[u8], &str); 17] = [
             ("r 1", w(WorkspaceAction::Inspect), &[0], "request id"),
             (
                 "r1",
@@ -2199,6 +2280,28 @@ mod tests {
                 &[26, 3, 0, b'/', b'a', 0],
                 "file",
             ),
+            (
+                "r1",
+                Action::CreateCommandPane { argv: Vec::new() },
+                &[27, 0, 0],
+                "command",
+            ),
+            (
+                "r1",
+                Action::CreateCommandPane {
+                    argv: vec![Vec::new()],
+                },
+                &[27, 1, 0, 0, 0],
+                "command",
+            ),
+            (
+                "r1",
+                Action::CreateCommandPane {
+                    argv: vec![b"hx".to_vec(), b"a\0".to_vec()],
+                },
+                &[27, 2, 0, 2, 0, b'h', b'x', 2, 0, b'a', 0],
+                "command argument",
+            ),
         ];
         for (id, action, bytes, expected) in invalid {
             let request = Request {
@@ -2222,10 +2325,10 @@ mod tests {
                 },
             ),
             (
-                &[27],
+                &[28],
                 Error::InvalidTag {
                     field: "action",
-                    value: 27,
+                    value: 28,
                 },
             ),
             (

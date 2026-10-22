@@ -510,7 +510,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v14 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v15 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -728,13 +728,28 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     as its working directory. A relative FILE resolves against the caller's
     working directory. The editor's argv is runtime policy and does not cross
     EONW.
+  - `eon pane create [--json] -- COMMAND [ARGS...]`, run from an Eon terminal,
+    opens a new pane exactly where `pane create` would for that caller, with
+    the tab directory as its working directory, running COMMAND and its
+    arguments as an exact argv with no shell: at most 256 arguments of up to
+    32 KiB each, within the shared frame ceiling. A bare COMMAND resolves
+    through the terminal PATH and a relative one against the tab directory, as
+    popup executables do. When COMMAND exits, the pane ends like any ended
+    terminal. This is the one request that carries a command
+    over EONW, and the runtime accepts it only from a caller naming a live
+    terminal of the addressed supervisor. That check states intent, not
+    security: the socket is private to the user, whose processes can already
+    run any command and read terminal identities.
 - **Important failures:** A caller that names no live terminal of the
   addressed supervisor (ended, closed, from another generation or window,
   empty, or malformed) changes nothing and exits 3 (`unknown-caller`), with no fallback
   to the active tab. In a tab without panes, a popup caller's `pane move`
   refuses, and so does its `pane create` when dismissing that popup would end
   the tab's last terminal; both change nothing and exit 1. An unavailable
-  editor changes nothing and exits 1. Malformed, oversized, incompatible, unavailable,
+  editor changes nothing and exits 1. An empty COMMAND is a usage error
+  (exit 2); a command pane requested without a calling terminal, or whose
+  program is missing or not executable, changes nothing and exits 1.
+  Malformed, oversized, incompatible, unavailable,
   rejected, timed-out, partially read, or response-lost operations fail within
   the shared bound without reconstructing hidden state or reviving completed
   Stop. Accepted Stop names affected live terminals, sends canonical Stop through
@@ -743,14 +758,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v14 and accepted Orbit management operations.
+- **Consumes:** Current EONW v15 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
   content, or direct child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v14 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v15 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -809,7 +824,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Eon rejects unknown fields, malformed or colliding shortcuts, unbounded
   values and unavailable executables before mutating workspace state. It does
   not install providers, cache selection, interpret shell strings, or expose
-  commands over EONW. Bare executables resolve through the terminal PATH;
+  commands over EONW beyond a calling terminal's `pane create -- COMMAND`. Bare executables resolve through the terminal PATH;
   relative executable paths resolve against the owning tab's launch directory.
 - **Target safety:** Invocation names the tab, entry and expected instance
   (absence means no instance exists). Focus-only and toggle intents are
@@ -826,8 +841,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   invalid geometry and stale popup targets. No terminal contents cross EONW.
 - **Popup snapshot:** The catalog carries enabled entries, normalized physical
   shortcuts and logical-pixel margins; per-tab popup terminals/selection and
-  pending-tab state are explicit. Popup-only tabs are valid. Commands, provider
-  selection, cwd and lifetime remain runtime policy and never cross EONW. The
+  pending-tab state are explicit. Popup-only tabs are valid. Popup commands,
+  provider selection, cwd and lifetime remain runtime policy and never cross EONW. The
   retired v4 picker opcode is unavailable; Project uses ordinary popup invocation.
   There is no negotiation or adapter.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
@@ -836,7 +851,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   retarget `eon-tbn1` (automated and installed tiers); the Files popup
   `eon-ecne.1` (automated and installed tiers); `EON_TAB` and Files Alt+Enter
   `eon-ecne.4` (automated and installed tiers); `eon edit` and Files Enter
-  `eon-ecne.2` (automated and installed tiers).
+  `eon-ecne.2` (automated and installed tiers); `pane create -- COMMAND`
+  `eon-n6ga` (automated and installed tiers).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -850,6 +866,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `chooser_retarget_parks_a_hidden_agent_as_the_first_pane_of_a_paneless_tab`,
     `files_keeps_its_terminal_across_retargets`,
     `files_edits_a_file_in_a_new_helix_pane_of_its_tab`,
+    `a_command_pane_runs_its_exact_argv_only_for_a_calling_terminal`,
     `orbit_uses_configured_argv_only_for_default_sessions`,
     `chooser_result_requires_its_exact_live_invocation`); deadlines and
     failures (`unix_connection_attempt_obeys_timeout`,
@@ -862,7 +879,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `callers_act_in_their_own_tab_without_changing_the_active_tab`,
     `a_transient_popup_caller_never_removes_its_paneless_tab`,
     `commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing`,
-    `edit_parser_sends_one_absolute_opaque_file`).
+    `edit_parser_sends_one_absolute_opaque_file`,
+    `command_pane_parser_passes_the_argv_through`,
+    `command_panes_bound_their_argv`).
     Installed checklist items 3 and 4 (`eon workspace` against the window;
     Project, Git, Agent and Anima popups). Installed `eon-8mnr.2` observation on
     isolated headless Sway: from a terminal in an inactive tab, `eon pane create`
@@ -886,7 +905,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     nothing. Installed `eon-ecne.2` observation on isolated headless Sway:
     in Files, Enter on a folder entered it; Enter on a text file opened a new
     selected pane running the packaged Helix on that file at the tab
-    directory and hid Files, which reopened at the same place.
+    directory and hid Files, which reopened at the same place. Installed
+    `eon-n6ga` observation on isolated headless Sway: `eon pane create --json
+    -- sh -c ...` without a calling terminal exited 1 with `caller-required`;
+    as the first pane's `EON_TERMINAL` it added selected pane p2 in that
+    column, whose Orbit child ran exactly `sh -c <script>` at the tab
+    directory and showed the script's output.
 
 ## EON-C11 — Runtime generations and presentation
 

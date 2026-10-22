@@ -1,5 +1,5 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v14::{
+use eon_workspace_protocol::v15::{
     Action, Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS,
     MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
     PopupEntry as SnapshotEntry, PopupTarget, Side, Snapshot, Tab as SnapshotTab, WorkspaceAction,
@@ -295,7 +295,8 @@ impl Workspace {
             }
             Action::Workspace(WorkspaceAction::CreatePane | WorkspaceAction::Move(_))
             | Action::MovePaneSideways(_)
-            | Action::Edit { .. } => {
+            | Action::Edit { .. }
+            | Action::CreateCommandPane { .. } => {
                 let (target, pane) = self.target_tab(caller)?;
                 (target, pane.map(|pane| self.select(target, pane)))
             }
@@ -366,6 +367,21 @@ impl Workspace {
                     &self.tabs[target].directory,
                 )
                 .map_err(|detail| action_error("edit-command", detail))?;
+                self.create_pane(target, called, LaunchCommand::Tool(argv), &mut operate)?;
+            }
+            Action::CreateCommandPane { argv } => {
+                if !called {
+                    return Err(action_error(
+                        "caller-required",
+                        "a command pane must be requested from an Eon terminal",
+                    ));
+                }
+                self.require_established(target)?;
+                let argv = prepare(
+                    &PopupCommand::Argv(argv.into_iter().map(OsString::from_vec).collect()),
+                    &self.tabs[target].directory,
+                )
+                .map_err(|detail| action_error("pane-command", detail))?;
                 self.create_pane(target, called, LaunchCommand::Tool(argv), &mut operate)?;
             }
         }
@@ -1611,13 +1627,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v14::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v15::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v14::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v14::ALT, "Alt"),
-        (eon_workspace_protocol::v14::SHIFT, "Shift"),
-        (eon_workspace_protocol::v14::SUPER, "Super"),
+        (eon_workspace_protocol::v15::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v15::ALT, "Alt"),
+        (eon_workspace_protocol::v15::SHIFT, "Shift"),
+        (eon_workspace_protocol::v15::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1670,7 +1686,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v14::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v15::{ALT, PopupGeometry, Shortcut};
 
     fn catalog() -> PopupCatalog {
         PopupCatalog {
@@ -1792,8 +1808,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v14::encode_response(
-            &eon_workspace_protocol::v14::Response::Snapshot(after),
+        eon_workspace_protocol::v15::encode_response(
+            &eon_workspace_protocol::v15::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -3147,6 +3163,77 @@ mod tests {
     }
 
     #[test]
+    fn a_command_pane_runs_its_exact_argv_only_for_a_calling_terminal() {
+        let root = std::env::temp_dir().join(format!("eon-command-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let mut workspace = Workspace::with_recovered_sessions(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: root.join("orbit.sock"),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        let command = || Action::CreateCommandPane {
+            argv: vec![b"claude".to_vec(), b"prime \xff".to_vec()],
+        };
+        let before = workspace.snapshot();
+
+        // Without a calling terminal, or with an unavailable program, nothing
+        // changes.
+        let failure = workspace
+            .dispatch("uncalled", None, command(), prepared, |_| {
+                Err("nothing starts".into())
+            })
+            .unwrap_err();
+        assert_eq!(failure.code, "caller-required");
+        let failure = workspace
+            .dispatch(
+                "missing",
+                Some("session-1"),
+                command(),
+                |_, _| Err("no claude".into()),
+                |_| Err("nothing starts".into()),
+            )
+            .unwrap_err();
+        assert_eq!(failure.code, "pane-command");
+        assert_eq!(workspace.snapshot(), before);
+
+        let mut started = Vec::new();
+        workspace
+            .dispatch("run", Some("session-1"), command(), prepared, |operation| {
+                started.push(operation);
+                Ok(())
+            })
+            .unwrap();
+        let [
+            SessionOperation::Start {
+                directory,
+                command: LaunchCommand::Tool(argv),
+                ..
+            },
+        ] = started.as_slice()
+        else {
+            panic!("one command pane starts: {started:?}");
+        };
+        assert_eq!(directory, &root);
+        assert_eq!(
+            argv,
+            &["claude".into(), OsString::from_vec(b"prime \xff".to_vec())]
+        );
+        let tab = &workspace.snapshot().tabs[0];
+        assert_eq!(tab.panes().count(), 2);
+        assert_eq!(tab.selected_pane.as_deref(), Some("p2"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn chooser_retarget_parks_a_hidden_agent_as_the_first_pane_of_a_paneless_tab() {
         let root = std::env::temp_dir().join(format!("eon-park-{}", std::process::id()));
         let next = root.join("next");
@@ -3268,8 +3355,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v14::encode_response(
-            &eon_workspace_protocol::v14::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v15::encode_response(
+            &eon_workspace_protocol::v15::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 

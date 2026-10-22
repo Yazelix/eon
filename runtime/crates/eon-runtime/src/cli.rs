@@ -16,7 +16,7 @@ use super::{
     windows,
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::v14::{
+use eon_workspace_protocol::v15::{
     Action, Direction, Failure, PopupTarget, Response, Side, VERSION, WorkspaceAction, valid_caller,
 };
 use std::{
@@ -587,6 +587,7 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
   {command}tab directory TAB [--json] -- DIRECTORY{reset}     Set the tab's launch directory
   {command}tab move left|right [--json]{reset}                Move the active tab
   {command}pane create [--json]{reset}                        Add a pane to the active tab
+  {command}pane create [--json] -- COMMAND...{reset}          Run COMMAND in a new pane
   {command}edit [--json] -- FILE{reset}                       Open FILE in Helix in a new pane
   {command}pane close PANE [--json]{reset}                    Close a pane of the active tab
   {command}pane move up|down|left|right [--json]{reset}       Move the selected pane
@@ -778,6 +779,7 @@ fn calling_terminal(action: &Action) -> Result<Option<String>, Failure> {
             | Action::MovePaneSideways(_)
             | Action::ClosePane { .. }
             | Action::Edit { .. }
+            | Action::CreateCommandPane { .. }
     ) {
         return Ok(None);
     }
@@ -801,6 +803,9 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
         return Ok(action);
     }
     if let Some(action) = parse_edit_arguments(arguments)? {
+        return Ok(action);
+    }
+    if let Some(action) = parse_command_pane_arguments(arguments)? {
         return Ok(action);
     }
     let mut json = false;
@@ -902,6 +907,39 @@ fn parse_edit_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>
     )))
 }
 
+/// `pane create [--json] -- COMMAND [ARGS...]`; every argument after `--`
+/// passes through unchanged as the new pane's argv.
+fn parse_command_pane_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>, Error> {
+    let (json, argv) = match arguments {
+        [command, operation, separator, argv @ ..]
+            if command == "pane" && operation == "create" && separator == "--" =>
+        {
+            (false, argv)
+        }
+        [command, operation, flag, separator, argv @ ..]
+            if command == "pane"
+                && operation == "create"
+                && flag == "--json"
+                && separator == "--" =>
+        {
+            (true, argv)
+        }
+        _ => return Ok(None),
+    };
+    if argv.first().is_none_or(|program| program.is_empty()) {
+        return Err(Error::usage("eon pane create -- needs a command"));
+    }
+    Ok(Some((
+        Action::CreateCommandPane {
+            argv: argv
+                .iter()
+                .map(|argument| argument.as_bytes().to_vec())
+                .collect(),
+        },
+        json,
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -948,6 +986,36 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn command_pane_parser_passes_the_argv_through() {
+        let prompt = OsString::from_vec(b"prime \xff".to_vec());
+        assert_eq!(
+            parse_control_arguments(&[
+                "pane".into(),
+                "create".into(),
+                "--json".into(),
+                "--".into(),
+                "claude".into(),
+                prompt,
+                "--".into(),
+            ])
+            .unwrap(),
+            (
+                Action::CreateCommandPane {
+                    argv: vec![b"claude".to_vec(), b"prime \xff".to_vec(), b"--".to_vec()],
+                },
+                true,
+            )
+        );
+        for arguments in [&["pane", "create", "--"][..], &["pane", "create", "--", ""]] {
+            let arguments: Vec<OsString> = arguments.iter().map(Into::into).collect();
+            assert!(
+                parse_control_arguments(&arguments).is_err(),
+                "{arguments:?}"
+            );
+        }
     }
 
     #[test]
