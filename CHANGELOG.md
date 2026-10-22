@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A pane no longer shows `Orbit connection lost: Orbit event queue exceeded
+  its bounded capacity` when a program prints a large burst while you scroll.
+  Venus waits for its screen to catch up and then shows the latest output.
+
 - A link under a still pointer stays highlighted, with its Open and Copy
   hint, while the terminal prints output, for example while an agent streams.
   `Ctrl+click` on it also opens it during such output, as long as the link

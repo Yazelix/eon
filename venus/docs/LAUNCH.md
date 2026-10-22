@@ -54,7 +54,7 @@ Venus may start before Orbit. A missing, refused, reset, or dropped local socket
 retries after 250 ms, 500 ms, 1 s, 2 s, 4 s, and then every 5 s. Venus retains
 the last coherent scene during recovery and replaces it only with a fresh
 complete frame. Busy, incompatible, exited, invalid protocol or model, resource,
-queue, input, and worker-start failures remain terminal and visible.
+input, and worker-start failures remain terminal and visible.
 Routine workspace attachment and first-frame progress are silent; standalone
 attachment retains progress messages.
 

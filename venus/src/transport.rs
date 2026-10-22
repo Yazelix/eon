@@ -11,7 +11,7 @@ use std::{
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
     sync::{
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc,
     },
@@ -409,8 +409,17 @@ impl Transport {
     }
 }
 
+impl Drop for Transport {
+    fn drop(&mut self) {
+        self.events.close();
+    }
+}
+
+/// Server events awaiting the native event loop. A push that would exceed a
+/// bound waits for the next drain, so the reader stops reading and Orbit's
+/// bounded slow-reader handling keeps its newest frame.
 #[derive(Default)]
-struct EventQueue(Mutex<QueuedEvents>);
+struct EventQueue(Mutex<QueuedEvents>, Condvar);
 
 #[derive(Default)]
 struct QueuedEvents {
@@ -445,66 +454,65 @@ impl EventQueue {
         framed_bytes: usize,
         byte_capacity: usize,
     ) -> bool {
-        let mut state = self.0.lock().expect("transport event queue lock poisoned");
-        if state.stopped {
-            return false;
-        }
         let incoming_revision = frame_revision(&event);
-        let mut replaced = None;
-        if let Some(revision) = incoming_revision {
-            for (index, queued) in state.events.iter().enumerate().rev() {
-                match &queued.event {
-                    TransportEvent::Server(
-                        ServerMessage::Accepted
-                        | ServerMessage::WheelOutcome(WheelOutcome::TerminalRouted),
-                    ) => {}
-                    TransportEvent::Server(ServerMessage::ScrollOutcome(_)) => break,
-                    queued => {
-                        let Some(queued_revision) = frame_revision(queued) else {
+        let mut state = self.0.lock().expect("transport event queue lock poisoned");
+        let (replaced, retained_bytes) = loop {
+            if state.stopped {
+                return false;
+            }
+            let mut replaced = None;
+            if let Some(revision) = incoming_revision {
+                for (index, queued) in state.events.iter().enumerate().rev() {
+                    match &queued.event {
+                        TransportEvent::Server(
+                            ServerMessage::Accepted
+                            | ServerMessage::WheelOutcome(WheelOutcome::TerminalRouted),
+                        ) => {}
+                        TransportEvent::Server(ServerMessage::ScrollOutcome(_)) => break,
+                        queued => {
+                            let Some(queued_revision) = frame_revision(queued) else {
+                                break;
+                            };
+                            let previous_revision = state
+                                .events
+                                .iter()
+                                .take(index)
+                                .filter_map(|queued| frame_revision(&queued.event))
+                                .chain(state.delivered_frame_high_water)
+                                .max();
+                            if revision > queued_revision
+                                && previous_revision
+                                    .is_none_or(|previous| queued_revision > previous)
+                            {
+                                replaced = Some(index);
+                            }
                             break;
-                        };
-                        let previous_revision = state
-                            .events
-                            .iter()
-                            .take(index)
-                            .filter_map(|queued| frame_revision(&queued.event))
-                            .chain(state.delivered_frame_high_water)
-                            .max();
-                        if revision > queued_revision
-                            && previous_revision.is_none_or(|previous| queued_revision > previous)
-                        {
-                            replaced = Some(index);
                         }
-                        break;
                     }
                 }
             }
-        }
+            let replaced_bytes = replaced.map_or(0, |index| state.events[index].framed_bytes);
+            let retained_bytes =
+                (state.retained_bytes - replaced_bytes).saturating_add(framed_bytes);
+            let full = retained_bytes > byte_capacity
+                || (replaced.is_none()
+                    && (state.events.len() == EVENT_QUEUE_CAPACITY
+                        || (incoming_revision.is_some()
+                            && state
+                                .events
+                                .iter()
+                                .filter_map(|queued| frame_revision(&queued.event))
+                                .count()
+                                == FRAME_QUEUE_CAPACITY)));
+            if !full {
+                break (replaced, retained_bytes);
+            }
+            state = self
+                .1
+                .wait(state)
+                .expect("transport event queue lock poisoned");
+        };
         let wake = state.events.is_empty();
-        let replaced_bytes = replaced.map_or(0, |index| state.events[index].framed_bytes);
-        let retained_bytes = (state.retained_bytes - replaced_bytes).saturating_add(framed_bytes);
-        if retained_bytes > byte_capacity
-            || (replaced.is_none()
-                && (state.events.len() == EVENT_QUEUE_CAPACITY
-                    || (incoming_revision.is_some()
-                        && state
-                            .events
-                            .iter()
-                            .filter_map(|queued| frame_revision(&queued.event))
-                            .count()
-                            == FRAME_QUEUE_CAPACITY)))
-        {
-            state.events.clear();
-            state.retained_bytes = 0;
-            state.events.push_back(QueuedEvent {
-                event: TransportEvent::Lost(
-                    "Orbit event queue exceeded its bounded capacity".into(),
-                ),
-                framed_bytes: 0,
-            });
-            state.stopped = true;
-            return wake;
-        }
         if let Some(index) = replaced {
             state.events.remove(index);
         }
@@ -532,7 +540,18 @@ impl EventQueue {
             .chain(state.delivered_frame_high_water)
             .max();
         state.retained_bytes = 0;
-        state.events.drain(..).map(|queued| queued.event).collect()
+        let events = state.events.drain(..).map(|queued| queued.event).collect();
+        self.1.notify_all();
+        events
+    }
+
+    /// Releases a waiting push once the client has gone.
+    fn close(&self) {
+        self.0
+            .lock()
+            .expect("transport event queue lock poisoned")
+            .stopped = true;
+        self.1.notify_all();
     }
 }
 
@@ -952,20 +971,76 @@ mod tests {
     }
 
     #[test]
-    fn decoded_frame_queue_is_bounded() {
-        let events = EventQueue::default();
-        events.push(server_frame(1));
-        events.push(TransportEvent::InvalidInput("first barrier".into()));
-        events.push(server_wheel_frame(2));
-        events.push(TransportEvent::InvalidInput("second barrier".into()));
-        events.push(server_frame(3));
+    fn full_event_queue_holds_the_reader_until_drained_or_dropped() {
+        const DEADLINE: Duration = Duration::from_secs(5);
+        let events = Arc::new(EventQueue::default());
+        let (wakes, woken) = mpsc::channel();
+        let notify = notifier(Arc::clone(&events), move || wakes.send(()).unwrap());
+        let (steps, step) = mpsc::channel();
+        let (resume, resumed) = mpsc::channel();
+        let reader = thread::spawn(move || {
+            // During a scroll Orbit answers each frame's preview between frames.
+            for event in [
+                server_frame(1),
+                server_preview(1),
+                server_wheel_frame(2),
+                server_preview(2),
+            ] {
+                notify(event, 0);
+            }
+            steps.send("held").unwrap();
+            notify(server_frame(3), 0);
+            steps.send("pushed").unwrap();
 
+            for _ in 0..2 {
+                resumed.recv().unwrap();
+                notify(accepted(), EVENT_QUEUE_BYTE_CAPACITY);
+                steps.send("held").unwrap();
+                notify(accepted(), 1);
+                steps.send("pushed").unwrap();
+            }
+        });
+        let next = || step.recv_timeout(DEADLINE).unwrap();
+        let held = || {
+            assert_eq!(next(), "held");
+            assert!(step.recv_timeout(Duration::from_millis(100)).is_err());
+        };
+
+        held();
         assert_eq!(
             events.drain(),
-            [TransportEvent::Lost(
-                "Orbit event queue exceeded its bounded capacity".into()
-            )]
+            [
+                server_frame(1),
+                server_preview(1),
+                server_wheel_frame(2),
+                server_preview(2),
+            ]
         );
+        assert_eq!(next(), "pushed");
+        woken.recv_timeout(DEADLINE).unwrap();
+        // The released frame wakes the event loop again.
+        woken.recv_timeout(DEADLINE).unwrap();
+        assert_eq!(events.drain(), [server_frame(3)]);
+        resume.send(()).unwrap();
+
+        held();
+        assert_eq!(
+            events.0.lock().unwrap().retained_bytes,
+            EVENT_QUEUE_BYTE_CAPACITY
+        );
+        assert_eq!(events.drain(), [accepted()]);
+        assert_eq!(next(), "pushed");
+        assert_eq!(events.drain(), [accepted()]);
+        resume.send(()).unwrap();
+
+        held();
+        drop(Transport {
+            messages: mpsc::sync_channel(1).0,
+            events: Arc::clone(&events),
+        });
+        assert_eq!(next(), "pushed");
+        assert_eq!(events.drain(), [accepted()]);
+        reader.join().unwrap();
     }
 
     #[test]
@@ -988,29 +1063,6 @@ mod tests {
             ]
         );
         assert_eq!(events.0.lock().unwrap().retained_bytes, 0);
-
-        assert!(events.push_with_byte_capacity(
-            TransportEvent::Server(ServerMessage::Accepted),
-            BYTE_CAPACITY,
-            BYTE_CAPACITY,
-        ));
-        assert!(!events.push_with_byte_capacity(
-            TransportEvent::Server(ServerMessage::Accepted),
-            1,
-            BYTE_CAPACITY,
-        ));
-        assert_eq!(
-            events.drain(),
-            [TransportEvent::Lost(
-                "Orbit event queue exceeded its bounded capacity".into()
-            )]
-        );
-        assert_eq!(events.0.lock().unwrap().retained_bytes, 0);
-        assert!(!events.push_with_byte_capacity(
-            TransportEvent::Server(ServerMessage::Accepted),
-            1,
-            BYTE_CAPACITY,
-        ));
     }
 
     #[test]
@@ -1431,6 +1483,18 @@ mod tests {
 
     fn server_frame(revision: u64) -> TransportEvent {
         TransportEvent::Server(ServerMessage::Frame(Box::new(frame(revision))))
+    }
+
+    fn server_preview(revision: u64) -> TransportEvent {
+        TransportEvent::Server(ServerMessage::VerticalPreview(session::VerticalPreview {
+            frame_revision: revision,
+            direction: session::VerticalDirection::Up,
+            outcome: session::PreviewOutcome::TerminalRouted,
+        }))
+    }
+
+    fn accepted() -> TransportEvent {
+        TransportEvent::Server(ServerMessage::Accepted)
     }
 
     fn server_wheel_frame(revision: u64) -> TransportEvent {

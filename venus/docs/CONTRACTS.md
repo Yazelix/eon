@@ -347,6 +347,11 @@ re-proved when that platform or feature is next touched.
     transient Busy while the departing attachment releases.
   - Endpoint replacement, non-live workspace state, successful attachment, or
     exit cancels obsolete retry state.
+  - A burst of Orbit output never costs the attachment. When Venus's bounded
+    event queue is full, Venus stops reading from Orbit until its event loop
+    drains the queue. Orbit's bounded slow-reader handling (`ORB-C7`) then
+    delivers the newest frame, so the pane resumes at the current terminal
+    state.
 - **Important failures:** Standalone Busy and incompatible, exited, malformed,
   or replaced endpoints remain terminal rather than creating duplicate clients.
 - **Owner:** Venus connection/retry and native event-loop lifecycle; Orbit owns
@@ -354,7 +359,8 @@ re-proved when that platform or feature is next touched.
 - **Consumes:** Orbit `ORB-C1`, `ORB-C3`, `ORB-C4`, and `ORB-C7` through canonical
   ORBS v13.
 - **Boundary:** Broader Linux compositor coverage remains unproved.
-- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
+- **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, with the `eon-10qt`
+  commit for output-burst backpressure
   - **Environment:** Automated and installed.
   - **Evidence:** `orbit_retry_schedule_is_bounded_and_resettable`,
     `workspace_recovery_requires_the_same_selected_live_endpoint`,
@@ -362,9 +368,11 @@ re-proved when that platform or feature is next touched.
     `protocol_and_terminal_failures_do_not_become_socket_retries`,
     `retryable_loss_records_state_independently_of_retry_policy`,
     `reconnect_preserves_the_last_scene_and_accepts_a_fresh_revision`,
-    `missing_and_dropped_sockets_can_attach_on_later_attempts`, and
-    `typed_attachment_is_duplex_and_client_drop_leaves_server_listener` in the
-    workspace suite; dogfood checklist items 2 and 11.
+    `missing_and_dropped_sockets_can_attach_on_later_attempts`,
+    `typed_attachment_is_duplex_and_client_drop_leaves_server_listener`, and
+    `full_event_queue_holds_the_reader_until_drained_or_dropped` in the
+    workspace suite; dogfood checklist items 2 and 11; the `eon-10qt`
+    installed burst-while-scrolling observation.
 
 ## VEN-C4 — Bounded explicit failure UX
 
@@ -380,7 +388,7 @@ re-proved when that platform or feature is next touched.
   attachment retains progress messages. Actual attachment and rendering failures
   remain visible in both modes.
 - **Important failures:** Standalone Busy is terminal; only supervised
-  replacement retries it. Incompatible, Exited, model, queue, invalid-input,
+  replacement retries it. Incompatible, Exited, model, invalid-input,
   worker-start, and persistent-renderer failures remain terminal and withdraw
   presented input.
 - **Owner:** Venus connection state, notice projection, and renderer lifecycle.

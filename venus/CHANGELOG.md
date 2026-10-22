@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C3, VEN-C4: when Venus's bounded Orbit event queue is full, Venus stops
+  reading from Orbit until its event loop drains the queue, in place of
+  dropping the attachment with `Orbit event queue exceeded its bounded
+  capacity`; Orbit's slow-reader handling keeps the newest frame
+  (`eon-10qt`).
 - VEN-C5: the link highlight and hint are derived from the frame being
   presented, so output no longer blinks them while the pointer rests on a
   link, and a `Ctrl+click` press survives output revisions that keep the same
