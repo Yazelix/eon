@@ -671,8 +671,9 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     authorize attach or Stop.
   - Lease disconnect before Stop is non-destructive. Two replacements produce
     one winner and one Busy loser; accepted Stop is not cancelled by disconnect.
-  - Management carries only bounded identity, live status, and explicit Stop,
-    with one request and response in flight.
+  - Management carries only bounded identity, live status, the ORB-C15
+    `ProgramStatus` request, and explicit Stop, with one request and response
+    in flight.
   - Canonical ORBS remains a separate one-input-client plus
     one-metadata-observer boundary retaining ORB-C1 through ORB-C11.
   - Stop succeeds only through the validated lease after ORB-C12 succeeds.
@@ -695,7 +696,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     PTY, presentation, child observation, or shutdown.
 - **Owner:** Orbit's private management owner and canonical protocol package;
   platform mechanics remain isolated, while Eon owns consumer policy.
-- **Consumes:** Canonical management v1 and ORB-C12.
+- **Consumes:** Canonical management v2 and ORB-C12.
 - **Boundary:**
   - The contract is per live Orbit run. Eon retains topology, enumeration,
     cleanup, and recovery policy.
@@ -706,11 +707,13 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     endpoint, permission, record, and polling mechanics with isolated Linux and
     Darwin peer-credential and process-start identity mechanisms.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.4` commit
-  for untrusted records and runtime directories
+  for untrusted records and runtime directories and the
+  `eon-agent-sidebar-yx8.5` commit for management v2
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
-    check); sandboxed `nix develop -c eon-test` (workspace and installer,
-    `tests/lifecycle.rs` unmodified);
+    check); sandboxed `nix develop -c eon-test` (workspace and installer;
+    `tests/lifecycle.rs` unmodified by the import, and changed only for the
+    `--management-v2` flag in `eon-agent-sidebar-yx8.5`);
     Apple M2 macOS 26.7.1 native `cargo test --locked -p yazelix-orbit -p
     orbit-protocol` of the previous Rust server at
     `4910b81e9d68942a65ad96ad21e03385de7144f5` (`eon-orb-c14-mac-reproof-l8rz`)
@@ -726,7 +729,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
       [`management_stop_needs_the_lease`](../LAWS.bend) and
       [`management_follows_its_contract`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
-    - Eon consumes management v1 in this repository.
+    - Eon consumes management v2 in this repository.
     - Both lifecycle checks passed on macOS for the previous Rust server; the
       managed run's `/proc` check that the PTY child inherits no Orbit
       listener is Linux-only.
@@ -789,7 +792,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 
 ## ORB-C15 — Program status records
 
-- **Status:** Planned. Approved on 2026-10-21 (draft 15 on
+- **Status:** Proved. Approved on 2026-10-21 (draft 15 on
   `eon-agent-sidebar-yx8.1`). `eon-agent-sidebar-yx8.4` stores the records
   and decides their lifetime; `eon-agent-sidebar-yx8.5` serves the
   `ProgramStatus` reply.
@@ -928,7 +931,40 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   the program in Orbit, and no notifications; no OSC 9, 99 or 777 handling; no
   records across Orbit restarts. Portability is neutral: `tcgetpgrp` and the
   PTY are POSIX, and macOS stays deferred.
-- **Proof:** Not proved.
+- **Proof:** the `eon-agent-sidebar-yx8.5` commit, with the
+  `eon-agent-sidebar-yx8.4` commit for the records and their lifetime
+  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
+    `orbit-boundary`, every `orbit-<name>` real-PTY check); sandboxed
+    `nix develop -c eon-test` (workspace and installer)
+  - **Evidence:**
+    - Real-PTY check [`orbit-program-status`](../tests/real_pty/program_status.rs):
+      through a management lease, a prompt mark drops in stream order, a
+      foreground return drops once on a terminal without prompt marks, a
+      return inside a detached turn ends the turn there, and requests are
+      answered within the worker-stall bound while the child floods the PTY
+      ([BEHAVIOR.md](BEHAVIOR.md#program-status) records the measured
+      answer times)
+    - Real-PTY check [`orbit-terminal-replies`](../tests/real_pty/terminal_replies.rs):
+      the probe's answer arrives before the device attributes reply
+    - Host unit tests in [src/status.rs](../src/status.rs) on real
+      libghostty terminals: the report rules and limits, the neutral facts,
+      clears and RIS, app inheritance and disarmed text, eviction past 256
+      records, drops in stream order, a real PTY child's reports, Claude
+      Code's and Codex's recorded reports, and the reply's fill order and
+      cuts; `the_worker_leads_each_output_with_its_status_lifetime`
+      ([src/host.rs](../src/host.rs)) against the built worker
+    - Protocol test `program_status_replies_keep_their_bounds` and the
+      management round trip ([crates/protocol/tests/management.rs](../crates/protocol/tests/management.rs))
+    - Laws `status_prompt_marks_drop`, `status_foreground_returns_drop`,
+      `status_foreground_drops_once`, `status_unknown_samples_keep_the_last`,
+      `status_prompt_marks_end_foreground_drops`,
+      `management_program_status_needs_a_live_lease` and
+      `management_follows_its_contract` ([LAWS.bend](../LAWS.bend),
+      `orbit-laws`); a turn's fact carries only its foreground sample and
+      whether it had a prompt mark, so reports add no publication beyond the
+      laws over `step` (ORB-C4)
+    - Claude Code 2.1.303 and Codex 0.163.0 inside an isolated Orbit on
+      2026-10-21 ([BEHAVIOR.md](BEHAVIOR.md#program-status))
 
 ## Focused terminal conformance corpus
 

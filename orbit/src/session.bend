@@ -94,6 +94,18 @@ def is_attached(life: Life.Lifecycle) -> Bool:
     case _:
       False{}
 
+# Whether the child still runs: no stop has begun and it has not exited.
+def runs(life: Life.Lifecycle) -> Bool:
+  match life:
+    case Life.Detached{pid}:
+      True{}
+    case Life.Attached{pid}:
+      True{}
+    case Life.Stopping{pid}:
+      False{}
+    case Life.Stopped{pid}:
+      False{}
+
 # Metadata is queued only when the title or working directory changed since
 # the metadata last queued. The first queued for an observer stays, and later
 # metadata replaces what has not started, so a slow observer converges on the
@@ -1012,6 +1024,10 @@ def managed(answer: Management.Answer, session: Session) -> Next():
       (session, [Boundary.ManageReject{}])
     case Management.Report{}:
       (session, [Boundary.ManageStatus{}])
+    case Management.Records{}:
+      (session, [Boundary.ManageProgramStatus{}])
+    case Management.Refuse{}:
+      (session, [Boundary.ManageRefuse{}])
     case Management.Shutdown{}:
       shut_down(session)
     case Management.Quiet{}:
@@ -1026,6 +1042,16 @@ def management(+signal: Management.Signal, session: Session) -> Next():
       managed(
         Management.answer(manage, signal),
         Session{life, written, observer, explicit, waiting, pointer, Management.next(manage, signal)}
+      )
+
+# A ProgramStatus request (ORB-C15) is answered while the child runs; its
+# foreground sample's lifetime decision already leads the step.
+def program_status(session: Session) -> Next():
+  match session:
+    case Session{+life, written, observer, explicit, waiting, pointer, manage}:
+      management(
+        Management.ProgramStatus{runs(life)},
+        Session{life, written, observer, explicit, waiting, pointer, manage}
       )
 
 def drained_stop(flags: Boundary.Flags, pair: Next()) -> Next():
@@ -1126,6 +1152,8 @@ def decide(
       ticked(state, x, y, flags, session)
     case Boundary.Management{event}:
       management(management_signal(event), session)
+    case Boundary.ProgramStatus{foreground}:
+      program_status(session)
     case Boundary.ChildExited{drained}:
       exited(drained, flags, session)
     case Boundary.Crowded{}:
@@ -1350,13 +1378,16 @@ def presented(
       )
 
 # A PTY turn's program status lifetime (ORB-C15) leads its decisions and moves
-# the tracker; every other fact keeps the tracker.
+# the tracker, and so does a ProgramStatus request's foreground sample, which
+# carries no prompt marks; every other fact keeps the tracker.
 def lifetime_of(
   fact: Boundary.Fact, +status: Status.Tracker
 ) -> Status.Tracker & Boundary.Decisions():
   match fact:
     case Boundary.Output{+foreground, +marks}:
       (Status.after(status, foreground, marks), [Status.lifetime(status, foreground, marks)])
+    case Boundary.ProgramStatus{+foreground}:
+      (Status.after(status, foreground, False{}), [Status.lifetime(status, foreground, False{})])
     case _:
       (status, Nil{})
 

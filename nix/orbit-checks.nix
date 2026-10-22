@@ -165,6 +165,11 @@ let
     { name = "management-record"; timeout = "30s"; }
     { name = "management-lease"; timeout = "60s"; }
     {
+      name = "program-status";
+      timeout = "60s";
+      env.ORBIT_BASH = bash;
+    }
+    {
       name = "terminal-identity";
       variable = "IDENTITY_SHELL";
       timeout = "30s";

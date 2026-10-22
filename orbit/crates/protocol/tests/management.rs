@@ -1,7 +1,25 @@
 use orbit_protocol::management::{
     self, ClientMessage, EndpointIdentity, Error, Failure, FailureCode, LiveIdentity,
-    ObjectIdentity, ProcessOutcome, Record, ServerMessage, TerminationReason, Tombstone,
+    ObjectIdentity, ProcessOutcome, ProgramKind, ProgramRecord, ProgramState, ProgramStatus,
+    Record, ServerMessage, TerminationReason, Tombstone,
 };
+
+fn program_record(id: &str, state: ProgramState) -> ProgramRecord {
+    ProgramRecord {
+        id: id.into(),
+        state,
+        kind: (state == ProgramState::Blocked).then_some(ProgramKind::Permission),
+        progress: Some(40),
+        app: "claude-code".into(),
+        title: "Fix the build".into(),
+        message: "Apply these changes?".into(),
+        updated: 9,
+        changed: 7,
+        previous: Some(ProgramState::Working),
+        updated_age_ms: 120,
+        changed_age_ms: 900,
+    }
+}
 
 fn live_identity() -> LiveIdentity {
     LiveIdentity {
@@ -51,6 +69,7 @@ fn management_messages_and_records_round_trip_canonically() {
         },
         ClientMessage::Status,
         ClientMessage::Stop,
+        ClientMessage::ProgramStatus,
     ];
     for message in client_messages {
         let bytes = management::encode_client_message(&message).unwrap();
@@ -69,6 +88,20 @@ fn management_messages_and_records_round_trip_canonically() {
         ServerMessage::Failure(Failure {
             code: FailureCode::InvalidIdentity,
             detail: "identity mismatch".into(),
+        }),
+        ServerMessage::ProgramStatus(ProgramStatus {
+            count: 3,
+            update: 9,
+            omitted: 1,
+            records: vec![
+                program_record("agent/1", ProgramState::Blocked),
+                ProgramRecord {
+                    kind: None,
+                    progress: None,
+                    previous: None,
+                    ..program_record("", ProgramState::Idle)
+                },
+            ],
         }),
     ];
     for message in server_messages {
@@ -154,17 +187,78 @@ fn management_codec_rejects_incompatible_or_noncanonical_bytes() {
         Err(Error::TrailingBytes { count: 1 })
     ));
 
-    let mut newer = bytes.clone();
-    newer[4..6].copy_from_slice(&(management::VERSION + 1).to_le_bytes());
-    assert!(matches!(
-        management::decode_client_message(&newer),
-        Err(Error::UnsupportedVersion { .. })
-    ));
+    // Generations are exact: an older or a newer peer is refused.
+    for generation in [management::VERSION - 1, management::VERSION + 1] {
+        let mut other = bytes.clone();
+        other[4..6].copy_from_slice(&generation.to_le_bytes());
+        assert!(matches!(
+            management::decode_client_message(&other),
+            Err(Error::UnsupportedVersion { .. })
+        ));
+    }
 
     let mut invalid_tag = bytes;
     invalid_tag[6] = u8::MAX;
     assert!(matches!(
         management::decode_client_message(&invalid_tag),
         Err(Error::InvalidTag { .. })
+    ));
+}
+
+/// Orbit fills a reply by `program_record_len`, so it must match the
+/// encoding; at the reply's text bounds seven records fit in 4 KiB.
+#[test]
+fn program_status_replies_keep_their_bounds() {
+    let full = ProgramRecord {
+        id: "a".repeat(management::MAX_PROGRAM_ID_BYTES),
+        app: "a".repeat(management::MAX_PROGRAM_APP_BYTES),
+        title: "a".repeat(management::MAX_PROGRAM_TITLE_BYTES),
+        message: "a".repeat(management::MAX_PROGRAM_MESSAGE_BYTES),
+        ..program_record("", ProgramState::Blocked)
+    };
+    let reply = |records: Vec<ProgramRecord>| {
+        ServerMessage::ProgramStatus(ProgramStatus {
+            count: records.len() as u16,
+            update: 1,
+            omitted: 0,
+            records,
+        })
+    };
+    let seven = management::encode_server_message(&reply(vec![full.clone(); 7])).unwrap();
+    assert_eq!(
+        seven.len(),
+        management::PROGRAM_STATUS_HEADER_BYTES + 7 * management::program_record_len(&full)
+    );
+    assert!(matches!(
+        management::encode_server_message(&reply(vec![full.clone(); 8])),
+        Err(Error::PayloadTooLarge { .. })
+    ));
+
+    let refused = |status: ProgramStatus| {
+        management::encode_server_message(&ServerMessage::ProgramStatus(status))
+    };
+    let mut kind_without_block = program_record("", ProgramState::Working);
+    kind_without_block.kind = Some(ProgramKind::Question);
+    let mut overfull = program_record("", ProgramState::Done);
+    overfull.progress = Some(101);
+    for records in [vec![kind_without_block], vec![overfull]] {
+        assert!(matches!(
+            refused(ProgramStatus {
+                count: 1,
+                update: 1,
+                omitted: 0,
+                records
+            }),
+            Err(Error::InvalidValue { .. })
+        ));
+    }
+    assert!(matches!(
+        refused(ProgramStatus {
+            count: 2,
+            update: 1,
+            omitted: 0,
+            records: vec![full]
+        }),
+        Err(Error::InvalidValue { .. })
     ));
 }

@@ -5,7 +5,7 @@ use std::fmt;
 const MESSAGE_MAGIC: [u8; 4] = *b"ORBM";
 const RECORD_MAGIC: [u8; 4] = *b"ORBR";
 
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 pub const RECORD_GENERATION: u16 = 1;
 pub const HEADER_BYTES: usize = 12;
 pub const MAX_MESSAGE_BYTES: usize = 4 * 1024;
@@ -13,6 +13,14 @@ pub const MAX_RECORD_BYTES: usize = 4 * 1024;
 pub const MAX_ID_BYTES: usize = 128;
 pub const MAX_DETAIL_BYTES: usize = 1024;
 const MAX_PATH_BYTES: usize = 1024;
+/// The most program status records a terminal holds (ORB-C15).
+pub const MAX_PROGRAM_RECORDS: u16 = 256;
+pub const MAX_PROGRAM_ID_BYTES: usize = 128;
+pub const MAX_PROGRAM_APP_BYTES: usize = 32;
+/// The reply's bounds on `title` and `msg`; Orbit truncates longer text at a
+/// UTF-8 boundary.
+pub const MAX_PROGRAM_TITLE_BYTES: usize = 96;
+pub const MAX_PROGRAM_MESSAGE_BYTES: usize = 256;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ObjectIdentity {
@@ -71,6 +79,61 @@ pub struct Failure {
     pub detail: String,
 }
 
+/// A program status state of OSC 7501 (ORB-C15).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgramState {
+    Idle,
+    Working,
+    Done,
+    Blocked,
+    Error,
+}
+
+/// What a blocked program needs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgramKind {
+    Permission,
+    Question,
+    Auth,
+}
+
+/// One program status record and its neutral facts (ORB-C15).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProgramRecord {
+    /// The full id; empty for the root record.
+    pub id: String,
+    pub state: ProgramState,
+    /// Only a blocked record has a kind.
+    pub kind: Option<ProgramKind>,
+    /// From 0 through 100.
+    pub progress: Option<u8>,
+    /// The record's app, or that of its nearest ancestor that has one.
+    pub app: String,
+    pub title: String,
+    pub message: String,
+    /// The update sequence of the record's last report.
+    pub updated: u64,
+    /// The update sequence at which its state last changed.
+    pub changed: u64,
+    /// The state before that change, or none for a new record.
+    pub previous: Option<ProgramState>,
+    /// Milliseconds since the last update and since the last state change,
+    /// on Orbit's monotonic clock.
+    pub updated_age_ms: u64,
+    pub changed_age_ms: u64,
+}
+
+/// The `ProgramStatus` reply: the terminal's record count, its latest update
+/// sequence, and as many records as fit in 4 KiB in ORB-C15's fill order;
+/// `omitted` counts the rest.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProgramStatus {
+    pub count: u16,
+    pub update: u64,
+    pub omitted: u16,
+    pub records: Vec<ProgramRecord>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClientMessage {
     Acquire {
@@ -79,6 +142,7 @@ pub enum ClientMessage {
     },
     Status,
     Stop,
+    ProgramStatus,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -88,6 +152,7 @@ pub enum ServerMessage {
     Busy,
     Stopped(Tombstone),
     Failure(Failure),
+    ProgramStatus(ProgramStatus),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,6 +252,7 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
         }
         ClientMessage::Status => encode(MESSAGE_MAGIC, 2, MAX_MESSAGE_BYTES, |_| Ok(())),
         ClientMessage::Stop => encode(MESSAGE_MAGIC, 3, MAX_MESSAGE_BYTES, |_| Ok(())),
+        ClientMessage::ProgramStatus => encode(MESSAGE_MAGIC, 4, MAX_MESSAGE_BYTES, |_| Ok(())),
     }
 }
 
@@ -199,6 +265,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
         },
         2 => ClientMessage::Status,
         3 => ClientMessage::Stop,
+        4 => ClientMessage::ProgramStatus,
         value => {
             return Err(Error::InvalidTag {
                 field: "client message",
@@ -229,6 +296,11 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
             });
             out.text("failure detail", &failure.detail, MAX_DETAIL_BYTES, true)
         }),
+        ServerMessage::ProgramStatus(status) => {
+            encode(MESSAGE_MAGIC, 69, MAX_MESSAGE_BYTES, |out| {
+                encode_program_status(out, status)
+            })
+        }
     }
 }
 
@@ -252,6 +324,7 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
             },
             detail: input.text("failure detail", MAX_DETAIL_BYTES, true)?,
         }),
+        69 => ServerMessage::ProgramStatus(decode_program_status(&mut input)?),
         value => {
             return Err(Error::InvalidTag {
                 field: "server message",
@@ -476,6 +549,162 @@ fn decode_tombstone(input: &mut Decoder<'_>) -> Result<Tombstone> {
         identity,
         reason,
         outcome,
+    })
+}
+
+/// The bytes one record takes in a reply.
+pub fn program_record_len(record: &ProgramRecord) -> usize {
+    // id, app, title and message lengths; state, kind, progress and previous;
+    // four sequences and ages.
+    4 * 2
+        + record.id.len()
+        + record.app.len()
+        + record.title.len()
+        + record.message.len()
+        + 4
+        + 4 * 8
+}
+
+/// The bytes a reply's message takes before its records.
+pub const PROGRAM_STATUS_HEADER_BYTES: usize = HEADER_BYTES + 2 + 8 + 2;
+
+fn encode_program_status(out: &mut Encoder, status: &ProgramStatus) -> Result<()> {
+    validate_program_counts(status.count, status.omitted, status.records.len())?;
+    out.u16(status.count);
+    out.u64(status.update);
+    out.u16(status.omitted);
+    for record in &status.records {
+        if record.progress.is_some_and(|progress| progress > 100) {
+            return Err(Error::InvalidValue { field: "progress" });
+        }
+        if record.kind.is_some() && record.state != ProgramState::Blocked {
+            return Err(Error::InvalidValue {
+                field: "program kind",
+            });
+        }
+        out.text("program id", &record.id, MAX_PROGRAM_ID_BYTES, true)?;
+        out.u8(state_tag(record.state));
+        out.u8(match record.kind {
+            None => 0,
+            Some(ProgramKind::Permission) => 1,
+            Some(ProgramKind::Question) => 2,
+            Some(ProgramKind::Auth) => 3,
+        });
+        out.u8(record.progress.unwrap_or(u8::MAX));
+        out.text("program app", &record.app, MAX_PROGRAM_APP_BYTES, true)?;
+        out.text(
+            "program title",
+            &record.title,
+            MAX_PROGRAM_TITLE_BYTES,
+            true,
+        )?;
+        out.text(
+            "program message",
+            &record.message,
+            MAX_PROGRAM_MESSAGE_BYTES,
+            true,
+        )?;
+        out.u64(record.updated);
+        out.u64(record.changed);
+        out.u8(record.previous.map_or(0, state_tag));
+        out.u64(record.updated_age_ms);
+        out.u64(record.changed_age_ms);
+    }
+    Ok(())
+}
+
+fn decode_program_status(input: &mut Decoder<'_>) -> Result<ProgramStatus> {
+    let count = input.u16()?;
+    let update = input.u64()?;
+    let omitted = input.u16()?;
+    let included = usize::from(count.checked_sub(omitted).ok_or(Error::InvalidValue {
+        field: "program record counts",
+    })?);
+    validate_program_counts(count, omitted, included)?;
+    let mut records = Vec::with_capacity(included);
+    for _ in 0..included {
+        let id = input.text("program id", MAX_PROGRAM_ID_BYTES, true)?;
+        let state = decode_state(input.u8()?)?;
+        let kind = match input.u8()? {
+            0 => None,
+            1 => Some(ProgramKind::Permission),
+            2 => Some(ProgramKind::Question),
+            3 => Some(ProgramKind::Auth),
+            value => {
+                return Err(Error::InvalidTag {
+                    field: "program kind",
+                    value,
+                });
+            }
+        };
+        if kind.is_some() && state != ProgramState::Blocked {
+            return Err(Error::InvalidValue {
+                field: "program kind",
+            });
+        }
+        let progress = match input.u8()? {
+            u8::MAX => None,
+            progress @ 0..=100 => Some(progress),
+            _ => return Err(Error::InvalidValue { field: "progress" }),
+        };
+        records.push(ProgramRecord {
+            id,
+            state,
+            kind,
+            progress,
+            app: input.text("program app", MAX_PROGRAM_APP_BYTES, true)?,
+            title: input.text("program title", MAX_PROGRAM_TITLE_BYTES, true)?,
+            message: input.text("program message", MAX_PROGRAM_MESSAGE_BYTES, true)?,
+            updated: input.u64()?,
+            changed: input.u64()?,
+            previous: match input.u8()? {
+                0 => None,
+                tag => Some(decode_state(tag)?),
+            },
+            updated_age_ms: input.u64()?,
+            changed_age_ms: input.u64()?,
+        });
+    }
+    Ok(ProgramStatus {
+        count,
+        update,
+        omitted,
+        records,
+    })
+}
+
+fn validate_program_counts(count: u16, omitted: u16, included: usize) -> Result<()> {
+    if count > MAX_PROGRAM_RECORDS || usize::from(omitted) + included != usize::from(count) {
+        return Err(Error::InvalidValue {
+            field: "program record counts",
+        });
+    }
+    Ok(())
+}
+
+fn state_tag(state: ProgramState) -> u8 {
+    match state {
+        ProgramState::Idle => 1,
+        ProgramState::Working => 2,
+        ProgramState::Done => 3,
+        ProgramState::Blocked => 4,
+        ProgramState::Error => 5,
+    }
+}
+
+fn decode_state(tag: u8) -> Result<ProgramState> {
+    Ok(match tag {
+        1 => ProgramState::Idle,
+        2 => ProgramState::Working,
+        3 => ProgramState::Done,
+        4 => ProgramState::Blocked,
+        5 => ProgramState::Error,
+        value => {
+            return Err(Error::InvalidTag {
+                field: "program state",
+                value,
+            });
+        }
     })
 }
 

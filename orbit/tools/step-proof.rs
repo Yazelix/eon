@@ -46,7 +46,7 @@ const MODULES: [(&str, &str); 9] = [
 ];
 
 // The facts of src/boundary.schema, with names for their fields.
-const FACTS: [(&str, &[(&str, &str)]); 27] = [
+const FACTS: [(&str, &[(&str, &str)]); 28] = [
     ("Started", &[("pid", "U32")]),
     (
         "Output",
@@ -102,6 +102,7 @@ const FACTS: [(&str, &[(&str, &str)]); 27] = [
     ),
     ("ReturnToLive", &[]),
     ("ExitedBeforeStop", &[("status", "U32")]),
+    ("ProgramStatus", &[("foreground", "Boundary.Foreground")]),
 ];
 const SESSION: [&str; 7] = [
     "life", "written", "observer", "explicit", "waiting", "pointer", "manage",
@@ -387,14 +388,18 @@ impl Ctx {
         let state =
             format!("Session.State{{{session}, Session.Shown{{revision, was}}, tracker}}");
         // A PTY turn's program status lifetime leads its decisions and moves
-        // the tracker; every other fact keeps it.
-        let (lifetime, tracked) = if fact == "Output" {
-            (
+        // the tracker, and so does a ProgramStatus request's foreground
+        // sample, without prompt marks; every other fact keeps it.
+        let (lifetime, tracked) = match fact {
+            "Output" => (
                 "[Status.lifetime(tracker, foreground, marks)]",
                 "Status.after(tracker, foreground, marks)",
-            )
-        } else {
-            ("Nil{}", "tracker")
+            ),
+            "ProgramStatus" => (
+                "[Status.lifetime(tracker, foreground, False{})]",
+                "Status.after(tracker, foreground, False{})",
+            ),
+            _ => ("Nil{}", "tracker"),
         };
         let step = format!(
             "Session.begun(Session.fact_advanced({fact_text}, was, revision), held, {lifetime}, \

@@ -732,7 +732,7 @@ fn pty_child(server: i32) -> Option<i32> {
 }
 
 /// Orbit's command line for one session, with `options`, such as
-/// `--management-v1` and its identities, before the command.
+/// `--management-v2` and its identities, before the command.
 pub fn server_command(path: &Path, command: &[&OsStr], options: &[&str]) -> Vec<OsString> {
     let binary = env::var_os("ORBIT_BIN").expect("ORBIT_BIN");
     let mut line = vec![binary, "serve".into(), path.into()];

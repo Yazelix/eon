@@ -55,7 +55,7 @@ blind to the schema.
 `yazelix-orbit` takes this command line:
 
 ```sh
-yazelix-orbit serve [SOCKET] [--management-v1 SESSION_ID RUN_ID COMPONENT_GENERATION]
+yazelix-orbit serve [SOCKET] [--management-v2 SESSION_ID RUN_ID COMPONENT_GENERATION]
                   [--ansi-palette-v1 RGB,...] [-- COMMAND ...]
 ```
 
@@ -102,7 +102,7 @@ after it. With the entry removed, the check failed.
 
 ## Management record
 
-`--management-v1` makes the run managed (ORB-C13).
+`--management-v2` makes the run managed (ORB-C13).
 Each identity has 1 to 128 UTF-8 bytes. Before the child starts, Rust opens a
 private management socket at `SOCKET.management`; at Ready it publishes an
 exact user-owned 0600 live record at `SOCKET.record` naming the three
@@ -146,10 +146,10 @@ connection is admitted only while no other holds the slot and gets Busy
 otherwise; it must acquire the lease within one second; Acquire is granted only
 when Rust found the expected identity, the record's exact inode and contents,
 the peer's UID and both sockets all equal to this run's, and fails with
-`InvalidIdentity` and closes otherwise; Status and Stop are answered only
-under the lease, and a request out of place, over 4 KiB, malformed or
-pipelined fails with `InvalidRequest` and closes. A
-refused connection keeps the slot until its Failure is written and it closes,
+`InvalidIdentity` and closes otherwise; Status, ProgramStatus and Stop are
+answered only under the lease, and a request out of place, over 4 KiB,
+malformed or pipelined fails with `InvalidRequest` and closes. A refused
+connection keeps the slot until its Failure is written and it closes,
 so a connection meanwhile is Busy. Bend's session holds the slot and whether
 a stop came through the lease, which makes the finish explicit; Rust keeps
 the connection, its one-second bound and the identity checks. Losing the lease
@@ -160,17 +160,34 @@ it, the observer hears the exit, the interactive client closes without
 `Exited`, and the server exits 0. Files and process
 metadata never authorize anything.
 
+A ProgramStatus request (ORB-C15) reaches Bend as the fact `ProgramStatus`,
+which carries a foreground sample, so a return to the child's group drops the
+`working` and `blocked` records in the same exchange, before the answer
+([Program status](#program-status)). Bend answers it with the records while
+the child runs and refuses it with Busy, keeping the lease, once a stop has
+begun or the child has exited; it never defers. The host reports no
+management event after a stop begins, since the stop and the reap run without
+returning to the loop, so the Busy answer is unreachable today and keeps the
+policy total.
+
 [LAWS.bend](../LAWS.bend) states, and [PROOF.bend](../PROOF.bend) proves, that over
 any list of connections, requests and departures, from any slot, the answers
 satisfy an audit kept apart from the policy: a connection is admitted only
 into a free slot and is Busy otherwise, a lease is granted only for a valid
 identity during negotiation, Status and Stop are carried out only under the
-lease, anything out of place is refused and keeps the slot until it closes,
-and a refused connection is answered nothing more; and that a Stop is carried
-out exactly when the lease is held. Four sensitivity checks, one that stopped
-the run during negotiation, one that admitted a second connection under the
-lease, one that freed the slot at a refusal and one that admitted a connection
-while a refused one closed, made the proof fail.
+lease, ProgramStatus is answered under the lease while the child runs and
+refused with Busy under it after, anything out of place is refused and keeps
+the slot until it closes, and a refused connection is answered nothing more;
+that a Stop is carried out exactly when the lease is held; and that a
+ProgramStatus request gets the records exactly when the lease is held and the
+child runs (`management_program_status_needs_a_live_lease`). Four sensitivity
+checks, one that stopped the run during negotiation, one that admitted a
+second connection under the lease, one that freed the slot at a refusal and
+one that admitted a connection while a refused one closed, made the proof
+fail. So did answering ProgramStatus with the records during negotiation,
+which the [management law](#management-law) over `step` caught, and after the
+child's run under the lease, which the audit caught; with the audit changed
+to match, `management_program_status_needs_a_live_lease` caught it too.
 
 The real-PTY management-lease check refuses a wrong identity, holds the slot
 with a silent connection so a contender is Busy until the one-second bound
@@ -547,6 +564,45 @@ for each law broke the policy in a scratch copy and made its proof fail:
 ignoring marks, ignoring the latch, dropping at every sample that finds the
 child, forgetting the last sample when none is found, never setting the
 latch, and resetting the latch when another group leads.
+
+A ProgramStatus request's fact carries a foreground sample like a turn's,
+without prompt marks, so a return to the child's group drops the `working`
+and `blocked` records before the answer.
+`the_worker_leads_each_output_with_its_status_lifetime` sends the built
+worker a request that finds the child's group after a turn that found
+another, and sees the drop lead the worker's decisions for it; removing the
+request's case from `lifetime_of` made it fail. The answer holds as many
+records as fit in one 4 KiB message: first `blocked`, `error` and `done`,
+then the rest, each group most recent change first, with `title` and `msg`
+cut to 96 and 256 bytes at UTF-8 boundaries; `omitted` counts the rest.
+`replies_fill_by_group_then_most_recent_change` checks the order, the cuts
+and the omitted count, and reversing the groups made it fail. The protocol
+test `program_status_replies_keep_their_bounds` shows that seven records at
+their bounds fit and an eighth does not.
+
+The real-PTY program-status check reads the records through a
+`--management-v2` lease:
+
+- One write carrying `working`, `blocked` and `done` reports, a prompt mark
+  and a `working` report leaves the `done` record and the last report.
+- In a Bash with job control and no prompt marks, a request while a job leads
+  keeps a `working` record; the request after the job returns drops it and
+  advances the update sequence by one; a report after the return survives the
+  next request.
+- A job reports `blocked` and leaves a writer in its group that keeps the PTY
+  full across the job's return, so the return lands inside a detached turn;
+  the turn ends there, the job's report is dropped and the shell's report
+  just after the return survives, over three rounds; each round's writer
+  marks the end of its output with a `done` report of its own. With the
+  turn's early end removed, the check failed in its first round in each of
+  three runs.
+- With the child flooding the PTY, 200 requests are each answered within the
+  worker-stall bound of two seconds; the check prints their distribution.
+  On 2026-10-22, on the x86_64 Linux development machine at a load average
+  near 1, with the child running `yes`, the answers took a median of 0.15 ms,
+  a 99th percentile of 1.1 ms and at most 1.7 ms, far inside the 250 ms
+  target. A request is answered between turns, after at most one detached
+  turn of 64 reads, and needs one exchange with the worker.
 
 The real-PTY terminal-replies check has the child send the support probe and
 then a device attributes query before any client attaches: the probe's answer,
@@ -957,17 +1013,21 @@ it out for ORB-C13. [LAWS.bend](../LAWS.bend) states a management automaton,
 written from the contract and kept apart from `step`, of the slot as the audit
 of [src/management.bend](../src/management.bend) keeps it. It reads only the
 management answers among `step`'s decisions: `ManageAdmit`, `ManageBusy`,
-`ManageLease`, `ManageRejectIdentity`, `ManageReject`, `ManageStatus` and
-`ManageStop`. The law says that over any list of facts with their flags, from
-any session state, `step`'s decisions never break the automaton:
+`ManageLease`, `ManageRejectIdentity`, `ManageReject`, `ManageStatus`,
+`ManageProgramStatus`, `ManageRefuse` and `ManageStop`. It reads the fact
+`ProgramStatus` as a request from a running child under the lease, and as
+out of order once a stop has begun. The law says that over any list of facts
+with their flags, from any session state, `step`'s decisions never break the
+automaton:
 
 - Each management event gets at most one answer, the one the management audit
   requires from the slot the automaton keeps, and the slot follows that audit:
   a connection is admitted only into a free slot and is Busy otherwise, a
   lease is granted only for a valid identity during negotiation, Status and
-  Stop are carried out only under the lease, anything out of place is refused
-  and keeps the slot until it closes, and a refused connection is answered
-  nothing more.
+  Stop are carried out only under the lease, ProgramStatus is answered under
+  the lease while the child runs, anything out of place is refused and keeps
+  the slot until it closes, and a refused connection is answered nothing
+  more.
 - `ManageStop`, which begins the stop, answers a Stop exactly when the lease
   is held.
 - No other fact answers anything on the management socket.
@@ -979,7 +1039,7 @@ rest. [PROOF.bend](../PROOF.bend) proves it by the same induction, and
 [proof/lease.bend](../proof/lease.bend), which `step-proof management`
 generates, holds each fact's lemma; rerun it, too, after changing `step` or
 this automaton. The whole proof, with the three laws over `step`, checks in
-about eleven seconds.
+about fifteen seconds.
 
 Two sensitivity checks broke `step` in a scratch copy and made the proof
 fail: one kept the slot from before each event, so an Acquire after a
@@ -1243,7 +1303,7 @@ ORB_BASELINE_CPUS=6-11 ORB_BASELINE_GRID="54 90" \
   unsupported, interactive-pressure, key-live, mouse, slow-observer,
   observer-finish, stale-socket, clipboard, clipboard-pressure, command-line,
   palette-reset, selection, selection-tick, refused-flush, management-record,
-  management-lease, terminal-identity and stopped-client-exit.
+  management-lease, program-status, terminal-identity and stopped-client-exit.
 
 Building the package runs the Rust unit tests. The real-PTY checks are Rust
 integration tests in [tests/real_pty](../tests/real_pty). They encode every

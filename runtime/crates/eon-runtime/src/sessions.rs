@@ -1033,7 +1033,7 @@ fn orbit_command(
     orbit_command
         .arg("serve")
         .arg(socket)
-        .arg("--management-v1")
+        .arg("--management-v2")
         .arg(session_id)
         .arg(run_id)
         .arg(component_generation)
@@ -1921,7 +1921,7 @@ mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v1",
+                "--management-v2",
                 "session-1",
                 "run-1",
                 "component-1",
@@ -1978,7 +1978,7 @@ mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v1",
+                "--management-v2",
                 "session-2",
                 "run-2",
                 "component-2",

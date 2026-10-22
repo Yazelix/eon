@@ -164,7 +164,8 @@ enum ManagementEvent
   7 Gone
 
 # Which process group the host found in the PTY's foreground when the PTY
-# turn began, before it fed the turn's output to the terminal (ORB-C15).
+# turn began, before it fed the turn's output to the terminal, or when it read
+# a ProgramStatus request (ORB-C15).
 enum Foreground
   # None: the terminal has no foreground group, or the host could not ask.
   0 Unknown
@@ -251,6 +252,9 @@ fact 26 ReturnToLive
 # The lease's stop found the child already exited with this exit code, so
 # the run ends naturally.
 fact 27 ExitedBeforeStop status:u32
+# A ProgramStatus request on the management connection (ORB-C15), with the
+# foreground group the host sampled when it read it, between PTY turns.
+fact 28 ProgramStatus foreground:Foreground
 
 # Why Bend rejects a request with Failure. The host owns each reason's code
 # and exact text.
@@ -430,3 +434,8 @@ decision 39 Capture on:bool
 # working and blocked records that exist at each of the turn's prompt marks,
 # so a report after a mark survives it.
 decision 40 StatusLifetime edge:bool marks:bool
+# Answers the connection ProgramStatus with the terminal's records, as many as
+# fit in 4 KiB in ORB-C15's fill order.
+decision 41 ManageProgramStatus
+# Answers the connection Busy; the lease stays.
+decision 42 ManageRefuse

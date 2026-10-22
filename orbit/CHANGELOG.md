@@ -46,6 +46,19 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   gains fact fields and a decision, which Orbit's host and worker ship
   together, so the ORBS v13 and ORBF v2 wire and every consumer are
   unaffected.
+- Management moves to generation 2, a breaking change with no compatibility
+  window (`eon-agent-sidebar-yx8.5`). Under the lease, the `ProgramStatus`
+  request (client tag 4) reads a terminal's OSC 7501 records: the reply
+  (server tag 69), at most 4 KiB, carries the record count, the latest update
+  sequence, the count omitted for size, and the records with their neutral
+  facts, blocked, error and done first, each group most recent change first.
+  Orbit answers while the child runs; its policy refuses with Busy once a
+  stop has begun, which no request reaches today. `--management-v1` becomes
+  `--management-v2`. The live record and tombstone are framed as generation
+  2 too, and a generation-1 peer or record is refused by the exact-generation
+  rule, so Eon Runtime and Eon move to generation 2 in the same change; Venus
+  does not use management. A new Eon cannot stop or recover a run started by
+  a generation-1 Orbit. ORB-C15 is Proved.
 
 ## Before this repository
 

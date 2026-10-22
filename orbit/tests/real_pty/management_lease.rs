@@ -18,11 +18,11 @@ use std::{
     time::Duration,
 };
 
-const MANAGED: [&str; 4] = ["--management-v1", "session-2", "run-2", "component-2"];
+const MANAGED: [&str; 4] = ["--management-v2", "session-2", "run-2", "component-2"];
 
 /// What a management connection reads next.
 #[derive(Debug, PartialEq)]
-enum Reply {
+pub enum Reply {
     Message(ServerMessage),
     Closed,
     Timeout,
@@ -30,14 +30,14 @@ enum Reply {
 }
 
 /// One management client of the run whose live record is at a path.
-struct Manager {
+pub struct Manager {
     record: PathBuf,
     identity: LiveIdentity,
     stream: Option<UnixStream>,
 }
 
 impl Manager {
-    fn new(record: &Path) -> Self {
+    pub fn new(record: &Path) -> Self {
         Self {
             record: record.to_path_buf(),
             identity: live(record),
@@ -46,7 +46,7 @@ impl Manager {
     }
 
     /// Connects to the run's management socket.
-    fn connect(&mut self) {
+    pub fn connect(&mut self) {
         let path = OsStr::from_bytes(&self.identity.management.path);
         let stream = UnixStream::connect(path).expect("connected");
         stream
@@ -56,7 +56,7 @@ impl Manager {
     }
 
     /// Reads one whole management message, or reports the connection closed.
-    fn read(&mut self) -> Reply {
+    pub fn read(&mut self) -> Reply {
         let stream = self.stream.as_mut().expect("connected");
         let mut bytes = Vec::new();
         loop {
@@ -93,7 +93,7 @@ impl Manager {
         self.read()
     }
 
-    fn send(&mut self, message: &ClientMessage) -> Reply {
+    pub fn send(&mut self, message: &ClientMessage) -> Reply {
         self.send_bytes(&management::encode_client_message(message).expect("encodable request"))
     }
 
@@ -110,7 +110,7 @@ impl Manager {
     }
 
     /// Connects and acquires with the record's identity.
-    fn acquire(&mut self) -> Reply {
+    pub fn acquire(&mut self) -> Reply {
         self.connect();
         self.acquire_as(self.identity.clone())
     }

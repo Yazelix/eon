@@ -114,7 +114,8 @@ pub(crate) enum ManagementEvent {
 }
 
 /// Which process group the host found in the PTY's foreground when the PTY
-/// turn began, before it fed the turn's output to the terminal (ORB-C15).
+/// turn began, before it fed the turn's output to the terminal, or when it read
+/// a ProgramStatus request (ORB-C15).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Foreground {
     /// None: the terminal has no foreground group, or the host could not ask.
@@ -332,6 +333,9 @@ pub(crate) enum Fact {
     /// The lease's stop found the child already exited with this exit code, so
     /// the run ends naturally.
     ExitedBeforeStop { status: u32 },
+    /// A ProgramStatus request on the management connection (ORB-C15), with the
+    /// foreground group the host sampled when it read it, between PTY turns.
+    ProgramStatus(Foreground),
 }
 
 impl Fact {
@@ -379,6 +383,7 @@ impl Fact {
             }
             Self::ReturnToLive => format!("26 {word}\n"),
             Self::ExitedBeforeStop { status } => format!("27 {word} {status}\n"),
+            Self::ProgramStatus(foreground) => format!("28 {word} {}\n", foreground as u32),
         }
     }
 }
@@ -390,7 +395,7 @@ fn halves(revision: u64) -> String {
 
 /// The line the worker writes before its first answer, naming the schema
 /// it was generated from; the host refuses a worker that names another.
-pub(crate) const SCHEMA: &str = "schema 53fffd3429ca6009";
+pub(crate) const SCHEMA: &str = "schema 5acfe336dcbbaf50";
 
 /// The line that ends each of the worker's answers.
 pub(crate) const END: &str = "end";
@@ -534,6 +539,11 @@ pub(crate) enum Decision {
     /// working and blocked records that exist at each of the turn's prompt marks,
     /// so a report after a mark survives it.
     StatusLifetime { edge: bool, marks: bool },
+    /// Answers the connection ProgramStatus with the terminal's records, as many as
+    /// fit in 4 KiB in ORB-C15's fill order.
+    ManageProgramStatus,
+    /// Answers the connection Busy; the lease stays.
+    ManageRefuse,
 }
 
 type Words<'a> = std::str::Split<'a, char>;
@@ -687,6 +697,8 @@ impl Decision {
                 edge: flag(&mut words)?,
                 marks: flag(&mut words)?,
             },
+            41 => Self::ManageProgramStatus,
+            42 => Self::ManageRefuse,
             _ => return None,
         };
         words.next().is_none().then_some(decision)

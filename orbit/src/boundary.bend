@@ -99,7 +99,8 @@ type ManagementEvent is Data:
   ManagementEventGone{}
 
 # Which process group the host found in the PTY's foreground when the PTY
-# turn began, before it fed the turn's output to the terminal (ORB-C15).
+# turn began, before it fed the turn's output to the terminal, or when it read
+# a ProgramStatus request (ORB-C15).
 type Foreground is Data:
   # None: the terminal has no foreground group, or the host could not ask.
   ForegroundUnknown{}
@@ -247,6 +248,9 @@ type Fact is Data:
   # The lease's stop found the child already exited with this exit code, so
   # the run ends naturally.
   ExitedBeforeStop{status: U32}
+  # A ProgramStatus request on the management connection (ORB-C15), with the
+  # foreground group the host sampled when it read it, between PTY turns.
+  ProgramStatus{foreground: Foreground}
 
 # One line from the host: a fact and the flags it carries.
 type Line is Data:
@@ -758,6 +762,16 @@ def fact_exited_before_stop(args: List<&2, String>) -> Maybe<&2, Fact>:
     case _:
       None{}
 
+def fact_program_status(args: List<&2, String>) -> Maybe<&2, Fact>:
+  match args:
+    case Con{a0, Nil{}}:
+      do Maybe<&2, Fact>:
+        foreground_word : U32 <- U32.read(a0)
+        foreground : Foreground <- decode_foreground(foreground_word)
+        return ProgramStatus{foreground}
+    case _:
+      None{}
+
 def decode_fact(code: U32, args: List<&2, String>) -> Maybe<&2, Fact>:
   match code:
     case 0:
@@ -814,6 +828,8 @@ def decode_fact(code: U32, args: List<&2, String>) -> Maybe<&2, Fact>:
       fact_return_to_live(args)
     case 27:
       fact_exited_before_stop(args)
+    case 28:
+      fact_program_status(args)
     case _:
       None{}
 
@@ -972,6 +988,11 @@ type Decision is Data:
   # working and blocked records that exist at each of the turn's prompt marks,
   # so a report after a mark survives it.
   StatusLifetime{edge: Bool, marks: Bool}
+  # Answers the connection ProgramStatus with the terminal's records, as many as
+  # fit in 4 KiB in ORB-C15's fill order.
+  ManageProgramStatus{}
+  # Answers the connection Busy; the lease stays.
+  ManageRefuse{}
 
 def encode_bool(value: Bool) -> String:
   match value:
@@ -1127,6 +1148,10 @@ def encode_decision(decision: Decision) -> String:
       "39" ++ " " ++ encode_bool(on) ++ "\n"
     case StatusLifetime{edge, marks}:
       "40" ++ " " ++ encode_bool(edge) ++ " " ++ encode_bool(marks) ++ "\n"
+    case ManageProgramStatus{}:
+      "41" ++ "\n"
+    case ManageRefuse{}:
+      "42" ++ "\n"
 
 # One answer: decisions, carried out in order.
 def Decisions() -> Type:
@@ -1143,4 +1168,4 @@ def encode(decisions: Decisions()) -> String:
 # The line the worker writes before its first answer, naming the schema it
 # was generated from; the host refuses a worker that names another.
 def schema() -> String:
-  "schema 53fffd3429ca6009\n"
+  "schema 5acfe336dcbbaf50\n"

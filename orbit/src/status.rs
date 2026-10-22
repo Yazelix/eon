@@ -3,12 +3,14 @@
 //! the reports and enforces the specification's limits and discard rules,
 //! and answers the support probe. The host keeps one record per id, and
 //! Bend's `StatusLifetime` decides when a PTY turn drops the working and
-//! blocked ones (src/status.bend).
+//! blocked ones (src/status.bend). Management's `ProgramStatus` reply reads
+//! them.
 
 use libghostty_vt::terminal::{
     ProgramStatus, ProgramStatusKind, ProgramStatusState, SemanticPrompt, SemanticPromptKind,
     SemanticPromptPromptKind,
 };
+use orbit_protocol::management::{self as protocol, ProgramKind, ProgramRecord, ProgramState};
 use std::{collections::HashMap, time::Instant};
 
 /// The most records a terminal keeps; a new record past it evicts the one
@@ -25,13 +27,6 @@ enum State {
 }
 
 /// One accepted report, its text disarmed.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "management reads records from eon-agent-sidebar-yx8.5 on"
-    )
-)]
 struct Report {
     id: Vec<u8>,
     state: State,
@@ -106,13 +101,6 @@ impl Turn {
 }
 
 /// One record and its neutral facts. Orbit derives no attention meaning.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "management reads records from eon-agent-sidebar-yx8.5 on"
-    )
-)]
 struct Record {
     report: Report,
     /// The update sequence of its last report.
@@ -206,15 +194,67 @@ impl Records {
         }
     }
 
+    /// The `ProgramStatus` reply: as many records as fit in one 4 KiB
+    /// message, first blocked, error and done, then the rest, each group most
+    /// recent change first, with `title` and `msg` cut to their reply bounds.
+    pub(crate) fn reply(&self, now: Instant) -> protocol::ProgramStatus {
+        let mut order: Vec<&Record> = self.records.values().collect();
+        order.sort_unstable_by_key(|record| {
+            (
+                !matches!(
+                    record.report.state,
+                    State::Blocked | State::Error | State::Done
+                ),
+                std::cmp::Reverse(record.changed),
+            )
+        });
+        let mut room = protocol::MAX_MESSAGE_BYTES - protocol::PROGRAM_STATUS_HEADER_BYTES;
+        let mut records = Vec::new();
+        for record in order {
+            let entry = self.entry(record, now);
+            let Some(left) = room.checked_sub(protocol::program_record_len(&entry)) else {
+                break;
+            };
+            room = left;
+            records.push(entry);
+        }
+        let count = self.records.len() as u16;
+        protocol::ProgramStatus {
+            count,
+            update: self.update,
+            omitted: count - records.len() as u16,
+            records,
+        }
+    }
+
+    fn entry(&self, record: &Record, now: Instant) -> ProgramRecord {
+        let report = &record.report;
+        let state = report.state.into();
+        let age = |at: Instant| now.saturating_duration_since(at).as_millis() as u64;
+        ProgramRecord {
+            // libghostty accepts only ASCII names in ids and apps.
+            id: String::from_utf8_lossy(&report.id).into_owned(),
+            state,
+            kind: match (report.state, report.kind) {
+                (State::Blocked, ProgramStatusKind::Permission) => Some(ProgramKind::Permission),
+                (State::Blocked, ProgramStatusKind::Question) => Some(ProgramKind::Question),
+                (State::Blocked, ProgramStatusKind::Auth) => Some(ProgramKind::Auth),
+                _ => None,
+            },
+            progress: report.progress,
+            app: String::from_utf8_lossy(self.app(&report.id)).into_owned(),
+            title: truncated(&report.title, protocol::MAX_PROGRAM_TITLE_BYTES),
+            message: truncated(&report.message, protocol::MAX_PROGRAM_MESSAGE_BYTES),
+            updated: record.updated,
+            changed: record.changed,
+            previous: record.previous.map(Into::into),
+            updated_age_ms: age(record.updated_at),
+            changed_age_ms: age(record.changed_at),
+        }
+    }
+
     /// The app a record shows: its own, or else that of its nearest ancestor
     /// that has one, up to the root record.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "management reads records from eon-agent-sidebar-yx8.5 on"
-        )
-    )]
     fn app(&self, mut id: &[u8]) -> &[u8] {
         loop {
             if let Some(record) = self.records.get(id)
@@ -231,6 +271,27 @@ impl Records {
                 .map_or(&[], |slash| &id[..slash]);
         }
     }
+}
+
+impl From<State> for ProgramState {
+    fn from(state: State) -> Self {
+        match state {
+            State::Idle => Self::Idle,
+            State::Working => Self::Working,
+            State::Done => Self::Done,
+            State::Blocked => Self::Blocked,
+            State::Error => Self::Error,
+        }
+    }
+}
+
+/// `text` cut to at most `maximum` bytes at a UTF-8 boundary.
+fn truncated(text: &str, maximum: usize) -> String {
+    let mut end = text.len().min(maximum);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_owned()
 }
 
 /// Whether the record `key` is `id` or beneath it; every record is beneath
@@ -284,6 +345,7 @@ fn invisible(character: char) -> bool {
 mod tests {
     use super::*;
     use libghostty_vt::Terminal;
+    use orbit_protocol::management;
     use std::{cell::RefCell, rc::Rc};
 
     const MARK: &str = "\x1b]133;A\x1b\\";
@@ -470,6 +532,65 @@ mod tests {
             ("Build evil", "Plan")
         );
         assert!(shown.app.is_empty());
+    }
+
+    /// The reply's neutral fill order, its text bounds and its omitted count.
+    #[test]
+    fn replies_fill_by_group_then_most_recent_change() {
+        let mut fixture = Fixture::new();
+        // The title is 95 bytes of `a` and then `é`, so 96 bytes cut inside it.
+        let title = format!("{}YWHDqQ", "YWFh".repeat(31));
+        let reports = [
+            report("state=working:id=w1"),
+            report("state=done:id=d"),
+            report("state=idle:id=i:app=deploy"),
+            report("state=blocked:id=b:kind=permission"),
+            report("state=error:id=e"),
+            report(&format!("state=working:id=i/w2:title={title}")),
+        ];
+        fixture.turn(&[&reports.concat()], false);
+        let reply = fixture.records.reply(Instant::now());
+        let ids: Vec<_> = reply
+            .records
+            .iter()
+            .map(|record| record.id.as_str())
+            .collect();
+        assert_eq!(ids, ["e", "b", "d", "i/w2", "i", "w1"]);
+        assert_eq!((reply.count, reply.omitted, reply.update), (6, 0, 6));
+        let kinds: Vec<_> = reply.records.iter().map(|record| record.kind).collect();
+        assert_eq!(
+            kinds,
+            [None, Some(ProgramKind::Permission), None, None, None, None]
+        );
+        let w2 = &reply.records[3];
+        assert_eq!(
+            (w2.title.as_str(), w2.app.as_str()),
+            ("a".repeat(95).as_str(), "deploy")
+        );
+
+        // Twenty working records with 300-byte messages: each message is cut
+        // to 256 bytes and thirteen records fit, the most recent first.
+        let mut fixture = Fixture::new();
+        let reports: String = (0..20)
+            .map(|n| report(&format!("state=working:id=r{n}:msg={}", "bW1t".repeat(100))))
+            .collect();
+        fixture.turn(&[&reports], false);
+        let reply = fixture.records.reply(Instant::now());
+        assert_eq!(
+            (reply.count, reply.omitted, reply.records.len()),
+            (20, 7, 13)
+        );
+        assert_eq!(reply.records[0].id, "r19");
+        assert!(
+            reply
+                .records
+                .iter()
+                .all(|record| record.message.len() == 256)
+        );
+        assert!(
+            management::encode_server_message(&management::ServerMessage::ProgramStatus(reply))
+                .is_ok()
+        );
     }
 
     #[test]

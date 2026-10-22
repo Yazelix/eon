@@ -772,7 +772,8 @@ impl Host {
                 {
                     return Ok(None);
                 }
-                Ok(management.read()?.map(Fact::Management))
+                let orbit = &self.orbit;
+                management.read(|| orbit.foreground())
             }
             Source::ManagementDeadline => Ok(self
                 .management
@@ -1337,6 +1338,11 @@ impl Host {
                 Decision::ManageBusy => self.managed()?.busy()?,
                 Decision::ManageLease => self.managed()?.lease()?,
                 Decision::ManageStatus => self.managed()?.status()?,
+                Decision::ManageProgramStatus => {
+                    let status = self.orbit.status.reply(Instant::now());
+                    self.managed()?.program_status(status)?
+                }
+                Decision::ManageRefuse => self.managed()?.refuse()?,
                 Decision::ManageRejectIdentity => {
                     self.managed()?.reject(ManagementFailure::InvalidIdentity)?
                 }
@@ -1679,9 +1685,10 @@ mod tests {
     #[test]
     fn the_worker_leads_each_output_with_its_status_lifetime() {
         fn lifetime(bend: &mut Bend, foreground: Foreground, marks: bool) -> (bool, bool) {
-            let decisions = bend
-                .ask(Fact::Output { foreground, marks }, Flags::default())
-                .unwrap();
+            led(bend, Fact::Output { foreground, marks })
+        }
+        fn led(bend: &mut Bend, fact: Fact) -> (bool, bool) {
+            let decisions = bend.ask(fact, Flags::default()).unwrap();
             let lifetimes: Vec<_> = decisions
                 .iter()
                 .filter_map(|decision| match *decision {
@@ -1720,6 +1727,19 @@ mod tests {
             (false, false)
         );
         assert_eq!(lifetime(&mut bend, Foreground::Child, false), (true, false));
+        assert_eq!(
+            lifetime(&mut bend, Foreground::Child, false),
+            (false, false)
+        );
+        // A ProgramStatus request samples too, without marks (ORB-C15).
+        assert_eq!(
+            lifetime(&mut bend, Foreground::Other, false),
+            (false, false)
+        );
+        assert_eq!(
+            led(&mut bend, Fact::ProgramStatus(Foreground::Child)),
+            (true, false)
+        );
         assert_eq!(
             lifetime(&mut bend, Foreground::Child, false),
             (false, false)

@@ -440,6 +440,28 @@ def Laws.management_answers_are_accounted(events, slot):
               Laws.management_answers_are_accounted(rest, Management.Leased{})
             case Management.Closing{}:
               Laws.management_answers_are_accounted(rest, Management.Closing{})
+        case Management.ProgramStatus{live}:
+          match live:
+            case True{}:
+              match slot:
+                case Management.Free{}:
+                  Laws.management_answers_are_accounted(rest, Management.Free{})
+                case Management.Negotiating{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+                case Management.Leased{}:
+                  Laws.management_answers_are_accounted(rest, Management.Leased{})
+                case Management.Closing{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+            case False{}:
+              match slot:
+                case Management.Free{}:
+                  Laws.management_answers_are_accounted(rest, Management.Free{})
+                case Management.Negotiating{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
+                case Management.Leased{}:
+                  Laws.management_answers_are_accounted(rest, Management.Leased{})
+                case Management.Closing{}:
+                  Laws.management_answers_are_accounted(rest, Management.Closing{})
         case Management.Bad{}:
           match slot:
             case Management.Free{}:
@@ -471,6 +493,33 @@ def Laws.management_stop_needs_the_lease(slot):
       {==}
     case Management.Closing{}:
       {==}
+
+def Laws.management_program_status_needs_a_live_lease(slot, live):
+  match slot:
+    case Management.Free{}:
+      match live:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+    case Management.Negotiating{}:
+      match live:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+    case Management.Leased{}:
+      match live:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
+    case Management.Closing{}:
+      match live:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
 
 # The revision counter: an increment is ahead unless it wraps.
 

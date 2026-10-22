@@ -43,7 +43,7 @@ the socket mode is `0600`. Orbit:
   the owned socket after normal or signal-driven shutdown.
 
 On Linux and Apple Silicon macOS, the private same-boot management owner is
-enabled with `serve SOCKET --management-v1 SESSION_ID RUN_ID COMPONENT_GENERATION -- COMMAND`.
+enabled with `serve SOCKET --management-v2 SESSION_ID RUN_ID COMPONENT_GENERATION -- COMMAND`.
 It derives `SOCKET.management` and `SOCKET.record`, publishes the live record
 only after the PTY, terminal owner, and both sockets are usable, and permits one
 UID- and identity-validated management lease. A launcher may retain an empty

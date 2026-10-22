@@ -3,12 +3,19 @@
 //! record published at Ready through the launcher's ready claim, one
 //! management connection with bounded requests, and a tombstone that
 //! replaces the record when the run ends. Every path and identity is
-//! checked here; Bend decides every answer (src/management.bend).
+//! checked here; Bend decides every answer (src/management.bend), including
+//! whether ORB-C15's `ProgramStatus` gets the records.
 
-use crate::{Timer, boundary::ManagementEvent as Event, errno, platform, socket::Listener};
+use crate::{
+    Timer,
+    boundary::{Fact, Foreground, ManagementEvent as Event},
+    errno, platform,
+    socket::Listener,
+};
 use orbit_protocol::management::{
     self as protocol, ClientMessage, EndpointIdentity, Failure, FailureCode, LiveIdentity,
-    ObjectIdentity, ProcessOutcome, Record, ServerMessage, TerminationReason, Tombstone,
+    ObjectIdentity, ProcessOutcome, ProgramStatus, Record, ServerMessage, TerminationReason,
+    Tombstone,
 };
 use std::{
     ffi::OsStr,
@@ -32,7 +39,7 @@ pub(crate) const NEGOTIATION_MS: u32 = 1000;
 
 static NEXT_ARTIFACT: AtomicU64 = AtomicU64::new(0);
 
-/// The identities `--management-v1` names.
+/// The identities `--management-v2` names.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Launch {
     pub(crate) session_id: String,
@@ -207,9 +214,20 @@ impl Owner {
     }
 
     /// Reads the connection's next request and reports it for Bend: one
-    /// whole request at most 4 KiB, never two at once, and an Acquire whose
-    /// identity, record, peer and sockets all match this run.
-    pub(crate) fn read(&mut self) -> io::Result<Option<Event>> {
+    /// whole request at most 4 KiB, never two at once, an Acquire whose
+    /// identity, record, peer and sockets all match this run, and a
+    /// ProgramStatus with the PTY's foreground group sampled as it is read.
+    pub(crate) fn read(
+        &mut self,
+        foreground: impl FnOnce() -> Foreground,
+    ) -> io::Result<Option<Fact>> {
+        Ok(self.request()?.map(|request| match request {
+            Ok(event) => Fact::Management(event),
+            Err(ProgramStatusRequest) => Fact::ProgramStatus(foreground()),
+        }))
+    }
+
+    fn request(&mut self) -> io::Result<Option<Result<Event, ProgramStatusRequest>>> {
         let Some(connection) = self.connection.as_mut() else {
             return Ok(None);
         };
@@ -218,15 +236,15 @@ impl Owner {
         }
         let remaining = protocol::MAX_MESSAGE_BYTES.saturating_sub(connection.input.len());
         if remaining == 0 {
-            return Ok(Some(
-                connection.refuse("management request exceeded its bound"),
-            ));
+            return Ok(Some(Ok(
+                connection.refuse("management request exceeded its bound")
+            )));
         }
         let mut bytes = [0; protocol::MAX_MESSAGE_BYTES];
         match connection.stream.read(&mut bytes[..remaining]) {
             Ok(0) => {
                 self.connection = None;
-                return Ok(Some(Event::Gone));
+                return Ok(Some(Ok(Event::Gone)));
             }
             Ok(read) => connection.input.extend_from_slice(&bytes[..read]),
             Err(error)
@@ -239,26 +257,26 @@ impl Owner {
             }
             Err(error) if crate::socket::peer_disconnected(&error) => {
                 self.connection = None;
-                return Ok(Some(Event::Gone));
+                return Ok(Some(Ok(Event::Gone)));
             }
             Err(error) => return Err(error),
         }
         let length = match protocol::client_message_len(&connection.input) {
             Ok(Some(length)) => length,
             Ok(None) => return Ok(None),
-            Err(error) => return Ok(Some(connection.refuse(&error.to_string()))),
+            Err(error) => return Ok(Some(Ok(connection.refuse(&error.to_string())))),
         };
         if connection.input.len() != length {
-            return Ok(Some(
-                connection.refuse("management requests cannot be pipelined"),
-            ));
+            return Ok(Some(Ok(
+                connection.refuse("management requests cannot be pipelined")
+            )));
         }
         let message = match protocol::decode_client_message(&connection.input) {
             Ok(message) => message,
-            Err(error) => return Ok(Some(connection.refuse(&error.to_string()))),
+            Err(error) => return Ok(Some(Ok(connection.refuse(&error.to_string())))),
         };
         connection.input.clear();
-        Ok(Some(match message {
+        Ok(Some(Ok(match message {
             ClientMessage::Acquire { expected, record } => {
                 let valid = connection.peer_uid == self.identity.uid
                     && expected == self.identity
@@ -276,7 +294,8 @@ impl Owner {
             }
             ClientMessage::Status => Event::Status,
             ClientMessage::Stop => Event::Stop,
-        }))
+            ClientMessage::ProgramStatus => return Ok(Some(Err(ProgramStatusRequest))),
+        })))
     }
 
     /// Grants the lease: the negotiation bound ends and Lease names the run.
@@ -297,6 +316,23 @@ impl Owner {
             .as_mut()
             .ok_or_else(|| errno(libc::EPROTO))?;
         connection.respond(&ServerMessage::Status(identity), false)
+    }
+
+    /// Answers ProgramStatus with the terminal's records.
+    pub(crate) fn program_status(&mut self, status: ProgramStatus) -> io::Result<()> {
+        self.respond(&ServerMessage::ProgramStatus(status))
+    }
+
+    /// Answers the request Busy; the lease stays.
+    pub(crate) fn refuse(&mut self) -> io::Result<()> {
+        self.respond(&ServerMessage::Busy)
+    }
+
+    fn respond(&mut self, message: &ServerMessage) -> io::Result<()> {
+        self.connection
+            .as_mut()
+            .ok_or_else(|| errno(libc::EPROTO))?
+            .respond(message, false)
     }
 
     /// Refuses the connection's request with this failure and closes it once
@@ -388,6 +424,9 @@ impl Owner {
         Ok(tombstone)
     }
 }
+
+/// A ProgramStatus request, which Bend hears as its own fact.
+struct ProgramStatusRequest;
 
 impl Connection {
     fn refuse(&mut self, detail: &str) -> Event {

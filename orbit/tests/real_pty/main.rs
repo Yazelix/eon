@@ -44,6 +44,7 @@ checks!(
     palette_reset,
     paste_flood,
     preview,
+    program_status,
     pty_reopen,
     refused_flush,
     request_half_close,

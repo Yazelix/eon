@@ -79,6 +79,13 @@ law management_stop_needs_the_lease:
   for slot: Management.Slot
   {Management.is_shutdown(Management.answer(slot, Management.Stop{})) == Management.is_leased(slot) : Bool}
 
+# ORB-C15: a ProgramStatus request gets the records exactly under the lease
+# while the child runs.
+law management_program_status_needs_a_live_lease:
+  for slot: Management.Slot
+  for live: Bool
+  {Management.is_records(Management.answer(slot, Management.ProgramStatus{live})) == Bool.and(Management.is_leased(slot), live) : Bool}
+
 law revision_next_is_ahead:
   for r: Revision.Revision
   {Revision.ahead(Revision.next(r), r) == Bool.not(Revision.is_last(r)) : Bool}
@@ -456,6 +463,9 @@ def live(
       exit_begun(moves, client)
     case Boundary.Management{event}:
       managed(event, moves, Live{client, observer})
+    # ORB-C15: a ProgramStatus answer changes no lifecycle.
+    case Boundary.ProgramStatus{foreground}:
+      quiet(moves, Live{client, observer})
     # The host reports a reap only after Bend asks for one.
     case _:
       Outside{}
@@ -1586,6 +1596,10 @@ def reply(
       Management.RejectRequest{} <> rest
     case Boundary.ManageStatus{}:
       Management.Report{} <> rest
+    case Boundary.ManageProgramStatus{}:
+      Management.Records{} <> rest
+    case Boundary.ManageRefuse{}:
+      Management.Refuse{} <> rest
     case Boundary.ManageStop{}:
       Management.Shutdown{} <> rest
     case _:
@@ -1667,6 +1681,10 @@ def on_lease(
   match fact:
     case Boundary.Management{event}:
       answered_event(management_signal(event), slot, replies)
+    # The lease is kept only while the child runs, so a ProgramStatus request
+    # here is live.
+    case Boundary.ProgramStatus{foreground}:
+      answered_event(Management.ProgramStatus{True{}}, slot, replies)
     # ORB-C12: the child's exit begins the stop.
     case Boundary.ChildExited{drained}:
       unanswered(replies, Ceased{})

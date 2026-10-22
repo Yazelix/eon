@@ -58793,6 +58793,180 @@ def fits_exited_before_stop(
         case False{}:
           {==}
 
+def fits_program_status(
+  foreground: Boundary.Foreground, life: Orbit.Lifecycle, observer: Bool, waiting: Session.Waiting, pointer: Session.Pointer, written: Bool, explicit: Bool, manage: Management.Slot, tracker: Status.Tracker, revision: Revision.Revision, was: Bool, future: Bool, held: Bool, unanchored: Bool, clipboard_overflow: Bool, clipboard: Bool, routed: Bool, room: Bool, frame_room: Bool, alternate: Bool, above_live: Bool, tracking: Bool, shift: Bool, result_frame_room: Bool, outside: Bool, host_room: Bool, terminal_room: Bool, pty_full: Bool, metadata_changed: Bool, metadata_fresh: Bool
+) ->
+  {Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ProgramStatus{foreground}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ProgramStatus{foreground}, was, revision), held, [Status.lifetime(tracker, foreground, False{})], Status.after(tracker, foreground, False{}), Session.anchored(unanchored, Boundary.ProgramStatus{foreground}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) == choose(Laws.lease_check(Laws.lease(Session.State{Session.Session{life, written, observer, explicit, waiting, pointer, manage}, Session.Shown{revision, was}, tracker}), Boundary.ProgramStatus{foreground}, Laws.replies(Laws.decided(Session.begun(Session.fact_advanced(Boundary.ProgramStatus{foreground}, was, revision), held, [Status.lifetime(tracker, foreground, False{})], Status.after(tracker, foreground, False{}), Session.anchored(unanchored, Boundary.ProgramStatus{foreground}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))), Laws.lease(Laws.after(Session.begun(Session.fact_advanced(Boundary.ProgramStatus{foreground}, was, revision), held, [Status.lifetime(tracker, foreground, False{})], Status.after(tracker, foreground, False{}), Session.anchored(unanchored, Boundary.ProgramStatus{foreground}, Boundary.Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}, future, Session.Session{life, written, observer, explicit, waiting, pointer, manage}))))) : Laws.Lease}:
+  match life:
+    case Orbit.Detached{pid}:
+      match pointer:
+        case Session.Pointer{route, lit, copied}:
+          match route:
+            case Selection.Idle{}:
+              match manage:
+                case Management.Free{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Negotiating{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Leased{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Closing{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+            case Selection.Host{}:
+              match manage:
+                case Management.Free{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Negotiating{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Leased{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Closing{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+            case Selection.Terminal{}:
+              match manage:
+                case Management.Free{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Negotiating{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Leased{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Closing{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+    case Orbit.Attached{pid}:
+      match pointer:
+        case Session.Pointer{route, lit, copied}:
+          match route:
+            case Selection.Idle{}:
+              match manage:
+                case Management.Free{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Negotiating{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Leased{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Closing{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+            case Selection.Host{}:
+              match manage:
+                case Management.Free{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Negotiating{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Leased{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Closing{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+            case Selection.Terminal{}:
+              match manage:
+                case Management.Free{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Negotiating{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Leased{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+                case Management.Closing{}:
+                  match unanchored:
+                    case True{}:
+                      {==}
+                    case False{}:
+                      {==}
+    case Orbit.Stopping{pid}:
+      {==}
+    case Orbit.Stopped{pid}:
+      {==}
+
 # Every fact: the per-fact lemma, with the future flag step computes.
 def step_fits(state: Session.State, flags: Boundary.Flags, fact: Boundary.Fact) ->
   {Laws.lease_check(Laws.lease(state), fact, Laws.replies(Laws.decided(Session.step(fact, flags, state)))) == choose(Laws.lease_check(Laws.lease(state), fact, Laws.replies(Laws.decided(Session.step(fact, flags, state)))), Laws.lease(Laws.after(Session.step(fact, flags, state)))) : Laws.Lease}:
@@ -58912,4 +59086,8 @@ def step_fits(state: Session.State, flags: Boundary.Flags, fact: Boundary.Fact) 
                     case Boundary.ExitedBeforeStop{+status}:
                       fits_exited_before_stop(
                         status, life, observer, waiting, pointer, written, explicit, manage, tracker, revision, was, Session.future_of(Boundary.ExitedBeforeStop{status}, revision), held, unanchored, clipboard_overflow, clipboard, routed, room, frame_room, alternate, above_live, tracking, shift, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh
+                      )
+                    case Boundary.ProgramStatus{+foreground}:
+                      fits_program_status(
+                        foreground, life, observer, waiting, pointer, written, explicit, manage, tracker, revision, was, Session.future_of(Boundary.ProgramStatus{foreground}, revision), held, unanchored, clipboard_overflow, clipboard, routed, room, frame_room, alternate, above_live, tracking, shift, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh
                       )
