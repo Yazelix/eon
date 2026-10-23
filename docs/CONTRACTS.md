@@ -565,20 +565,41 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `pane_metadata_label_is_bounded_safe_and_has_honest_fallbacks`,
     `workspace_accessibility_order_matches_tabs_then_one_expanded_pane`).
     Installed checklist items 3 and 4.
-- **Open proof:** Final tab and final pane close, ending the window, are
-  covered by `closing_the_final_tab_ends_the_window_and_its_terminals`,
-  `delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`
-  and `pane_close_targets_the_active_tab_and_prunes_like_an_exit`; the
-  Venus prompt and its launch argument by
-  `close_prompt_asks_only_for_a_window_ending_close`,
-  `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space`,
-  `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog`,
-  `pane_frame_option_is_a_strict_single_boolean` and
-  `venus_receives_workspace_endpoint_only_in_workspace_mode`; installed
-  proof is pending `eon-prove-close-and-detach-batch-bf8t`. The first-detach
-  notice (`eon-first-detach-notification-a0p3`) has no automated test, since
-  the test sandbox has no D-Bus; its installed proof is pending the same bead.
-  Columns (`eon-splits-opwv`): runtime topology and EONW v10
+  - **Final close and detach (`eon-pg67`):** Final tab and final pane close,
+    ending the window, are covered by
+    `closing_the_final_tab_ends_the_window_and_its_terminals`,
+    `delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`
+    and `pane_close_targets_the_active_tab_and_prunes_like_an_exit`; the Venus
+    prompt and its launch argument by
+    `close_prompt_asks_only_for_a_window_ending_close`,
+    `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space`,
+    `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog`,
+    `pane_frame_option_is_a_strict_single_boolean` and
+    `venus_receives_workspace_endpoint_only_in_workspace_mode`. The
+    first-detach notice (`eon-first-detach-notification-a0p3`) has no
+    automated test, since the test sandbox has no D-Bus. Installed proof
+    (`eon-prove-close-and-detach-batch-bf8t`): edge
+    `22915af5dca41f87e706ad548c0506f79c17648f`, whose build is the installed
+    `eon` profile `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`
+    (EONW 18), on x86_64 Linux in a private headless Sway (1280x720) with a
+    private D-Bus. With the warning on,
+    Alt+Shift+W, the bar's `×` and Alt+W on the final tab's last pane each
+    showed the prompt listing `p1`; Escape kept the window and its terminal,
+    and Enter ended the window with no Orbit terminal of that generation
+    left. With `warning_close_last_tab = false`, Alt+Shift+W ended the window
+    at once. Alt+Shift+D from the prompt and from the workspace detached the
+    window with its terminal live, and `eon attach` returned to the same
+    `session-1` each time. On a fresh state directory, with a stub
+    notification server recording each request, the first detach sent one
+    notification with no actions, and the second sent none. In a second fresh
+    run with the mako 1.11.0 notification daemon, detaching an independent
+    window displayed the notice while keyboard focus stayed on the remaining
+    window, whose terminal took the next typed command; a second detach added
+    no notification. In an
+    independent window, Commands > Quit this window asked to stop that
+    window's terminals and, confirmed, ended only that window; the default
+    window kept its terminal and its Orbit process.
+- **Open proof:** Columns (`eon-splits-opwv`): runtime topology and EONW v10
   are covered by `columns_hold_accordions_traverse_into_tabs_and_collapse_on_exit`,
   `create_column_in_a_popup_only_tab_never_overfills_a_neighbor`,
   `column_moves_stay_in_their_column_popups_skip_columns_and_the_cli_reports_positions`
@@ -933,7 +954,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-n6ga` (automated and installed tiers); `pane create --no-focus`
   `eon-zhjj` (automated and installed tiers); UTF-8 paths as JSON strings
   `eon-readable-windows-and-child-notices-jf6f` (automated and installed
-  tiers).
+  tiers); final-tab `tab close` and `pane close`
+  `eon-prove-close-and-detach-batch-bf8t` (installed tier).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -1005,10 +1027,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     observation on isolated headless Sway: `eon workspace --json` printed the
     tab directory and each pane endpoint as JSON strings; human `eon windows`
     printed the independent window's generation as `eon generations` does,
-    with `--json` unchanged.
-- **Open proof:** `eon tab close` and `eon pane close` on the final tab, with
-  their question on a terminal, are pending
-  `eon-prove-close-and-detach-batch-bf8t`.
+    with `--json` unchanged. Installed
+    `eon-prove-close-and-detach-batch-bf8t` observation (edge
+    `22915af5dca41f87e706ad548c0506f79c17648f`, installed `eon` profile
+    `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`) on isolated
+    headless Sway, from a pseudo-terminal: `eon tab close t1` on the final
+    tab asked `Close the last tab? This quits the window and stops 1
+    terminal [p1]. [y/N]`, and `n` left the window open; `eon pane close p1`
+    on the final tab's last pane asked the same, and `y` ended the window;
+    `eon tab close t1 --json` asked nothing, printed
+    `{"ended":{"generation":...}}` and ended the window.
 
 ## EON-C11 — Runtime generations and presentation
 
@@ -1660,10 +1688,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Files popup configured on Alt+Shift+N: the key opened and hid the popup
     without a second window, and Alt+/ listed `Open new Eon window (overridden
     by Files)`.
+  - **Detach row (`eon-prove-close-and-detach-batch-bf8t`):** isolated
+    installed dogfood (edge `22915af5dca41f87e706ad548c0506f79c17648f`,
+    installed `eon` profile
+    `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`, private headless
+    Sway, 1280x720): Alt+/ listed `Alt+Shift+D` `Detach: close the window,
+    keep terminals running` under Host.
 - **Open proof:** Pending re-proof in this repository: header spacing at
   compact sizes, rebound and disabled popup rows, and AT-SPI projection on an
-  installed surface. The Alt+Shift+D row is pending
-  `eon-prove-close-and-detach-batch-bf8t`. No eonbase, fractional-scale,
+  installed surface. No eonbase, fractional-scale,
   screen-reader workflow, wider compositor, non-systemd, macOS or
   direct-distribution proof is added.
 
@@ -1707,11 +1740,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `tab_text_fits_shaped_width_without_splitting_combining_clusters` and
     `workspace_accessibility_order_matches_tabs_then_one_expanded_pane`.
     Installed checklist items 3 and 6.
+  - **Final-tab close (`eon-prove-close-and-detach-batch-bf8t`):** isolated
+    installed dogfood (edge `22915af5dca41f87e706ad548c0506f79c17648f`,
+    installed `eon` profile
+    `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`, private headless
+    Sway, 1280x720): the bar's `×` on the only tab showed the final-close
+    prompt; Escape kept the tab and Enter ended the window.
 - **Open proof:** Pending re-proof in this repository: real compositor window
   dragging, eight-tab overflow, narrow widths and AT-SPI order on an installed
   surface. AT-SPI tree order is not a screen-reader workflow; macOS and wider
-  platform coverage remain open. Close tab on the final tab is pending
-  `eon-prove-close-and-detach-batch-bf8t`.
+  platform coverage remain open.
 
 ## EON-C22 — Trustworthy Codex quota in the Eon Bar
 
@@ -1829,11 +1867,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `popup_configuration_owns_defaults_overrides_and_collisions` and Venus
     `configured_popups_take_fixed_bindings_except_reserved_keys`; the installed
     observation is pending.
+  - **Detach hint (`eon-prove-close-and-detach-batch-bf8t`):**
+    `shortcut_hints_follow_bindings_catalog_and_native_focus`; isolated
+    installed dogfood (edge `22915af5dca41f87e706ad548c0506f79c17648f`,
+    installed `eon` profile
+    `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`, private headless
+    Sway, 1280x720) showed `D detach` in the footer's Alt+Shift group.
 - **Open proof:** Pending re-proof in this repository: footer placement below
   the cards across widths, fractional scales and minimum fonts on an installed
-  surface. No performance, macOS or screen-reader workflow claim. The detach
-  hint is covered by `shortcut_hints_follow_bindings_catalog_and_native_focus`;
-  its installed observation is pending `eon-prove-close-and-detach-batch-bf8t`.
+  surface. No performance, macOS or screen-reader workflow claim.
 
 ## EON-C25 — Running Eon version badge
 

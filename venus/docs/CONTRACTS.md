@@ -701,6 +701,21 @@ re-proved when that platform or feature is next touched.
     `incompatible_workspace_response_is_rejected_before_model_state`, and
     `quota_refresh_and_workspace_failures_preserve_structure` in the workspace
     suite; dogfood checklist items 3, 4 and 10.
+  - **Final close (`eon-final-close-prompt-and-detach-key-m798`):** the
+    prompt's trigger, key answers and Alt+Shift+D mapping by
+    `close_prompt_asks_only_for_a_window_ending_close`, its scene and
+    AccessKit projection by
+    `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space` and
+    `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog`, and the
+    launch argument by `pane_frame_option_is_a_strict_single_boolean`.
+    Installed proof (`eon-prove-close-and-detach-batch-bf8t`): edge
+    `22915af5dca41f87e706ad548c0506f79c17648f`, installed `eon` profile
+    `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`, x86_64 Linux,
+    private headless Sway at 1280x720. With the warning on, Alt+Shift+W, the
+    bar's `×` and Alt+W on the last pane each showed the prompt listing `p1`;
+    Escape kept the window, Enter ended it, and Alt+Shift+D from the prompt
+    detached it. With `warning_close_last_tab = false`, Alt+Shift+W ended the
+    window at once.
 - **Open proof:** Columns (`eon-splits-opwv`): layout, column attachments and
   the 40-column threshold are covered by
   `columns_sit_side_by_side_and_keep_the_selected_column_primary`,
@@ -716,13 +731,6 @@ re-proved when that platform or feature is next touched.
   dogfood of the built package on a private headless Sway
   (`eon-close-pane-onwi` slice B, 1280x720) showed the `close pane` hint and
   the refusal notice.
-  Final close (`eon-final-close-prompt-and-detach-key-m798`): the prompt's
-  trigger, key answers and Alt+Shift+D mapping by
-  `close_prompt_asks_only_for_a_window_ending_close`, its scene and AccessKit
-  projection by `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space`
-  and `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog`, and the
-  launch argument by `pane_frame_option_is_a_strict_single_boolean`; installed
-  proof is pending `eon-prove-close-and-detach-batch-bf8t`.
   Sideways pane moves (`eon-sideways-pane-moves-k9ca`): the Ctrl+Alt+H/L and
   Ctrl+Alt+Shift+H/L mappings and the edge-column predicate by
   `direct_workspace_shortcuts_use_stable_eon_actions` and
@@ -884,10 +892,15 @@ re-proved when that platform or feature is next touched.
     `startup_snapshot_leaves_following_presentation_control_unread`, and
     `only_supervised_orbit_busy_is_retryable` in the workspace suite; dogfood
     checklist items 1 and 2.
+  - **Final close and detach (`eon-prove-close-and-detach-batch-bf8t`):**
+    isolated installed dogfood (edge
+    `22915af5dca41f87e706ad548c0506f79c17648f`, installed `eon` profile
+    `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`, private headless
+    Sway, 1280x720): Venus exited after Enter in the final-close prompt, and
+    no Orbit terminal of the generation remained; Alt+Shift+D closed the
+    window with its terminal still live.
 - **Open proof:** Pending re-proof in this repository: native Present of an
-  existing window that preserves its process and terminal attachment. Native
-  exit on an EONW `Ended` reply and the Alt+Shift+D detach are pending
-  `eon-prove-close-and-detach-batch-bf8t`.
+  existing window that preserves its process and terminal attachment.
 
 ## VEN-C15 — Compositor-owned background blur
 
@@ -1132,9 +1145,14 @@ re-proved when that platform or feature is next touched.
     Files popup configured on Alt+Shift+N: the key opened and hid the popup
     without a second window, and Alt+/ listed `Open new Eon window (overridden
     by Files)`.
+  - **Detach row (`eon-prove-close-and-detach-batch-bf8t`):** isolated
+    installed dogfood (edge `22915af5dca41f87e706ad548c0506f79c17648f`,
+    installed `eon` profile
+    `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`, private headless
+    Sway, 1280x720): the viewer listed `Alt+Shift+D` `Detach: close the
+    window, keep terminals running` under Host.
 - **Open proof:** Pending re-proof in this repository: AT-SPI dialog traversal
-  and tiny-surface clipping. The Alt+Shift+D row is pending
-  `eon-prove-close-and-detach-batch-bf8t`.
+  and tiny-surface clipping.
 
 ## VEN-C21 — Native Eon Bar workspace header
 
@@ -1194,9 +1212,15 @@ re-proved when that platform or feature is next touched.
   - **Override evidence (`eon-igae.10`):**
     `eon_bar_buttons_share_scene_bounds_and_separate_focus_from_activation`; the
     installed observation is pending.
+  - **Final-tab close (`eon-prove-close-and-detach-batch-bf8t`):** isolated
+    installed dogfood (edge `22915af5dca41f87e706ad548c0506f79c17648f`,
+    installed `eon` profile
+    `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`, private headless
+    Sway, 1280x720): Close tab (`×`, tooltip `Close tab — Alt+Shift+W`) on
+    the only tab showed the final-close prompt; Escape kept the tab and Enter
+    ended the window.
 - **Open proof:** Pending re-proof in this repository: compositor window drag
   from the empty header region, narrow-width captures, and AT-SPI header order.
-  Close tab on the final tab is pending `eon-prove-close-and-detach-batch-bf8t`.
 
 ## VEN-C22 — Codex quota fact chip
 
