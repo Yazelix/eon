@@ -1198,6 +1198,18 @@ re-proved when that platform or feature is next touched.
   It yields before tabs or controls when width contracts. Tab and Shift+Tab
   traverse focused header controls; Enter and Space activate them. Hover,
   pressed, and focus states remain distinct, and focus includes an outline.
+- **Attention badges (EON-C31):** These rules apply while the agent sidebar is
+  not visible (`Closed`, `Off`, or hidden for width):
+  - every tab whose rollup is needs input, error, finished or working shows a
+    corner badge (◆, ✕, ✓, or a spinner), the active tab included. A stale
+    tab's badge is dimmed;
+  - Eon has no animation-off setting, so the spinner always animates. Under
+    AP-PERF-001 it repaints at no more than 5 Hz, and only the badge;
+  - the badge changes neither the tab's width nor its label text;
+  - with tab overflow, the scroll edge shows the most urgent hidden badge;
+  - a tab's accessible name appends its state, for example
+    `Tab 3 of 5  /home/me/site, needs input`;
+  - clicking a badged tab behaves like any tab click.
 - **Quota placement:** The optional quota chip sits in the slot New tab
   vacates, adjacent to Shortcuts, so the blank drag region stays continuous.
 - **Important failures:** Buttons, tab gaps, pane chrome, terminal content,
@@ -1216,7 +1228,9 @@ re-proved when that platform or feature is next touched.
   workspace's patched winit 0.30.13.
 - **Boundary:** No second row, widget framework, status/quota data, polling,
   configuration, Nova compatibility, inactive-tab close, protocol change,
-  dependency, native-decoration policy, or platform-support expansion.
+  dependency, native-decoration policy, or platform-support expansion. The one
+  exception is the EON-C31 tab attention marker, read from the EONW v18
+  snapshot that Venus already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** Automated and installed.
   - **Evidence:** `eon_bar_controls_reuse_existing_actions_and_local_viewer`,
@@ -1234,6 +1248,25 @@ re-proved when that platform or feature is next touched.
     Sway, 1280x720): Close tab (`×`, tooltip `Close tab — Alt+Shift+W`) on
     the only tab showed the final-close prompt; Escape kept the tab and Enter
     ended the window.
+  - **Attention badges (`eon-agent-sidebar-yx8.2`):** automated proof in
+    `attention_badges_mark_tab_corners_without_moving_tabs`,
+    `only_badges_wholly_inside_the_tab_viewport_are_drawn`,
+    `spinner_phases_rewrite_only_alpha_in_place`,
+    `spinner_turns_at_most_five_times_a_second_and_only_while_shown`, and the
+    AccessKit label in
+    `workspace_accessibility_order_matches_tabs_then_one_expanded_pane`;
+    isolated installed dogfood (edge `08e52ca`, the candidate's `nix build`
+    of `/nix/store/i0j3p4bds3na8hha9j2f5f1gc828ga2v-eon-0.1.1`, private
+    headless Sway at 1280x720 and 320x480):
+    - with the sidebar closed, the four badge states showed. A real Codex
+      0.163 turn in a background tab badged it working, then finished.
+    - at 320x480, each scroll edge showed the most urgent badge hidden past it.
+    - two captures 300 ms apart differed only in the 10x10 spinner box.
+    - with the sidebar open the badges were hidden, and they returned when it
+      hid for width.
+    - Venus CPU over 20 s with and without a spinner: 14 and 6 ticks of
+      10 ms with Sway rendering on the Intel GPU; 738 and 51 with Sway
+      compositing in software (pixman).
 - **Open proof:** Pending re-proof in this repository: compositor window drag
   from the empty header region, narrow-width captures, and AT-SPI header order.
 

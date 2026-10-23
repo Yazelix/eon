@@ -39,7 +39,7 @@ use cells::{
     build_scene_rectangles, cell_ink_right, cell_text_attrs, cell_text_segments, cursor_bounds,
     cursor_outline, fitted_cell_font, set_cell_layer,
 };
-use chrome::{HeaderInteraction, fit_header_text, rasterize_quota_icon};
+use chrome::{HeaderInteraction, SpinnerSlot, fit_header_text, rasterize_quota_icon};
 use cursor_trail::{CursorAnimation, build_tail_cursor};
 
 pub use fonts::{FontSettings, FontSetup};
@@ -358,6 +358,9 @@ pub struct Renderer {
     notice_lines: usize,
     terminal: TerminalLayer,
     header: HeaderInteraction,
+    /// Working badges in the current static vertices, and the phase they are drawn at.
+    spinners: Vec<SpinnerSlot>,
+    spinner_phase: usize,
     cursor_tail: Option<(SceneColor, SceneColor, f32)>,
     clear: wgpu::Color,
     background_opacity: f32,
@@ -586,6 +589,8 @@ impl Renderer {
                 last_cursor_frame: None,
             },
             header: HeaderInteraction::default(),
+            spinners: Vec::new(),
+            spinner_phase: 0,
             cursor_tail: cursor_tail
                 .map(|(color, duration)| (color, cursor_outline(color), duration)),
             clear: clear_color(DEFAULT_BACKGROUND, background_opacity, srgb_target),
@@ -871,6 +876,7 @@ impl Renderer {
 
         self.text.clear();
         self.text_overlay = None;
+        self.spinners.clear();
         self.terminal.scrollback_rect = None;
         let viewport = workspace.map_or(
             SceneRect {
@@ -2122,6 +2128,37 @@ impl RectangleBatch {
                 top_left,
                 bottom_right,
                 top_right,
+            ],
+            color,
+            alpha,
+        );
+    }
+
+    /// A straight stroke `thickness` wide from `start` to `end`.
+    fn push_stroke(
+        &mut self,
+        start: CursorPoint,
+        end: CursorPoint,
+        thickness: f32,
+        color: SceneColor,
+        alpha: f32,
+    ) {
+        let (dx, dy) = (end.x - start.x, end.y - start.y);
+        let length = dx.hypot(dy).max(f32::EPSILON);
+        let (nx, ny) = (
+            -dy / length * thickness / 2.0,
+            dx / length * thickness / 2.0,
+        );
+        let offset = |point: CursorPoint, sign: f32| CursorPoint {
+            x: point.x + nx * sign,
+            y: point.y + ny * sign,
+        };
+        self.push_quad(
+            [
+                offset(start, 1.0),
+                offset(end, 1.0),
+                offset(end, -1.0),
+                offset(start, -1.0),
             ],
             color,
             alpha,

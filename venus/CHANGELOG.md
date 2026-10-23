@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- VEN-C21 and EON-C21: while the agent sidebar is not visible, each Eon Bar
+  tab whose EON-C31 rollup is needs input, error, finished or working shows a
+  corner badge (◆, ✕, ✓ or a spinner). The badge is dimmed when every terminal
+  in that state is stale, and it changes neither tab width nor label. The
+  spinner turns at most 5 times a second by rewriting only its own vertices.
+  Each tab-overflow edge shows the most urgent badge hidden past it, and the
+  tab's accessible name appends its state (`eon-agent-sidebar-yx8.2`).
+
 - VEN-C30 (Planned): the agent sidebar's frame. While the snapshot's
   `sidebar` is `Open` and the window keeps at least 80 cells right of it, a
   28-cell sidebar sits below the Eon Bar and the cards share the content area

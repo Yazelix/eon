@@ -125,6 +125,17 @@ fn without_attention(tabs: &[Tab]) -> Vec<Tab> {
         .collect()
 }
 
+/// Whether `next` differs from `current` only in EON-C31 attention. That moves no geometry a hit
+/// test or link target reads, so the presented geometry stays current.
+#[must_use]
+pub fn attention_only_change(current: &Snapshot, next: &Snapshot) -> bool {
+    let plain = |snapshot: &Snapshot| Snapshot {
+        tabs: without_attention(&snapshot.tabs),
+        ..snapshot.clone()
+    };
+    current.tabs != next.tabs && plain(current) == plain(next)
+}
+
 #[must_use]
 pub fn active_popup(snapshot: &Snapshot) -> Option<&Popup> {
     let tab = snapshot
@@ -685,7 +696,13 @@ mod tests {
             record: None,
         });
         attention.tabs[1].attention_rollup = Some(workspace::AttentionState::Unavailable);
+        assert!(attention_only_change(&snapshot, &attention));
+        assert!(!attention_only_change(&snapshot, &snapshot));
         attention.sidebar = workspace::Sidebar::Closed;
+        assert!(
+            !attention_only_change(&snapshot, &attention),
+            "the sidebar moves the content area"
+        );
         assert_eq!(
             model.apply(WorkspaceResponse::Snapshot(attention)),
             (true, false),

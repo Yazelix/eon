@@ -2856,11 +2856,25 @@ mod tests {
                                 session: "session-3".into(),
                                 endpoint: b"/run/eon/three.sock".to_vec(),
                                 live: false,
-                                attention: None,
+                                attention: Some(eon_workspace_protocol::v18::Attention {
+                                    state: eon_workspace_protocol::v18::AttentionState::Finished,
+                                    record: Some(eon_workspace_protocol::v18::AttentionRecord {
+                                        kind: None,
+                                        progress: None,
+                                        app: "claude-code".into(),
+                                        title: String::new(),
+                                        message: String::new(),
+                                        changed_at: 1,
+                                        stale: false,
+                                        others: 0,
+                                    }),
+                                }),
                             }],
                             expanded: "p3".into(),
                         }],
-                        attention_rollup: None,
+                        attention_rollup: Some(
+                            eon_workspace_protocol::v18::AttentionState::Finished,
+                        ),
                     },
                 ],
                 geometry: eon_workspace_protocol::v18::PopupGeometry {
@@ -2914,7 +2928,10 @@ mod tests {
         );
         assert_eq!(node(&update, tab_1).role(), Role::Tab);
         assert_eq!(node(&update, tab_1).label(), Some("Tab 1 of 2  /tmp/eon"));
-        assert_eq!(node(&update, tab_2).label(), Some("Tab 2 of 2  /tmp/nova"));
+        assert_eq!(
+            node(&update, tab_2).label(),
+            Some("Tab 2 of 2  /tmp/nova, finished")
+        );
         assert_eq!(node(&update, pane_1).label(), Some("p1 offline"));
         assert_eq!(workspace.panes[1].label(), "p2  /tmp/eon");
         assert_eq!(

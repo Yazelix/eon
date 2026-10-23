@@ -36,7 +36,7 @@ use yazelix_venus::{
     MetadataTransport, ModelError, PaneMetadata, PresentOutcome, RamUse, Renderer, Scene,
     SceneRect, SessionModel, ShortcutHintsScene, Transport, TransportEvent, WorkspaceEvent,
     WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene,
-    WorkspaceTransport, active_popup, validate_copy_uri, validate_open_uri,
+    WorkspaceTransport, active_popup, attention_only_change, validate_copy_uri, validate_open_uri,
 };
 
 mod geometry;
@@ -58,6 +58,8 @@ use shortcuts::{
 };
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
+/// A working badge's spinner turns at most 5 times a second (VEN-C21, AP-PERF-001).
+const SPINNER_INTERVAL: Duration = Duration::from_millis(200);
 const MINUTE: Duration = Duration::from_secs(60);
 const READING_INTERVAL: Duration = Duration::from_secs(2);
 const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
@@ -528,6 +530,7 @@ struct Application {
     render_notice: Option<String>,
     blink_visible: bool,
     next_blink: Option<Instant>,
+    next_spinner: Option<Instant>,
     next_animation: Option<Instant>,
     clock: Option<LocalClock>,
     next_clock: Option<Instant>,
@@ -612,6 +615,7 @@ impl Application {
             render_notice: None,
             blink_visible: true,
             next_blink: None,
+            next_spinner: None,
             clock: None,
             next_clock: None,
             cpu_times: None,
@@ -1659,11 +1663,16 @@ impl Application {
     }
 
     fn handle_workspace(&mut self, event: WorkspaceEvent) {
-        let (received_snapshot, snapshot_changed) = match &event {
+        let (received_snapshot, snapshot_changed, attention_only) = match &event {
             WorkspaceEvent::Response(eon_workspace_protocol::v18::Response::Snapshot(snapshot)) => {
-                (true, self.workspace_model.snapshot() != Some(snapshot))
+                let current = self.workspace_model.snapshot();
+                (
+                    true,
+                    current != Some(snapshot),
+                    current.is_some_and(|current| attention_only_change(current, snapshot)),
+                )
             }
-            _ => (false, false),
+            _ => (false, false, false),
         };
         let unavailable = matches!(&event, WorkspaceEvent::Unavailable(_));
         let quota_expired = unavailable
@@ -1738,10 +1747,16 @@ impl Application {
             };
             self.tab_scroll = scene.tab_scroll();
             self.pane_scroll = scene.pane_scroll();
-            self.presentation.invalidate();
-            // Showing or hiding the sidebar resizes the columns; other refreshes leave every
-            // size as it was, so nothing is sent.
-            self.send_resize();
+            // Attention moves no presented geometry, so a held link press or a shortcut
+            // waiting on the presented scene survives it.
+            if attention_only {
+                self.presentation.content_changed();
+            } else {
+                self.presentation.invalidate();
+                // Showing or hiding the sidebar resizes the columns; other refreshes leave
+                // every size as it was, so nothing is sent.
+                self.send_resize();
+            }
         }
         if self.workspace_model.snapshot().is_some()
             && self.workspace_model.active_attachment().is_none()
@@ -3957,6 +3972,17 @@ impl ApplicationHandler<UserEvent> for Application {
         {
             state.window.request_redraw();
         }
+        let spinning = !self.window_occluded
+            && self
+                .window
+                .as_ref()
+                .is_some_and(|state| state.renderer.spinning());
+        if update_spinner(spinning, &mut self.next_spinner, now)
+            && let Some(state) = &mut self.window
+        {
+            state.renderer.turn_spinners();
+            state.window.request_redraw();
+        }
         let animation_active = self
             .window
             .as_ref()
@@ -3973,6 +3999,7 @@ impl ApplicationHandler<UserEvent> for Application {
         event_loop.set_control_flow(
             [
                 self.next_blink,
+                self.next_spinner,
                 self.next_animation,
                 self.next_clock,
                 self.next_reading,
@@ -4021,6 +4048,20 @@ fn update_blink(
     } else if deadline.is_some_and(|next| now >= next) {
         *visible = !*visible;
         *deadline = Some(now + BLINK_INTERVAL);
+        return true;
+    }
+    false
+}
+
+/// Whether the spinners turn now: once `SPINNER_INTERVAL` has passed since the previous turn
+/// while a spinner shows. Ticking stops while none does.
+fn update_spinner(spinning: bool, deadline: &mut Option<Instant>, now: Instant) -> bool {
+    if !spinning {
+        *deadline = None;
+    } else if deadline.is_none() {
+        *deadline = Some(now + SPINNER_INTERVAL);
+    } else if deadline.is_some_and(|next| now >= next) {
+        *deadline = Some(now + SPINNER_INTERVAL);
         return true;
     }
     false
@@ -6337,6 +6378,24 @@ mod tests {
         assert_eq!((visible, deadline), (true, None));
         assert!(!update_blink(true, &mut visible, &mut deadline, now));
         assert_eq!((visible, deadline), (true, Some(now + BLINK_INTERVAL)));
+    }
+
+    #[test]
+    fn spinner_turns_at_most_five_times_a_second_and_only_while_shown() {
+        let now = Instant::now();
+        let mut deadline = None;
+
+        assert!(!update_spinner(true, &mut deadline, now));
+        let late = now + SPINNER_INTERVAL * 3;
+        assert!(update_spinner(true, &mut deadline, late));
+        assert_eq!(deadline, Some(late + SPINNER_INTERVAL));
+        assert!(!update_spinner(
+            true,
+            &mut deadline,
+            late + SPINNER_INTERVAL - Duration::from_millis(1)
+        ));
+        assert!(!update_spinner(false, &mut deadline, late));
+        assert_eq!(deadline, None);
     }
 
     #[test]

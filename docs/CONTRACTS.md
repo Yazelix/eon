@@ -1728,6 +1728,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   compositor-owned window dragging. The existing CreateTab and exact active
   CloseTab actions and local VEN-C20 viewer remain their sole behavior owners.
   The accessibility tree places New tab before the optional quota chip.
+  While the agent sidebar is not visible, Venus badges each tab's EON-C31
+  attention rollup under VEN-C21.
 - **Important failures:** Stale component identity fails before activation.
   Rejected Eon actions never mutate another tab. Narrow surfaces retain the
   active tab and required controls without overlap. A failed native drag causes
@@ -1737,11 +1739,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, current EONW v7 and Orbit terminals.
+- **Consumes:** Venus VEN-C21, EONW v7 (v18 for the EON-C31 tab attention
+  marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
-  controls, macOS claim or distribution expansion.
+  controls, macOS claim or distribution expansion. The one exception is the
+  EON-C31 tab attention marker, which Venus reads from the EONW v18 snapshot it
+  already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Venus
@@ -1757,6 +1762,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`, private headless
     Sway, 1280x720): the bar's `×` on the only tab showed the final-close
     prompt; Escape kept the tab and Enter ended the window.
+  - **Tab attention marker (`eon-agent-sidebar-yx8.2`):** isolated installed
+    dogfood (edge `08e52ca`, the candidate's `nix build` of
+    `/nix/store/i0j3p4bds3na8hha9j2f5f1gc828ga2v-eon-0.1.1`, private headless
+    Sway at 1280x720 and 320x480): with the sidebar closed by Alt+Shift+H,
+    tabs showed ◆, ✕, ✓ and a spinner for needs input, error, finished and
+    working, the active tab included. A real Codex 0.163 turn in a background
+    tab showed the spinner and then ✓. With the sidebar open the badges were
+    hidden, and they returned when it hid for width.
 - **Open proof:** Pending re-proof in this repository: real compositor window
   dragging, eight-tab overflow, narrow widths and AT-SPI order on an installed
   surface. AT-SPI tree order is not a screen-reader workflow; macOS and wider

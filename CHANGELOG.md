@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- While the agent sidebar is hidden, Eon Bar tabs show what their agents are
+  doing. A corner badge marks a tab whose agent needs input (◆), hit an error
+  (✕), finished (✓) or is working (a spinner), including the active tab. A
+  badge is dimmed while its status is stale. When tabs overflow, each scroll
+  edge shows the most urgent badge hidden past it. Screen readers hear the
+  state after the tab's name, such as "needs input". Badges never change a
+  tab's width or name, and clicking a badged tab selects it as before.
+
 - `eon pane close PANE`, run from a popup such as Agent or from a pane of the
   same tab, now closes that pane while the popup stays shown. Alt+W under a
   popup, and closing the tab's last pane from there, are still refused.

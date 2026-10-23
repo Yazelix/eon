@@ -2,13 +2,14 @@
 //! header tooltip and the native dialog, plus the pointer state that highlights them.
 
 use super::{
-    CellMetrics, DEFAULT_BACKGROUND, DrawStyleKind, PlacedText, RectangleBatch, Renderer,
-    SceneColor, shaping,
+    CellMetrics, CursorPoint, DEFAULT_BACKGROUND, DrawStyleKind, PlacedText, RectangleBatch,
+    Renderer, SceneColor, shaping,
 };
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
-    scene::{QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, inset_sides, pane_chrome_rect},
+    scene::{QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, inset_sides, pane_chrome_rect},
 };
+use eon_workspace_protocol::v18::AttentionState;
 use glyphon::{
     Attrs, Buffer, Color, ContentType, CustomGlyph, Family, FontSystem, Metrics,
     RasterizeCustomGlyphRequest, RasterizedCustomGlyph, TextBounds, Wrap,
@@ -82,6 +83,142 @@ pub(super) fn rasterize_quota_icon(
         data,
         content_type: ContentType::Mask,
     })
+}
+
+/// The ring segments of a working badge's spinner; one phase per segment.
+const SPINNER_SEGMENTS: usize = 8;
+
+/// A working badge's spinner within the static rectangle vertices: a tick rewrites only these
+/// bytes, which keep their length in every phase. The badge lies wholly inside its clip, so the
+/// rewrite needs none.
+pub(super) struct SpinnerSlot {
+    offset: usize,
+    badge: TabBadge,
+}
+
+/// Whether a badge lies wholly inside `clip`. One that crosses an edge of the tab viewport is
+/// hidden past it, and that edge's badge stands for it; it is not drawn, so no clipped spinner
+/// keeps ticking.
+fn badge_inside(badge: TabBadge, clip: Option<SceneRect>) -> bool {
+    clip.is_none_or(|clip| {
+        badge.rect.left >= clip.left
+            && badge.rect.right() <= clip.right()
+            && badge.rect.top >= clip.top
+            && badge.rect.bottom() <= clip.bottom()
+    })
+}
+
+/// Draws one attention badge's glyph inside its header-colored disc: ◆ needs input, ✕ error,
+/// ✓ finished, or the spinner at `phase` for working. Quads keep the glyphs independent of fonts.
+fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: usize) {
+    // The ring yields entirely on the smallest badges, so the glyph never leaves the badge.
+    let ring = (badge.rect.width / 12.0).floor();
+    let glyph = SceneRect {
+        left: badge.rect.left + ring,
+        top: badge.rect.top + ring,
+        width: badge.rect.width - ring * 2.0,
+        height: badge.rect.height - ring * 2.0,
+    };
+    let alpha = if badge.dimmed { 0.45 } else { 1.0 };
+    let at = |x: f32, y: f32| CursorPoint {
+        x: glyph.left + glyph.width * x,
+        y: glyph.top + glyph.height * y,
+    };
+    let stroke = (glyph.width / 4.0).max(1.0);
+    match badge.state {
+        AttentionState::NeedsInput => rectangles.push_quad(
+            [at(0.5, 0.0), at(1.0, 0.5), at(0.5, 1.0), at(0.0, 0.5)],
+            SceneColor {
+                r: 255,
+                g: 196,
+                b: 87,
+            },
+            alpha,
+        ),
+        AttentionState::Error => {
+            let red = SceneColor {
+                r: 255,
+                g: 107,
+                b: 107,
+            };
+            rectangles.push_stroke(at(0.1, 0.1), at(0.9, 0.9), stroke, red, alpha);
+            rectangles.push_stroke(at(0.9, 0.1), at(0.1, 0.9), stroke, red, alpha);
+        }
+        AttentionState::Finished => {
+            let green = SceneColor {
+                r: 126,
+                g: 231,
+                b: 185,
+            };
+            rectangles.push_stroke(at(0.05, 0.55), at(0.4, 0.88), stroke, green, alpha);
+            rectangles.push_stroke(at(0.4, 0.88), at(0.95, 0.15), stroke, green, alpha);
+        }
+        AttentionState::Working => {
+            // The lit segment at `phase` leads clockwise; the ones behind it fade.
+            let center = at(0.5, 0.5);
+            let outer = glyph.width / 2.0;
+            let inner = outer * 0.45;
+            let step = std::f32::consts::TAU / SPINNER_SEGMENTS as f32;
+            let point = |radius: f32, angle: f32| CursorPoint {
+                x: center.x + radius * angle.cos(),
+                y: center.y + radius * angle.sin(),
+            };
+            for segment in 0..SPINNER_SEGMENTS {
+                let start = segment as f32 * step - std::f32::consts::FRAC_PI_2 + step * 0.15;
+                let end = start + step * 0.7;
+                let behind = (phase + SPINNER_SEGMENTS - segment) % SPINNER_SEGMENTS;
+                rectangles.push_quad(
+                    [
+                        point(outer, start),
+                        point(outer, end),
+                        point(inner, end),
+                        point(inner, start),
+                    ],
+                    SceneColor {
+                        r: 138,
+                        g: 180,
+                        b: 255,
+                    },
+                    alpha * (1.0 - behind as f32 * 0.11),
+                );
+            }
+        }
+        AttentionState::Idle | AttentionState::Unavailable => {}
+    }
+}
+
+impl Renderer {
+    fn push_badge(&mut self, badge: TabBadge, rectangles: &mut RectangleBatch) {
+        if !badge_inside(badge, rectangles.clip) {
+            return;
+        }
+        rectangles.push_rounded(badge.rect, badge.rect.width / 2.0, DEFAULT_BACKGROUND);
+        if badge.state == AttentionState::Working {
+            self.spinners.push(SpinnerSlot {
+                offset: rectangles.bytes.len(),
+                badge,
+            });
+        }
+        push_badge_glyph(rectangles, badge, self.spinner_phase);
+    }
+
+    /// Turns every drawn spinner one segment by rewriting only its own uploaded vertices, so the
+    /// scene, text and terminal layers stay cached.
+    pub fn turn_spinners(&mut self) {
+        self.spinner_phase = (self.spinner_phase + 1) % SPINNER_SEGMENTS;
+        for slot in &self.spinners {
+            let mut batch = RectangleBatch::new(self.config.width, self.config.height);
+            push_badge_glyph(&mut batch, slot.badge, self.spinner_phase);
+            self.queue
+                .write_buffer(&self.vertices, slot.offset as u64, &batch.bytes);
+        }
+    }
+
+    /// Whether the current frame draws a working badge's spinner.
+    #[must_use]
+    pub fn spinning(&self) -> bool {
+        !self.spinners.is_empty()
+    }
 }
 
 fn header_item_visual(rect: SceneRect, padding: f32) -> SceneRect {
@@ -677,8 +814,14 @@ impl Renderer {
                     }
                 },
                 DrawStyleKind::Status(Wrap::None),
-                workspace.tab_viewport,
+                workspace.tab_label_clip,
             );
+            if let Some(badge) = tab.badge {
+                self.push_badge(badge, rectangles);
+            }
+        }
+        for badge in &workspace.edge_badges {
+            self.push_badge(*badge, rectangles);
         }
         rectangles.clip = None;
         // Quota chips and readings share one pill; the version label stays plain.
@@ -939,6 +1082,76 @@ mod tests {
     use super::*;
     use crate::EonBar;
     use glyphon::cosmic_text::SubpixelBin;
+
+    #[test]
+    fn only_badges_wholly_inside_the_tab_viewport_are_drawn() {
+        let badge = |left| TabBadge {
+            state: AttentionState::Working,
+            dimmed: false,
+            rect: SceneRect {
+                left,
+                top: 4.0,
+                width: 12.0,
+                height: 12.0,
+            },
+        };
+        let viewport = Some(SceneRect {
+            width: 240.0,
+            height: 40.0,
+            ..SceneRect::default()
+        });
+        assert!(badge_inside(badge(228.0), viewport));
+        // A fractional scroll that leaves a sliver inside still hides it past the edge.
+        assert!(!badge_inside(badge(228.01), viewport));
+        assert!(!badge_inside(badge(238.99), viewport));
+        assert!(!badge_inside(badge(-0.01), viewport));
+        assert!(badge_inside(badge(238.99), None));
+    }
+
+    #[test]
+    fn spinner_phases_rewrite_only_alpha_in_place() {
+        // A tick rewrites without the tab viewport's clip, which leaves a drawn badge unchanged,
+        // down to the one-pixel badge of the smallest typography, at the viewport's edge.
+        let viewport = Some(SceneRect {
+            width: 240.0,
+            height: 40.0,
+            ..SceneRect::default()
+        });
+        for size in [12.0, 1.0] {
+            let badge = TabBadge {
+                state: AttentionState::Working,
+                dimmed: false,
+                rect: SceneRect {
+                    left: 240.0 - size,
+                    top: 4.0,
+                    width: size,
+                    height: size,
+                },
+            };
+            let glyph = |phase, clip| {
+                let mut rectangles = RectangleBatch::new(800, 600);
+                rectangles.clip = clip;
+                push_badge_glyph(&mut rectangles, badge, phase);
+                rectangles
+                    .bytes
+                    .chunks_exact(4)
+                    .map(|value| f32::from_ne_bytes(value.try_into().unwrap()))
+                    .collect::<Vec<_>>()
+            };
+            assert!(badge_inside(badge, viewport));
+            let first = glyph(0, None);
+            for phase in 0..SPINNER_SEGMENTS {
+                let turned = glyph(phase, None);
+                assert_eq!(turned, glyph(phase, viewport));
+                assert_eq!(turned.len(), first.len());
+                // Each vertex is x, y, r, g, b, alpha: only alpha turns.
+                for (vertex, first) in turned.chunks_exact(6).zip(first.chunks_exact(6)) {
+                    assert_eq!(vertex[..5], first[..5]);
+                }
+                assert_eq!(phase == 0, turned == first);
+            }
+        }
+    }
 
     #[test]
     fn quota_icons_preserve_transparency_and_shape_across_scales() {

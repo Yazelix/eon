@@ -4,8 +4,8 @@ use crate::{
     render::CellMetrics,
 };
 use eon_workspace_protocol::v18::{
-    ALT, ClaudeQuotaState, CodexQuotaState, Pane, PopupEntry, QuotaWindow, SHIFT, Sidebar,
-    Snapshot, Tab,
+    ALT, AttentionState, ClaudeQuotaState, CodexQuotaState, Pane, PopupEntry, QuotaWindow, SHIFT,
+    Sidebar, Snapshot, Tab,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, Rgb, Row, Screen, StyleColor, Underline,
@@ -67,6 +67,58 @@ pub struct WorkspaceTab {
     pub rect: SceneRect,
     label: String,
     accessible_label: String,
+    /// The tab's attention badge while the agent sidebar is not visible.
+    pub(crate) badge: Option<TabBadge>,
+}
+
+/// An EON-C31 attention badge on a tab pill's corner, or on a scroll edge for hidden tabs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TabBadge {
+    /// Needs input, error, finished or working.
+    pub(crate) state: AttentionState,
+    /// Every terminal in the tab's rollup state is stale.
+    pub(crate) dimmed: bool,
+    pub(crate) rect: SceneRect,
+}
+
+impl TabBadge {
+    /// The tab's badge state, the word naming it and whether it is dimmed; idle and unavailable
+    /// show no badge.
+    fn of(tab: &Tab) -> Option<(AttentionState, &'static str, bool)> {
+        let state = tab.attention_rollup?;
+        let word = match state {
+            AttentionState::NeedsInput => "needs input",
+            AttentionState::Error => "error",
+            AttentionState::Finished => "finished",
+            AttentionState::Working => "working",
+            AttentionState::Idle | AttentionState::Unavailable => return None,
+        };
+        let dimmed = tab
+            .columns
+            .iter()
+            .flat_map(|column| &column.panes)
+            .map(|pane| &pane.attention)
+            .chain(tab.popups.iter().map(|popup| &popup.attention))
+            .flatten()
+            .filter(|attention| attention.state == state)
+            .all(|attention| attention.record.as_ref().is_some_and(|record| record.stale));
+        Some((state, word, dimmed))
+    }
+
+    /// The badge's square: as wide as the label padding at most, so it never meets the label,
+    /// overhanging the pill's top-right corner into the gap after it and the inset above it.
+    /// Typography too small for a six-pixel badge shows no glyph, so it gets none; the tab's
+    /// accessible name still carries its state.
+    fn corner(pill: SceneRect, metrics: CellMetrics, gap: f32) -> Option<SceneRect> {
+        let size = metrics.padding.min(metrics.font_size * 0.75).round();
+        let overhang = (size / 4.0).min(gap / 2.0).floor();
+        (size >= 6.0).then_some(SceneRect {
+            left: pill.right() - size + overhang,
+            top: (pill.top - overhang).max(0.0),
+            width: size,
+            height: size,
+        })
+    }
 }
 
 impl WorkspaceTab {
@@ -831,6 +883,10 @@ impl DialogScene {
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkspaceScene {
     pub tabs: Vec<WorkspaceTab>,
+    /// The most urgent badge of the tabs scrolled out past each tab-viewport edge.
+    pub(crate) edge_badges: Vec<TabBadge>,
+    /// The tab viewport less the columns its edge badges take, so no label is drawn over them.
+    pub(crate) tab_label_clip: SceneRect,
     pub(crate) header: SceneRect,
     pub(crate) drag_region: SceneRect,
     pub(crate) quotas: Vec<WorkspaceQuota>,
@@ -1076,6 +1132,37 @@ fn workspace_header_geometry(
         control
     });
     (header, tab_viewport, drag_region, quota, controls)
+}
+
+/// For each tab-viewport edge that badges are scrolled past, the most urgent of them, moved just
+/// inside that edge: by state, then undimmed before dimmed. Also the viewport less the columns
+/// those badges take, which clips tab labels.
+fn edge_badges(tabs: &[WorkspaceTab], viewport: SceneRect, gap: f32) -> (Vec<TabBadge>, SceneRect) {
+    let inset = (gap / 2.0).floor();
+    let hidden = |past: &dyn Fn(SceneRect) -> bool| {
+        tabs.iter()
+            .filter_map(|tab| tab.badge)
+            .filter(|badge| past(badge.rect))
+            .min_by_key(|badge| (badge.state, badge.dimmed))
+    };
+    let left = hidden(&|rect| rect.left < viewport.left).map(|mut badge| {
+        badge.rect.left = viewport.left + inset;
+        badge
+    });
+    let right = hidden(&|rect| rect.right() > viewport.right()).map(|mut badge| {
+        badge.rect.left = viewport.right() - inset - badge.rect.width;
+        badge
+    });
+    let label_left = left.map_or(viewport.left, |badge| badge.rect.right());
+    let label_right = right.map_or(viewport.right(), |badge| badge.rect.left);
+    (
+        left.into_iter().chain(right).collect(),
+        SceneRect {
+            left: label_left,
+            width: (label_right - label_left).max(0.0),
+            ..viewport
+        },
+    )
 }
 
 fn quota_duration(minutes: u32) -> String {
@@ -1499,17 +1586,34 @@ impl WorkspaceScene {
                     .clamp((metrics.font_size * 4.0).min(max_tab_width), max_tab_width);
                 let left = tab_end;
                 tab_end = left + tab_width + gap;
+                let rect = SceneRect {
+                    left,
+                    top: inset,
+                    width: tab_width,
+                    height: (tab_height - inset * 2.0).max(0.0),
+                };
+                // VEN-C21 badges show while the agent sidebar is not visible.
+                let badge = TabBadge::of(tab).filter(|_| sidebar.is_none()).and_then(
+                    |(state, word, dimmed)| {
+                        accessible_label.push_str(", ");
+                        accessible_label.push_str(word);
+                        if dimmed {
+                            accessible_label.push_str(", status stale");
+                        }
+                        Some(TabBadge {
+                            state,
+                            dimmed,
+                            rect: TabBadge::corner(rect, metrics, gap)?,
+                        })
+                    },
+                );
                 WorkspaceTab {
                     id: tab.id.clone(),
                     selected: index == active_tab,
-                    rect: SceneRect {
-                        left,
-                        top: inset,
-                        width: tab_width,
-                        height: (tab_height - inset * 2.0).max(0.0),
-                    },
+                    rect,
                     label,
                     accessible_label,
+                    badge,
                 }
             })
             .collect();
@@ -1619,7 +1723,11 @@ impl WorkspaceScene {
         };
         for tab in &mut tabs {
             tab.rect.left -= tab_scroll;
+            if let Some(badge) = &mut tab.badge {
+                badge.rect.left -= tab_scroll;
+            }
         }
+        let (edge_badges, tab_label_clip) = edge_badges(&tabs, tab_viewport, gap);
         let active = &snapshot.tabs[active_tab];
         let popup = active_popup(snapshot);
         let card_radius = card_gap(metrics);
@@ -1643,6 +1751,8 @@ impl WorkspaceScene {
             };
             return Self {
                 tabs,
+                edge_badges,
+                tab_label_clip,
                 header,
                 drag_region,
                 quotas,
@@ -1811,6 +1921,8 @@ impl WorkspaceScene {
 
         Self {
             tabs,
+            edge_badges,
+            tab_label_clip,
             header,
             drag_region,
             quotas,
@@ -3348,6 +3460,200 @@ mod tests {
         assert_eq!(
             scrolled.tabs.last().unwrap().rect.right() + tab_gap(metrics, scrolled.header.height),
             scrolled.controls[0].rect.left
+        );
+    }
+
+    #[test]
+    fn attention_badges_mark_tab_corners_without_moving_tabs() {
+        use eon_workspace_protocol::v18::{
+            Attention, AttentionRecord, AttentionState as State, Column, Pane, PopupGeometry,
+        };
+
+        let attention = |state, stale| Attention {
+            state,
+            record: Some(AttentionRecord {
+                kind: None,
+                progress: None,
+                app: "codex".into(),
+                title: String::new(),
+                message: String::new(),
+                changed_at: 1,
+                stale,
+                others: 0,
+            }),
+        };
+        // Each tab's panes and their attention; the rollup is the most urgent of them.
+        let tabs: [&[Option<(State, bool)>]; 8] = [
+            &[Some((State::NeedsInput, false))],
+            &[Some((State::Error, false))],
+            &[Some((State::Finished, true))],
+            &[Some((State::Working, false)), Some((State::Idle, false))],
+            &[Some((State::Idle, false))],
+            &[None],
+            &[
+                Some((State::NeedsInput, true)),
+                Some((State::NeedsInput, false)),
+            ],
+            &[Some((State::Working, true))],
+        ];
+        let mut snapshot = Snapshot {
+            active_tab: "t1".into(),
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            tabs: tabs
+                .iter()
+                .enumerate()
+                .map(|(index, panes)| Tab {
+                    id: format!("t{}", index + 1),
+                    directory: format!("/tmp/tab-{}", index + 1).into_bytes(),
+                    pending: false,
+                    selected_pane: Some(format!("p{index}-0")),
+                    selected_popup: None,
+                    columns: vec![Column {
+                        panes: panes
+                            .iter()
+                            .enumerate()
+                            .map(|(pane, state)| Pane {
+                                id: format!("p{index}-{pane}"),
+                                session: format!("s{index}-{pane}"),
+                                endpoint: format!("/tmp/p{index}-{pane}.sock").into_bytes(),
+                                live: true,
+                                attention: state.map(|(state, stale)| attention(state, stale)),
+                            })
+                            .collect(),
+                        expanded: format!("p{index}-0"),
+                    }],
+                    popups: Vec::new(),
+                    attention_rollup: panes.iter().flatten().map(|(state, _)| *state).min(),
+                })
+                .collect(),
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: eon_workspace_protocol::v18::Sidebar::Closed,
+        };
+        let metrics = CellMetrics::for_scale(1.0);
+        let project = |snapshot: &Snapshot, width, scroll| {
+            WorkspaceScene::from_snapshot(
+                snapshot,
+                PhysicalSize::new(width, 600),
+                metrics,
+                scroll,
+                0.0,
+                |_, text| (text.into(), text.len() as f32 * 10.0),
+            )
+        };
+        let scene = project(&snapshot, 1600, 0.0);
+        let badges = scene
+            .tabs
+            .iter()
+            .map(|tab| tab.badge.map(|badge| (badge.state, badge.dimmed)))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            badges,
+            [
+                Some((State::NeedsInput, false)),
+                Some((State::Error, false)),
+                Some((State::Finished, true)),
+                Some((State::Working, false)),
+                None,
+                None,
+                Some((State::NeedsInput, false)),
+                Some((State::Working, true)),
+            ],
+            "the active tab is badged, idle and empty tabs are not, and a badge dims only when \
+             every terminal in its state is stale"
+        );
+        assert_eq!(
+            scene.tabs[0].accessible_label(),
+            "Tab 1 of 8  /tmp/tab-1, needs input"
+        );
+        assert_eq!(
+            scene.tabs[2].accessible_label(),
+            "Tab 3 of 8  /tmp/tab-3, finished, status stale"
+        );
+        assert_eq!(scene.tabs[4].accessible_label(), "Tab 5 of 8  /tmp/tab-5");
+        assert!(scene.edge_badges.is_empty(), "every tab fits");
+        // Typography too small for a visible glyph draws no badge but keeps the state.
+        let tiny = WorkspaceScene::from_snapshot(
+            &snapshot,
+            PhysicalSize::new(400, 150),
+            CellMetrics::for_scale(0.25),
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * 2.5),
+        );
+        assert!(tiny.tabs.iter().all(|tab| tab.badge.is_none()));
+        assert_eq!(
+            tiny.tabs[0].accessible_label(),
+            "Tab 1 of 8  /tmp/tab-1, needs input"
+        );
+        // While the sidebar shows, the tabs carry no badge or state; hidden for width, they do.
+        let mut open = snapshot.clone();
+        open.sidebar = eon_workspace_protocol::v18::Sidebar::Open;
+        let beside = project(&open, 1600, 0.0);
+        assert!(beside.sidebar().is_some());
+        assert!(beside.tabs.iter().all(|tab| tab.badge.is_none()));
+        assert_eq!(beside.tabs[0].accessible_label(), "Tab 1 of 8  /tmp/tab-1");
+        let narrow = project(&open, 600, 0.0);
+        assert!(narrow.sidebar().is_none());
+        assert_eq!(
+            narrow.tabs[0].badge.map(|badge| badge.state),
+            Some(State::NeedsInput)
+        );
+
+        let mut plain = snapshot.clone();
+        for tab in &mut plain.tabs {
+            tab.attention_rollup = None;
+            for pane in &mut tab.columns[0].panes {
+                pane.attention = None;
+            }
+        }
+        for (width, scroll) in [(1600, 0.0), (400, 0.0), (400, f32::MAX)] {
+            let badged = project(&snapshot, width, scroll);
+            let unbadged = project(&plain, width, scroll);
+            for (tab, plain) in badged.tabs.iter().zip(&unbadged.tabs) {
+                assert_eq!((tab.rect, tab.label()), (plain.rect, plain.label()));
+                if let Some(badge) = tab.badge {
+                    // The badge stays clear of the label's text box and inside the header.
+                    assert!(badge.rect.left >= tab.rect.right() - metrics.padding);
+                    assert!(badge.rect.top >= 0.0);
+                    assert!(badge.rect.bottom() <= badged.header.height);
+                }
+            }
+            assert_eq!(badged.tab_viewport, unbadged.tab_viewport);
+        }
+
+        // Overflow: each scroll edge shows the most urgent badge scrolled past it.
+        let edges = |scene: &WorkspaceScene| {
+            scene
+                .edge_badges
+                .iter()
+                .map(|badge| {
+                    assert!(badge.rect.left >= scene.tab_viewport.left);
+                    assert!(badge.rect.right() <= scene.tab_viewport.right());
+                    // Labels are clipped clear of edge badges, which they would otherwise cover.
+                    assert!(badge.rect.intersection(scene.tab_label_clip).is_none());
+                    (
+                        badge.rect.left < scene.tab_viewport.width / 2.0,
+                        badge.state,
+                        badge.dimmed,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let start = project(&snapshot, 400, 0.0);
+        assert!(start.tab_scroll_limit() > 0.0);
+        assert_eq!(edges(&start), [(false, State::NeedsInput, false)]);
+        let end = project(&snapshot, 400, f32::MAX);
+        assert_eq!(edges(&end), [(true, State::NeedsInput, false)]);
+        snapshot.tabs[0].columns[0].panes[0].attention = None;
+        snapshot.tabs[0].attention_rollup = None;
+        assert_eq!(
+            edges(&project(&snapshot, 400, f32::MAX)),
+            [(true, State::Error, false)]
         );
     }
 
