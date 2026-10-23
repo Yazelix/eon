@@ -108,4 +108,6 @@ We're looking for Apple Silicon testers: [open an issue](https://github.com/Yaze
 Contributors and coding agents start with [AGENTS.md](AGENTS.md) and
 [Development](docs/DEVELOPMENT.md). [Architecture](docs/ARCHITECTURE.md) and
 [contracts](docs/CONTRACTS.md) record component ownership, exact product
-boundaries and proof.
+boundaries and proof. Pull requests from outside the Yazelix organization are
+read as reference and reimplemented here, with the author credited as
+co-author; see [Outside Contributions](AGENTS.md#outside-contributions).
