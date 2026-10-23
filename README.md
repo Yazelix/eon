@@ -93,7 +93,7 @@ application identity, transparency and Eon itself are not proved on Mac yet.
 Eon has no Mac install path or ETA yet, and Intel Macs are out of scope.
 We're looking for Apple Silicon testers: [open an issue](https://github.com/Yazelix/eon/issues/new).
 
-[Report a problem](https://github.com/Yazelix/eon/issues).
+[Report a problem](https://github.com/Yazelix/eon/issues/new?template=bug_report.yml).
 
 ## Guides
 

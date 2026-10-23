@@ -1,0 +1,88 @@
+name: Bug report
+description: Report something in Eon that fails or behaves wrongly.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Before you submit, remove paths, environment
+        values, terminal content and credentials that should stay private.
+  - type: textarea
+    id: versions
+    attributes:
+      label: Eon version
+      description: Paste the full output of `eon versions`. It names every component.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: generation
+    attributes:
+      label: Generation
+      description: The relevant generation from `eon generations`, if the bug involves running work.
+    validations:
+      required: false
+  - type: dropdown
+    id: install
+    attributes:
+      label: Install route
+      options:
+        - Nix profile (nix profile add)
+        - Flake input (NixOS, Home Manager or another flake)
+        - Other
+    validations:
+      required: false
+  - type: input
+    id: distribution
+    attributes:
+      label: Distribution
+      placeholder: NixOS, Fedora, Arch, ...
+    validations:
+      required: false
+  - type: input
+    id: compositor
+    attributes:
+      label: Compositor
+      description: The Wayland compositor or desktop, with its version if you know it.
+      placeholder: COSMIC, Sway, GNOME, KDE Plasma, ...
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU and driver
+      placeholder: AMD Radeon 780M with Mesa, ...
+    validations:
+      required: false
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The exact commands and keys, starting from `eon`.
+      placeholder: |
+        1. Run `eon`
+        2. Press ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: false
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: What happened instead, with any error message.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or screenshot
+      description: |
+        If a window closed on its own, attach its supervisor log from
+        `$XDG_STATE_HOME/eon/logs` (`~/.local/state/eon/logs` by default).
+        Drag a screenshot or file here to attach it.
+    validations:
+      required: false

@@ -430,7 +430,7 @@ composition.
 - **Graphics fail outside native Wayland or on unproved hardware:** that
   environment is outside the supported boundary.
 
-Report reproducible failures in [GitHub Issues](https://github.com/Yazelix/eon/issues).
+Report reproducible failures in [GitHub Issues](https://github.com/Yazelix/eon/issues/new?template=bug_report.yml).
 Include `eon versions`, the relevant generation from `eon generations`, your
 distribution, compositor, GPU, and the exact command and error. Remove paths,
 environment values, terminal content, and credentials that should remain
