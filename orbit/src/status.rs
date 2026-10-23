@@ -105,6 +105,8 @@ struct Record {
     report: Report,
     /// The update sequence of its last report.
     updated: u64,
+    /// The update sequence of the report that created it.
+    created: u64,
     /// The update sequence at which its state last changed; creating the
     /// record counts as a change.
     changed: u64,
@@ -144,17 +146,17 @@ impl Records {
         }
     }
 
-    /// A report replaces its record. A same-state report keeps the record's
-    /// change sequence and previous state.
+    /// A report replaces its record and keeps its creation sequence. A
+    /// same-state report also keeps its change sequence and previous state.
     fn put(&mut self, report: Report, now: Instant) {
         self.update += 1;
         let update = self.update;
-        let (changed, previous, changed_at) = match self.records.remove(&report.id) {
+        let (created, changed, previous, changed_at) = match self.records.remove(&report.id) {
             Some(old) if old.report.state == report.state => {
-                (old.changed, old.previous, old.changed_at)
+                (old.created, old.changed, old.previous, old.changed_at)
             }
-            Some(old) => (update, Some(old.report.state), now),
-            None => (update, None, now),
+            Some(old) => (old.created, update, Some(old.report.state), now),
+            None => (update, update, None, now),
         };
         if self.records.len() == MAX_RECORDS
             && let Some(oldest) = self
@@ -170,6 +172,7 @@ impl Records {
             Record {
                 report,
                 updated: update,
+                created,
                 changed,
                 previous,
                 updated_at: now,
@@ -195,8 +198,9 @@ impl Records {
     }
 
     /// The `ProgramStatus` reply: as many records as fit in one 4 KiB
-    /// message, first blocked, error and done, then the rest, each group most
-    /// recent change first, with `title` and `msg` cut to their reply bounds.
+    /// message beside the creation sequences of the rest, first blocked,
+    /// error and done, then the rest, each group most recent change first,
+    /// with `title` and `msg` cut to their reply bounds.
     pub(crate) fn reply(&self, now: Instant) -> protocol::ProgramStatus {
         let mut order: Vec<&Record> = self.records.values().collect();
         order.sort_unstable_by_key(|record| {
@@ -208,21 +212,28 @@ impl Records {
                 std::cmp::Reverse(record.changed),
             )
         });
-        let mut room = protocol::MAX_MESSAGE_BYTES - protocol::PROGRAM_STATUS_HEADER_BYTES;
+        // Room for every record's creation sequence is set aside; a record
+        // that fits gives its own back.
+        let mut room = protocol::MAX_MESSAGE_BYTES
+            - protocol::PROGRAM_STATUS_HEADER_BYTES
+            - order.len() * protocol::PROGRAM_OMITTED_BYTES;
         let mut records = Vec::new();
-        for record in order {
+        for &record in &order {
             let entry = self.entry(record, now);
-            let Some(left) = room.checked_sub(protocol::program_record_len(&entry)) else {
+            let cost = protocol::program_record_len(&entry) - protocol::PROGRAM_OMITTED_BYTES;
+            let Some(left) = room.checked_sub(cost) else {
                 break;
             };
             room = left;
             records.push(entry);
         }
-        let count = self.records.len() as u16;
         protocol::ProgramStatus {
-            count,
+            count: self.records.len() as u16,
             update: self.update,
-            omitted: count - records.len() as u16,
+            omitted: order[records.len()..]
+                .iter()
+                .map(|record| record.created)
+                .collect(),
             records,
         }
     }
@@ -246,6 +257,7 @@ impl Records {
             title: truncated(&report.title, protocol::MAX_PROGRAM_TITLE_BYTES),
             message: truncated(&report.message, protocol::MAX_PROGRAM_MESSAGE_BYTES),
             updated: record.updated,
+            created: record.created,
             changed: record.changed,
             previous: record.previous.map(Into::into),
             updated_age_ms: age(record.updated_at),
@@ -481,6 +493,13 @@ mod tests {
             (done.updated, done.changed, done.previous),
             (3, 3, Some(State::Working))
         );
+        assert_eq!(done.created, 1);
+
+        // Reported again after a clear, it is a new record.
+        let reports = [report("state=clear:id=x"), report("state=done:id=x")].concat();
+        fixture.turn(&[&reports], false);
+        let again = fixture.record("x");
+        assert_eq!((again.created, again.changed, again.previous), (5, 5, None));
     }
 
     #[test]
@@ -534,7 +553,8 @@ mod tests {
         assert!(shown.app.is_empty());
     }
 
-    /// The reply's neutral fill order, its text bounds and its omitted count.
+    /// The reply's neutral fill order, its text bounds and its omitted
+    /// creation sequences.
     #[test]
     fn replies_fill_by_group_then_most_recent_change() {
         let mut fixture = Fixture::new();
@@ -556,7 +576,8 @@ mod tests {
             .map(|record| record.id.as_str())
             .collect();
         assert_eq!(ids, ["e", "b", "d", "i/w2", "i", "w1"]);
-        assert_eq!((reply.count, reply.omitted, reply.update), (6, 0, 6));
+        assert_eq!((reply.count, reply.update), (6, 6));
+        assert!(reply.omitted.is_empty());
         let kinds: Vec<_> = reply.records.iter().map(|record| record.kind).collect();
         assert_eq!(
             kinds,
@@ -569,17 +590,16 @@ mod tests {
         );
 
         // Twenty working records with 300-byte messages: each message is cut
-        // to 256 bytes and thirteen records fit, the most recent first.
+        // to 256 bytes and twelve records fit, the most recent first, beside
+        // the creation sequences of the other eight.
         let mut fixture = Fixture::new();
         let reports: String = (0..20)
             .map(|n| report(&format!("state=working:id=r{n}:msg={}", "bW1t".repeat(100))))
             .collect();
         fixture.turn(&[&reports], false);
         let reply = fixture.records.reply(Instant::now());
-        assert_eq!(
-            (reply.count, reply.omitted, reply.records.len()),
-            (20, 7, 13)
-        );
+        assert_eq!((reply.count, reply.records.len()), (20, 12));
+        assert_eq!(reply.omitted, [8, 7, 6, 5, 4, 3, 2, 1]);
         assert_eq!(reply.records[0].id, "r19");
         assert!(
             reply

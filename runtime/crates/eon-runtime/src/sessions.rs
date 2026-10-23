@@ -2188,7 +2188,7 @@ pub(crate) mod tests {
                 management::ProgramStatus {
                     count: 0,
                     update: 1,
-                    omitted: 0,
+                    omitted: Vec::new(),
                     records: Vec::new(),
                 },
             ))

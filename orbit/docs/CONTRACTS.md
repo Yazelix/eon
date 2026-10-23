@@ -848,6 +848,9 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   - **Neutral per-record facts.** Orbit derives no attention meaning.
     - **Update sequence.** One counter per terminal increases by one on each
       accepted report, clear and lifetime drop, so the Runtime sees removals.
+    - **Creation sequence.** The update sequence of the report that created
+      the record. Later reports keep it; a record that is cleared, dropped or
+      evicted and then reported again is a new record with a new one.
     - **Change sequence.** The update sequence at which the record's state
       last changed. Creating a record counts as a change; a same-state
       re-report keeps it.
@@ -887,14 +890,18 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     heartbeat. The spec forbids requiring re-sends and leaves to the terminal
     when to stop showing `done` or `error`; EON-C31 decides that.
   - **ProgramStatus reply.** One request gets one reply of at most 4 KiB. It
-    carries the record count, the terminal's latest update sequence, and the
-    count of records omitted for size, and as many records as fit in a
-    neutral fill order: first `blocked`, `error` and `done`, most recent
-    change first; then every other record, most recent change first. Each
-    record carries its full `id`, `state`, `kind`, `progress`, `app`
+    carries the record count, the terminal's latest update sequence, the
+    creation sequence of each record omitted for size, and as many records as
+    fit in a neutral fill order: first `blocked`, `error` and `done`, most
+    recent change first; then every other record, most recent change first.
+    Each record carries its full `id`, `state`, `kind`, `progress`, `app`
     (32 bytes or less), `title` (96 or less) and `msg` (256 or less), its
-    update sequence, change sequence, previous state and both ages. Orbit
-    truncates only `title` and `msg`, at UTF-8 boundaries.
+    update sequence, creation sequence, change sequence, previous state and
+    both ages. Orbit truncates only `title` and `msg`, at UTF-8 boundaries.
+    The omitted creation sequences count toward the 4 KiB and let a reader
+    tell a record omitted for size from one Orbit no longer holds. With
+    every record at its bounds, a reply carries up to 7 records while the
+    terminal holds 22 or fewer, and at least 3 when it holds 256.
 - **Important failures:**
   - Orbit ignores any report over 4096 bytes.
   - Past 256 records, Orbit evicts the least-recently-updated one.
@@ -932,7 +939,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   records across Orbit restarts. Portability is neutral: `tcgetpgrp` and the
   PTY are POSIX, and macOS stays deferred.
 - **Proof:** the `eon-agent-sidebar-yx8.5` commit, with the
-  `eon-agent-sidebar-yx8.4` commit for the records and their lifetime
+  `eon-agent-sidebar-yx8.4` commit for the records and their lifetime and
+  the `eon-agent-sidebar-yx8.12` commit for creation sequences
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, every `orbit-<name>` real-PTY check); sandboxed
     `nix develop -c eon-test` (workspace and installer)
@@ -950,8 +958,9 @@ in this repository. Each contract below states the current ORBS v13 behavior.
       libghostty terminals: the report rules and limits, the neutral facts,
       clears and RIS, app inheritance and disarmed text, eviction past 256
       records, drops in stream order, a real PTY child's reports, Claude
-      Code's and Codex's recorded reports, and the reply's fill order and
-      cuts; `the_worker_leads_each_output_with_its_status_lifetime`
+      Code's and Codex's recorded reports, and the reply's fill order, cuts
+      and omitted creation sequences;
+      `the_worker_leads_each_output_with_its_status_lifetime`
       ([src/host.rs](../src/host.rs)) against the built worker
     - Protocol test `program_status_replies_keep_their_bounds` and the
       management round trip ([crates/protocol/tests/management.rs](../crates/protocol/tests/management.rs))

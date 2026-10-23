@@ -109,7 +109,7 @@ fn prompt_marks_drop_in_stream_order() {
         &[("ORBIT_GATE", gate.path())],
     );
     let empty = status(&mut lease);
-    assert_eq!((empty.count, empty.omitted, empty.records.len()), (0, 0, 0), "{empty:?}");
+    assert_eq!((empty.count, empty.omitted.len(), empty.records.len()), (0, 0, 0), "{empty:?}");
     gate.release();
     let status = until_reported(&mut lease, "d");
     assert_eq!(
@@ -117,7 +117,7 @@ fn prompt_marks_drop_in_stream_order() {
         [("c", ProgramState::Done), ("d", ProgramState::Working)],
         "{status:?}"
     );
-    assert_eq!((status.count, status.omitted), (2, 0));
+    assert_eq!((status.count, status.omitted.len()), (2, 0));
     stop(server, lease);
 }
 

@@ -113,6 +113,8 @@ pub struct ProgramRecord {
     pub message: String,
     /// The update sequence of the record's last report.
     pub updated: u64,
+    /// The update sequence of the report that created the record.
+    pub created: u64,
     /// The update sequence at which its state last changed.
     pub changed: u64,
     /// The state before that change, or none for a new record.
@@ -125,12 +127,12 @@ pub struct ProgramRecord {
 
 /// The `ProgramStatus` reply: the terminal's record count, its latest update
 /// sequence, and as many records as fit in 4 KiB in ORB-C15's fill order;
-/// `omitted` counts the rest.
+/// `omitted` holds the creation sequence of each of the rest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProgramStatus {
     pub count: u16,
     pub update: u64,
-    pub omitted: u16,
+    pub omitted: Vec<u64>,
     pub records: Vec<ProgramRecord>,
 }
 
@@ -297,7 +299,7 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
             out.text("failure detail", &failure.detail, MAX_DETAIL_BYTES, true)
         }),
         ServerMessage::ProgramStatus(status) => {
-            encode(MESSAGE_MAGIC, 69, MAX_MESSAGE_BYTES, |out| {
+            encode(MESSAGE_MAGIC, 70, MAX_MESSAGE_BYTES, |out| {
                 encode_program_status(out, status)
             })
         }
@@ -324,7 +326,7 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
             },
             detail: input.text("failure detail", MAX_DETAIL_BYTES, true)?,
         }),
-        69 => ServerMessage::ProgramStatus(decode_program_status(&mut input)?),
+        70 => ServerMessage::ProgramStatus(decode_program_status(&mut input)?),
         value => {
             return Err(Error::InvalidTag {
                 field: "server message",
@@ -555,24 +557,31 @@ fn decode_tombstone(input: &mut Decoder<'_>) -> Result<Tombstone> {
 /// The bytes one record takes in a reply.
 pub fn program_record_len(record: &ProgramRecord) -> usize {
     // id, app, title and message lengths; state, kind, progress and previous;
-    // four sequences and ages.
+    // five sequences and ages.
     4 * 2
         + record.id.len()
         + record.app.len()
         + record.title.len()
         + record.message.len()
         + 4
-        + 4 * 8
+        + 5 * 8
 }
 
-/// The bytes a reply's message takes before its records.
+/// The bytes a reply's message takes before its records and omitted creation
+/// sequences.
 pub const PROGRAM_STATUS_HEADER_BYTES: usize = HEADER_BYTES + 2 + 8 + 2;
 
+/// The bytes one omitted record's creation sequence takes in a reply.
+pub const PROGRAM_OMITTED_BYTES: usize = 8;
+
 fn encode_program_status(out: &mut Encoder, status: &ProgramStatus) -> Result<()> {
-    validate_program_counts(status.count, status.omitted, status.records.len())?;
+    validate_program_counts(status.count, status.omitted.len(), status.records.len())?;
     out.u16(status.count);
     out.u64(status.update);
-    out.u16(status.omitted);
+    out.u16(status.omitted.len() as u16);
+    for &created in &status.omitted {
+        out.u64(created);
+    }
     for record in &status.records {
         if record.progress.is_some_and(|progress| progress > 100) {
             return Err(Error::InvalidValue { field: "progress" });
@@ -605,6 +614,7 @@ fn encode_program_status(out: &mut Encoder, status: &ProgramStatus) -> Result<()
             true,
         )?;
         out.u64(record.updated);
+        out.u64(record.created);
         out.u64(record.changed);
         out.u8(record.previous.map_or(0, state_tag));
         out.u64(record.updated_age_ms);
@@ -620,7 +630,10 @@ fn decode_program_status(input: &mut Decoder<'_>) -> Result<ProgramStatus> {
     let included = usize::from(count.checked_sub(omitted).ok_or(Error::InvalidValue {
         field: "program record counts",
     })?);
-    validate_program_counts(count, omitted, included)?;
+    validate_program_counts(count, usize::from(omitted), included)?;
+    let omitted = (0..omitted)
+        .map(|_| input.u64())
+        .collect::<Result<Vec<_>>>()?;
     let mut records = Vec::with_capacity(included);
     for _ in 0..included {
         let id = input.text("program id", MAX_PROGRAM_ID_BYTES, true)?;
@@ -656,6 +669,7 @@ fn decode_program_status(input: &mut Decoder<'_>) -> Result<ProgramStatus> {
             title: input.text("program title", MAX_PROGRAM_TITLE_BYTES, true)?,
             message: input.text("program message", MAX_PROGRAM_MESSAGE_BYTES, true)?,
             updated: input.u64()?,
+            created: input.u64()?,
             changed: input.u64()?,
             previous: match input.u8()? {
                 0 => None,
@@ -673,8 +687,8 @@ fn decode_program_status(input: &mut Decoder<'_>) -> Result<ProgramStatus> {
     })
 }
 
-fn validate_program_counts(count: u16, omitted: u16, included: usize) -> Result<()> {
-    if count > MAX_PROGRAM_RECORDS || usize::from(omitted) + included != usize::from(count) {
+fn validate_program_counts(count: u16, omitted: usize, included: usize) -> Result<()> {
+    if count > MAX_PROGRAM_RECORDS || omitted + included != usize::from(count) {
         return Err(Error::InvalidValue {
             field: "program record counts",
         });

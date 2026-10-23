@@ -2319,9 +2319,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     - in the Agent popup the agent is the PTY child, so its exit ends the Orbit run, and its
       `done` and `error` records end with the run, even though the spec says they survive
       process exit;
-    - the ProgramStatus reply holds about 7 records, so a terminal with 7 or more `blocked`,
-      `error` or `done` records (Claude subagents, for example) can crowd out a raised `idle`
-      from the reply. That finish never shows.
+    - the ProgramStatus reply holds 7 records at their bounds, more when they are shorter, and as
+      few as 3 when a terminal holds many, so a terminal with as many `blocked`, `error` or `done`
+      records as fit (Claude subagents, for example) can crowd out a raised `idle` from the reply.
+      That finish never shows.
 
     All three are accepted for 1.0. In the first two the user is usually interacting with that
     terminal; the third needs an unusual number of records.

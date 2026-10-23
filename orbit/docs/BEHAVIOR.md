@@ -574,11 +574,15 @@ another, and sees the drop lead the worker's decisions for it; removing the
 request's case from `lifetime_of` made it fail. The answer holds as many
 records as fit in one 4 KiB message: first `blocked`, `error` and `done`,
 then the rest, each group most recent change first, with `title` and `msg`
-cut to 96 and 256 bytes at UTF-8 boundaries; `omitted` counts the rest.
-`replies_fill_by_group_then_most_recent_change` checks the order, the cuts
-and the omitted count, and reversing the groups made it fail. The protocol
-test `program_status_replies_keep_their_bounds` shows that seven records at
-their bounds fit and an eighth does not.
+cut to 96 and 256 bytes at UTF-8 boundaries; `omitted` holds the creation
+sequence of each of the rest, in the same order, and room for them is set
+aside first. `replies_fill_by_group_then_most_recent_change` checks the
+order, the cuts and the omitted creation sequences, and reversing the groups
+made it fail; `records_keep_neutral_facts` checks that a record keeps its
+creation sequence through a state change and gets a new one after a clear.
+The protocol test `program_status_replies_keep_their_bounds` shows that
+seven records at their bounds fit and an eighth does not, and that three fit
+beside 253 creation sequences and a fourth does not.
 
 The real-PTY program-status check reads the records through a
 `--management-v2` lease:

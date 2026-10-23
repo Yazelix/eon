@@ -59,6 +59,17 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   rule, so Eon Runtime and Eon move to generation 2 in the same change; Venus
   does not use management. A new Eon cannot stop or recover a run started by
   a generation-1 Orbit. ORB-C15 is Proved.
+- ORB-C15's `ProgramStatus` reply moves from server tag 69 to 70, a breaking
+  change for its one consumer, Eon Runtime, with no compatibility window
+  (`eon-agent-sidebar-yx8.12`). Each record carries its creation sequence:
+  the update sequence of the report that created it. After the omitted count
+  the reply carries the creation sequence of each record omitted for size,
+  inside the same 4 KiB, so the Runtime can tell an omitted record from a
+  removed one. Management stays generation 2: a tag-69 reply from an older
+  generation-2 Orbit is refused as an unknown tag, so that terminal's
+  attention stays stale; if the Runtime never had a good reply, it has none,
+  and an Agent popup shows unavailable. Stop and recovery are unaffected.
+  Venus and Eon do not read the reply.
 
 ## Before this repository
 

@@ -11,9 +11,7 @@ use eon_workspace_protocol::v18::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
-use orbit_protocol::management::{
-    MAX_PROGRAM_RECORDS, ProgramKind, ProgramRecord, ProgramState, ProgramStatus,
-};
+use orbit_protocol::management::{ProgramKind, ProgramRecord, ProgramState, ProgramStatus};
 use std::{
     cmp::Reverse,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -119,9 +117,8 @@ struct Terminal {
     update: u64,
     count: u16,
     records: Vec<Record>,
-    /// Records the reply omitted for size, kept so their change times and
-    /// seen raises survive until they return. Like Orbit's own store, it
-    /// holds at most 256 records.
+    /// Records the reply omitted for size, kept while Orbit still holds them
+    /// so their change times and seen raises survive until they return.
     omitted: Vec<Record>,
     replied: Instant,
 }
@@ -304,22 +301,14 @@ impl Attention {
                 }
             })
             .collect();
-        let mut omitted: Vec<Record> = if status.omitted == 0 {
-            Vec::new()
-        } else {
-            records
-                .into_iter()
-                .chain(omitted)
-                .filter(|record| fresh.iter().all(|kept| kept.record.id != record.record.id))
-                .collect()
-        };
-        // Forgetting a record without a seen raise only re-derives it when it
-        // returns, so those go first, least recently updated first.
-        omitted.sort_by_key(|record| {
-            let seen = record.raise.is_some_and(|raise| raise.seen);
-            Reverse((seen, record.record.updated))
-        });
-        omitted.truncate(usize::from(MAX_PROGRAM_RECORDS).saturating_sub(fresh.len()));
+        // The reply names each omitted record by its creation sequence, so a
+        // record that is gone is forgotten and one still held is kept.
+        let omitted = records
+            .into_iter()
+            .chain(omitted)
+            .filter(|record| status.omitted.contains(&record.record.created))
+            .take(status.omitted.len())
+            .collect();
         let terminal = Terminal {
             session: session.into(),
             run: run.into(),
@@ -571,6 +560,7 @@ mod tests {
             title: String::new(),
             message: String::new(),
             updated: changed,
+            created: changed,
             changed,
             previous,
             updated_age_ms: 0,
@@ -582,7 +572,7 @@ mod tests {
         ProgramStatus {
             count: records.len() as u16,
             update,
-            omitted: 0,
+            omitted: Vec::new(),
             records,
         }
     }
@@ -860,7 +850,7 @@ mod tests {
         let crowded = ProgramStatus {
             count: 2,
             update: 7,
-            omitted: 1,
+            omitted: vec![5],
             records: vec![record("b", Idle, None, 7)],
         };
         attention.apply(
@@ -882,30 +872,31 @@ mod tests {
         let a = |attention: &Attention| attention.terminals[0].records[0].changed_at;
         assert_eq!(Some(a(&attention)), fixed);
 
-        // The kept omitted records stay within Orbit's own bound, and a seen
-        // raise outlasts records that have none.
-        let rotations = 9..9 + 2 * u64::from(MAX_PROGRAM_RECORDS);
-        for update in rotations.clone() {
-            let rotating = ProgramStatus {
+        // Records seen and then cleared while `a` stays omitted are
+        // forgotten, and `a` keeps its seen raise however many go.
+        let churn = 9..9 + 2 * 256;
+        for update in churn.clone() {
+            let churning = ProgramStatus {
                 count: 2,
                 update,
-                omitted: 1,
-                records: vec![record(&format!("r{update}"), Idle, None, update)],
+                omitted: vec![5],
+                records: vec![record(&format!("r{update}"), Done, Some(Working), update)],
             };
             attention.apply(
                 &targets,
                 "s",
                 "run",
-                rotating,
+                churning,
                 base + Duration::from_secs(13),
             );
+            attention.see("s");
         }
-        assert!(attention.terminals[0].omitted.len() < usize::from(MAX_PROGRAM_RECORDS));
+        assert_eq!(attention.terminals[0].omitted.len(), 1);
         attention.apply(
             &targets,
             "s",
             "run",
-            status(rotations.end, vec![done(5000)]),
+            status(churn.end, vec![done(5000)]),
             base + Duration::from_secs(13),
         );
         assert_eq!(state(&attention, &targets, "s", base), Some(State::Idle));
