@@ -255,7 +255,7 @@ sidebar row or Alt+H, or when an agent needs something more urgent than the one
 you last jumped to, for example input while you were walking finished agents.
 A jump to an agent under a
 transient popup or a pending directory picker only selects its tab. With no
-agent waiting, the keys do nothing.
+agent waiting, the keys show "No agent needs attention" and move nothing.
 
 ### Scrolling and directory picker
 

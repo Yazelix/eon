@@ -769,7 +769,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     and response and does not use EOF as framing.
   - The shared 2 MiB frame ceiling admits every snapshot valid at EONW's field
     and workspace-count bounds.
-  - Harmless navigation no-ops return the unchanged Snapshot as success;
+  - Harmless navigation no-ops return the unchanged Snapshot as success
+    (EON-C31's empty attention queue is a rejection instead);
     request deduplication and picker/lifecycle restrictions still apply.
   - `eon` and `eonbase` exit 0 on success, 1 when a command is refused or
     fails, 2 for invalid command lines and argument syntax (including
@@ -2384,7 +2385,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
         This keeps D9's rule that the most urgent work comes first.
     - Seen raises leave the queue.
-    - An empty queue is EON-C10's unchanged-snapshot no-op.
+    - On an empty queue, both actions are rejected with the EONW action failure `no-attention`,
+      detail `No agent needs attention`. Focus, selection and the cursor are unchanged, and no
+      Orbit state changes.
   - **Covered-target rule.** It applies to `FocusAttention` and both queue actions, for pane and
     popup targets alike. If the target's tab is showing a popup that is not the target:
     - a keep-alive popup is hidden (it survives), and then the target is focused or shown;

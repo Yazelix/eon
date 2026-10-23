@@ -2931,6 +2931,16 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     let unchanged = invoke(&binary, &runtime, &config, &["focus", "left", "--json"]);
     assert!(unchanged.status.success());
     assert_eq!(stdout(&before), stdout(&unchanged));
+    for (id, action) in [
+        ("next-attention", ProtocolAction::NextAttention),
+        ("previous-attention", ProtocolAction::PreviousAttention),
+    ] {
+        assert!(matches!(
+            protocol_action(&control, id, action),
+            Response::Failure(failure)
+                if failure.code == "no-attention" && failure.detail == "No agent needs attention"
+        ));
+    }
     let after = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
     assert_eq!(stdout(&before), stdout(&after));
     let human = invoke(&binary, &runtime, &config, &["workspace"]);

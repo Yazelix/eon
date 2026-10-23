@@ -2958,9 +2958,11 @@ impl Application {
                 .terminal
                 .model
                 .clear_venus_notice(LocalNoticeSource::Clipboard);
+        let attention_cleared = dismisses_clipboard && self.workspace_model.dismiss_no_attention();
         if self.terminal.model.clear_venus_notice(notice_source)
             || queue_recovered
             || clipboard_cleared
+            || attention_cleared
         {
             self.refresh_client_view();
         }

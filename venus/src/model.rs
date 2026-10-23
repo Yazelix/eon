@@ -1,5 +1,7 @@
 use crate::scene::{DrawRow, Scene, ScenePreview};
-use eon_workspace_protocol::v19::{Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab};
+use eon_workspace_protocol::v19::{
+    AttentionState, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
+};
 use orbit_protocol::FrameReducer;
 use orbit_protocol::session::{
     ClipboardLocation, FailureCode, PreviewOutcome, ScrollOutcome, ServerMessage, WheelOutcome,
@@ -93,6 +95,8 @@ pub struct WorkspaceModel {
 #[derive(Debug, PartialEq, Eq)]
 enum WorkspaceNotice {
     Action(String),
+    /// Eon's answer to a queue jump with no agent needing attention (EON-C31).
+    NoAttention(String),
     Unavailable(String),
 }
 
@@ -104,6 +108,20 @@ pub(crate) fn presented_panes(tab: &Tab) -> &[Pane] {
         .find(|column| tab.selected_pane.as_ref() == Some(&column.expanded))
         .or(tab.columns.first())
         .map_or(&[], |column| &column.panes)
+}
+
+/// Each terminal's attention state, without the record text a working agent keeps changing.
+fn attention_states(tabs: &[Tab]) -> Vec<Option<AttentionState>> {
+    tabs.iter()
+        .flat_map(|tab| {
+            tab.columns
+                .iter()
+                .flat_map(|column| &column.panes)
+                .map(|pane| pane.attention.as_ref())
+                .chain(tab.popups.iter().map(|popup| popup.attention.as_ref()))
+        })
+        .map(|attention| attention.map(|attention| attention.state))
+        .collect()
 }
 
 /// The tabs without EON-C31 attention: a snapshot that differs only in
@@ -155,7 +173,9 @@ impl WorkspaceModel {
     #[must_use]
     pub fn notice(&self) -> Option<&str> {
         self.notice.as_ref().map(|notice| match notice {
-            WorkspaceNotice::Action(text) | WorkspaceNotice::Unavailable(text) => text.as_str(),
+            WorkspaceNotice::Action(text)
+            | WorkspaceNotice::NoAttention(text)
+            | WorkspaceNotice::Unavailable(text) => text.as_str(),
         })
     }
 
@@ -173,21 +193,34 @@ impl WorkspaceModel {
                                 != without_attention(&snapshot.tabs))
                 });
                 let notice_cleared = (workspace_changed
-                    || matches!(self.notice, Some(WorkspaceNotice::Unavailable(_))))
+                    || matches!(self.notice, Some(WorkspaceNotice::Unavailable(_)))
+                    || matches!(self.notice, Some(WorkspaceNotice::NoAttention(_)))
+                        && self.snapshot.as_ref().is_some_and(|current| {
+                            attention_states(&current.tabs) != attention_states(&snapshot.tabs)
+                        }))
                     && self.notice.take().is_some();
                 self.snapshot = Some(snapshot);
                 (snapshot_changed || notice_cleared, workspace_changed)
             }
             WorkspaceResponse::Failure(failure) => (
-                self.set_notice(WorkspaceNotice::Action(bounded(format!(
-                    "Eon workspace {}: {}",
-                    failure.code, failure.detail
-                )))),
+                self.set_notice(if failure.code == "no-attention" {
+                    WorkspaceNotice::NoAttention(bounded(failure.detail))
+                } else {
+                    WorkspaceNotice::Action(bounded(format!(
+                        "Eon workspace {}: {}",
+                        failure.code, failure.detail
+                    )))
+                }),
                 false,
             ),
             // The client exits on an ended generation before applying it.
             WorkspaceResponse::Ended(_) => (false, false),
         }
+    }
+
+    /// Clear the empty-queue notice, which the next terminal input retires (VEN-C30).
+    pub fn dismiss_no_attention(&mut self) -> bool {
+        matches!(self.notice, Some(WorkspaceNotice::NoAttention(_))) && self.notice.take().is_some()
     }
 
     /// Refuse an action locally with the same lifetime as an Eon rejection.
@@ -712,9 +745,75 @@ mod tests {
             model.notice().is_some(),
             "attention updates retain the failure"
         );
+
+        let agent = |state, message: &str| {
+            let mut next = snapshot.clone();
+            next.tabs[1].columns[0].panes[0].attention = Some(workspace::Attention {
+                state,
+                record: Some(workspace::AttentionRecord {
+                    kind: None,
+                    progress: None,
+                    app: "claude-code".into(),
+                    name: String::new(),
+                    title: String::new(),
+                    message: message.into(),
+                    changed_at: 0,
+                    stale: false,
+                    others: 0,
+                }),
+            });
+            next
+        };
+        model.apply(WorkspaceResponse::Snapshot(agent(
+            workspace::AttentionState::Working,
+            "Reading",
+        )));
+        assert_eq!(
+            model.apply(WorkspaceResponse::Failure(Failure {
+                code: "no-attention".into(),
+                detail: "No agent needs attention".into(),
+            })),
+            (true, false)
+        );
+        assert_eq!(model.notice(), Some("No agent needs attention"));
+        assert!(model.dismiss_no_attention(), "terminal input retires it");
+        assert!(!model.dismiss_no_attention());
+        model.apply(WorkspaceResponse::Failure(Failure {
+            code: "no-attention".into(),
+            detail: "No agent needs attention".into(),
+        }));
+        model.apply(WorkspaceResponse::Snapshot(agent(
+            workspace::AttentionState::Working,
+            "Editing",
+        )));
+        assert_eq!(
+            model.notice(),
+            Some("No agent needs attention"),
+            "a working agent's new message keeps the empty-queue notice"
+        );
+        assert_eq!(
+            model.apply(WorkspaceResponse::Snapshot(agent(
+                workspace::AttentionState::NeedsInput,
+                "Editing",
+            ))),
+            (true, false)
+        );
+        assert_eq!(
+            model.notice(),
+            None,
+            "an attention state change retires the empty-queue notice"
+        );
         assert_eq!(
             model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
             (true, false)
+        );
+        model.apply(WorkspaceResponse::Failure(Failure {
+            code: "edge".into(),
+            detail: "there is no pane above the selected pane".into(),
+        }));
+        assert!(
+            !model.dismiss_no_attention(),
+            "terminal input keeps other rejections"
         );
 
         let mut selected = snapshot.clone();

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C30: Venus shows Eon's `no-attention` rejection of Alt+G or Alt+Shift+G
+  as the bare VEN-C8 notice "No agent needs attention", without taking focus.
+  Unlike other rejected-action notices, it also clears when a terminal's
+  attention state changes and on the next input Venus sends to the terminal,
+  as the clipboard notice does (`eon-empty-attention-notice-opy3`).
+
 - VEN-C30: when a listed tab shows a popup (its `selected_popup` is set), its
   sidebar heading ends with the popup marker, a small window glyph drawn from
   quads, and a row whose source is that popup carries the same glyph after its

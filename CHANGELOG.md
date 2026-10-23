@@ -16,6 +16,11 @@ installation, and proven contract changes.
   not started, and workspace commands no longer leave an empty generation
   folder behind for a build that isn't running.
 
+- Alt+G and Alt+Shift+G no longer do nothing when no agent needs attention:
+  the window shows "No agent needs attention" and focus stays where it was.
+  The notice goes away when you type or click in the terminal, select another
+  terminal, or an agent's attention state changes.
+
 - The agent sidebar marks a tab that shows a popup: its heading ends with a
   small window mark, and the row of an agent running in that popup carries
   the same mark after the popup's name. From another tab you can see which

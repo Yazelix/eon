@@ -1743,18 +1743,22 @@ fn dispatch_control_request(
                 unreachable!("reconciliation keeps the workspace owner");
             };
             // A queue jump is the FocusAttention of its target; an empty queue
-            // leaves the workspace unchanged (EON-C31).
+            // is rejected and changes nothing (EON-C31).
             let (action, jump) = match (request.action, &state.attention) {
                 (action @ (Action::NextAttention | Action::PreviousAttention), Some(attention)) => {
-                    attention
-                        .jump(
-                            &workspace.snapshot(),
-                            matches!(action, Action::NextAttention),
-                        )
-                        .map_or(
-                            (Action::Workspace(WorkspaceAction::Inspect), None),
-                            |(action, key)| (action, Some(key)),
-                        )
+                    let Some((action, key)) = attention.jump(
+                        &workspace.snapshot(),
+                        matches!(action, Action::NextAttention),
+                    ) else {
+                        return (
+                            ControlResponse::Workspace(Response::Failure(failure(
+                                "no-attention",
+                                "No agent needs attention",
+                            ))),
+                            false,
+                        );
+                    };
+                    (action, Some(key))
                 }
                 (action, _) => (action, None),
             };

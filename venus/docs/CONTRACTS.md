@@ -672,7 +672,8 @@ re-proved when that platform or feature is next touched.
   stale observations and never grants Venus topology or Session-lifecycle
   ownership. Repeats create no second structural action. Rejected-action notices
   remain available through unchanged, quota-only, and EON-C31 attention- or
-  sidebar-only refreshes until workspace structure changes.
+  sidebar-only refreshes until workspace structure changes, except the EON-C31
+  empty-queue notice, whose lifetime VEN-C30 sets.
   Connection-unavailable notices clear on a successful snapshot.
   Terminal-status alerts announce their actual error without moving focus;
   routine polling does not repeat the announcement.
@@ -1819,6 +1820,10 @@ re-proved when that platform or feature is next touched.
       - the focused row's target is removed.
     - Alt+G and Alt+Shift+G send `NextAttention` and `PreviousAttention`,
       whether the sidebar is visible or not.
+    - Venus shows the `no-attention` rejection as the VEN-C8 notice `No agent needs
+      attention`, without taking focus. Unlike other rejected-action notices, it also clears
+      when a terminal's attention state changes and on the next input Venus sends to the
+      terminal, as the clipboard notice does.
   - **Accessibility.** The sidebar is one named AccessKit region after the
     header and before the panes. Each row's accessible name gives the state
     word, app, Claude Code's session name, tab, source terminal and message.
