@@ -136,7 +136,13 @@ re-proved when that platform or feature is next touched.
   HTTP/HTTPS URI syntax with a host and without credentials. Copy accepts bounded
   target text without control characters. Unsupported or malformed targets,
   missing native handlers, and launch failures/timeouts have bounded visual and
-  accessible notices. No URI is opened on hover or keyboard focus.
+  accessible notices. No URI is opened on hover or keyboard focus. A success
+  notice ('Link handed to the desktop handler.' and 'Link copied.') clears about
+  2 seconds after it appears, through one scheduled redraw and no repeating
+  ticks, or sooner on the input that clears it today. Failure and timeout
+  notices keep that input-bound lifetime. The 2-second value is fixed: a UX
+  timing with no accessibility or tool-convention reason for users to differ
+  (Configurability).
 - **Owners:** Orbit owns URI attributes; Scene derives explicit spans and
   detects plain-text targets from the projected visible cell text; Venus
   presentation identity gates actions; the existing renderer, input, AccessKit
@@ -675,6 +681,12 @@ re-proved when that platform or feature is next touched.
   sidebar-only refreshes until workspace structure changes, except the EON-C31
   empty-queue notice, whose lifetime VEN-C30 sets.
   Connection-unavailable notices clear on a successful snapshot.
+  No notice disables link hover, highlight, open or copy: VEN-C5 links work
+  while any workspace or link notice shows. The status line shows the newer of
+  a workspace notice and a VEN-C5 link result. With no pending result, a
+  hovered link's hint outranks the workspace notice, which returns when the
+  pointer leaves the link. A render failure notice still outranks both, and a
+  terminal notice still outranks a link result or hint.
   Terminal-status alerts announce their actual error without moving focus;
   routine polling does not repeat the announcement.
 - **Owner:** Venus workspace materialization, bounded metadata observation,

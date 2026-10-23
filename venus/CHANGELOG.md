@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- VEN-C5 and VEN-C8: a link success notice ("Link handed to the desktop
+  handler." or "Link copied.") clears on its own after about 2 seconds;
+  failure notices still wait for input. No notice disables link hover, open or
+  copy. The status line shows the newer of a workspace notice and a link
+  result, and a hovered link's hint shows over a workspace notice, which
+  returns when the pointer leaves (`eon-link-notice-lifetime-454q`).
+
 - VEN-C21: the working badge, in Eon Bar tabs and VEN-C30 sidebar rows, is
   an antialiased open arc of 270° that turns clockwise in 45° steps. As
   before, it repaints at most 5 times a second, and only the badge. It

@@ -90,6 +90,8 @@ pub struct SessionModel {
 pub struct WorkspaceModel {
     snapshot: Option<Snapshot>,
     notice: Option<WorkspaceNotice>,
+    /// Counts new notices, so a newer notice can outrank older client notices.
+    notice_serial: u64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -203,18 +205,34 @@ impl WorkspaceModel {
                 (snapshot_changed || notice_cleared, workspace_changed)
             }
             WorkspaceResponse::Failure(failure) => (
-                self.set_notice(if failure.code == "no-attention" {
-                    WorkspaceNotice::NoAttention(bounded(failure.detail))
-                } else {
-                    WorkspaceNotice::Action(bounded(format!(
-                        "Eon workspace {}: {}",
-                        failure.code, failure.detail
-                    )))
-                }),
+                self.set_notice(
+                    if failure.code == "no-attention" {
+                        WorkspaceNotice::NoAttention(bounded(failure.detail))
+                    } else {
+                        WorkspaceNotice::Action(bounded(format!(
+                            "Eon workspace {}: {}",
+                            failure.code, failure.detail
+                        )))
+                    },
+                    false,
+                ),
                 false,
             ),
             // The client exits on an ended generation before applying it.
             WorkspaceResponse::Ended(_) => (false, false),
+        }
+    }
+
+    #[must_use]
+    pub fn notice_serial(&self) -> u64 {
+        self.notice_serial
+    }
+
+    /// Mark the current notice as a refused action's answer, so it outranks older client notices.
+    pub fn renew_notice(&mut self) -> bool {
+        self.notice.is_some() && {
+            self.notice_serial += 1;
+            true
         }
     }
 
@@ -225,16 +243,20 @@ impl WorkspaceModel {
 
     /// Refuse an action locally with the same lifetime as an Eon rejection.
     pub fn reject_action(&mut self, detail: impl Into<String>) -> bool {
-        self.set_notice(WorkspaceNotice::Action(bounded(detail.into())))
+        self.set_notice(WorkspaceNotice::Action(bounded(detail.into())), true)
     }
 
-    pub fn mark_unavailable(&mut self, detail: impl Into<String>) -> bool {
+    /// Mark Eon unavailable; `answers_action` when the failure itself answers a user action.
+    pub fn mark_unavailable(&mut self, detail: impl Into<String>, answers_action: bool) -> bool {
         let expired_quota = self.snapshot.as_mut().is_some_and(|snapshot| {
             let codex = snapshot.codex_quota.take().is_some();
             let claude = snapshot.claude_quota.take().is_some();
             codex || claude
         });
-        self.set_notice(WorkspaceNotice::Unavailable(bounded(detail.into()))) || expired_quota
+        self.set_notice(
+            WorkspaceNotice::Unavailable(bounded(detail.into())),
+            answers_action,
+        ) || expired_quota
     }
 
     #[must_use]
@@ -284,10 +306,12 @@ impl WorkspaceModel {
             .collect()
     }
 
-    fn set_notice(&mut self, notice: WorkspaceNotice) -> bool {
-        let changed = self.notice.as_ref() != Some(&notice);
+    /// A notice that answers an action is new even when it repeats; a repeated poll result is not.
+    fn set_notice(&mut self, notice: WorkspaceNotice, answers_action: bool) -> bool {
+        let fresh = answers_action || self.notice.as_ref() != Some(&notice);
         self.notice = Some(notice);
-        changed
+        self.notice_serial += u64::from(fresh);
+        fresh
     }
 }
 
@@ -609,6 +633,46 @@ mod tests {
     };
 
     #[test]
+    fn refused_actions_are_new_notices_but_repeated_polls_are_not() {
+        let mut model = WorkspaceModel::default();
+        model.reject_action("refused");
+        let first = model.notice_serial();
+        assert!(model.reject_action("refused"), "a repeated refusal is new");
+        assert!(model.notice_serial() > first);
+        model.mark_unavailable("full", true);
+        let queued = model.notice_serial();
+        assert!(
+            model.mark_unavailable("full", true),
+            "so is a queue refusal"
+        );
+        assert!(model.notice_serial() > queued);
+        model.mark_unavailable("gone", false);
+        let unavailable = model.notice_serial();
+        model.mark_unavailable("gone", false);
+        assert_eq!(
+            model.notice_serial(),
+            unavailable,
+            "a retry poll is no new notice"
+        );
+        let stopping = || {
+            WorkspaceResponse::Failure(Failure {
+                code: "stop-incomplete".into(),
+                detail: "stopping".into(),
+            })
+        };
+        model.apply(stopping());
+        let polled = model.notice_serial();
+        assert!(!model.apply(stopping()).0);
+        assert_eq!(
+            model.notice_serial(),
+            polled,
+            "nor is a repeated poll failure"
+        );
+        assert!(model.renew_notice(), "an action's refusal renews it");
+        assert!(model.notice_serial() > polled);
+    }
+
+    #[test]
     fn quota_refresh_and_workspace_failures_preserve_structure() {
         let snapshot = Snapshot {
             active_tab: "t1".into(),
@@ -828,10 +892,10 @@ mod tests {
             "a changed workspace retires the failure"
         );
 
-        assert!(model.mark_unavailable("Cannot connect to Eon"));
+        assert!(model.mark_unavailable("Cannot connect to Eon", false));
         assert!(model.snapshot().unwrap().codex_quota.is_none());
         assert!(model.snapshot().unwrap().claude_quota.is_none());
-        assert!(!model.mark_unavailable("Cannot connect to Eon"));
+        assert!(!model.mark_unavailable("Cannot connect to Eon", false));
         let recovered = model.snapshot().unwrap().clone();
         assert_eq!(
             model.apply(WorkspaceResponse::Snapshot(recovered)),

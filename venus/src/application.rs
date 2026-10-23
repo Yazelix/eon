@@ -257,7 +257,43 @@ struct LinkInteraction {
     unshifted: bool,
     pointer_inside: bool,
     pressed: Option<LinkPress>,
-    notice: Option<String>,
+    notice: Option<LinkNotice>,
+}
+
+/// How long a link success notice shows without input (VEN-C5).
+const LINK_SUCCESS_NOTICE: Duration = Duration::from_secs(2);
+
+struct LinkNotice {
+    text: String,
+    /// When a success notice clears itself; other notices wait for input.
+    expires: Option<Instant>,
+    /// The workspace notice serial when it appeared; a later workspace notice outranks it.
+    workspace_serial: u64,
+}
+
+impl LinkInteraction {
+    fn show_notice(&mut self, text: &str, success: bool, now: Instant, workspace_serial: u64) {
+        self.notice = Some(LinkNotice {
+            text: text.into(),
+            expires: success.then(|| now + LINK_SUCCESS_NOTICE),
+            workspace_serial,
+        });
+    }
+
+    fn notice(&self) -> Option<&str> {
+        self.notice.as_ref().map(|notice| notice.text.as_str())
+    }
+
+    fn notice_deadline(&self) -> Option<Instant> {
+        self.notice.as_ref()?.expires
+    }
+
+    /// Clears a success notice at its deadline, returning whether it cleared.
+    fn expire_notice(&mut self, now: Instant) -> bool {
+        self.notice_deadline()
+            .is_some_and(|deadline| now >= deadline)
+            && self.notice.take().is_some()
+    }
 }
 
 struct LinkOpener {
@@ -326,14 +362,16 @@ impl LinkOpener {
         })
     }
 
-    fn poll(&mut self, now: Instant) -> Option<&'static str> {
+    fn poll(&mut self, now: Instant) -> Option<std::result::Result<&'static str, &'static str>> {
         match self.child.try_wait() {
-            Ok(Some(status)) if status.success() => Some("Link handed to the desktop handler."),
-            Ok(Some(_)) => Some("Could not open link. Check the desktop's HTTP/HTTPS handler."),
-            Err(_) => Some("Could not observe the native link dispatcher."),
-            Ok(None) if now >= self.deadline => {
-                Some("Link dispatcher timed out. The handler may already have opened.")
-            }
+            Ok(Some(status)) if status.success() => Some(Ok("Link handed to the desktop handler.")),
+            Ok(Some(_)) => Some(Err(
+                "Could not open link. Check the desktop's HTTP/HTTPS handler.",
+            )),
+            Err(_) => Some(Err("Could not observe the native link dispatcher.")),
+            Ok(None) if now >= self.deadline => Some(Err(
+                "Link dispatcher timed out. The handler may already have opened.",
+            )),
             Ok(None) => None,
         }
     }
@@ -1773,8 +1811,12 @@ impl Application {
 
     fn handle_workspace(&mut self, event: WorkspaceEvent) {
         if let WorkspaceEvent::Answered { ticket, accepted } = event {
+            // A refused action's notice is new even when it repeats a poll's or an earlier one.
+            let renewed = !accepted && self.workspace_model.renew_notice();
             if self.attention_jump.is_some() {
                 self.settle_attention_jump(Some((ticket, accepted)));
+                self.refresh_client_view();
+            } else if renewed {
                 self.refresh_client_view();
             }
             return;
@@ -1799,7 +1841,7 @@ impl Application {
         let (view_changed, workspace_changed) = match event {
             WorkspaceEvent::Response(response) => self.workspace_model.apply(response),
             WorkspaceEvent::Unavailable(detail) => {
-                (self.workspace_model.mark_unavailable(detail), false)
+                (self.workspace_model.mark_unavailable(detail, false), false)
             }
             WorkspaceEvent::Answered { .. } => unreachable!("answers return above"),
         };
@@ -2046,7 +2088,7 @@ impl Application {
                 });
                 if self
                     .workspace_model
-                    .mark_unavailable(format!("Cannot queue Eon workspace action: {error}"))
+                    .mark_unavailable(format!("Cannot queue Eon workspace action: {error}"), true)
                 {
                     if quota_expired {
                         self.presentation.invalidate();
@@ -2561,7 +2603,6 @@ impl Application {
             && !self.window_occluded
             && !self.dialog_open()
             && self.workspace_focus == WorkspaceFocus::Terminal
-            && self.workspace_model.notice().is_none()
             && !self
                 .terminal
                 .terminal_scroll
@@ -2681,8 +2722,8 @@ impl Application {
     }
 
     fn link_status(&self, unshifted: bool) -> Option<String> {
-        if let Some(notice) = &self.links.notice {
-            return Some(notice.clone());
+        if let Some(notice) = self.links.notice() {
+            return Some(notice.to_owned());
         }
         let link = self.visible_link(unshifted)?;
         if link.uri.len() > MAX_LINK_BYTES {
@@ -2747,7 +2788,13 @@ impl Application {
                 "Opening link…"
             })
         };
-        self.links.notice = Some(result.unwrap_or_else(|error| error).into());
+        let success = copy && result.is_ok();
+        self.links.show_notice(
+            result.unwrap_or_else(|error| error),
+            success,
+            Instant::now(),
+            self.workspace_model.notice_serial(),
+        );
     }
 
     fn handle_link_button(&mut self, state: ElementState, button: MouseButton) -> bool {
@@ -3124,16 +3171,27 @@ impl Application {
         if let Some(notice) = &self.render_notice {
             return notice.clone();
         }
+        let links_available =
+            self.terminal.model.is_attached() && !self.terminal.model.awaiting_current_frame();
+        // The newer of a link result and a workspace notice shows. With no result, a
+        // hovered link's hint outranks the workspace notice, which returns when it leaves.
+        let link_first = match &self.links.notice {
+            Some(notice) => notice.workspace_serial == self.workspace_model.notice_serial(),
+            None => self.visible_link(unshifted).is_some(),
+        };
+        if links_available
+            && link_first
+            && self.terminal.model.notice().is_none()
+            && let Some(status) = self.link_status(unshifted)
+        {
+            return status;
+        }
         if let Some(notice) = self.workspace_model.notice() {
             return notice.to_owned();
         }
-        let links_available =
-            self.terminal.model.is_attached() && !self.terminal.model.awaiting_current_frame();
         if let Some(notice) = status_notice(
             self.terminal.model.notice(),
-            links_available
-                .then_some(self.links.notice.as_deref())
-                .flatten(),
+            links_available.then(|| self.links.notice()).flatten(),
         ) {
             return notice.to_owned();
         }
@@ -4103,13 +4161,21 @@ impl ApplicationHandler<UserEvent> for Application {
             self.refresh_client_view();
         }
         let now = Instant::now();
-        if let Some(notice) = self
+        if let Some(result) = self
             .link_opener
             .as_mut()
             .and_then(|opener| opener.poll(now))
         {
             self.link_opener = None;
-            self.links.notice = Some(notice.into());
+            self.links.show_notice(
+                result.unwrap_or_else(|error| error),
+                result.is_ok(),
+                now,
+                self.workspace_model.notice_serial(),
+            );
+            self.refresh_client_view();
+        }
+        if self.links.expire_notice(now) {
             self.refresh_client_view();
         }
         self.retry_orbit(now);
@@ -4212,6 +4278,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.link_opener
                     .as_ref()
                     .map(|_| now + Duration::from_millis(50)),
+                self.links.notice_deadline(),
             ]
             .into_iter()
             .flatten()
@@ -5743,6 +5810,16 @@ mod tests {
                 app.render();
                 assert_eq!(app.focused_link().unwrap().uri, "https://example.com/6");
                 assert_eq!(highlighted(app), Some((0, 0)));
+                // No notice disables links: the hover, hint and click below run
+                // under a workspace notice, which the hovered link's hint outranks.
+                app.workspace_model
+                    .apply(workspace::Response::Failure(workspace::Failure {
+                        code: "no-attention".into(),
+                        detail: "No agent needs attention.".into(),
+                    }));
+                app.render();
+                assert_eq!(highlighted(app), Some((0, 0)), "a notice keeps the hover");
+                assert!(app.status().contains("https://example.com/6"));
                 // Output that keeps the target over the same cells keeps its
                 // hover, hint and captured click, frame after frame.
                 let kept = "file:///kept-across-output";
@@ -5761,10 +5838,65 @@ mod tests {
                 }
                 assert!(app.handle_link_button(ElementState::Released, MouseButton::Left));
                 assert_eq!(
-                    app.links.notice.as_deref(),
+                    app.links.notice(),
                     Some("Only HTTP and HTTPS links can be opened. Copy other targets explicitly."),
                     "a click across output revisions must activate its kept target"
                 );
+                app.links.focus = None;
+                app.links.notice = None;
+                assert!(app.workspace_model.notice().is_some());
+                app.activate_accessible_link(0, 0, false);
+                let refused =
+                    "Only HTTP and HTTPS links can be opened. Copy other targets explicitly.";
+                assert_eq!(
+                    app.status(),
+                    refused,
+                    "a link result outranks an older notice"
+                );
+                app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Failure(
+                    workspace::Failure {
+                        code: "no-attention".into(),
+                        detail: "Nothing is waiting.".into(),
+                    },
+                )));
+                assert_eq!(
+                    app.status(),
+                    "Nothing is waiting.",
+                    "a newer notice outranks it"
+                );
+                assert!(app.workspace_model.dismiss_no_attention());
+                assert_eq!(
+                    app.status(),
+                    refused,
+                    "an older failure returns when the notice clears"
+                );
+                let now = Instant::now();
+                app.links.show_notice(
+                    "Link handed to the desktop handler.",
+                    true,
+                    now,
+                    app.workspace_model.notice_serial(),
+                );
+                app.about_to_wait(event_loop);
+                assert!(
+                    matches!(
+                        event_loop.control_flow(),
+                        ControlFlow::WaitUntil(at) if at <= now + LINK_SUCCESS_NOTICE
+                    ),
+                    "a success notice schedules its own wakeup"
+                );
+                app.links.show_notice(
+                    "Link handed to the desktop handler.",
+                    true,
+                    Instant::now() - LINK_SUCCESS_NOTICE,
+                    app.workspace_model.notice_serial(),
+                );
+                app.about_to_wait(event_loop);
+                assert!(
+                    app.links.notice.is_none(),
+                    "a success clears at its deadline"
+                );
+                app.inspect_pointer_link();
                 // A target replaced by output retires its press for good, even
                 // when it returns before the next frame.
                 let press = |app: &mut Application, state| {
@@ -6098,8 +6230,8 @@ mod tests {
                 app.handle_workspace(WorkspaceEvent::Unavailable("offline".into()));
                 assert_eq!(app.presented_revision(), None);
                 assert!(
-                    app.links.pressed.is_none(),
-                    "an unavailable link surface must retire its captured press"
+                    !matches!(app.links.pressed, Some(LinkPress::Live(_))),
+                    "the presentation change must retire its captured press"
                 );
                 app.workspace_model
                     .apply(workspace::Response::Snapshot(snapshot));
@@ -6825,6 +6957,7 @@ mod tests {
             opener
                 .poll(now + Duration::from_secs(10))
                 .unwrap()
+                .unwrap_err()
                 .contains("timed out")
         );
         drop(opener);
@@ -6832,6 +6965,35 @@ mod tests {
             !PathBuf::from(format!("/proc/{pid}")).exists(),
             "dispatcher must be reaped"
         );
+    }
+
+    #[test]
+    fn link_success_notice_clears_on_its_own_and_failures_persist() {
+        let now = Instant::now();
+        let mut opener = LinkOpener {
+            child: Command::new("true").spawn().unwrap(),
+            deadline: now + Duration::from_secs(10),
+        };
+        let handed = loop {
+            if let Some(result) = opener.poll(now) {
+                break result;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(handed, Ok("Link handed to the desktop handler."));
+        let mut links = LinkInteraction::default();
+        links.show_notice(handed.unwrap(), true, now, 0);
+        let deadline = links.notice_deadline().unwrap();
+        assert_eq!(deadline, now + LINK_SUCCESS_NOTICE);
+        assert!(!links.expire_notice(deadline - Duration::from_millis(1)));
+        assert!(
+            links.expire_notice(deadline),
+            "success clears with no input"
+        );
+        assert_eq!((links.notice(), links.notice_deadline()), (None, None));
+        links.show_notice("Could not open link.", false, now, 0);
+        assert!(!links.expire_notice(now + Duration::from_secs(3600)));
+        assert_eq!(links.notice(), Some("Could not open link."));
     }
 
     #[test]

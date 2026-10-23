@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The "Link handed to the desktop handler." and "Link copied." notices go
+  away on their own after about 2 seconds, so returning from the browser no
+  longer finds them waiting. A notice in the status line no longer stops you
+  from hovering or Ctrl+clicking a link.
+
 - Closing a tab no longer ends the whole window when one of its terminals
   fails to stop. A terminal whose Orbit failed and exited without a result is
   closed as an ended terminal. One that still can't be accounted for stays in
