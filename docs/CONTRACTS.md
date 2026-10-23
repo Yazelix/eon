@@ -487,9 +487,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     the snapshot gains a tab while the prompt is open, Enter closes only the
     named tab and the window stays. When the setting is false, a final close
     quits at once. Venus receives the setting as a launch argument (VEN-C8).
-    Closing the window itself, or Alt+Shift+D, detaches without asking.
     Venus maps Alt+Shift+W directly to this stable-target action; lowercase
-    Ctrl+W remains terminal input.
+    Ctrl+W remains terminal input. Closing the window itself, or
+    Alt+Shift+D, detaches without asking.
+    The first time any of the user's windows detaches this way, the
+    supervisor sends one non-activating desktop notification, titled "Eon is
+    still running in the background", with the body "Open Eon to return;
+    close the last tab or use Commands > Quit this window to stop it." A
+    marker in Eon's state directory makes it once per user. A missing or
+    failing notification service sends nothing, does not delay the detach,
+    and leaves the marker unset for a later detach. A Venus crash sends none.
   - Closing a pane names a `pN` in the active tab, or in the calling
     terminal's tab under EON-C10. Eon stops that pane's
     terminal and prunes the confirmed end through the normal terminal-exit
@@ -536,8 +543,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
   restoration, a per-pane terminal restart action, closing panes outside the
   active or calling tab, terminal
-  content/history, provider state, plugin surface, remote access, or
-  reconstructed terminal state.
+  content/history, provider state, plugin surface, remote access,
+  reconstructed terminal state, or notifications other than the first-detach
+  notice.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Topology and pruning
@@ -565,7 +573,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog`,
   `pane_frame_option_is_a_strict_single_boolean` and
   `venus_receives_workspace_endpoint_only_in_workspace_mode`; installed
-  proof is pending `eon-prove-close-and-detach-batch-bf8t`.
+  proof is pending `eon-prove-close-and-detach-batch-bf8t`. The first-detach
+  notice (`eon-first-detach-notification-a0p3`) has no automated test, since
+  the test sandbox has no D-Bus; its installed proof is pending the same bead.
   Columns (`eon-splits-opwv`): runtime topology and EONW v10
   are covered by `columns_hold_accordions_traverse_into_tabs_and_collapse_on_exit`,
   `create_column_in_a_popup_only_tab_never_overfills_a_neighbor`,

@@ -780,6 +780,7 @@ dependencies = [
  "socket2",
  "time",
  "toml",
+ "zbus",
 ]
 
 [[package]]

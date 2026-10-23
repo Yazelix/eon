@@ -6,6 +6,7 @@ mod control;
 mod diagnostics;
 mod generation;
 mod managed_environment;
+mod notification;
 mod quota;
 mod sessions;
 mod supervisor;

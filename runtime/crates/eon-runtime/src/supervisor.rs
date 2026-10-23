@@ -9,7 +9,7 @@ use super::{
     diagnostics::DiagnosticLog,
     generation::{current_generation, generation_directory},
     managed_environment::{self, nonempty_environment_path},
-    quota,
+    notification, quota,
     sessions::{
         RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE, acquire_generation_sessions,
         recover_sessions, session_finished, start_orbit, stop_managed_sessions,
@@ -586,8 +586,8 @@ impl PresentationProcess {
         Ok(process)
     }
 
-    /// Reports whether Eon Desktop has exited, recording how once.
-    fn exited(&mut self) -> Result<bool, String> {
+    /// Reports how Eon Desktop exited, if it has, recording it once.
+    fn exited(&mut self) -> Result<Option<ExitStatus>, String> {
         let status = self
             .child
             .try_wait()
@@ -605,7 +605,7 @@ impl PresentationProcess {
             }
             self.log.record(&format!("Eon Desktop exited: {status}"));
         }
-        Ok(status.is_some())
+        Ok(status)
     }
 
     fn present(&self) -> Result<(), String> {
@@ -1410,15 +1410,20 @@ fn reap_presentation(
 ) -> Result<bool, String> {
     let exited = match state.venus.as_mut() {
         Some(process) => process.exited()?,
-        None => false,
+        None => None,
     };
-    if exited {
-        state.venus = None;
-        if !state.stopping {
-            cancel_transient_popups(state, inputs, config)?;
+    let Some(status) = exited else {
+        return Ok(false);
+    };
+    state.venus = None;
+    if !state.stopping {
+        // Full Eon's clean exit is a detach; a crash is not (EON-C8).
+        if state.workspace.is_some() && status.success() {
+            notification::notify_first_detach(&state.application_id);
         }
+        cancel_transient_popups(state, inputs, config)?;
     }
-    Ok(exited)
+    Ok(true)
 }
 
 pub(super) fn supervisor_lock_path(root: &Path, generation: &str) -> PathBuf {
@@ -1935,7 +1940,7 @@ mod tests {
             super::PresentationProcess::start(command, false, None, Duration::from_secs(2), &log)
                 .unwrap();
         let deadline = Instant::now() + Duration::from_secs(5);
-        while !process.exited().unwrap() {
+        while process.exited().unwrap().is_none() {
             assert!(Instant::now() < deadline);
             thread::sleep(Duration::from_millis(10));
         }

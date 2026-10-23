@@ -51,7 +51,8 @@ longer want it. The initial workspace uses the directory where Eon was launched.
 A terminal starts after choosing a directory or dismissing the picker. Closing the last
 tab quits the window and stops its terminals. Closing the Eon window instead detaches
 the desktop without stopping its terminals or PTY commands. Alt+Shift+D does the
-same from the keyboard. Reconnect with:
+same from the keyboard. The first time, Eon shows a desktop notification saying
+it is still running in the background. Reconnect with:
 
 ```sh
 eon attach

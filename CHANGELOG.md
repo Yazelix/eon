@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The first time an Eon window detaches, by closing it or with Alt+Shift+D,
+  a desktop notification says Eon is still running in the background and how
+  to return or stop it. It appears once per user and never takes focus.
+
 - Closing the last tab from the window now asks first: Alt+Shift+W, the bar's
   `×` and Alt+W on the last pane show "Close the last tab?" with the
   terminals that will stop. Enter quits, Escape cancels. The new Alt+Shift+D
