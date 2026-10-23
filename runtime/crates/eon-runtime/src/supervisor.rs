@@ -14,7 +14,9 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, Workspace},
 };
-use eon_workspace_protocol::v12::{
+pub(crate) mod named;
+pub(crate) mod window;
+use eon_workspace_protocol::v13::{
     Action, Availability, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
     Stopped, VERSION, WorkspaceAction,
 };
@@ -426,7 +428,7 @@ impl PresentationProcess {
     fn start(
         mut command: Command,
         admission: bool,
-        snapshot: Option<Snapshot>,
+        snapshot: Option<Response>,
         deadline: Instant,
     ) -> Result<Self, String> {
         let (control, input) = UnixStream::pair()
@@ -457,9 +459,8 @@ impl PresentationProcess {
                         .ok_or("timed out waiting for native startup admission")
                 };
                 if let Some(snapshot) = snapshot {
-                    let bytes =
-                        eon_workspace_protocol::v12::encode_response(&Response::Snapshot(snapshot))
-                            .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
+                    let bytes = eon_workspace_protocol::v13::encode_response(&snapshot)
+                        .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
                         process
@@ -611,6 +612,8 @@ fn recovered_workspace_sessions(
                     .ok_or("recovered a transient terminal as a durable pane")?,
                 workspace::Session {
                     id: session.id.clone(),
+                    run: session.run_id().into(),
+                    live: true,
                     endpoint: session.endpoint.clone(),
                 },
             ))
@@ -675,6 +678,8 @@ fn supervise(
                             1,
                             workspace::Session {
                                 id: initial_session_id.into(),
+                                run: request_id(),
+                                live: true,
                                 endpoint: initial_endpoint.clone(),
                             },
                         )]
@@ -704,7 +709,10 @@ fn supervise(
             decorations,
         )?;
         Some(PresentationProcess::start(
-            command, true, snapshot, deadline,
+            command,
+            true,
+            snapshot.map(Response::Snapshot),
+            deadline,
         )?)
     } else {
         None
@@ -1377,7 +1385,7 @@ fn dispatch_control_request(
                 state.venus = Some(PresentationProcess::start(
                     command,
                     terminal.requires_startup_admission(),
-                    state.workspace_snapshot(),
+                    state.workspace_snapshot().map(Response::Snapshot),
                     Instant::now() + SESSION_START_TIMEOUT,
                 )?);
                 Ok(())
@@ -1577,7 +1585,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v12::{
+        use eon_workspace_protocol::v13::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::{
@@ -1626,7 +1634,7 @@ mod tests {
         let process = super::PresentationProcess::start(
             command,
             true,
-            Some(snapshot.clone()),
+            Some(Response::Snapshot(snapshot.clone())),
             Instant::now() + Duration::from_secs(2),
         )
         .unwrap();
@@ -1640,7 +1648,7 @@ mod tests {
             super::PresentationProcess::start(
                 command,
                 true,
-                Some(snapshot),
+                Some(Response::Snapshot(snapshot)),
                 started + Duration::from_millis(300),
             )
             .is_err()

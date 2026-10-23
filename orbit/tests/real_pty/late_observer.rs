@@ -22,7 +22,7 @@ pub fn run() {
     active.frame();
 
     let mut contender = Peer::connect(&server.path, 4.0);
-    contender.send(&ClientMessage::Hello);
+    contender.send(&ClientMessage::Hello(None));
     contender.expect(ServerMessage::Busy);
     drop(contender);
 
@@ -38,13 +38,13 @@ pub fn run() {
     drop(silent);
 
     let mut observer = Peer::connect(&server.path, 4.0);
-    observer.send(&ClientMessage::ObserveMetadata);
-    observer.expect(ServerMessage::ObservingMetadata);
+    observer.send(&ClientMessage::ObserveMetadata(None));
+    observer.expect(ServerMessage::ObservingMetadata(Default::default()));
     let first = observer.metadata();
     assert_eq!(first.title, "LATE ONE");
 
     let mut contender = Peer::connect(&server.path, 4.0);
-    contender.send(&ClientMessage::ObserveMetadata);
+    contender.send(&ClientMessage::ObserveMetadata(None));
     contender.expect(ServerMessage::Busy); // Observer slot is full.
     drop(contender);
 
@@ -56,8 +56,8 @@ pub fn run() {
     drop(observer);
 
     let mut observer = Peer::connect(&server.path, 4.0);
-    observer.send(&ClientMessage::ObserveMetadata);
-    observer.expect(ServerMessage::ObservingMetadata);
+    observer.send(&ClientMessage::ObserveMetadata(None));
+    observer.expect(ServerMessage::ObservingMetadata(Default::default()));
     let current = observer.metadata();
     assert_eq!(
         (current.revision, current.title.as_str()),
@@ -72,8 +72,8 @@ pub fn run() {
     observer.expect_closed();
     drop(observer);
     let mut observer = Peer::connect(&server.path, 4.0);
-    observer.send(&ClientMessage::ObserveMetadata);
-    observer.expect(ServerMessage::ObservingMetadata);
+    observer.send(&ClientMessage::ObserveMetadata(None));
+    observer.expect(ServerMessage::ObservingMetadata(Default::default()));
     assert_eq!(observer.metadata().title, "LATE TWO");
 
     active.send(&paste(b"x"));

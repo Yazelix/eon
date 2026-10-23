@@ -21,9 +21,10 @@ pub use model::{
 pub use render::{CellMetrics, FontSettings, FontSetup, PresentOutcome, RenderError, Renderer};
 pub use scene::{
     Color, DrawCell, DrawCursor, DrawRow, DrawStyle, GlyphRun, Hyperlink, PaneMetadata, Scene,
-    ScenePreview, SceneRect, ShortcutGroup, ShortcutHint, ShortcutHintsScene, ShortcutRow,
-    ShortcutViewerScene, WorkspaceColumn, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit,
-    WorkspacePane, WorkspaceScene, WorkspaceTab, workspace_column_width,
+    ScenePreview, SceneRect, ShortcutHint, ShortcutHintsScene, WorkspaceColumn,
+    WorkspaceDialogGroup, WorkspaceDialogRow, WorkspaceDialogScene, WorkspaceFocus,
+    WorkspaceHeaderControl, WorkspaceHit, WorkspacePane, WorkspaceScene, WorkspaceTab,
+    workspace_column_width,
 };
 pub use transport::{
     MetadataEvent, MetadataTransport, SendError, Transport, TransportEvent, WorkspaceEvent,

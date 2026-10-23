@@ -81,9 +81,10 @@ fn header(kind: u8, payload: usize) -> [u8; HEADER_BYTES] {
 #[test]
 fn every_client_message_round_trips() {
     let messages = [
-        ClientMessage::Hello,
-        ClientMessage::ObserveMetadata,
+        ClientMessage::Hello(None),
+        ClientMessage::ObserveMetadata(None),
         ClientMessage::ReturnToLive,
+        ClientMessage::Detach,
         ClientMessage::Key(KeyEvent {
             action: KeyAction::Repeat,
             key: PhysicalKey::A,
@@ -147,8 +148,8 @@ fn every_client_message_round_trips() {
 #[test]
 fn every_server_message_round_trips() {
     let messages = [
-        ServerMessage::Attached,
-        ServerMessage::ObservingMetadata,
+        ServerMessage::Attached(Handshake::default()),
+        ServerMessage::ObservingMetadata(Handshake::default()),
         ServerMessage::Metadata(Metadata {
             revision: 8,
             title: "Codex ◐".into(),
@@ -278,7 +279,7 @@ fn mouse_action_button_combinations_are_canonical() {
 
 #[test]
 fn framing_is_incremental_strict_and_bounded() {
-    let encoded = encode_client_message(&ClientMessage::Hello).unwrap();
+    let encoded = encode_client_message(&ClientMessage::Hello(None)).unwrap();
     for end in 0..HEADER_BYTES {
         assert_eq!(client_message_len(&encoded[..end]).unwrap(), None);
     }
@@ -337,10 +338,10 @@ fn declared_payloads_are_validated_from_the_header() {
         })
     );
     assert_eq!(
-        client_message_len(&header(CLIENT_HELLO, 1)),
+        client_message_len(&header(CLIENT_HELLO, MAX_HANDSHAKE_BYTES + 1)),
         Err(Error::PayloadTooLarge {
-            size: 1,
-            maximum: 0,
+            size: MAX_HANDSHAKE_BYTES + 1,
+            maximum: MAX_HANDSHAKE_BYTES,
         })
     );
     assert_eq!(
@@ -1094,4 +1095,52 @@ fn return_to_live_has_zero_payload() {
             .len(),
         HEADER_BYTES
     );
+}
+
+#[test]
+fn handshake_binds_run_without_requiring_the_same_build() {
+    let identity = RunIdentity {
+        workspace: "w1".into(),
+        session: "s1".into(),
+        run: "r1".into(),
+    };
+    let mut handshake = Handshake {
+        identity: Some(identity.clone()),
+        build: "old-compatible-build".into(),
+        ..Handshake::default()
+    };
+    let request = ClientMessage::Hello(Some(identity.clone()));
+    assert_eq!(
+        decode_client_message(&encode_client_message(&request).unwrap()).unwrap(),
+        request
+    );
+    let response = ServerMessage::Attached(handshake.clone());
+    assert_eq!(
+        decode_server_message(&encode_server_message(&response).unwrap()).unwrap(),
+        response
+    );
+    assert!(handshake.accepts(Some(&identity)));
+    handshake.build = "new-compatible-build".into();
+    assert!(handshake.accepts(Some(&identity)));
+    for changed in [
+        RunIdentity {
+            workspace: "w2".into(),
+            ..identity.clone()
+        },
+        RunIdentity {
+            session: "s2".into(),
+            ..identity.clone()
+        },
+        RunIdentity {
+            run: "r2".into(),
+            ..identity.clone()
+        },
+    ] {
+        assert!(!handshake.accepts(Some(&changed)));
+    }
+    for capabilities in [0, FULL_SNAPSHOTS, EXPLICIT_DETACH, CAPABILITIES | 4] {
+        handshake.capabilities = capabilities;
+        assert!(!handshake.accepts(Some(&identity)));
+        assert!(encode_server_message(&ServerMessage::Attached(handshake.clone())).is_err());
+    }
 }

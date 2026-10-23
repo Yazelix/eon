@@ -9,7 +9,7 @@ use std::{
     process::Command,
 };
 
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     ALT, CTRL, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry, SHIFT, SUPER,
     Shortcut,
 };
@@ -31,6 +31,7 @@ struct EonConfig {
     popups: BTreeMap<String, PopupEntrySettings>,
 }
 
+#[derive(Clone)]
 pub struct Defaults {
     pub show_version: bool,
     pub shell: ShellConfig,
@@ -178,6 +179,7 @@ impl TerminalConfig {
     }
 }
 
+#[derive(Clone)]
 pub struct ManagedPrograms {
     pub nu: PathBuf,
     pub bash: PathBuf,

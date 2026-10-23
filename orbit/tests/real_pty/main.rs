@@ -1,5 +1,5 @@
 //! The real-PTY checks: each starts the Orbit at `ORBIT_BIN` on
-//! Orbit's command line, drives it through ORBS v13 and management
+//! Orbit's command line, drives it through ORBS v14 and management
 //! messages encoded and decoded by the canonical `orbit-protocol` codec, and
 //! checks how the session, its child and its socket end.
 //!

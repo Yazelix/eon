@@ -5,6 +5,10 @@ use orbit_protocol::management::{
 
 fn live_identity() -> LiveIdentity {
     LiveIdentity {
+        workspace_id: "workspace-1".into(),
+        session_version: orbit_protocol::session::VERSION,
+        frame_version: orbit_protocol::VERSION,
+        capabilities: orbit_protocol::session::CAPABILITIES,
         session_id: "session-1".into(),
         run_id: "run-1".into(),
         component_generation: "component-1".into(),
@@ -43,7 +47,7 @@ fn management_messages_and_records_round_trip_canonically() {
     let identity = live_identity();
     let client_messages = [
         ClientMessage::Acquire {
-            expected: identity.clone(),
+            expected: Box::new(identity.clone()),
             record: ObjectIdentity {
                 device: 7,
                 inode: 13,
@@ -166,5 +170,22 @@ fn management_codec_rejects_incompatible_or_noncanonical_bytes() {
     assert!(matches!(
         management::decode_client_message(&invalid_tag),
         Err(Error::InvalidTag { .. })
+    ));
+}
+
+#[test]
+fn previous_management_wire_and_record_are_rejected_before_identity_use() {
+    let mut wire =
+        management::encode_server_message(&ServerMessage::Lease(live_identity())).unwrap();
+    wire[4..6].copy_from_slice(&1_u16.to_le_bytes());
+    assert!(matches!(
+        management::decode_server_message(&wire),
+        Err(Error::UnsupportedVersion { version: 1 })
+    ));
+    let mut record = management::encode_record(&Record::Live(live_identity())).unwrap();
+    record[4..6].copy_from_slice(&1_u16.to_le_bytes());
+    assert!(matches!(
+        management::decode_record(&record),
+        Err(Error::UnsupportedVersion { version: 1 })
     ));
 }

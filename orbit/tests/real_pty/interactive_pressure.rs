@@ -29,13 +29,13 @@ pub fn run() {
     let pid = read_pid(&pid_file);
 
     let mut stalled = Peer::connect(&server.path, 10.0);
-    stalled.send(&ClientMessage::Hello);
-    stalled.expect(ServerMessage::Attached);
+    stalled.send(&ClientMessage::Hello(None));
+    stalled.expect(ServerMessage::Attached(Default::default()));
     stalled.frame();
 
     let mut observer = Peer::connect(&server.path, 10.0);
-    observer.send(&ClientMessage::ObserveMetadata);
-    observer.expect(ServerMessage::ObservingMetadata);
+    observer.send(&ClientMessage::ObserveMetadata(None));
+    observer.expect(ServerMessage::ObservingMetadata(Default::default()));
 
     // The interactive client stops reading and keeps sending requests that
     // Bend answers with Failure, until the server closes.
@@ -109,8 +109,8 @@ pub fn run() {
 
     // A new client reattaches to the same child and receives a current frame.
     let mut client = Peer::connect(&server.path, 10.0);
-    client.send(&ClientMessage::Hello);
-    client.expect(ServerMessage::Attached);
+    client.send(&ClientMessage::Hello(None));
+    client.expect(ServerMessage::Attached(Default::default()));
     let current = client.frame();
     assert!(current.title.starts_with("TICK "), "{:?}", current.title);
     fs::write(&stop, "").expect("stop");

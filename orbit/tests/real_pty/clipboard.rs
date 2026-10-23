@@ -26,8 +26,8 @@ pub fn run() {
     let mut server =
         Server::start(&directory, &shell, &[("ORBIT_CLIPBOARD_GATE", gate.path())]);
     let mut observer = Peer::connect(&server.path, 4.0);
-    observer.send(&ClientMessage::ObserveMetadata);
-    observer.expect(ServerMessage::ObservingMetadata);
+    observer.send(&ClientMessage::ObserveMetadata(None));
+    observer.expect(ServerMessage::ObservingMetadata(Default::default()));
     observer.metadata();
 
     // The observer hears the title that follows the detached write, so the

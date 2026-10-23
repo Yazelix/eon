@@ -16,6 +16,7 @@ const CLIENT_PREVIEW_VERTICAL: u8 = 8;
 const CLIENT_OBSERVE_METADATA: u8 = 9;
 const CLIENT_SCROLL_VERTICAL: u8 = 10;
 const CLIENT_RETURN_TO_LIVE: u8 = 11;
+const CLIENT_DETACH: u8 = 12;
 const SERVER_ATTACHED: u8 = 129;
 pub(super) const SERVER_BUSY: u8 = 130;
 pub(super) const SERVER_FRAME: u8 = 132;
@@ -82,8 +83,7 @@ fn message_len(
 
 fn client_payload_limits(kind: u8) -> Result<(usize, usize)> {
     match kind {
-        CLIENT_HELLO => Ok((0, 0)),
-        CLIENT_OBSERVE_METADATA => Ok((0, 0)),
+        CLIENT_HELLO | CLIENT_OBSERVE_METADATA => Ok((1, MAX_HANDSHAKE_BYTES)),
         CLIENT_KEY => Ok((16, 16 + MAX_KEY_TEXT_BYTES)),
         CLIENT_MOUSE => Ok((12, 12)),
         CLIENT_FOCUS => Ok((1, 1)),
@@ -92,7 +92,7 @@ fn client_payload_limits(kind: u8) -> Result<(usize, usize)> {
         CLIENT_SELECTION => Ok((1, 27)),
         CLIENT_PREVIEW_VERTICAL => Ok((9, 9)),
         CLIENT_SCROLL_VERTICAL => Ok((10, 10)),
-        CLIENT_RETURN_TO_LIVE => Ok((0, 0)),
+        CLIENT_RETURN_TO_LIVE | CLIENT_DETACH => Ok((0, 0)),
         value => Err(Error::InvalidTag {
             field: "client message",
             value,
@@ -102,8 +102,8 @@ fn client_payload_limits(kind: u8) -> Result<(usize, usize)> {
 
 fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     match kind {
-        SERVER_ATTACHED => Ok((0, 0)),
-        SERVER_BUSY | SERVER_ACCEPTED | SERVER_OBSERVING_METADATA => Ok((0, 0)),
+        SERVER_ATTACHED | SERVER_OBSERVING_METADATA => Ok((9, MAX_HANDSHAKE_BYTES)),
+        SERVER_BUSY | SERVER_ACCEPTED => Ok((0, 0)),
         SERVER_METADATA => Ok((16, MAX_METADATA_BYTES)),
         SERVER_EXITED => Ok((4, 4)),
         SERVER_FRAME => Ok((MIN_FRAME_BYTES, MAX_FRAME_BYTES)),
@@ -125,12 +125,18 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     }
 }
 
-/// Encodes one client message with an ORBS v13 header.
+/// Encodes one client message with an ORBS v14 header.
 pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
-        ClientMessage::Hello => CLIENT_HELLO,
-        ClientMessage::ObserveMetadata => CLIENT_OBSERVE_METADATA,
+        ClientMessage::Hello(identity) => {
+            put_identity(&mut payload, identity.as_ref())?;
+            CLIENT_HELLO
+        }
+        ClientMessage::ObserveMetadata(identity) => {
+            put_identity(&mut payload, identity.as_ref())?;
+            CLIENT_OBSERVE_METADATA
+        }
         ClientMessage::Key(event) => {
             validate_key(event)?;
             payload.push(key_action_tag(event.action));
@@ -250,6 +256,7 @@ pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
             CLIENT_SCROLL_VERTICAL
         }
         ClientMessage::ReturnToLive => CLIENT_RETURN_TO_LIVE,
+        ClientMessage::Detach => CLIENT_DETACH,
     };
     frame_message(kind, payload, client_payload_limits(kind)?.1)
 }
@@ -259,8 +266,8 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     let (kind, payload) = exact_message(bytes, client_message_len(bytes)?)?;
     let mut reader = Reader::new(payload);
     let message = match kind {
-        CLIENT_HELLO => ClientMessage::Hello,
-        CLIENT_OBSERVE_METADATA => ClientMessage::ObserveMetadata,
+        CLIENT_HELLO => ClientMessage::Hello(read_identity(&mut reader)?),
+        CLIENT_OBSERVE_METADATA => ClientMessage::ObserveMetadata(read_identity(&mut reader)?),
         CLIENT_KEY => {
             let action = decode_key_action(reader.u8()?)?;
             let raw_key = reader.u16()?;
@@ -398,6 +405,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
             }
         }
         CLIENT_RETURN_TO_LIVE => ClientMessage::ReturnToLive,
+        CLIENT_DETACH => ClientMessage::Detach,
         value => {
             return Err(Error::InvalidTag {
                 field: "client message",
@@ -409,12 +417,18 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     Ok(message)
 }
 
-/// Encodes one server message with an ORBS v13 header.
+/// Encodes one server message with an ORBS v14 header.
 pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
-        ServerMessage::Attached => SERVER_ATTACHED,
-        ServerMessage::ObservingMetadata => SERVER_OBSERVING_METADATA,
+        ServerMessage::Attached(handshake) => {
+            put_handshake(&mut payload, handshake)?;
+            SERVER_ATTACHED
+        }
+        ServerMessage::ObservingMetadata(handshake) => {
+            put_handshake(&mut payload, handshake)?;
+            SERVER_OBSERVING_METADATA
+        }
         ServerMessage::Metadata(metadata) => {
             payload.extend_from_slice(&metadata.revision.to_le_bytes());
             put_bounded_bytes(&mut payload, metadata.title.as_bytes(), MAX_METADATA_BYTES)?;
@@ -557,8 +571,8 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
     }
     let mut reader = Reader::new(payload);
     let message = match kind {
-        SERVER_ATTACHED => ServerMessage::Attached,
-        SERVER_OBSERVING_METADATA => ServerMessage::ObservingMetadata,
+        SERVER_ATTACHED => ServerMessage::Attached(read_handshake(&mut reader)?),
+        SERVER_OBSERVING_METADATA => ServerMessage::ObservingMetadata(read_handshake(&mut reader)?),
         SERVER_METADATA => ServerMessage::Metadata(Metadata {
             revision: u64::from_le_bytes(reader.array()?),
             title: reader.bounded_text("metadata title", MAX_METADATA_BYTES)?,
@@ -1038,6 +1052,75 @@ fn put_bounded_bytes(target: &mut Vec<u8>, value: &[u8], maximum: usize) -> Resu
 
 fn put_u16(target: &mut Vec<u8>, value: u16) {
     target.extend_from_slice(&value.to_le_bytes());
+}
+
+fn put_identity(out: &mut Vec<u8>, identity: Option<&RunIdentity>) -> Result<()> {
+    out.push(u8::from(identity.is_some()));
+    if let Some(identity) = identity {
+        for value in [&identity.workspace, &identity.session, &identity.run] {
+            if value.is_empty() {
+                return Err(Error::InvalidValue {
+                    field: "run identity",
+                });
+            }
+            put_bounded_bytes(out, value.as_bytes(), 128)?;
+        }
+    }
+    Ok(())
+}
+
+fn read_identity(reader: &mut Reader<'_>) -> Result<Option<RunIdentity>> {
+    match reader.u8()? {
+        0 => Ok(None),
+        1 => {
+            let identity = RunIdentity {
+                workspace: reader.bounded_text("workspace identity", 128)?,
+                session: reader.bounded_text("session identity", 128)?,
+                run: reader.bounded_text("run identity", 128)?,
+            };
+            if identity.workspace.is_empty()
+                || identity.session.is_empty()
+                || identity.run.is_empty()
+            {
+                return Err(Error::InvalidValue {
+                    field: "run identity",
+                });
+            }
+            Ok(Some(identity))
+        }
+        value => Err(Error::InvalidTag {
+            field: "run identity",
+            value,
+        }),
+    }
+}
+
+fn put_handshake(out: &mut Vec<u8>, value: &Handshake) -> Result<()> {
+    if !value.accepts(None) {
+        return Err(Error::InvalidValue {
+            field: "handshake compatibility",
+        });
+    }
+    put_identity(out, value.identity.as_ref())?;
+    put_bounded_bytes(out, value.build.as_bytes(), 128)?;
+    put_u16(out, value.frame_version);
+    put_u16(out, value.capabilities);
+    Ok(())
+}
+
+fn read_handshake(reader: &mut Reader<'_>) -> Result<Handshake> {
+    let value = Handshake {
+        identity: read_identity(reader)?,
+        build: reader.bounded_text("build", 128)?,
+        frame_version: reader.u16()?,
+        capabilities: reader.u16()?,
+    };
+    if !value.accepts(None) {
+        return Err(Error::InvalidValue {
+            field: "handshake compatibility",
+        });
+    }
+    Ok(value)
 }
 
 fn put_i16(target: &mut Vec<u8>, value: i16) {

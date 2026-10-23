@@ -146,6 +146,12 @@
       lazygitIdentity = component "lazygit";
       ratconfigIdentity = component "ratconfig";
       animaPackage = anima.packages.${system}.anima;
+      # The server uses Anima's terminal renderer, without its optional desktop font payload.
+      animaServerPackage = animaPackage.overrideAttrs (old: {
+        postInstall = (old.postInstall or "") + ''
+          rm -rf "$out/share/fonts"
+        '';
+      });
 
       githubSource =
         identity: hash:
@@ -240,8 +246,8 @@
       # Orbit's host and its Bend worker (orbit/docs/HOST.md), which
       # orbit/build.rs compiles. The unit tests run here; the real-PTY test
       # binary, whose checks are ignored here, goes to the tests output for the
-      # real-PTY checks. tests/lifecycle.rs needs host /usr/bin/setsid, which
-      # the build sandbox lacks, so eon-test runs it.
+      # real-PTY checks. eon-test runs tests/lifecycle.rs with its required
+      # process tools in the isolated test environment.
       orbitPackage =
         assert ghostty.rev == "a887df42c56f6de86c0fe6da9c4eeca37931e083";
         assert bend.rev == "234cb9b950800f20b15feafcb4ce2f43e76e7fae";
@@ -461,12 +467,11 @@
         EOF
       '';
 
-      eonEnvironment = out: {
+      eonEnvironment = out: server: {
         set = {
           EON_ORBIT = "${orbitPackage}/bin/yazelix-orbit";
-          EON_VENUS = "${venusPackage}/bin/yazelix-venus";
           EON_CODEXBAR = "${codexbarPackage}/bin/CodexBarCLI";
-          EON_ANIMA = "${animaPackage}/bin/anima";
+          EON_ANIMA = "${if server then animaServerPackage else animaPackage}/bin/anima";
           EON_NU = "${nushellPackage}/bin/nu";
           EON_BASH = "${bashPackage}/bin/bash";
           EON_HX = "${helixPackage}/bin/hx";
@@ -477,10 +482,14 @@
           EON_NU_VENDOR_AUTOLOAD = "${out}/libexec/eon/shell/nu";
           EON_BASH_RC = "${out}/libexec/eon/shell/eon.bashrc";
           EON_SESSION_BIN = "${out}/libexec/eon/bin";
-        };
+        } // (if server then {
+          EON_SERVER_PROGRAM = "${out}/bin/eon-server";
+        } else {
+          EON_VENUS = "${venusPackage}/bin/yazelix-venus";
+        });
         prefix.TERMINFO_DIRS = [ "${orbitPackage}/share/terminfo" ];
       };
-      eonPackage =
+      mkEonPackage = server:
         assert workspaceVersions;
         assert nixpkgs.rev == "567a49d1913ce81ac6e9582e3553dd90a955875f";
         assert ratconfig.rev == ratconfigIdentity.revision;
@@ -492,7 +501,7 @@
         assert lib.assertMsg (helixCargo.workspace.package.version == helixIdentity.version)
           "Helix manifest version does not match the selected Cargo workspace package";
         pkgs.rustPlatform.buildRustPackage {
-          pname = "eon";
+          pname = if server then "eon-server" else "eon";
           inherit (eonCargo.package) version;
           src = workspaceSource;
           cargoLock = workspaceCargoLock;
@@ -519,14 +528,15 @@
             pkgs.copyDesktopItems
             pkgs.makeWrapper
           ];
-          desktopItems = [ desktopItem ];
-          postInstall = ''
+          desktopItems = lib.optionals (!server) [ desktopItem ];
+          postInstall = lib.optionalString (!server) ''
             for size in 16 24 32 48 64 128 256 512; do
               icon_dir="$out/share/icons/hicolor/''${size}x''${size}/apps"
               mkdir -p "$icon_dir"
               ${pkgs.imagemagick}/bin/magick ${./assets/eon.png} \
                 -filter Box -resize "''${size}x''${size}" "$icon_dir/eon.png"
             done
+          '' + ''
             for command in nu bash hx yazi ya lazygit lg; do
               ln -s eon "$out/bin/eon-$command"
             done
@@ -540,7 +550,7 @@
             ln -s ${starshipPackage}/bin/starship "$out/libexec/eon/bin/starship"
             ln -s ${zoxidePackage}/bin/zoxide "$out/libexec/eon/bin/zoxide"
             ln -s ${fzfPackage}/bin/fzf "$out/libexec/eon/bin/fzf"
-            ln -s ${animaPackage}/bin/anima "$out/libexec/eon/bin/anima"
+            ln -s ${if server then animaServerPackage else animaPackage}/bin/anima "$out/libexec/eon/bin/anima"
             ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-directory-picker"
             ln -s ${atuinPackage}/bin/atuin "$out/libexec/eon/bin/atuin"
             ln -s ${carapacePackage}/bin/carapace "$out/libexec/eon/bin/carapace"
@@ -560,18 +570,44 @@
             install -Dm444 ${yazi}/LICENSE "$out/share/licenses/eon/yazi/LICENSE"
             install -Dm444 ${lazygitPackage.src}/LICENSE "$out/share/licenses/eon/lazygit/LICENSE"
           '';
-          postFixup = ''
+          postFixup = lib.optionalString (!server) ''
             substituteInPlace "$out/share/applications/eon.desktop" \
               --replace-fail 'Exec=eon' "Exec=$out/bin/eon"
-            wrapProgram "$out/bin/eon" ${wrapperArgs (eonEnvironment (placeholder "out"))}
+          '' + ''
+            wrapProgram "$out/bin/eon" ${wrapperArgs (eonEnvironment (placeholder "out") server)}
+          '' + lib.optionalString server ''
+            makeWrapper "$out/bin/eon" "$out/bin/eon-server" --add-flags __server
           '';
           meta = {
             description = "Native terminal workspaces with persistent terminals";
             license = lib.licenses.asl20;
-            mainProgram = "eon";
+            mainProgram = if server then "eon-server" else "eon";
             platforms = [ system ];
           };
         };
+      eonPackage = mkEonPackage false;
+      eonServerPackage = mkEonPackage true;
+      eonServerClosure = pkgs.closureInfo { rootPaths = [ eonServerPackage ]; };
+      eonServerClosureCheck = pkgs.runCommand "eon-server-closure-check" { } ''
+        test -x ${eonServerPackage}/bin/eon-server
+        test -x ${eonServerPackage}/libexec/eon/bin/eon-directory-picker
+        test ! -e ${eonServerPackage}/share/applications
+        test ! -e ${animaServerPackage}/share/fonts
+        for required in ${orbitPackage} ${animaServerPackage} ${codexbarPackage}; do
+          ${pkgs.gnugrep}/bin/grep -Fx "$required" ${eonServerClosure}/store-paths
+        done
+        for forbidden in ${venusPackage} ${animaPackage} ${venusFontsConf} \
+          ${anima.packages.${system}.accelerando-font} ${pkgs.dejavu_fonts} \
+          ${pkgs.nerd-fonts.symbols-only} ${pkgs.fontconfig} ${pkgs.freetype} \
+          ${pkgs.mesa} ${lib.concatStringsSep " " (map toString venusRuntimeLibraries)}; do
+          if ${pkgs.gnugrep}/bin/grep -Fx "$forbidden" ${eonServerClosure}/store-paths; then
+            exit 1
+          elif test $? != 1; then
+            exit 1
+          fi
+        done
+        ${eonServerPackage}/bin/eon-server --help > "$out"
+      '';
       eonbasePackage =
         assert manifest.composition.services == [ orbitIdentity.id ];
         assert manifest.composition.clients == [ venusIdentity.id ];
@@ -664,7 +700,7 @@
         wrappers = [
           {
             program = "${eonPackage}/bin/eon";
-            environment = eonEnvironment "${eonPackage}";
+            environment = eonEnvironment "${eonPackage}" false;
             # Bash's ncurses for terminal types other than Orbit's.
             relocated.prefix.TERMINFO_DIRS = [ "${pkgs.ncurses}/share/terminfo" ];
           }
@@ -712,6 +748,7 @@
       packages.${system} = {
         default = eonPackage;
         eonbase = eonbasePackage;
+        eon-server = eonServerPackage;
         installer = import ./nix/installer.nix { inherit pkgs; };
         manual-bundle = import ./nix/linux-bundle.nix {
           inherit pkgs eonPackage;
@@ -738,6 +775,7 @@
         default = eonPackage;
         helix-grammars = helix.checks.${system}.codeberg_grammars;
         eonbase-closure = eonbaseClosureCheck;
+        eon-server-closure = eonServerClosureCheck;
         managed-command-path = managedCommandPathCheck;
         bundle-relink = bundleRelink.tree;
         bundle-launch = bundleRelink.launch;

@@ -44,7 +44,7 @@ const FRAME: u8 = 132;
 
 fn message(kind: u8, payload: &[u8]) -> Vec<u8> {
     let mut out = b"ORBS".to_vec();
-    out.extend(13u16.to_le_bytes());
+    out.extend(14u16.to_le_bytes());
     out.extend([kind, 0]);
     out.extend((payload.len() as u32).to_le_bytes());
     out.extend(payload);
@@ -204,8 +204,8 @@ fn discard(mut peer: UnixStream, received: Arc<Mutex<Received>>) {
             offset += taken;
             if start.len() == 12 {
                 assert!(
-                    &start[..6] == b"ORBS\r\0" && start[7] == 0,
-                    "invalid ORBS v13 header"
+                    &start[..6] == b"ORBS\x0e\0" && start[7] == 0,
+                    "invalid ORBS v14 header"
                 );
                 assert!(payload_len(&start) >= wanted(&start) - 12, "short frame");
             }
@@ -288,7 +288,7 @@ fn run_once(
         &socket_path.display().to_string(),
     );
     let mut client = UnixStream::connect(&socket_path).expect("connect");
-    let mut hello = message(1, &[]);
+    let mut hello = message(1, &[0]);
     hello.extend(resize(rows, cols));
     client.write_all(&hello).expect("send hello and resize");
     let received = Arc::new(Mutex::new(Received::default()));

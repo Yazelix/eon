@@ -38,6 +38,7 @@ static NEXT_ARTIFACT: AtomicU64 = AtomicU64::new(0);
 /// The identities `--management-v1` names.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct Launch {
+    pub(crate) workspace_id: String,
     pub(crate) session_id: String,
     pub(crate) run_id: String,
     pub(crate) component_generation: String,
@@ -65,6 +66,7 @@ impl Launch {
         let [session_id, run_id, component_generation] =
             <[String; 3]>::try_from(checked).map_err(|_| "three identities".to_owned())?;
         Ok(Self {
+            workspace_id: component_generation.clone(),
             session_id,
             run_id,
             component_generation,
@@ -127,6 +129,10 @@ impl Prepared {
         // SAFETY: geteuid has no preconditions.
         let uid = unsafe { libc::geteuid() };
         let identity = LiveIdentity {
+            workspace_id: self.launch.workspace_id,
+            session_version: orbit_protocol::session::VERSION,
+            frame_version: orbit_protocol::VERSION,
+            capabilities: orbit_protocol::session::CAPABILITIES,
             session_id: self.launch.session_id,
             run_id: self.launch.run_id,
             component_generation: self.launch.component_generation,
@@ -265,7 +271,7 @@ impl Owner {
         Ok(Some(match message {
             ClientMessage::Acquire { expected, record } => {
                 let valid = connection.peer_uid == self.identity.uid
-                    && expected == self.identity
+                    && *expected == self.identity
                     && self
                         .record
                         .identity()

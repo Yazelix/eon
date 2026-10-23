@@ -7,8 +7,8 @@ pub fn run() {
     let shell = script(&directory, "SLOW_SHELL", "slow-observer-shell");
     let mut server = Server::start(&directory, &shell, &[("ORBIT_SLOW_GATE", gate.path())]);
     let mut observer = Peer::connect(&server.path, 10.0);
-    observer.send(&ClientMessage::ObserveMetadata);
-    observer.expect(ServerMessage::ObservingMetadata);
+    observer.send(&ClientMessage::ObserveMetadata(None));
+    observer.expect(ServerMessage::ObservingMetadata(Default::default()));
     observer.metadata();
 
     // The observer stops reading while the child changes its title a

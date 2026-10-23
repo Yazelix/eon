@@ -2,11 +2,11 @@ use super::{
     supervisor::{LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id},
     workspace,
 };
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
-    Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
-    decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
-    encode_request, encode_response,
+    RegistryAction, Request, Response, Runtime, VERSION, WindowAction, WorkspaceAction,
+    declared_message_len, decode_lifecycle_response, decode_request, decode_response,
+    encode_lifecycle_response, encode_request, encode_response,
 };
 use std::{
     fs,
@@ -124,15 +124,46 @@ pub(super) fn send_action_on(
     send_prepared_action(stream, prepare_action(action)?)
 }
 
-fn prepare_action(action: Action) -> Result<(bool, Vec<u8>, Duration), EndpointFailure> {
-    let timeout = if matches!(action, Action::Workspace(WorkspaceAction::Stop { .. })) {
+pub(super) fn send_request_on(
+    stream: UnixStream,
+    request: Request,
+) -> Result<ControlResponse, EndpointFailure> {
+    send_prepared_action(stream, prepare_request(request)?)
+}
+
+fn prepare_action(
+    action: Action,
+) -> Result<(bool, Vec<u8>, Duration, Option<usize>), EndpointFailure> {
+    prepare_request(Request {
+        id: request_id(),
+        action,
+    })
+}
+
+fn prepare_request(
+    request: Request,
+) -> Result<(bool, Vec<u8>, Duration, Option<usize>), EndpointFailure> {
+    let limit = matches!(
+        request.action,
+        Action::Hello { .. } | Action::Presentation { .. }
+    )
+    .then_some(eon_workspace_protocol::v13::MAX_HANDSHAKE_BYTES + HEADER_BYTES);
+    let timeout = if matches!(
+        request.action,
+        Action::Workspace(WorkspaceAction::Stop { .. })
+            | Action::Registry(RegistryAction::Stop { .. })
+            | Action::Window {
+                action: WindowAction::Stop,
+                ..
+            }
+    ) {
         // One in-flight operation may precede the bounded managed Stop.
         CONTROL_TIMEOUT.saturating_add(SESSION_START_TIMEOUT)
     } else {
         CONTROL_TIMEOUT
     };
     let lifecycle = matches!(
-        action,
+        request.action,
         Action::Workspace(
             WorkspaceAction::InspectRuntime
                 | WorkspaceAction::InspectPresentation
@@ -140,22 +171,18 @@ fn prepare_action(action: Action) -> Result<(bool, Vec<u8>, Duration), EndpointF
                 | WorkspaceAction::Stop { .. }
         )
     );
-    let request = encode_request(&Request {
-        id: request_id(),
-        action,
-    })
-    .map_err(|error| {
+    let request = encode_request(&request).map_err(|error| {
         EndpointFailure::new(
             EndpointFailureKind::InvalidAction,
             format!("cannot encode Eon action: {error}"),
         )
     })?;
-    Ok((lifecycle, request, timeout))
+    Ok((lifecycle, request, timeout, limit))
 }
 
 fn send_prepared_action(
     mut stream: UnixStream,
-    (lifecycle, request, timeout): (bool, Vec<u8>, Duration),
+    (lifecycle, request, timeout, limit): (bool, Vec<u8>, Duration, Option<usize>),
 ) -> Result<ControlResponse, EndpointFailure> {
     stream
         .set_read_timeout(Some(timeout))
@@ -169,6 +196,12 @@ fn send_prepared_action(
         .read_exact(&mut response)
         .map_err(|error| io_endpoint_failure(error, "cannot read Eon action result"))?;
     let length = declared_message_len(&response).map_err(protocol_endpoint_failure)?;
+    if limit.is_some_and(|limit| length > limit) {
+        return Err(EndpointFailure::new(
+            EndpointFailureKind::Incompatible,
+            "workspace handshake exceeds its size limit",
+        ));
+    }
     response.resize(length, 0);
     stream
         .read_exact(&mut response[HEADER_BYTES..])
@@ -268,7 +301,9 @@ pub(super) fn probe_presentable_runtime(socket: &Path) -> Result<Runtime, Endpoi
 
 pub(super) fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFailure> {
     match send_action(socket, Action::Workspace(WorkspaceAction::Inspect))? {
-        ControlResponse::Workspace(Response::Snapshot(_)) => Ok(LaunchMode::Workspace),
+        ControlResponse::Workspace(
+            Response::Snapshot(_) | Response::Workspace(_) | Response::Window(_),
+        ) => Ok(LaunchMode::Workspace),
         ControlResponse::Workspace(Response::Failure(failure))
             if failure.code == "workspace-unavailable" =>
         {
@@ -285,7 +320,7 @@ pub(super) fn probe_launch_mode(socket: &Path) -> Result<LaunchMode, EndpointFai
                 failure.detail
             ),
         )),
-        ControlResponse::Lifecycle(_) => Err(EndpointFailure::new(
+        ControlResponse::Lifecycle(_) | ControlResponse::Workspace(_) => Err(EndpointFailure::new(
             EndpointFailureKind::Corrupt,
             "supervisor returned the wrong EONW result for launch-mode inspection",
         )),
@@ -299,6 +334,28 @@ pub(super) struct ControlListener {
 }
 
 impl ControlListener {
+    pub(super) fn accept_request(&self) -> Result<Option<PendingRequest>, String> {
+        let (mut stream, _) = match self.listener.accept() {
+            Ok(value) => value,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
+            Err(error) => return Err(format!("cannot accept Eon control client: {error}")),
+        };
+        let timeout = Some(Duration::from_millis(250));
+        stream
+            .set_read_timeout(timeout)
+            .and_then(|()| stream.set_write_timeout(timeout))
+            .map_err(|error| error.to_string())?;
+        match read_request(&mut stream) {
+            Ok(request) => Ok(Some(PendingRequest { stream, request })),
+            Err(error) => {
+                write_response(
+                    &mut stream,
+                    &ControlResponse::Workspace(Response::Failure(error)),
+                );
+                Ok(None)
+            }
+        }
+    }
     pub(super) fn bind(path: &Path) -> Result<Self, String> {
         match UnixStream::connect(path) {
             Ok(_) => {
@@ -369,11 +426,33 @@ impl ControlListener {
         &self,
         dispatch: impl FnOnce(Request) -> (ControlResponse, bool),
     ) -> Result<bool, String> {
-        match self.listener.accept() {
-            Ok((stream, _)) => Ok(handle_client(stream, dispatch)),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(false),
-            Err(error) => Err(format!("cannot accept Eon control client: {error}")),
-        }
+        let Some(mut client) = self.accept_request()? else {
+            return Ok(false);
+        };
+        let (response, shutdown) = dispatch(client.request);
+        write_response(&mut client.stream, &response);
+        Ok(shutdown)
+    }
+}
+
+pub(super) struct PendingRequest {
+    stream: UnixStream,
+    pub(super) request: Request,
+}
+impl PendingRequest {
+    pub(super) fn reply(mut self, response: Response) {
+        write_response(&mut self.stream, &ControlResponse::Workspace(response));
+    }
+
+    pub(super) fn reply_and_retain(mut self, response: Response) -> Result<UnixStream, String> {
+        let bytes = encode_response(&response).map_err(|error| error.to_string())?;
+        self.stream
+            .write_all(&bytes)
+            .map_err(|error| error.to_string())?;
+        self.stream
+            .set_nonblocking(true)
+            .map_err(|error| error.to_string())?;
+        Ok(self.stream)
     }
 }
 
@@ -390,19 +469,8 @@ impl Drop for ControlListener {
     }
 }
 
-fn handle_client(
-    mut stream: UnixStream,
-    dispatch: impl FnOnce(Request) -> (ControlResponse, bool),
-) -> bool {
-    let timeout = Some(Duration::from_millis(250));
-    if stream.set_read_timeout(timeout).is_err() || stream.set_write_timeout(timeout).is_err() {
-        return false;
-    }
-    let (response, shutdown) = match read_request(&mut stream) {
-        Ok(request) => dispatch(request),
-        Err(error) => (ControlResponse::Workspace(Response::Failure(error)), false),
-    };
-    let encoded = match &response {
+fn write_response(stream: &mut UnixStream, response: &ControlResponse) {
+    let encoded = match response {
         ControlResponse::Workspace(response) => encode_response(response),
         ControlResponse::Lifecycle(response) => encode_lifecycle_response(response),
     };
@@ -414,7 +482,6 @@ fn handle_client(
     }) {
         let _ = stream.write_all(&encoded);
     }
-    shutdown
 }
 
 fn read_request(stream: &mut impl Read) -> Result<Request, Failure> {

@@ -5,9 +5,17 @@ installation, and proven contract changes.
 
 ## Unreleased
 
-- `eon` speaks only EONW 12. A generation started by an older build that uses
-  an earlier EONW is listed as incompatible and can no longer be inspected or
-  stopped by this `eon`; stop it with the build that started it.
+- SSH named workspaces (EON-C29): bare
+  `eon` and `window new` create persistent named workspaces; `workspaces`,
+  `workspace create`, `workspace stop`, `workspace forget`, `remote add`,
+  `connect` and `disconnect`
+  manage local or SSH targets. The native selector switches within a window,
+  and each workspace saves its layout and existing terminal run identities.
+  `.#eon-server` supplies explicit systemd user-service setup without Venus or
+  presentation fonts. Remote hosting requires linger. EONW is now v13, ORBS
+  v14, ORBF v2 and management/record v2; older live work requires its retained
+  executable. Existing `eon run` generation commands and eonbase remain.
+
 - `eon claude-statusline` is gone; Claude quota has come from CodexBar since
   EON-C27, so the command only drained old status-line wrappers. The shared
   executable no longer refuses the retired `eonterm` name; any name other than

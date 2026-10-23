@@ -28,8 +28,8 @@ pub fn run() {
     // The silent peer was closed without an answer.
     silent.expect_closed();
     let mut client = Peer::connect(&server.path, PEER_BOUND + MARGIN);
-    client.send(&ClientMessage::Hello);
-    client.expect(ServerMessage::Attached);
+    client.send(&ClientMessage::Hello(None));
+    client.expect(ServerMessage::Attached(Default::default()));
     client.frame();
     // The same holds while a client is attached, which keeps its child.
     let mut silent = Peer::connect(&server.path, PEER_BOUND + MARGIN);

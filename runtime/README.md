@@ -6,13 +6,12 @@ Both crates build and test without the Eon crates.
 | Package | Owns | Version |
 |---|---|---|
 | `eon-runtime` | Invocation, terminal lifecycle, workspace state, configuration parsing and generation identity | `0.1.0` |
-| `eon-workspace-protocol` | EONW v12 types and bounded codec | `0.1.0` |
+| `eon-workspace-protocol` | EONW v13 types and bounded codec | `0.1.0` |
 
 ## Consumer boundary
 
 Eon's actual executable calls `eon_runtime::run(inputs)`. The concrete root
-exports construct `Inputs`, defaults and managed-program inputs; the nine
-mechanism modules remain private. `run` returns the product label and exit
+exports construct `Inputs`, defaults and managed-program inputs; the mechanism modules remain private. `run` returns the product label and exit
 result. Eon retains process exit/error handling.
 The private CLI prints grouped Eon help for standalone `-h` and `--help`,
 with terminal-only color and concise usage errors; child options remain forwarded.
@@ -69,12 +68,22 @@ Successful missing quota clears prior facts.
 Eon's [EON-C27](../docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
 owns product policy and installed acceptance.
 
-EONW v12 adds a request that moves the selected pane into the neighbouring
-column; v11 adds a request that closes one pane by its stable identity; v10
-arranges each tab's panes into up to four columns; v9 permits genuinely absent
-provider resets, including stale observations. Only v12 remains: the CLI
-inspects and stops supervisors that use it, lists any other as incompatible,
-and presentation remains bound to the original exact executable.
+EONW v13 adds bounded named-workspace registry and handshake messages, run
+bindings and a window projection. Mutations routed through a window include its
+connection generation, so a delayed action cannot affect a newly selected
+workspace. Each window owns Venus and its SSH connection; each named supervisor
+owns atomic layout and management leases. Session and frame compatibility are
+checked before terminal input or full frames are accepted. Build identity stays
+diagnostic for named-workspace recovery; process, UID, run and endpoint identity
+checks still apply.
+
+Only EONW v13 remains. Legacy generation commands still require the exact
+protocol and original executable. Named layout format 1 stores structure and
+run identities, never commands or terminal contents. Missing runs become
+stopped slots rather than new processes. The server path uses per-workspace
+systemd user services and independent Orbit scopes; local starts remain direct.
+[EON-C29](../docs/CONTRACTS.md#eon-c29--recoverable-ssh-named-workspaces) and
+`eon-remote-ssh-x7dr.3` record the accepted behavior and installed proof.
 
 ## Packages
 
@@ -82,7 +91,7 @@ Runtime and codec have separate package manifests and version owners. Runtime
 depends on the in-tree Orbit protocol crate.
 
 EONW's complete package is its Cargo manifest, `src/lib.rs` and
-`src/v12.rs`. It has no external dependencies, feature declarations,
+`src/v13.rs` and `src/v13/connection.rs`. It has no external dependencies, feature declarations,
 build script or workspace-inherited settings.
 
 Runtime evolution has one owner here; Eon owns product composition and

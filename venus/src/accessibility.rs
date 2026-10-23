@@ -1,5 +1,5 @@
 use crate::{
-    CellMetrics, MAX_LINK_BYTES, Scene, SceneRect, ShortcutViewerScene, WorkspaceFocus,
+    CellMetrics, MAX_LINK_BYTES, Scene, SceneRect, WorkspaceDialogScene, WorkspaceFocus,
     WorkspaceHeaderControl, WorkspaceScene,
     scene::{
         AccessiblePosition, AccessibleRow, AccessibleSelection, AccessibleText, QuotaProvider,
@@ -30,6 +30,7 @@ const SCROLLBACK: NodeId = NodeId(10);
 const HINTS: NodeId = NodeId(11);
 const VERSION: NodeId = NodeId(12);
 const CLAUDE_QUOTA: NodeId = NodeId(13);
+const WORKSPACES: NodeId = NodeId(14);
 // Scene rows are u16, so this range cannot collide with fixed or text-run nodes.
 const WORKSPACE_NODE_START: u64 = 1 << 32;
 const LINK_NODE_START: u64 = 1 << 48;
@@ -57,7 +58,7 @@ struct Snapshot {
     metrics: CellMetrics,
     columns: Option<u16>,
     workspace: Option<WorkspaceScene>,
-    shortcut_viewer: Option<ShortcutViewerScene>,
+    shortcut_viewer: Option<WorkspaceDialogScene>,
     workspace_focus: WorkspaceFocus,
     tab_ids: HashMap<String, NodeId>,
     pane_ids: HashMap<String, NodeId>,
@@ -179,15 +180,15 @@ impl Snapshot {
         if let Some(viewer) = &self.shortcut_viewer {
             root.set_children(vec![SHORTCUT_DIALOG]);
             let mut dialog = Node::new(Role::Dialog);
-            dialog.set_label("Eon shortcuts");
-            dialog.set_description(
-                "Native Eon surface shortcuts. Use arrows or Page Up and Page Down to scroll; press Escape or Alt+Slash to close.",
-            );
+            dialog.set_label(viewer.title_text.as_str());
+            dialog.set_description(format!("{}. {}", viewer.subtitle_text, viewer.footer_text));
             dialog.set_bounds(rect(viewer.bounds));
             dialog.set_modal();
             dialog.set_clips_children();
             let mut nodes = vec![(WINDOW, root)];
             let mut group_ids = Vec::with_capacity(viewer.groups.len());
+            let mut row_index = 0;
+            let mut focus = SHORTCUT_DIALOG;
             for (group_index, group) in viewer.groups.iter().enumerate() {
                 let group_id =
                     NodeId(SHORTCUT_NODE_START + group_index as u64 * SHORTCUT_GROUP_STRIDE);
@@ -203,8 +204,23 @@ impl Snapshot {
                 group_node.set_children(row_ids.clone());
                 nodes.push((group_id, group_node));
                 for (row, id) in group.rows.iter().zip(row_ids) {
-                    let mut node = Node::new(Role::Label);
-                    node.set_value(format!("{} — {}", row.shortcut, row.action));
+                    let mut node = Node::new(if row.window_action.is_some() {
+                        Role::Button
+                    } else {
+                        Role::Label
+                    });
+                    let label = format!("{} — {}", row.shortcut, row.action);
+                    if row.window_action.is_some() {
+                        node.set_label(label);
+                        node.add_action(Action::Click);
+                        node.add_action(Action::Focus);
+                        if row_index == viewer.selected {
+                            focus = id;
+                        }
+                    } else {
+                        node.set_value(label);
+                    }
+                    row_index += 1;
                     if let Some(bounds) = row.rect.intersection(viewer.content) {
                         node.set_bounds(rect(bounds));
                     }
@@ -217,22 +233,31 @@ impl Snapshot {
                 nodes,
                 tree: Some(Tree::new(WINDOW)),
                 tree_id: TreeId::ROOT,
-                focus: SHORTCUT_DIALOG,
+                focus,
             };
         }
         let status_alert = terminal && !self.status.is_empty();
         let mut root_children = if let Some(workspace) = &self.workspace {
-            let mut children = vec![TAB_LIST, NEW_TAB];
+            let mut children = vec![TAB_LIST];
+            if workspace.has_control(WorkspaceHeaderControl::NewTab) {
+                children.push(NEW_TAB);
+            }
             for quota in &workspace.quotas {
                 children.push(quota_id(quota.provider));
             }
             if workspace.version.is_some() {
                 children.push(VERSION);
             }
-            if workspace.has_control(WorkspaceHeaderControl::Shortcuts) {
-                children.push(SHORTCUTS);
+            for kind in [
+                WorkspaceHeaderControl::Shortcuts,
+                WorkspaceHeaderControl::CloseTab,
+                WorkspaceHeaderControl::Workspaces,
+            ] {
+                if workspace.has_control(kind) {
+                    children.push(control_node_id(kind));
+                }
             }
-            children.extend([CLOSE_TAB, PANE_PANEL]);
+            children.push(PANE_PANEL);
             if workspace
                 .hints
                 .as_ref()
@@ -359,7 +384,14 @@ impl Snapshot {
                     continue;
                 }
                 let mut node = Node::new(Role::Button);
-                node.set_label(control.kind.label());
+                node.set_label(if control.kind == WorkspaceHeaderControl::Workspaces {
+                    workspace
+                        .connection_label
+                        .as_deref()
+                        .unwrap_or(control.kind.label())
+                } else {
+                    control.kind.label()
+                });
                 if control.kind == WorkspaceHeaderControl::CloseTab
                     && let Some(tab) = workspace.tabs.iter().find(|tab| tab.selected)
                 {
@@ -501,7 +533,28 @@ impl Snapshot {
     }
 
     fn action_target(&self, target: NodeId, action: Action) -> Option<AccessibilityTarget> {
-        if self.shortcut_viewer.is_some() {
+        if let Some(viewer) = &self.shortcut_viewer {
+            if !matches!(action, Action::Click | Action::Focus) {
+                return None;
+            }
+            let mut index = 0;
+            for (group_index, group) in viewer.groups.iter().enumerate() {
+                for (row_index, row) in group.rows.iter().enumerate() {
+                    let id = NodeId(
+                        SHORTCUT_NODE_START
+                            + group_index as u64 * SHORTCUT_GROUP_STRIDE
+                            + row_index as u64
+                            + 1,
+                    );
+                    if id == target && row.window_action.is_some() {
+                        return Some(AccessibilityTarget::DialogRow {
+                            index,
+                            activate: action == Action::Click,
+                        });
+                    }
+                    index += 1;
+                }
+            }
             return None;
         }
         if target == SCROLLBACK && action == Action::Click {
@@ -589,7 +642,7 @@ impl Accessibility {
         adapter: &mut Adapter,
         scene: Option<&Scene>,
         workspace: Option<&WorkspaceScene>,
-        shortcut_viewer: Option<&ShortcutViewerScene>,
+        shortcut_viewer: Option<&WorkspaceDialogScene>,
         workspace_focus: WorkspaceFocus,
         status: &str,
         scrollback_label: Option<&str>,
@@ -665,6 +718,10 @@ fn accessible_link_label(uri: &str) -> String {
 /// Accessible action routed back through Venus and Eon semantics.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AccessibilityTarget {
+    DialogRow {
+        index: usize,
+        activate: bool,
+    },
     Terminal,
     ReturnToLive,
     Tab(String),
@@ -682,6 +739,7 @@ pub enum AccessibilityTarget {
 
 fn control_node_id(control: WorkspaceHeaderControl) -> NodeId {
     match control {
+        WorkspaceHeaderControl::Workspaces => WORKSPACES,
         WorkspaceHeaderControl::NewTab => NEW_TAB,
         WorkspaceHeaderControl::Shortcuts => SHORTCUTS,
         WorkspaceHeaderControl::CloseTab => CLOSE_TAB,
@@ -690,6 +748,7 @@ fn control_node_id(control: WorkspaceHeaderControl) -> NodeId {
 
 fn header_control_for_node(node: NodeId) -> Option<WorkspaceHeaderControl> {
     match node {
+        WORKSPACES => Some(WorkspaceHeaderControl::Workspaces),
         NEW_TAB => Some(WorkspaceHeaderControl::NewTab),
         SHORTCUTS => Some(WorkspaceHeaderControl::Shortcuts),
         CLOSE_TAB => Some(WorkspaceHeaderControl::CloseTab),
@@ -789,8 +848,10 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Color, DrawCell, DrawRow, DrawStyle, PaneMetadata, ShortcutGroup, ShortcutRow};
-    use eon_workspace_protocol::v12::{
+    use crate::{
+        Color, DrawCell, DrawRow, DrawStyle, PaneMetadata, WorkspaceDialogGroup, WorkspaceDialogRow,
+    };
+    use eon_workspace_protocol::v13::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, CodexQuotaWindow, Pane, Popup,
         PopupEntry, PopupGeometry, Shortcut, Snapshot as WorkspaceSnapshot, Tab,
     };
@@ -804,7 +865,7 @@ mod tests {
             id: id.into(),
             directory: format!("/tmp/{id}").into_bytes(),
             selected_pane: Some(selected_pane.into()),
-            columns: vec![eon_workspace_protocol::v12::Column {
+            columns: vec![eon_workspace_protocol::v13::Column {
                 panes: panes
                     .iter()
                     .map(|id| Pane {
@@ -824,7 +885,7 @@ mod tests {
             &WorkspaceSnapshot {
                 active_tab: active_tab.into(),
                 tabs,
-                geometry: eon_workspace_protocol::v12::PopupGeometry {
+                geometry: eon_workspace_protocol::v13::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
@@ -938,6 +999,7 @@ mod tests {
                                         )
                                     },
                                     hints.clone(),
+                                    None,
                                 )
                             };
                             let baseline = project(None);
@@ -1220,7 +1282,7 @@ mod tests {
 
     #[test]
     fn two_provider_chips_share_layout_without_losing_identity_or_freshness() {
-        use eon_workspace_protocol::v12::{ClaudeQuota, ClaudeQuotaState};
+        use eon_workspace_protocol::v13::{ClaudeQuota, ClaudeQuotaState};
         for state in [ClaudeQuotaState::Fresh, ClaudeQuotaState::Stale] {
             for providers in 0..4 {
                 for scale in [1.0, 1.25, 2.0] {
@@ -1413,10 +1475,10 @@ mod tests {
     #[test]
     fn shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog() {
         let size = PhysicalSize::new(320, 180);
-        let viewer = ShortcutViewerScene::new(
-            vec![ShortcutGroup::new(
+        let viewer = WorkspaceDialogScene::new(
+            vec![WorkspaceDialogGroup::new(
                 "Host",
-                vec![ShortcutRow::new("Alt+/", "Show or close shortcuts")],
+                vec![WorkspaceDialogRow::new("Alt+/", "Show or close shortcuts")],
             )],
             size,
             CellMetrics::for_scale(1.0),
@@ -1776,7 +1838,7 @@ mod tests {
                 workspace_tab("t2", &["pane-7"], "pane-7"),
                 workspace_tab("t3", &["pane-8"], "pane-8"),
             ],
-            geometry: eon_workspace_protocol::v12::PopupGeometry {
+            geometry: eon_workspace_protocol::v13::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1920,6 +1982,7 @@ mod tests {
                 |_| None,
                 |_, text| (text.to_owned(), text.len() as f32 * 10.0),
                 footer,
+                None,
             )
         };
         let mut snapshot = Snapshot::new(size);
@@ -2026,7 +2089,7 @@ mod tests {
                         id: "t1".into(),
                         directory: b"/tmp/eon".to_vec(),
                         selected_pane: Some("p2".into()),
-                        columns: vec![eon_workspace_protocol::v12::Column {
+                        columns: vec![eon_workspace_protocol::v13::Column {
                             panes: vec![
                                 Pane {
                                     id: "p1".into(),
@@ -2051,7 +2114,7 @@ mod tests {
                         id: "t2".into(),
                         directory: b"/tmp/nova".to_vec(),
                         selected_pane: Some("p3".into()),
-                        columns: vec![eon_workspace_protocol::v12::Column {
+                        columns: vec![eon_workspace_protocol::v13::Column {
                             panes: vec![Pane {
                                 id: "p3".into(),
                                 session: "session-3".into(),
@@ -2062,7 +2125,7 @@ mod tests {
                         }],
                     },
                 ],
-                geometry: eon_workspace_protocol::v12::PopupGeometry {
+                geometry: eon_workspace_protocol::v13::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
@@ -2077,6 +2140,7 @@ mod tests {
             0.0,
             |endpoint| (endpoint == b"/run/eon/two.sock").then_some(&metadata),
             |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+            None,
             None,
         );
         let terminal_bounds = rect(workspace.visible_terminal().unwrap());
@@ -2138,7 +2202,7 @@ mod tests {
                 id: "project".into(),
                 label: "Project".into(),
                 shortcut: Shortcut {
-                    modifiers: eon_workspace_protocol::v12::ALT,
+                    modifiers: eon_workspace_protocol::v13::ALT,
                     key: "KeyZ".into(),
                 },
             }],

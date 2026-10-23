@@ -1,5 +1,8 @@
 use crate::scene::{DrawRow, Scene, ScenePreview};
-use eon_workspace_protocol::v12::{Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab};
+use eon_workspace_protocol::v13::{
+    ConnectionState as WorkspaceConnection, Pane, Popup, Response as WorkspaceResponse, Snapshot,
+    Tab, WindowState,
+};
 use orbit_protocol::FrameReducer;
 use orbit_protocol::session::{
     ClipboardLocation, FailureCode, PreviewOutcome, ScrollOutcome, ServerMessage, WheelOutcome,
@@ -88,6 +91,7 @@ pub struct SessionModel {
 pub struct WorkspaceModel {
     snapshot: Option<Snapshot>,
     notice: Option<WorkspaceNotice>,
+    window: Option<WindowState>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -118,6 +122,43 @@ pub fn active_popup(snapshot: &Snapshot) -> Option<&Popup> {
 
 impl WorkspaceModel {
     #[must_use]
+    pub fn window(&self) -> Option<&WindowState> {
+        self.window.as_ref()
+    }
+
+    #[must_use]
+    pub fn online(&self) -> bool {
+        self.window
+            .as_ref()
+            .is_none_or(|window| window.connection == WorkspaceConnection::Connected)
+            && !matches!(self.notice, Some(WorkspaceNotice::Unavailable(_)))
+    }
+
+    #[must_use]
+    pub fn expected_run(&self, endpoint: &[u8]) -> Option<orbit_protocol::session::RunIdentity> {
+        let workspace = self.window.as_ref()?.workspace.as_ref()?;
+        let session = workspace.snapshot.tabs.iter().find_map(|tab| {
+            tab.panes()
+                .find(|pane| pane.endpoint == endpoint)
+                .map(|pane| &pane.session)
+                .or_else(|| {
+                    tab.popups
+                        .iter()
+                        .find(|popup| popup.endpoint == endpoint)
+                        .map(|popup| &popup.session)
+                })
+        })?;
+        let binding = workspace
+            .runs
+            .iter()
+            .find(|run| run.live && &run.session == session)?;
+        Some(orbit_protocol::session::RunIdentity {
+            workspace: workspace.workspace.clone(),
+            session: session.clone(),
+            run: binding.run.clone(),
+        })
+    }
+    #[must_use]
     pub fn snapshot(&self) -> Option<&Snapshot> {
         self.snapshot.as_ref()
     }
@@ -129,17 +170,99 @@ impl WorkspaceModel {
         })
     }
 
+    fn structure_changed(&self, next: Option<&Snapshot>) -> bool {
+        match (self.snapshot.as_ref(), next) {
+            (Some(current), Some(next)) => {
+                current.active_tab != next.active_tab
+                    || current.geometry != next.geometry
+                    || current.entries != next.entries
+                    || current.tabs != next.tabs
+            }
+            (None, None) => false,
+            _ => true,
+        }
+    }
+
     /// Apply a response and report `(view changed, workspace changed)`.
     pub fn apply(&mut self, response: WorkspaceResponse) -> (bool, bool) {
         match response {
-            WorkspaceResponse::Snapshot(snapshot) => {
-                let snapshot_changed = self.snapshot.as_ref() != Some(&snapshot);
-                let workspace_changed = self.snapshot.as_ref().is_none_or(|current| {
-                    current.active_tab != snapshot.active_tab
-                        || current.geometry != snapshot.geometry
-                        || current.entries != snapshot.entries
-                        || current.tabs != snapshot.tabs
+            WorkspaceResponse::Window(window) => {
+                let window = *window;
+                if self
+                    .window
+                    .as_ref()
+                    .is_some_and(|current| current.generation > window.generation)
+                {
+                    return (false, false);
+                }
+                let generation_changed = self
+                    .window
+                    .as_ref()
+                    .is_none_or(|current| current.generation != window.generation);
+                let target_changed = self.window.as_ref().is_none_or(|current| {
+                    current.host != window.host
+                        || current.target.as_ref().map(|target| &target.id)
+                            != window.target.as_ref().map(|target| &target.id)
                 });
+                let accepts_target = self.window.as_ref().is_some_and(|current| {
+                    current.connection == WorkspaceConnection::Connecting
+                        && window.connection == WorkspaceConnection::Connected
+                });
+                if !generation_changed && target_changed && !accepts_target {
+                    return (
+                        self.reject_action(
+                            "Eon changed the target without advancing its connection generation",
+                        ),
+                        false,
+                    );
+                }
+                let changed = self.window.as_ref() != Some(&window);
+                let snapshot = window
+                    .workspace
+                    .as_ref()
+                    .map(|workspace| workspace.snapshot.clone());
+                let workspace_changed = generation_changed
+                    || target_changed
+                    || self.structure_changed(snapshot.as_ref())
+                    || self
+                        .window
+                        .as_ref()
+                        .is_none_or(|current| current.connection != window.connection);
+                self.snapshot = snapshot;
+                if window.connection != WorkspaceConnection::Connected {
+                    self.clear_quotas();
+                }
+                let notice_changed = if !workspace_changed
+                    && matches!(self.notice, Some(WorkspaceNotice::Action(_)))
+                {
+                    false
+                } else {
+                    let notice = (!window.detail.is_empty())
+                        .then(|| WorkspaceNotice::Unavailable(bounded(window.detail.clone())));
+                    let changed = self.notice != notice;
+                    self.notice = notice;
+                    changed
+                };
+                self.window = Some(window);
+                (changed || notice_changed, workspace_changed)
+            }
+            WorkspaceResponse::Hello(_)
+            | WorkspaceResponse::Registry(_)
+            | WorkspaceResponse::Workspace(_) => (
+                self.reject_action("Unexpected connection response from the window controller"),
+                false,
+            ),
+            WorkspaceResponse::Snapshot(snapshot) => {
+                if self.window.is_some() {
+                    return (
+                        self.reject_action(
+                            "A window requires a generation-bound workspace response",
+                        ),
+                        false,
+                    );
+                }
+                let snapshot_changed = self.snapshot.as_ref() != Some(&snapshot);
+                let workspace_changed = self.structure_changed(Some(&snapshot));
                 let notice_cleared = (workspace_changed
                     || matches!(self.notice, Some(WorkspaceNotice::Unavailable(_))))
                     && self.notice.take().is_some();
@@ -162,19 +285,34 @@ impl WorkspaceModel {
     }
 
     pub fn mark_unavailable(&mut self, detail: impl Into<String>) -> bool {
-        let expired_quota = self.snapshot.as_mut().is_some_and(|snapshot| {
+        if let Some(window) = &mut self.window {
+            window.connection = WorkspaceConnection::Offline;
+        }
+        let expired_quota = self.clear_quotas();
+        self.set_notice(WorkspaceNotice::Unavailable(bounded(detail.into()))) || expired_quota
+    }
+
+    fn clear_quotas(&mut self) -> bool {
+        self.snapshot.as_mut().is_some_and(|snapshot| {
             let codex = snapshot.codex_quota.take().is_some();
             let claude = snapshot.claude_quota.take().is_some();
             codex || claude
-        });
-        self.set_notice(WorkspaceNotice::Unavailable(bounded(detail.into()))) || expired_quota
+        })
     }
 
     #[must_use]
     pub fn active_attachment(&self) -> Option<(&[u8], bool)> {
         let snapshot = self.snapshot.as_ref()?;
         if let Some(popup) = active_popup(snapshot) {
-            return Some((&popup.endpoint, true));
+            let live = self.window.as_ref().is_none_or(|window| {
+                window.workspace.as_ref().is_some_and(|workspace| {
+                    workspace
+                        .runs
+                        .iter()
+                        .any(|run| run.session == popup.session && run.live)
+                })
+            });
+            return Some((&popup.endpoint, live));
         }
         let tab = snapshot
             .tabs
@@ -313,7 +451,7 @@ impl SessionModel {
         let connecting = matches!(self.connection, ConnectionState::Connecting);
         let attached = self.is_attached();
         match message {
-            ServerMessage::Attached if connecting => {
+            ServerMessage::Attached(_) if connecting => {
                 self.connection = ConnectionState::Attached;
                 self.notices.clear();
             }
@@ -537,9 +675,84 @@ fn bounded(mut detail: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v12::{
+    use eon_workspace_protocol::v13::{
         self as workspace, CodexQuota, CodexQuotaState, Failure, Pane, PopupEntry, Shortcut, Tab,
     };
+
+    #[test]
+    fn window_selection_accepts_only_the_current_connection_and_preserves_offline_target() {
+        use workspace::{Compatibility, WindowState, WorkspaceInfo, WorkspaceSnapshot};
+        let snapshot = Snapshot {
+            active_tab: "t1".into(),
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/project".to_vec(),
+                pending: false,
+                columns: Vec::new(),
+                selected_pane: None,
+                selected_popup: None,
+                popups: Vec::new(),
+            }],
+            geometry: workspace::PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            codex_quota: None,
+            claude_quota: None,
+        };
+        let target = |id: &str| WorkspaceInfo {
+            id: id.into(),
+            name: id.into(),
+            build: "diagnostic".into(),
+            control_endpoint: b"/run/eon/eon.sock".to_vec(),
+            compatibility: Compatibility::default(),
+            stopped: false,
+        };
+        let mut state = WindowState {
+            generation: 1,
+            connection: WorkspaceConnection::Connected,
+            host: String::new(),
+            target: Some(target("A")),
+            groups: Vec::new(),
+            detail: String::new(),
+            workspace: Some(WorkspaceSnapshot {
+                workspace: "A".into(),
+                snapshot: snapshot.clone(),
+                runs: Vec::new(),
+            }),
+        };
+        let mut model = WorkspaceModel::default();
+        model.apply(WorkspaceResponse::Window(Box::new(state.clone())));
+        assert!(model.online());
+        state.generation = 2;
+        state.connection = WorkspaceConnection::Connecting;
+        model.apply(WorkspaceResponse::Window(Box::new(state.clone())));
+        assert!(!model.online());
+        assert_eq!(model.window().unwrap().target.as_ref().unwrap().id, "A");
+        state.connection = WorkspaceConnection::Connected;
+        state.host = "remote".into();
+        state.target = Some(target("B"));
+        state.workspace.as_mut().unwrap().workspace = "B".into();
+        assert_eq!(
+            model.apply(WorkspaceResponse::Window(Box::new(state.clone()))),
+            (true, true)
+        );
+        assert!(model.online());
+        assert_eq!(model.window().unwrap().target.as_ref().unwrap().id, "B");
+        let accepted = state.clone();
+        state.generation = 1;
+        state.target = Some(target("A"));
+        assert_eq!(
+            model.apply(WorkspaceResponse::Window(Box::new(state))),
+            (false, false)
+        );
+        assert_eq!(model.window(), Some(&accepted));
+        model.mark_unavailable("connection lost");
+        assert!(!model.online());
+        assert_eq!(model.snapshot(), Some(&snapshot));
+        assert_eq!(model.window().unwrap().target.as_ref().unwrap().id, "B");
+    }
 
     #[test]
     fn quota_refresh_and_workspace_failures_preserve_structure() {
@@ -553,7 +766,7 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v12::Column {
+                    columns: vec![eon_workspace_protocol::v13::Column {
                         panes: vec![Pane {
                             id: "pane-1".into(),
                             session: "session-1".into(),
@@ -570,7 +783,7 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-2".into()),
-                    columns: vec![eon_workspace_protocol::v12::Column {
+                    columns: vec![eon_workspace_protocol::v13::Column {
                         panes: vec![Pane {
                             id: "pane-2".into(),
                             session: "session-2".into(),
@@ -581,7 +794,7 @@ mod tests {
                     }],
                 },
             ],
-            geometry: eon_workspace_protocol::v12::PopupGeometry {
+            geometry: eon_workspace_protocol::v13::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -601,91 +814,127 @@ mod tests {
                 }],
             }),
         };
-        let mut model = WorkspaceModel::default();
+        for named in [false, true] {
+            let response = |snapshot: Snapshot| {
+                if named {
+                    WorkspaceResponse::Window(Box::new(workspace::WindowState {
+                        generation: 1,
+                        connection: workspace::ConnectionState::Connected,
+                        host: String::new(),
+                        target: None,
+                        groups: Vec::new(),
+                        detail: String::new(),
+                        workspace: Some(workspace::WorkspaceSnapshot {
+                            workspace: "w1".into(),
+                            snapshot,
+                            runs: Vec::new(),
+                        }),
+                    }))
+                } else {
+                    WorkspaceResponse::Snapshot(snapshot)
+                }
+            };
+            let mut model = WorkspaceModel::default();
 
-        assert_eq!(
-            model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
-            (true, true)
-        );
-        assert_eq!(
-            model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
-            (false, false)
-        );
-        let mut refreshed_quota = snapshot.clone();
-        refreshed_quota.codex_quota.as_mut().unwrap().observed_at += 1;
-        refreshed_quota.claude_quota.as_mut().unwrap().observed_at += 1;
-        assert_eq!(
-            model.apply(WorkspaceResponse::Snapshot(refreshed_quota.clone())),
-            (true, false),
-            "quota-only refreshes are not structural workspace changes"
-        );
-        assert_eq!(
-            model.apply(WorkspaceResponse::Failure(Failure {
-                code: "edge".into(),
-                detail: "there is no pane above the selected pane".into(),
-            })),
-            (true, false)
-        );
+            assert_eq!(model.apply(response(snapshot.clone())), (true, true));
+            assert_eq!(model.apply(response(snapshot.clone())), (false, false));
+            let mut refreshed_quota = snapshot.clone();
+            refreshed_quota.codex_quota.as_mut().unwrap().observed_at += 1;
+            refreshed_quota.claude_quota.as_mut().unwrap().observed_at += 1;
+            assert_eq!(
+                model.apply(response(refreshed_quota.clone())),
+                (true, false),
+                "quota-only refreshes are not structural workspace changes"
+            );
+            assert_eq!(
+                model.apply(WorkspaceResponse::Failure(Failure {
+                    code: "edge".into(),
+                    detail: "there is no pane above the selected pane".into(),
+                })),
+                (true, false)
+            );
 
-        assert_eq!(model.snapshot(), Some(&refreshed_quota));
-        assert_eq!(
-            model.active_attachment(),
-            Some((&b"/run/eon/orbit.sock"[..], true))
-        );
-        assert_eq!(
-            model.notice(),
-            Some("Eon workspace edge: there is no pane above the selected pane")
-        );
-        assert_eq!(
-            model.apply(WorkspaceResponse::Snapshot(refreshed_quota.clone())),
-            (false, false),
-            "an unchanged poll must not dismiss an action failure"
-        );
-        assert!(model.notice().is_some());
-        assert_eq!(
-            model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
-            (true, false)
-        );
-        assert!(model.notice().is_some(), "quota updates retain the failure");
-        assert_eq!(
-            model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
-            (false, false)
-        );
+            assert_eq!(model.snapshot(), Some(&refreshed_quota));
+            assert_eq!(
+                model.active_attachment(),
+                Some((&b"/run/eon/orbit.sock"[..], true))
+            );
+            assert_eq!(
+                model.notice(),
+                Some("Eon workspace edge: there is no pane above the selected pane")
+            );
+            assert_eq!(
+                model.apply(response(refreshed_quota.clone())),
+                (false, false),
+                "an unchanged poll must not dismiss an action failure"
+            );
+            assert!(model.notice().is_some());
+            assert_eq!(model.apply(response(snapshot.clone())), (true, false));
+            assert!(model.notice().is_some(), "quota updates retain the failure");
+            assert_eq!(model.apply(response(snapshot.clone())), (false, false));
 
-        let mut selected = snapshot.clone();
-        selected.active_tab = "t2".into();
-        assert_eq!(
-            model.apply(WorkspaceResponse::Snapshot(selected)),
-            (true, true)
-        );
-        assert_eq!(
-            model.notice(),
-            None,
-            "a changed workspace retires the failure"
-        );
+            let mut selected = snapshot.clone();
+            selected.active_tab = "t2".into();
+            assert_eq!(model.apply(response(selected)), (true, true));
+            assert_eq!(
+                model.notice(),
+                None,
+                "a changed workspace retires the failure"
+            );
 
-        assert!(model.mark_unavailable("Cannot connect to Eon"));
-        assert!(model.snapshot().unwrap().codex_quota.is_none());
-        assert!(model.snapshot().unwrap().claude_quota.is_none());
-        assert!(!model.mark_unavailable("Cannot connect to Eon"));
-        let recovered = model.snapshot().unwrap().clone();
-        assert_eq!(
-            model.apply(WorkspaceResponse::Snapshot(recovered)),
-            (true, false)
-        );
-        assert_eq!(
-            model.notice(),
-            None,
-            "an identical snapshot proves reconnection"
-        );
+            assert!(model.mark_unavailable("Cannot connect to Eon"));
+            assert!(model.snapshot().unwrap().codex_quota.is_none());
+            assert!(model.snapshot().unwrap().claude_quota.is_none());
+            assert!(!model.mark_unavailable("Cannot connect to Eon"));
+            let recovered = model.snapshot().unwrap().clone();
+            assert_eq!(
+                model.apply(response(recovered)),
+                (true, named),
+                "a named connection recovering from Offline invalidates its attachment state"
+            );
+            assert_eq!(
+                model.notice(),
+                None,
+                "an identical snapshot proves reconnection"
+            );
 
-        let mut offline = snapshot.clone();
-        offline.tabs[0].columns[0].panes[0].live = false;
-        model.apply(WorkspaceResponse::Snapshot(offline));
-        assert_eq!(
-            model.active_attachment(),
-            Some((&b"/run/eon/orbit.sock"[..], false))
-        );
+            if named {
+                for connection in [
+                    WorkspaceConnection::Offline,
+                    WorkspaceConnection::Disconnected,
+                ] {
+                    model.apply(response(snapshot.clone()));
+                    let WorkspaceResponse::Window(mut offline) = response(snapshot.clone()) else {
+                        unreachable!();
+                    };
+                    offline.connection = connection;
+                    offline.detail = "Remote connection lost".into();
+                    assert_eq!(
+                        model.apply(WorkspaceResponse::Window(offline.clone())),
+                        (true, true)
+                    );
+                    assert!(!model.online());
+                    assert!(model.snapshot().unwrap().codex_quota.is_none());
+                    assert!(model.snapshot().unwrap().claude_quota.is_none());
+                    assert_eq!(model.snapshot().unwrap().tabs, snapshot.tabs);
+                    assert_eq!(
+                        model.apply(WorkspaceResponse::Window(offline)),
+                        (false, false),
+                        "an unchanged offline poll must not restore cached quota figures"
+                    );
+                    assert!(model.snapshot().unwrap().codex_quota.is_none());
+                    assert!(model.snapshot().unwrap().claude_quota.is_none());
+                }
+            }
+
+            let mut offline = snapshot.clone();
+            offline.tabs[0].columns[0].panes[0].live = false;
+            model.apply(response(offline));
+            assert_eq!(
+                model.active_attachment(),
+                Some((&b"/run/eon/orbit.sock"[..], false))
+            );
+        }
     }
 
     #[test]

@@ -36,10 +36,10 @@ clear/reset, screen switches and reattachment therefore carry position at that
 frame's revision. Failed engine extraction does not fabricate zero or publish a
 partial frame. Existing 4 MiB/100,000-cell bounds remain.
 
-ORBS v7 through v13 are explicitly breaking, exact-version boundaries with no
+ORBS v7 through v14 are explicitly breaking, exact-version boundaries with no
 compatibility window or adapter; each replaced its predecessor. Orbit's
 real-PTY checks and lifecycle tests, Venus and Eon consume the canonical crate
-in this repository. Each contract below states the current ORBS v13 behavior.
+in this repository. Each contract below states the current ORBS v14 behavior.
 
 ## ORB-C1 — Session survival across client loss
 
@@ -113,6 +113,11 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Trigger:** A peer negotiates an explicit role on the private presentation
   endpoint.
 - **Result:**
+  - ORBS v14 admits a bounded identity/capability handshake before terminal payload. Consumers validate the supported protocol and expected run before using the attachment. Eon may forward the Unix endpoint over SSH; Orbit still owns one local interactive attachment and one metadata observer, not remote transport. ORBF remains v2 with complete snapshots. The v14 handshake and explicit-release proof is recorded in [EON-C29](../../docs/CONTRACTS.md#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
+  - An interactive client can explicitly release its attachment without ending
+    the terminal task, including through SSH forwarding. Closing only its write
+    half retains the existing output-reading behavior. Clients validate the
+    release capability in the handshake before using this mechanism.
   - One client may own input while one observer receives only initial and changed
     terminal-authored title, raw working directory, presentation revision, and
     lifecycle.
@@ -652,6 +657,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Trigger:** A launcher prepares an owned mode-0600 record, Orbit crosses Ready,
   the original supervisor disappears, or a replacement acquires management.
 - **Result:**
+  - Management and record v2 retain origin build identity separately from compatible protocol admission, with an explicit workspace identity. A replacement must match the complete published identity and live peer; a different compatible consumer build does not change the originating run. Orbit has no systemd requirement. Eon may host it in an independent user scope, without altering canonical Stop or detached-process semantics. The v2 takeover and identity-rejection proof is recorded in [EON-C29](../../docs/CONTRACTS.md#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
   - The launcher may retain an empty exact owned mode-0600 record inode before
     spawn. Orbit serializes Ready by attempting one exclusive lock; a held claim
     stops startup without marking or publishing.
@@ -694,7 +700,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     PTY, presentation, child observation, or shutdown.
 - **Owner:** Orbit's private management owner and canonical protocol package;
   platform mechanics remain isolated, while Eon owns consumer policy.
-- **Consumes:** Canonical management v1 and ORB-C12.
+- **Consumes:** Canonical management v2 and ORB-C12.
 - **Boundary:**
   - The contract is per live Orbit run. Eon retains topology, enumeration,
     cleanup, and recovery policy.

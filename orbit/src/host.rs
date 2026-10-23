@@ -878,7 +878,12 @@ impl Host {
                 }
                 let mut deadline = Timer::default();
                 deadline.set(Some(self.bounds.peer_ms));
-                self.peer = Some(Peer::new(stream));
+                let mut peer = Peer::new(stream);
+                if let Some(management) = &self.management {
+                    peer.handshake =
+                        orbit_protocol::session::Handshake::from_management(&management.identity);
+                }
+                self.peer = Some(peer);
                 self.peer_deadline = Some(deadline);
                 Ok(None)
             }
@@ -995,7 +1000,10 @@ impl Host {
             }));
         }
         match client.request.take().ok_or_else(protocol)? {
-            ClientMessage::Hello | ClientMessage::ObserveMetadata => Ok(Some(Fact::RoleRepeated)),
+            ClientMessage::Hello(_) | ClientMessage::ObserveMetadata(_) => {
+                Ok(Some(Fact::RoleRepeated))
+            }
+            ClientMessage::Detach => Ok(Some(Fact::Closed { full: true })),
             // Once the PTY closes, no request is applied.
             _ if !self.pty_open => Ok(Some(Fact::Applied(Effect::Closed))),
             // Bend compares a request's revision with authority.

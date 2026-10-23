@@ -1,5 +1,5 @@
 use super::{NATIVE_PLATFORM, NativePlatform};
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, Side, Snapshot, Tab,
     WorkspaceAction as CommonAction,
 };
@@ -8,7 +8,7 @@ use winit::{
     event::MouseButton,
     keyboard::{Key, KeyCode, PhysicalKey},
 };
-use yazelix_venus::{ShortcutGroup, ShortcutHint, ShortcutRow, WorkspaceFocus};
+use yazelix_venus::{ShortcutHint, WorkspaceDialogGroup, WorkspaceDialogRow, WorkspaceFocus};
 
 pub(super) fn paste_shortcut(
     key: &Key,
@@ -413,25 +413,25 @@ pub(super) fn native_pointer_shortcut_for(
 }
 
 pub(super) fn shortcut_groups(
-    entries: &[eon_workspace_protocol::v12::PopupEntry],
-) -> Vec<ShortcutGroup> {
+    entries: &[eon_workspace_protocol::v13::PopupEntry],
+) -> Vec<WorkspaceDialogGroup> {
     shortcut_groups_for(NATIVE_PLATFORM, entries)
 }
 
 pub(super) fn shortcut_groups_for(
     platform: NativePlatform,
-    entries: &[eon_workspace_protocol::v12::PopupEntry],
-) -> Vec<ShortcutGroup> {
+    entries: &[eon_workspace_protocol::v13::PopupEntry],
+) -> Vec<WorkspaceDialogGroup> {
     let mut groups = ["Navigate", "Tabs and panes", "Host"]
         .into_iter()
         .map(|title| {
-            ShortcutGroup::new(
+            WorkspaceDialogGroup::new(
                 title,
                 FIXED_SHORTCUTS
                     .iter()
                     .filter(|shortcut| shortcut.group == title)
                     .map(|shortcut| {
-                        ShortcutRow::new(
+                        WorkspaceDialogRow::new(
                             shortcut.trigger.display_label_for(platform),
                             shortcut.label,
                         )
@@ -443,12 +443,12 @@ pub(super) fn shortcut_groups_for(
     if !entries.is_empty() {
         groups.insert(
             2,
-            ShortcutGroup::new(
+            WorkspaceDialogGroup::new(
                 "Projects and tools",
                 entries
                     .iter()
                     .map(|entry| {
-                        ShortcutRow::new(
+                        WorkspaceDialogRow::new(
                             physical_shortcut_label_for(
                                 platform,
                                 entry.shortcut.modifiers,
@@ -467,7 +467,7 @@ pub(super) fn shortcut_groups_for(
 pub(super) fn shortcut_hints_for(
     platform: NativePlatform,
     focus: WorkspaceFocus,
-    entries: &[eon_workspace_protocol::v12::PopupEntry],
+    entries: &[eon_workspace_protocol::v13::PopupEntry],
 ) -> Vec<ShortcutHint> {
     let mut hints: Vec<ShortcutHint> = Vec::new();
     for shortcut in FIXED_SHORTCUTS {
@@ -496,7 +496,7 @@ pub(super) fn shortcut_hints_for(
             NativeShortcutTrigger::Key(code, modifiers) => {
                 (wire_modifiers(modifiers), format!("{code:?}"))
             }
-            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v12::ALT, "1..9".into()),
+            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v13::ALT, "1..9".into()),
             _ => continue,
         };
         let modifiers = physical_modifiers_label_for(platform, modifiers, true);
@@ -567,7 +567,7 @@ fn physical_shortcut_label_for(platform: NativePlatform, modifiers: u8, key: &st
 }
 
 fn physical_modifiers_label_for(platform: NativePlatform, modifiers: u8, compact: bool) -> String {
-    use eon_workspace_protocol::v12 as wire;
+    use eon_workspace_protocol::v13 as wire;
 
     let mut parts = Vec::with_capacity(5);
     let labels = match (platform, compact) {
@@ -611,7 +611,7 @@ fn physical_key_label(key: &str) -> &str {
 }
 
 fn wire_modifiers(modifiers: session::Modifiers) -> u8 {
-    use eon_workspace_protocol::v12 as wire;
+    use eon_workspace_protocol::v13 as wire;
 
     [
         (session::Modifiers::SHIFT, wire::SHIFT),
@@ -726,7 +726,7 @@ pub(super) fn popup_shortcut(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v12::PopupEntry;
+    use eon_workspace_protocol::v13::PopupEntry;
 
     #[test]
     fn direct_workspace_shortcuts_use_stable_eon_actions() {
@@ -847,7 +847,7 @@ mod tests {
 
     #[test]
     fn sideways_moves_open_a_column_only_for_a_stacked_outer_pane() {
-        use eon_workspace_protocol::v12::{Column, Pane};
+        use eon_workspace_protocol::v13::{Column, Pane};
 
         let pane = |id: &str| Pane {
             id: id.into(),
@@ -885,16 +885,16 @@ mod tests {
         let entry = PopupEntry {
             id: "agent".into(),
             label: "My agent".into(),
-            shortcut: eon_workspace_protocol::v12::Shortcut {
-                modifiers: eon_workspace_protocol::v12::SUPER,
+            shortcut: eon_workspace_protocol::v13::Shortcut {
+                modifiers: eon_workspace_protocol::v13::SUPER,
                 key: "KeyF".into(),
             },
         };
         let project = PopupEntry {
             id: "project".into(),
             label: "Folder chooser".into(),
-            shortcut: eon_workspace_protocol::v12::Shortcut {
-                modifiers: eon_workspace_protocol::v12::ALT,
+            shortcut: eon_workspace_protocol::v13::Shortcut {
+                modifiers: eon_workspace_protocol::v13::ALT,
                 key: "KeyZ".into(),
             },
         };

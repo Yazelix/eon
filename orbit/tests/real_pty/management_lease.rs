@@ -101,7 +101,7 @@ impl Manager {
     fn acquire_as(&mut self, expected: LiveIdentity) -> Reply {
         let metadata = fs::symlink_metadata(&self.record).expect("record");
         self.send(&ClientMessage::Acquire {
-            expected,
+            expected: Box::new(expected),
             record: ObjectIdentity {
                 device: metadata.dev(),
                 inode: metadata.ino(),

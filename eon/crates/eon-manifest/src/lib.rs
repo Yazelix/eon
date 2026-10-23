@@ -160,7 +160,7 @@ fn validate_strings(value: &serde_json::Value) -> Result<(), Error> {
 }
 
 fn validate(manifest: &Manifest) -> Result<(), Error> {
-    required(manifest.schema == 4, "unsupported manifest schema")?;
+    required(manifest.schema == 5, "unsupported manifest schema")?;
     required(token(&manifest.product.id), "invalid product id")?;
     required(token(&manifest.product.target), "invalid product target")?;
     required(!manifest.components.is_empty(), "component set is empty")?;
@@ -235,7 +235,10 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
                 "duplicate contract id",
             )?;
             required(token(&contract.id), "invalid contract id")?;
-            required(revision(&contract.proof), "invalid contract proof")?;
+            required(
+                proof(&contract.proof, &component.source),
+                "invalid contract proof",
+            )?;
         }
 
         let mut interfaces = HashSet::new();
@@ -246,7 +249,10 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
                 "duplicate interface",
             )?;
             required(token(&interface.id), "invalid interface id")?;
-            required(revision(&interface.proof), "invalid interface proof")?;
+            required(
+                proof(&interface.proof, &component.source),
+                "invalid interface proof",
+            )?;
         }
 
         let mut requirements = HashSet::new();
@@ -272,7 +278,7 @@ fn validate(manifest: &Manifest) -> Result<(), Error> {
                 )?;
                 required(token(&interface.id), "invalid required interface id")?;
                 required(
-                    revision(&interface.proof),
+                    revision(&interface.proof) || bead_proof(&interface.proof),
                     "invalid required interface proof",
                 )?;
             }
@@ -409,6 +415,18 @@ fn revision(value: &str) -> bool {
         && value.bytes().any(|byte| byte != b'0')
 }
 
+fn proof(value: &str, source: &Source) -> bool {
+    revision(value) || matches!(source, Source::Workspace { .. }) && bead_proof(value)
+}
+
+// An owning bead records in-tree proof in the same commit as its implementation.
+fn bead_proof(value: &str) -> bool {
+    value.len() <= 128
+        && value
+            .strip_prefix("bead:")
+            .is_some_and(|id| id.split('.').all(token))
+}
+
 fn token(value: &str) -> bool {
     !value.is_empty()
         && value
@@ -436,6 +454,15 @@ mod tests {
         let input = serde_json::to_string(manifest).unwrap();
         let actual = parse_and_validate(&input).unwrap_err().to_string();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn owning_bead_proofs_are_limited_to_workspace_components() {
+        let mut graph: Value = serde_json::from_str(CANONICAL).unwrap();
+        let proof = "bead:eon-remote-ssh-x7dr.3";
+        component_mut(&mut graph, "yazi")["contracts"] =
+            serde_json::json!([{ "id": "YAZI-C1", "proof": proof }]);
+        rejected("invalid contract proof", &graph);
     }
 
     #[test]
@@ -563,8 +590,8 @@ mod tests {
         rejected("invalid component revision", &mutable_revision);
 
         let duplicate = CANONICAL.replacen(
-            "{\n  \"schema\": 4,",
-            "{\n  \"schema\": 4,\n  \"schema\": 4,",
+            "{\n  \"schema\": 5,",
+            "{\n  \"schema\": 5,\n  \"schema\": 5,",
             1,
         );
         assert!(parse_and_validate(&duplicate).is_err());

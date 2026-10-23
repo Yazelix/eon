@@ -16,7 +16,7 @@ mod tests;
 /// Local-session framing discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBS";
 /// The only local-session revision understood by this package.
-pub const VERSION: u16 = 13;
+pub const VERSION: u16 = 14;
 /// Fixed bytes before a message payload.
 pub const HEADER_BYTES: usize = 12;
 /// Largest payload accepted by the local-session decoder.
@@ -126,13 +126,74 @@ impl From<crate::Error> for Error {
 /// Local-session codec result.
 pub type Result<T> = std::result::Result<T, Error>;
 
+/// Maximum negotiation payload, checked before reading the body.
+pub const MAX_HANDSHAKE_BYTES: usize = 1024;
+/// This revision implements complete ORBF snapshots only.
+pub const FULL_SNAPSHOTS: u16 = 1;
+/// An interactive client can release its own attachment explicitly.
+pub const EXPLICIT_DETACH: u16 = 2;
+/// Capabilities required by this exact ORBS revision.
+pub const CAPABILITIES: u16 = FULL_SNAPSHOTS | EXPLICIT_DETACH;
+
+/// Stable identities supplied by the workspace owner before attachment.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunIdentity {
+    pub workspace: String,
+    pub session: String,
+    pub run: String,
+}
+
+/// Bounded acknowledgement sent before any terminal or metadata payload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Handshake {
+    pub identity: Option<RunIdentity>,
+    /// Diagnostic only: compatible builds need not have equal digests.
+    pub build: String,
+    pub frame_version: u16,
+    pub capabilities: u16,
+}
+
+impl Default for Handshake {
+    fn default() -> Self {
+        Self {
+            identity: None,
+            build: env!("CARGO_PKG_VERSION").into(),
+            frame_version: crate::VERSION,
+            capabilities: CAPABILITIES,
+        }
+    }
+}
+
+impl Handshake {
+    pub fn from_management(identity: &crate::management::LiveIdentity) -> Self {
+        Self {
+            identity: Some(RunIdentity {
+                workspace: identity.workspace_id.clone(),
+                session: identity.session_id.clone(),
+                run: identity.run_id.clone(),
+            }),
+            build: identity.component_generation.clone(),
+            frame_version: identity.frame_version,
+            capabilities: identity.capabilities,
+        }
+    }
+
+    pub fn accepts(&self, expected: Option<&RunIdentity>) -> bool {
+        self.frame_version == crate::VERSION
+            && self.capabilities == CAPABILITIES
+            && expected.is_none_or(|expected| self.identity.as_ref() == Some(expected))
+    }
+}
+
 /// A client-to-Orbit semantic message.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientMessage {
     /// Opens a session using the exact revision in the ORBS header.
-    Hello,
+    Hello(Option<RunIdentity>),
     /// Opens one read-only title/CWD metadata observation.
-    ObserveMetadata,
+    ObserveMetadata(Option<RunIdentity>),
+    /// Releases this attachment without ending the terminal task.
+    Detach,
     /// One physical key event and its text meaning.
     Key(KeyEvent),
     /// One pointer event in surface pixels.
@@ -160,9 +221,9 @@ pub enum ClientMessage {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ServerMessage {
     /// The client owns the single attachment at this exact ORBS revision.
-    Attached,
+    Attached(Handshake),
     /// The client owns the single read-only metadata observation.
-    ObservingMetadata,
+    ObservingMetadata(Handshake),
     /// One authoritative title/CWD observation at a presentation revision.
     Metadata(Metadata),
     /// Another client already owns the single attachment.

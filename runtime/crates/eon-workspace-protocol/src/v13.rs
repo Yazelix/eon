@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v12 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v13 codec for workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -6,7 +6,14 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 12;
+mod connection;
+pub use connection::{
+    Compatibility, ConnectionState, FULL_SNAPSHOTS, MAX_HANDSHAKE_BYTES, MAX_HOSTS, MAX_WORKSPACES,
+    RegistryAction, SessionRun, WindowAction, WindowState, WorkspaceGroup, WorkspaceInfo,
+    WorkspaceSnapshot,
+};
+
+pub const VERSION: u16 = 13;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -35,6 +42,10 @@ const SNAPSHOT: u8 = 129;
 const FAILURE: u8 = 130;
 const RUNTIME: u8 = 131;
 const STOPPED: u8 = 132;
+const HELLO_RESPONSE: u8 = 133;
+const REGISTRY_RESPONSE: u8 = 134;
+const WORKSPACE_STATE: u8 = 135;
+const WINDOW_STATE: u8 = 136;
 
 const INVOKE_POPUP: u8 = 19;
 const DISMISS_POPUP: u8 = 20;
@@ -43,6 +54,10 @@ const CREATE_COLUMN: u8 = 22;
 const CLOSE_PANE: u8 = 23;
 const MOVE_PANE_LEFT: u8 = 24;
 const MOVE_PANE_RIGHT: u8 = 25;
+const HELLO: u8 = 26;
+const REGISTRY: u8 = 27;
+const WINDOW: u8 = 28;
+const PRESENTATION: u8 = 29;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
@@ -100,6 +115,18 @@ pub enum Side {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
+    Hello {
+        workspace: String,
+    },
+    /// Hold this validated channel for the selected window connection lifetime.
+    Presentation {
+        workspace: String,
+    },
+    Registry(RegistryAction),
+    Window {
+        generation: u64,
+        action: WindowAction,
+    },
     Workspace(WorkspaceAction),
     InvokePopup {
         tab: String,
@@ -295,6 +322,10 @@ pub struct Snapshot {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Response {
+    Hello(WorkspaceInfo),
+    Registry(Vec<WorkspaceInfo>),
+    Workspace(WorkspaceSnapshot),
+    Window(Box<WindowState>),
     Snapshot(Snapshot),
     Failure(Failure),
 }
@@ -442,6 +473,24 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
     let mut payload = Encoder::default();
     payload.string(&request.id);
     match &request.action {
+        Action::Hello { workspace } => {
+            identity("workspace id", workspace)?;
+            payload.byte(HELLO);
+            payload.string(workspace);
+        }
+        Action::Presentation { workspace } => {
+            identity("workspace id", workspace)?;
+            payload.byte(PRESENTATION);
+            payload.string(workspace);
+        }
+        Action::Registry(action) => {
+            payload.byte(REGISTRY);
+            connection::encode_registry_action(&mut payload, action)?;
+        }
+        Action::Window { generation, action } => {
+            payload.byte(WINDOW);
+            connection::encode_window_action(&mut payload, *generation, action)?;
+        }
         Action::Workspace(action) => encode_workspace_action(&mut payload, action)?,
         Action::InvokePopup {
             tab,
@@ -540,6 +589,20 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
     let id = decoder.string("request id", MAX_ID_BYTES)?;
     let tag = decoder.byte()?;
     let action = match tag {
+        HELLO => {
+            let workspace = decoder.string("workspace id", MAX_ID_BYTES)?;
+            identity("workspace id", &workspace)?;
+            Some(Action::Hello { workspace })
+        }
+        PRESENTATION => {
+            let workspace = decoder.string("workspace id", MAX_ID_BYTES)?;
+            identity("workspace id", &workspace)?;
+            Some(Action::Presentation { workspace })
+        }
+        REGISTRY => Some(Action::Registry(connection::decode_registry_action(
+            &mut decoder,
+        )?)),
+        WINDOW => Some(connection::decode_window_action(&mut decoder)?),
         CREATE_COLUMN => Some(Action::CreateColumn),
         CLOSE_PANE => {
             let pane = decoder.string("pane id", MAX_ID_BYTES)?;
@@ -646,6 +709,10 @@ fn decode_workspace_action(decoder: &mut Decoder<'_>, tag: u8) -> Result<Workspa
 
 fn validate_popup_action(action: &Action) -> Result<()> {
     match action {
+        Action::Hello { .. }
+        | Action::Presentation { .. }
+        | Action::Registry(_)
+        | Action::Window { .. } => (),
         Action::InvokePopup {
             tab,
             entry,
@@ -704,6 +771,22 @@ impl From<&Tab> for WireTab {
 pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
     let mut payload = Encoder::default();
     let kind = match response {
+        Response::Hello(value) => {
+            connection::encode_hello(&mut payload, value)?;
+            HELLO_RESPONSE
+        }
+        Response::Registry(value) => {
+            connection::encode_registry(&mut payload, value)?;
+            REGISTRY_RESPONSE
+        }
+        Response::Workspace(value) => {
+            connection::encode_state(&mut payload, value)?;
+            WORKSPACE_STATE
+        }
+        Response::Window(value) => {
+            connection::encode_window(&mut payload, value)?;
+            WINDOW_STATE
+        }
         Response::Snapshot(snapshot) => {
             let tabs: Vec<_> = snapshot.tabs.iter().map(WireTab::from).collect();
             let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
@@ -740,6 +823,21 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
 pub fn decode_response(bytes: &[u8]) -> Result<Response> {
     let (kind, payload) = unframe(bytes)?;
     let mut decoder = Decoder::new(payload);
+    let connection = match kind {
+        HELLO_RESPONSE => Some(Response::Hello(connection::decode_hello(&mut decoder)?)),
+        REGISTRY_RESPONSE => Some(Response::Registry(connection::decode_registry(
+            &mut decoder,
+        )?)),
+        WORKSPACE_STATE => Some(Response::Workspace(connection::decode_state(&mut decoder)?)),
+        WINDOW_STATE => Some(Response::Window(Box::new(connection::decode_window(
+            &mut decoder,
+        )?))),
+        _ => None,
+    };
+    if let Some(response) = connection {
+        decoder.finish()?;
+        return Ok(response);
+    }
     if kind == FAILURE {
         let failure = decode_failure(&mut decoder)?;
         decoder.finish()?;
@@ -970,9 +1068,8 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
         if !identities.insert(tab.id.as_str()) {
             return Err(Error::InvalidSnapshot { field: "tab id" });
         }
-        if tab.panes.is_empty() && tab.popups.is_empty() {
-            return Err(Error::InvalidSnapshot { field: "empty tab" });
-        }
+        // A recovered named tab may be empty after its transient Project picker was lost.
+        // The structure remains selectable; recovery must not invent or replay a terminal.
         if tab
             .selected_pane
             .as_ref()
@@ -1728,14 +1825,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e570c00010009000000020072311202007431",
+                "454f4e570d00010009000000020072311202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e570c0001000f000000020072310c0200743104002f746d70",
+                "454f4e570d0001000f000000020072310c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -1744,23 +1841,23 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e570c000100140000000200723113020074310300676974010200753101",
+                "454f4e570d000100140000000200723113020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e570c000100130000000200723115020074310200753104002f746d70",
+                "454f4e570d000100130000000200723115020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e570c000100050000000200723116"),
+            (Action::CreateColumn, "454f4e570d000100050000000200723116"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e570c00010009000000020072311702007032",
+                "454f4e570d00010009000000020072311702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e570c000100050000000200723119",
+                "454f4e570d000100050000000200723119",
             ),
         ] {
             let request = Request {
@@ -1831,7 +1928,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e570c008100b20000000100020002000100010000000200743100000041",
+                    "454f4e570d008100b20000000100020002000100010000000200743100000041",
                     "000080400100030067697403004769740404004b65794701000200743104002f",
                     "746d700001020070330102007531030002007031030073703103002f70310102",
                     "007032030073703203002f70320102007033030073703303002f703301010002",
@@ -1839,7 +1936,7 @@ mod tests {
                     "00002a01f40100000000000001015a000000000000000100602700000700",
                 ),
             ),
-            (failure, "454f4e570c0082000a00000004006275737902006e6f"),
+            (failure, "454f4e570d0082000a00000004006275737902006e6f"),
         ] {
             let bytes = encode_response(&response).unwrap();
             assert_eq!(hex(&bytes), expected, "{response:?}");
@@ -1864,7 +1961,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e570c00830026000000020067310500302e392e300c0002006f6b010002",
+                    "454f4e570d00830026000000020067310500302e392e300d0002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -1873,7 +1970,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e570c00840006000000020067310000",
+                "454f4e570d00840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -2126,10 +2223,10 @@ mod tests {
                 },
             ),
             (
-                &[26],
+                &[30],
                 Error::InvalidTag {
                     field: "action",
-                    value: 26,
+                    value: 30,
                 },
             ),
             (
@@ -2266,7 +2363,7 @@ mod tests {
             s.claude_quota.as_mut().unwrap()
         }
         type Change = fn(&mut Snapshot);
-        let invalid: [(&str, &[Change]); 21] = [
+        let invalid: [(&str, &[Change]); 20] = [
             // Every tab, pane and popup owns its identity, session and endpoint.
             (
                 "surface identity",
@@ -2299,7 +2396,6 @@ mod tests {
                     |s| s.tabs[0].selected_pane = Some("p1".into()),
                 ],
             ),
-            ("empty tab", &[|s| s.tabs[2].popups.clear()]),
             ("active tab", &[|s| s.active_tab = "t5".into()]),
             // A pending tab holds exactly one selected project popup.
             (

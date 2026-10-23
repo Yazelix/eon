@@ -134,7 +134,7 @@ struct MetadataObserver {
 impl MetadataObserver {
     fn attach(socket: &Path) -> TestResult<Self> {
         let deadline = Instant::now() + Duration::from_secs(5);
-        let observe = encode_client_message(&ClientMessage::ObserveMetadata)?;
+        let observe = encode_client_message(&ClientMessage::ObserveMetadata(None))?;
         loop {
             let stream = connect_with_timeouts(socket, deadline)?;
             let mut reader = BufReader::new(stream);
@@ -142,7 +142,7 @@ impl MetadataObserver {
             let mut observing = false;
             loop {
                 match read_message(&mut reader) {
-                    Ok(ServerMessage::ObservingMetadata) if !observing => observing = true,
+                    Ok(ServerMessage::ObservingMetadata(_)) if !observing => observing = true,
                     Ok(ServerMessage::Metadata(metadata)) if observing => {
                         return Ok(Self { reader, metadata });
                     }
@@ -191,7 +191,7 @@ impl MetadataObserver {
 impl Client {
     fn attach(socket: &Path) -> TestResult<Self> {
         let deadline = Instant::now() + Duration::from_secs(5);
-        let hello = encode_client_message(&ClientMessage::Hello)?;
+        let hello = encode_client_message(&ClientMessage::Hello(None))?;
         loop {
             let stream = connect_with_timeouts(socket, deadline)?;
             let mut reader = BufReader::new(stream);
@@ -205,7 +205,7 @@ impl Client {
             let mut attached = false;
             loop {
                 match read_message(&mut reader) {
-                    Ok(ServerMessage::Attached) if !attached => attached = true,
+                    Ok(ServerMessage::Attached(_)) if !attached => attached = true,
                     Ok(ServerMessage::Frame(frame)) if attached => {
                         return Ok(Self {
                             reader,
@@ -475,7 +475,7 @@ fn acquire_management(
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     let write = stream.write_all(&management::encode_client_message(
         &ManagementClientMessage::Acquire {
-            expected: identity.clone(),
+            expected: Box::new(identity.clone()),
             record,
         },
     )?);
@@ -794,10 +794,16 @@ fn attachment_negotiation_and_races_recover_for_canonical_client() -> TestResult
     let server = spawn_server(&socket)?;
 
     let mut incompatible = connect_with_timeouts(&socket, Instant::now() + Duration::from_secs(5))?;
-    let mut unsupported = encode_client_message(&ClientMessage::Hello)?;
+    let mut unsupported = encode_client_message(&ClientMessage::Hello(None))?;
     unsupported[4..6].copy_from_slice(&(session::VERSION + 1).to_le_bytes());
     incompatible.write_all(&unsupported)?;
-    assert_eq!(incompatible.read(&mut [0; 1])?, 0);
+    match incompatible.read(&mut [0; 1]) {
+        Ok(0) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::ConnectionReset => {}
+        response => {
+            return Err(format!("incompatible peer was not disconnected: {response:?}").into());
+        }
+    }
     drop(incompatible);
 
     let mut unordered = connect_with_timeouts(&socket, Instant::now() + Duration::from_secs(5))?;
@@ -891,7 +897,7 @@ fn metadata_observer_streams_inactive_title_and_cwd_without_owning_input() -> Te
 
     let mut observer = MetadataObserver::attach(&socket)?;
     let mut excess = connect_with_timeouts(&socket, Instant::now() + Duration::from_secs(5))?;
-    let _ = write_message(&mut excess, &ClientMessage::ObserveMetadata);
+    let _ = write_message(&mut excess, &ClientMessage::ObserveMetadata(None));
     assert_eq!(read_message(&mut excess)?, ServerMessage::Busy);
 
     fs::write(&begin, b"begin")?;
@@ -1128,7 +1134,7 @@ fn shell_survives_detach_and_one_client_reattaches() -> TestResult {
 
     let mut rejected = UnixStream::connect(&socket)?;
     rejected.set_read_timeout(Some(Duration::from_secs(2)))?;
-    write_message(&mut rejected, &ClientMessage::Hello)?;
+    write_message(&mut rejected, &ClientMessage::Hello(None))?;
     assert_eq!(read_message(&mut rejected)?, ServerMessage::Busy);
     first.request(&ClientMessage::Focus(FocusEvent::Gained))?;
 
@@ -1493,7 +1499,7 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
     let _ = second.reader.get_mut().write_all(&wheel.repeat(4096));
     fs::write(&pressure, b"pressure")?;
     let mut busy = connect_with_timeouts(&socket, Instant::now() + Duration::from_secs(5))?;
-    write_message(&mut busy, &ClientMessage::Hello)?;
+    write_message(&mut busy, &ClientMessage::Hello(None))?;
     assert_eq!(read_message(&mut busy)?, ServerMessage::Busy);
     drop(busy);
     drop(second);
@@ -1787,16 +1793,16 @@ fn shutdown_escalates_foreground_and_permits_a_detached_process() -> TestResult 
     let initial_pid_file = dir.0.join("initial.pid");
     let detached_pid_file = dir.0.join("detached.pid");
     let foreground_pid_file = dir.0.join("foreground.pid");
-    let mut unrelated = Server(Command::new("/bin/sleep").arg("60").spawn()?);
+    let mut unrelated = Server(Command::new("sleep").arg("60").spawn()?);
     let server = Server(
         server_command()
             .arg(&socket)
             .arg("--")
-            .arg("/bin/bash")
+            .arg("bash")
             .arg("-c")
             .arg(
-                "set -m; printf '%s\\n' \"$$\" > \"$ORBIT_INITIAL_PID\"; \
-                 /usr/bin/setsid --fork /bin/sh -c 'printf \"%s\\n\" \"$$\" > \"$ORBIT_DETACHED_PID\"; exec sleep 60' </dev/null >/dev/null 2>&1; \
+                "set -m; trap '' HUP; printf '%s\\n' \"$$\" > \"$ORBIT_INITIAL_PID\"; \
+                 setsid --fork /bin/sh -c 'printf \"%s\\n\" \"$$\" > \"$ORBIT_DETACHED_PID\"; exec sleep 60' </dev/null >/dev/null 2>&1; \
                  while [ ! -s \"$ORBIT_DETACHED_PID\" ]; do :; done; \
                  /bin/sh -c 'trap \"\" HUP; printf \"%s\\n\" \"$$\" > \"$ORBIT_FOREGROUND_PID\"; exec sleep 60'",
             )

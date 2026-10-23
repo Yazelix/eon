@@ -10,6 +10,8 @@ pkgs.writeShellApplication {
   name = "eon-test";
   runtimeInputs = [
     pkgs.bubblewrap
+    pkgs.bash
+    pkgs.util-linux
     pkgs.coreutils
     pkgs.git
   ];

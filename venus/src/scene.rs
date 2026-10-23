@@ -2,7 +2,9 @@ use crate::{
     model::{active_popup, presented_panes},
     render::CellMetrics,
 };
-use eon_workspace_protocol::v12::{ClaudeQuotaState, CodexQuotaState, QuotaWindow, Snapshot};
+use eon_workspace_protocol::v13::{
+    ClaudeQuotaState, CodexQuotaState, QuotaWindow, Snapshot, WindowAction,
+};
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, Rgb, Row, Screen, StyleColor, Underline,
     session::VerticalDirection,
@@ -217,11 +219,13 @@ pub enum WorkspaceHeaderControl {
     NewTab,
     Shortcuts,
     CloseTab,
+    Workspaces,
 }
 
 impl WorkspaceHeaderControl {
     pub(crate) fn label(self) -> &'static str {
         match self {
+            Self::Workspaces => "Choose workspace",
             Self::NewTab => "New tab — Alt+Shift+T",
             Self::Shortcuts => "Keyboard shortcuts — Alt+/",
             Self::CloseTab => "Close tab — Alt+Shift+W",
@@ -230,6 +234,7 @@ impl WorkspaceHeaderControl {
 
     pub(crate) fn glyph(self) -> &'static str {
         match self {
+            Self::Workspaces => "▾",
             Self::NewTab => "+",
             Self::Shortcuts => "?",
             Self::CloseTab => "×",
@@ -302,9 +307,10 @@ pub enum WorkspaceFocus {
     Panes,
 }
 
-/// One read-only shortcut shown by the native viewer.
+/// One native dialog row, optionally invoking a window-owned command.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ShortcutRow {
+pub struct WorkspaceDialogRow {
+    pub window_action: Option<WindowAction>,
     pub shortcut: String,
     pub action: String,
     pub rect: SceneRect,
@@ -481,10 +487,22 @@ impl ShortcutHintsScene {
     }
 }
 
-impl ShortcutRow {
+impl WorkspaceDialogRow {
+    #[must_use]
+    pub fn command(
+        label: impl Into<String>,
+        detail: impl Into<String>,
+        action: WindowAction,
+    ) -> Self {
+        let mut row = Self::new(label, detail);
+        row.window_action = Some(action);
+        row
+    }
+
     #[must_use]
     pub fn new(shortcut: impl Into<String>, action: impl Into<String>) -> Self {
         Self {
+            window_action: None,
             shortcut: shortcut.into(),
             action: action.into(),
             rect: SceneRect::default(),
@@ -494,15 +512,15 @@ impl ShortcutRow {
 
 /// Related shortcuts presented under one native heading.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ShortcutGroup {
+pub struct WorkspaceDialogGroup {
     pub title: String,
-    pub rows: Vec<ShortcutRow>,
+    pub rows: Vec<WorkspaceDialogRow>,
     pub heading: SceneRect,
 }
 
-impl ShortcutGroup {
+impl WorkspaceDialogGroup {
     #[must_use]
-    pub fn new(title: impl Into<String>, rows: Vec<ShortcutRow>) -> Self {
+    pub fn new(title: impl Into<String>, rows: Vec<WorkspaceDialogRow>) -> Self {
         Self {
             title: title.into(),
             rows,
@@ -511,22 +529,43 @@ impl ShortcutGroup {
     }
 }
 
-/// Bounded geometry for the one native shortcut dialog.
+/// Shared native geometry for shortcuts and workspace selection.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ShortcutViewerScene {
+pub struct WorkspaceDialogScene {
+    pub title_text: String,
+    pub subtitle_text: String,
+    pub footer_text: String,
+    pub selector: bool,
+    pub selected: usize,
     pub bounds: SceneRect,
     pub(crate) title: SceneRect,
     pub(crate) subtitle: SceneRect,
     pub content: SceneRect,
-    pub groups: Vec<ShortcutGroup>,
+    pub groups: Vec<WorkspaceDialogGroup>,
     pub scroll: f32,
     pub max_scroll: f32,
 }
 
-impl ShortcutViewerScene {
+impl WorkspaceDialogScene {
+    #[must_use]
+    pub fn row(&self, index: usize) -> Option<&WorkspaceDialogRow> {
+        self.groups.iter().flat_map(|group| &group.rows).nth(index)
+    }
+
+    #[must_use]
+    pub fn hit_row(&self, x: f32, y: f32) -> Option<usize> {
+        if !self.content.contains(x, y) {
+            return None;
+        }
+        self.groups
+            .iter()
+            .flat_map(|group| &group.rows)
+            .position(|row| row.window_action.is_some() && row.rect.contains(x, y))
+    }
+
     #[must_use]
     pub fn new(
-        mut groups: Vec<ShortcutGroup>,
+        mut groups: Vec<WorkspaceDialogGroup>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         scroll: f32,
@@ -590,6 +629,11 @@ impl ShortcutViewerScene {
             top += group_gap;
         }
         Self {
+            title_text: "Shortcuts".into(),
+            subtitle_text: "Eon surface · physical keys".into(),
+            footer_text: "Wheel or ↑↓ to scroll · Esc or Alt+/ to close".into(),
+            selector: false,
+            selected: 0,
             bounds,
             title,
             subtitle,
@@ -604,12 +648,13 @@ impl ShortcutViewerScene {
 /// Deterministic native projection of one complete accepted Eon snapshot.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkspaceScene {
+    pub connection_label: Option<String>,
     pub tabs: Vec<WorkspaceTab>,
     pub(crate) header: SceneRect,
     pub(crate) drag_region: SceneRect,
     pub(crate) quotas: Vec<WorkspaceQuota>,
     pub(crate) version: Option<WorkspaceVersion>,
-    pub(crate) controls: [WorkspaceControl; 3],
+    pub(crate) controls: [WorkspaceControl; 4],
     pub hints: Option<ShortcutHintsScene>,
     /// The selected column's headers and terminal; `other_columns` holds the rest.
     pub panes: Vec<WorkspacePane>,
@@ -734,12 +779,13 @@ fn workspace_header_geometry(
     metrics: CellMetrics,
     requested_quota_width: Option<f32>,
     show_shortcuts: bool,
+    connection_label: Option<&str>,
 ) -> (
     SceneRect,
     SceneRect,
     SceneRect,
     Option<SceneRect>,
-    [WorkspaceControl; 3],
+    [WorkspaceControl; 4],
 ) {
     let width = size.width as f32;
     let identity_width =
@@ -750,7 +796,12 @@ fn workspace_header_geometry(
     let control_count = if show_shortcuts { 3.0 } else { 2.0 };
     let control_width =
         tab_row(metrics, tab_height).min(((width - minimum_tabs) / control_count).max(0.0));
-    let controls_width = control_width * control_count;
+    let workspace_width = connection_label.map_or(0.0, |label| {
+        (label.chars().count() as f32 * metrics.width + metrics.padding * 2.0)
+            .min(width * 0.45)
+            .min((width - minimum_tabs - control_width * control_count).max(0.0))
+    });
+    let controls_width = control_width * control_count + workspace_width;
     let drag_width =
         (metrics.font_size * 4.0).min((width - controls_width - minimum_tabs).max(0.0));
     let quota_width = requested_quota_width
@@ -786,10 +837,13 @@ fn workspace_header_geometry(
         WorkspaceHeaderControl::NewTab,
         WorkspaceHeaderControl::Shortcuts,
         WorkspaceHeaderControl::CloseTab,
+        WorkspaceHeaderControl::Workspaces,
     ];
     let mut left = drag_region.right() + quota_width;
     let controls = control_kinds.map(|kind| {
-        let width = if kind == WorkspaceHeaderControl::Shortcuts && !show_shortcuts {
+        let width = if kind == WorkspaceHeaderControl::Workspaces {
+            workspace_width
+        } else if kind == WorkspaceHeaderControl::Shortcuts && !show_shortcuts {
             0.0
         } else {
             control_width
@@ -951,13 +1005,57 @@ pub(crate) fn inset_sides(rect: SceneRect, metrics: CellMetrics) -> SceneRect {
 }
 
 impl WorkspaceScene {
+    /// A disconnected window can navigate without inventing an authoritative workspace.
+    #[must_use]
+    pub fn empty(size: PhysicalSize<u32>, metrics: CellMetrics, connection_label: String) -> Self {
+        let tab_height = header_heights(metrics).0.min(size.height as f32);
+        let (header, tab_viewport, drag_region, _, mut controls) = workspace_header_geometry(
+            size,
+            tab_height,
+            metrics,
+            None,
+            false,
+            Some(&connection_label),
+        );
+        for control in &mut controls {
+            if control.kind != WorkspaceHeaderControl::Workspaces {
+                control.rect.width = 0.0;
+            }
+        }
+        Self {
+            connection_label: Some(connection_label),
+            tabs: Vec::new(),
+            header,
+            drag_region,
+            quotas: Vec::new(),
+            version: None,
+            controls,
+            hints: None,
+            panes: Vec::new(),
+            terminal: SceneRect::default(),
+            selected_column: 0,
+            other_columns: Vec::new(),
+            tab_viewport,
+            pane_viewport: SceneRect::default(),
+            chrome: SceneRect::default(),
+            card_radius: 0.0,
+            tab_scroll: 0.0,
+            pane_scroll: 0.0,
+            tab_scroll_limit: 0.0,
+            pane_scroll_limit: 0.0,
+            active_tab_scroll: 0.0,
+            selected_pane_scroll: 0.0,
+            popup_label: None,
+        }
+    }
+
     /// Maximum shaped label width inside this surface's tab viewport.
     #[must_use]
     pub(crate) fn tab_text_width(size: PhysicalSize<u32>, metrics: CellMetrics) -> f32 {
         // Header widths depend only on the pill row, never on the header's extra inset.
         let tab_height = header_heights(metrics).0.min(size.height as f32);
         let (_, tab_viewport, _, _, _) =
-            workspace_header_geometry(size, tab_height, metrics, None, true);
+            workspace_header_geometry(size, tab_height, metrics, None, true, None);
         (tab_max_width(metrics, tab_viewport.width) - metrics.padding * 2.0)
             .max(0.0)
             .floor()
@@ -1012,6 +1110,7 @@ impl WorkspaceScene {
             |_| None,
             header_text,
             None,
+            None,
         )
     }
 
@@ -1027,6 +1126,7 @@ impl WorkspaceScene {
         metadata: impl Fn(&[u8]) -> Option<&'a PaneMetadata>,
         mut header_text: impl FnMut(Option<&str>, &str) -> (String, f32),
         hints: Option<ShortcutHintsScene>,
+        connection_label: Option<String>,
     ) -> Self {
         let width = size.width as f32;
         let height = size.height as f32;
@@ -1103,8 +1203,14 @@ impl WorkspaceScene {
         let geometry = loop {
             let requested =
                 (!quotas.is_empty()).then(|| quotas.iter().map(|quota| quota.rect.width).sum());
-            let geometry =
-                workspace_header_geometry(size, tab_height, metrics, requested, show_shortcuts);
+            let geometry = workspace_header_geometry(
+                size,
+                tab_height,
+                metrics,
+                requested,
+                show_shortcuts,
+                connection_label.as_deref(),
+            );
             if geometry.3.is_some() || quotas.is_empty() {
                 break geometry;
             }
@@ -1248,6 +1354,7 @@ impl WorkspaceScene {
                 0.0
             };
             return Self {
+                connection_label,
                 tabs,
                 header,
                 drag_region,
@@ -1403,6 +1510,7 @@ impl WorkspaceScene {
             selected_layout.expect("the selected column is laid out");
 
         Self {
+            connection_label,
             tabs,
             header,
             drag_region,
@@ -2138,7 +2246,7 @@ mod tests {
 
     #[test]
     fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
-        use eon_workspace_protocol::v12::{
+        use eon_workspace_protocol::v13::{
             ALT, Pane, Popup, PopupEntry, PopupGeometry, Shortcut, Tab,
         };
 
@@ -2162,7 +2270,7 @@ mod tests {
                 pending: false,
                 selected_pane: Some("p1".into()),
                 selected_popup: None,
-                columns: vec![eon_workspace_protocol::v12::Column {
+                columns: vec![eon_workspace_protocol::v13::Column {
                     panes: vec![Pane {
                         id: "p1".into(),
                         session: "session-1".into(),
@@ -2229,7 +2337,7 @@ mod tests {
         for index in 2..=3 {
             columns.tabs[0]
                 .columns
-                .push(eon_workspace_protocol::v12::Column {
+                .push(eon_workspace_protocol::v13::Column {
                     panes: vec![Pane {
                         id: format!("p{index}"),
                         session: format!("session-{}", index + 1),
@@ -2278,6 +2386,7 @@ mod tests {
                     |_| None,
                     |_, text| (text.into(), text.len() as f32 * 10.0),
                     Some(footer),
+                    None,
                 );
                 // The footer's band replaces the bottom gap as the cards' bottom margin.
                 assert_eq!(
@@ -2456,7 +2565,7 @@ mod tests {
 
     #[test]
     fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
-        use eon_workspace_protocol::v12::{Pane, PopupGeometry, Tab};
+        use eon_workspace_protocol::v13::{Pane, PopupGeometry, Tab};
 
         let snapshot = Snapshot {
             active_tab: "t2".into(),
@@ -2472,7 +2581,7 @@ mod tests {
                     pending: false,
                     selected_pane: Some(format!("p{index}")),
                     selected_popup: None,
-                    columns: vec![eon_workspace_protocol::v12::Column {
+                    columns: vec![eon_workspace_protocol::v13::Column {
                         panes: vec![Pane {
                             id: format!("p{index}"),
                             session: format!("s{index}"),
@@ -2520,6 +2629,7 @@ mod tests {
                     Some(WorkspaceHit::Control(WorkspaceHeaderControl::NewTab)),
                     Some(WorkspaceHit::Control(WorkspaceHeaderControl::Shortcuts)),
                     Some(WorkspaceHit::Control(WorkspaceHeaderControl::CloseTab)),
+                    None,
                 ]
             );
         }
@@ -3007,10 +3117,10 @@ mod tests {
 
     #[test]
     fn shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space() {
-        let groups = vec![ShortcutGroup::new(
+        let groups = vec![WorkspaceDialogGroup::new(
             "Projects and tools",
             (0..32)
-                .map(|index| ShortcutRow::new("Alt+Z", format!("Entry {index}")))
+                .map(|index| WorkspaceDialogRow::new("Alt+Z", format!("Entry {index}")))
                 .collect(),
         )];
         for scale in [1.0, 1.25, 1.5, 2.0] {
@@ -3020,8 +3130,8 @@ mod tests {
                     (f64::from(width) * scale) as u32,
                     (f64::from(height) * scale) as u32,
                 );
-                let start = ShortcutViewerScene::new(groups.clone(), size, metrics, -100.0);
-                let end = ShortcutViewerScene::new(groups.clone(), size, metrics, f32::MAX);
+                let start = WorkspaceDialogScene::new(groups.clone(), size, metrics, -100.0);
+                let end = WorkspaceDialogScene::new(groups.clone(), size, metrics, f32::MAX);
 
                 assert_eq!(start.scroll, 0.0);
                 assert!(end.max_scroll > 0.0);
@@ -3046,7 +3156,7 @@ mod tests {
         }
 
         let metrics = CellMetrics::for_scale(1.0);
-        let tiny = ShortcutViewerScene::new(Vec::new(), PhysicalSize::new(1, 1), metrics, 0.0);
+        let tiny = WorkspaceDialogScene::new(Vec::new(), PhysicalSize::new(1, 1), metrics, 0.0);
         assert!(tiny.bounds.right() <= 1.0 && tiny.bounds.bottom() <= 1.0);
         assert!(
             tiny.content.right() <= tiny.bounds.right()

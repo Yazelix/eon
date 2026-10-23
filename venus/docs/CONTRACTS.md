@@ -4,8 +4,8 @@ This is the canonical current state of Venus behavior, ownership, proof, and
 remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
-`VEN-C16` owns platform scope. Venus consumes ORBF v2 / ORBS v13 through the
-in-tree `orbit-protocol` crate and canonical EONW v12 through the in-tree
+`VEN-C16` owns platform scope. Venus consumes ORBF v2 / ORBS v14 through the
+in-tree `orbit-protocol` crate and canonical EONW v13 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version.
@@ -263,6 +263,7 @@ re-proved when that platform or feature is next touched.
 ## VEN-C3 — Transient client recovery
 
 - **Status:** Proved
+- **Named-workspace amendment (EON-C29):** For EON-C29 windows the local window controller owns the supervised control stream. Workspace/SSH loss retains the window and its last coherent scene while withdrawing terminal input. Switching retires old attachment requests and ignores late responses. An already attached remote run reports Busy explicitly. Accepted proof: [EON-C29](../../docs/CONTRACTS.md#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** Standalone or Eon-supervised Venus attached to one selected live
   Orbit endpoint.
 - **Trigger:** Client close or crash, retryable connection loss, control-stream
@@ -299,6 +300,7 @@ re-proved when that platform or feature is next touched.
 
 - **Status:** Proved by the automated tier; native failure observations are
   pending re-proof in this repository.
+- **Named-workspace amendment (EON-C29):** The window projection distinguishes disconnected, connecting, online, stopped and failed targets. Offline scenes retain their accepted host label and disable terminal input; selector and explicit reconnect remain usable. A failed switch cannot relabel old content as the new target. Accepted proof: [EON-C29](../../docs/CONTRACTS.md#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** A Venus user observing connection, protocol, model, renderer, or
   Orbit failure.
 - **Trigger:** Attachment rejection, incompatibility, invalid frame, Orbit loss,
@@ -448,6 +450,7 @@ re-proved when that platform or feature is next touched.
 ## VEN-C8 — Eon workspace presentation
 
 - **Status:** Partially proved
+- **Named-workspace amendment (EON-C29):** EONW v13 may arrive from a stable local window endpoint. Venus presents the accepted target and connection generation, rejects stale target results, and consumes Runtime-adapted endpoints for every pane, popup and metadata observer. A window with no workspace can still show the selector. It owns neither SSH nor a second authoritative layout. Accepted proof: [EON-C29](../../docs/CONTRACTS.md#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** One Venus surface controlled by an Eon workspace.
 - **Trigger:** Outside visible `VEN-C18` popup presentation, Eon supplies
   durable topology or a workspace action changes tab, pane, focus, order,
@@ -739,6 +742,7 @@ re-proved when that platform or feature is next touched.
 ## VEN-C14 — Supervised native presentation lifecycle
 
 - **Status:** Proved
+- **Named-workspace amendment (EON-C29):** For named workspaces, the supervised control owner is the local window controller, independent of workspace supervisors. Control EOF still closes Venus; workspace or SSH failure does not close that control stream. Eonbase and legacy supervised presentation keep the existing stream behavior. Accepted proof: [EON-C29](../../docs/CONTRACTS.md#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** One Eon-supervised Venus process.
 - **Trigger:** A complete private Present command, control EOF, or terminal read
   failure.
@@ -897,6 +901,7 @@ re-proved when that platform or feature is next touched.
 ## VEN-C18 — Shared popup and picker-first presentation
 
 - **Status:** Proven on x86_64 Linux Wayland
+- **Named-workspace amendment (EON-C29):** Named-workspace switching uses the same endpoint adapter and generation guard for popups as for panes. Persistent popup recovery remains Runtime-owned and cannot replay commands in Venus. Canonical EONW v13 and ORBS v14 retain full ORBF v2 presentation. Accepted proof: [EON-C29](../../docs/CONTRACTS.md#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** One person using a Venus workspace supplied through EONW v5.
 - **Trigger:** The active tab selects a popup, its selection changes, or the
   person invokes an Eon-supplied catalog shortcut.
@@ -1002,6 +1007,7 @@ re-proved when that platform or feature is next touched.
 ## VEN-C21 — Native Eon Bar workspace header
 
 - **Status:** Proven
+- **Named-workspace amendment (EON-C29):** The header includes a native, keyboard-accessible Local/host-grouped workspace selector with accepted name and connection state. Its rows send window-owned selection actions through the existing EONW endpoint. Offline/empty windows retain this control; selecting a workspace changes the current window, not the previous workspace lifecycle. Accepted proof: [EON-C29](../../docs/CONTRACTS.md#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
 - **Trigger:** The person points at, focuses, or activates the workspace header;

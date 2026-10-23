@@ -22,8 +22,8 @@ pub fn run() {
     let pid = read_pid(&pid_file);
 
     let mut client = Peer::connect_with_receive_buffer(&server.path, 4096, 4.0);
-    client.send(&ClientMessage::Hello);
-    client.expect(ServerMessage::Attached);
+    client.send(&ClientMessage::Hello(None));
+    client.expect(ServerMessage::Attached(Default::default()));
     client.frame();
     // The client reads nothing more while the child floods and exits.
     gate.release();

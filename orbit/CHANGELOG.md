@@ -6,6 +6,17 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- ORBS v14 admits presentation and metadata clients through a bounded
+  workspace/session/run handshake before full frames or input. Its build
+  identity is diagnostic; exact session/frame compatibility still applies.
+  The required explicit-detach capability releases an attachment through SSH
+  forwarding without stopping its task; write-half-close still permits output.
+  ORBF stays v2. Management and record v2 add stable workspace identity and
+  compatibility fields; existing UID, PID/start, endpoint and lease checks
+  remain. `serve --workspace-id ID` separates named-workspace ownership from
+  the originating build. EON-C29 records the installed SSH and compatible
+  supervisor-takeover checks.
+
 - Orbit's implementation is a Rust host plus a Bend session-policy worker,
   imported from bend-orbit `e03926274203d78b76f49337e9f6670d2dd6e97d`. The
   ORBS v13 and ORBF v2 wire, the `yazelix-orbit serve` command line, the

@@ -47,8 +47,8 @@ pub fn run() {
         let mut silent_peer = None;
         if mode == "detach" {
             let mut peer = Peer::connect(&server.path, 4.0);
-            peer.send(&ClientMessage::Hello);
-            peer.expect(ServerMessage::Attached);
+            peer.send(&ClientMessage::Hello(None));
+            peer.expect(ServerMessage::Attached(Default::default()));
             peer.frame();
             peer.shutdown_write();
             peer.expect_closed(); // Bend has detached this client.

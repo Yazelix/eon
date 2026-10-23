@@ -1,4 +1,4 @@
-//! The ORBS v13 client and server harness the real-PTY checks share, on the
+//! The ORBS v14 client and server harness the real-PTY checks share, on the
 //! canonical `orbit-protocol` codec.
 
 use orbit_protocol::{
@@ -395,14 +395,17 @@ impl Peer {
         let deadline = Instant::now() + seconds(2.0);
         loop {
             let mut peer = Self::connect(path, timeout);
-            peer.send(&ClientMessage::Hello);
+            peer.send(&ClientMessage::Hello(None));
             let answer = peer.receive();
             if answer == ServerMessage::Busy && Instant::now() < deadline {
                 drop(peer);
                 sleep(0.02);
                 continue;
             }
-            assert_eq!(answer, ServerMessage::Attached, "attach");
+            assert!(
+                matches!(answer, ServerMessage::Attached(_)),
+                "attach: {answer:?}"
+            );
             return peer;
         }
     }
@@ -472,7 +475,7 @@ impl Peer {
         }
     }
 
-    /// Reads one whole ORBS v13 message.
+    /// Reads one whole ORBS v14 message.
     pub fn receive(&mut self) -> ServerMessage {
         self.receive_within()
             .expect("timed out waiting for a message")

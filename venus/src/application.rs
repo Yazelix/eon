@@ -1,7 +1,8 @@
 use crate::{Result, launch::LaunchArguments};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
-use eon_workspace_protocol::v12::{
-    Action as WorkspaceAction, Direction as WorkspaceDirection, WorkspaceAction as CommonAction,
+use eon_workspace_protocol::v13::{
+    Action as WorkspaceAction, ConnectionState as WorkspaceConnection,
+    Direction as WorkspaceDirection, WindowAction, WorkspaceAction as CommonAction,
 };
 use orbit_protocol::session::{
     self, ClientMessage, ClipboardLocation, FailureCode, ScrollOutcome, SelectionAction,
@@ -11,7 +12,7 @@ use std::{
     collections::{HashMap, HashSet, VecDeque},
     ffi::OsString,
     io::{self, Read, Write},
-    os::unix::ffi::OsStringExt,
+    os::unix::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Arc,
@@ -33,9 +34,10 @@ use yazelix_venus::{
     Accessibility, AccessibilityTarget, CellMetrics, ClipboardEffect, Color, ConnectionState,
     FontSettings, FontSetup, Hyperlink, InputState, LocalNoticeSource, MAX_LINK_BYTES,
     MetadataEvent, MetadataTransport, ModelError, PaneMetadata, PresentOutcome, Renderer, Scene,
-    SceneRect, SessionModel, ShortcutHintsScene, ShortcutViewerScene, Transport, TransportEvent,
-    WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
-    WorkspaceScene, WorkspaceTransport, active_popup,
+    SceneRect, SessionModel, ShortcutHintsScene, Transport, TransportEvent, WorkspaceDialogGroup,
+    WorkspaceDialogRow, WorkspaceDialogScene, WorkspaceEvent, WorkspaceFocus,
+    WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
+    active_popup,
 };
 
 mod geometry;
@@ -439,6 +441,8 @@ struct MetadataObserver {
 #[derive(Debug, Default)]
 struct ShortcutViewerState {
     open: bool,
+    selector: bool,
+    selected: usize,
     scroll: f32,
 }
 
@@ -527,6 +531,7 @@ struct Application {
     links: LinkInteraction,
     workspace_transport: Option<WorkspaceTransport>,
     metadata_observers: HashMap<Vec<u8>, MetadataObserver>,
+    departing_attachments: HashMap<Vec<u8>, Instant>,
     workspace_model: WorkspaceModel,
     input: InputState,
     input_epoch: Instant,
@@ -598,6 +603,7 @@ impl Application {
             window: None,
             workspace_transport: None,
             metadata_observers: HashMap::new(),
+            departing_attachments: HashMap::new(),
             workspace_model: WorkspaceModel::default(),
             input: InputState::default(),
             input_epoch: Instant::now(),
@@ -691,6 +697,12 @@ impl Application {
         }
         self.reveal_workspace_selection();
         if self.workspace_socket.is_some() {
+            if !self.workspace_model.online() {
+                self.set_workspace_focus(WorkspaceFocus::Header(
+                    WorkspaceHeaderControl::Workspaces,
+                ));
+                return;
+            }
             if let Some((endpoint, live)) = self.workspace_model.active_attachment() {
                 self.set_orbit_attachment(Some(endpoint.to_vec()), live);
                 self.reconcile_column_views();
@@ -716,7 +728,10 @@ impl Application {
 
     fn start_orbit(&mut self, socket: PathBuf) {
         self.terminal.orbit_socket = Some(socket.clone());
-        self.terminal.transport = Some(orbit_transport(&self.proxy, socket));
+        let expected = self
+            .workspace_model
+            .expected_run(socket.as_os_str().as_bytes());
+        self.terminal.transport = Some(orbit_transport(&self.proxy, socket, expected));
     }
 
     fn reset_cursor_animation(&mut self) {
@@ -837,38 +852,151 @@ impl Application {
 
     fn workspace_scene(&self) -> Option<WorkspaceScene> {
         let state = self.window.as_ref()?;
-        self.workspace_model.snapshot().map(|snapshot| {
-            WorkspaceScene::from_snapshot_with_metadata(
-                snapshot,
-                self.eon_version.as_deref(),
-                state.renderer.size(),
-                state.renderer.metrics(),
-                self.tab_scroll,
-                self.pane_scroll,
-                |endpoint| {
-                    self.metadata_observers
-                        .get(endpoint)
-                        .map(|observer| &observer.metadata)
-                },
-                |id, label| {
-                    id.map_or_else(
-                        || (label.to_owned(), self.quota_widths[label]),
-                        |id| self.tab_texts[id].clone(),
-                    )
-                },
-                self.hints.clone(),
-            )
-        })
+        self.workspace_model
+            .snapshot()
+            .map(|snapshot| {
+                WorkspaceScene::from_snapshot_with_metadata(
+                    snapshot,
+                    self.eon_version.as_deref(),
+                    state.renderer.size(),
+                    state.renderer.metrics(),
+                    self.tab_scroll,
+                    self.pane_scroll,
+                    |endpoint| {
+                        self.metadata_observers
+                            .get(endpoint)
+                            .map(|observer| &observer.metadata)
+                    },
+                    |id, label| {
+                        id.map_or_else(
+                            || (label.to_owned(), self.quota_widths[label]),
+                            |id| self.tab_texts[id].clone(),
+                        )
+                    },
+                    self.hints.clone(),
+                    self.connection_label(),
+                )
+            })
+            .or_else(|| {
+                self.connection_label().map(|label| {
+                    WorkspaceScene::empty(state.renderer.size(), state.renderer.metrics(), label)
+                })
+            })
     }
 
-    fn shortcut_viewer_scene(&self) -> Option<ShortcutViewerScene> {
+    fn connection_label(&self) -> Option<String> {
+        let window = self.workspace_model.window()?;
+        let host = if window.host.is_empty() {
+            "Local"
+        } else {
+            &window.host
+        };
+        let target = window
+            .target
+            .as_ref()
+            .map_or("Choose workspace", |target| target.name.as_str());
+        Some(format!(
+            "{host} · {target} · {} ▾",
+            connection_label(window.connection)
+        ))
+    }
+
+    fn shortcut_viewer_scene(&self) -> Option<WorkspaceDialogScene> {
         let state = self.window.as_ref()?;
         self.shortcut_viewer.open.then(|| {
+            if self.shortcut_viewer.selector {
+                let window = self
+                    .workspace_model
+                    .window()
+                    .expect("selector requires a window controller");
+                let mut groups = window
+                    .groups
+                    .iter()
+                    .map(|group| {
+                        let heading = if group.host.is_empty() {
+                            "Local"
+                        } else {
+                            &group.host
+                        };
+                        let rows = group
+                            .workspaces
+                            .iter()
+                            .map(|workspace| {
+                                let selected = window.host == group.host
+                                    && window
+                                        .target
+                                        .as_ref()
+                                        .is_some_and(|target| target.id == workspace.id);
+                                let state = if selected {
+                                    connection_label(window.connection)
+                                } else if group.offline {
+                                    "Offline · cached"
+                                } else {
+                                    "Available"
+                                };
+                                WorkspaceDialogRow::command(
+                                    &workspace.name,
+                                    format!("{state} · {}", workspace.id),
+                                    WindowAction::Select {
+                                        host: group.host.clone(),
+                                        workspace: workspace.id.clone(),
+                                    },
+                                )
+                            })
+                            .collect();
+                        WorkspaceDialogGroup::new(heading, rows)
+                    })
+                    .collect::<Vec<_>>();
+                let mut actions = vec![WorkspaceDialogRow::command(
+                    "Refresh",
+                    "Update host and workspace list",
+                    WindowAction::Refresh,
+                )];
+                if window.target.is_some()
+                    || matches!(
+                        window.connection,
+                        WorkspaceConnection::Connecting
+                            | WorkspaceConnection::Offline
+                            | WorkspaceConnection::Busy
+                    )
+                {
+                    actions.push(WorkspaceDialogRow::command(
+                        "Reconnect",
+                        "Attach the selected workspace",
+                        WindowAction::Reconnect,
+                    ));
+                    actions.push(WorkspaceDialogRow::command(
+                        "Disconnect",
+                        "Leave tasks running",
+                        WindowAction::Disconnect,
+                    ));
+                }
+                groups.push(WorkspaceDialogGroup::new("Connection", actions));
+                let mut scene = WorkspaceDialogScene::new(
+                    groups,
+                    state.renderer.size(),
+                    state.renderer.metrics(),
+                    self.shortcut_viewer.scroll,
+                );
+                scene.selector = true;
+                scene.selected = self.shortcut_viewer.selected.min(
+                    scene
+                        .groups
+                        .iter()
+                        .map(|group| group.rows.len())
+                        .sum::<usize>()
+                        .saturating_sub(1),
+                );
+                scene.title_text = "Workspaces".into();
+                scene.subtitle_text = self.connection_label().unwrap_or_default();
+                scene.footer_text = "↑↓ choose · Enter connect · Esc close · Wheel scroll".into();
+                return scene;
+            }
             let entries = self
                 .workspace_model
                 .snapshot()
                 .map_or(&[][..], |snapshot| snapshot.entries.as_slice());
-            ShortcutViewerScene::new(
+            WorkspaceDialogScene::new(
                 shortcut_groups(entries),
                 state.renderer.size(),
                 state.renderer.metrics(),
@@ -878,7 +1006,11 @@ impl Application {
     }
 
     fn set_shortcut_viewer(&mut self, open: bool) {
-        if self.shortcut_viewer.open == open || open && self.workspace_model.snapshot().is_none() {
+        if self.shortcut_viewer.open == open
+            || open
+                && self.workspace_model.snapshot().is_none()
+                && self.workspace_model.window().is_none()
+        {
             return;
         }
         let was_terminal_focused = terminal_focused(self.window_focused, self.workspace_focus)
@@ -896,6 +1028,50 @@ impl Application {
         self.refresh_client_view();
     }
 
+    fn toggle_workspace_selector(&mut self) {
+        if self.workspace_model.window().is_none() {
+            return;
+        }
+        if self.shortcut_viewer.open && self.shortcut_viewer.selector {
+            self.set_shortcut_viewer(false);
+        } else {
+            self.set_shortcut_viewer(false);
+            self.shortcut_viewer.selector = true;
+            self.shortcut_viewer.selected = 0;
+            self.set_shortcut_viewer(true);
+            self.send_window_action(WindowAction::Refresh);
+        }
+    }
+
+    fn activate_dialog_row(&mut self, index: usize) {
+        let action = self
+            .shortcut_viewer_scene()
+            .and_then(|scene| scene.row(index).and_then(|row| row.window_action.clone()));
+        let Some(action) = action else {
+            return;
+        };
+        if action != WindowAction::Refresh {
+            self.set_shortcut_viewer(false);
+        }
+        self.send_window_action(action);
+    }
+
+    fn select_dialog_row(&mut self, index: usize) {
+        self.shortcut_viewer.selected = index;
+        self.presentation.content_changed();
+        if let Some(scene) = self.shortcut_viewer_scene()
+            && let Some(row) = scene.row(index)
+        {
+            if row.rect.top < scene.content.top {
+                self.shortcut_viewer.scroll -= scene.content.top - row.rect.top;
+            }
+            if row.rect.bottom() > scene.content.bottom() {
+                self.shortcut_viewer.scroll += row.rect.bottom() - scene.content.bottom();
+            }
+        }
+        self.refresh_client_view();
+    }
+
     fn handle_shortcut_viewer_key(&mut self, event: &winit::event::KeyEvent) -> bool {
         if !self.shortcut_viewer.open && self.workspace_model.snapshot().is_none() {
             return false;
@@ -904,6 +1080,44 @@ impl Application {
             .is_some_and(|shortcut| shortcut.action == NativeShortcutAction::NewWindow)
         {
             return false;
+        }
+        if self.shortcut_viewer.open && self.shortcut_viewer.selector {
+            if !self
+                .input
+                .consumes_shortcut(event.physical_key, event.state, event.repeat, true)
+            {
+                return false;
+            }
+            if event.state == ElementState::Pressed {
+                let (count, selected) = self.shortcut_viewer_scene().map_or((0, 0), |scene| {
+                    (
+                        scene
+                            .groups
+                            .iter()
+                            .map(|group| group.rows.len())
+                            .sum::<usize>(),
+                        scene.selected,
+                    )
+                });
+                match event.physical_key {
+                    PhysicalKey::Code(KeyCode::Escape) => self.set_shortcut_viewer(false),
+                    PhysicalKey::Code(KeyCode::Enter | KeyCode::Space) if !event.repeat => {
+                        self.activate_dialog_row(selected)
+                    }
+                    PhysicalKey::Code(KeyCode::ArrowUp) => {
+                        self.select_dialog_row(selected.saturating_sub(1))
+                    }
+                    PhysicalKey::Code(KeyCode::ArrowDown) => {
+                        self.select_dialog_row((selected + 1).min(count.saturating_sub(1)))
+                    }
+                    PhysicalKey::Code(KeyCode::Home) => self.select_dialog_row(0),
+                    PhysicalKey::Code(KeyCode::End) => {
+                        self.select_dialog_row(count.saturating_sub(1))
+                    }
+                    _ => {}
+                }
+            }
+            return true;
         }
         let command = match event.physical_key {
             PhysicalKey::Code(code) => shortcut_viewer_command(
@@ -925,6 +1139,7 @@ impl Application {
         if event.state == ElementState::Pressed {
             match command {
                 Some(ShortcutViewerCommand::Toggle) => {
+                    self.shortcut_viewer.selector = false;
                     self.set_shortcut_viewer(!self.shortcut_viewer.open)
                 }
                 Some(ShortcutViewerCommand::Close) => self.set_shortcut_viewer(false),
@@ -1042,8 +1257,13 @@ impl Application {
         tab_scroll: f32,
         pane_scroll: f32,
     ) -> Option<WorkspaceScene> {
+        let connection_label = self.connection_label();
         let state = self.window.as_mut()?;
-        let snapshot = self.workspace_model.snapshot()?;
+        let Some(snapshot) = self.workspace_model.snapshot() else {
+            return connection_label.map(|label| {
+                WorkspaceScene::empty(state.renderer.size(), state.renderer.metrics(), label)
+            });
+        };
         self.hints = self.hints_visible.then(|| {
             ShortcutHintsScene::new(
                 shortcut_hints_for(NATIVE_PLATFORM, self.workspace_focus, &snapshot.entries),
@@ -1077,6 +1297,7 @@ impl Application {
                 fitted
             },
             self.hints.clone(),
+            connection_label,
         ))
     }
 
@@ -1147,6 +1368,12 @@ impl Application {
                         .iter()
                         .any(|&(_, column, live)| live && column == outgoing)
                 });
+        if self.terminal.transport.is_some()
+            && (!keep_outgoing || owes_viewport)
+            && let Some(endpoint) = self.terminal.active_endpoint.clone()
+        {
+            self.remember_departure(endpoint);
+        }
         if keep_outgoing
             && pointer_sequence_needs_cancel(
                 &self.terminal.selection_gate,
@@ -1240,6 +1467,14 @@ impl Application {
     }
 
     fn retry_allowed(&self) -> bool {
+        if self.workspace_model.window().is_some() {
+            return self.workspace_model.online()
+                && self
+                    .terminal
+                    .active_endpoint
+                    .as_ref()
+                    .is_some_and(|endpoint| self.departing_attachments.contains_key(endpoint));
+        }
         retry_is_allowed(
             self.workspace_socket.is_some(),
             self.workspace_model.active_attachment(),
@@ -1273,6 +1508,9 @@ impl Application {
 
     /// Attach each other visible column's live expanded pane and release views no column shows.
     fn reconcile_column_views(&mut self) {
+        if !self.workspace_model.online() {
+            return;
+        }
         let selected = self.terminal.active_endpoint.as_deref();
         let wanted = self
             .workspace_model
@@ -1281,6 +1519,20 @@ impl Application {
             .filter(|&(_, endpoint, live)| live && Some(endpoint) != selected)
             .map(|(_, endpoint, _)| endpoint.to_vec())
             .collect::<Vec<_>>();
+        let departing = self
+            .column_views
+            .iter()
+            .filter(|view| view.transport.is_some())
+            .filter_map(|view| {
+                view.active_endpoint
+                    .as_ref()
+                    .filter(|endpoint| !wanted.contains(endpoint))
+                    .cloned()
+            })
+            .collect::<Vec<_>>();
+        for endpoint in departing {
+            self.remember_departure(endpoint);
+        }
         let before = self.column_views.len();
         self.column_views.retain(|view| {
             view.active_endpoint
@@ -1289,16 +1541,30 @@ impl Application {
         });
         let mut changed = before != self.column_views.len();
         for endpoint in wanted {
-            if self
+            if let Some(view) = self
                 .column_views
-                .iter()
-                .any(|view| view.active_endpoint.as_ref() == Some(&endpoint))
+                .iter_mut()
+                .find(|view| view.active_endpoint.as_ref() == Some(&endpoint))
             {
+                if view.transport.is_none() && view.orbit_retry.deadline.is_none() {
+                    view.model.prepare_reconnect();
+                    view.last_resize = None;
+                    let socket = PathBuf::from(OsString::from_vec(endpoint.clone()));
+                    view.transport = Some(orbit_transport(
+                        &self.proxy,
+                        socket,
+                        self.workspace_model.expected_run(&endpoint),
+                    ));
+                }
                 continue;
             }
             let socket = PathBuf::from(OsString::from_vec(endpoint.clone()));
             let mut view = TerminalView::new(Some(socket.clone()));
-            view.transport = Some(orbit_transport(&self.proxy, socket));
+            view.transport = Some(orbit_transport(
+                &self.proxy,
+                socket,
+                self.workspace_model.expected_run(&endpoint),
+            ));
             view.active_endpoint = Some(endpoint);
             view.active_endpoint_live = true;
             self.column_views.push(view);
@@ -1310,6 +1576,14 @@ impl Application {
     }
 
     fn handle_column_transport(&mut self, index: usize, event: TransportEvent) {
+        if self.workspace_model.window().is_some() && !self.workspace_model.online() {
+            return;
+        }
+        let endpoint = self.column_views[index].active_endpoint.clone();
+        if self.handle_window_transport_loss(&event, endpoint.as_deref()) {
+            return;
+        }
+
         let retryable_busy = managed_busy_is_retryable(self.supervised, &event);
         let retryable_event = retryable_busy || matches!(&event, TransportEvent::RetryableLoss(_));
         let view = &mut self.column_views[index];
@@ -1354,6 +1628,9 @@ impl Application {
         }
         let attached = !was_attached && view.model.is_attached();
         if attached {
+            if let Some(endpoint) = &view.active_endpoint {
+                self.departing_attachments.remove(endpoint);
+            }
             view.orbit_retry.reset();
             view.last_resize = None;
             // Orbit forwards focus to applications that request it; this column is unfocused.
@@ -1376,11 +1653,20 @@ impl Application {
     }
 
     fn retry_column_views(&mut self, now: Instant) {
+        if !self.workspace_model.online() {
+            return;
+        }
         for view in &mut self.column_views {
             if !view.orbit_retry.take_due(now) {
                 continue;
             }
-            if view.transport.is_some() {
+            if view.transport.is_some()
+                || self.workspace_model.window().is_some()
+                    && !view
+                        .active_endpoint
+                        .as_ref()
+                        .is_some_and(|endpoint| self.departing_attachments.contains_key(endpoint))
+            {
                 view.orbit_retry.reset();
                 continue;
             }
@@ -1392,12 +1678,18 @@ impl Application {
                 view.orbit_socket
                     .clone()
                     .expect("a column view has an attachment socket"),
+                view.active_endpoint
+                    .as_deref()
+                    .and_then(|endpoint| self.workspace_model.expected_run(endpoint)),
             ));
         }
     }
 
     /// Size every other column's attached terminal to its own column.
     fn send_column_resizes(&mut self) {
+        if !self.workspace_model.online() {
+            return;
+        }
         let Some(metrics) = self.window.as_ref().map(|state| state.renderer.metrics()) else {
             return;
         };
@@ -1446,10 +1738,23 @@ impl Application {
     }
 
     fn handle_workspace(&mut self, event: WorkspaceEvent) {
+        let was_online = self.workspace_model.online();
+        let previous_generation = self
+            .workspace_model
+            .window()
+            .map(|window| window.generation);
         let (received_snapshot, snapshot_changed) = match &event {
-            WorkspaceEvent::Response(eon_workspace_protocol::v12::Response::Snapshot(snapshot)) => {
+            WorkspaceEvent::Response(eon_workspace_protocol::v13::Response::Snapshot(snapshot)) => {
                 (true, self.workspace_model.snapshot() != Some(snapshot))
             }
+            WorkspaceEvent::Response(eon_workspace_protocol::v13::Response::Window(window)) => (
+                true,
+                self.workspace_model.snapshot()
+                    != window
+                        .workspace
+                        .as_ref()
+                        .map(|workspace| &workspace.snapshot),
+            ),
             _ => (false, false),
         };
         let unavailable = matches!(&event, WorkspaceEvent::Unavailable(_));
@@ -1463,6 +1768,19 @@ impl Application {
                 (self.workspace_model.mark_unavailable(detail), false)
             }
         };
+        if view_changed {
+            self.presentation.content_changed();
+        }
+        if !self.workspace_model.online()
+            && (was_online
+                || previous_generation
+                    != self
+                        .workspace_model
+                        .window()
+                        .map(|window| window.generation))
+        {
+            self.suspend_workspace_attachments();
+        }
         if self.window.is_none() || self.initial_scale_pending {
             if snapshot_changed {
                 self.reveal_workspace_selection();
@@ -1476,7 +1794,13 @@ impl Application {
                 self.presentation.invalidate();
             }
         }
-        if workspace_changed {
+        if !self.workspace_model.online() {
+            if view_changed {
+                self.refresh_client_view();
+            }
+            return;
+        }
+        if workspace_changed || !was_online {
             self.cancel_terminal_scroll();
             self.reveal_workspace_selection();
             self.presentation.invalidate();
@@ -1492,6 +1816,7 @@ impl Application {
                     .active_endpoint
                     .as_deref()
                     .map(|endpoint| (endpoint, self.terminal.active_endpoint_live))
+                || attachment.is_some_and(|(_, live)| live && self.terminal.transport.is_none())
             {
                 let (endpoint, live) = attachment.map_or((None, false), |(endpoint, live)| {
                     (Some(endpoint.to_vec()), live)
@@ -1526,7 +1851,42 @@ impl Application {
         }
     }
 
+    fn suspend_workspace_attachments(&mut self) {
+        let departing = std::iter::once(&self.terminal)
+            .chain(&self.column_views)
+            .filter(|view| view.transport.is_some())
+            .filter_map(|view| view.active_endpoint.clone())
+            .collect::<Vec<_>>();
+        for endpoint in departing {
+            self.remember_departure(endpoint);
+        }
+        self.metadata_observers.clear();
+        self.input.retire_orbit_generation();
+        for view in std::iter::once(&mut self.terminal).chain(&mut self.column_views) {
+            view.transport = None;
+            view.orbit_retry.reset();
+            view.retry_suppressed = true;
+            view.deferred_selection.clear();
+            view.pending_viewport = None;
+            view.pending_return_to_live = false;
+            view.selection_gate = SelectionGate::Ready;
+            view.terminal_scroll.reset();
+            view.selection_scroll.reset();
+            view.model.clear_viewport_preview();
+            view.model.mark_lost("Workspace connection is suspended");
+            view.last_resize = None;
+        }
+        self.header_press = None;
+        self.reset_cursor_animation();
+        self.presentation.invalidate();
+    }
+
     fn reconcile_metadata_observers(&mut self) {
+        if !self.workspace_model.online() {
+            self.metadata_observers.clear();
+            return;
+        }
+
         let endpoints = self
             .workspace_model
             .snapshot()
@@ -1545,10 +1905,11 @@ impl Application {
         for endpoint in endpoints {
             let socket = PathBuf::from(OsString::from_vec(endpoint.clone()));
             let proxy = self.proxy.clone();
+            let expected = self.workspace_model.expected_run(&endpoint);
             self.metadata_observers
                 .entry(endpoint)
                 .or_insert_with(|| MetadataObserver {
-                    transport: MetadataTransport::start(socket, move || {
+                    transport: MetadataTransport::start_for_run(socket, expected, move || {
                         let _ = proxy.send_event(UserEvent::Metadata);
                     }),
                     metadata: PaneMetadata::Connecting,
@@ -1588,6 +1949,10 @@ impl Application {
     }
 
     fn activate_workspace_header(&mut self, control: WorkspaceHeaderControl) {
+        if control == WorkspaceHeaderControl::Workspaces {
+            self.toggle_workspace_selector();
+            return;
+        }
         let Some(active_tab) = self
             .workspace_model
             .snapshot()
@@ -1599,7 +1964,9 @@ impl Application {
             WorkspaceHeaderAction::Workspace(action) => {
                 self.send_workspace(action);
             }
+            WorkspaceHeaderAction::ToggleWorkspaces => self.toggle_workspace_selector(),
             WorkspaceHeaderAction::ToggleShortcuts => {
+                self.shortcut_viewer.selector = false;
                 self.set_shortcut_viewer(!self.shortcut_viewer.open);
             }
         }
@@ -1623,7 +1990,58 @@ impl Application {
             })
     }
 
+    fn send_window_action(&mut self, action: WindowAction) -> bool {
+        let Some(window) = self.workspace_model.window() else {
+            return false;
+        };
+        let generation = window.generation;
+        let suspend = matches!(
+            action,
+            WindowAction::Select { .. }
+                | WindowAction::Reconnect
+                | WindowAction::Disconnect
+                | WindowAction::Busy
+                | WindowAction::Offline { .. }
+        );
+        if suspend {
+            self.workspace_model
+                .mark_unavailable("Changing workspace connection");
+            self.suspend_workspace_attachments();
+            let Some(socket) = self.workspace_socket.clone() else {
+                return false;
+            };
+            self.workspace_transport = None;
+            let proxy = self.proxy.clone();
+            self.workspace_transport = Some(WorkspaceTransport::start_with_action(
+                socket,
+                WorkspaceAction::Window { generation, action },
+                move || {
+                    let _ = proxy.send_event(UserEvent::Workspace);
+                },
+            ));
+            self.refresh_client_view();
+            true
+        } else {
+            self.queue_workspace_raw(WorkspaceAction::Window { generation, action })
+        }
+    }
+
     fn queue_workspace(&mut self, action: WorkspaceAction) -> bool {
+        if !self.workspace_model.online() {
+            return false;
+        }
+        let action = if let Some(window) = self.workspace_model.window() {
+            WorkspaceAction::Window {
+                generation: window.generation,
+                action: WindowAction::Apply(Box::new(action)),
+            }
+        } else {
+            action
+        };
+        self.queue_workspace_raw(action)
+    }
+
+    fn queue_workspace_raw(&mut self, action: WorkspaceAction) -> bool {
         let Some(transport) = &self.workspace_transport else {
             return false;
         };
@@ -1675,6 +2093,18 @@ impl Application {
 
     fn handle_workspace_key(&mut self, event: &winit::event::KeyEvent) -> bool {
         let Some(snapshot) = self.workspace_model.snapshot() else {
+            if self.workspace_model.window().is_some() {
+                if event.state == ElementState::Pressed
+                    && !event.repeat
+                    && matches!(
+                        event.physical_key,
+                        PhysicalKey::Code(KeyCode::Enter | KeyCode::Space)
+                    )
+                {
+                    self.toggle_workspace_selector();
+                }
+                return true;
+            }
             return false;
         };
         let focus = self.workspace_focus;
@@ -1786,6 +2216,7 @@ impl Application {
                     modifiers == session::Modifiers::SHIFT,
                     self.workspace_scene()
                         .is_some_and(|scene| scene.has_control(WorkspaceHeaderControl::Shortcuts)),
+                    self.workspace_model.window().is_some(),
                 )
             {
                 self.set_workspace_focus(next);
@@ -1857,7 +2288,58 @@ impl Application {
         }
     }
 
+    fn remember_departure(&mut self, endpoint: Vec<u8>) {
+        let now = Instant::now();
+        self.departing_attachments
+            .retain(|_, deadline| *deadline > now);
+        if self.departing_attachments.len() < eon_workspace_protocol::v13::MAX_SESSIONS {
+            self.departing_attachments
+                .insert(endpoint, now + Duration::from_secs(1));
+        }
+    }
+
+    fn handle_window_transport_loss(
+        &mut self,
+        event: &TransportEvent,
+        endpoint: Option<&[u8]>,
+    ) -> bool {
+        if self.workspace_model.window().is_none() {
+            return false;
+        }
+        let action = match event {
+            TransportEvent::Server(ServerMessage::Busy) => {
+                let deadline = endpoint
+                    .and_then(|endpoint| self.departing_attachments.get(endpoint))
+                    .copied();
+                if departing_busy_is_retryable(deadline, Instant::now()) {
+                    return false;
+                }
+                WindowAction::Busy
+            }
+            // A stopped pane also ends its Orbit channel without Exited. The
+            // workspace control channel owns loss of the whole connection;
+            // terminal EOF must leave its pending layout response intact.
+            TransportEvent::RetryableLoss(_) | TransportEvent::Lost(_) => return false,
+            TransportEvent::Incompatible { version } => WindowAction::Offline {
+                detail: format!("Incompatible Orbit session protocol {version}"),
+            },
+            _ => return false,
+        };
+        if self.workspace_model.online() {
+            self.send_window_action(action);
+        }
+        true
+    }
+
     fn handle_transport(&mut self, event: TransportEvent) {
+        if self.workspace_model.window().is_some() && !self.workspace_model.online() {
+            return;
+        }
+        let endpoint = self.terminal.active_endpoint.clone();
+        if self.handle_window_transport_loss(&event, endpoint.as_deref()) {
+            return;
+        }
+
         let retryable_busy = managed_busy_is_retryable(self.supervised, &event);
         let retryable_event = retryable_busy || matches!(&event, TransportEvent::RetryableLoss(_));
         let mut schedule_retry = false;
@@ -2021,6 +2503,9 @@ impl Application {
                     }
                 }
                 if !was_attached && self.terminal.model.is_attached() {
+                    if let Some(endpoint) = &self.terminal.active_endpoint {
+                        self.departing_attachments.remove(endpoint);
+                    }
                     self.terminal.orbit_retry.reset();
                     self.terminal.deferred_selection.clear();
                     self.terminal.selection_gate = SelectionGate::Ready;
@@ -2306,6 +2791,7 @@ impl Application {
         let scrollback_rect = self.scrollback_rect(workspace.as_ref());
         let workspace_focus = self.workspace_focus;
         let ime_allowed = shortcut_viewer.is_none()
+            && self.workspace_model.online()
             && ime_allowed(
                 self.window_focused,
                 workspace_focus,
@@ -2367,6 +2853,9 @@ impl Application {
     }
 
     fn send(&mut self, message: ClientMessage) -> bool {
+        if !self.workspace_model.online() {
+            return false;
+        }
         let pending = match &message {
             ClientMessage::ScrollVertical { rows, .. } => Some(PendingViewportRequest::Scroll {
                 rows: *rows,
@@ -2575,6 +3064,9 @@ impl Application {
     }
 
     fn send_resize(&mut self) {
+        if !self.workspace_model.online() {
+            return;
+        }
         self.send_column_resizes();
         let Some(state) = &self.window else {
             return;
@@ -2844,6 +3336,7 @@ impl ApplicationHandler<UserEvent> for Application {
         if self.window.is_none()
             && self.initial_scale_pending
             && self.workspace_model.snapshot().is_none()
+            && self.workspace_model.window().is_none()
             && let Some(socket) = self.workspace_socket.clone()
         {
             if self.workspace_transport.is_none() {
@@ -2992,6 +3485,7 @@ impl ApplicationHandler<UserEvent> for Application {
             WindowEvent::Ime(event) => {
                 self.cancel_terminal_scroll();
                 let allowed = !self.shortcut_viewer.open
+                    && self.workspace_model.online()
                     && ime_allowed(
                         self.window_focused,
                         workspace_focus,
@@ -3141,6 +3635,15 @@ impl ApplicationHandler<UserEvent> for Application {
                     self.terminal.selection_scroll.cancel();
                 }
                 if self.shortcut_viewer.open {
+                    if self.shortcut_viewer.selector
+                        && button == MouseButton::Left
+                        && button_state == ElementState::Released
+                        && let Some(index) = self.shortcut_viewer_scene().and_then(|scene| {
+                            scene.hit_row(self.cursor.x as f32, self.cursor.y as f32)
+                        })
+                    {
+                        self.activate_dialog_row(index);
+                    }
                     return;
                 }
                 if button_state == ElementState::Pressed {
@@ -3434,7 +3937,9 @@ impl ApplicationHandler<UserEvent> for Application {
                     self.handle_workspace(event);
                 }
                 if self.window.is_none() {
-                    if self.workspace_model.snapshot().is_some() {
+                    if self.workspace_model.snapshot().is_some()
+                        || self.workspace_model.window().is_some()
+                    {
                         self.resumed(event_loop);
                     } else if let Some(notice) = self.workspace_model.notice() {
                         self.fatal_error = Some(notice.to_owned());
@@ -3456,6 +3961,12 @@ impl ApplicationHandler<UserEvent> for Application {
                             .accessibility
                             .action_target(request.target_node, request.action);
                         match target {
+                            Some(AccessibilityTarget::DialogRow { index, activate }) => {
+                                self.select_dialog_row(index);
+                                if activate {
+                                    self.activate_dialog_row(index);
+                                }
+                            }
                             Some(AccessibilityTarget::Link { row, column, copy }) => {
                                 self.activate_accessible_link(row, column, copy);
                             }
@@ -3641,7 +4152,7 @@ fn retry_is_allowed(
 /// Live panes of the active tab, except endpoints whose presentation attachment is not
 /// established; none while a popup covers the tab.
 fn visible_metadata_endpoints(
-    snapshot: &eon_workspace_protocol::v12::Snapshot,
+    snapshot: &eon_workspace_protocol::v13::Snapshot,
     unattached: &[&[u8]],
 ) -> HashSet<Vec<u8>> {
     if active_popup(snapshot).is_some() {
@@ -3666,6 +4177,10 @@ fn server_failure_suppresses_retry(message: &ServerMessage) -> bool {
     )
 }
 
+fn departing_busy_is_retryable(deadline: Option<Instant>, now: Instant) -> bool {
+    deadline.is_some_and(|deadline| now < deadline)
+}
+
 fn managed_busy_is_retryable(supervised: bool, event: &TransportEvent) -> bool {
     supervised && matches!(event, TransportEvent::Server(ServerMessage::Busy))
 }
@@ -3674,6 +4189,17 @@ fn apply_retryable_loss(model: &mut SessionModel, detail: String, retry_suppress
     let schedule_retry = !model.is_terminal() && !retry_suppressed;
     model.mark_lost_preserving_constraining_notice(detail);
     schedule_retry
+}
+
+fn connection_label(state: WorkspaceConnection) -> &'static str {
+    match state {
+        WorkspaceConnection::Disconnected => "Disconnected",
+        WorkspaceConnection::Connecting => "Connecting",
+        WorkspaceConnection::Connected => "Connected",
+        WorkspaceConnection::Offline => "Offline",
+        WorkspaceConnection::Stopped => "Stopped",
+        WorkspaceConnection::Busy => "Busy",
+    }
 }
 
 fn window_title<'a>(scene_title: Option<&'a str>, render_notice: Option<&'a str>) -> &'a str {
@@ -3728,9 +4254,13 @@ fn column_scenes<'a>(
     })
 }
 
-fn orbit_transport(proxy: &EventLoopProxy<UserEvent>, socket: PathBuf) -> Transport {
+fn orbit_transport(
+    proxy: &EventLoopProxy<UserEvent>,
+    socket: PathBuf,
+    expected: Option<session::RunIdentity>,
+) -> Transport {
     let proxy = proxy.clone();
-    Transport::start(socket, move || {
+    Transport::start_for_run(socket, expected, move || {
         let _ = proxy.send_event(UserEvent::Transport);
     })
 }
@@ -3863,7 +4393,8 @@ fn accessibility_workspace_focus(
         AccessibilityTarget::Terminal => return Some(WorkspaceFocus::Terminal),
         AccessibilityTarget::Tab(id) => (WorkspaceFocus::Tabs, id),
         AccessibilityTarget::Pane(id) => (WorkspaceFocus::Panes, id),
-        AccessibilityTarget::HeaderControl { .. }
+        AccessibilityTarget::DialogRow { .. }
+        | AccessibilityTarget::HeaderControl { .. }
         | AccessibilityTarget::Link { .. }
         | AccessibilityTarget::ReturnToLive => {
             return None;
@@ -3903,6 +4434,7 @@ fn shortcut_viewer_command(
 enum WorkspaceHeaderAction {
     Workspace(CommonAction),
     ToggleShortcuts,
+    ToggleWorkspaces,
 }
 
 fn workspace_header_action(
@@ -3910,6 +4442,7 @@ fn workspace_header_action(
     active_tab: &str,
 ) -> WorkspaceHeaderAction {
     match control {
+        WorkspaceHeaderControl::Workspaces => WorkspaceHeaderAction::ToggleWorkspaces,
         WorkspaceHeaderControl::NewTab => WorkspaceHeaderAction::Workspace(CommonAction::CreateTab),
         WorkspaceHeaderControl::Shortcuts => WorkspaceHeaderAction::ToggleShortcuts,
         WorkspaceHeaderControl::CloseTab => {
@@ -3924,26 +4457,19 @@ fn cycle_header_focus(
     focus: WorkspaceFocus,
     backwards: bool,
     shortcuts_visible: bool,
+    workspaces_visible: bool,
 ) -> Option<WorkspaceFocus> {
-    use WorkspaceHeaderControl::{CloseTab, NewTab, Shortcuts};
-
-    Some(match (focus, backwards) {
-        (WorkspaceFocus::Tabs, false) => WorkspaceFocus::Header(NewTab),
-        (WorkspaceFocus::Header(NewTab), false) => WorkspaceFocus::Header(if shortcuts_visible {
-            Shortcuts
-        } else {
-            CloseTab
-        }),
-        (WorkspaceFocus::Header(Shortcuts), false) => WorkspaceFocus::Header(CloseTab),
-        (WorkspaceFocus::Header(CloseTab), false) => WorkspaceFocus::Tabs,
-        (WorkspaceFocus::Tabs, true) => WorkspaceFocus::Header(CloseTab),
-        (WorkspaceFocus::Header(CloseTab), true) => {
-            WorkspaceFocus::Header(if shortcuts_visible { Shortcuts } else { NewTab })
-        }
-        (WorkspaceFocus::Header(Shortcuts), true) => WorkspaceFocus::Header(NewTab),
-        (WorkspaceFocus::Header(NewTab), true) => WorkspaceFocus::Tabs,
-        _ => return None,
-    })
+    use WorkspaceHeaderControl::{CloseTab, NewTab, Shortcuts, Workspaces};
+    let mut controls = vec![WorkspaceFocus::Tabs, WorkspaceFocus::Header(NewTab)];
+    if shortcuts_visible {
+        controls.push(WorkspaceFocus::Header(Shortcuts));
+    }
+    controls.push(WorkspaceFocus::Header(CloseTab));
+    if workspaces_visible {
+        controls.push(WorkspaceFocus::Header(Workspaces));
+    }
+    let index = controls.iter().position(|value| *value == focus)?;
+    Some(controls[(index + if backwards { controls.len() - 1 } else { 1 }) % controls.len()])
 }
 
 fn sends_workspace_shortcut(action: &WorkspaceAction, state: ElementState, repeat: bool) -> bool {
@@ -4128,7 +4654,11 @@ pub(super) fn run(arguments: LaunchArguments) -> Result {
     let mut application = Application::new(arguments, event_loop.create_proxy());
     if application.startup_admission && application.workspace_socket.is_some() {
         let response = yazelix_venus::read_workspace_response(&mut io::stdin().lock())?;
-        if !matches!(response, eon_workspace_protocol::v12::Response::Snapshot(_)) {
+        if !matches!(
+            response,
+            eon_workspace_protocol::v13::Response::Snapshot(_)
+                | eon_workspace_protocol::v13::Response::Window(_)
+        ) {
             return Err("Venus startup admission requires an Eon workspace snapshot".into());
         }
         application.workspace_model.apply(response);
@@ -4170,7 +4700,7 @@ mod tests {
     };
     use super::*;
     use crate::launch;
-    use eon_workspace_protocol::v12::{
+    use eon_workspace_protocol::v13::{
         InvokeIntent, Pane, Popup, PopupEntry, Shortcut, Side, Snapshot, Tab,
     };
 
@@ -4179,7 +4709,7 @@ mod tests {
             id: "project".into(),
             label: "Project".into(),
             shortcut: Shortcut {
-                modifiers: eon_workspace_protocol::v12::ALT,
+                modifiers: eon_workspace_protocol::v13::ALT,
                 key: "KeyZ".into(),
             },
         }];
@@ -4204,9 +4734,9 @@ mod tests {
                 assert!(self.0.window.is_none(), "wait for workspace geometry");
                 self.0
                     .workspace_model
-                    .apply(eon_workspace_protocol::v12::Response::Snapshot(Snapshot {
+                    .apply(eon_workspace_protocol::v13::Response::Snapshot(Snapshot {
                         active_tab: "t1".into(),
-                        geometry: eon_workspace_protocol::v12::PopupGeometry {
+                        geometry: eon_workspace_protocol::v13::PopupGeometry {
                             side_margin: 8.0,
                             vertical_margin: 4.0,
                         },
@@ -4218,7 +4748,7 @@ mod tests {
                             id: "t1".into(),
                             directory: b"/tmp".to_vec(),
                             selected_pane: Some("p1".into()),
-                            columns: vec![eon_workspace_protocol::v12::Column {
+                            columns: vec![eon_workspace_protocol::v13::Column {
                                 panes: vec![Pane {
                                     id: "p1".into(),
                                     session: "s1".into(),
@@ -4387,7 +4917,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
     fn live_output_keeps_application_input_admitted_before_repaint() {
-        use eon_workspace_protocol::v12 as workspace;
+        use eon_workspace_protocol::v13 as workspace;
         use orbit_protocol::{
             Capabilities, Colors, Cursor, CursorShape, Dimensions, Frame, Rgb, Screen,
         };
@@ -4399,6 +4929,17 @@ mod tests {
             event::{DeviceId, TouchPhase},
             platform::wayland::EventLoopBuilderExtWayland,
         };
+
+        fn accept_orbit(listener: &UnixListener) -> UnixStream {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .write_all(
+                    &session::encode_server_message(&ServerMessage::Attached(Default::default()))
+                        .unwrap(),
+                )
+                .unwrap();
+            stream
+        }
 
         fn frame(revision: u64, screen: Screen) -> TransportEvent {
             TransportEvent::Server(ServerMessage::Frame(Box::new(Frame {
@@ -4484,9 +5025,11 @@ mod tests {
         impl ApplicationHandler<UserEvent> for Probe {
             fn resumed(&mut self, event_loop: &ActiveEventLoop) {
                 self.app.create_window(event_loop).unwrap();
-                self.stream = Some(self.listener.accept().unwrap().0);
+                self.stream = Some(accept_orbit(&self.listener));
                 self.app
-                    .handle_transport(TransportEvent::Server(ServerMessage::Attached));
+                    .handle_transport(TransportEvent::Server(ServerMessage::Attached(
+                        Default::default(),
+                    )));
                 assert!(
                     self.app.status().is_empty(),
                     "normal workspace attachment must not announce its first-frame wait"
@@ -5011,8 +5554,14 @@ mod tests {
                     paused.send(()).unwrap();
                     writer_gate.wait();
                 }));
-                let (blocked_stream, _) = listener.accept().unwrap();
+                let blocked_stream = accept_orbit(&listener);
                 let transport = app.terminal.transport.as_ref().unwrap();
+                writer_paused.recv_timeout(Duration::from_secs(3)).unwrap();
+                assert!(matches!(
+                    transport.drain_events().as_slice(),
+                    [TransportEvent::Server(ServerMessage::Attached(_))]
+                ));
+                resume_writer.wait();
                 // Hold the writer in its encoding-error wake so Full cannot race a dequeue.
                 transport
                     .send(ClientMessage::ScrollVertical {
@@ -5171,12 +5720,14 @@ mod tests {
                     app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
                         snapshot.clone(),
                     )));
-                    streams.push(listeners[index].accept().unwrap().0);
+                    streams.push(accept_orbit(&listeners[index]));
                     assert!(app.terminal.model.scene().is_none());
                     app.render();
                     assert!(!animation_active(app));
                     assert!(app.next_animation.is_none());
-                    app.handle_transport(TransportEvent::Server(ServerMessage::Attached));
+                    app.handle_transport(TransportEvent::Server(ServerMessage::Attached(
+                        Default::default(),
+                    )));
                     app.render();
                     assert!(app.terminal.model.scene().is_none());
                     if streams.len() == 1 {
@@ -5197,7 +5748,9 @@ mod tests {
                 // but its first fresh cursor must snap after a real failure.
                 app.terminal.model.prepare_reconnect();
                 app.render();
-                app.handle_transport(TransportEvent::Server(ServerMessage::Attached));
+                app.handle_transport(TransportEvent::Server(ServerMessage::Attached(
+                    Default::default(),
+                )));
                 app.render();
                 app.handle_transport(cursor_frame(1, 1));
                 app.render();
@@ -5223,8 +5776,10 @@ mod tests {
                 app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
                     snapshot,
                 )));
-                streams.push(listeners[1].accept().unwrap().0);
-                app.handle_transport(TransportEvent::Server(ServerMessage::Attached));
+                streams.push(accept_orbit(&listeners[1]));
+                app.handle_transport(TransportEvent::Server(ServerMessage::Attached(
+                    Default::default(),
+                )));
                 app.render();
                 app.handle_transport(cursor_frame(1, 0));
                 app.render();
@@ -5248,7 +5803,7 @@ mod tests {
                 empty.tabs[0].selected_pane = None;
                 empty.tabs[0].selected_popup = None;
                 app.handle_workspace(WorkspaceEvent::Response(
-                    eon_workspace_protocol::v12::Response::Snapshot(empty),
+                    eon_workspace_protocol::v13::Response::Snapshot(empty),
                 ));
                 assert!(app.terminal.transport.is_none());
                 assert!(app.terminal.model.scene().is_none());
@@ -5260,6 +5815,54 @@ mod tests {
                     app.status().is_empty(),
                     "an empty body has no resize failure"
                 );
+                // Explicit management Stop ends an Orbit channel without an
+                // Exited message, before its workspace mutation can reply.
+                let named = workspace::WindowState {
+                    generation: 1,
+                    connection: workspace::ConnectionState::Connected,
+                    host: String::new(),
+                    target: Some(workspace::WorkspaceInfo {
+                        stopped: false,
+                        id: "named".into(),
+                        name: "Named".into(),
+                        build: "test".into(),
+                        control_endpoint: root
+                            .join("workspace.sock")
+                            .as_os_str()
+                            .as_bytes()
+                            .to_vec(),
+                        compatibility: workspace::Compatibility::default(),
+                    }),
+                    groups: Vec::new(),
+                    detail: String::new(),
+                    workspace: Some(workspace::WorkspaceSnapshot {
+                        workspace: "named".into(),
+                        snapshot: app.workspace_model.snapshot().unwrap().clone(),
+                        runs: Vec::new(),
+                    }),
+                };
+                app.workspace_model
+                    .apply(workspace::Response::Window(Box::new(named)));
+                let mut surviving = TerminalView::new(None);
+                surviving
+                    .model
+                    .apply(ServerMessage::Attached(Default::default()))
+                    .unwrap();
+                app.column_views.push(surviving);
+                for event in [
+                    TransportEvent::RetryableLoss("pane closed".into()),
+                    TransportEvent::Lost("pane closed".into()),
+                ] {
+                    app.handle_transport(event);
+                    assert!(
+                        app.workspace_model.online(),
+                        "a terminal EOF must not cancel the workspace mutation"
+                    );
+                    assert!(
+                        app.column_views.last().unwrap().model.is_attached(),
+                        "surviving panes remain attached"
+                    );
+                }
                 self.checked = true;
                 event_loop.exit();
             }
@@ -5273,7 +5876,7 @@ mod tests {
         let workspace_listener = UnixListener::bind(&workspace_socket).unwrap();
         let snapshot = Snapshot {
             active_tab: "t1".into(),
-            geometry: eon_workspace_protocol::v12::PopupGeometry {
+            geometry: eon_workspace_protocol::v13::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -5286,7 +5889,7 @@ mod tests {
                     id: format!("t{index}"),
                     directory: b"/tmp".to_vec(),
                     selected_pane: Some(format!("p{index}")),
-                    columns: vec![eon_workspace_protocol::v12::Column {
+                    columns: vec![eon_workspace_protocol::v13::Column {
                         panes: vec![Pane {
                             id: format!("p{index}"),
                             session: format!("s{index}"),
@@ -5387,7 +5990,7 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v12::Column {
+                    columns: vec![eon_workspace_protocol::v13::Column {
                         panes: vec![
                             Pane {
                                 id: "pane-1".into(),
@@ -5412,7 +6015,7 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-3".into()),
-                    columns: vec![eon_workspace_protocol::v12::Column {
+                    columns: vec![eon_workspace_protocol::v13::Column {
                         panes: vec![Pane {
                             id: "pane-3".into(),
                             session: "session-3".into(),
@@ -5423,7 +6026,7 @@ mod tests {
                     }],
                 },
             ],
-            geometry: eon_workspace_protocol::v12::PopupGeometry {
+            geometry: eon_workspace_protocol::v13::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -5444,7 +6047,7 @@ mod tests {
         let mut columns = snapshot.clone();
         columns.tabs[0]
             .columns
-            .push(eon_workspace_protocol::v12::Column {
+            .push(eon_workspace_protocol::v13::Column {
                 panes: vec![Pane {
                     id: "pane-4".into(),
                     session: "session-4".into(),
@@ -5647,6 +6250,17 @@ mod tests {
     }
 
     #[test]
+    fn named_busy_retries_only_a_known_departing_attachment_before_its_deadline() {
+        let now = Instant::now();
+        assert!(!departing_busy_is_retryable(None, now));
+        assert!(departing_busy_is_retryable(
+            Some(now + Duration::from_secs(1)),
+            now
+        ));
+        assert!(!departing_busy_is_retryable(Some(now), now));
+    }
+
+    #[test]
     fn only_supervised_orbit_busy_is_retryable() {
         let busy = TransportEvent::Server(ServerMessage::Busy);
 
@@ -5683,7 +6297,9 @@ mod tests {
 
         let attached = || {
             let mut model = SessionModel::new();
-            model.apply(ServerMessage::Attached).unwrap();
+            model
+                .apply(ServerMessage::Attached(Default::default()))
+                .unwrap();
             model
         };
         let fail = |model: &mut SessionModel, code, detail: &str| {
@@ -6042,23 +6658,28 @@ mod tests {
             WorkspaceHeaderAction::Workspace(CommonAction::CloseTab { tab: "t7".into() })
         );
         assert_eq!(
-            cycle_header_focus(WorkspaceFocus::Tabs, false, true),
+            cycle_header_focus(WorkspaceFocus::Tabs, false, true, false),
             Some(WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab))
         );
         assert_eq!(
             cycle_header_focus(
                 WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab),
                 true,
-                true
+                true,
+                false,
             ),
             Some(WorkspaceFocus::Tabs)
         );
-        assert_eq!(cycle_header_focus(WorkspaceFocus::Panes, false, true), None);
+        assert_eq!(
+            cycle_header_focus(WorkspaceFocus::Panes, false, true, false),
+            None
+        );
         assert_eq!(
             cycle_header_focus(
                 WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab),
                 false,
-                false
+                false,
+                false,
             ),
             Some(WorkspaceFocus::Header(WorkspaceHeaderControl::CloseTab))
         );
@@ -6066,7 +6687,8 @@ mod tests {
             cycle_header_focus(
                 WorkspaceFocus::Header(WorkspaceHeaderControl::CloseTab),
                 true,
-                false
+                false,
+                false,
             ),
             Some(WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab))
         );
@@ -6085,7 +6707,7 @@ mod tests {
             id: "project".into(),
             label: "Money ops".into(),
             shortcut: Shortcut {
-                modifiers: eon_workspace_protocol::v12::ALT,
+                modifiers: eon_workspace_protocol::v13::ALT,
                 key: "KeyZ".into(),
             },
         }];
@@ -6321,7 +6943,7 @@ mod tests {
         ));
         let mut snapshot = Snapshot {
             active_tab: "t1".into(),
-            geometry: eon_workspace_protocol::v12::PopupGeometry {
+            geometry: eon_workspace_protocol::v13::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -6356,7 +6978,7 @@ mod tests {
                     intent
                 }
             );
-            eon_workspace_protocol::v12::check_popup_action(&snapshot, &action).unwrap();
+            eon_workspace_protocol::v13::check_popup_action(&snapshot, &action).unwrap();
             assert!(!sends_workspace_shortcut(
                 &action,
                 ElementState::Pressed,

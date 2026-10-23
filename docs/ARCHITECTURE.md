@@ -96,29 +96,28 @@ shims require an explicit user decision, a removal condition, and a bead.
 EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
 snapshots, supervisor lifecycle results, structured failures, and bounded
-framing. EONW v12 carries Eon-owned raw tab launch directories, each tab's
+framing. EONW v13 carries Eon-owned raw tab launch directories, each tab's
 zero to four pane columns, the popup catalog,
 tab-scoped popup terminals, explicit retarget and chooser-completion actions, and
 an optional pending tab's absent pane selection without interpreting Orbit
 terminal metadata. Workspace and
 lifecycle results are separate types, so the pinned
 Venus consumer remains source- and wire-compatible with additive lifecycle
-tags it never requests. The running Eon supervisor remains the only live
-topology, action, launch-mode, presentation-process, and generation-lifecycle
-owner; the CLI and Venus never infer state from each other, terminal output, or
-the wire format. An idempotent presentation action sends one bounded private
-presentation signal to the supervisor's live Venus child, or starts one replacement
-after detachment with the supervisor's original native-decoration choice. Venus
-alone translates that signal into a native presentation request.
+tags it never requests. The named supervisor owns topology, actions and terminal
+lifecycle; its local window controller owns Venus, the selected connection and
+SSH forwarding. The CLI and Venus consume those owners' projections. Legacy
+generations retain their supervisor-owned presentation stream and replacement
+behavior. Venus alone translates presentation signals into native requests.
 A side-effect-free presentation-capability inspection leaves existing runtime
 reports unchanged. In eonbase mode the same private EONW endpoint retains
 lifecycle authority but returns `workspace-unavailable` to topology actions,
 while Venus receives only Orbit's endpoint. EONW carries opaque Orbit endpoint
 bytes but no terminal content.
 
-EONW v12 is the current Eon source boundary. It adds one request that moves
-the selected pane into the neighbouring column and keeps v11's bytes for
-everything else; v11 adds one request that closes a pane by its stable
+EONW v13 is the current Eon source boundary. It adds named registry and
+compatibility handshakes, terminal run bindings, and window projections with
+generation-bound mutations. v12 added movement into the neighbouring column;
+v11 added one request that closes a pane by its stable
 identity. v10 arranges each tab's panes into up to four columns, each with
 one expanded pane, ahead of the unchanged v9 snapshot of the flattened panes. The current
 snapshot retains v6's optional, bounded Codex quota field with fresh, stale,
@@ -130,8 +129,9 @@ Credentials, account identity, provider payloads, and provider lifecycle stay
 out of EONW and Venus. v7 also permits distinct pending Project pickers in
 separate tabs. Eon provides no version negotiation layer. Existing live
 supervisors retain their generation until explicitly stopped; the updated
-executable starts a separate generation.
-Composed activation requires an exact v12 Venus consumer.
+executable starts a separate generation on the legacy entry. Named workspaces
+retain their stable IDs across compatible builds, independently of the build
+digest. Composed activation requires an exact v13 Venus consumer.
 
 The optional Claude observation adds only bounded presentation facts. Under
 EON-C27, pinned CodexBar collects it; Runtime owns bounded subprocesses,
@@ -139,15 +139,17 @@ validation, observation age and expiry, and Venus owns its native chip.
 Credential contents, account identity and raw provider output stay
 outside EONW and Venus.
 
-Within one exact runtime generation, Eon consumes Orbit's canonical private
+Eon consumes Orbit's canonical private
 management records and lease stream without copying their schema. Eon validates
 the complete live identity and acquires every lease before publishing EONW or
-Venus. Same-boot supervisor replacement retains the exact Orbit runs and maps
-their numeric terminal identities into one synthetic `t1` whose launch directory
-is fresh replacement policy; it does not reconstruct prior topology or launch
-directories. Whole-generation stop is EONW-owned product
-policy routed through Orbit-owned Stop and terminal records. Venus is tied to
-its Eon owner by a private stream and exits on owner EOF.
+Venus. Named supervisors save an atomic layout with tabs, columns, panes,
+popup slots, directories, selection and preassigned run identities. Recovery
+matches existing runs without storing or replaying commands. Missing runs stay
+stopped, transient pickers are not replayed, and unclaimed terminals are
+preserved and reported. The legacy generation path retains its synthetic `t1`
+recovery. Stop is EONW-owned product policy routed through Orbit-owned Stop and
+terminal records. Venus follows the local window controller's private stream;
+ending a workspace does not end that window.
 
 ## Repository subsystem boundaries
 
@@ -218,9 +220,9 @@ Paths below are relative to the repository root.
 - **Owning surfaces:** `runtime/crates/eon-runtime/src/workspace.rs`
 - **Owns:** Live ordered tabs and panes, stable identities, authoritative tab launch
   directories, active selection, terminal-to-endpoint mapping, one captured-tab
-  directory-picker state, deterministic recovered-terminal projection, semantic action
+  directory-picker state, atomic named-layout persistence and recovery, semantic action
   results, and complete snapshots
-- **Does not own:** EONW encoding, Orbit state, prior-topology persistence, shell-CWD
+- **Does not own:** EONW encoding, Orbit state, shell-CWD
   inference, picker rendering, or Venus geometry
 
 ### EONW boundary
@@ -251,14 +253,15 @@ Paths below are relative to the repository root.
 
 - **Owning surfaces:** `flake.nix`
 - **Owns:** In-tree workspace builds, exact external source resolution, opaque launch-path injection, full Eon
-  desktop packaging, and the slim eonbase package
+  desktop and headless server packaging, and the slim eonbase package
 - **Does not own:** Runtime product semantics or a second component graph
 
-The supervisor is the composition root for runtime policy. An opaque source-
-and-graph digest selects its private generation namespace. Candidate directories
+The supervisor is the composition root for runtime policy. Named workspaces
+have random stable IDs; legacy generations use a source-and-graph digest.
+Candidate directories
 locate control endpoints, but only a bounded EONW response establishes live
-identity and capabilities. A bare launch never adopts or stops a different
-generation. Workspace and lifecycle state cross process boundaries only through
+identity and capabilities. Bare launch creates a new named workspace; selecting
+one leaves the previous target running. Workspace and lifecycle state cross process boundaries only through
 EONW for Eon clients; canonical Orbit management records and leases remain the
 private child-lifecycle boundary. Nix resolves the canonical component graph and
 injects paths without becoming a runtime owner. A subsystem review includes its
@@ -279,8 +282,8 @@ them. Invalid graph or package inputs fail at their required boundary.
 | Owner | Responsibility |
 |---|---|
 | Eon | Product contracts/version/default values, actual executable and exit/error mapping, canonical component graph and `eon-manifest`, assets, component selection, Nix translation and distribution |
-| `eon-runtime` | The `cli`, `quota`, `control`, `generation`, `managed_environment`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
-| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v12 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
+| `eon-runtime` | Private CLI, connection, quota, control, generation, environment, terminal, supervisor, window and workspace mechanisms, with one strict config parser |
+| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v13 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
 | Orbit and Venus | Their terminal and native-client authority |
 
 Eon calls one concrete library entry point. Runtime handles invocation selection,
@@ -378,28 +381,35 @@ the user activates an implementation bead and its prerequisite proofs exist. The
 active Eon slice launches one accepted Venus and Orbit pair, supplies the
 accepted managed environment, preserves Eon component and native shell
 configuration boundaries, reports component identity through one Nix-managed
-path, and exposes its live workspace through EONW v12. Venus consumes a new EONW
+path, and exposes its live workspace through EONW v13. Venus consumes a new EONW
 version only after Eon Runtime's producer proof; the graph's interface versions
 change only after Venus's consumer proof exists. Later slices earn their scope
 through dogfooding. Direct distribution has its own activation gate.
 
 ## Remote access
 
-**Status: planned and unproved; no contract.** On 2026-10-15 the user chose
-SSH as Eon's remote path: a user keeps Eon's window on a local Wayland desktop
-while terminals, editor, Git and agents run on a headless Linux server. Eon
-opens no network listener and owns no login, authentication or encryption.
-`eon-remote-ssh-x7dr` owns the candidate shapes (a Waypipe-forwarded window
-first and, only if that falls short, a local Venus with a remote supervisor
-over SSH-forwarded sockets), their measurements, and keeping remote work alive
-after the SSH session ends. EON-C15 currently excludes both logout survival and
-remote authority.
+A local
+Venus window renders workspaces whose supervisor and terminals run on a
+configured SSH host. This replaces the earlier Waypipe experiment. Eon opens
+no network listener and owns no login, authentication or encryption.
 
 | Owner | Responsibility |
 |---|---|
 | OpenSSH | Reachability, authentication, encryption, host configuration, keys and jump hosts |
-| Waypipe | Candidate external tool for the first shape: Wayland forwarding, buffer transfer and compression |
-| Eon | Remote launch policy and disconnect-versus-Stop policy |
-| Eon Runtime | Supervisor start on the server (headless start open in `eon-remote-ssh-x7dr.3`) and any Eon-owned survival mechanism (open in `eon-remote-ssh-x7dr.2`) |
+| Eon/Nix | One component graph, desktop/server packages and explicit service installation |
+| Eon Runtime window controller | Accepted target, connection generation, cancellation and private SSH master/forwards |
+| Eon Runtime named supervisor | Registry, atomic layout, terminal launches, leases and recovery |
+| systemd on the remote host | A user service per supervisor and independent Orbit scopes, with explicit linger |
 | Orbit | Terminal authority over local Unix sockets; any row-patch protocol for slow links is a separate decision |
-| Venus | Presentation of the workspace, including the attached machine if Venus stays local |
+| Venus | Native selector, accepted identity/status, last consistent picture and input gating |
+
+Local launch remains independent of systemd. The remote boundary is ordinary
+users on x86_64 Linux with systemd; setup and linger are explicit prerequisites.
+Disconnect and window close only detach. Workspace Stop preserves its window;
+window Stop ends its selected workspace before closing. Uncertain mutations
+and queued input are never replayed. Complete frames are the transport baseline.
+Delta frames, history paging, performance claims, multi-client attachment,
+cross-host layouts, and recovery after Orbit or machine restart remain outside
+this slice. `eon-remote-ssh-x7dr.3` records the accepted implementation and
+[EON-C29](CONTRACTS.md#eon-c29--recoverable-ssh-named-workspaces) proof; the parent issue remains
+open for the rest of the remote delivery.

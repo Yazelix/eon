@@ -1,5 +1,5 @@
 use crate::{
-    Color as SceneColor, DrawRow, DrawStyle, Scene, ScenePreview, SceneRect, ShortcutViewerScene,
+    Color as SceneColor, DrawRow, DrawStyle, Scene, ScenePreview, SceneRect, WorkspaceDialogScene,
     WorkspaceFocus, WorkspaceScene,
     scene::{inset_sides, pane_chrome_rect},
 };
@@ -655,7 +655,7 @@ impl Renderer {
         scroll_offset: f32,
         workspace: Option<&WorkspaceScene>,
         columns: &[Option<&Scene>],
-        shortcut_viewer: Option<&ShortcutViewerScene>,
+        shortcut_viewer: Option<&WorkspaceDialogScene>,
         workspace_focus: WorkspaceFocus,
         status: &str,
         blink_visible: bool,
@@ -824,7 +824,7 @@ impl Renderer {
         scroll_offset: f32,
         workspace: Option<&WorkspaceScene>,
         columns: &[Option<&Scene>],
-        shortcut_viewer: Option<&ShortcutViewerScene>,
+        shortcut_viewer: Option<&WorkspaceDialogScene>,
         workspace_focus: WorkspaceFocus,
         status: &str,
         blink_visible: bool,

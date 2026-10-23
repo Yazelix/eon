@@ -14,7 +14,7 @@ use super::{
     windows,
     workspace::{human as human_output, json as json_output},
 };
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     Action, Direction, PopupTarget, Response, Side, VERSION, WorkspaceAction,
 };
 use std::{
@@ -35,6 +35,7 @@ use std::{
 const EON_USAGE: &str = "invalid command or arguments\nusage: eon [COMMAND]\nRun `eon --help` for commands and examples.";
 const EONBASE_USAGE: &str = "usage: eonbase [--no-decorations] [--application-id ID] -- COMMAND... | attach [GENERATION] | generations [--json] | stop GENERATION [--json]";
 
+#[derive(Clone)]
 pub struct Inputs {
     pub version: &'static str,
     pub component_report: Result<String, String>,
@@ -57,6 +58,13 @@ pub fn run(inputs: Inputs) -> (&'static str, Result<i32, String>) {
     let mut arguments = env::args_os();
     let invocation = arguments.next().unwrap_or_default();
     let mut arguments: Vec<OsString> = arguments.collect();
+    if arguments.first().is_some_and(|value| value == "__server") {
+        arguments.remove(0);
+        return (
+            "eon-server",
+            super::supervisor::named::service::command(&inputs, &arguments),
+        );
+    }
     if arguments
         .first()
         .is_some_and(|argument| argument == OsStr::new("__directory-picker"))
@@ -72,6 +80,10 @@ pub fn run(inputs: Inputs) -> (&'static str, Result<i32, String>) {
         return ("eon-directory-picker", startup_anima(&inputs, arguments));
     }
     match Path::new(&invocation).file_name().and_then(OsStr::to_str) {
+        Some("eon-server") => (
+            "eon-server",
+            super::supervisor::named::service::command(&inputs, &arguments),
+        ),
         Some("eonbase") => ("eonbase", execute_eonbase(&inputs, arguments)),
         // Other names stay Eon: Nix's wrapped executable relaunches itself under its own file
         // name for independent windows.
@@ -252,14 +264,12 @@ fn directory_picker(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, St
             directory,
         },
     ) {
-        Ok(ControlResponse::Workspace(Response::Snapshot(_))) => Ok(0),
+        Ok(ControlResponse::Workspace(Response::Snapshot(_) | Response::Workspace(_))) => Ok(0),
         Ok(ControlResponse::Workspace(Response::Failure(failure))) => Err(format!(
             "cannot retarget tab: {}: {}",
             failure.code, failure.detail
         )),
-        Ok(ControlResponse::Lifecycle(_)) => {
-            Err("Eon returned a lifecycle result for the directory picker".into())
-        }
+        Ok(_) => Err("Eon returned the wrong result for the directory picker".into()),
         Err(error) => Err(format!("cannot retarget tab: {}", error.detail)),
     }
 }
@@ -345,12 +355,57 @@ fn launch_managed(
 }
 
 fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
+    if arguments
+        .first()
+        .is_some_and(|command| command == "__window")
+    {
+        let (host, id, welcome) = match arguments.as_slice() {
+            [_, host, id] => (host, id, false),
+            [_, host, id, flag] if flag == "--welcome" => (host, id, true),
+            _ => return Err("invalid private window launch".into()),
+        };
+        let root = managed_environment::nonempty_environment_path("EON_WINDOW_RUNTIME_DIR")
+            .ok_or("window controller has no reserved directory")?;
+        let result = super::supervisor::window::serve(
+            inputs,
+            &root,
+            host.to_str().ok_or("SSH host must be UTF-8")?.into(),
+            id.to_str().ok_or("workspace id must be UTF-8")?.into(),
+            welcome,
+        );
+        if result.is_ok() {
+            let _ = fs::remove_dir_all(root);
+        }
+        return result;
+    }
+    if arguments
+        .first()
+        .is_some_and(|command| command == "__serve-workspace")
+    {
+        let (id, welcome) = match arguments.as_slice() {
+            [_, id] => (id, false),
+            [_, id, flag] if flag == "--welcome" => (id, true),
+            _ => return Err("invalid private workspace launch".into()),
+        };
+        return super::supervisor::named::serve(
+            inputs,
+            id.to_str().ok_or("workspace id must be UTF-8")?,
+            false,
+            welcome,
+        );
+    }
+    if let Some(result) = super::supervisor::named::local_command(inputs, &arguments) {
+        return result;
+    }
+    if let Some(result) = remote_command(&arguments) {
+        return result;
+    }
     if let Some(code) = lifecycle_command(inputs, &arguments, "eon")? {
         return Ok(code);
     }
     match arguments.as_slice() {
         [flag] if flag == "-h" || flag == "--help" => print_help(inputs),
-        [] => launch_current(inputs, LaunchMode::Workspace, &[], true, false, "eon"),
+        [] => windows::new_window(inputs),
         [command, action] if command == "window" && action == "new" => windows::new_window(inputs),
         [command, action, id] if command == "window" && action == "attach" => {
             windows::window_action(id, false, false)
@@ -426,17 +481,26 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
 {heading}Usage{reset}  {command}eon [COMMAND]{reset}
 
 {heading}Start{reset}
-  {command}eon{reset}                                         Open or present the workspace
-  {command}run [-- COMMAND...]{reset}                         Start a fresh workspace
+  {command}eon{reset}                                         Create named workspace and window
+  {command}run [-- COMMAND...]{reset}                         Use the legacy generation entry
+
+{heading}Named workspaces & SSH{reset}
+  {command}workspace create --name NAME [--host HOST]{reset}  Create a persistent workspace
+  {command}workspaces [--host HOST] [--json]{reset}           List named workspaces
+  {command}workspace stop ID [--host HOST]{reset}             Stop one named workspace
+  {command}workspace forget ID [--host HOST]{reset}           Remove a stopped workspace
+  {command}remote add HOST [--server-program PATH]{reset}     Register an OpenSSH host alias
+  {command}connect HOST ID [--window WINDOW]{reset}           Select a workspace in this window
+  {command}disconnect [--window WINDOW]{reset}                Detach and leave tasks running
 
 {heading}Windows{reset}
   {command}window new{reset}                                  Open an independent window
-  {command}window attach ID{reset}                            Reopen a window
-  {command}window stop ID [--json]{reset}                     End that window's terminals
-  {command}window stop all{reset}                             End every window's terminals
+  {command}window attach ID{reset}                            Present an existing window
+  {command}window stop ID [--json]{reset}                     Stop its workspace and close it
+  {command}window stop all{reset}                             Stop and close each window
   {command}windows [--json]{reset}                            List independent windows
 
-{heading}Attach & stop{reset}
+{heading}Legacy generations{reset}
   {command}attach [GENERATION]{reset}                         Reattach to current or named work
   {command}generations [--json]{reset}                        List current and older work
   {command}stop GENERATION|previous|all [--json]{reset}       End selected terminals
@@ -464,6 +528,7 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
   {command}eon anima --help{reset}                            Browse animation styles/options
 
 Closing a window detaches. Stop ends its terminals.
+Use an empty HOST for Local; multiple windows require --window WINDOW.
 Where shown, {command}--json{reset} prints JSON and skips Stop confirmation.
 ",
         version = inputs.version
@@ -582,10 +647,15 @@ fn generation_argument(argument: &OsStr) -> Result<&str, String> {
 
 fn control(inputs: &Inputs, arguments: &[OsString]) -> Result<i32, String> {
     let (action, json) = parse_control_arguments(arguments)?;
-    let generation = current_generation(inputs)?;
-    let root = runtime_directory("eon");
-    let runtime = prepare_generation_runtime(&root, &generation)?;
-    let socket = runtime.join("eon.sock");
+    let socket = if let Some(socket) =
+        managed_environment::nonempty_environment_path("EON_WORKSPACE_SOCKET")
+    {
+        socket
+    } else {
+        let generation = current_generation(inputs)?;
+        let root = runtime_directory("eon");
+        prepare_generation_runtime(&root, &generation)?.join("eon.sock")
+    };
     let response = match send_action(&socket, action) {
         Ok(response) => response,
         Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
@@ -613,6 +683,17 @@ fn control(inputs: &Inputs, arguments: &[OsString]) -> Result<i32, String> {
             Ok(0)
         }
         ControlResponse::Workspace(Response::Failure(failure)) => report_failure(&failure, json),
+        ControlResponse::Workspace(Response::Workspace(value)) => {
+            write_stdout(if json {
+                json_output(&value.snapshot)
+            } else {
+                human_output(&value.snapshot)
+            })?;
+            Ok(0)
+        }
+        ControlResponse::Workspace(_) => {
+            Err("Eon returned a connection result for a workspace action".into())
+        }
         ControlResponse::Lifecycle(_) => {
             Err("Eon supervisor returned a lifecycle result for a workspace action".into())
         }
@@ -694,6 +775,59 @@ fn parse_tab_directory_arguments(arguments: &[OsString]) -> Result<Option<(Actio
         }),
         json,
     )))
+}
+
+fn remote_command(arguments: &[OsString]) -> Option<Result<i32, String>> {
+    use crate::connections::{self, Cancellation};
+    use eon_workspace_protocol::v13::RegistryAction;
+    let values = arguments
+        .iter()
+        .map(|value| value.to_str())
+        .collect::<Option<Vec<_>>>()?;
+    let registry = |host: &str, action, json| {
+        let response = connections::registry(host, action, &Cancellation::default())?;
+        match response {
+            Response::Registry(values) => super::supervisor::named::print_workspaces(&values, json),
+            Response::Hello(value) => super::supervisor::named::print_workspaces(&[value], json),
+            _ => Err("remote returned an unexpected registry result".into()),
+        }
+    };
+    Some(match values.as_slice() {
+        ["remote", "add", host] => connections::add(host, None).map(|_| 0),
+        ["remote", "add", host, "--server-program", program] => {
+            connections::add(host, Some(program)).map(|_| 0)
+        }
+        ["workspaces", "--host", host] => registry(host, RegistryAction::List, false),
+        ["workspaces", "--host", host, "--json"] => registry(host, RegistryAction::List, true),
+        ["workspace", "create", "--name", name, "--host", host] => registry(
+            host,
+            RegistryAction::Create {
+                name: (*name).into(),
+            },
+            false,
+        ),
+        ["workspace", "stop", id, "--host", host] => registry(
+            host,
+            RegistryAction::Stop {
+                workspace: (*id).into(),
+            },
+            false,
+        ),
+        ["workspace", "forget", id, "--host", host] => registry(
+            host,
+            RegistryAction::Forget {
+                workspace: (*id).into(),
+            },
+            false,
+        ),
+        ["connect", host, id] => windows::connect(host, id, None),
+        ["connect", host, id, "--window", window] => {
+            windows::connect(host, id, Some(OsStr::new(window)))
+        }
+        ["disconnect"] => windows::disconnect(None),
+        ["disconnect", "--window", window] => windows::disconnect(Some(OsStr::new(window))),
+        _ => return None,
+    })
 }
 
 #[cfg(test)]

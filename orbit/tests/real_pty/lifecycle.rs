@@ -29,7 +29,7 @@ fn linger(peer: &mut Peer) {
 /// Connects, sends Hello and waits for the server's first message.
 fn interactive(path: &Path) -> Peer {
     let mut peer = Peer::connect(path, 8.0);
-    peer.send(&ClientMessage::Hello);
+    peer.send(&ClientMessage::Hello(None));
     peer.receive();
     peer
 }
@@ -96,7 +96,7 @@ pub fn run() {
     );
     let client = interactive(&server.path);
     let mut contender = Peer::connect(&server.path, 2.0);
-    contender.send(&ClientMessage::Hello);
+    contender.send(&ClientMessage::Hello(None));
     contender.shutdown_write();
     linger(&mut contender);
     drop(contender);
@@ -112,7 +112,7 @@ pub fn run() {
     let mut server = Server::start(&directory, &shell, &[]);
     let client = interactive(&server.path);
     let mut observer = Peer::connect(&server.path, 8.0);
-    observer.send(&ClientMessage::ObserveMetadata);
+    observer.send(&ClientMessage::ObserveMetadata(None));
     paste_and_leave(client);
     server.passed(7, 10.0);
     drop(observer);

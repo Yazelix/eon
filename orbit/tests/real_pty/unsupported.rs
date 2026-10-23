@@ -1,5 +1,5 @@
 use crate::support::*;
-use orbit_protocol::session::{ClientMessage, FailureCode, FocusEvent, ServerMessage};
+use orbit_protocol::session::{ClientMessage, FailureCode, FocusEvent, ServerMessage, VERSION};
 use std::path::Path;
 
 /// A canonical message sent with another ORBS version.
@@ -17,13 +17,14 @@ fn first_message(path: &Path, data: &[u8]) -> Peer {
 
 /// Bad first messages end only their peer.
 fn refusals(path: &Path) {
-    // An unsupported version is dropped silently.
-    first_message(path, &with_version(&ClientMessage::Hello, 14)).expect_closed();
-    let mut magic = encode(&ClientMessage::Hello);
+    // Reject the header without reading its payload; Unix may report reset at close.
+    let mut peer = first_message(path, &with_version(&ClientMessage::Hello(None), VERSION + 1));
+    assert!(peer.read_until_closed(true).0.is_empty());
+    let mut magic = encode(&ClientMessage::Hello(None));
     magic[..4].copy_from_slice(b"ORBX");
     let mut peer = first_message(path, &magic);
     peer.failure(FailureCode::Protocol);
-    peer.expect_closed();
+    assert!(peer.read_until_closed(true).0.is_empty());
     // Focus before a role.
     let mut peer = first_message(path, &encode(&ClientMessage::Focus(FocusEvent::Gained)));
     peer.failure(FailureCode::Protocol);
@@ -55,7 +56,7 @@ pub fn run() {
     first.expect(ServerMessage::Accepted);
     first.frame_with("FIRST a");
     // A repeated role fails as a protocol error and ends only this attachment.
-    first.send(&ClientMessage::Hello);
+    first.send(&ClientMessage::Hello(None));
     first.failure(FailureCode::Protocol);
     first.expect_closed();
     drop(first);
@@ -74,7 +75,7 @@ pub fn run() {
     drop(malformed);
     let mut changed = Peer::attach(&server.path, 4.0);
     changed.frame_with("FIRST a");
-    changed.send_bytes(&with_version(&ClientMessage::ReturnToLive, 14));
+    changed.send_bytes(&with_version(&ClientMessage::ReturnToLive, VERSION + 1));
     changed.expect_closed(); // A changed version is closed silently.
     drop(changed);
 

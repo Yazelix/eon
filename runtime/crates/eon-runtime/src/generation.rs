@@ -9,7 +9,7 @@ use super::supervisor::{
     try_lock_supervisor_lifecycle, validate_private_directory,
 };
 use super::workspace::json_escape;
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     Action, Availability, LifecycleResponse, Stopped, WorkspaceAction,
 };
 use std::{
@@ -558,7 +558,7 @@ pub(super) fn stop_generation(
     }
 }
 
-fn read_stop_confirmation() -> Result<String, String> {
+pub(super) fn read_stop_confirmation() -> Result<String, String> {
     let mut answer = Vec::new();
     loop {
         let mut byte = 0u8;
@@ -675,6 +675,32 @@ mod tests {
         assert_eq!(first, current_generation(&inputs).unwrap());
         inputs.assembly = b"changed-assembly";
         assert_ne!(first, current_generation(&inputs).unwrap());
+    }
+
+    #[test]
+    fn invalid_assembly_precedes_named_entrypoint_validation() {
+        let mut inputs = crate::fixtures::inputs();
+        inputs.component_report = Err("invalid supplied component graph".into());
+        let expected = "invalid supplied component graph";
+        assert_eq!(
+            crate::supervisor::named::create(&inputs, "").unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            crate::supervisor::named::serve(&inputs, "invalid", false, false).unwrap_err(),
+            expected
+        );
+        assert_eq!(
+            crate::supervisor::window::serve(
+                &inputs,
+                Path::new("/invalid-eon-runtime"),
+                String::new(),
+                "invalid".into(),
+                false
+            )
+            .unwrap_err(),
+            expected
+        );
     }
 
     #[test]

@@ -153,6 +153,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C2 — One component compatibility graph
 
+- **Same-commit proof amendment:** Manifest schema 5 accepts `bead:ID` as an
+  in-tree contract or interface proof reference when that owning bead records
+  checks, artifacts, environment and results in the implementation commit.
+  This is a reference to evidence, not a substitute for running the checks.
+  External components still require exact Git revisions and commit proof
+  references. Consumer interface requirements must match the producer's
+  version and proof reference exactly.
+
 - **Status:** Candidate
 - **Consumer:** Every Eon distribution and runtime launch path.
 - **Trigger:** A product generation resolves or validates its component set.
@@ -314,6 +322,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C7 — Native Linux Wayland and Apple Silicon macOS
 
 - **Status:** Partially proved
+- **Named-workspace amendment (EON-C29):** Local launch remains independent of a service manager. The approved remote host is x86_64 Linux with a systemd user manager and linger; EON-C29 owns that explicit hosting prerequisite. The client remains native Wayland. Accepted proof: [EON-C29](#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** A user launching a supported Eon distribution on an approved
   native platform.
 - **Trigger:** Build, install, or launch an approved Eon channel.
@@ -357,6 +366,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C8 — Durable tab and pane workspace
 
 - **Status:** Partially proved
+- **Named-workspace amendment (EON-C29):** A named workspace has a stable identity independent of directory and build. Its supervisor owns a versioned, atomic layout snapshot and restores tab order/directories, columns, panes, selection and persistent popup instances against validated live runs. Unfinished creation is not replayed; missing runs are stopped slots and unassigned valid runs are preserved and reported. Legacy generation recovery below is unchanged. Accepted proof: [EON-C29](#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** One local Eon workspace user.
 - **Trigger:** Launch, create or close a tab, create or close a pane, create a
   column, traverse focus, reorder the active tab or selected pane, move the
@@ -491,14 +501,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v12 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v13 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
-  arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
-  restoration, a per-pane terminal restart action, closing panes outside the
-  active tab, terminal
-  content/history, provider state, plugin surface, remote access, or
-  reconstructed terminal state.
+  arbitrary reorder target, cross-tab pane movement, picker relocation,
+  a per-pane terminal restart action, closing panes outside the active tab,
+  terminal content/history, provider state, plugin surface, or reconstructed
+  terminal state. Persistent layout and SSH apply only to EON-C29 named
+  workspaces; legacy generation roots retain their local, non-durable boundary.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Topology and pruning
@@ -639,6 +649,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C10 — Typed workspace control
 
 - **Status:** Proven
+- **Named-workspace amendment (EON-C29):** EONW v13 separates window selection/connection actions from workspace mutations. Window actions use a stable local endpoint; mutations are bound to the accepted workspace and connection generation. An offline window retains the last accepted scene without admitting input. EON-C29 adds SSH transport and structural recovery to this boundary; terminal state remains Orbit-owned. Accepted proof: [EON-C29](#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned workspace or supervisor-lifecycle
@@ -668,14 +679,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v12 and accepted Orbit management operations.
+- **Consumes:** Current EONW v13 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
-  consumer. There is no event stream, subscription policy, remote transport,
-  plugin/MCP API, authorization framework, durable restoration, terminal
-  content, or direct child-protocol escape hatch.
+  consumer. There is no event stream, subscription policy, plugin/MCP API,
+  authorization framework, terminal content, or direct child-protocol escape
+  hatch. SSH forwarding and persistent topology apply only to EON-C29 named
+  workspaces; legacy generation behavior is unchanged.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v12 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v13 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -738,6 +750,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C11 — Runtime generations and presentation
 
 - **Status:** Proven on x86_64 Linux native Wayland
+- **Named-workspace amendment (EON-C29):** The generation-only rules below continue to describe legacy roots and eonbase. EON-C29 named workspaces use a build-independent namespace and compatible protocol admission. Each local window owns its Venus process and connection independently of workspace supervisors; stopping a background workspace cannot close that window. A retained incompatible build remains the only manager of its old format. Accepted proof: [EON-C29](#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** Eon and eonbase users launching or targeting a product generation.
 - **Trigger:** Launch current generation, inspect an older live generation,
   present a compatible existing surface, stop one generation, or stop a selected
@@ -941,6 +954,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Proven on x86_64 Linux by the automated tier; installed
   supervisor-loss adoption is pending re-proof in this repository.
+- **Named-workspace amendment (EON-C29):** The synthetic t1 projection and same-login limitation below apply to legacy generation roots and eonbase. Named workspaces restore their acknowledged topology and persistent popup instances without replaying commands. Compatible supervisor replacement retains Orbit run/PID/start/PTY identities and validates record, UID, socket and lease identity. Explicit remote hosting also survives the last SSH logout through independent user units and linger. Orbit and machine restart recovery remain excluded. Accepted proof: [EON-C29](#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** One local Eon or eonbase user on the same boot and login.
 - **Trigger:** An Eon-launched Orbit crosses Ready, its supervisor disappears,
   its acquired owner dies, a replacement targets the same exact generation,
@@ -1071,6 +1085,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C17 — Tab launch directory
 
 - **Status:** Partially proved
+- **Named-workspace amendment (EON-C29):** A named workspace persists each tab launch directory with its layout. Project, new panes and popups run on that workspace host. Directory identity never identifies the workspace: two workspaces may use the same directory. Accepted proof: [EON-C29](#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** One local Eon workspace user creating tabs and panes.
 - **Trigger:** Eon creates or recovers a workspace, creates a tab or pane, or an
   approved same-user client explicitly retargets one live tab.
@@ -1121,6 +1136,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Status:** Proven for home-directory tabs, picker dismissal and shared popups
   on x86_64 Linux native Wayland; v7 multi-pending tabs are proven by the
   automated tier.
+- **Named-workspace amendment (EON-C29):** Project remains a transient terminal on the selected workspace host, including an SSH host. Persistent Git/Agent popups recover their existing run and launch directory; a transient chooser is not replayed after supervisor loss. Accepted proof: [EON-C29](#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** One person starting or using full Eon.
 - **Trigger:** Eon needs the first pane for a new tab, or the person presses
   Alt+Z in an existing tab.
@@ -1362,6 +1378,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C21 — Native workspace header
 
 - **Status:** Proven
+- **Named-workspace amendment (EON-C29):** The native header gains a Local/host-grouped named-workspace selector and shows the accepted machine, workspace name and connection state. Selection changes the current window without stopping the previous workspace. A failed switch retains the previous scene and its previous label. Accepted proof: [EON-C29](#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** One installed full-Eon user on native x86_64 Linux Wayland.
 - **Trigger:** The user points at, focuses, scrolls, or activates the top
   workspace row, its tabs, New tab, Shortcuts, active-tab Close, or blank drag
@@ -1413,6 +1430,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C23 — Independent Eon windows
 
 - **Status:** Proven
+- **Named-workspace amendment (EON-C29):** Each new window owns Venus and its connection resources independently of workspace supervisors. Close and disconnect detach without stopping work. workspace stop preserves the window; window stop stops only its current target then closes it, reporting failure if Stop fails. window stop all processes the caller last and never visits prior targets. CLI selection requires an explicit window ID when several windows exist. Legacy window roots remain manageable through their retained executable. Accepted proof: [EON-C29](#eon-c29--recoverable-ssh-named-workspaces), `eon-remote-ssh-x7dr.3` (2026-10-23).
 - **Consumer:** A full-Eon user on native x86_64 Linux Wayland.
 - **Trigger:** `eon window new`, the desktop launcher's New Eon Window action,
   or Venus's Alt+Shift+N shortcut.
@@ -1681,3 +1699,59 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   review of changed defaults against the changelog and one installed upgrade
   observation in which the previous release's live terminals keep running and
   the new release lists and stops them.
+
+
+## EON-C29 — Recoverable SSH named workspaces
+
+- **Status:** Proven by automated and installed two-host checks on 2026-10-23
+  (`eon-remote-ssh-x7dr.3`); x86_64 Linux native Wayland client and systemd host.
+- **Consumer:** One native Wayland client and one ordinary user on a configured
+  x86_64 Linux/systemd remote host, or a local named workspace.
+- **Trigger:** Create/select a named workspace, detach, lose SSH, end the last
+  remote login, restart a compatible supervisor, reconnect, explicitly Stop,
+  or explicitly forget a stopped workspace.
+- **Approved lifecycle completion (2026-10-23):** A validated EONW 13
+  Presentation channel reports the selected window connection lifetime to its
+  workspace owner. Its last closure applies EON-C18 transient-picker cleanup
+  and pending-tab fallback; persistent panes and popups keep running.
+  `workspace forget ID [--host HOST]` removes only the named registration,
+  layout and completed runtime records after a persisted successful Stop and
+  confirmation that no live, unresolved or unowned run remains. It serializes
+  against creation and supervisor startup, never sends Stop, and never evicts
+  workspaces automatically. Ordinary Stop retains the saved workspace.
+- **Result:** Names and directories do not define identity. The local window
+  owns Venus, its selected target and private SSH connections; each workspace
+  supervisor owns its layout and management leases; Orbit owns live PTYs and
+  terminal state. Detach, window close and supervisor replacement preserve
+  existing tasks and acknowledged topology. Remote hosting uses a user service
+  per supervisor and an independent scope per Orbit, with explicitly configured
+  linger. Local launch retains its direct process path. Full snapshots are the
+  transport baseline. Incompatible peers are rejected without stopping work.
+- **Important failures:** Corrupt or unknown layouts, replaced endpoints, stale
+  process identities, Busy attachments, cancelled connections and uncertain
+  mutations never authorize command replay, arbitrary forwarding or batch Stop.
+  An unsuccessful switch keeps the previous scene under its previous identity.
+- **Owner:** Eon Runtime owns workspace/window identity, layout, SSH adaptation,
+  compatibility and host lifecycle. Eon supplies one component graph and Nix
+  composition; Venus owns native presentation; Orbit owns terminals.
+- **Boundary:** One active client and one host per workspace; no Orbit/machine
+  restart recovery, mixed-host layout, protocol translator, remote GUI, generic
+  RPC or permanent provisioning framework. Remote setup is explicit. Connecting
+  does not install, upgrade or enable linger. Existing local generations and
+  eonbase retain their original lifecycle.
+- **Proof:** `bead:eon-remote-ssh-x7dr.3` records the implementation, gate and
+  review evidence in the same commit. G1–G5 pass; installed G6 used homePC
+  `192.168.0.125` and server `192.168.0.116`, both NixOS 26.05 x86_64 Linux,
+  with a private native Wayland/Sway display and a dedicated remote account.
+  The final build is Eon 0.1.1 `g1-d8784bb3fda0633bdcf31aff8654ee32`:
+  desktop `/nix/store/a1csivir54s2ayxg40fdivfi6crhbc1n-eon-0.1.1` and server
+  `/nix/store/xibzrxvlgf7i2a8db24j561zv4sxi66y-eon-server-0.1.1`.
+  The owning bead retains the exact component graph, compatible predecessor,
+  process/run/start/PTY identities, layout comparisons and native observations.
+  Nu, Bash and persistent popup tasks survived window close, SSH loss, zero
+  login sessions, supervisor restart/crash and a different compatible build.
+  The same window remained usable after switching local A to remote B and
+  stopping A; workspace Stop and window Stop had their distinct effects.
+  Fault injection preserved unrelated tasks, and temporary resources were
+  removed after evidence capture. The parent remote issue remains open for
+  incremental frames, history paging and performance work.

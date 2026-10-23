@@ -12,15 +12,15 @@ pub fn run() {
     let mut server =
         Server::start(&directory, &shell, &[("ORBIT_CLIPBOARD_GATE", gate.path())]);
     let mut observer = Peer::connect(&server.path, 10.0);
-    observer.send(&ClientMessage::ObserveMetadata);
-    observer.expect(ServerMessage::ObservingMetadata);
+    observer.send(&ClientMessage::ObserveMetadata(None));
+    observer.expect(ServerMessage::ObservingMetadata(Default::default()));
     observer.metadata();
 
     // The client reads nothing after its first frame, so ordered writes,
     // which no frame replaces, fill its output queue.
     let mut client = Peer::connect_with_receive_buffer(&server.path, 4096, 10.0);
-    client.send(&ClientMessage::Hello);
-    client.expect(ServerMessage::Attached);
+    client.send(&ClientMessage::Hello(None));
+    client.expect(ServerMessage::Attached(Default::default()));
     client.frame();
     for write in 1..=WRITES {
         gate.release();

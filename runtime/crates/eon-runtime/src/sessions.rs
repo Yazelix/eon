@@ -7,7 +7,7 @@ use super::{
     },
     workspace::{is_directory_picker_endpoint, is_directory_picker_session},
 };
-use eon_workspace_protocol::v12::MAX_SESSIONS;
+use eon_workspace_protocol::v13::MAX_SESSIONS;
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LiveIdentity,
     ObjectIdentity, ProcessOutcome, Record as ManagementRecord,
@@ -318,10 +318,10 @@ fn validate_management_identity(
     if expected_run.is_some_and(|expected| identity.run_id != expected) {
         return Err("terminal record reports a different run identity".into());
     }
-    if identity.component_generation != component_generation {
+    if identity.workspace_id != component_generation {
         return Err(format!(
-            "terminal record reports component generation {}, expected {component_generation}",
-            identity.component_generation
+            "terminal record reports workspace identity {}, expected {component_generation}",
+            identity.workspace_id
         ));
     }
     if identity.record_generation != management::RECORD_GENERATION
@@ -456,58 +456,74 @@ fn acquire_management(
     candidate: ManagedCandidate,
     deadline: Instant,
 ) -> Result<RunningSession, String> {
-    let current = read_management_record(&candidate.record_path)?.ok_or_else(|| {
-        format!(
-            "terminal record {} disappeared",
-            candidate.record_path.display()
-        )
-    })?;
-    if current.object != candidate.record
-        || current.record != ManagementRecord::Live(candidate.identity.clone())
-    {
-        return Err(format!(
-            "terminal record {} changed before lease acquisition",
-            candidate.record_path.display()
-        ));
-    }
-    let management_path = Path::new(OsStr::from_bytes(&candidate.identity.management.path));
-    endpoint_matches(management_path, &candidate.identity.management)?;
-    let timeout = operation_timeout(deadline, "terminal lease acquisition")?;
-    let mut stream = unix_connect_with_timeout(management_path, timeout).map_err(|error| {
-        format!(
-            "cannot connect to terminal management endpoint {}: {error}",
-            management_path.display()
-        )
-    })?;
-    validate_management_peer(&stream, &candidate.identity)?;
-    let timeout = operation_timeout(deadline, "terminal lease acquisition")?;
-    stream
-        .set_write_timeout(Some(timeout))
-        .map_err(|error| format!("cannot bound terminal lease acquisition: {error}"))?;
-    let request = management::encode_client_message(&ManagementClientMessage::Acquire {
-        expected: candidate.identity.clone(),
-        record: candidate.record,
-    })
-    .map_err(|error| format!("cannot encode terminal lease request: {error}"))?;
-    stream
-        .write_all(&request)
-        .map_err(|error| format!("cannot send terminal lease request: {error}"))?;
-    match read_management_response(&mut stream, deadline, "terminal lease acquisition")? {
-        ManagementServerMessage::Lease(identity) if identity == candidate.identity => {}
-        ManagementServerMessage::Busy => {
+    let stream = loop {
+        let current = read_management_record(&candidate.record_path)?.ok_or_else(|| {
+            format!(
+                "terminal record {} disappeared",
+                candidate.record_path.display()
+            )
+        })?;
+        if current.object != candidate.record
+            || current.record != ManagementRecord::Live(candidate.identity.clone())
+        {
             return Err(format!(
-                "terminal run {} is already managed",
-                candidate.identity.run_id
+                "terminal record {} changed before lease acquisition",
+                candidate.record_path.display()
             ));
         }
-        ManagementServerMessage::Failure(failure) => {
-            return Err(format!(
-                "terminal rejected lease acquisition: {}",
-                failure.detail
-            ));
+        let management_path = Path::new(OsStr::from_bytes(&candidate.identity.management.path));
+        endpoint_matches(management_path, &candidate.identity.management)?;
+        let timeout = operation_timeout(deadline, "terminal lease acquisition")?;
+        let mut stream = unix_connect_with_timeout(management_path, timeout).map_err(|error| {
+            format!(
+                "cannot connect to terminal management endpoint {}: {error}",
+                management_path.display()
+            )
+        })?;
+        validate_management_peer(&stream, &candidate.identity)?;
+        let timeout = operation_timeout(deadline, "terminal lease acquisition")?;
+        stream
+            .set_write_timeout(Some(timeout))
+            .map_err(|error| format!("cannot bound terminal lease acquisition: {error}"))?;
+        let request = management::encode_client_message(&ManagementClientMessage::Acquire {
+            expected: Box::new(candidate.identity.clone()),
+            record: candidate.record,
+        })
+        .map_err(|error| format!("cannot encode terminal lease request: {error}"))?;
+        // Orbit can answer Busy and close before it reads Acquire.
+        let sent = stream
+            .write_all(&request)
+            .map_err(|error| format!("cannot send terminal lease request: {error}"));
+        let response =
+            read_management_response(&mut stream, deadline, "terminal lease acquisition");
+        if !matches!(response, Ok(ManagementServerMessage::Busy)) {
+            sent?;
         }
-        _ => return Err("terminal returned the wrong lease result".into()),
-    }
+        match response? {
+            ManagementServerMessage::Lease(identity) if identity == candidate.identity => {}
+            ManagementServerMessage::Busy => {
+                // A departed owner's EOF can still be queued behind this admission.
+                // Never seize its lease; retry identity validation within the start bound.
+                if Instant::now() < deadline {
+                    drop(stream);
+                    thread::sleep(Duration::from_millis(25));
+                    continue;
+                }
+                return Err(format!(
+                    "terminal run {} is already managed",
+                    candidate.identity.run_id
+                ));
+            }
+            ManagementServerMessage::Failure(failure) => {
+                return Err(format!(
+                    "terminal rejected lease acquisition: {}",
+                    failure.detail
+                ));
+            }
+            _ => return Err("terminal returned the wrong lease result".into()),
+        }
+        break stream;
+    };
     stream
         .set_read_timeout(None)
         .and_then(|()| stream.set_write_timeout(None))
@@ -657,6 +673,19 @@ pub(super) fn acquire_generation_sessions(
     owned: &[RunningSession],
     deadline: Instant,
 ) -> Result<Vec<RunningSession>, String> {
+    acquire_named_sessions(runtime, mode, component_generation, owned, &[], deadline)
+}
+
+/// An empty Ready claim is an unfinished intent, only when its exact path is in the layout.
+/// Preserve it without replay or unlinking; a child already launched may still publish Ready.
+pub(super) fn acquire_named_sessions(
+    runtime: &Path,
+    mode: LaunchMode,
+    component_generation: &str,
+    owned: &[RunningSession],
+    pending: &[PathBuf],
+    deadline: Instant,
+) -> Result<Vec<RunningSession>, String> {
     let mut paths = fs::read_dir(runtime)
         .map_err(|error| {
             format!(
@@ -693,6 +722,16 @@ pub(super) fn acquire_generation_sessions(
     let mut numbers = HashSet::new();
     for record_path in paths {
         if owned.iter().any(|session| session.record == record_path) {
+            continue;
+        }
+        if pending.contains(&record_path)
+            && fs::symlink_metadata(&record_path).is_ok_and(|metadata| {
+                metadata.is_file()
+                    && metadata.uid() == effective_uid()
+                    && metadata.mode() & 0o7777 == 0o600
+                    && metadata.len() == 0
+            })
+        {
             continue;
         }
         operation_timeout(deadline, "terminal recovery")?;
@@ -790,6 +829,9 @@ enum SessionEnd {
 }
 
 impl RunningSession {
+    pub(super) fn run_id(&self) -> &str {
+        &self.identity.run_id
+    }
     pub(super) fn is_finished(&self) -> bool {
         self.finished.is_some()
     }
@@ -807,16 +849,53 @@ pub(super) fn start_orbit(
     deadline: Instant,
 ) -> Result<RunningSession, String> {
     let run_id = request_id();
+    start_orbit_with_run(
+        inputs,
+        config,
+        socket,
+        session_id,
+        component_generation,
+        directory,
+        child,
+        deadline,
+        &OrbitLaunch {
+            workspace: component_generation,
+            run: &run_id,
+            scoped: false,
+        },
+    )
+}
+
+pub(super) struct OrbitLaunch<'a> {
+    pub(super) workspace: &'a str,
+    pub(super) run: &'a str,
+    pub(super) scoped: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn start_orbit_with_run(
+    inputs: &Inputs,
+    config: &Path,
+    socket: &Path,
+    session_id: &str,
+    component_generation: &str,
+    directory: &Path,
+    child: &[OsString],
+    deadline: Instant,
+    launch: &OrbitLaunch<'_>,
+) -> Result<RunningSession, String> {
+    let run_id = launch.run;
     let record_path = artifact_path(socket, ".record");
     let mut orbit_command = orbit_command(
         inputs,
         config,
         socket,
         session_id,
-        &run_id,
+        run_id,
         component_generation,
         directory,
         child,
+        launch,
     )?;
     let claim = ReadyClaim::create(&record_path)?;
     let mut orbit = match orbit_command.spawn() {
@@ -853,11 +932,14 @@ pub(super) fn start_orbit(
                     }
                     let (number, endpoint) = validate_management_identity(
                         &identity,
-                        component_generation,
-                        Some(&run_id),
+                        launch.workspace,
+                        Some(run_id),
                         true,
                     )?;
-                    if identity.session_id != session_id || endpoint != socket {
+                    if identity.session_id != session_id
+                        || endpoint != socket
+                        || identity.process_id != orbit.id()
+                    {
                         return Err("terminal Ready identity does not match its launch".into());
                     }
                     return acquire_management(
@@ -911,7 +993,7 @@ pub(super) fn start_orbit(
         Err(error) => match rollback_unleased_orbit(
             orbit,
             claim,
-            (&run_id, component_generation, socket),
+            (run_id, launch.workspace, socket),
             deadline,
         ) {
             Ok(()) => Err(error),
@@ -1003,8 +1085,26 @@ fn orbit_command(
     component_generation: &str,
     directory: &Path,
     child: &[OsString],
+    launch: &OrbitLaunch<'_>,
 ) -> Result<Command, String> {
-    let mut orbit_command = Command::new(&inputs.orbit);
+    let mut orbit_command = if launch.scoped {
+        let mut command = Command::new("systemd-run");
+        command
+            .args([
+                "--user",
+                "--scope",
+                "--quiet",
+                "--collect",
+                "--no-ask-password",
+                "--expand-environment=no",
+            ])
+            .arg(format!("--unit=eon-orbit-{run_id}.scope"))
+            .arg("--")
+            .arg(&inputs.orbit);
+        command
+    } else {
+        Command::new(&inputs.orbit)
+    };
     orbit_command
         .arg("serve")
         .arg(socket)
@@ -1012,10 +1112,19 @@ fn orbit_command(
         .arg(session_id)
         .arg(run_id)
         .arg(component_generation)
+        .arg("--workspace-id")
+        .arg(launch.workspace)
         .arg("--ansi-palette-v1")
         .arg(inputs.defaults.ansi_palette)
         .arg("--")
         .env("EON_CONFIG_HOME", config)
+        .env(
+            "EON_WORKSPACE_SOCKET",
+            socket
+                .parent()
+                .ok_or("terminal endpoint has no workspace")?
+                .join("eon.sock"),
+        )
         .current_dir(directory)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -1302,8 +1411,8 @@ pub(super) fn stop_managed_sessions(
 #[cfg(test)]
 mod tests {
     use super::{
-        EndpointIdentity, LiveIdentity, ManagementRecord, ObjectIdentity, ProcessOutcome,
-        RunningSession, TerminationReason, Tombstone, is_directory_picker_endpoint,
+        EndpointIdentity, LiveIdentity, ManagementRecord, ObjectIdentity, OrbitLaunch,
+        ProcessOutcome, RunningSession, TerminationReason, Tombstone, is_directory_picker_endpoint,
         managed_session_number, management, orbit_command, read_management_response,
         session_number, stop_managed_sessions, unix_connect_with_timeout,
     };
@@ -1354,6 +1463,10 @@ mod tests {
             object: super::object_identity(&fs::symlink_metadata(path).unwrap()),
         };
         let identity = LiveIdentity {
+            workspace_id: "component-1".into(),
+            session_version: orbit_protocol::session::VERSION,
+            frame_version: orbit_protocol::VERSION,
+            capabilities: orbit_protocol::session::CAPABILITIES,
             session_id: "session-1".into(),
             run_id: "lost-owner".into(),
             component_generation: "component-1".into(),
@@ -1484,6 +1597,10 @@ mod tests {
             let endpoint = root.join("k1.sock");
             let record = root.join("k1.sock.record");
             let identity = LiveIdentity {
+                workspace_id: "component-1".into(),
+                session_version: orbit_protocol::session::VERSION,
+                frame_version: orbit_protocol::VERSION,
+                capabilities: orbit_protocol::session::CAPABILITIES,
                 session_id: "directory-picker-1".into(),
                 run_id: format!("run-{pid}"),
                 component_generation: "component-1".into(),
@@ -1599,6 +1716,10 @@ mod tests {
             let (presentation, presentation_object) = endpoint("session-5.sock");
             let (management_path, management_object) = endpoint("session-5.sock.management");
             let identity = LiveIdentity {
+                workspace_id: "component-1".into(),
+                session_version: orbit_protocol::session::VERSION,
+                frame_version: orbit_protocol::VERSION,
+                capabilities: orbit_protocol::session::CAPABILITIES,
                 session_id: "session-5".into(),
                 run_id: format!("run-{pid}"),
                 component_generation: "component-1".into(),
@@ -1675,6 +1796,10 @@ mod tests {
             let number = index + 1;
             let endpoint = root.join(format!("session-{number}.sock"));
             let identity = LiveIdentity {
+                workspace_id: "component-1".into(),
+                session_version: orbit_protocol::session::VERSION,
+                frame_version: orbit_protocol::VERSION,
+                capabilities: orbit_protocol::session::CAPABILITIES,
                 session_id: format!("session-{number}"),
                 run_id: format!("run-{number}"),
                 component_generation: "component-1".into(),
@@ -1883,6 +2008,11 @@ mod tests {
             "component-1",
             root.as_path(),
             &[],
+            &OrbitLaunch {
+                workspace: "workspace-1",
+                run: "run-1",
+                scoped: false,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -1894,6 +2024,8 @@ mod tests {
                 "session-1",
                 "run-1",
                 "component-1",
+                "--workspace-id",
+                "workspace-1",
                 "--ansi-palette-v1",
                 inputs.defaults.ansi_palette,
                 "--",
@@ -1930,6 +2062,11 @@ mod tests {
             "component-2",
             root.as_path(),
             &["codex".into(), "--model".into(), "test".into()],
+            &OrbitLaunch {
+                workspace: "workspace-2",
+                run: "run-2",
+                scoped: false,
+            },
         )
         .unwrap();
         assert_eq!(
@@ -1941,6 +2078,8 @@ mod tests {
                 "session-2",
                 "run-2",
                 "component-2",
+                "--workspace-id",
+                "workspace-2",
                 "--ansi-palette-v1",
                 inputs.defaults.ansi_palette,
                 "--",

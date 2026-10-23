@@ -6,7 +6,7 @@ use super::{
     SceneColor, shaping,
 };
 use crate::{
-    SceneRect, ShortcutViewerScene, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
+    SceneRect, WorkspaceDialogScene, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{QuotaProvider, inset_sides, pane_chrome_rect},
 };
 use glyphon::{
@@ -297,7 +297,7 @@ impl Renderer {
 
     pub(super) fn build_shortcut_viewer(
         &mut self,
-        viewer: &ShortcutViewerScene,
+        viewer: &WorkspaceDialogScene,
         rectangles: &mut RectangleBatch,
     ) {
         let first = self.text.len();
@@ -332,7 +332,7 @@ impl Renderer {
         ));
 
         self.push_text_clipped(
-            "Shortcuts",
+            &viewer.title_text,
             viewer.title.left,
             viewer.title.top,
             viewer.title.width,
@@ -347,7 +347,7 @@ impl Renderer {
             viewer.bounds,
         );
         self.push_text_clipped(
-            "Eon surface · physical keys",
+            &viewer.subtitle_text,
             viewer.subtitle.left,
             viewer.subtitle.top,
             viewer.subtitle.width,
@@ -365,6 +365,7 @@ impl Renderer {
         rectangles.clip = Some(viewer.content);
         let key_width = (self.metrics.font_size * 15.0).min(viewer.content.width * 0.4);
         let gap = padding.min(self.metrics.width);
+        let mut row_index = 0;
         for group in &viewer.groups {
             self.push_text_clipped(
                 &group.title,
@@ -382,6 +383,18 @@ impl Renderer {
                 viewer.content,
             );
             for row in &group.rows {
+                if viewer.selector && row_index == viewer.selected {
+                    rectangles.push_rounded(
+                        row.rect,
+                        padding / 2.0,
+                        SceneColor {
+                            r: 35,
+                            g: 57,
+                            b: 70,
+                        },
+                    );
+                }
+                row_index += 1;
                 self.push_text_clipped(
                     &row.shortcut,
                     row.rect.left,
@@ -453,7 +466,7 @@ impl Renderer {
         }
         rectangles.clip = None;
         self.push_text_clipped(
-            "Wheel or ↑↓ to scroll · Esc or Alt+/ to close",
+            &viewer.footer_text,
             viewer.content.left,
             viewer.content.bottom() + self.metrics.height * 0.35,
             viewer.content.width,
@@ -674,9 +687,21 @@ impl Renderer {
             if focused {
                 rectangles.push_rounded_outline(visual, visual.height / 2.0, accent);
             }
-            let glyph_width = self.metrics.width.min(control.rect.width);
+            let label = if control.kind == WorkspaceHeaderControl::Workspaces {
+                workspace
+                    .connection_label
+                    .as_deref()
+                    .unwrap_or("Workspaces")
+            } else {
+                control.kind.glyph()
+            };
+            let glyph_width = if control.kind == WorkspaceHeaderControl::Workspaces {
+                (control.rect.width - self.metrics.padding * 2.0).max(0.0)
+            } else {
+                self.metrics.width.min(control.rect.width)
+            };
             self.push_text_clipped(
-                control.kind.glyph(),
+                label,
                 control.rect.left + (control.rect.width - glyph_width).max(0.0) / 2.0,
                 control.rect.top + (control.rect.height - self.metrics.height).max(0.0) / 2.0,
                 glyph_width,
@@ -927,7 +952,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
     fn long_workspace_labels_stay_on_the_visible_line() {
-        use eon_workspace_protocol::v12::{Pane, Snapshot, Tab};
+        use eon_workspace_protocol::v13::{Pane, Snapshot, Tab};
         use winit::{
             application::ApplicationHandler, event::WindowEvent, event_loop::EventLoop,
             platform::wayland::EventLoopBuilderExtWayland, window::WindowId,
@@ -952,7 +977,7 @@ mod tests {
                 .unwrap();
                 let snapshot = Snapshot {
                     active_tab: "t2".into(),
-                    geometry: eon_workspace_protocol::v12::PopupGeometry {
+                    geometry: eon_workspace_protocol::v13::PopupGeometry {
                         side_margin: 8.0,
                         vertical_margin: 4.0,
                     },
@@ -967,7 +992,7 @@ mod tests {
                             id: format!("t{}", index + 1),
                             directory: format!("/tmp/{directory}").into_bytes(),
                             selected_pane: Some(format!("p{}", index + 1)),
-                            columns: vec![eon_workspace_protocol::v12::Column {
+                            columns: vec![eon_workspace_protocol::v13::Column {
                                 panes: vec![Pane {
                                     id: format!("p{}", index + 1),
                                     session: format!("session-{}", index + 1),
@@ -1111,6 +1136,7 @@ mod tests {
                     0.0,
                     |_| Some(&metadata),
                     |_, label| renderer.fit_tab_text(label),
+                    None,
                     None,
                 );
                 renderer.set_scrollback_label(Some("↓ 240 rows".into()));

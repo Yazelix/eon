@@ -44,8 +44,8 @@ pub fn run() {
         &["--ansi-palette-v1", PALETTE],
     );
     let mut client = Peer::connect(&server.path, 10.0);
-    client.send(&ClientMessage::Hello);
-    client.expect(ServerMessage::Attached);
+    client.send(&ClientMessage::Hello(None));
+    client.expect(ServerMessage::Attached(Default::default()));
     // The palette replaces the default ANSI colors and no others.
     let frame = client.frame();
     assert_eq!(frame.colors.palette[..16], palette()[..]);

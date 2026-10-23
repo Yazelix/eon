@@ -27,7 +27,7 @@ pub fn run() {
     incomplete.shutdown_write();
     {
         let mut gone = UnixStream::connect(&server.path).expect("connect");
-        gone.write_all(&encode(&ClientMessage::Hello)).expect("send");
+        gone.write_all(&encode(&ClientMessage::Hello(None))).expect("send");
     }
     ready_gate.release();
     incomplete.expect_closed(); // Bend discards the partial Hello.
@@ -39,6 +39,27 @@ pub fn run() {
     incomplete.shutdown_write();
     incomplete.drain(); // An incomplete request closes only this attachment.
     drop(incomplete);
+
+    // An explicit release must work even while the peer can still read and
+    // after an input request made write-half-close retain the attachment.
+    let mut released = Peer::attach(&server.path, 4.0);
+    released.frame();
+    released.send(&ClientMessage::Resize(orbit_protocol::session::SurfaceSize {
+        cols: 101,
+        rows: 30,
+        screen_width: 1010,
+        screen_height: 540,
+        cell_width: 10,
+        cell_height: 18,
+        padding_top: 0,
+        padding_bottom: 0,
+        padding_left: 0,
+        padding_right: 0,
+    }));
+    released.expect(ServerMessage::Accepted);
+    released.frame();
+    released.send(&ClientMessage::Detach);
+    released.expect_closed();
 
     let pid = read_pid(&pid_file);
     let mut previous_revision = 0;
@@ -79,7 +100,7 @@ pub fn run() {
                 last = Some(input);
                 peer.shutdown_write();
                 let mut contender = Peer::connect(&server.path, 4.0);
-                contender.send(&ClientMessage::Hello);
+                contender.send(&ClientMessage::Hello(None));
                 contender.expect(ServerMessage::Busy); // Still attached.
                 // Closing the read side later must free the attachment.
             }

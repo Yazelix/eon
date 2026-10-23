@@ -6,14 +6,31 @@ codecs.
 
 ## Framing and validation
 
-ORBS v13 starts with a 12-byte little-endian header: `ORBS` magic, exact
+ORBS v14 starts with a 12-byte little-endian header: `ORBS` magic, exact
 revision, typed message kind, zero reserved flags, and bounded payload length.
 The incremental decoder rejects unsupported versions, wrong-role or unknown
 kinds, and impossible message declarations before payload-sized buffering. It
 then checks typed values, truncation, and trailing bytes.
 
+## Admission
+
+Before input or a frame, `Hello` or `ObserveMetadata` optionally names the
+expected workspace, session and run. Orbit refuses a mismatched run before
+attachment. `Attached` and `ObservingMetadata` carry that identity, a diagnostic
+build string, ORBF revision and capabilities; the role exchange is bounded to
+1 KiB. Both complete snapshots and explicit detach are required capabilities;
+candidates missing either are rejected before input. A standalone unmanaged
+peer may omit expected identity. ORBF remains v2.
+
+The private management stream and record are version 2. Their Live identity
+adds workspace identity and protocol compatibility while retaining UID,
+PID/start time, run, endpoint inode and management-lease validation.
+
 ## Semantic messages
 
+- `Detach` (kind 12, empty payload) releases the current interactive attachment
+  through the existing full-close policy without stopping the PTY or management
+  lease. Write-half-close alone retains output-reading semantics.
 - Paste bytes stay opaque. Keys retain physical identity, action, modifiers,
   composition, text, and an optional unshifted codepoint.
 - Left-pointer phases carry bounded surface positions and modifiers. Begin adds

@@ -1,5 +1,5 @@
 {
-  "schema": 4,
+  "schema": 5,
   "product": {
     "id": "eon-alpha",
     "target": "x86_64-linux"
@@ -47,8 +47,8 @@
     ],
     "required_interfaces": [
       { "component": "orbit", "interface": "ORBF", "version": 2 },
-      { "component": "orbit", "interface": "ORBS", "version": 13 },
-      { "component": "eon-workspace-protocol", "interface": "EONW", "version": 12 }
+      { "component": "orbit", "interface": "ORBS", "version": 14 },
+      { "component": "eon-workspace-protocol", "interface": "EONW", "version": 13 }
     ]
   },
   "components": [
@@ -85,7 +85,7 @@
       "contracts": [
         { "id": "ORB-C1", "proof": "d96fff2015cded947c881c454216c6bf0ad69b7b" },
         { "id": "ORB-C2", "proof": "d96fff2015cded947c881c454216c6bf0ad69b7b" },
-        { "id": "ORB-C3", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
+        { "id": "ORB-C3", "proof": "bead:eon-remote-ssh-x7dr.3" },
         { "id": "ORB-C4", "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
         { "id": "ORB-C5", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
         { "id": "ORB-C6", "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
@@ -95,11 +95,11 @@
         { "id": "ORB-C10", "proof": "7f067b30e97d0b4787a7c6c0bbe3dd8a80a61c2c" },
         { "id": "ORB-C11", "proof": "a65e199e16e97330175e314cacf791fa00f53069" },
         { "id": "ORB-C12", "proof": "7de9980ffbd6417758698d5c33356204eeb24de5" },
-        { "id": "ORB-C13", "proof": "7de9980ffbd6417758698d5c33356204eeb24de5" }
+        { "id": "ORB-C13", "proof": "bead:eon-remote-ssh-x7dr.3" }
       ],
       "interfaces": [
         { "id": "ORBF", "version": 2, "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
-        { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
+        { "id": "ORBS", "version": 14, "proof": "bead:eon-remote-ssh-x7dr.3" }
       ],
       "requires": []
     },
@@ -118,22 +118,22 @@
       "contracts": [
         { "id": "VEN-C1", "proof": "58f2eaa8057627bdbf73262fdb10a1dc8b681ffc" },
         { "id": "VEN-C2", "proof": "58f2eaa8057627bdbf73262fdb10a1dc8b681ffc" },
-        { "id": "VEN-C3", "proof": "a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8" },
-        { "id": "VEN-C4", "proof": "dd31c0e74628674c772b1494590ce31cacce1ef0" },
+        { "id": "VEN-C3", "proof": "bead:eon-remote-ssh-x7dr.3" },
+        { "id": "VEN-C4", "proof": "bead:eon-remote-ssh-x7dr.3" },
         { "id": "VEN-C5", "proof": "3730201d6dd27e15fdcd1a8b0662aa476a587eb6" },
         { "id": "VEN-C7", "proof": "5dca0688644ef11f7fa8e845bb42842603189d32" },
-        { "id": "VEN-C8", "proof": "dd31c0e74628674c772b1494590ce31cacce1ef0" },
+        { "id": "VEN-C8", "proof": "bead:eon-remote-ssh-x7dr.3" },
         { "id": "VEN-C9", "proof": "90988f6ebcde68338e202a9c637c59398aafe93d" },
         { "id": "VEN-C10", "proof": "9c56eb17613e10ef7712a1852b049ed63cf22b18" },
         { "id": "VEN-C11", "proof": "74ab5a0b661210f0afec94086f5358fe50b01f05" },
         { "id": "VEN-C13", "proof": "2d3498258920736eb1bdae2b8869b6547b9735d4" },
-        { "id": "VEN-C14", "proof": "a768e9a1bcb61eac5a21d25b7463c9dc44aa2df8" },
+        { "id": "VEN-C14", "proof": "bead:eon-remote-ssh-x7dr.3" },
         { "id": "VEN-C15", "proof": "7fc7e4ba97aaf48b586002934a580ef2d1c31694" },
         { "id": "VEN-C17", "proof": "ab24961bd6b2f9403736e52ebbac8cc266488a41" },
-        { "id": "VEN-C18", "proof": "d212ff911c18cf0c1cd0f6b7e3f48a2e01d78d86" },
+        { "id": "VEN-C18", "proof": "bead:eon-remote-ssh-x7dr.3" },
         { "id": "VEN-C19", "proof": "bc5a2bd3b2363abdea69c4cd89953b612bc970e8" },
         { "id": "VEN-C20", "proof": "8af87bb0d07bc975413b05e3bdea9404ed6c1e57" },
-        { "id": "VEN-C21", "proof": "1897526455a23bf8ed390bb2e144f87280968d6c" },
+        { "id": "VEN-C21", "proof": "bead:eon-remote-ssh-x7dr.3" },
         { "id": "VEN-C22", "proof": "002784bedeceb71f767193a33fa66fa85ba59b30" },
         { "id": "VEN-C23", "proof": "a23f9eed95120ca4acea8789bf7d32d2472d84ce" },
         { "id": "VEN-C24", "proof": "dc5a4fb7008ae612cdc6935267a39aec3441060b" },
@@ -146,13 +146,13 @@
           "component": "orbit",
           "interfaces": [
             { "id": "ORBF", "version": 2, "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
-            { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
+            { "id": "ORBS", "version": 14, "proof": "bead:eon-remote-ssh-x7dr.3" }
           ]
         },
         {
           "component": "eon-workspace-protocol",
           "interfaces": [
-            { "id": "EONW", "version": 12, "proof": "0152005f7f8438d8fab023027d9f6fafdb39b689" }
+            { "id": "EONW", "version": 13, "proof": "bead:eon-remote-ssh-x7dr.3" }
           ]
         }
       ]
@@ -375,13 +375,13 @@
         {
           "component": "eon-workspace-protocol",
           "interfaces": [
-            { "id": "EONW", "version": 12, "proof": "0152005f7f8438d8fab023027d9f6fafdb39b689" }
+            { "id": "EONW", "version": 13, "proof": "bead:eon-remote-ssh-x7dr.3" }
           ]
         },
         {
           "component": "orbit",
           "interfaces": [
-            { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
+            { "id": "ORBS", "version": 14, "proof": "bead:eon-remote-ssh-x7dr.3" }
           ]
         }
       ]
@@ -399,7 +399,7 @@
         { "id": "eon-workspace-protocol", "kind": "cargo-package" }
       ],
       "contracts": [],
-      "interfaces": [{ "id": "EONW", "version": 12, "proof": "0152005f7f8438d8fab023027d9f6fafdb39b689" }],
+      "interfaces": [{ "id": "EONW", "version": 13, "proof": "bead:eon-remote-ssh-x7dr.3" }],
       "requires": []
     }
   ]

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Named-workspace presentation consumes EONW v13 and ORBS v14.
+  The native header selector groups Local and configured SSH hosts, switches
+  the existing window, and exposes connection state and reconnect/disconnect.
+  Offline views retain their last picture with input disabled. Terminal
+  transports verify the selected run and explicit-detach capability, discard
+  queued input when retired, and release the attachment through background I/O.
+  An empty window remains navigable. EON-C29 records the installed Local/SSH
+  switching, recovery and Stop checks.
+
 - Venus consumes EONW v12. VEN-C8: Ctrl+Alt+H/L sends one non-repeating
   `MovePaneSideways` for the selected pane, applying Alt+Shift+M's 40-column
   refusal when the move would open a column; moving the active tab moves to

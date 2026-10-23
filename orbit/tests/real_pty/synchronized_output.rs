@@ -14,8 +14,8 @@ pub fn run() {
     let mut active = Peer::attach(&server.path, 4.0);
     let mut observer = Peer::connect(&server.path, 4.0);
     let revision = active.frame().revision;
-    observer.send(&ClientMessage::ObserveMetadata);
-    observer.expect(ServerMessage::ObservingMetadata);
+    observer.send(&ClientMessage::ObserveMetadata(None));
+    observer.expect(ServerMessage::ObservingMetadata(Default::default()));
     assert_eq!(observer.metadata().title, "");
 
     // A synchronized update split across PTY reads stays held while input is

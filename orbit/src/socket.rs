@@ -357,6 +357,7 @@ impl OutputQueue {
 
 pub(crate) struct Peer {
     pub(crate) stream: UnixStream,
+    pub(crate) handshake: session::Handshake,
     read_closed: bool,
     pending: PendingWrite,
     /// An attached interactive client's messages, bounded by Bend.
@@ -471,6 +472,7 @@ impl Peer {
     pub(crate) fn new(stream: UnixStream) -> Self {
         Self {
             stream,
+            handshake: session::Handshake::default(),
             read_closed: false,
             pending: PendingWrite::default(),
             output: OutputQueue::default(),
@@ -522,14 +524,34 @@ impl Peer {
             let Session::ReadingRole(request) = &mut self.session else {
                 return Err(errno(libc::EALREADY));
             };
-            if request.len() == session::HEADER_BYTES {
+            let needed = if request.len() < session::HEADER_BYTES {
+                session::HEADER_BYTES
+            } else {
+                match session::client_message_len(request) {
+                    Ok(Some(length))
+                        if matches!(request[6], 1 | 9)
+                            && length <= session::HEADER_BYTES + session::MAX_HANDSHAKE_BYTES =>
+                    {
+                        length
+                    }
+                    Err(session::Error::UnsupportedVersion { .. }) => {
+                        self.session = Session::Disconnected;
+                        return Ok(Some(FirstMessage::Unsupported));
+                    }
+                    result => {
+                        self.session = Session::Refused(match result {
+                            Err(error) => error.to_string(),
+                            _ => "first client message must be Hello or ObserveMetadata".into(),
+                        });
+                        return Ok(Some(FirstMessage::Refused));
+                    }
+                }
+            };
+            if request.len() == needed {
                 break;
             }
-            let mut bytes = [0; session::HEADER_BYTES];
-            match self
-                .stream
-                .read(&mut bytes[..session::HEADER_BYTES - request.len()])
-            {
+            let mut bytes = [0; session::MAX_HANDSHAKE_BYTES];
+            match self.stream.read(&mut bytes[..needed - request.len()]) {
                 Ok(0) => return Err(errno(libc::EPIPE)),
                 Ok(len) => request.extend_from_slice(&bytes[..len]),
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
@@ -541,31 +563,32 @@ impl Peer {
         let Session::ReadingRole(request) = &self.session else {
             unreachable!("role request was collected")
         };
-        // Role requests have no payload, so a valid header with one is refused
-        // without reading it.
-        let decoded = match session::client_message_len(request) {
-            Ok(Some(length)) if length > session::HEADER_BYTES => None,
-            Ok(_) => Some(session::decode_client_message(request)),
-            Err(error) => Some(Err(error)),
-        };
-        let message = match decoded {
-            Some(Ok(ClientMessage::Hello)) => {
+        let message = match session::decode_client_message(request) {
+            Ok(ClientMessage::Hello(expected)) if self.handshake.accepts(expected.as_ref()) => {
                 self.session = Session::Negotiated(Role::Interactive);
                 FirstMessage::Hello
             }
-            Some(Ok(ClientMessage::ObserveMetadata)) => {
+            Ok(ClientMessage::ObserveMetadata(expected))
+                if self.handshake.accepts(expected.as_ref()) =>
+            {
                 self.session = Session::Negotiated(Role::Metadata);
                 FirstMessage::ObserveMetadata
             }
-            Some(Err(session::Error::UnsupportedVersion { .. })) => {
+            Ok(ClientMessage::Hello(_) | ClientMessage::ObserveMetadata(_)) => {
+                self.session = Session::Refused(
+                    "workspace or run identity differs from the requested terminal".into(),
+                );
+                FirstMessage::Refused
+            }
+            Err(session::Error::UnsupportedVersion { .. }) => {
                 self.session = Session::Disconnected;
                 FirstMessage::Unsupported
             }
-            Some(Err(error)) => {
+            Err(error) => {
                 self.session = Session::Refused(error.to_string());
                 FirstMessage::Refused
             }
-            None | Some(Ok(_)) => {
+            Ok(_) => {
                 self.session = Session::Refused(
                     "first client message must be Hello or ObserveMetadata".into(),
                 );
@@ -589,8 +612,8 @@ impl Peer {
         }
         if matches!(self.session, Session::Negotiated(current) if current == role) {
             let response = session::encode_server_message(&match role {
-                Role::Interactive => ServerMessage::Attached,
-                Role::Metadata => ServerMessage::ObservingMetadata,
+                Role::Interactive => ServerMessage::Attached(self.handshake.clone()),
+                Role::Metadata => ServerMessage::ObservingMetadata(self.handshake.clone()),
             })
             .map_err(|_| errno(libc::EPROTO))?;
             self.pending.start(&response)?;
@@ -1009,8 +1032,10 @@ mod tests {
         stream.set_nonblocking(true).unwrap();
         let mut socket = Peer::new(stream);
         socket.output_bound = 1 << 20;
-        peer.write_all(&session::encode_client_message(&ClientMessage::ObserveMetadata).unwrap())
-            .unwrap();
+        peer.write_all(
+            &session::encode_client_message(&ClientMessage::ObserveMetadata(None)).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             socket.recv_role().unwrap(),
             Some(FirstMessage::ObserveMetadata)
@@ -1018,7 +1043,7 @@ mod tests {
         assert_eq!(socket.send_role(Role::Metadata).unwrap(), Step::Done);
         assert!(matches!(
             read_server_message(&mut peer),
-            ServerMessage::ObservingMetadata
+            ServerMessage::ObservingMetadata(_)
         ));
         (socket, peer)
     }
@@ -1255,15 +1280,18 @@ mod tests {
     #[test]
     fn socket_protocol_mechanics_preserve_canonical_bytes_and_bend_policy() {
         let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
-        const HELLO: [u8; 12] = [b'O', b'R', b'B', b'S', 13, 0, 1, 0, 0, 0, 0, 0];
-        const ATTACHED: [u8; 12] = [b'O', b'R', b'B', b'S', 13, 0, 129, 0, 0, 0, 0, 0];
+        const HELLO: [u8; 13] = [b'O', b'R', b'B', b'S', 14, 0, 1, 0, 1, 0, 0, 0, 0];
+        const ATTACHED: [u8; 26] = [
+            b'O', b'R', b'B', b'S', 14, 0, 129, 0, 14, 0, 0, 0, 0, 5, 0, 0, 0, b'0', b'.', b'1',
+            b'.', b'0', 2, 0, 3, 0,
+        ];
 
         assert_eq!(
-            session::encode_client_message(&ClientMessage::Hello).unwrap(),
+            session::encode_client_message(&ClientMessage::Hello(None)).unwrap(),
             HELLO
         );
         assert_eq!(
-            session::encode_server_message(&ServerMessage::Attached).unwrap(),
+            session::encode_server_message(&ServerMessage::Attached(Default::default())).unwrap(),
             ATTACHED
         );
 
@@ -1286,8 +1314,10 @@ mod tests {
         let (stream, mut peer) = UnixStream::pair().unwrap();
         stream.set_nonblocking(true).unwrap();
         let mut socket = Peer::new(stream);
-        peer.write_all(&session::encode_client_message(&ClientMessage::ObserveMetadata).unwrap())
-            .unwrap();
+        peer.write_all(
+            &session::encode_client_message(&ClientMessage::ObserveMetadata(None)).unwrap(),
+        )
+        .unwrap();
         assert_eq!(
             socket.recv_role().unwrap().unwrap(),
             FirstMessage::ObserveMetadata
@@ -1297,7 +1327,8 @@ mod tests {
         peer.read_exact(&mut observing).unwrap();
         assert_eq!(
             observing.as_slice(),
-            session::encode_server_message(&ServerMessage::ObservingMetadata).unwrap()
+            session::encode_server_message(&ServerMessage::ObservingMetadata(Default::default()))
+                .unwrap()
         );
         drop(socket);
 
@@ -1313,7 +1344,11 @@ mod tests {
             FirstMessage::Unsupported
         );
         drop(socket);
-        assert_eq!(peer.read(&mut response).unwrap(), 0);
+        assert!(match peer.read(&mut response) {
+            Ok(0) => true,
+            Err(error) => peer_disconnected(&error),
+            _ => false,
+        });
 
         let (stream, mut peer) = UnixStream::pair().unwrap();
         stream.set_nonblocking(true).unwrap();
@@ -1358,6 +1393,38 @@ mod tests {
             code(socket.send_role(Role::Interactive)),
             Some(libc::EPROTO)
         );
+    }
+
+    #[test]
+    fn mismatched_run_is_refused_before_attachment() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let mut socket = Peer::new(stream);
+        let identity = session::RunIdentity {
+            workspace: "workspace".into(),
+            session: "session".into(),
+            run: "old-run".into(),
+        };
+        socket.handshake.identity = Some(identity.clone());
+        let expected = session::RunIdentity {
+            run: "replacement-run".into(),
+            ..identity
+        };
+        let request =
+            session::encode_client_message(&ClientMessage::Hello(Some(expected))).unwrap();
+        peer.write_all(&request[..session::HEADER_BYTES]).unwrap();
+        assert_eq!(socket.recv_role().unwrap(), None);
+        peer.write_all(&request[session::HEADER_BYTES..]).unwrap();
+        assert_eq!(socket.recv_role().unwrap(), Some(FirstMessage::Refused));
+        assert_eq!(
+            code(socket.send_role(Role::Interactive)),
+            Some(libc::EPROTO)
+        );
+        socket.refuse_peer().unwrap();
+        assert!(matches!(
+            read_server_message(&mut peer),
+            ServerMessage::Failure(_)
+        ));
     }
 
     #[test]
@@ -1430,7 +1497,7 @@ mod tests {
 
         // Another ORBS version is dropped without an answer.
         let (mut observer, mut peer) = open_metadata_observer();
-        let mut other = session::encode_client_message(&ClientMessage::Hello).unwrap();
+        let mut other = session::encode_client_message(&ClientMessage::Hello(None)).unwrap();
         other[4..6].copy_from_slice(&(session::VERSION + 1).to_le_bytes());
         peer.write_all(&other).unwrap();
         assert_eq!(

@@ -1,17 +1,17 @@
-use crate::management_record::{suffixed, tombstone};
+use crate::management_record::{live, suffixed, tombstone};
 use crate::support::*;
 use orbit_protocol::{
     management::{ProcessOutcome, TerminationReason},
-    session::{ClientMessage, ServerMessage},
+    session::{ClientMessage, Handshake, ServerMessage},
 };
 use std::time::Instant;
 
 const MANAGED: [&str; 4] = ["--management-v1", "session-1", "run-1", "component-1"];
 
-fn observe(path: &std::path::Path) -> Peer {
+fn observe(path: &std::path::Path, expected: Handshake) -> Peer {
     let mut observer = Peer::connect(path, 10.0);
-    observer.send(&ClientMessage::ObserveMetadata);
-    observer.expect(ServerMessage::ObservingMetadata);
+    observer.send(&ClientMessage::ObserveMetadata(None));
+    observer.expect(ServerMessage::ObservingMetadata(expected));
     observer.metadata();
     observer
 }
@@ -28,7 +28,7 @@ pub fn run() {
         wait_for(&record_path);
         let mut client = Peer::attach(&server.path, 10.0);
         client.frame();
-        let mut observer = observe(&server.path);
+        let mut observer = observe(&server.path, Handshake::from_management(&live(&record_path)));
 
         signal(server.pid(), libc::SIGTERM);
         observer.expect(ServerMessage::Exited { code: 1 });
@@ -64,7 +64,7 @@ pub fn run() {
         let shell = script(&directory, "SLOW_SHELL", "slow-observer-shell");
         let mut server =
             Server::start(&directory, &shell, &[("ORBIT_SLOW_GATE", gate.path())]);
-        let mut observer = observe(&server.path);
+        let mut observer = observe(&server.path, Handshake::default());
         gate.release();
         sleep(2.0);
 

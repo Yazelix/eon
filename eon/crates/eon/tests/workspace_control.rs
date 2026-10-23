@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
@@ -236,130 +236,172 @@ fn anima_command_preserves_child_arguments_status_and_avoids_workspace() {
 
 #[test]
 fn anima_waits_for_native_readiness_then_hands_off_picker_and_popup_stops_on_dismissal() {
-    let root = temporary_directory();
-    let runtime = root.join("runtime");
-    let config = root.join("config");
-    let session_bin = root.join("session-bin");
-    let orbit = root.join("orbit");
-    let venus = root.join("venus");
-    let anima = root.join("anima");
-    let venus_started = root.join("venus-started");
-    let venus_ready = root.join("venus-ready");
-    let startup_started = root.join("startup-started");
-    let startup_release = root.join("startup-release");
-    let picker_started = root.join("picker-started");
-    let picker_release = root.join("picker-release");
-    let popup_pid = root.join("popup-pid");
-    let popup_release = root.join("popup-release");
-    let stop = root.join("stop");
-    fs::create_dir(&session_bin).unwrap();
-    managed_orbit_executable(&orbit);
-    executable(
-        &venus,
-        "#!/bin/sh\nprintf started > \"$EON_TEST_VENUS_STARTED\"\nwhile [ ! -e \"$EON_TEST_VENUS_READY\" ]; do sleep 0.01; done\nprintf ready-v1\ncat >/dev/null\n",
-    );
-    executable(
-        &anima,
-        "#!/bin/sh\nif [ \"$2\" = --duration-seconds ]; then\n  printf '%s|%s' \"$1\" \"$3\" > \"$EON_TEST_STARTUP_STARTED\"\n  while [ ! -e \"$EON_TEST_STARTUP_RELEASE\" ]; do sleep 0.01; done\nelse\n  printf '%s' \"$$\" > \"$EON_TEST_POPUP_PID\"\n  while [ ! -e \"$EON_TEST_POPUP_RELEASE\" ]; do sleep 0.01; done\nfi\n",
-    );
-    symlink(&anima, session_bin.join("anima")).unwrap();
-    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
-    executable(
-        &session_bin.join("zoxide"),
-        "#!/bin/sh\nprintf started > \"$EON_TEST_PICKER_STARTED\"\nprintf '/known\\n'\n",
-    );
-    executable(
-        &session_bin.join("fzf"),
-        "#!/bin/sh\ncat >/dev/null\nwhile [ ! -e \"$EON_TEST_PICKER_RELEASE\" ]; do sleep 0.01; done\nexit 130\n",
-    );
-    executable(
-        &session_bin.join("eon-nu"),
-        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
-    );
-    let child = eon_command(&binary)
-        .arg("run")
-        .env("EON_RUNTIME_DIR", &runtime)
-        .env("EON_CONFIG_HOME", &config)
-        .env("EON_ORBIT", &orbit)
-        .env("EON_VENUS", &venus)
-        .env("EON_ANIMA", &anima)
-        .env("EON_SESSION_BIN", &session_bin)
-        .env("EON_TEST_RUN_CHILD", "1")
-        .env("EON_TEST_VENUS_STARTED", &venus_started)
-        .env("EON_TEST_VENUS_READY", &venus_ready)
-        .env("EON_TEST_STARTUP_STARTED", &startup_started)
-        .env("EON_TEST_STARTUP_RELEASE", &startup_release)
-        .env("EON_TEST_PICKER_STARTED", &picker_started)
-        .env("EON_TEST_PICKER_RELEASE", &picker_release)
-        .env("EON_TEST_POPUP_PID", &popup_pid)
-        .env("EON_TEST_POPUP_RELEASE", &popup_release)
-        .env("EON_TEST_STOP", &stop)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    let mut supervisor = TestProcess {
-        child,
-        stop: stop.clone(),
-    };
-    wait_for(&venus_started);
-    thread::sleep(Duration::from_millis(100));
-    assert!(!startup_started.exists() && !picker_started.exists());
-    fs::write(&venus_ready, "ready").unwrap();
-    wait_for(&startup_started);
-    assert_eq!(fs::read_to_string(&startup_started).unwrap(), "random|3");
-    assert!(!picker_started.exists());
-    fs::write(&startup_release, "done").unwrap();
-    wait_for(&picker_started);
-    let control = generation_runtime(&runtime).join("eon.sock");
-    let Response::Snapshot(pending) = workspace_action(&control, "anima-pending", Action::Inspect)
-    else {
-        panic!("initial picker snapshot missing");
-    };
-    assert!(project_popup(&pending).is_some());
-    assert!(pending.tabs[0].columns.is_empty());
+    for named in [false, true] {
+        let root = temporary_directory();
+        let runtime = root.join("r");
+        let config = root.join("config");
+        let session_bin = root.join("session-bin");
+        let orbit = root.join("orbit");
+        let venus = root.join("venus");
+        let anima = root.join("anima");
+        let venus_started = root.join("venus-started");
+        let venus_ready = root.join("venus-ready");
+        let startup_started = root.join("startup-started");
+        let startup_release = root.join("startup-release");
+        let picker_started = root.join("picker-started");
+        let picker_release = root.join("picker-release");
+        let popup_pid = root.join("popup-pid");
+        let popup_release = root.join("popup-release");
+        let stop = root.join("stop");
+        fs::create_dir(&session_bin).unwrap();
+        managed_orbit_executable(&orbit);
+        executable(
+            &venus,
+            "#!/bin/sh\nprintf started > \"$EON_TEST_VENUS_STARTED\"\nwhile [ ! -e \"$EON_TEST_VENUS_READY\" ]; do sleep 0.01; done\nprintf ready-v1\ncat >/dev/null\n",
+        );
+        executable(
+            &anima,
+            "#!/bin/sh\nif [ \"$2\" = --duration-seconds ]; then\n  printf '%s|%s' \"$1\" \"$3\" > \"$EON_TEST_STARTUP_STARTED\"\n  while [ ! -e \"$EON_TEST_STARTUP_RELEASE\" ]; do sleep 0.01; done\nelse\n  printf '%s' \"$$\" > \"$EON_TEST_POPUP_PID\"\n  while [ ! -e \"$EON_TEST_POPUP_RELEASE\" ]; do sleep 0.01; done\nfi\n",
+        );
+        symlink(&anima, session_bin.join("anima")).unwrap();
+        let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+        symlink(&binary, session_bin.join("eon-directory-picker")).unwrap();
+        executable(
+            &session_bin.join("zoxide"),
+            "#!/bin/sh\nprintf started > \"$EON_TEST_PICKER_STARTED\"\nprintf '/known\\n'\n",
+        );
+        executable(
+            &session_bin.join("fzf"),
+            "#!/bin/sh\ncat >/dev/null\nwhile [ ! -e \"$EON_TEST_PICKER_RELEASE\" ]; do sleep 0.01; done\nexit 130\n",
+        );
+        executable(
+            &session_bin.join("eon-nu"),
+            "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+        );
+        let child = eon_command(&binary)
+            .args(if named { &[][..] } else { &["run"][..] })
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_ANIMA", &anima)
+            .env("EON_SESSION_BIN", &session_bin)
+            .env("EON_TEST_RUN_CHILD", "1")
+            .env("EON_TEST_VENUS_STARTED", &venus_started)
+            .env("EON_TEST_VENUS_READY", &venus_ready)
+            .env("EON_TEST_STARTUP_STARTED", &startup_started)
+            .env("EON_TEST_STARTUP_RELEASE", &startup_release)
+            .env("EON_TEST_PICKER_STARTED", &picker_started)
+            .env("EON_TEST_PICKER_RELEASE", &picker_release)
+            .env("EON_TEST_POPUP_PID", &popup_pid)
+            .env("EON_TEST_POPUP_RELEASE", &popup_release)
+            .env("EON_TEST_STOP", &stop)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let mut supervisor = TestProcess {
+            child,
+            stop: stop.clone(),
+        };
+        wait_for(&venus_started);
+        thread::sleep(Duration::from_millis(100));
+        assert!(!startup_started.exists() && !picker_started.exists());
+        fs::write(&venus_ready, "ready").unwrap();
+        wait_for(&startup_started);
+        assert_eq!(fs::read_to_string(&startup_started).unwrap(), "random|3");
+        assert!(!picker_started.exists());
+        fs::write(&startup_release, "done").unwrap();
+        wait_for(&picker_started);
+        let workspace_runtime = if named {
+            fs::read_dir(runtime.join("n"))
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .path()
+        } else {
+            generation_runtime(&runtime)
+        };
+        let control = workspace_runtime.join("eon.sock");
+        let snapshot = |response| match response {
+            Response::Snapshot(value) => value,
+            Response::Workspace(value) => value.snapshot,
+            other => panic!("workspace snapshot missing: {other:?}"),
+        };
+        let pending = snapshot(workspace_action(&control, "anima-pending", Action::Inspect));
+        assert!(project_popup(&pending).is_some());
+        assert!(pending.tabs[0].columns.is_empty());
 
-    fs::write(&picker_release, "cancel").unwrap();
-    wait_for(&generation_runtime(&runtime).join("orbit.sock"));
-    let Response::Snapshot(opened) = protocol_action(
-        &control,
-        "anima-popup-open",
-        ProtocolAction::InvokePopup {
-            tab: "t1".into(),
-            entry: "anima".into(),
-            expected_instance: None,
-            intent: InvokeIntent::Toggle,
-        },
-    ) else {
-        panic!("Anima popup did not open");
-    };
-    wait_for(&popup_pid);
-    let popup = opened.tabs[0]
-        .popups
-        .iter()
-        .find(|popup| popup.entry == "anima")
-        .unwrap();
-    let selected_pane = opened.tabs[0].selected_pane.clone();
-    let Response::Snapshot(dismissed) = protocol_action(
-        &control,
-        "anima-popup-dismiss",
-        ProtocolAction::DismissPopup(PopupTarget {
-            tab: "t1".into(),
-            instance: popup.id.clone(),
-        }),
-    ) else {
-        panic!("Anima popup did not dismiss");
-    };
-    assert!(dismissed.tabs[0].popups.is_empty());
-    assert_eq!(dismissed.tabs[0].selected_pane, selected_pane);
-    wait_for_process_removal(
-        fs::read_to_string(&popup_pid).unwrap().parse().unwrap(),
-        "dismissed Anima kept running",
-    );
-    fs::write(&stop, "stop").unwrap();
-    wait_for_successful_exit(&mut supervisor.child);
-    fs::remove_dir_all(root).unwrap();
+        fs::write(&picker_release, "cancel").unwrap();
+        wait_for(&workspace_runtime.join("orbit.sock"));
+        let opened = snapshot(protocol_action(
+            &control,
+            "anima-popup-open",
+            ProtocolAction::InvokePopup {
+                tab: "t1".into(),
+                entry: "anima".into(),
+                expected_instance: None,
+                intent: InvokeIntent::Toggle,
+            },
+        ));
+        wait_for(&popup_pid);
+        let popup = opened.tabs[0]
+            .popups
+            .iter()
+            .find(|popup| popup.entry == "anima")
+            .unwrap();
+        let selected_pane = opened.tabs[0].selected_pane.clone();
+        let dismissed = snapshot(protocol_action(
+            &control,
+            "anima-popup-dismiss",
+            ProtocolAction::DismissPopup(PopupTarget {
+                tab: "t1".into(),
+                instance: popup.id.clone(),
+            }),
+        ));
+        assert!(dismissed.tabs[0].popups.is_empty());
+        assert_eq!(dismissed.tabs[0].selected_pane, selected_pane);
+        wait_for_process_removal(
+            fs::read_to_string(&popup_pid).unwrap().parse().unwrap(),
+            "dismissed Anima kept running",
+        );
+        if named {
+            let window = fs::read_dir(runtime.join("w"))
+                .unwrap()
+                .next()
+                .unwrap()
+                .unwrap()
+                .file_name();
+            let window_socket = runtime.join("w").join(&window).join("window.sock");
+            let deadline = Instant::now() + Duration::from_secs(5);
+            loop {
+                if let Response::Window(state) =
+                    workspace_action(&window_socket, "anima-window-ready", Action::Inspect)
+                    && state.connection == eon_workspace_protocol::v13::ConnectionState::Connected
+                {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "window did not finish selection");
+                thread::sleep(Duration::from_millis(25));
+            }
+            let result = invoke(
+                &binary,
+                &runtime,
+                &config,
+                &["window", "stop", window.to_str().unwrap(), "--json"],
+            );
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+        fs::write(&stop, "stop").unwrap();
+        wait_for_successful_exit(&mut supervisor.child);
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[test]
@@ -558,6 +600,9 @@ fn managed_orbit_helper() {
         .to_str()
         .unwrap()
         .to_string();
+    if std::env::var("EON_TEST_EXIT_BEFORE_READY").ok().as_deref() == Some(&session_id) {
+        return;
+    }
     let run_id = arguments[management_argument + 2]
         .to_str()
         .unwrap()
@@ -591,6 +636,16 @@ fn managed_orbit_helper() {
     fs::set_permissions(&management_path, fs::Permissions::from_mode(0o600)).unwrap();
     management_listener.set_nonblocking(true).unwrap();
     let identity = LiveIdentity {
+        workspace_id: std::env::var("EON_TEST_ORBIT_WORKSPACE_ID").unwrap_or_else(|_| {
+            arguments
+                .iter()
+                .position(|argument| argument == OsStr::new("--workspace-id"))
+                .map(|index| arguments[index + 1].to_str().unwrap().to_owned())
+                .unwrap_or_else(|| component_generation.clone())
+        }),
+        session_version: orbit_protocol::session::VERSION,
+        frame_version: orbit_protocol::VERSION,
+        capabilities: orbit_protocol::session::CAPABILITIES,
         session_id,
         run_id,
         component_generation,
@@ -676,7 +731,7 @@ fn managed_orbit_helper() {
                         match request {
                             ManagementClientMessage::Acquire { expected, record }
                                 if !*leased
-                                    && expected == identity
+                                    && *expected == identity
                                     && record == object_identity(&record_path) =>
                             {
                                 *leased = true;
@@ -770,7 +825,10 @@ fn managed_orbit_helper() {
                 .is_some_and(|path| Path::new(&path).exists());
         let requested_exit =
             std::env::var_os("EON_TEST_STOP").is_some_and(|path| Path::new(&path).exists());
-        if child_status.is_some() || initial_exit || requested_exit {
+        let selected_exit = std::env::var_os("EON_TEST_EXIT_SESSION_FILE")
+            .and_then(|path| fs::read_to_string(path).ok())
+            .is_some_and(|session| session == identity.session_id);
+        if child_status.is_some() || initial_exit || requested_exit || selected_exit {
             drop(child.take());
             let outcome = child_status.map_or_else(
                 || {
@@ -856,6 +914,31 @@ fn wait_for_process_removal(process_id: u32, failure: &str) {
     }
 }
 
+fn control_peer_pid(socket: &Path) -> u32 {
+    use std::os::fd::AsRawFd;
+    let peer = UnixStream::connect(socket).unwrap();
+    let mut credentials = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut size = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: the initialized ucred and its length are valid writable buffers.
+    assert_eq!(
+        unsafe {
+            libc::getsockopt(
+                peer.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut credentials as *mut libc::ucred).cast(),
+                &mut size,
+            )
+        },
+        0
+    );
+    u32::try_from(credentials.pid).unwrap()
+}
+
 fn generation_runtime(root: &Path) -> PathBuf {
     let parent = root.join("generations");
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -914,6 +997,10 @@ fn workspace_action(socket: &Path, id: &str, action: Action) -> Response {
 }
 
 fn protocol_action(socket: &Path, id: &str, action: ProtocolAction) -> Response {
+    retained_action(socket, id, action).1
+}
+
+fn retained_action(socket: &Path, id: &str, action: ProtocolAction) -> (UnixStream, Response) {
     let request = encode_request(&Request {
         id: id.into(),
         action,
@@ -928,7 +1015,7 @@ fn protocol_action(socket: &Path, id: &str, action: ProtocolAction) -> Response 
     let length = declared_message_len(&response).unwrap();
     response.resize(length, 0);
     stream.read_exact(&mut response[HEADER_BYTES..]).unwrap();
-    decode_response(&response).unwrap()
+    (stream, decode_response(&response).unwrap())
 }
 
 fn project_popup(snapshot: &Snapshot) -> Option<(&Tab, &Popup)> {
@@ -1918,6 +2005,205 @@ fn stop_result_covers_queued_operation_and_managed_cleanup() {
 }
 
 #[test]
+fn named_window_stop_refuses_an_unresolved_initial_selection() {
+    use eon_workspace_protocol::v13::{ConnectionState, WindowAction};
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let venus = root.join("venus");
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
+    executable(
+        &root.join("ssh"),
+        &format!(
+            "#!/bin/sh\necho started > '{}'/ssh-started\nwhile [ ! -f '{}'/ssh-release ]; do sleep 0.05; done\nexit 1\n",
+            root.display(),
+            root.display()
+        ),
+    );
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let command = || {
+        let mut command = eon_command(binary);
+        let inherited_path = command
+            .get_envs()
+            .find(|(key, _)| *key == "PATH")
+            .unwrap()
+            .1
+            .unwrap();
+        let path = std::env::join_paths(
+            std::iter::once(root.clone()).chain(std::env::split_paths(inherited_path)),
+        )
+        .unwrap();
+        command
+            .env("PATH", path)
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_VENUS", &venus);
+        command
+    };
+    assert!(
+        command()
+            .args(["remote", "add", "slow-initial"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let opened = command()
+        .args(["connect", "slow-initial", "0123456789abcdef"])
+        .output()
+        .unwrap();
+    assert!(
+        opened.status.success(),
+        "{}",
+        String::from_utf8_lossy(&opened.stderr)
+    );
+    let id = stdout(&opened).trim().to_owned();
+    let socket = runtime.join("w").join(&id).join("window.sock");
+    wait_for(&root.join("ssh-started"));
+    let Response::Window(state) = workspace_action(&socket, "initial-state", Action::Inspect)
+    else {
+        panic!("initial connection must be inspectable");
+    };
+    assert_eq!(state.connection, ConnectionState::Connecting);
+    assert!(state.target.is_none());
+    let stopped = command()
+        .args(["window", "stop", &id, "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        !stopped.status.success(),
+        "Stop acknowledged an unresolved selection"
+    );
+    assert!(String::from_utf8_lossy(&stopped.stderr).contains("wait for workspace selection"));
+    assert!(matches!(
+        protocol_action(
+            &socket,
+            "cancel-selection",
+            ProtocolAction::Window {
+                generation: state.generation,
+                action: WindowAction::Disconnect,
+            }
+        ),
+        Response::Window(_)
+    ));
+    let stopped = command()
+        .args(["window", "stop", &id, "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        stopped.status.success(),
+        "a disconnected empty window must close: {}",
+        String::from_utf8_lossy(&stopped.stderr)
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while socket.exists() {
+        assert!(Instant::now() < deadline, "empty window survived Stop");
+        thread::sleep(Duration::from_millis(10));
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn named_window_stop_covers_queued_operation_and_managed_cleanup() {
+    use eon_workspace_protocol::v13::ConnectionState;
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let delay = root.join("delay");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let command = || {
+        let mut command = eon_command(binary);
+        command
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop)
+            .env("EON_TEST_DELAY_SESSION_2_MS", "3500")
+            .env("EON_TEST_STOP_DELAY", &delay);
+        command
+    };
+    let mut launcher = TestProcess {
+        child: command()
+            .args(["window", "new"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    let mut id = String::new();
+    launcher
+        .child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut id)
+        .unwrap();
+    assert!(launcher.child.wait().unwrap().success());
+    let id = id.trim();
+    let window = runtime.join("w").join(id);
+    let socket = window.join("window.sock");
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let state = loop {
+        if let Response::Window(state) = workspace_action(&socket, "wait-ready", Action::Inspect)
+            && state.connection == ConnectionState::Connected
+            && state
+                .workspace
+                .as_ref()
+                .is_some_and(|workspace| !workspace.snapshot.tabs[0].columns.is_empty())
+        {
+            break state;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "named workspace did not establish a pane"
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+    let workspace = runtime.join("n").join(&state.target.unwrap().id);
+    fs::write(&delay, "3500").unwrap();
+    let mut creating = command()
+        .args(["pane", "create", "--json"])
+        .env("EON_WORKSPACE_SOCKET", workspace.join("eon.sock"))
+        .stdout(Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !workspace.join("session-2.sock.record").exists() {
+        assert!(Instant::now() < deadline, "queued named pane did not start");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let result = command()
+        .args(["window", "stop", id, "--json"])
+        .output()
+        .unwrap();
+    assert!(creating.wait().unwrap().success());
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(stdout(&result).contains("Stopped"));
+    let deadline = Instant::now() + Duration::from_secs(12);
+    while window.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "named window survived managed Stop"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn closed_stdout_pipe_is_not_a_panic() {
     let (reader, writer) = std::io::pipe().unwrap();
     drop(reader);
@@ -2147,7 +2433,7 @@ fn invalid_presentation_configuration_precedes_supervisor_generation_and_childre
 }
 
 #[test]
-fn bare_eon_attaches_only_to_the_live_current_generation() {
+fn attach_without_generation_only_presents_the_live_current_generation() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
@@ -2185,6 +2471,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     wait_for(&log);
 
     let output = eon_command(&binary)
+        .arg("attach")
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
         .env("EON_ORBIT", &orbit)
@@ -3127,6 +3414,7 @@ fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
     }
 
     let second = eon_command(&binary)
+        .arg("run")
         .env("EON_RUNTIME_DIR", &runtime)
         .env("EON_CONFIG_HOME", &config)
         .env("EON_ORBIT", &orbit)
@@ -3589,9 +3877,9 @@ fn desktop_launch_failure_stops_the_ready_session_through_management() {
 fn rejected_ready_identity_stops_the_spawned_session_through_management() {
     for (variable, value, expected_error) in [
         (
-            "EON_TEST_ORBIT_COMPONENT_GENERATION",
+            "EON_TEST_ORBIT_WORKSPACE_ID",
             "wrong-generation",
-            "terminal record reports component generation wrong-generation",
+            "terminal record reports workspace identity wrong-generation",
         ),
         (
             "EON_TEST_ORBIT_SESSION_ID",
@@ -3862,7 +4150,7 @@ fn stop_confirmation_refuses_a_replacement_supervisor() {
 }
 
 #[test]
-fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
+fn concurrent_explicit_runs_keep_one_owner_and_reject_the_second_launch() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
@@ -3877,6 +4165,7 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     let launch = || {
         eon_command(&binary)
+            .arg("run")
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
             .env("EON_ORBIT", &orbit)
@@ -3906,16 +4195,19 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
         let second_status = second.child.try_wait().unwrap();
         match (first_status, second_status) {
             (None, Some(status)) => {
-                assert!(status.success());
+                assert_eq!(status.code(), Some(1));
                 break true;
             }
             (Some(status), None) => {
-                assert!(status.success());
+                assert_eq!(status.code(), Some(1));
                 break false;
             }
             (Some(_), Some(_)) => panic!("both concurrent Eon launches exited"),
             (None, None) => {
-                assert!(Instant::now() < deadline, "neither Eon launch attached");
+                assert!(
+                    Instant::now() < deadline,
+                    "neither duplicate Eon launch was rejected"
+                );
                 thread::sleep(Duration::from_millis(10));
             }
         }
@@ -3969,11 +4261,23 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     let orbit = root.join("orbit");
     let venus = root.join("venus");
     managed_orbit_executable(&orbit);
-    executable(&venus, "#!/bin/sh\nexit 0\n");
+    executable(&venus, "#!/bin/sh\ncat >/dev/null\n");
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     let command = || {
         let mut command = eon_command(&binary);
+        let inherited_path = command
+            .get_envs()
+            .find(|(key, _)| *key == "PATH")
+            .unwrap()
+            .1
+            .unwrap();
+        let path = std::env::join_paths(
+            std::iter::once(root.clone()).chain(std::env::split_paths(inherited_path)),
+        )
+        .unwrap();
         command
+            .env("PATH", path)
+            .env("XDG_STATE_HOME", root.join("state"))
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
             .env("EON_ORBIT", &orbit)
@@ -4002,14 +4306,183 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
         );
         stdout(&output).trim().to_owned()
     };
-    let first = open();
+    let dead = runtime.join("w/deadbeef");
+    fs::create_dir_all(&dead).unwrap();
+    for path in [runtime.join("w"), dead.clone()] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let dead_listener = UnixListener::bind(dead.join("window.sock")).unwrap();
+    fs::set_permissions(dead.join("window.sock"), fs::Permissions::from_mode(0o600)).unwrap();
+    drop(dead_listener);
+    let initial = command()
+        .args(["workspace", "create", "--name", "first"])
+        .output()
+        .unwrap();
+    assert!(initial.status.success());
+    let initial_id = stdout(&initial)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned();
+    let created = command()
+        .args(["connect", "", &initial_id])
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "dead roots must not block a new window: {}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let first = stdout(&created).trim().to_owned();
+    assert!(
+        command()
+            .args(["connect", "", &initial_id])
+            .status()
+            .unwrap()
+            .success(),
+        "one live window plus a dead root is unambiguous"
+    );
+    assert!(dead.exists(), "retained diagnostic roots are not removed");
     let second = open();
     assert_ne!(first, second);
-    let first_control = generation_runtime(&runtime.join("w").join(&first)).join("eon.sock");
-    let second_control = generation_runtime(&runtime.join("w").join(&second)).join("eon.sock");
+    let first_control = runtime.join("w").join(&first).join("window.sock");
+    let second_control = runtime.join("w").join(&second).join("window.sock");
     assert_ne!(first_control, second_control);
     wait_for_connection(&first_control);
     wait_for_connection(&second_control);
+    use eon_workspace_protocol::v13::{ConnectionState, WindowAction, WindowState};
+    let connected = |socket: &Path, expected: Option<&str>| -> WindowState {
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            if let Response::Window(state) =
+                workspace_action(socket, "inspect-window", Action::Inspect)
+                && state.connection == ConnectionState::Connected
+                && expected
+                    .is_none_or(|id| state.target.as_ref().is_some_and(|target| target.id == id))
+            {
+                return *state;
+            }
+            assert!(Instant::now() < deadline, "window did not connect");
+            thread::sleep(Duration::from_millis(25));
+        }
+    };
+    let before = connected(&first_control, None);
+    connected(&second_control, None);
+    assert!(
+        !command()
+            .args(["disconnect"])
+            .output()
+            .unwrap()
+            .status
+            .success(),
+        "multiple windows require an explicit selection"
+    );
+    let created = command()
+        .args(["workspace", "create", "--name", "switch target"])
+        .output()
+        .unwrap();
+    assert!(created.status.success());
+    let target = stdout(&created)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned();
+    assert!(matches!(
+        protocol_action(
+            &first_control,
+            "select-target",
+            ProtocolAction::Window {
+                generation: before.generation,
+                action: WindowAction::Select {
+                    host: String::new(),
+                    workspace: target.clone()
+                },
+            }
+        ),
+        Response::Window(_)
+    ));
+    let selected = connected(&first_control, Some(&target));
+    assert!(
+        command()
+            .args(["workspace", "stop", &before.target.unwrap().id])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(matches!(
+        protocol_action(
+            &first_control,
+            "stale-mutation",
+            ProtocolAction::Window {
+                generation: before.generation,
+                action: WindowAction::Apply(Box::new(ProtocolAction::CreateColumn)),
+            }
+        ),
+        Response::Failure(_)
+    ));
+    let Response::Window(changed) = protocol_action(
+        &first_control,
+        "new-target-mutation",
+        ProtocolAction::Window {
+            generation: selected.generation,
+            action: WindowAction::Apply(Box::new(ProtocolAction::CreateColumn)),
+        },
+    ) else {
+        panic!("stopping the previous workspace broke the current window");
+    };
+    assert_eq!(changed.target.unwrap().id, target);
+    assert_eq!(changed.workspace.unwrap().snapshot.tabs[0].columns.len(), 2);
+    assert!(
+        matches!(protocol_action(&first_control, "new-target-mutation", ProtocolAction::Window {
+        generation: selected.generation,
+        action: WindowAction::Apply(Box::new(ProtocolAction::CreateColumn)),
+    }), Response::Failure(error) if error.detail.contains("already accepted")),
+        "routing must retain the original request identity"
+    );
+    executable(
+        &root.join("ssh"),
+        &format!(
+            "#!/bin/sh\necho started > '{}'/ssh-started\nwhile [ ! -f '{}'/ssh-release ]; do sleep 0.05; done\nexit 1\n",
+            root.display(),
+            root.display()
+        ),
+    );
+    assert!(
+        command()
+            .args(["remote", "add", "slow-navigation"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(matches!(
+        protocol_action(
+            &first_control,
+            "refresh-slow-host",
+            ProtocolAction::Window {
+                generation: selected.generation,
+                action: WindowAction::Refresh,
+            }
+        ),
+        Response::Window(_)
+    ));
+    wait_for(&root.join("ssh-started"));
+    assert!(
+        matches!(
+            protocol_action(
+                &first_control,
+                "action-during-discovery",
+                ProtocolAction::Window {
+                    generation: selected.generation,
+                    action: WindowAction::Apply(Box::new(ProtocolAction::Workspace(
+                        Action::Focus(Direction::Right)
+                    ))),
+                }
+            ),
+            Response::Window(_)
+        ),
+        "unreachable navigation hosts must not block the selected workspace"
+    );
+    fs::write(root.join("ssh-release"), "").unwrap();
     let listed = invoke(&binary, &runtime, &config, &["windows", "--json"]);
     assert!(listed.status.success());
     assert!(stdout(&listed).contains(&format!("\"id\":\"{first}\"")));
@@ -4022,7 +4495,7 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
         &["window", "stop", &first, "--json"],
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
-    assert!(stdout(&stopped).contains("\"stopped\""));
+    assert!(stdout(&stopped).contains("\"Stopped\""));
     assert!(
         invoke(&binary, &runtime, &config, &["workspace", "--json"])
             .status
@@ -4030,7 +4503,7 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     );
     assert!(matches!(
         workspace_action(&second_control, "still-live", Action::Inspect),
-        Response::Snapshot(_)
+        Response::Window(_)
     ));
     symlink(&config, runtime.join("w").join("aaaaaaaa")).unwrap();
     let unsafe_listing = invoke(&binary, &runtime, &config, &["windows", "--json"]);
@@ -4039,13 +4512,34 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     fs::remove_file(runtime.join("w").join("aaaaaaaa")).unwrap();
 
     let third = open();
+    connected(&runtime.join("w").join(&third).join("window.sock"), None);
     let (caller, other) = if second < third {
         (&second, &third)
     } else {
         (&third, &second)
     };
+    let caller_state = connected(&runtime.join("w").join(caller).join("window.sock"), None);
+    let other_control = runtime.join("w").join(other).join("window.sock");
+    let other_state = connected(&other_control, None);
+    assert!(matches!(
+        protocol_action(
+            &other_control,
+            "offline-batch-target",
+            ProtocolAction::Window {
+                generation: other_state.generation,
+                action: WindowAction::Offline {
+                    detail: "test target is offline".into()
+                },
+            }
+        ),
+        Response::Window(_)
+    ));
     let mut batch = command()
-        .env("EON_WINDOW_RUNTIME_DIR", runtime.join("w").join(caller))
+        .env_remove("EON_WINDOW_RUNTIME_DIR")
+        .env(
+            "EON_WORKSPACE_SOCKET",
+            OsStr::from_bytes(&caller_state.target.unwrap().control_endpoint),
+        )
         .args(["window", "stop", "all"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -4054,19 +4548,197 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
         .unwrap();
     batch.stdin.as_mut().unwrap().write_all(b"y\ny\n").unwrap();
     let batch = batch.wait_with_output().unwrap();
-    assert!(batch.status.success(), "{}", stdout(&batch));
-    assert_eq!(stdout(&batch).matches("stopped generation").count(), 2);
+    assert!(
+        !batch.status.success(),
+        "stdout={} stderr={}",
+        stdout(&batch),
+        String::from_utf8_lossy(&batch.stderr)
+    );
+    assert!(
+        !runtime.join("w").join(caller).exists(),
+        "a failed earlier Stop must not skip the caller"
+    );
+    assert!(
+        other_control.exists(),
+        "the failed target remains available for recovery"
+    );
     let prompts = String::from_utf8_lossy(&batch.stderr);
     assert!(
         prompts.find(&format!("Stop Eon window {other}:")).unwrap()
             < prompts.find(&format!("Stop Eon window {caller}:")).unwrap(),
         "{prompts}"
     );
+    let Response::Window(offline) =
+        workspace_action(&other_control, "offline-state", Action::Inspect)
+    else {
+        panic!("missing offline window");
+    };
+    assert!(matches!(
+        protocol_action(
+            &other_control,
+            "reconnect-batch-target",
+            ProtocolAction::Window {
+                generation: offline.generation,
+                action: WindowAction::Reconnect,
+            }
+        ),
+        Response::Window(_)
+    ));
+    connected(&other_control, None);
+    assert!(
+        command()
+            .args(["window", "stop", other, "--json"])
+            .status()
+            .unwrap()
+            .success()
+    );
     let current = generation_runtime(&runtime);
     let current_id = current.file_name().unwrap().to_str().unwrap();
     let stopped = invoke(&binary, &runtime, &config, &["stop", current_id, "--json"]);
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     wait_for_successful_exit(&mut default.child);
+
+    // Keep external Stop projection after the independent window checks.
+    let stopped_window = open();
+    let first_control = runtime.join("w").join(&stopped_window).join("window.sock");
+    let selected = connected(&first_control, None);
+    let target = selected.target.as_ref().unwrap().id.clone();
+    let layout_path = root
+        .join("state/eon/workspaces")
+        .join(&target)
+        .join("layout.json");
+    let layout = fs::read(&layout_path).unwrap();
+    fs::write(&layout_path, b"invalid layout").unwrap();
+    let refreshed = protocol_action(
+        &first_control,
+        "failed-refresh",
+        ProtocolAction::Window {
+            generation: selected.generation,
+            action: WindowAction::Refresh,
+        },
+    );
+    fs::write(&layout_path, layout).unwrap();
+    assert!(
+        matches!(refreshed, Response::Failure(_)),
+        "Refresh did not report unreadable navigation"
+    );
+    assert_eq!(
+        connected(&first_control, Some(&target)).groups,
+        selected.groups,
+        "failed Refresh replaced accepted navigation"
+    );
+    let supervisor_pid = control_peer_pid(&runtime.join("n").join(&target).join("eon.sock"));
+    assert!(
+        command()
+            .args(["workspace", "stop", &target])
+            .status()
+            .unwrap()
+            .success()
+    );
+    wait_for_process_removal(
+        supervisor_pid,
+        "local supervisor was not reaped while its window remained open",
+    );
+    let deadline = Instant::now() + Duration::from_secs(3);
+    let stopped_state = loop {
+        let Response::Window(state) =
+            workspace_action(&first_control, "external-stop", Action::Inspect)
+        else {
+            panic!("window disappeared after external Stop");
+        };
+        if state.connection == ConnectionState::Stopped {
+            break state;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "external Stop remained {:?}",
+            state.connection
+        );
+        thread::sleep(Duration::from_millis(25));
+    };
+    // A stopped window must not acknowledge a receipt invalidated by another client.
+    let second_window = open();
+    let second_control = runtime.join("w").join(&second_window).join("window.sock");
+    let second = connected(&second_control, None);
+    let second_target = second.target.as_ref().unwrap().id.clone();
+    assert!(matches!(
+        protocol_action(
+            &second_control,
+            "resume-stopped-target",
+            ProtocolAction::Window {
+                generation: second.generation,
+                action: WindowAction::Select {
+                    host: String::new(),
+                    workspace: target.clone()
+                }
+            }
+        ),
+        Response::Window(_)
+    ));
+    let resumed = connected(&second_control, Some(&target));
+    assert!(matches!(
+        protocol_action(
+            &second_control,
+            "pane-after-resume",
+            ProtocolAction::Window {
+                generation: resumed.generation,
+                action: WindowAction::Apply(Box::new(ProtocolAction::Workspace(
+                    Action::CreatePane
+                )))
+            }
+        ),
+        Response::Window(_)
+    ));
+    let stale_stop = command()
+        .args(["window", "stop", &stopped_window, "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        !stale_stop.status.success(),
+        "window Stop trusted a receipt invalidated by resume"
+    );
+    assert!(matches!(
+        workspace_action(&first_control, "retained-stopped-window", Action::Inspect),
+        Response::Window(_)
+    ));
+    assert!(
+        command()
+            .args(["window", "stop", &second_window, "--json"])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        command()
+            .args(["workspace", "stop", &second_target])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(matches!(
+        protocol_action(
+            &first_control,
+            "select-after-stop",
+            ProtocolAction::Window {
+                generation: stopped_state.generation,
+                action: WindowAction::Select {
+                    host: String::new(),
+                    workspace: target.clone()
+                },
+            }
+        ),
+        Response::Window(_)
+    ));
+    connected(&first_control, Some(&target));
+    let closed = command()
+        .args(["window", "stop", &stopped_window, "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        closed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&closed.stderr)
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -4317,5 +4989,710 @@ fn batch_stop_preserves_current_until_all_and_reports_unavailable_generations() 
     fourth.join().unwrap();
     wait_for_successful_exit(&mut current.child);
     assert!(!current_runtime.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn named_workspace_recovers_layout_and_runs_without_a_desktop_or_command_replay() {
+    use eon_workspace_protocol::v13::RegistryAction;
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let orbit = root.join("orbit");
+    managed_orbit_executable(&orbit);
+    let stop = root.join("stop");
+    let log = root.join("orbit.log");
+    let failed_stop = root.join("failed-stop");
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let command = || {
+        let mut command = eon_command(binary);
+        command
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env_remove("EON_WORKSPACE_SOCKET")
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", root.join("no-desktop"))
+            .env("EON_TEST_STOP", &stop)
+            .env("EON_TEST_ORBIT_LOG", &log)
+            .env("EON_TEST_FAIL_STOP_ONCE", &failed_stop)
+            .env("EON_TEST_EXIT_SESSION_FILE", root.join("natural-exit"))
+            .env(
+                "EON_TEST_ORBIT_COMPONENT_GENERATION",
+                "another-compatible-build",
+            )
+            .current_dir(&root);
+        command
+    };
+    let removed = root.join("removed-working-directory");
+    fs::create_dir(&removed).unwrap();
+    let removed_c = std::ffi::CString::new(removed.as_os_str().as_bytes()).unwrap();
+    let mut invalid = command();
+    invalid
+        .current_dir(&removed)
+        .args(["workspace", "create", "--name", "invalid directory"]);
+    // SAFETY: rmdir is async-signal-safe; the CString is prepared before fork and
+    // names this test's empty directory, which is already the child's cwd.
+    unsafe {
+        invalid.pre_exec(move || {
+            if libc::rmdir(removed_c.as_ptr()) == 0 {
+                Ok(())
+            } else {
+                Err(std::io::Error::last_os_error())
+            }
+        });
+    }
+    assert!(!invalid.output().unwrap().status.success());
+    let listed = command().args(["workspaces", "--json"]).output().unwrap();
+    assert!(
+        listed.status.success(),
+        "failed creation poisoned the registry: {}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    assert_eq!(stdout(&listed).trim(), "[]");
+    let created = command()
+        .args(["workspace", "create", "--name", "remote project"])
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let id = stdout(&created)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned();
+    let directory = runtime.join("n").join(&id);
+    let socket = directory.join("eon.sock");
+    let supervisor_pid = control_peer_pid(&socket);
+    let Response::Workspace(_) = protocol_action(&socket, "column", ProtocolAction::CreateColumn)
+    else {
+        panic!("column creation failed");
+    };
+    fs::write(&failed_stop, "session-2").unwrap();
+    assert!(matches!(
+        protocol_action(
+            &socket,
+            "failed-close",
+            ProtocolAction::ClosePane { pane: "p2".into() }
+        ),
+        Response::Failure(_)
+    ));
+    let Response::Workspace(after_failure) =
+        workspace_action(&socket, "after-failed-close", Action::Inspect)
+    else {
+        panic!("snapshot missing after failed close");
+    };
+    assert_eq!(after_failure.snapshot.tabs[0].columns.len(), 2);
+    assert!(after_failure.snapshot.tabs[0].columns[1].panes[0].live);
+    let missing_directory = root.join("removed-tab-directory");
+    fs::create_dir(&missing_directory).unwrap();
+    let Response::Workspace(before_start_failure) = workspace_action(
+        &socket,
+        "retarget-before-failure",
+        Action::SetTabDirectory {
+            tab: "t1".into(),
+            directory: missing_directory.as_os_str().as_bytes().to_vec(),
+        },
+    ) else {
+        panic!("retarget failed");
+    };
+    fs::remove_dir(&missing_directory).unwrap();
+    assert!(matches!(
+        workspace_action(&socket, "failed-pane-start", Action::CreatePane),
+        Response::Failure(_)
+    ));
+    assert_eq!(
+        workspace_action(&socket, "inspect-failed-start", Action::Inspect),
+        Response::Workspace(before_start_failure),
+        "a conclusively failed Start committed pane topology"
+    );
+    assert!(!directory.join("session-3.sock.record").exists());
+    assert!(matches!(
+        workspace_action(
+            &socket,
+            "restore-directory",
+            Action::SetTabDirectory {
+                tab: "t1".into(),
+                directory: root.as_os_str().as_bytes().to_vec(),
+            },
+        ),
+        Response::Workspace(_)
+    ));
+    let Response::Workspace(expected) = protocol_action(
+        &socket,
+        "agent",
+        ProtocolAction::InvokePopup {
+            tab: "t1".into(),
+            entry: "agent".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        },
+    ) else {
+        panic!("agent popup creation failed");
+    };
+    assert_eq!(expected.snapshot.tabs[0].columns.len(), 2);
+    assert_eq!(expected.snapshot.tabs[0].popups.len(), 1);
+    let identities = ["orbit.sock", "session-2.sock", "session-3.sock"]
+        .map(|name| live_identity(&directory.join(name)));
+    assert!(identities.iter().all(|identity| identity.workspace_id == id
+        && identity.component_generation == "another-compatible-build"));
+    // SAFETY: SO_PEERCRED identifies this test's private supervisor; the socket was just checked.
+    assert_eq!(
+        unsafe { libc::kill(supervisor_pid as i32, libc::SIGKILL) },
+        0
+    );
+    let layout = root
+        .join("state/eon/workspaces")
+        .join(&id)
+        .join("layout.json");
+    let saved = fs::read(&layout).unwrap();
+    fs::write(&layout, b"{\"format\":999}").unwrap();
+    let rejected = command().args(["workspace", "stop", &id]).output().unwrap();
+    assert!(!rejected.status.success());
+    assert!(
+        String::from_utf8_lossy(&rejected.stderr).contains("layout"),
+        "{}",
+        String::from_utf8_lossy(&rejected.stderr)
+    );
+    for identity in &identities {
+        // SAFETY: signal 0 only checks the exact helper recorded for this workspace.
+        assert_eq!(unsafe { libc::kill(identity.process_id as i32, 0) }, 0);
+    }
+    fs::write(&layout, saved).unwrap();
+    let mut resumed = TestProcess {
+        child: command()
+            .args(["__serve-workspace", &id])
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    wait_for_connection(&socket);
+    let Response::Workspace(restored) = workspace_action(&socket, "restored", Action::Inspect)
+    else {
+        panic!("restored snapshot missing");
+    };
+    assert_eq!(restored, expected);
+    for (name, identity) in ["orbit.sock", "session-2.sock", "session-3.sock"]
+        .iter()
+        .zip(&identities)
+    {
+        assert_eq!(live_identity(&directory.join(name)), *identity);
+    }
+    assert_eq!(
+        fs::read_to_string(&log).unwrap().lines().count(),
+        3,
+        "recovery replayed a command"
+    );
+    resumed.child.kill().unwrap();
+    resumed.child.wait().unwrap();
+    let mut saved: serde_json::Value = serde_json::from_slice(&fs::read(&layout).unwrap()).unwrap();
+    let pane = &mut saved["tabs"][0]["columns"][1]["panes"][0];
+    pane["session"]["run"] = "an-unmatched-old-run".into();
+    pane["session"]["live"] = false.into();
+    let mut pending = pane.clone();
+    pending["id"] = "p4".into();
+    pending["session"]["id"] = "session-4".into();
+    pending["session"]["run"] = "an-unfinished-start".into();
+    pending["session"]["endpoint"] =
+        serde_json::to_value(directory.join("session-4.sock").as_os_str().as_bytes()).unwrap();
+    saved["tabs"][0]["columns"][1]["panes"]
+        .as_array_mut()
+        .unwrap()
+        .push(pending);
+    saved["next_pane"] = 5.into();
+    saved["next_session"] = 5.into();
+    fs::write(&layout, serde_json::to_vec(&saved).unwrap()).unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(directory.join("session-4.sock.record"))
+        .unwrap();
+    resumed.child = command()
+        .args(["__serve-workspace", &id])
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+    wait_for_connection(&socket);
+    let Response::Workspace(pending) = workspace_action(&socket, "pending-start", Action::Inspect)
+    else {
+        panic!("unfinished Start prevented recovery");
+    };
+    assert!(!pending.snapshot.tabs[0].columns[1].panes[0].live);
+    assert!(!pending.snapshot.tabs[0].columns[1].panes[1].live);
+    let popup = &pending.snapshot.tabs[0].popups[0];
+    assert!(matches!(
+        protocol_action(
+            &socket,
+            "hide-agent",
+            ProtocolAction::DismissPopup(PopupTarget {
+                tab: "t1".into(),
+                instance: popup.id.clone()
+            })
+        ),
+        Response::Workspace(_)
+    ));
+    assert!(matches!(
+        protocol_action(
+            &socket,
+            "close-stopped-slot",
+            ProtocolAction::ClosePane { pane: "p2".into() }
+        ),
+        Response::Workspace(_)
+    ));
+    assert_eq!(
+        live_identity(&directory.join("session-2.sock")),
+        identities[1],
+        "closing a stopped slot killed a different preserved run"
+    );
+    assert_eq!(
+        fs::read_to_string(&log).unwrap().lines().count(),
+        3,
+        "unfinished Start was replayed"
+    );
+    assert!(
+        matches!(
+            protocol_action(
+                &socket,
+                "close-unfinished",
+                ProtocolAction::ClosePane { pane: "p4".into() }
+            ),
+            Response::Failure(_)
+        ),
+        "an unfinished launch must retain its slot"
+    );
+    assert!(
+        matches!(protocol_action(&socket, "close-unfinished", ProtocolAction::ClosePane { pane: "p4".into() }), Response::Failure(error) if error.code == "duplicate-request"),
+        "a failed destructive request must stay consumed"
+    );
+    let second = command()
+        .args(["workspace", "create", "--name", "same directory"])
+        .output()
+        .unwrap();
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let second_id = stdout(&second)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned();
+    assert_ne!(id, second_id);
+    let second_state = root.join("state/eon/workspaces").join(&second_id);
+    let second_runtime = runtime.join("n").join(&second_id);
+    assert!(
+        !command()
+            .args(["workspace", "forget", &second_id])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(second_state.exists(), "Forget removed a running workspace");
+    assert!(
+        command()
+            .args(["workspace", "stop", &second_id])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert!(
+        second_state.join("layout.json").exists(),
+        "Stop must preserve recovery data"
+    );
+    let second_layout: serde_json::Value =
+        serde_json::from_slice(&fs::read(second_state.join("layout.json")).unwrap()).unwrap();
+    assert_eq!(second_layout["stopped"], true);
+    let unresolved = second_runtime.join("session-99.sock.record");
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&unresolved)
+        .unwrap();
+    assert!(
+        !command()
+            .args(["workspace", "forget", &second_id])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    assert!(
+        second_state.exists() && unresolved.exists(),
+        "Forget removed an unresolved run"
+    );
+    fs::remove_file(unresolved).unwrap();
+    let forgotten = command()
+        .args(["workspace", "forget", &second_id])
+        .output()
+        .unwrap();
+    assert!(
+        forgotten.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forgotten.stderr)
+    );
+    assert!(!second_state.exists() && !second_runtime.exists());
+    assert!(root.join("state/eon/workspaces").join(&id).exists());
+    let listed = command().args(["workspaces", "--json"]).output().unwrap();
+    assert!(listed.status.success());
+    assert!(!stdout(&listed).contains(&second_id));
+    let picker_home = root.join("picker-home");
+    fs::create_dir(&picker_home).unwrap();
+    let picker_workspace = command()
+        .env("HOME", &picker_home)
+        .env("EON_SESSION_BIN", root.join("bin"))
+        .args(["workspace", "create", "--name", "picker failures"])
+        .output()
+        .unwrap();
+    assert!(
+        picker_workspace.status.success(),
+        "{}",
+        String::from_utf8_lossy(&picker_workspace.stderr)
+    );
+    let picker_id = stdout(&picker_workspace)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned();
+    let picker_socket = runtime.join("n").join(&picker_id).join("eon.sock");
+    let Response::Workspace(pending_picker) =
+        workspace_action(&picker_socket, "picker", Action::Inspect)
+    else {
+        panic!("picker workspace missing");
+    };
+    let Response::Workspace(_) = protocol_action(
+        &picker_socket,
+        "dismiss-first-picker",
+        ProtocolAction::DismissPopup(PopupTarget {
+            tab: "t1".into(),
+            instance: pending_picker.snapshot.tabs[0].popups[0].id.clone(),
+        }),
+    ) else {
+        panic!("picker dismissal failed");
+    };
+    let Response::Workspace(persistent) = protocol_action(
+        &picker_socket,
+        "persistent-agent",
+        ProtocolAction::InvokePopup {
+            tab: "t1".into(),
+            entry: "agent".into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        },
+    ) else {
+        panic!("persistent popup missing");
+    };
+    let persistent_runs = persistent.runs.clone();
+    let mut established = None;
+    for completion in ["retry", "natural-exit"] {
+        let (presentation, accepted) = retained_action(
+            &picker_socket,
+            "presentation",
+            ProtocolAction::Presentation {
+                workspace: picker_id.clone(),
+            },
+        );
+        assert!(matches!(accepted, Response::Hello(info) if info.id == picker_id));
+        let (wrong_presentation, rejected) = retained_action(
+            &picker_socket,
+            "wrong-presentation",
+            ProtocolAction::Presentation {
+                workspace: id.clone(),
+            },
+        );
+        assert!(matches!(rejected, Response::Failure(error) if error.code == "workspace-mismatch"));
+        let Response::Workspace(presented) = workspace_action(
+            &picker_socket,
+            &format!("presented-picker-{completion}"),
+            Action::CreateTab,
+        ) else {
+            panic!("presented picker missing");
+        };
+        let detached_tab = presented.snapshot.tabs[1].id.clone();
+        let chooser = presented.snapshot.tabs[1].popups[0].session.clone();
+        fs::write(&failed_stop, &chooser).unwrap();
+        drop(presentation);
+        if completion == "natural-exit" {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while failed_stop.exists() {
+                assert!(
+                    Instant::now() < deadline,
+                    "detach did not attempt picker Stop"
+                );
+                thread::sleep(Duration::from_millis(10));
+            }
+            fs::write(root.join("natural-exit"), &chooser).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let Response::Workspace(state) =
+                workspace_action(&picker_socket, "after-detach", Action::Inspect)
+            else {
+                panic!("detach stopped the workspace");
+            };
+            if !state.snapshot.tabs[1].pending && state.snapshot.tabs[1].popups.is_empty() {
+                assert_eq!(state.snapshot.tabs[1].panes().count(), 1);
+                for run in &persistent_runs {
+                    assert!(state.runs.contains(run), "detach replaced a persistent run");
+                }
+                assert!(state.runs.iter().all(|run| run.session != chooser));
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "last presentation detach did not clean the picker"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+        drop(wrong_presentation);
+        if completion == "natural-exit" {
+            thread::sleep(Duration::from_millis(1100));
+        }
+        let Response::Workspace(after_detach) = workspace_action(
+            &picker_socket,
+            &format!("close-detach-tab-{completion}"),
+            Action::CloseTab { tab: detached_tab },
+        ) else {
+            panic!("cannot close the fallback test tab");
+        };
+        established = Some(after_detach);
+    }
+    let established = established.unwrap();
+    let unavailable_orbit = root.join("unavailable-orbit");
+    fs::rename(&orbit, &unavailable_orbit).unwrap();
+    let failed_tab = workspace_action(&picker_socket, "failed-picker-start", Action::CreateTab);
+    fs::rename(&unavailable_orbit, &orbit).unwrap();
+    assert!(matches!(failed_tab, Response::Failure(_)));
+    assert_eq!(
+        workspace_action(&picker_socket, "after-failed-picker", Action::Inspect),
+        Response::Workspace(established),
+        "a conclusively failed picker Start committed a tab"
+    );
+    let Response::Workspace(with_pending) =
+        workspace_action(&picker_socket, "pending-tab", Action::CreateTab)
+    else {
+        panic!("pending tab creation failed");
+    };
+    assert_eq!(with_pending.snapshot.tabs.len(), 2);
+    let healthy_identity = live_identity(&runtime.join("n").join(&picker_id).join("orbit.sock"));
+    let failing_picker = &with_pending.snapshot.tabs[1].popups[0].session;
+    fs::remove_dir(&picker_home).unwrap();
+    fs::write(root.join("natural-exit"), failing_picker).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let Response::Workspace(state) =
+            workspace_action(&picker_socket, "after-picker-exit", Action::Inspect)
+        else {
+            panic!("a failed picker fallback disconnected the healthy tab");
+        };
+        if state.snapshot.tabs.len() == 1 {
+            assert_eq!(state.snapshot.active_tab, "t1");
+            assert_eq!(state.snapshot.tabs[0].panes().count(), 1);
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "failed fallback retained an unstartable tab"
+        );
+        thread::sleep(Duration::from_millis(25));
+    }
+    assert_eq!(
+        live_identity(&runtime.join("n").join(&picker_id).join("orbit.sock")),
+        healthy_identity
+    );
+    let Response::Workspace(before_save_failure) =
+        workspace_action(&picker_socket, "before-save-failure", Action::CreatePane)
+    else {
+        panic!("pane creation before save failure failed");
+    };
+    let closing = before_save_failure.snapshot.tabs[0].panes().last().unwrap();
+    let picker_state = root.join("state/eon/workspaces").join(&picker_id);
+    // Reject the directory's changed permissions at the existing persistence boundary.
+    fs::set_permissions(&picker_state, fs::Permissions::from_mode(0o500)).unwrap();
+    let close = ProtocolAction::ClosePane {
+        pane: closing.id.clone(),
+    };
+    let refused = protocol_action(&picker_socket, "save-failed-close", close.clone());
+    fs::set_permissions(&picker_state, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(matches!(refused, Response::Failure(error) if error.code == "layout-save"));
+    let Response::Workspace(after_save_failure) =
+        workspace_action(&picker_socket, "after-save-failure", Action::Inspect)
+    else {
+        panic!("snapshot missing after save failure");
+    };
+    assert!(
+        after_save_failure.snapshot.tabs[0]
+            .panes()
+            .any(|pane| pane.id == closing.id && !pane.live),
+        "a completed Stop remained live after layout persistence failed"
+    );
+    assert!(
+        matches!(protocol_action(&picker_socket, "save-failed-close", close.clone()), Response::Failure(error) if error.code == "duplicate-request"),
+        "failed persistence discarded the consumed Stop request"
+    );
+    assert!(matches!(
+        protocol_action(&picker_socket, "retry-save", close),
+        Response::Workspace(_)
+    ));
+    fs::create_dir(&picker_home).unwrap();
+    let Response::Workspace(before_partial_stop) =
+        workspace_action(&picker_socket, "pending-before-stop", Action::CreateTab)
+    else {
+        panic!("pending picker before Stop failed");
+    };
+    let pending_session = before_partial_stop.snapshot.tabs[1].popups[0]
+        .session
+        .clone();
+    let launch_count = fs::read_to_string(&log).unwrap().lines().count();
+    fs::write(&failed_stop, "session-1").unwrap();
+    assert!(matches!(
+        protocol_action(
+            &picker_socket,
+            "partial-stop",
+            ProtocolAction::Registry(RegistryAction::Stop {
+                workspace: picker_id.clone()
+            })
+        ),
+        Response::Failure(_)
+    ));
+    assert!(
+        matches!(workspace_action(&picker_socket, "mutate-during-cleanup", Action::CreatePane), Response::Failure(error) if error.code == "stop-incomplete"),
+        "partial Stop admitted a workspace mutation"
+    );
+    assert_eq!(
+        fs::read_to_string(&log).unwrap().lines().count(),
+        launch_count,
+        "partial Stop launched a replacement terminal"
+    );
+    let partial_layout: serde_json::Value =
+        serde_json::from_slice(&fs::read(picker_state.join("layout.json")).unwrap()).unwrap();
+    assert!(
+        partial_layout["tabs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|tab| tab["popups"].as_array().unwrap())
+            .any(|popup| popup["session"]["id"] == pending_session
+                && popup["session"]["live"] == false)
+    );
+    fs::set_permissions(&picker_state, fs::Permissions::from_mode(0o500)).unwrap();
+    let refused = protocol_action(
+        &picker_socket,
+        "stop-without-persistence",
+        ProtocolAction::Registry(RegistryAction::Stop {
+            workspace: picker_id.clone(),
+        }),
+    );
+    fs::set_permissions(&picker_state, fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(matches!(refused, Response::Failure(error) if error.code == "layout-save"));
+    let hello = protocol_action(
+        &picker_socket,
+        "receipt-after-failed-save",
+        ProtocolAction::Hello {
+            workspace: picker_id.clone(),
+        },
+    );
+    assert!(
+        matches!(hello, Response::Hello(info) if !info.stopped),
+        "Hello advertised an unpersisted Stop receipt"
+    );
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(picker_state.join("layout.json")).unwrap()).unwrap();
+    assert_eq!(saved["stopped"], false);
+    assert!(matches!(
+        protocol_action(
+            &picker_socket,
+            "stop-picker-workspace",
+            ProtocolAction::Registry(RegistryAction::Stop {
+                workspace: picker_id
+            })
+        ),
+        Response::Workspace(_)
+    ));
+    let startup_fallback = command()
+        .env("EON_SESSION_BIN", root.join("bin"))
+        .env("EON_TEST_EXIT_BEFORE_READY", "directory-picker-1")
+        .args(["workspace", "create", "--name", "startup fallback"])
+        .output()
+        .unwrap();
+    assert!(
+        startup_fallback.status.success(),
+        "initial picker failure did not fall back: {}",
+        String::from_utf8_lossy(&startup_fallback.stderr)
+    );
+    let fallback_id = stdout(&startup_fallback)
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_owned();
+    let fallback_socket = runtime.join("n").join(&fallback_id).join("eon.sock");
+    let Response::Workspace(fallback) =
+        workspace_action(&fallback_socket, "startup-fallback", Action::Inspect)
+    else {
+        panic!("initial fallback workspace missing");
+    };
+    assert!(!fallback.snapshot.tabs[0].pending);
+    assert!(fallback.snapshot.tabs[0].popups.is_empty());
+    assert_eq!(fallback.snapshot.tabs[0].panes().count(), 1);
+    assert!(
+        command()
+            .args(["workspace", "stop", &fallback_id])
+            .status()
+            .unwrap()
+            .success()
+    );
+    for session in ["session-1", "session-3"] {
+        fs::write(root.join("natural-exit"), session).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let Response::Workspace(state) =
+                workspace_action(&socket, "observed-exit", Action::Inspect)
+            else {
+                panic!("workspace disappeared after natural exit");
+            };
+            if state.runs.iter().all(|run| run.session != session) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "observed natural exit retained dead slot {session}"
+            );
+            thread::sleep(Duration::from_millis(25));
+        }
+    }
+    assert!(
+        matches!(
+            protocol_action(
+                &socket,
+                "stop-unfinished",
+                ProtocolAction::Registry(RegistryAction::Stop {
+                    workspace: id.clone()
+                })
+            ),
+            Response::Failure(_)
+        ),
+        "Stop cannot acknowledge an unknown launch outcome"
+    );
+    // This test created an empty claim without a child; resolve that exact fixture.
+    fs::remove_file(directory.join("session-4.sock.record")).unwrap();
+    assert!(matches!(
+        protocol_action(
+            &socket,
+            "stop",
+            ProtocolAction::Registry(RegistryAction::Stop { workspace: id })
+        ),
+        Response::Workspace(_)
+    ));
+    wait_for_successful_exit(&mut resumed.child);
     fs::remove_dir_all(root).unwrap();
 }

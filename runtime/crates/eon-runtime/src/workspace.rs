@@ -1,5 +1,7 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v12::{
+use serde::{Deserialize, Serialize};
+mod layout;
+use eon_workspace_protocol::v13::{
     Action, Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS,
     MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
     PopupEntry as SnapshotEntry, PopupTarget, Side, Snapshot, Tab as SnapshotTab, WorkspaceAction,
@@ -30,9 +32,12 @@ pub(crate) fn is_directory_picker_endpoint(name: &str) -> bool {
             .is_some()
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Session {
     pub(crate) id: String,
+    pub(crate) run: String,
+    pub(crate) live: bool,
+    #[serde(with = "layout::path_bytes")]
     pub(crate) endpoint: PathBuf,
 }
 
@@ -60,30 +65,32 @@ pub(crate) enum SessionOperation {
     Stop(String),
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Pane {
     id: String,
     session: Session,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Popup {
     id: String,
     entry: String,
     session: Session,
+    #[serde(with = "layout::path_bytes")]
     launch_directory: PathBuf,
 }
 
 /// One accordion of panes; `expanded` indexes the pane it shows.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Column {
     panes: Vec<Pane>,
     expanded: usize,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct Tab {
     id: String,
+    #[serde(with = "layout::path_bytes")]
     directory: PathBuf,
     pending: bool,
     /// Side-by-side columns; `selected_column` is set exactly when this is nonempty.
@@ -120,6 +127,7 @@ pub(crate) struct Workspace {
     next_session: usize,
     next_popup: usize,
     recent_requests: VecDeque<String>,
+    pub(crate) stopped: bool,
 }
 
 impl Workspace {
@@ -150,6 +158,7 @@ impl Workspace {
             next_session: 1,
             next_popup: 1,
             recent_requests: VecDeque::new(),
+            stopped: false,
         };
         if workspace
             .open_popup(0, "project", &mut prepare, &mut operate, true)
@@ -200,6 +209,7 @@ impl Workspace {
             next_session,
             next_popup: 1,
             recent_requests: VecDeque::new(),
+            stopped: false,
         })
     }
 
@@ -240,7 +250,7 @@ impl Workspace {
                                     id: pane.id.clone(),
                                     session: pane.session.id.clone(),
                                     endpoint: pane.session.endpoint.as_os_str().as_bytes().to_vec(),
-                                    live: true,
+                                    live: pane.session.live,
                                 })
                                 .collect(),
                             expanded: column.panes[column.expanded].id.clone(),
@@ -274,6 +284,15 @@ impl Workspace {
         check_popup_action(&self.snapshot(), &action)
             .map_err(|error| action_error("stale-popup", error.to_string()))?;
         match action {
+            Action::Hello { .. }
+            | Action::Presentation { .. }
+            | Action::Registry(_)
+            | Action::Window { .. } => {
+                return Err(action_error(
+                    "unavailable",
+                    "connection actions belong to the window or registry owner",
+                ));
+            }
             Action::Workspace(action) => {
                 self.dispatch_workspace(action, &mut prepare, &mut operate)?
             }
@@ -417,7 +436,7 @@ impl Workspace {
             .position(|popup| popup.entry == entry)
         {
             let popup = self.tabs[tab_index].popups[index].clone();
-            if popup.launch_directory != self.tabs[tab_index].directory {
+            if !popup.session.live || popup.launch_directory != self.tabs[tab_index].directory {
                 let candidate = self.popup_candidate(tab_index, &definition, true)?;
                 let launch = self.prepare_launch(tab_index, &candidate, &definition, prepare)?;
                 if let Some(index) = self.displaced_transient(tab_index, Some(&popup.id))? {
@@ -504,6 +523,14 @@ impl Workspace {
         Ok((!self.definition(&popup.entry)?.keep_alive).then_some(index))
     }
 
+    fn session_endpoint(&self, number: usize) -> PathBuf {
+        self.runtime.join(if number == 1 {
+            "orbit.sock".into()
+        } else {
+            format!("session-{number}.sock")
+        })
+    }
+
     fn popup_candidate(
         &self,
         tab_index: usize,
@@ -538,11 +565,13 @@ impl Workspace {
             entry: definition.id.clone(),
             session: Session {
                 id: session_id.clone(),
-                endpoint: self.runtime.join(if project {
-                    format!("k{number}.sock")
+                run: super::supervisor::request_id(),
+                live: true,
+                endpoint: if project {
+                    self.runtime.join(format!("k{number}.sock"))
                 } else {
-                    format!("{session_id}.sock")
-                }),
+                    self.session_endpoint(number)
+                },
             },
             launch_directory: self.tabs[tab_index].directory.clone(),
         })
@@ -625,6 +654,16 @@ impl Workspace {
             .iter()
             .position(|tab| tab.id == target.tab)
             .ok_or_else(|| action_error("stale-popup", "chooser tab is no longer live"))?;
+        if !self.tabs[tab_index]
+            .popups
+            .iter()
+            .any(|popup| popup.id == target.instance && popup.session.live)
+        {
+            return Err(action_error(
+                "stale-popup",
+                "chooser session is no longer live",
+            ));
+        }
         let directory = validated_directory(directory)?;
         if self.tabs[tab_index].pending {
             self.start_pane_at(tab_index, &directory, operate)
@@ -700,7 +739,12 @@ impl Workspace {
         self.tabs
             .iter()
             .flat_map(|tab| &tab.popups)
-            .filter(|popup| popup.entry == "project")
+            .filter(|popup| {
+                self.catalog
+                    .entries
+                    .iter()
+                    .any(|entry| entry.id == popup.entry && !entry.keep_alive)
+            })
             .map(|popup| popup.session.id.clone())
             .collect()
     }
@@ -738,6 +782,9 @@ impl Workspace {
                     .map(|popup| popup.session.id.clone()),
             )
             .collect();
+        // An established tab can be empty after a recovered picker is dismissed.
+        // With no session completion callback forthcoming, close it here.
+        self.remove_empty_tab(index);
         self.remember(request_id);
         Ok(sessions)
     }
@@ -823,11 +870,9 @@ impl Workspace {
             id: format!("p{}", self.next_pane),
             session: Session {
                 id: format!("session-{}", self.next_session),
-                endpoint: self.runtime.join(if self.next_session == 1 {
-                    "orbit.sock".into()
-                } else {
-                    format!("session-{}.sock", self.next_session)
-                }),
+                run: super::supervisor::request_id(),
+                live: true,
+                endpoint: self.session_endpoint(self.next_session),
             },
         };
         operate(SessionOperation::Start {
@@ -880,13 +925,21 @@ impl Workspace {
         let Some(instance) = self.tabs[tab_index].selected_popup.clone() else {
             return Ok(());
         };
-        self.dismiss_popup(
-            &PopupTarget {
-                tab: self.tabs[tab_index].id.clone(),
-                instance,
-            },
-            operate,
-        )
+        let popup_index = self.tabs[tab_index]
+            .popups
+            .iter()
+            .position(|popup| popup.id == instance)
+            .ok_or_else(|| action_error("stale-popup", "popup instance is no longer live"))?;
+        if self
+            .definition(&self.tabs[tab_index].popups[popup_index].entry)?
+            .keep_alive
+        {
+            self.tabs[tab_index].selected_popup = None;
+            Ok(())
+        } else {
+            // A pane action keeps its target tab even when retiring its last popup.
+            self.stop_popup(tab_index, popup_index, operate)
+        }
     }
 
     fn focus_id(
@@ -1176,6 +1229,10 @@ impl Workspace {
         }
     }
 
+    pub(crate) fn retain_requests_from(&mut self, attempted: &Self) {
+        self.recent_requests.clone_from(&attempted.recent_requests);
+    }
+
     fn remember(&mut self, request_id: &str) {
         if self.recent_requests.len() == MAX_RECENT_REQUESTS {
             self.recent_requests.pop_front();
@@ -1381,13 +1438,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v12::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v13::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v12::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v12::ALT, "Alt"),
-        (eon_workspace_protocol::v12::SHIFT, "Shift"),
-        (eon_workspace_protocol::v12::SUPER, "Super"),
+        (eon_workspace_protocol::v13::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v13::ALT, "Alt"),
+        (eon_workspace_protocol::v13::SHIFT, "Shift"),
+        (eon_workspace_protocol::v13::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1440,7 +1497,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v12::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v13::{ALT, PopupGeometry, Shortcut};
 
     fn catalog() -> PopupCatalog {
         PopupCatalog {
@@ -1482,6 +1539,201 @@ mod tests {
     }
 
     #[test]
+    fn recovered_pending_tab_remains_selectable_without_replaying_its_picker() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = super::super::supervisor::temporary_directory();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut workspace = Workspace::pending(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            catalog(),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert!(workspace.snapshot().tabs[0].pending);
+        workspace.retire_transient_layout();
+        workspace.reconcile_runs(&[]);
+        let path = root.join("layout.json");
+        workspace.save_layout(&path, "workspace-1").unwrap();
+        let restored = Workspace::load_layout(
+            &path,
+            "workspace-1",
+            root.clone(),
+            Some(root.clone()),
+            catalog(),
+        )
+        .unwrap();
+        assert_eq!(restored.snapshot(), workspace.snapshot());
+        assert_eq!(restored.sessions().count(), 1);
+        assert!(restored.sessions().all(|slot| !slot.live));
+        assert!(!restored.snapshot().tabs[0].pending);
+        let mut stale_result = restored.clone();
+        let other_directory = root.join("other");
+        fs::create_dir(&other_directory).unwrap();
+        let before = stale_result.snapshot();
+        assert!(
+            stale_result
+                .dispatch(
+                    "retired-picker-result",
+                    Action::CommitDirectory {
+                        target: PopupTarget {
+                            tab: "t1".into(),
+                            instance: before.tabs[0].popups[0].id.clone()
+                        },
+                        directory: other_directory.as_os_str().as_bytes().to_vec(),
+                    },
+                    prepared,
+                    |_| Ok(()),
+                )
+                .is_err(),
+            "a stopped Project chooser changed its recovered tab"
+        );
+        assert_eq!(stale_result.snapshot(), before);
+        let mut popup_first = restored.clone();
+        popup_first
+            .dispatch(
+                "agent-first",
+                Action::InvokePopup {
+                    tab: "t1".into(),
+                    entry: "agent".into(),
+                    expected_instance: None,
+                    intent: InvokeIntent::Toggle,
+                },
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        popup_first.save_layout(&path, "workspace-1").unwrap();
+        for action in [
+            Action::Workspace(WorkspaceAction::CreatePane),
+            Action::CreateColumn,
+        ] {
+            let mut panes = restored.clone();
+            panes
+                .dispatch(
+                    "second-tab",
+                    Action::Workspace(WorkspaceAction::CreateTab),
+                    prepared,
+                    |_| Ok(()),
+                )
+                .unwrap();
+            panes
+                .dispatch(
+                    "select-recovered",
+                    Action::Workspace(WorkspaceAction::FocusId("t1".into())),
+                    prepared,
+                    |_| Ok(()),
+                )
+                .unwrap();
+            let other_tab = panes.snapshot().tabs[1].clone();
+            let mut starts = Vec::new();
+            panes
+                .dispatch("pane-in-recovered-tab", action, prepared, |operation| {
+                    if let SessionOperation::Start { directory, .. } = operation {
+                        starts.push(directory);
+                    }
+                    Ok(())
+                })
+                .unwrap();
+            let snapshot = panes.snapshot();
+            assert_eq!(
+                snapshot.active_tab, "t1",
+                "pane action removed its target tab"
+            );
+            assert_eq!(snapshot.tabs.len(), 2);
+            assert_eq!(snapshot.tabs[0].columns.len(), 1);
+            assert!(snapshot.tabs[0].popups.is_empty());
+            assert_eq!(snapshot.tabs[1], other_tab);
+            assert_eq!(starts, std::slice::from_ref(&root));
+        }
+        let mut restored = restored;
+        let picker = restored.snapshot().tabs[0].popups[0].session.clone();
+        restored
+            .session_ended(&picker, SessionEnd::Closed, |_| Ok(()))
+            .unwrap();
+        assert!(restored.snapshot().tabs[0].columns.is_empty());
+        restored
+            .dispatch(
+                "another",
+                Action::Workspace(WorkspaceAction::CreateTab),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        restored
+            .dispatch(
+                "focus-empty",
+                Action::Workspace(WorkspaceAction::FocusId("t1".into())),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        assert!(
+            restored
+                .prepare_close_tab("close-empty", "t1")
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(restored.snapshot().tabs.len(), 1);
+        assert_eq!(restored.snapshot().active_tab, "t2");
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn named_recovery_retains_columns_popup_and_selection() {
+        let root = super::super::supervisor::temporary_directory();
+        let mut workspace = Workspace::with_recovered_sessions(
+            root.clone(),
+            root.clone(),
+            Some(root.clone()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    run: "run-1".into(),
+                    live: true,
+                    endpoint: root.join("orbit.sock"),
+                },
+            )],
+            catalog(),
+        )
+        .unwrap();
+        workspace
+            .dispatch("column", Action::CreateColumn, prepared, |_| Ok(()))
+            .unwrap();
+        workspace
+            .dispatch(
+                "agent",
+                Action::InvokePopup {
+                    tab: "t1".into(),
+                    entry: "agent".into(),
+                    expected_instance: None,
+                    intent: InvokeIntent::Toggle,
+                },
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let path = root.join("layout.json");
+        workspace.save_layout(&path, "workspace-1").unwrap();
+        let restored = Workspace::load_layout(
+            &path,
+            "workspace-1",
+            root.clone(),
+            Some(root.clone()),
+            catalog(),
+        )
+        .unwrap();
+        assert_eq!(restored.snapshot(), workspace.snapshot());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn create_column_in_a_popup_only_tab_never_overfills_a_neighbor() {
         let root = std::env::temp_dir().join(format!("eon-column-limit-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
@@ -1493,6 +1745,8 @@ mod tests {
                 1,
                 Session {
                     id: "session-1".into(),
+                    run: super::super::supervisor::request_id(),
+                    live: true,
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -1539,10 +1793,13 @@ mod tests {
             .dispatch("c4", Action::CreateColumn, prepared, ok)
             .unwrap();
         let after = workspace.snapshot();
-        assert_eq!(after.tabs.len(), 1);
+        assert_eq!(after.tabs.len(), 2);
+        assert_eq!(after.active_tab, "t2");
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v12::encode_response(
-            &eon_workspace_protocol::v12::Response::Snapshot(after),
+        assert_eq!(after.tabs[1].columns.len(), 1);
+        assert!(after.tabs[1].popups.is_empty());
+        eon_workspace_protocol::v13::encode_response(
+            &eon_workspace_protocol::v13::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -1560,6 +1817,8 @@ mod tests {
                 1,
                 Session {
                     id: "session-1".into(),
+                    run: super::super::supervisor::request_id(),
+                    live: true,
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -1718,6 +1977,8 @@ mod tests {
                 1,
                 Session {
                     id: "session-1".into(),
+                    run: super::super::supervisor::request_id(),
+                    live: true,
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -1819,6 +2080,8 @@ mod tests {
                 1,
                 Session {
                     id: "session-1".into(),
+                    run: super::super::supervisor::request_id(),
+                    live: true,
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -1958,6 +2221,8 @@ mod tests {
                 1,
                 Session {
                     id: "session-1".into(),
+                    run: super::super::supervisor::request_id(),
+                    live: true,
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -2025,6 +2290,8 @@ mod tests {
                 1,
                 Session {
                     id: "session-1".into(),
+                    run: super::super::supervisor::request_id(),
+                    live: true,
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -2126,6 +2393,8 @@ mod tests {
                 1,
                 Session {
                     id: "session-1".into(),
+                    run: super::super::supervisor::request_id(),
+                    live: true,
                     endpoint: root.join("orbit.sock"),
                 },
             )],
@@ -2278,6 +2547,8 @@ mod tests {
                 1,
                 Session {
                     id: "session-1".into(),
+                    run: super::super::supervisor::request_id(),
+                    live: true,
                     endpoint: "/runtime/orbit.sock".into(),
                 },
             )],
@@ -2345,6 +2616,8 @@ mod tests {
                     id: "p99".into(),
                     session: Session {
                         id: "session-99".into(),
+                        run: super::super::supervisor::request_id(),
+                        live: true,
                         endpoint: "/runtime/session-99.sock".into(),
                     },
                 }],
@@ -2478,8 +2751,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v12::encode_response(
-            &eon_workspace_protocol::v12::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v13::encode_response(
+            &eon_workspace_protocol::v13::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 

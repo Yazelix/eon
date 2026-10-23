@@ -1,6 +1,7 @@
 //! Eon's runtime mechanisms, invoked with assembly-owned product inputs.
 
 mod cli;
+mod connections;
 mod control;
 mod generation;
 mod managed_environment;

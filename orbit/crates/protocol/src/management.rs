@@ -5,8 +5,8 @@ use std::fmt;
 const MESSAGE_MAGIC: [u8; 4] = *b"ORBM";
 const RECORD_MAGIC: [u8; 4] = *b"ORBR";
 
-pub const VERSION: u16 = 1;
-pub const RECORD_GENERATION: u16 = 1;
+pub const VERSION: u16 = 2;
+pub const RECORD_GENERATION: u16 = 2;
 pub const HEADER_BYTES: usize = 12;
 pub const MAX_MESSAGE_BYTES: usize = 4 * 1024;
 pub const MAX_RECORD_BYTES: usize = 4 * 1024;
@@ -28,6 +28,10 @@ pub struct EndpointIdentity {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiveIdentity {
+    pub workspace_id: String,
+    pub session_version: u16,
+    pub frame_version: u16,
+    pub capabilities: u16,
     pub session_id: String,
     pub run_id: String,
     pub component_generation: String,
@@ -74,7 +78,7 @@ pub struct Failure {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClientMessage {
     Acquire {
-        expected: LiveIdentity,
+        expected: Box<LiveIdentity>,
         record: ObjectIdentity,
     },
     Status,
@@ -194,7 +198,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     let (tag, mut input) = decode_frame(bytes, MESSAGE_MAGIC, MAX_MESSAGE_BYTES)?;
     let message = match tag {
         1 => ClientMessage::Acquire {
-            expected: decode_live(&mut input)?,
+            expected: Box::new(decode_live(&mut input)?),
             record: decode_object(&mut input)?,
         },
         2 => ClientMessage::Status,
@@ -292,6 +296,10 @@ pub fn decode_record(bytes: &[u8]) -> Result<Record> {
 
 fn encode_live(out: &mut Encoder, identity: &LiveIdentity) -> Result<()> {
     validate_live(identity)?;
+    out.text("workspace ID", &identity.workspace_id, MAX_ID_BYTES, false)?;
+    out.u16(identity.session_version);
+    out.u16(identity.frame_version);
+    out.u16(identity.capabilities);
     out.text("session ID", &identity.session_id, MAX_ID_BYTES, false)?;
     out.text("run ID", &identity.run_id, MAX_ID_BYTES, false)?;
     out.text(
@@ -311,6 +319,10 @@ fn encode_live(out: &mut Encoder, identity: &LiveIdentity) -> Result<()> {
 
 fn decode_live(input: &mut Decoder<'_>) -> Result<LiveIdentity> {
     let identity = LiveIdentity {
+        workspace_id: input.text("workspace ID", MAX_ID_BYTES, false)?,
+        session_version: input.u16()?,
+        frame_version: input.u16()?,
+        capabilities: input.u16()?,
         session_id: input.text("session ID", MAX_ID_BYTES, false)?,
         run_id: input.text("run ID", MAX_ID_BYTES, false)?,
         component_generation: input.text("component generation", MAX_ID_BYTES, false)?,
@@ -327,6 +339,15 @@ fn decode_live(input: &mut Decoder<'_>) -> Result<LiveIdentity> {
 }
 
 fn validate_live(identity: &LiveIdentity) -> Result<()> {
+    validate_text("workspace ID", &identity.workspace_id, MAX_ID_BYTES, false)?;
+    if identity.session_version != crate::session::VERSION
+        || identity.frame_version != crate::VERSION
+        || identity.capabilities != crate::session::CAPABILITIES
+    {
+        return Err(Error::InvalidValue {
+            field: "protocol compatibility",
+        });
+    }
     validate_text("session ID", &identity.session_id, MAX_ID_BYTES, false)?;
     validate_text("run ID", &identity.run_id, MAX_ID_BYTES, false)?;
     validate_text(

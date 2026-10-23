@@ -64,8 +64,8 @@ fn peers(path: &Path) -> (Peer, Peer) {
     let mut client = Peer::attach(path, 10.0);
     client.frame();
     let mut observer = Peer::connect(path, 10.0);
-    observer.send(&ClientMessage::ObserveMetadata);
-    observer.expect(ServerMessage::ObservingMetadata);
+    observer.send(&ClientMessage::ObserveMetadata(None));
+    observer.expect(ServerMessage::ObservingMetadata(Default::default()));
     observer.metadata();
     (client, observer)
 }
@@ -131,7 +131,7 @@ impl Probe {
     fn stall(&self, worker: i32) -> (Peer, Instant) {
         signal(worker, libc::SIGSTOP);
         let mut peer = Peer::connect(&self.server.path, 10.0);
-        peer.send(&ClientMessage::Hello);
+        peer.send(&ClientMessage::Hello(None));
         (peer, Instant::now())
     }
 

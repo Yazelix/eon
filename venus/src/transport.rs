@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     self as workspace, Action as WorkspaceAction, Request as WorkspaceRequest,
     Response as WorkspaceResponse,
 };
@@ -51,6 +51,7 @@ impl std::error::Error for SendError {}
 pub struct Transport {
     messages: mpsc::SyncSender<ClientMessage>,
     events: Arc<EventQueue>,
+    control: Arc<TransportControl>,
 }
 
 /// One complete result from the Eon-owned workspace request boundary.
@@ -60,8 +61,9 @@ pub enum WorkspaceEvent {
     Unavailable(String),
 }
 
-/// Bounded semantic-action handle for EONW v12.
+/// Bounded semantic-action handle for EONW v13.
 pub struct WorkspaceTransport {
+    control: Arc<TransportControl>,
     actions: mpsc::SyncSender<WorkspaceAction>,
     events: Arc<WorkspaceEventQueue>,
 }
@@ -76,7 +78,7 @@ pub enum MetadataEvent {
 /// One bounded read-only Orbit metadata observer.
 pub struct MetadataTransport {
     events: Arc<MetadataEventQueue>,
-    control: Arc<MetadataControl>,
+    control: Arc<TransportControl>,
 }
 
 #[derive(Default)]
@@ -99,23 +101,45 @@ impl MetadataEventQueue {
 }
 
 #[derive(Default)]
-struct MetadataControl {
+struct TransportControl {
     cancelled: AtomicBool,
     stream: Mutex<Option<UnixStream>>,
+}
+
+impl TransportControl {
+    fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        if let Some(stream) = self
+            .stream
+            .lock()
+            .expect("transport stream lock poisoned")
+            .take()
+        {
+            let _ = stream.shutdown(std::net::Shutdown::Both);
+        }
+    }
 }
 
 impl MetadataTransport {
     #[must_use]
     pub fn start(socket: PathBuf, wake: impl Fn() + Send + Sync + 'static) -> Self {
+        Self::start_for_run(socket, None, wake)
+    }
+
+    pub fn start_for_run(
+        socket: PathBuf,
+        expected: Option<session::RunIdentity>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
         let events = Arc::new(MetadataEventQueue::default());
-        let control = Arc::new(MetadataControl::default());
+        let control = Arc::new(TransportControl::default());
         let notify = metadata_notifier(Arc::clone(&events), wake);
         if thread::Builder::new()
             .name("venus-orbit-metadata".into())
             .spawn({
                 let control = Arc::clone(&control);
                 let notify = Arc::clone(&notify);
-                move || run_metadata(socket, control, notify)
+                move || run_metadata(socket, expected, control, notify)
             })
             .is_err()
         {
@@ -131,16 +155,7 @@ impl MetadataTransport {
 
 impl Drop for MetadataTransport {
     fn drop(&mut self) {
-        self.control.cancelled.store(true, Ordering::Release);
-        if let Some(stream) = self
-            .control
-            .stream
-            .lock()
-            .expect("metadata control lock poisoned")
-            .take()
-        {
-            let _ = stream.shutdown(Shutdown::Both);
-        }
+        self.control.cancel();
     }
 }
 
@@ -157,7 +172,8 @@ fn metadata_notifier(
 
 fn run_metadata(
     socket: PathBuf,
-    control: Arc<MetadataControl>,
+    expected: Option<session::RunIdentity>,
+    control: Arc<TransportControl>,
     notify: Arc<dyn Fn(MetadataEvent) + Send + Sync>,
 ) {
     let Ok(mut stream) = UnixStream::connect(socket) else {
@@ -181,7 +197,7 @@ fn run_metadata(
         }
         *active = Some(control_stream);
     }
-    observe_metadata(&mut stream, notify.as_ref());
+    observe_metadata_for_run(&mut stream, expected, notify.as_ref());
     control
         .stream
         .lock()
@@ -192,13 +208,23 @@ fn run_metadata(
     }
 }
 
-fn observe_metadata(stream: &mut UnixStream, notify: &dyn Fn(MetadataEvent)) {
-    if write_message(stream, &ClientMessage::ObserveMetadata).is_err()
+fn observe_metadata_for_run(
+    stream: &mut UnixStream,
+    expected: Option<session::RunIdentity>,
+    notify: &dyn Fn(MetadataEvent),
+) {
+    if stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .is_err()
+        || write_message(stream, &ClientMessage::ObserveMetadata(expected.clone())).is_err()
         || !matches!(
-            read_message(stream),
-            Ok(Some((ServerMessage::ObservingMetadata, _)))
+            read_message_bounded(stream, true),
+            Ok(Some((ServerMessage::ObservingMetadata(handshake), _))) if handshake.accepts(expected.as_ref())
         )
     {
+        return;
+    }
+    if stream.set_read_timeout(None).is_err() {
         return;
     }
     let mut revision = None;
@@ -216,27 +242,70 @@ const WORKSPACE_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
 impl WorkspaceTransport {
     #[must_use]
     pub fn start(socket: PathBuf, wake: impl Fn() + Send + Sync + 'static) -> Self {
-        Self::start_with_refresh(socket, WORKSPACE_REFRESH_INTERVAL, wake)
+        Self::start_with_action(
+            socket,
+            WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect),
+            wake,
+        )
     }
 
+    #[must_use]
+    pub fn start_with_action(
+        socket: PathBuf,
+        action: WorkspaceAction,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        Self::start_worker(socket, action, WORKSPACE_REFRESH_INTERVAL, wake)
+    }
+
+    #[cfg(test)]
     fn start_with_refresh(
         socket: PathBuf,
         refresh_interval: Duration,
         wake: impl Fn() + Send + Sync + 'static,
     ) -> Self {
+        Self::start_worker(
+            socket,
+            WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect),
+            refresh_interval,
+            wake,
+        )
+    }
+
+    fn start_worker(
+        socket: PathBuf,
+        action: WorkspaceAction,
+        refresh_interval: Duration,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        let control = Arc::new(TransportControl::default());
+        let worker_control = Arc::clone(&control);
         let (actions, receiver) = mpsc::sync_channel(32);
         let events = Arc::new(WorkspaceEventQueue::default());
         let notify = workspace_notifier(Arc::clone(&events), wake);
         let worker_notify = Arc::clone(&notify);
         if let Err(error) = thread::Builder::new()
             .name("venus-eon-workspace".into())
-            .spawn(move || run_workspace(socket, receiver, refresh_interval, worker_notify))
+            .spawn(move || {
+                run_workspace(
+                    socket,
+                    action,
+                    receiver,
+                    refresh_interval,
+                    worker_control,
+                    worker_notify,
+                )
+            })
         {
             notify(WorkspaceEvent::Unavailable(format!(
                 "Cannot start the Eon workspace worker: {error}"
             )));
         }
-        Self { actions, events }
+        Self {
+            actions,
+            events,
+            control,
+        }
     }
 
     pub fn send(&self, action: WorkspaceAction) -> Result<(), SendError> {
@@ -248,6 +317,12 @@ impl WorkspaceTransport {
 
     pub fn drain_events(&self) -> Vec<WorkspaceEvent> {
         self.events.drain()
+    }
+}
+
+impl Drop for WorkspaceTransport {
+    fn drop(&mut self) {
+        self.control.cancel();
     }
 }
 
@@ -292,8 +367,10 @@ fn workspace_notifier(
 
 fn run_workspace(
     socket: PathBuf,
+    mut action: WorkspaceAction,
     receiver: mpsc::Receiver<WorkspaceAction>,
     refresh_interval: Duration,
+    control: Arc<TransportControl>,
     notify: Arc<dyn Fn(WorkspaceEvent) + Send + Sync>,
 ) {
     let nonce = SystemTime::now()
@@ -301,11 +378,13 @@ fn run_workspace(
         .unwrap_or_default()
         .as_nanos();
     let mut counter = 0;
-    let mut action = WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect);
-    loop {
-        let event = workspace_exchange(&socket, nonce, counter, action)
+    while !control.cancelled.load(Ordering::Acquire) {
+        let event = workspace_exchange(&socket, nonce, counter, action, &control)
             .map(WorkspaceEvent::Response)
             .unwrap_or_else(WorkspaceEvent::Unavailable);
+        if control.cancelled.load(Ordering::Acquire) {
+            break;
+        }
         notify(event);
         counter = counter.wrapping_add(1);
         action = match receiver.recv_timeout(refresh_interval) {
@@ -330,6 +409,7 @@ fn workspace_exchange(
     nonce: u128,
     counter: usize,
     action: WorkspaceAction,
+    control: &TransportControl,
 ) -> Result<WorkspaceResponse, String> {
     let request = WorkspaceRequest {
         id: format!("venus-{}-{nonce}-{counter}", std::process::id()),
@@ -343,6 +423,16 @@ fn workspace_exchange(
             socket.display()
         )
     })?;
+    {
+        let mut current = control
+            .stream
+            .lock()
+            .expect("workspace stream lock poisoned");
+        if control.cancelled.load(Ordering::Acquire) {
+            return Err("connection cancelled".into());
+        }
+        *current = Some(stream.try_clone().map_err(|error| error.to_string())?);
+    }
     let timeout = Some(WORKSPACE_EXCHANGE_TIMEOUT);
     stream
         .set_read_timeout(timeout)
@@ -375,14 +465,24 @@ impl Transport {
     /// Connect on a worker thread, queue decoded server messages, and wake the event loop.
     #[must_use]
     pub fn start(socket: PathBuf, wake: impl Fn() + Send + Sync + 'static) -> Self {
+        Self::start_for_run(socket, None, wake)
+    }
+
+    pub fn start_for_run(
+        socket: PathBuf,
+        expected: Option<session::RunIdentity>,
+        wake: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
         let (messages, receiver) = mpsc::sync_channel(256);
         let events = Arc::new(EventQueue::default());
+        let control = Arc::new(TransportControl::default());
         let notify = notifier(Arc::clone(&events), wake);
         if let Err(error) = thread::Builder::new()
             .name("venus-orbit-reader".into())
             .spawn({
                 let notify = Arc::clone(&notify);
-                move || run(socket, receiver, notify)
+                let control = Arc::clone(&control);
+                move || run(socket, expected, receiver, control, notify)
             })
         {
             notify(
@@ -390,7 +490,11 @@ impl Transport {
                 0,
             );
         }
-        Self { messages, events }
+        Self {
+            messages,
+            events,
+            control,
+        }
     }
 
     /// Queue one canonical Orbit message without blocking the native event loop.
@@ -406,6 +510,14 @@ impl Transport {
     /// Drain ordered server events, with consecutive complete frames reduced to the latest one.
     pub fn drain_events(&self) -> Vec<TransportEvent> {
         self.events.drain()
+    }
+}
+
+impl Drop for Transport {
+    fn drop(&mut self) {
+        // Dropping the sender wakes a healthy writer to send Detach. If that
+        // writer already failed, cancel closes the stream it handed back.
+        self.control.cancel();
     }
 }
 
@@ -560,7 +672,9 @@ fn notifier(
 
 fn run(
     socket: PathBuf,
+    expected: Option<session::RunIdentity>,
     receiver: mpsc::Receiver<ClientMessage>,
+    control: Arc<TransportControl>,
     notify: Arc<dyn Fn(TransportEvent, usize) + Send + Sync>,
 ) {
     let mut stream = match UnixStream::connect(&socket) {
@@ -587,7 +701,14 @@ fn run(
             return;
         }
     };
-    if let Err(error) = write_message(&mut stream, &ClientMessage::Hello) {
+    if control.cancelled.load(Ordering::Acquire) {
+        return;
+    }
+    if let Err(error) = stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .and_then(|()| stream.set_read_timeout(Some(Duration::from_secs(5))))
+        .and_then(|()| write_message(&mut stream, &ClientMessage::Hello(expected.clone())))
+    {
         let kind = error.kind();
         notify(
             socket_loss(format!("Cannot start the Orbit attachment: {error}"), kind),
@@ -596,10 +717,42 @@ fn run(
         return;
     }
 
+    match read_message_bounded(&mut stream, true) {
+        Ok(Some((ServerMessage::Attached(handshake), bytes)))
+            if handshake.accepts(expected.as_ref()) =>
+        {
+            notify(
+                TransportEvent::Server(ServerMessage::Attached(handshake)),
+                bytes,
+            );
+        }
+        Ok(Some((message @ (ServerMessage::Busy | ServerMessage::Failure(_)), bytes))) => {
+            notify(TransportEvent::Server(message), bytes);
+            return;
+        }
+        Err(event) => {
+            notify(event, 0);
+            return;
+        }
+        _ => {
+            notify(
+                TransportEvent::Lost(
+                    "Orbit attachment identity differs from the selected terminal".into(),
+                ),
+                0,
+            );
+            return;
+        }
+    }
+    if let Err(error) = stream.set_read_timeout(None) {
+        notify(io_loss(error), 0);
+        return;
+    }
+
     let writer_notify = Arc::clone(&notify);
     if let Err(error) = thread::Builder::new()
         .name("venus-orbit-writer".into())
-        .spawn(move || write_loop(writer, receiver, writer_notify))
+        .spawn(move || write_loop(writer, receiver, control, writer_notify))
     {
         let _ = stream.shutdown(Shutdown::Both);
         notify(
@@ -632,18 +785,30 @@ fn run(
 fn write_loop(
     mut stream: UnixStream,
     receiver: mpsc::Receiver<ClientMessage>,
+    control: Arc<TransportControl>,
     notify: Arc<dyn Fn(TransportEvent, usize) + Send + Sync>,
 ) {
     while let Ok(message) = receiver.recv() {
+        if control.cancelled.load(Ordering::Acquire) {
+            break;
+        }
         if let Err(error) = write_message(&mut stream, &message) {
             if error.kind() != ErrorKind::InvalidInput {
-                // The reader owns peer completion so buffered terminal output wins.
+                // Preserve buffered completion while alive, but hand shutdown
+                // back to Drop because this writer can no longer send Detach.
                 let _ = stream.shutdown(Shutdown::Write);
+                let mut active = control.stream.lock().expect("transport lock poisoned");
+                if control.cancelled.load(Ordering::Acquire) {
+                    let _ = stream.shutdown(Shutdown::Both);
+                } else {
+                    *active = Some(stream);
+                }
                 return;
             }
             notify(TransportEvent::InvalidInput(error.to_string()), 0);
         }
     }
+    let _ = write_message(&mut stream, &ClientMessage::Detach);
     let _ = stream.shutdown(Shutdown::Both);
 }
 
@@ -654,6 +819,13 @@ fn write_message(stream: &mut UnixStream, message: &ClientMessage) -> io::Result
 }
 
 fn read_message(stream: &mut impl Read) -> Result<Option<(ServerMessage, usize)>, TransportEvent> {
+    read_message_bounded(stream, false)
+}
+
+fn read_message_bounded(
+    stream: &mut impl Read,
+    negotiating: bool,
+) -> Result<Option<(ServerMessage, usize)>, TransportEvent> {
     let mut header = [0; session::HEADER_BYTES];
     match stream.read_exact(&mut header[..1]) {
         Ok(()) => {}
@@ -664,6 +836,14 @@ fn read_message(stream: &mut impl Read) -> Result<Option<(ServerMessage, usize)>
     let length = session::server_message_len(&header)
         .map_err(protocol_loss)?
         .expect("a complete ORBS header declares a message length");
+    if negotiating
+        && (!matches!(header[6], 129 | 130 | 134 | 143)
+            || length > session::HEADER_BYTES + session::MAX_HANDSHAKE_BYTES + 5)
+    {
+        return Err(TransportEvent::Lost(
+            "Orbit sent terminal data before its identity handshake".into(),
+        ));
+    }
     let mut bytes = Vec::with_capacity(length);
     bytes.extend_from_slice(&header);
     bytes.resize(length, 0);
@@ -712,7 +892,7 @@ fn protocol_loss(error: session::Error) -> TransportEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v12::{
+    use eon_workspace_protocol::v13::{
         InvokeIntent, Pane, Popup, PopupEntry, Shortcut, Snapshot, Tab,
     };
     use orbit_protocol::{
@@ -729,9 +909,12 @@ mod tests {
             stream
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
-            assert_eq!(read_client(&mut stream), ClientMessage::ObserveMetadata);
+            assert_eq!(
+                read_client(&mut stream),
+                ClientMessage::ObserveMetadata(None)
+            );
             for message in [
-                ServerMessage::ObservingMetadata,
+                ServerMessage::ObservingMetadata(Default::default()),
                 ServerMessage::Metadata(Metadata {
                     revision: 7,
                     title: "working".into(),
@@ -887,7 +1070,12 @@ mod tests {
             .unwrap();
         drop(messages);
         let events = Arc::new(EventQueue::default());
-        write_loop(writer, receiver, notifier(Arc::clone(&events), || {}));
+        write_loop(
+            writer,
+            receiver,
+            Arc::new(TransportControl::default()),
+            notifier(Arc::clone(&events), || {}),
+        );
 
         assert!(events.drain().is_empty());
         assert_eq!(
@@ -897,6 +1085,32 @@ mod tests {
                 session::HEADER_BYTES + 4,
             )))
         );
+
+        // A failed input writer must not strand a reader when the peer keeps
+        // its output half open and the user then retires the transport.
+        let (mut reader, orbit) = UnixStream::pair().unwrap();
+        reader
+            .set_read_timeout(Some(Duration::from_millis(200)))
+            .unwrap();
+        orbit.shutdown(Shutdown::Read).unwrap();
+        let (messages, receiver) = mpsc::sync_channel(1);
+        messages
+            .send(ClientMessage::Focus(FocusEvent::Gained))
+            .unwrap();
+        let control = Arc::new(TransportControl::default());
+        let transport = Transport {
+            messages,
+            events: Arc::clone(&events),
+            control: Arc::clone(&control),
+        };
+        write_loop(
+            reader.try_clone().unwrap(),
+            receiver,
+            control,
+            notifier(events, || {}),
+        );
+        drop(transport);
+        assert_eq!(reader.read(&mut [0]).unwrap(), 0);
     }
 
     #[test]
@@ -1014,23 +1228,107 @@ mod tests {
     }
 
     #[test]
+    fn unaccepted_handshakes_cannot_receive_queued_input() {
+        for case in 0..3 {
+            let socket = TestSocket::new();
+            let listener = UnixListener::bind(&socket.path).unwrap();
+            let expected = session::RunIdentity {
+                workspace: "workspace".into(),
+                session: "session-1".into(),
+                run: "run-1".into(),
+            };
+            let server_expected = expected.clone();
+            let (queued, proceed) = mpsc::channel();
+            let server = thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                assert_eq!(
+                    read_client(&mut stream),
+                    ClientMessage::Hello(Some(server_expected.clone()))
+                );
+                proceed.recv_timeout(Duration::from_secs(5)).unwrap();
+                if case == 1 {
+                    let mut bytes = session::encode_server_message(&ServerMessage::Busy).unwrap();
+                    bytes[6] = 132; // ORBS Frame, with a valid declared length but no payload.
+                    bytes[8..12]
+                        .copy_from_slice(&(orbit_protocol::MAX_FRAME_BYTES as u32).to_le_bytes());
+                    assert_eq!(
+                        session::server_message_len(&bytes).unwrap(),
+                        Some(session::HEADER_BYTES + orbit_protocol::MAX_FRAME_BYTES)
+                    );
+                    // A payload is deliberately absent: negotiation must reject its header.
+                    stream.write_all(&bytes).unwrap();
+                } else {
+                    let mut identity = server_expected;
+                    if case == 0 {
+                        identity.run = "wrong-run".into();
+                    }
+                    let handshake = session::Handshake {
+                        identity: Some(identity),
+                        ..Default::default()
+                    };
+                    let mut bytes =
+                        session::encode_server_message(&ServerMessage::Attached(handshake))
+                            .unwrap();
+                    if case == 2 {
+                        let capability_offset = bytes.len() - 2;
+                        bytes[capability_offset..]
+                            .copy_from_slice(&session::FULL_SNAPSHOTS.to_le_bytes());
+                    }
+                    stream.write_all(&bytes).unwrap();
+                }
+                let mut byte = [0];
+                assert_eq!(
+                    stream.read(&mut byte).unwrap(),
+                    0,
+                    "input reached an unaccepted run"
+                );
+            });
+            let (wake, ready) = mpsc::channel();
+            let transport =
+                Transport::start_for_run(socket.path.clone(), Some(expected), move || {
+                    let _ = wake.send(());
+                });
+            transport
+                .send(ClientMessage::Focus(FocusEvent::Gained))
+                .unwrap();
+            queued.send(()).unwrap();
+            ready.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(matches!(
+                transport.drain_events().as_slice(),
+                [TransportEvent::Lost(_)]
+            ));
+            drop(transport);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
     fn typed_attachment_is_duplex_and_client_drop_leaves_server_listener() {
         let socket = TestSocket::new();
         let listener = UnixListener::bind(&socket.path).unwrap();
         let path = socket.path.clone();
+        let (accepted, delivered) = mpsc::channel();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .unwrap();
-            assert_eq!(read_client(&mut stream), ClientMessage::Hello);
+            assert_eq!(read_client(&mut stream), ClientMessage::Hello(None));
             stream
-                .write_all(&session::encode_server_message(&ServerMessage::Attached).unwrap())
+                .write_all(
+                    &session::encode_server_message(&ServerMessage::Attached(Default::default()))
+                        .unwrap(),
+                )
                 .unwrap();
             assert_eq!(
                 read_client(&mut stream),
                 ClientMessage::Focus(FocusEvent::Gained)
             );
+            accepted.send(()).unwrap();
+            assert_eq!(read_client(&mut stream), ClientMessage::Detach);
             let mut eof = [0];
             assert_eq!(stream.read(&mut eof).unwrap(), 0);
 
@@ -1048,16 +1346,19 @@ mod tests {
         receiver.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(
             transport.drain_events(),
-            [TransportEvent::Server(ServerMessage::Attached)]
+            [TransportEvent::Server(ServerMessage::Attached(
+                Default::default()
+            ))]
         );
         transport
             .send(ClientMessage::Focus(FocusEvent::Gained))
             .unwrap();
+        delivered.recv_timeout(Duration::from_secs(5)).unwrap();
         drop(transport);
 
         let mut reopened = UnixStream::connect(path).unwrap();
-        write_message(&mut reopened, &ClientMessage::Hello).unwrap();
-        assert_eq!(server.join().unwrap(), ClientMessage::Hello);
+        write_message(&mut reopened, &ClientMessage::Hello(None)).unwrap();
+        assert_eq!(server.join().unwrap(), ClientMessage::Hello(None));
     }
 
     #[test]
@@ -1079,9 +1380,14 @@ mod tests {
         let server = thread::spawn(move || {
             for _ in 0..2 {
                 let (mut stream, _) = listener.accept().unwrap();
-                assert_eq!(read_client(&mut stream), ClientMessage::Hello);
+                assert_eq!(read_client(&mut stream), ClientMessage::Hello(None));
                 stream
-                    .write_all(&session::encode_server_message(&ServerMessage::Attached).unwrap())
+                    .write_all(
+                        &session::encode_server_message(&ServerMessage::Attached(
+                            Default::default(),
+                        ))
+                        .unwrap(),
+                    )
                     .unwrap();
                 releases.recv_timeout(Duration::from_secs(5)).unwrap();
             }
@@ -1094,7 +1400,7 @@ mod tests {
         second_events.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(matches!(
             second.drain_events().as_slice(),
-            [TransportEvent::Server(ServerMessage::Attached)]
+            [TransportEvent::Server(ServerMessage::Attached(_))]
         ));
         release.send(()).unwrap();
         second_events.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -1111,7 +1417,7 @@ mod tests {
         third_events.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(matches!(
             third.drain_events().as_slice(),
-            [TransportEvent::Server(ServerMessage::Attached)]
+            [TransportEvent::Server(ServerMessage::Attached(_))]
         ));
         release.send(()).unwrap();
         drop(third);
@@ -1311,6 +1617,7 @@ mod tests {
             1,
             0,
             WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect),
+            &TransportControl::default(),
         )
         .unwrap_err();
 
@@ -1336,6 +1643,7 @@ mod tests {
             1,
             0,
             WorkspaceAction::Workspace(workspace::WorkspaceAction::CreatePane),
+            &TransportControl::default(),
         );
 
         assert_eq!(result, Ok(snapshot));
@@ -1382,7 +1690,7 @@ mod tests {
                 id: "t1".into(),
                 directory: b"/tmp/eon".to_vec(),
                 selected_pane: Some("pane-1".into()),
-                columns: vec![eon_workspace_protocol::v12::Column {
+                columns: vec![eon_workspace_protocol::v13::Column {
                     panes: vec![Pane {
                         id: "pane-1".into(),
                         session: "session-1".into(),
@@ -1392,7 +1700,7 @@ mod tests {
                     expanded: "pane-1".into(),
                 }],
             }],
-            geometry: eon_workspace_protocol::v12::PopupGeometry {
+            geometry: eon_workspace_protocol::v13::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1417,7 +1725,7 @@ mod tests {
             id: "t2".into(),
             directory: b"/tmp/nova".to_vec(),
             selected_pane: Some("pane-2".into()),
-            columns: vec![eon_workspace_protocol::v12::Column {
+            columns: vec![eon_workspace_protocol::v13::Column {
                 panes: vec![Pane {
                     id: "pane-2".into(),
                     session: "session-2".into(),

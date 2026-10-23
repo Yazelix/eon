@@ -19,7 +19,7 @@ The server is two processes ([HOST.md](HOST.md)). The Rust host owns the PTY,
 child process, terminal state, presentation extraction, input encoding,
 resize, and terminal-generated replies in one event loop, and asks the Bend
 worker, which it starts and contains, for every decision. Clients and the
-server use only the bounded ORBS v13 codec. An exact-version
+server use only the bounded ORBS v14 codec. An exact-version
 attachment receives typed outcomes, canonical presentation frames,
 acknowledgements, bounded failures, and session exit. Client messages carry
 semantic key, mouse, focus, arbitrary paste, full surface-resize, and

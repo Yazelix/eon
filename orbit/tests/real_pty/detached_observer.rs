@@ -25,12 +25,12 @@ pub fn run() {
 
     // No interactive client has attached yet.
     let mut observer = Peer::connect(&server.path, 4.0);
-    observer.send(&ClientMessage::ObserveMetadata);
-    observer.expect(ServerMessage::ObservingMetadata);
+    observer.send(&ClientMessage::ObserveMetadata(None));
+    observer.expect(ServerMessage::ObservingMetadata(Default::default()));
     observer.metadata();
 
     let mut contender = Peer::connect(&server.path, 4.0);
-    contender.send(&ClientMessage::ObserveMetadata);
+    contender.send(&ClientMessage::ObserveMetadata(None));
     contender.expect(ServerMessage::Busy); // Observer slot is full.
     drop(contender);
 

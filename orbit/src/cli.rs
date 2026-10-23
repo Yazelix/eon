@@ -37,7 +37,23 @@ pub(crate) fn parse(arguments: &[OsString]) -> Result<Serve, String> {
         return Err(USAGE.into());
     }
     let mut arguments = arguments.to_vec();
-    let management = take_management(&mut arguments)?;
+    let mut management = take_management(&mut arguments)?;
+    if let Some(index) = arguments[..launch_end(&arguments)]
+        .iter()
+        .position(|value| value == "--workspace-id")
+    {
+        let value = arguments
+            .get(index + 1)
+            .filter(|_| index + 1 < launch_end(&arguments))
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.is_empty() && value.len() <= 128)
+            .ok_or("--workspace-id requires a bounded workspace identity")?;
+        management
+            .as_mut()
+            .ok_or("--workspace-id requires management identities")?
+            .workspace_id = value.into();
+        arguments.drain(index..index + 2);
+    }
     let palette = take_ansi_palette(&mut arguments)?;
     let socket = if arguments.first().is_some_and(|value| value != "--") {
         PathBuf::from(arguments.remove(0))
@@ -222,6 +238,7 @@ mod tests {
         assert_eq!(
             serve.management,
             Some(Launch {
+                workspace_id: "component-1".into(),
                 session_id: "session-1".into(),
                 run_id: "run-1".into(),
                 component_generation: "component-1".into(),

@@ -16,8 +16,9 @@ lavapipe can render in software.
 Before Eon moved into one repository, the accepted runtime proof used COSMIC
 with systemd and Mesa on Intel hardware. This repository's installed checks so
 far run on a private headless Sway, plus a brief COSMIC launch check; the full
-COSMIC desktop proof awaits re-proof here. Eon does not require systemd or cgroup delegation, but non-systemd use and
-proprietary NVIDIA remain unproved.
+COSMIC desktop proof awaits re-proof here. Local Eon does not require systemd or cgroup delegation, but non-systemd use
+and proprietary NVIDIA remain unproved. The SSH hosting mode below
+requires a systemd user manager and linger on the server.
 
 Apple Silicon macOS is the active expansion. Orbit's native proof passes in this
 repository. Venus's foundation and interaction are partially re-proved
@@ -39,10 +40,10 @@ Run `eon` to start. `eon versions` shows the generation of the in-tree build and
 each exact external component revision; Orbit, Venus and Eon Runtime report
 `workspace`.
 
-Fresh workspaces first show a three-second random Anima animation after the
+Fresh local windows show a three-second random Anima animation after the
 window is ready. Press any key other than the style-browsing keys to dismiss it;
 set `[anima].enabled = false` in `config.toml` to skip it. The directory picker
-then opens. Press Enter to use a Zoxide history
+then opens. Headless workspace creation and reconnect skip the welcome. Press Enter to use a Zoxide history
 match, or Tab to browse folders with Yazi. In the browser, Enter chooses the
 highlighted folder and F1 shows its keys. New tabs start in your home directory. Escape dismisses the picker and opens
 a terminal there, keeping the tab. Close the tab with Alt+Shift+W if you no
@@ -52,14 +53,111 @@ A terminal starts after choosing a directory or dismissing the picker. Closing t
 the desktop without stopping its terminals or PTY commands. Reconnect with:
 
 ```sh
-eon attach
+eon workspaces
+eon connect '' WORKSPACE_ID
 ```
 
 Press **Alt+/** inside Eon to open the native Shortcuts dialog. It includes the
 fixed workspace bindings and every enabled popup binding. Escape or Alt+/ closes
 it.
 
-### Stop terminals
+### Named workspaces and SSH
+
+The following commands are unreleased. Installed two-host acceptance is
+recorded in [EON-C29](CONTRACTS.md#eon-c29--recoverable-ssh-named-workspaces)
+and `eon-remote-ssh-x7dr.3`.
+
+Bare `eon` and `eon window new` create a named local workspace and a new
+window. Names are labels: two workspaces with the same name or directory have
+different IDs. List, create and select them with:
+
+```sh
+eon workspaces
+eon workspace create --name research
+eon connect '' WORKSPACE_ID
+```
+
+The empty host selects Local. `connect` uses the sole open window, or opens
+one when none exists. With several windows, add `--window WINDOW_ID` from
+`eon windows`. The header's workspace selector groups Local and configured SSH
+hosts; selecting a row switches the current window and leaves the previous
+workspace running. Use its Refresh, Reconnect and Disconnect actions without
+closing the window.
+
+The server package comes from the same component manifest as the desktop
+package and contains no Venus, Wayland renderer or bundled presentation fonts.
+On the server, install this checkout's package into a retained Nix profile:
+
+```sh
+nix profile add .#eon-server
+eon-server service install
+eon-server doctor --json
+```
+
+Hosting requires an ordinary account, a reachable systemd user manager, and
+linger enabled explicitly by the administrator, for example
+`sudo loginctl enable-linger USER`. Linger keeps the user manager alive after
+the last login ends. Each workspace supervisor has its own user service;
+each Orbit terminal runs in an independent scope, so replacing a supervisor
+leaves its terminals running. Local workspaces use direct launches.
+`service install` records the selected server executable and any explicit
+configuration, state and runtime directory overrides. Re-run it to select a
+new compatible build; it does not restart existing supervisors. Keep the
+chosen build in a profile or GC root while its workspaces run.
+
+Configure authentication, host keys, `IdentityFile` and `ProxyJump` in OpenSSH,
+then register the host on the client:
+
+```sh
+eon remote add compute --server-program /absolute/profile/bin/eon-server
+eon workspace create --name research --host compute
+eon workspaces --host compute
+eon connect compute WORKSPACE_ID
+```
+
+Omit `--server-program` when `eon-server` is on the remote login PATH.
+Connections use noninteractive OpenSSH; complete authentication setup first.
+Connecting does not install software, enable linger or change host-key policy.
+Project, panes, Git, Agent and quota collection run as the selected host's
+account. Each window owns and cleans up its private SSH master and forwards.
+Cached remote names remain navigation hints when a host is offline.
+
+Closing a window or `eon disconnect [--window WINDOW_ID]` detaches and leaves
+work running. `eon workspace stop WORKSPACE_ID [--host HOST]` explicitly stops
+that workspace and retains its layout. `eon workspace forget WORKSPACE_ID
+[--host HOST]` deletes that saved workspace only after a confirmed Stop with no
+live or unresolved terminal runs. It never stops tasks implicitly. Use it to
+release a slot when the 64-workspace registry is full.
+`eon window stop WINDOW_ID` stops the current target and closes
+the window only after Stop succeeds. A failed connection keeps the last
+consistent picture and disables terminal input; use Reconnect to try again.
+No queued input or uncertain mutation is replayed. A terminal attached in a
+different window is reported as Busy. The last window connection detaching
+closes transient Project pickers and starts a pending tab's first pane at its
+starting directory; existing panes and persistent popups keep running.
+
+The workspace owner saves tabs, columns, panes, popup slots, directories and
+selection atomically. A compatible supervisor recovers the existing Orbit
+runs after replacement; it never recreates them by rerunning commands.
+Missing runs remain stopped. Transient pickers are not replayed. A corrupt or
+unknown layout is refused and existing tasks are preserved. Orbit or machine
+restart recovery is outside this feature. The current compatibility boundary
+is EONW 13, ORBS 14, ORBF 2 and management/record version 2; differing build
+identities alone do not reject a named workspace.
+
+An exit observed by the running supervisor removes that pane or popup through
+the usual focus rules. Stopped slots are retained when recovery discovers a
+missing run. Automatic local supervisors retain startup and recovery diagnostics
+in `<EON_RUNTIME_DIR>/n/WORKSPACE_ID/supervisor.log` (under Eon's default runtime
+directory when no override is set). Failed startup returns the diagnostic and
+log path; warnings about preserved, unassigned runs remain in that private log.
+Remote supervisor diagnostics are in its systemd user service journal.
+
+### Legacy generations
+
+`eon run [-- COMMAND...]`, `eon attach`, generation commands and eonbase retain
+their generation-based lifecycle. Use the executable that started an older,
+incompatible generation to manage it.
 
 To inspect or stop work explicitly:
 
@@ -197,13 +295,13 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 
 | Command | Result |
 |---|---|
-| `eon` | Present the current workspace or start its first directory picker |
+| `eon` | Create a named local workspace and window |
 | `eon anima [STYLE] [CHILD OPTIONS...]` | Run pinned Anima in the caller's terminal without starting a workspace; `--help` lists styles and options |
-| `eon run [-- COMMAND...]` | Start a fresh workspace picker, optionally for an exact first command |
+| `eon run [-- COMMAND...]` | Use the legacy generation entry, optionally with an exact first command |
 | `eon window new` | Open an independent Eon window and print its window ID |
-| `eon windows [--json]` | List independent windows and their generations |
-| `eon window attach ID` | Present one window's current generation after detach |
-| `eon window stop ID [--json]` | Stop only the selected window's terminals |
+| `eon windows [--json]` | List windows, accepted targets and connection states |
+| `eon window attach ID` | Present an existing window |
+| `eon window stop ID [--json]` | Stop the window's selected workspace and close it |
 | `eon window stop all` | Attempt Stop in every independent window |
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
 | `eon generations [--json]` | List validated current and older generations |
@@ -223,14 +321,16 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon config-path` | Create and print the configuration root |
 
-Workspace commands target the current-generation supervisor. Human and `--json`
+Inside a named workspace, tab, pane and popup commands target its supervisor
+even after the window switches away. Outside a named workspace they retain the
+legacy current-generation target. Human and `--json`
 output describe the same result. A missing supervisor is not started implicitly;
 run `eon` first.
 Eon calls Orbit-backed instances terminals in human output.
 JSON retains the technical `session` / `sessions` fields and `session-N` IDs;
 these refer to terminals.
-Commands run inside an independent window target that window; commands outside
-one target the default workspace. `eon stop all` covers generations in that
+Named workspace commands carry their workspace endpoint. The legacy entry
+keeps its original window or default namespace. `eon stop all` covers generations in that
 current namespace. `eon window stop all` covers independent windows and visits
 the caller's window last. Run it outside those terminals when you need its final
 status; stopping its own terminal can terminate the CLI.

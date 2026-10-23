@@ -61,12 +61,12 @@ Venus                   -> native presentation, interaction, client failure UX
 Orbit                   -> PTYs, terminal state, session lifetime, wire authority
 ```
 
-Venus consumes EONW v12 through the in-tree `eon-workspace-protocol` 0.1.0
+Venus consumes EONW v13 through the in-tree `eon-workspace-protocol` 0.1.0
 crate. Eon supplies popup definitions,
 commands and geometry defaults. The runtime validates configuration and owns
 live workspace and popup state, Session mappings, and provider quota collection
 and normalization. Venus consumes
-the in-tree `orbit-protocol` 0.1.0 crate with ORBF v2 and ORBS v13. One reducer turns complete canonical
+the in-tree `orbit-protocol` 0.1.0 crate with ORBF v2 and ORBS v14. One reducer turns complete canonical
 frames into immutable scene data used by drawing and accessibility. The native
 host owns the local socket, window, input mapping, and redraw lifecycle; it owns
 no terminal state.
@@ -88,7 +88,7 @@ under VEN-C1; complete composed screen-reader qualification and native reader-ke
 
 This slice excludes arbitrary split trees, vertical splits, column resizing,
 sidebars, popup command/lifetime policy, persistent Venus configuration,
-background images, plugins, remote or web access, packaging, and distribution.
+background images, plugins, SSH transport ownership, web access, packaging, and distribution.
 Blur strength and live blur changes are also outside its scope.
 
 The proved Linux host uses winit, wgpu, glyphon, AccessKit, and wl-clipboard-rs

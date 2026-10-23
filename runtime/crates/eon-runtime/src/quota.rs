@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v12::{
+use eon_workspace_protocol::v13::{
     ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, QuotaWindow, Snapshot,
 };
 use serde_json::Value;
