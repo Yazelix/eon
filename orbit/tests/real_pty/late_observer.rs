@@ -76,6 +76,20 @@ pub fn run() {
     observer.expect(ServerMessage::ObservingMetadata);
     assert_eq!(observer.metadata().title, "LATE TWO");
 
+    // A title libghostty cuts at 1024 bytes inside `é`, and then an OSC 7
+    // directory that is not UTF-8, reach the client and the observer as empty
+    // and leave the terminal running.
+    gate.release();
+    active.frame_titled("");
+    assert_eq!(observer.metadata().title, "");
+    gate.release();
+    assert_eq!(active.frame_titled("LATE THREE").working_directory, "");
+    let current = observer.metadata();
+    assert_eq!(
+        (current.title.as_str(), current.working_directory.as_str()),
+        ("LATE THREE", "")
+    );
+
     active.send(&paste(b"x"));
     active.expect(ServerMessage::Accepted);
     active.exited(7);

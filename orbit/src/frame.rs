@@ -78,8 +78,7 @@ impl FrameExtractor {
                     at_wide_tail: cursor.at_wide_tail,
                 }),
         };
-        let title = terminal.title().map_err(|_| errno(libc::EIO))?;
-        let working_directory = terminal.pwd().map_err(|_| errno(libc::EIO))?;
+        let (title, working_directory) = title_and_directory(terminal);
         let mut size = FrameSize::new(
             title,
             working_directory,
@@ -247,6 +246,17 @@ impl FrameExtractor {
             cells,
         })
     }
+}
+
+/// The terminal's title and working directory, each empty when libghostty
+/// refuses to read it, as it does invalid UTF-8: an OSC 7 directory can be,
+/// and so is a title cut inside a character at libghostty's 1024 bytes. A
+/// program's bad metadata never ends its terminal.
+pub(crate) fn title_and_directory<'a>(terminal: &'a Terminal<'static, '_>) -> (&'a str, &'a str) {
+    (
+        terminal.title().unwrap_or_default(),
+        terminal.pwd().unwrap_or_default(),
+    )
 }
 
 /// Up to one viewport of rows beyond the viewport, nearest first, bounded like a frame.

@@ -80,6 +80,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   window (`eon-agent-sidebar-yx8.11`). Management stays generation 2; a
   tag-70 reply from an older Orbit is refused as an unknown tag, as yx8.12's
   tag-69 reply was. Stop and recovery are unaffected.
+- ORB-C3 adds a failure: invalid UTF-8 terminal metadata, such as a title
+  libghostty cuts inside a character or a non-UTF-8 OSC 7 directory, reaches
+  the client and observer as empty and never ends the terminal. Before, either
+  ended the terminal while a client or observer was attached
+  (`eon-title-utf8-ends-terminal-atq2`).
 
 ## Before this repository
 

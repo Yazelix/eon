@@ -4,7 +4,7 @@ use crate::{
     Timer,
     boundary::{Effect, Foreground, TickState},
     errno,
-    frame::{FrameExtractor, SCROLLBACK_BUDGET_BYTES, viewport_preview},
+    frame::{FrameExtractor, SCROLLBACK_BUDGET_BYTES, title_and_directory, viewport_preview},
     input::encode_input,
     platform,
     pointer::{Pointer, phase_position},
@@ -531,30 +531,13 @@ impl Orbit {
     }
 
     /// The observer's view at `revision`: the title and working directory.
-    pub(crate) fn metadata(&self, revision: u64) -> io::Result<Metadata> {
-        let (title, working_directory) = self.title_and_directory()?;
-        Ok(Metadata {
+    pub(crate) fn metadata(&self, revision: u64) -> Metadata {
+        let (title, working_directory) = title_and_directory(&self.terminal);
+        Metadata {
             revision,
             title: title.to_owned(),
             working_directory: working_directory.to_owned(),
-        })
-    }
-
-    /// The terminal's title, empty when libghostty refuses it as invalid
-    /// UTF-8, which a title cut inside a character at libghostty's 1024 bytes
-    /// is, so a program's bad title never fails the reader. The ProgramStatus
-    /// answer reads it; `eon-title-utf8-ends-terminal-atq2` moves the metadata
-    /// observer onto this fallback too.
-    pub(crate) fn title(&self) -> &str {
-        self.terminal.title().unwrap_or_default()
-    }
-
-    /// The terminal's title and working directory.
-    pub(crate) fn title_and_directory(&self) -> io::Result<(&str, &str)> {
-        Ok((
-            self.terminal.title().map_err(|_| errno(libc::EIO))?,
-            self.terminal.pwd().map_err(|_| errno(libc::EIO))?,
-        ))
+        }
     }
 
     /// The current terminal at `revision`, which Bend names (ORB-C4).

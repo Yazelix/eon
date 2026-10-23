@@ -386,6 +386,16 @@ has an observer send Focus: the observer reads `Failure(Protocol)` and the end
 of the stream, and a new observer is then admitted. Without the refusal, the
 check failed.
 
+Rust reads the title and working directory through one fallback: when
+libghostty refuses either as invalid UTF-8, frames and the observer's
+metadata carry it empty, and so does the ProgramStatus reply for the title,
+so the terminal keeps running.
+The late-observer check sets a title of 1023 ASCII bytes and `é`, which
+libghostty's 1024-byte cut splits, then a non-UTF-8 OSC 7 directory beside a
+new title; the client and the observer read each as empty and the child
+goes on. Without the fallback, the title step ended the terminal; with it for
+the title only, the directory step did.
+
 While detached and awaiting a connection, Bend waits on the listener, the PTY
 and the synchronized-output timer. It keeps reading PTY output, sends a
 metadata observer each change, and, when the direct child exits, reaps it before

@@ -10,7 +10,7 @@ use crate::{
     },
     cli::{self, Serve},
     errno,
-    frame::viewport_preview,
+    frame::{title_and_directory, viewport_preview},
     input::wheel_direction,
     management::Owner as Management,
     platform::{self, signal},
@@ -506,7 +506,7 @@ impl Host {
         // Without an observer, nothing was queued for the one Bend may admit.
         let (changed, fresh) = match &self.observer {
             Some(observer) => {
-                let (title, directory) = self.orbit.title_and_directory()?;
+                let (title, directory) = title_and_directory(&self.orbit.terminal);
                 (
                     observer.metadata_changed(title, directory),
                     observer.metadata_fresh(),
@@ -920,7 +920,7 @@ impl Host {
             self.queued.push_back(outcome);
             return Ok(());
         }
-        let metadata = self.orbit.metadata(revision)?;
+        let metadata = self.orbit.metadata(revision);
         let observer = self.observer.as_mut().ok_or_else(protocol)?;
         match observer.send_metadata(metadata, ordered) {
             Ok(ObserverSend::Sent) => {}
@@ -1339,7 +1339,10 @@ impl Host {
                 Decision::ManageLease => self.managed()?.lease()?,
                 Decision::ManageStatus => self.managed()?.status()?,
                 Decision::ManageProgramStatus => {
-                    let status = self.orbit.status.reply(self.orbit.title(), Instant::now());
+                    let status = self
+                        .orbit
+                        .status
+                        .reply(title_and_directory(&self.orbit.terminal).0, Instant::now());
                     self.managed()?.program_status(status)?
                 }
                 Decision::ManageRefuse => self.managed()?.refuse()?,

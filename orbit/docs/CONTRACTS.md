@@ -119,9 +119,13 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     lifecycle.
   - The observer cannot send terminal, presentation, process, or lifecycle
     mutations.
-- **Important failures:** Excess roles, incompatible or malformed peers, slow
-  readers, disconnect, and exit fail deterministically without disturbing the
-  PTY, child, other role, or cleanup.
+- **Important failures:**
+  - Excess roles, incompatible or malformed peers, slow readers, disconnect,
+    and exit fail deterministically without disturbing the PTY, child, other
+    role, or cleanup.
+  - Invalid UTF-8 terminal metadata, such as a title libghostty cuts inside a
+    character or a non-UTF-8 OSC 7 directory, reaches the client and observer
+    as empty and never ends the terminal.
 - **Owner:** Orbit's Bend admission policy and Rust socket transport with
   canonical `orbit-protocol` ORBS v7.
 - **Consumes:** Canonical ORBS v7 behavior, preserved through ORBS v13; Venus
@@ -129,7 +133,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Boundary:** Visible text observation, agent observation, multiple observers,
   multiple interactive clients, remote access, and process authority are
   excluded.
-- **Proof:** the `eon-awmq.3` import commit
+- **Proof:** the `eon-awmq.3` import commit, with the
+  `eon-title-utf8-ends-terminal-atq2` commit for invalid metadata
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,

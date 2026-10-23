@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A program that sets an invalid title or working directory no longer ends
+  its terminal while a window shows it or Eon watches its title. A title that
+  Orbit's terminal cuts at 1024 bytes inside a character, or an OSC 7
+  directory that is not UTF-8, now reads as empty, and the terminal and its
+  program keep running.
+
 - When Venus renders in software, as in a VM without GPU acceleration, the
   working badge on tabs and in the agent sidebar is a still ring instead of a
   spinner, so an agent at work no longer costs Venus a quarter to a third of a
