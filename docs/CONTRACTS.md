@@ -964,7 +964,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   `eon-zhjj` (automated and installed tiers); UTF-8 paths as JSON strings
   `eon-readable-windows-and-child-notices-jf6f` (automated and installed
   tiers); final-tab `tab close` and `pane close`
-  `eon-prove-close-and-detach-batch-bf8t` (installed tier).
+  `eon-prove-close-and-detach-batch-bf8t` (installed tier); EONW v19 attention
+  fields `eon-agent-sidebar-yx8.9` (installed tier).
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** EONW codecs (`request_actions_have_stable_v2_wire_bytes`,
     `round_trips_v2_bounds_and_rejects_invalid_inputs`,
@@ -1046,6 +1047,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     on the final tab's last pane asked the same, and `y` ended the window;
     `eon tab close t1 --json` asked nothing, printed
     `{"ended":{"generation":...}}` and ended the window.
+    Installed `eon-agent-sidebar-yx8.9` observation (edge
+    `c8c62cb63938b145b13cfa4fe161ea5689807652`, installed `eon` profile
+    `/nix/store/m5mzxy8cikz3f6y7k0ldgf7qxmc64bji-eon-0.1.1`, EONW 19) on
+    isolated headless Sway:
+    - `eon workspace --json` gave each pane and popup an `attention` of
+      exactly `state`, `app` and `name`, or null. Examples are
+      `{"state":"idle","app":"codex","name":"Create proof file | w"}` and
+      `{"state":"unavailable","app":null,"name":null}`.
+    - It gave each tab an `attention_rollup` and the snapshot `sidebar`.
+    - Human `eon workspace` printed `attention=`, `app=` and `name=` per
+      terminal, `attention=` per tab and a `sidebar` line.
 
 ## EON-C11 — Runtime generations and presentation
 
@@ -2177,10 +2189,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C31 — Agent attention
 
-- **Status:** Planned. Approved by Lucca on 2026-10-21 (draft 15 on
-  `eon-agent-sidebar-yx8.1`, which records decisions D1–D11 and Q1–Q8, every Q
-  with its recommendation). `eon-agent-sidebar-yx8.6` implements the Runtime
-  model; `eon-agent-sidebar-yx8.7` carries it over EONW.
+- **Status:** Proven on x86_64 Linux Wayland. Approved by Lucca on 2026-10-21
+  (draft 15 on `eon-agent-sidebar-yx8.1`, which records decisions D1–D11 and
+  Q1–Q8, every Q with its recommendation). `eon-agent-sidebar-yx8.6`
+  implements the Runtime model; `eon-agent-sidebar-yx8.7` carries it over
+  EONW; `eon-agent-sidebar-yx8.9` proves it on the installed product.
 - **Consumer:** One person supervising coding agents across the tabs of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
 - **Trigger:**
@@ -2392,7 +2405,69 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - no notifications or sound (eon-iwmz consumes this later);
   - no agent launching, orchestration or worktrees;
   - agents under tmux report nothing; this is documented.
-- **Proof:** None yet.
+- **Proof:** `eon-agent-sidebar-yx8.9`
+  - **Environment:** Automated tier at the commits below; isolated installed
+    dogfood on x86_64 Linux of edge `c8c62cb63938b145b13cfa4fe161ea5689807652`,
+    installed `eon` profile
+    `/nix/store/m5mzxy8cikz3f6y7k0ldgf7qxmc64bji-eon-0.1.1` (EONW 19),
+    private headless Sway 1.12 at 1280x720, with Claude Code 2.1.303,
+    Codex 0.164.0 and Claude Code 2.1.293.
+  - **Evidence:**
+    - **Automated:** the Runtime tests that `e87b9f8`
+      (`eon-agent-sidebar-yx8.6`) added in
+      `runtime/crates/eon-runtime/src/attention.rs`, whose bead records their
+      `nix develop` run, among them
+      `identity_fixes_change_times_and_discards_older_replies_until_a_new_run`,
+      `stale_results_keep_their_state_and_only_agent_popups_start_unavailable`,
+      `seen_needs_an_attached_venus_and_the_exact_focused_terminal` and
+      `the_queue_walks_its_total_order_and_its_cursor_resets` and
+      `raises_follow_the_changes_eon_c31_names`, which alone covers Q6 (an
+      `idle` from `blocked` does not raise).
+      `attention_focus_hides_keep_alive_popups_and_never_stops_a_transient_one`
+      in `runtime/crates/eon-runtime/src/workspace.rs`, added by `4b150d5`
+      (`eon-agent-sidebar-yx8.7`, whose `nix develop -c eon-test` run its bead
+      records), covers a transient popup over the target, which the installed
+      run did not use.
+      `[sidebar] enabled = false` was observed installed under
+      `eon-agent-sidebar-yx8.8` (VEN-C30).
+    - **Installed:** states come from `eon workspace` dumps, the stale row from
+      captures, focus from Sway tree samples and liveness from process lists.
+      - A real Claude Code and a real Codex each went from working to needs
+        input to finished. Both finishes stayed unseen until visited.
+      - After its first finish, Claude's own dialog read needs input.
+      - A pane whose program never reports had no attention (`null`).
+      - A burst of working, blocked, working and done sent back to back
+        showed only finished.
+      - A record cleared and reported again after its finish was seen showed
+        finished again.
+      - An Agent popup running Claude Code 2.1.293 read unavailable.
+      - Stale. 5 s after its Orbit host was stopped:
+        - the terminal's row was dimmed with "status stale" and kept its last
+          state, needs input;
+        - Alt+G still jumped to it;
+        - it recovered when the host resumed.
+
+        The 3 s threshold itself is covered only by the automated tests.
+      - Alt+G from a quiet tab:
+        - It visited needs input, then the three finishes oldest first across
+          three tabs, then wrapped.
+        - Each visited finish became idle.
+        - On an empty queue, Alt+G and Alt+Shift+G changed nothing.
+        - With a keep-alive Agent popup covering the target, the popup was
+          hidden and kept running, and the target pane stayed the tab's
+          selected pane.
+      - Alt+Shift+H toggled `Open` and `Closed`.
+      - No side effects. While a foot window held desktop focus on another
+        Sway workspace, Claude, Codex and the fixtures changed attention.
+        Every focus sample stayed on foot, and none showed an urgent window.
+        Later, with the sidebar closed, a new needs input left the sidebar
+        closed, the active tab unchanged and desktop focus on Eon.
+      - At the last process check every terminal, agent and popup was still
+        running, and the later tab-6 pane read `live=true`.
+      - `eon workspace --json` carried only `state`, `app` and `name`.
+- **Open proof:** A reply with a lower update sequence for the same run
+  cannot be produced by an emitter, so only the automated test covers its
+  discard.
 
 ## EON-C32 — Eon Bar items and order
 

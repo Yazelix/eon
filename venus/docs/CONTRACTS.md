@@ -1301,6 +1301,18 @@ re-proved when that platform or feature is next touched.
     20 s: 62 ticks of 10 ms with the working badge and 65 without, against
     545 and 605 with the spinner and 62 and 47 without on the pre-change
     installed build.
+  - **Both adapters on the installed product (`eon-agent-sidebar-yx8.9`):**
+    isolated installed observation (edge
+    `c8c62cb63938b145b13cfa4fe161ea5689807652`, installed `eon` profile
+    `/nix/store/m5mzxy8cikz3f6y7k0ldgf7qxmc64bji-eon-0.1.1`, private headless
+    Sway 1.12 at 1280x720, sidebar closed, one tab reporting working). In
+    both runs, ten captures were taken 100 ms apart.
+    - Under the pixman renderer, Venus ran on lavapipe (16 llvmpipe threads,
+      no render-engine time). The tab showed the still ring, and the captures
+      were identical.
+    - Under Sway's Vulkan renderer on the Intel GPU, Venus had no llvmpipe
+      threads and render-engine time on `renderD129`. The spinner turned,
+      giving 7 distinct frames, and Venus used 11 ticks of 10 ms over 20 s.
 - **Open proof:** Pending re-proof in this repository: compositor window drag
   from the empty header region, narrow-width captures, and AT-SPI header order.
 
@@ -1706,13 +1718,16 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C30 — Agent sidebar
 
-- **Status:** Partially proved. Approved by Lucca on 2026-10-21 (draft 15 on
+- **Status:** Partially proved: on x86_64 Linux Wayland every clause is proved
+  except compositor blur through the card, which waits on VEN-C15's native
+  backdrop re-proof. Approved by Lucca on 2026-10-21 (draft 15 on
   `eon-agent-sidebar-yx8.1`, there named VEN-C29). `eon-agent-sidebar-yx8.3`
   implements visibility, layout and hiding for width, Alt+Shift+H, the
   sidebar's AccessKit region and the empty state;
   `eon-agent-sidebar-yx8.13` implements contents, row navigation, F6 and row
   accessibility; `eon-agent-sidebar-yx8.8` implements Alt+G and
-  Alt+Shift+G; `eon-agent-sidebar-yx8.11` adds the name.
+  Alt+Shift+G; `eon-agent-sidebar-yx8.11` adds the name;
+  `eon-agent-sidebar-yx8.9` proves the epic on the installed product.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -1836,8 +1851,9 @@ re-proved when that platform or feature is next touched.
     row names in
     `agent_sidebar_region_follows_the_header_and_names_its_empty_state`;
     `quota_refresh_and_workspace_failures_preserve_structure` covers
-    attention-only refreshes. These automated checks alone prove stale rows
-    and AccessKit names; their pure helpers alone prove Up between rows and
+    attention-only refreshes. These automated checks alone prove AccessKit
+    names, "status stale" included; their pure helpers alone prove Up between
+    rows and
     focus ending on the tab strip after a covered-target jump.
     `eon-agent-sidebar-yx8.8` extends
     `direct_workspace_shortcuts_use_stable_eon_actions`,
@@ -1899,11 +1915,57 @@ re-proved when that platform or feature is next touched.
     - With `sidebar` `Off`, no sidebar showed and the tab badges did; Alt+G
       selected tab 1 and then tab 2, and Alt+Shift+G selected tab 1. The
       footer and viewer listed both keys, and the footer omitted `H sidebar`.
+  - **Installed (`eon-agent-sidebar-yx8.9`):** isolated installed dogfood
+    (edge `c8c62cb63938b145b13cfa4fe161ea5689807652`, installed `eon` profile
+    `/nix/store/m5mzxy8cikz3f6y7k0ldgf7qxmc64bji-eon-0.1.1`, x86_64 Linux,
+    private headless Sway 1.12 at 1280x720, the pixman renderer, where Venus
+    used lavapipe; two further runs: one with no attention and one with a
+    Markdown fixture).
+
+    The main run had six tabs:
+    1. a real Claude Code 2.1.303 (`--name proof-claude`);
+    2. a real Codex 0.164.0;
+    3. a burst fixture, and a fixture that needs input whose title holds HTML
+       and a Markdown link and whose `msg` holds a URL, HTML and Markdown;
+    4. a quiet pane;
+    5. a working fixture;
+    6. a fixture that needs input, raised after a delay.
+
+    Tabs 3 and 4 each showed a keep-alive Agent popup running Claude Code
+    2.1.293.
+
+    Observations:
+    - Rows showed `proof-claude` and `Codex` needing input and, after
+      approval, Codex finished. `eon workspace` read the working and finished
+      states that came between captures. The Agent popup row read
+      `status unavailable`.
+    - The fixture's `msg` printed `Open https://example.com/<i` as plain text,
+      cut at the row width, with no link styling. In the Markdown run, a
+      Codex-app fixture's title `# H **t**` led its row and its `msg`
+      ``**b** _i_ `c` [l](u)`` filled the message line, both as literal
+      characters in the row's plain font, with no heading, emphasis, code or
+      link rendering.
+    - A stopped Orbit host's row dimmed with `status stale` and recovered.
+    - F6 focused a row, Down moved to the Codex row, and Space jumped to its
+      tab, where the footer returned to terminal hints.
+    - Alt+Shift+H, and hiding at 1000x720, each left typing echoing in the
+      active terminal. With the sidebar closed, tab 3 showed its ◆ badge.
+    - A keep-alive popup covering the target was hidden by Alt+G and kept
+      running.
+    - On an empty queue, the empty state showed and Alt+G changed nothing.
+    - Desktop focus and Orbit state:
+      - A foot window held desktop focus on another Sway workspace while
+        attention changed. Every Sway sample kept focus on foot and showed
+        no urgent window.
+      - With the sidebar closed, tab 6's needs input neither opened the
+        sidebar nor changed the active tab.
+      - At the last process check every terminal, agent and popup was still
+        running.
+    - Tab 5's working row was the still ring shared with VEN-C21's badge. One
+      set of 10 captures with the sidebar open, taken 100 ms apart, gave 1
+      distinct frame. An earlier set, taken right after the tab opened,
+      spanned 10.6 s instead of 1 s and gave 2; its cause was not determined.
 - **Open proof:**
-  - Space on a row, which no check presses.
-  - Record text with markup or a URL rendering as plain text; the checks feed
-    only plain strings.
-  - The important failures that the sidebar never takes desktop focus, never
-    changes Orbit state and never stops a terminal; no check targets them.
   - Compositor blur through the card: headless Sway has no blur, so only its
-    translucency was measured.
+    translucency was measured. It waits on VEN-C15's native backdrop
+    re-proof.

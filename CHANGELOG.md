@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Agent attention (EON-C31) is proven on the installed product, x86_64 Linux
+  Wayland. In it, Eon follows real Claude Code and Codex sessions through
+  working, needs input and finished, and the agent sidebar lists them. Stale
+  status dims, Alt+G walks agents across tabs, and an Agent popup running an
+  older Claude Code (2.1.293) reads unavailable. Status changes never take
+  focus or stop a terminal. The agent sidebar (VEN-C30) is proven there too,
+  except compositor blur behind it.
+
 - A program that prints a link whose address is not valid UTF-8 no longer
   ends its terminal while a window shows it. The text shows without the link,
   and the terminal and its program keep running.
@@ -80,9 +88,9 @@ installation, and proven contract changes.
   without attention. The states are `needs-input`, `error`, `finished`,
   `working`, `idle` and `unavailable`. An agent's own status text never
   appears there. `[sidebar] enabled = false` turns the coming agent sidebar
-  off. This changes the workspace protocol to EONW 18: the updated `eon`
-  cannot manage windows started by an earlier build, so stop the ones you no
-  longer need with the old `eon` first.
+  off. This changed the workspace protocol to EONW 18, since followed by
+  EONW 19: the updated `eon` cannot manage windows started by an earlier
+  build, so stop the ones you no longer need with the old `eon` first.
 
 - Closing the last tab from the window now asks first: Alt+Shift+W, the bar's
   `×` and Alt+W on the last pane show "Close the last tab?" with the
@@ -267,7 +275,7 @@ installation, and proven contract changes.
   130 interrupted. Structured failures exited 2 and
   every other failure 1; scripts that tested for those values need updating.
   `eon --help` and [Using Eon](docs/USAGE.md#exit-status) list the statuses.
-- `eon` speaks only EONW 18. A generation started by an older build that uses
+- `eon` speaks only EONW 19. A generation started by an older build that uses
   an earlier EONW is listed as incompatible and can no longer be inspected or
   stopped by this `eon`; stop it with the build that started it.
 - `eon claude-statusline` is gone; Claude quota has come from CodexBar since

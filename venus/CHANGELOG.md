@@ -48,7 +48,7 @@
   heading shows. The row's accessible name includes Claude Code's session
   name (VEN-C30, `eon-agent-sidebar-yx8.11`).
 
-- Venus consumes EONW v18, which adds EON-C31 agent attention to panes,
+- EONW v18 (now v19, above) adds EON-C31 agent attention to panes,
   popups and tabs, the window's sidebar visibility, and the `ToggleSidebar`,
   `FocusAttention`, `NextAttention` and `PreviousAttention` actions; the
   VEN-C21 and VEN-C30 entries above render and send them. VEN-C8 and VEN-C22: a

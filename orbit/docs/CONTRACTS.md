@@ -998,6 +998,17 @@ in this repository. Each contract below states the current ORBS v13 behavior.
       laws over `step` (ORB-C4)
     - Claude Code 2.1.303 and Codex 0.163.0 inside an isolated Orbit on
       2026-10-21 ([BEHAVIOR.md](BEHAVIOR.md#program-status))
+    - Installed (`eon-agent-sidebar-yx8.9`). The run used the installed Eon
+      package `/nix/store/m5mzxy8cikz3f6y7k0ldgf7qxmc64bji-eon-0.1.1` (edge
+      `c8c62cb63938b145b13cfa4fe161ea5689807652`) under private headless
+      Sway.
+      - Through Eon's poll, Claude Code 2.1.303 and Codex 0.164.0 each
+        reported working, blocked and a finish.
+      - Claude Code 2.1.293 reported nothing.
+      - A clear and an identical `done` sent back to back read as a new
+        record.
+      - A terminal host held under SIGSTOP answered nothing, and after
+        SIGCONT it served its records unchanged, with its child still running.
 
 ## Focused terminal conformance corpus
 
