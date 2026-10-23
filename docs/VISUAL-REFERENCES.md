@@ -33,7 +33,33 @@ reference and dependency gates at an exact revision.
   [MIT plus Commons Clause license](https://github.com/DavidHDev/react-bits/blob/main/LICENSE.md)
   restricts component redistribution; inspect the exact source and license
   before any reuse.
+- [T3 Chat](https://t3.chat/) informs how fast switching between agents must
+  feel, what a sidebar row shows while an agent works, and how one call
+  launches a fully configured agent. Study its fast local switching as
+  described in 2025 (client-side routing, preloaded messages, re-rendering
+  only the streaming block), its sidebar spinner on threads still generating,
+  and its `/new?q=&model=&profile=` launch URL. Its open request for a
+  completion signal shows the gap a spinner alone leaves, and its branches,
+  each a new top-level chat, show how forks clutter a list. T3 Chat is
+  proprietary; the MIT-licensed
+  [T3 Code](https://github.com/pingdotgg/t3code) and cloneathon starter are
+  separate projects.
+- The [ChatGPT desktop app](https://learn.chatgpt.com/docs/pets) for macOS and
+  Windows informs Eon's attention states, switching, notifications, and focus
+  preservation. Study its four ranked states (needs input, blocked, ready with
+  unread activity, running), its Activity view of unread, running, and waiting
+  chats, its "next chat needing attention" key in Codex mode, and its
+  completion alerts set to never, background only, or always, with separate
+  toggles for permission requests. Its floating Option+Space window shows the
+  focus risk: in July 2026 a macOS user
+  [reported](https://community.openai.com/t/companion-window-no-longer-returns-focus-to-the-previous-app/1388206)
+  that closing it no longer returned focus to the previous app, and OpenAI
+  support agreed that it should. The app is proprietary and its docs change
+  often; recheck them before relying on a detail.
 
 Backgrounds Supply, Grainient, Ditther, and Gradientora were not retained. They
 mainly offer finished assets or image-editing workflows; revisit them only for
 a chosen marketing-asset task.
+
+Sources and access dates for the T3 Chat and ChatGPT entries are on
+`eon-t3chat-chatgpt-desktop-refs-0ooo`.
