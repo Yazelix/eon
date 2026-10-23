@@ -2032,6 +2032,22 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
         assert!(output.contains("the terminal's own `eon`"), "{output}");
         assert!(!output.contains("run `eon` first"), "{output}");
     }
+    // A control call creates no runtime or generation directory for a build
+    // that isn't running, as after an upgrade.
+    assert!(!root.join("runtime").exists());
+    let generations = root.join("runtime").join("generations");
+    fs::create_dir_all(&generations).unwrap();
+    for directory in [generations.parent().unwrap(), &generations] {
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    assert_eq!(run(&["workspace", "--json"]).status.code(), Some(4));
+    assert_eq!(fs::read_dir(&generations).unwrap().count(), 0);
+    // An existing directory that is not private still refuses the call.
+    fs::set_permissions(&generations, fs::Permissions::from_mode(0o755)).unwrap();
+    let unsafe_directory = run(&["workspace", "--json"]);
+    assert_eq!(unsafe_directory.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&unsafe_directory.stderr).contains("owned private directory"));
+    fs::set_permissions(&generations, fs::Permissions::from_mode(0o700)).unwrap();
     // An unknown window is missing whether or not the windows directory exists.
     let windows = root.join("runtime").join("w");
     for windows_exist in [false, true] {
@@ -2067,7 +2083,6 @@ fn invalid_focus_is_rejected_before_supervisor_connection() {
 
     let missing = invoke(binary, &runtime, &config, &["workspace", "--json"]);
     assert_eq!(missing.status.code(), Some(4));
-    let control = generation_runtime(&runtime).join("eon.sock");
     let too_long = "x".repeat(129);
     let assert_invalid = |id| {
         let output = invoke(binary, &runtime, &config, &["focus", id, "--json"]);
@@ -2076,10 +2091,20 @@ fn invalid_focus_is_rejected_before_supervisor_connection() {
         assert!(!stdout(&output).contains("run `eon` first"));
         assert!(output.stderr.is_empty());
     };
+    // The action is validated before the runtime directory is known missing.
     for id in ["", too_long.as_str()] {
         assert_invalid(id);
     }
 
+    let listed = invoke(binary, &runtime, &config, &["generations", "--json"]);
+    let listed: serde_json::Value = serde_json::from_str(stdout(&listed)).unwrap();
+    let current = listed["generations"][0]["id"].as_str().unwrap();
+    let generation = runtime.join("generations").join(current);
+    fs::create_dir_all(&generation).unwrap();
+    for directory in [&runtime, &runtime.join("generations"), &generation] {
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let control = generation.join("eon.sock");
     let listener = UnixListener::bind(&control).unwrap();
     fs::set_permissions(&control, fs::Permissions::from_mode(0o600)).unwrap();
     listener.set_nonblocking(true).unwrap();

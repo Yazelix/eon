@@ -1,17 +1,18 @@
 use super::{
     control::{
-        ControlResponse, EndpointFailure, EndpointFailureKind, Error, failure, report_failure,
-        send_action, send_action_from, write_stdout,
+        ControlResponse, EndpointFailure, EndpointFailureKind, Error, failure, missing_endpoint,
+        report_failure, send_action, send_action_from, write_stdout,
     },
     generation::{
-        attach_generation, current_generation, generations_command, read_stop_confirmation,
-        stop_generation, stop_generations, valid_generation,
+        attach_generation, current_generation, generation_directory, generations_command,
+        private_directory_exists, read_stop_confirmation, stop_generation, stop_generations,
+        valid_generation,
     },
     managed_environment,
     sessions::{TAB_VARIABLE, TERMINAL_VARIABLE},
     supervisor::{
         LaunchMode, configuration_directory, launch_current, prepare_configuration,
-        prepare_generation_runtime, runtime_directory,
+        runtime_directory,
     },
     windows,
     workspace::{human as human_output, json as json_output, json_escape},
@@ -744,15 +745,25 @@ fn generation_argument(argument: &OsStr) -> Result<&str, Error> {
 fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
     let generation = current_generation(inputs)?;
     let root = runtime_directory("eon");
-    let runtime = prepare_generation_runtime(&root, &generation)?;
+    let runtime = generation_directory(&root, &generation);
     let socket = runtime.join("eon.sock");
+    // Create no directory for a build whose supervisor is not running. Past the
+    // first missing one the path is never used: another user could create it.
+    let present = private_directory_exists(&root, "runtime directory")?
+        && private_directory_exists(&root.join("generations"), "generation directory")?
+        && private_directory_exists(&runtime, "generation runtime directory")?;
+    let endpoint = || {
+        present
+            .then_some(socket.as_path())
+            .ok_or_else(|| missing_endpoint(&socket))
+    };
     let caller = match calling_terminal(&action) {
         Ok(caller) => caller,
         Err(error) => return report_failure(&error, json),
     };
     let calling = caller.is_some();
     let final_close = if !json && std::io::stdin().is_terminal() {
-        match final_close_terminals(&socket, &action, &generation, calling) {
+        match final_close_terminals(endpoint(), &action, &generation, calling) {
             Ok(terminals) => terminals,
             Err(error) => return report_failure(&error, json),
         }
@@ -777,7 +788,7 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
             return Ok(0);
         }
     }
-    let response = match send_action_from(&socket, caller, action) {
+    let response = match send_action_from(endpoint(), caller, action) {
         Ok(response) => response,
         Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
             return report_failure(&failure("malformed-action", error.detail), json);
@@ -846,7 +857,7 @@ fn unreachable_supervisor(error: EndpointFailure, generation: &str, caller: bool
 /// A close that cannot inspect the workspace first fails rather than skip the
 /// question.
 fn final_close_terminals(
-    socket: &Path,
+    socket: Result<&Path, EndpointFailure>,
     action: &Action,
     generation: &str,
     caller: bool,
@@ -857,7 +868,8 @@ fn final_close_terminals(
     ) {
         return Ok(None);
     }
-    let snapshot = match send_action(socket, Action::Workspace(WorkspaceAction::Inspect)) {
+    let snapshot = match send_action_from(socket, None, Action::Workspace(WorkspaceAction::Inspect))
+    {
         Ok(ControlResponse::Workspace(Response::Snapshot(snapshot))) => snapshot,
         Ok(ControlResponse::Workspace(Response::Failure(failure))) => return Err(failure),
         Ok(_) => {

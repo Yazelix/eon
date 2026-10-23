@@ -668,7 +668,7 @@ pub(super) fn base_runtime_directory(product: &str) -> PathBuf {
         })
 }
 
-pub(super) fn prepare_generation_runtime(root: &Path, generation: &str) -> Result<PathBuf, String> {
+fn prepare_generation_runtime(root: &Path, generation: &str) -> Result<PathBuf, String> {
     prepare_runtime(root)?;
     prepare_runtime(&root.join("generations"))?;
     let runtime = generation_directory(root, generation);

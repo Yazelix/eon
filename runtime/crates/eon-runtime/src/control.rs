@@ -61,27 +61,32 @@ pub(super) fn send_action(
     socket: &Path,
     action: Action,
 ) -> Result<ControlResponse, EndpointFailure> {
-    send_action_from(socket, None, action)
+    send_action_from(Ok(socket), None, action)
 }
 
-/// Sends an action on behalf of the calling terminal `caller`, if any.
+/// Sends an action on behalf of the calling terminal `caller`, if any. The
+/// action is validated before the endpoint, which may already be known missing.
 pub(super) fn send_action_from(
-    socket: &Path,
+    socket: Result<&Path, EndpointFailure>,
     caller: Option<String>,
     action: Action,
 ) -> Result<ControlResponse, EndpointFailure> {
     let action = prepare_action(caller, action)?;
-    send_prepared_action(connect_control(socket)?, action)
+    send_prepared_action(connect_control(socket?)?, action)
+}
+
+pub(super) fn missing_endpoint(socket: &Path) -> EndpointFailure {
+    EndpointFailure::new(
+        EndpointFailureKind::Dead,
+        format!("endpoint {} is missing", socket.display()),
+    )
 }
 
 pub(super) fn connect_control(socket: &Path) -> Result<UnixStream, EndpointFailure> {
     let metadata = match fs::symlink_metadata(socket) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(EndpointFailure::new(
-                EndpointFailureKind::Dead,
-                format!("endpoint {} is missing", socket.display()),
-            ));
+            return Err(missing_endpoint(socket));
         }
         Err(error) => {
             return Err(EndpointFailure::new(
