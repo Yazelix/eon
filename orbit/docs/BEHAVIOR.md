@@ -396,6 +396,13 @@ new title; the client and the observer read each as empty and the child
 goes on. Without the fallback, the title step ended the terminal; with it for
 the title only, the directory step did.
 
+A hyperlink URI is no link when it is not valid UTF-8, which libghostty
+stores unchecked from OSC 8: the cell keeps its text in frames and previews,
+and the terminal keeps running. The late-observer check prints such a link and
+reads its text without it in the client's frame, and
+`vertical_preview_reads_history_nearest_first` reads the same in a preview
+row. Without the fallback, the late-observer step ended the terminal.
+
 While detached and awaiting a connection, Bend waits on the listener, the PTY
 and the synchronized-output timer. It keeps reading PTY output, sends a
 metadata observer each change, and, when the direct child exits, reaps it before

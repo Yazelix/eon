@@ -85,6 +85,10 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   the client and observer as empty and never ends the terminal. Before, either
   ended the terminal while a client or observer was attached
   (`eon-title-utf8-ends-terminal-atq2`).
+- ORB-C6 adds a failure: a hyperlink URI that is not valid UTF-8 reaches the
+  client as no link, the cell keeps its text in frames and previews, and the
+  terminal keeps running. Before, such a link ended the terminal while a
+  client was attached (`eon-osc8-invalid-utf8-ymts`).
 
 ## Before this repository
 

@@ -90,6 +90,21 @@ pub fn run() {
         ("LATE THREE", "")
     );
 
+    // An OSC 8 hyperlink whose URI is not UTF-8 leaves its text on screen
+    // without the link and the terminal running.
+    gate.release();
+    let frame = active.frame_titled("LATE FOUR");
+    let linked = frame
+        .rows
+        .iter()
+        .find(|row| {
+            let text: String = row.cells.iter().map(|cell| cell.text.as_str()).collect();
+            text.contains("LINKED")
+        })
+        .expect("the linked text is on screen");
+    assert!(linked.cells.iter().all(|cell| cell.hyperlink.is_empty()));
+    assert_eq!(observer.metadata().title, "LATE FOUR");
+
     active.send(&paste(b"x"));
     active.expect(ServerMessage::Accepted);
     active.exited(7);

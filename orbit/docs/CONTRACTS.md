@@ -236,15 +236,19 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Trigger:** Orbit extracts or encodes terminal presentation state.
 - **Result:** The boundary carries rich terminal state or explicitly declares an
   unsupported capability; it never silently collapses to a plain-text grid.
-- **Important failures:** Malformed cell-width topology fails at every admission
-  boundary.
+- **Important failures:**
+  - Malformed cell-width topology fails at every admission boundary.
+  - A hyperlink URI that is not valid UTF-8 reaches the client as no link: the
+    cell keeps its text, in frames and previews, and the terminal keeps
+    running.
 - **Owner:** Orbit's authoritative extraction and synchronized publication with
   canonical `orbit-protocol` values and codecs.
 - **Consumes:** Canonical ORBF v2 in ORBS v13; Venus and Eon consume it in this
   repository.
 - **Boundary:** Kitty graphics remain explicitly unsupported.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.2` commit
-  for direct rows, width roles, protection and reflow
+  for direct rows, width roles, protection and reflow, and the
+  `eon-osc8-invalid-utf8-ymts` commit for invalid hyperlink URIs
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,
@@ -257,6 +261,10 @@ in this repository. Each contract below states the current ORBS v13 behavior.
       hyperlink, wide and combining graphemes and the cursor from a real PTY's
       rich alternate screen, and reattaches to an identical frame.
     - [`orbf_v2_cell_width_topology_is_validated_at_every_acceptance_boundary`](../crates/protocol/src/lib.rs)
+    - [`orbit-late-observer`](../tests/real_pty/late_observer.rs) prints an
+      OSC 8 link whose URI is not UTF-8 and reads its text without the link,
+      with the terminal running; `vertical_preview_reads_history_nearest_first`
+      reads the same in a preview row.
     - Canonical ORBF-in-ORBS codec checks in the workspace suite
 
 ## ORB-C7 — Bounded attachment pressure

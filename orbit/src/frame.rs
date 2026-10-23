@@ -317,6 +317,9 @@ fn hyperlink(terminal: &Terminal<'static, '_>, x: u16, y: u16) -> io::Result<Str
     hyperlink_uri(&reference)
 }
 
+/// The cell's hyperlink URI, empty when it is not valid UTF-8: libghostty
+/// stores OSC 8 bytes unchecked, and a program's bad link never ends its
+/// terminal. A lossy decode would link somewhere the program never named.
 fn hyperlink_uri(reference: &GridRef<'_>) -> io::Result<String> {
     let mut bytes = vec![0; 256];
     let length = match reference.hyperlink_uri(&mut bytes) {
@@ -331,7 +334,7 @@ fn hyperlink_uri(reference: &GridRef<'_>) -> io::Result<String> {
         Err(_) => return Err(errno(libc::EIO)),
     };
     bytes.truncate(length);
-    String::from_utf8(bytes).map_err(|_| errno(libc::EPROTO))
+    Ok(String::from_utf8(bytes).unwrap_or_default())
 }
 
 fn rgb(color: RgbColor) -> Rgb {
@@ -565,7 +568,7 @@ mod tests {
             .set_scrollback_max_bytes(Some(SCROLLBACK_BUDGET_BYTES))
             .unwrap();
         terminal.vt_write(
-            b"\x1b]8;;https://example.test\x1b\\one\x1b]8;;\x1b\\\r\ntwo\r\nthree\r\nlongerthan8\r\nlast",
+            b"\x1b]8;;https://example.test\x1b\\one\x1b]8;;\x1b\\\r\n\x1b]8;;http://x/\xff\x1b\\two\x1b]8;;\x1b\\\r\nthree\r\nlongerthan8\r\nlast",
         );
         let extractor = FrameExtractor::new().unwrap();
         let text = |row: &Row| {
@@ -600,6 +603,12 @@ mod tests {
         let oldest = extractor.row(&terminal, 0, 8).unwrap();
         assert_eq!(text(&oldest), "one");
         assert_eq!(oldest.cells[0].hyperlink, "https://example.test");
+        // A URI that is not UTF-8 is no link, and the text stays.
+        let invalid = extractor.row(&terminal, 1, 8).unwrap();
+        assert_eq!(
+            (text(&invalid).as_str(), invalid.cells[0].hyperlink.as_str()),
+            ("two", "")
+        );
         assert_eq!(
             viewport_preview(&terminal, &extractor, VerticalDirection::Down).unwrap(),
             PreviewOutcome::Viewport {

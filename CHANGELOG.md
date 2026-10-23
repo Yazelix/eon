@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A program that prints a link whose address is not valid UTF-8 no longer
+  ends its terminal while a window shows it. The text shows without the link,
+  and the terminal and its program keep running.
+
 - A program that sets an invalid title or working directory no longer ends
   its terminal while a window shows it or Eon watches its title. A title that
   Orbit's terminal cuts at 1024 bytes inside a character, or an OSC 7
