@@ -39,7 +39,7 @@ use cells::{
     build_scene_rectangles, cell_ink_right, cell_text_attrs, cell_text_segments, cursor_bounds,
     cursor_outline, fitted_cell_font, set_cell_layer,
 };
-use chrome::{HeaderInteraction, SpinnerSlot, fit_header_text, rasterize_quota_icon};
+use chrome::{HeaderInteraction, Spinners, fit_header_text, rasterize_quota_icon};
 use cursor_trail::{CursorAnimation, build_tail_cursor};
 
 pub use fonts::{FontSettings, FontSetup};
@@ -383,9 +383,7 @@ pub struct Renderer {
     notice_lines: usize,
     terminal: TerminalLayer,
     header: HeaderInteraction,
-    /// Working badges in the current static vertices, and the phase they are drawn at.
-    spinners: Vec<SpinnerSlot>,
-    spinner_phase: usize,
+    spinners: Spinners,
     cursor_tail: Option<(SceneColor, SceneColor, f32)>,
     clear: wgpu::Color,
     background_opacity: f32,
@@ -458,6 +456,7 @@ impl Renderer {
             })
             .await
             .map_err(display_error("no compatible Venus GPU adapter"))?;
+        let spinners_turn = adapter.get_info().device_type != wgpu::DeviceType::Cpu;
         let (device, queue) = adapter
             .request_device(&DeviceDescriptor::default())
             .await
@@ -614,8 +613,7 @@ impl Renderer {
                 last_cursor_frame: None,
             },
             header: HeaderInteraction::default(),
-            spinners: Vec::new(),
-            spinner_phase: 0,
+            spinners: Spinners::new(spinners_turn),
             cursor_tail: cursor_tail
                 .map(|(color, duration)| (color, cursor_outline(color), duration)),
             clear: clear_color(DEFAULT_BACKGROUND, background_opacity, srgb_target),

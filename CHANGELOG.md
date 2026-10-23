@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- When Venus renders in software, as in a VM without GPU acceleration, the
+  working badge on tabs and in the agent sidebar is a still ring instead of a
+  spinner, so an agent at work no longer costs Venus a quarter to a third of a
+  CPU core.
+
 - Claude Code rows in the agent sidebar lead with the session's name, so
   agents in one project are easy to tell apart. A session started with
   `claude --name eon-9a`, or renamed with `/rename`, shows `eon-9a`;

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C21: on a software (CPU) wgpu adapter the working badge, in Eon Bar
+  tabs and VEN-C30 sidebar rows, is a still ring with every segment lit, and
+  no spinner tick or redraw is scheduled. Other adapters keep the 5 Hz
+  spinner (`eon-agent-sidebar-yx8.15`).
+
 - VEN-C21 and EON-C21: while the agent sidebar is not visible, each Eon Bar
   tab whose EON-C31 rollup is needs input, error, finished or working shows a
   corner badge (◆, ✕, ✓ or a spinner). The badge is dimmed when every terminal

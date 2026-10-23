@@ -1224,8 +1224,9 @@ re-proved when that platform or feature is next touched.
   - every tab whose rollup is needs input, error, finished or working shows a
     corner badge (◆, ✕, ✓, or a spinner), the active tab included. A stale
     tab's badge is dimmed;
-  - Eon has no animation-off setting, so the spinner always animates. Under
-    AP-PERF-001 it repaints at no more than 5 Hz, and only the badge;
+  - on a software (CPU) graphics adapter the working badge is a still segmented
+    ring that never repaints to animate; otherwise its spinner turns,
+    repainting at no more than 5 Hz under AP-PERF-001, and only the badge;
   - the badge changes neither the tab's width nor its label text;
   - with tab overflow, the scroll edge shows the most urgent hidden badge;
   - a tab's accessible name appends its state, for example
@@ -1288,6 +1289,18 @@ re-proved when that platform or feature is next touched.
     - Venus CPU over 20 s with and without a spinner: 14 and 6 ticks of
       10 ms with Sway rendering on the Intel GPU; 738 and 51 with Sway
       compositing in software (pixman).
+  - **Still badge on software adapters (`eon-agent-sidebar-yx8.15`):**
+    automated proof in
+    `software_adapters_draw_working_badges_still_and_never_tick`; isolated
+    installed observation (tree `bf7c28b` on edge `2112ff3`, the candidate's
+    `nix build` of `/nix/store/mf0ypf0qpdbm8bjdb9rx3p6i0s6xm17a-eon-0.1.1`,
+    private headless Sway with the pixman renderer at 1280x720, sidebar
+    closed, one tab reporting working). Venus ran on lavapipe (16 llvmpipe
+    threads, no render-engine time on its render node). The tab showed the
+    still ring, and ten captures 100 ms apart were identical. Venus CPU over
+    20 s: 62 ticks of 10 ms with the working badge and 65 without, against
+    545 and 605 with the spinner and 62 and 47 without on the pre-change
+    installed build.
 - **Open proof:** Pending re-proof in this repository: compositor window drag
   from the empty header region, narrow-width captures, and AT-SPI header order.
 
