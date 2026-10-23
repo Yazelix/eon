@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Closing a tab whose terminal's program is slow to die after it is killed,
+  for example on a heavily loaded machine, now waits for the program instead
+  of failing like a crash. A program gone within the close's 5-second limit
+  closes with the tab as usual; a slower one still makes the close report a
+  failure, and its terminal records the stop once the program is gone.
+
 - A terminal whose end can't be accounted for, after it exits on its own or a
   close of it fails, no longer ends the whole window. It stays in its tab, Eon
   logs why once and keeps checking, and the window and other tabs keep running.

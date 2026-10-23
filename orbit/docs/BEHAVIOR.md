@@ -157,7 +157,17 @@ does not stop the run. An accepted Stop begins the reap-gated stop: the host han
 and reaps the child with the bounded shutdown of ORB-C12, the tombstone
 records the explicit stop and the exact signal, the lease hears `Stopped` with
 it, the observer hears the exit, the interactive client closes without
-`Exited`, and the server exits 0. Files and process
+`Exited`, and the server exits 0. A child that the escalation leaves
+unreaped, such as one the kernel holds in uninterruptible sleep, keeps the
+run, its live record and the pending Stop: Bend answers `NotReaped` with
+another `Reap`, so the host waits again, two seconds at a time and serving
+nothing else, until the child is reaped and the Stop completes as above. A
+SIGKILL that fails ends the run as a host failure instead, and a termination
+signal during the wait takes the fatal-exit path. The real-PTY
+check [`orbit-unreaped-stop`](../tests/real_pty/unreaped_stop.rs) traces the
+child, so its zombie stays hidden from Orbit past the escalation, then
+releases it and sees the Stop complete with SIGKILL; in a second run, SIGTERM
+during the wait ends Orbit with 143 and no record. Files and process
 metadata never authorize anything.
 
 A ProgramStatus request (ORB-C15) reaches Bend as the fact `ProgramStatus`,
@@ -860,8 +870,9 @@ any session state, `step`'s decisions never break the automaton:
   output, may end the attachment and do nothing else. Nothing a client does
   stops the session, and a closed PTY alone does not either (ORB-C1).
 - A stop begins only from the child's exit, which asks the host to reap, or
-  from a management Stop. Once it begins, the only lifecycle decision is one
-  `Finish`, answering the reap with the reaped status (ORB-C12).
+  from a management Stop. Once it begins, a child the escalation did not reap
+  is waited on again with one `Reap`, and the only other lifecycle decision is
+  one `Finish`, answering the reap with the reaped status (ORB-C12).
 
 The automaton assumes the host's fact order, which
 [HOST.md](HOST.md) states; after a fact out of that order it
@@ -875,9 +886,10 @@ cases until every leaf computes; the tool finds those splits by asking Bend
 which variable a failing leaf waits on. Rerun it after changing `step` or the
 automaton.
 
-Two sensitivity checks broke `step` in a scratch copy and made the proof
-fail: one admitted a second client while one was attached, and one began the
-stop at the child's exit without asking the host to reap. As with the other
+Three sensitivity checks broke `step` in a scratch copy and made the proof
+fail: one admitted a second client while one was attached, one began the
+stop at the child's exit without asking the host to reap, and one answered
+`NotReaped` with nothing instead of another `Reap`. As with the other
 laws, the proof covers Bend's decisions, not the truth of Rust's facts or
 their delivery.
 

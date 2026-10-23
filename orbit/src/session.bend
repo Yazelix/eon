@@ -1160,9 +1160,11 @@ def decide(
       admit(Admission.Crowded{}, flags, session)
     case Boundary.ObserverMessage{}:
       admit(Admission.Spoke{}, flags, session)
-    # serve answers these itself.
+    # ORB-C12: a child the escalation did not reap keeps the run until it is
+    # reaped.
     case Boundary.NotReaped{}:
-      (session, Nil{})
+      (session, [Boundary.Reap{}])
+    # serve answers these itself.
     case Boundary.Finished{}:
       (session, Nil{})
     case Boundary.Fault{pid}:

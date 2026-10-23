@@ -100,6 +100,14 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   client as their first codepoint and as no link. Before, a screen of cells
   heavy with combining marks ended the terminal while a client was attached
   (`eon-frame-budget-text-kzze`).
+- ORB-C12 changes a failure: a management Stop whose child is not reaped
+  within two seconds of SIGKILL keeps the run and its live record until the
+  child is reaped, then succeeds with the child's outcome. Before, the Bend
+  worker died, and the run exited with no tombstone and removed its record. A
+  termination signal still requires the reap within two seconds. Compatible
+  for Venus, Eon Runtime and Eon: Eon Runtime's Stop still waits five seconds
+  for the result, so a child reaped after that still fails its Stop there,
+  and the tombstone comes later (`eon-orbit-stop-not-reaped-7vb4`).
 
 ## Before this repository
 

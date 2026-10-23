@@ -67,8 +67,10 @@ path on both targets. Orbit gives the child up to 500 ms to exit. If it
 remains unreaped, Orbit sends SIGKILL to its still-stable initial group and
 re-reads the terminal's foreground group before escalating it. If the child
 exits during the grace period, Orbit sends no later signal to the cached
-foreground-group number. Orbit requires the direct child to be reaped within
-two seconds before reporting success. A child that had already exited before
+foreground-group number. After a signal, Orbit requires the direct child to be
+reaped within two seconds before reporting success. After a management Stop, a
+child not reaped by then keeps the run and its live record until it is reaped,
+and the Stop then succeeds with its outcome. A child that had already exited before
 shutdown is reaped without signaling its recyclable numeric identity.
 
 This is terminal cleanup, not whole-process-tree ownership. A deliberately

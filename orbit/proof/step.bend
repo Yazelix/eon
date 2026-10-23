@@ -15305,7 +15305,11 @@ def fits_not_reaped(
     case Orbit.Attached{pid}:
       {==}
     case Orbit.Stopping{pid}:
-      {==}
+      match unanchored:
+        case True{}:
+          {==}
+        case False{}:
+          {==}
     case Orbit.Stopped{pid}:
       {==}
 

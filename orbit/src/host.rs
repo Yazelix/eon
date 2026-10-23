@@ -1391,7 +1391,7 @@ impl Host {
         if let Some(status) = self.orbit.try_reap()? {
             return Ok(Fact::ExitedBeforeStop { status });
         }
-        if !self.contain() {
+        if !self.contain()? {
             return Ok(Fact::NotReaped);
         }
         let status = self.orbit.try_reap()?.ok_or_else(protocol)?;
@@ -1413,12 +1413,15 @@ impl Host {
         Ok(())
     }
 
+    /// Waits up to two seconds for the child. Bend asks again while a stopped
+    /// child stays unreaped, so a termination signal ends the wait.
     fn reap(&mut self) -> io::Result<Fact> {
         let deadline = Instant::now() + REAP_DEADLINE;
         loop {
             if let Some(status) = self.orbit.try_reap()? {
                 return Ok(Fact::Reaped { status });
             }
+            terminated()?;
             if Instant::now() >= deadline {
                 return Ok(Fact::NotReaped);
             }
@@ -1503,10 +1506,12 @@ impl Host {
     /// reaped without a signal to its recyclable PID; otherwise the child's
     /// group and a distinct foreground group get SIGHUP, then, after 500 ms,
     /// SIGKILL with the foreground group read again, and the child must be
-    /// reaped within two seconds. Reports whether it was reaped.
-    fn contain(&mut self) -> bool {
+    /// reaped within two seconds. Reports whether it was reaped; an unreaped
+    /// child that the SIGKILL could not reach fails, so only a killed child is
+    /// waited on again.
+    fn contain(&mut self) -> io::Result<bool> {
         if self.orbit.child.is_none() || !matches!(self.orbit.try_reap(), Ok(None)) {
-            return true;
+            return Ok(true);
         }
         let pid = self.orbit.pid as platform::pid_t;
         let reaped_by = |orbit: &mut Orbit, deadline: Instant| {
@@ -1529,10 +1534,14 @@ impl Host {
         if hang_up(&self.orbit, platform::SIGHUP).is_ok()
             && reaped_by(&mut self.orbit, Instant::now() + Duration::from_millis(500))
         {
-            return true;
+            return Ok(true);
         }
-        let _ = hang_up(&self.orbit, platform::SIGKILL);
-        reaped_by(&mut self.orbit, Instant::now() + Duration::from_secs(2))
+        let killed = hang_up(&self.orbit, platform::SIGKILL);
+        let reaped = reaped_by(&mut self.orbit, Instant::now() + Duration::from_secs(2));
+        if !reaped {
+            killed?;
+        }
+        Ok(reaped)
     }
 }
 
@@ -1589,7 +1598,7 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
         // A failed host, a terminated host, or a dead or stalled worker:
         // contain the child and remove the socket pathname before exiting.
         Err(error) => {
-            let reaped = host.contain();
+            let reaped = matches!(host.contain(), Ok(true));
             let number = TERMINATION_SIGNAL.load(Ordering::Relaxed);
             // A termination signal is an explicit stop: once the child is
             // reaped, a live observer hears its exit, and then a managed run's

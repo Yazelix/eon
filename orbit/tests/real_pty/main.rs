@@ -61,5 +61,6 @@ checks!(
     terminal_identity,
     terminal_replies,
     three_attach,
+    unreaped_stop,
     unsupported,
 );

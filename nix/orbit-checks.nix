@@ -135,6 +135,7 @@ let
     }
     { name = "pty-reopen"; variable = "REOPEN_SHELL"; timeout = "30s"; }
     { name = "descendant-exit"; timeout = "30s"; }
+    { name = "unreaped-stop"; timeout = "30s"; }
     { name = "unsupported"; variable = "UNSUPPORTED_SHELL"; }
     {
       name = "interactive-pressure";

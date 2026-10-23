@@ -52,8 +52,6 @@ def heard(
   +fact: Boundary.Fact, flags: Boundary.Flags, input: File, output: File, state: Session.State
 ) -> IO(Unit):
   match fact:
-    case Boundary.NotReaped{}:
-      IO.die(Unit, 1, "PTY child was not reaped after canonical session exit")
     # The containment fixture: Bend fails at once, holding nothing the host
     # must clean up for it.
     case Boundary.Fault{pid}:

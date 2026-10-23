@@ -622,13 +622,17 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     and rereads the current foreground group before escalation. If the child
     exits during grace, Orbit sends no later signal to a cached foreground-group
     number.
-  - After escalation, Orbit requires the direct child to be reaped within two
+  - After escalation, management Stop succeeds once the direct child is reaped;
+    a child not reaped within two seconds keeps the run and its live record
+    until it is reaped, then Stop succeeds with its outcome. After a
+    termination signal, Orbit requires the direct child to be reaped within two
     seconds.
 - **Important failures:**
   - An already-gone signal target is benign; every other signaling or reaping
     failure is bounded non-success.
   - PID reuse, foreground-group changes, child exit during grace, and writing
-    descendants cannot cause delayed signaling or unbounded server lifetime.
+    descendants cannot cause delayed signaling, and only a child the kernel
+    never releases after a management Stop extends server lifetime.
   - Client disconnection remains the non-destructive ORB-C1 detach path.
 - **Owner:** Orbit's Bend session policy decides the stop and its result; its
   Rust host carries out graceful timing, escalation, and direct-child reaping
@@ -641,7 +645,9 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     whole-descendant cleanup. Direct-child HUP and reaping were proved natively
     on Apple Silicon macOS for the previous Rust server (ORB-C14); the special
     detached and foreground-group topology remains Linux-proved only.
-- **Proof:** the `eon-awmq.3` import commit
+- **Proof:** the `eon-awmq.3` import commit, with the
+  `eon-orbit-stop-not-reaped-7vb4` commit for a management Stop whose child is
+  reaped after escalation
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,
@@ -660,8 +666,9 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     - Real-PTY checks
       [`orbit-guardian-containment`](../tests/real_pty/guardian_containment.rs),
       [`orbit-descendant-exit`](../tests/real_pty/descendant_exit.rs),
-      [`orbit-observer-finish`](../tests/real_pty/observer_finish.rs) and
-      [`orbit-stopped-client-exit`](../tests/real_pty/stopped_client_exit.rs)
+      [`orbit-observer-finish`](../tests/real_pty/observer_finish.rs),
+      [`orbit-stopped-client-exit`](../tests/real_pty/stopped_client_exit.rs) and
+      [`orbit-unreaped-stop`](../tests/real_pty/unreaped_stop.rs)
     - Laws [`bounded_stop_preserves_pid`](../LAWS.bend),
       [`pre_reap_events_preserve_stopped`](../LAWS.bend) and
       [`lifecycle_follows_its_contracts`](../LAWS.bend) (`orbit-laws`)

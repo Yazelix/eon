@@ -358,7 +358,8 @@ def from_client(moves: List<&2, Move>, client: Bool, observer: Bool) -> Phase:
       Outside{}
 
 # ORB-C12: the child's exit begins a stop that waits on the reap, after
-# ending the attachment if its last output overflowed the clipboard bound.
+# ending the attachment if its last output overflowed the clipboard bound; a
+# child not reaped is waited on again the same way.
 def reaping(moves: List<&2, Move>) -> Phase:
   match moves:
     case Con{first, rest}:
@@ -472,7 +473,8 @@ def live(
 
 # ORB-C12: the run finishes only once the direct child is reaped, with its
 # status; until then only an observer's loss and a tick or host phase that
-# was already queued arrive, and none changes the lifecycle.
+# was already queued arrive, and none changes the lifecycle, or the host
+# reports the child not reaped, which Bend answers with another reap.
 def same_status(equal: Bool, rest: List<&2, Move>) -> Phase:
   match equal:
     case True{}:
@@ -497,6 +499,9 @@ def stopping(fact: Boundary.Fact, moves: List<&2, Move>) -> Phase:
       finished(moves, status)
     case Boundary.ExitedBeforeStop{status}:
       finished(moves, status)
+    # ORB-C12: a child the escalation did not reap is waited on again.
+    case Boundary.NotReaped{}:
+      reaping(moves)
     case Boundary.ObserverGone{loss}:
       only(moves, Unobserved{}, Stopping{})
     case Boundary.Tick{state, x, y}:
