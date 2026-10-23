@@ -154,6 +154,25 @@ fn badge_inside(badge: TabBadge, clip: Option<SceneRect>) -> bool {
     })
 }
 
+/// Where a shaped buffer's ink ends, from its left edge. Unlike a run's `line_w`, this counts the
+/// offset that right-aligns a right-to-left line, such as a Hebrew directory name.
+fn shaped_end(buffer: &Buffer) -> f32 {
+    buffer
+        .layout_runs()
+        .flat_map(|run| run.glyphs.iter())
+        .map(|glyph| glyph.x + glyph.w)
+        .fold(0.0, f32::max)
+}
+
+/// Draws the agent sidebar's popup marker, a small window: an outlined square with a filled
+/// title bar, distinct from every attention glyph. Quads keep it independent of fonts.
+fn push_popup_marker(rectangles: &mut RectangleBatch, rect: SceneRect, color: SceneColor) {
+    let stroke = (rect.width / 8.0).round().max(1.0);
+    rectangles.push_hollow(rect.left, rect.top, rect.width, rect.height, stroke, color);
+    let bar = (rect.height * 0.3).round().max(stroke);
+    rectangles.push(rect.left, rect.top, rect.width, bar, color, 1.0);
+}
+
 /// Draws one attention badge's glyph inside its disc: ◆ needs input, ✕ error, ✓ finished, the
 /// spinner at `phase` for working, or every segment lit without one, and, in sidebar rows, ○ idle
 /// and · unavailable. Quads keep the glyphs independent of fonts.
@@ -404,6 +423,60 @@ impl Renderer {
     pub fn fit_tab_text(&mut self, label: &str) -> (String, f32) {
         let width = WorkspaceScene::tab_text_width(self.size(), self.metrics);
         fit_header_text(&mut self.fonts.font_system, self.metrics, label, width)
+    }
+
+    /// One line of agent sidebar text. With `marker`, the popup marker follows the text before
+    /// that byte offset, at the end of the line if that text overflows, and the rest of the text
+    /// follows the marker.
+    #[allow(clippy::too_many_arguments)]
+    fn push_sidebar_line(
+        &mut self,
+        text: &str,
+        marker: Option<usize>,
+        left: f32,
+        top: f32,
+        width: f32,
+        color: SceneColor,
+        clip: SceneRect,
+        rectangles: &mut RectangleBatch,
+    ) {
+        let height = sidebar_text_height(self.metrics);
+        let style = DrawStyleKind::Status(Wrap::None);
+        let Some(marker) = marker else {
+            self.push_text_clipped(text, left, top, width, width, height, color, style, clip);
+            return;
+        };
+        let (before, after) = text.split_at(marker);
+        // The marker is as large as a row's state glyph, half a cell from the text before it.
+        let size = (self.metrics.font_size * 0.75).round().max(1.0);
+        let spacing = (self.metrics.width / 2.0).round();
+        let ink = (width - size - spacing).max(0.0);
+        let pushed = self.text.len();
+        self.push_text_clipped(before, left, top, ink, ink, height, color, style, clip);
+        let end = self.text[pushed..]
+            .first()
+            .map_or(0.0, |text| shaped_end(&text.buffer));
+        let marker = SceneRect {
+            left: (left + end + spacing).min(left + width - size).max(left),
+            top: top + (self.metrics.height - size) / 2.0,
+            width: size,
+            height: size,
+        };
+        push_popup_marker(rectangles, marker, color);
+        let rest = left + width - marker.right();
+        if rest > 0.0 {
+            self.push_text_clipped(
+                after,
+                marker.right(),
+                top,
+                rest,
+                rest,
+                height,
+                color,
+                style,
+                clip,
+            );
+        }
     }
 
     /// Measure an exact, non-truncated Eon Bar fact label with header typography.
@@ -786,20 +859,19 @@ impl Renderer {
                     sidebar,
                 );
             }
+            rectangles.clip = Some(list);
             for heading in &workspace.sidebar_headings {
-                self.push_text_clipped(
+                self.push_sidebar_line(
                     &heading.label,
+                    heading.popup_shown.then_some(heading.label.len()),
                     heading.rect.left,
                     heading.rect.top,
                     heading.rect.width,
-                    heading.rect.width,
-                    text_height,
                     accent,
-                    DrawStyleKind::Status(Wrap::None),
                     list,
+                    rectangles,
                 );
             }
-            rectangles.clip = Some(list);
             for row in workspace.sidebar_rows() {
                 if row.rect.intersection(list).is_none() {
                     continue;
@@ -824,25 +896,24 @@ impl Renderer {
                 };
                 let text_width = (row.rect.right() - padding / 2.0 - row.text_left).max(0.0);
                 let text_top = row.glyph.rect.top - (line - row.glyph.rect.height) / 2.0;
-                for (index, (text, color)) in [
-                    (Some(row.title.as_str()), title),
-                    (Some(row.detail.as_str()), detail),
-                    (row.message.as_deref(), title),
+                for (index, (text, marker, color)) in [
+                    (Some(row.title.as_str()), None, title),
+                    (Some(row.detail.as_str()), row.popup_marker, detail),
+                    (row.message.as_deref(), None, title),
                 ]
                 .into_iter()
                 .enumerate()
                 {
                     let Some(text) = text else { continue };
-                    self.push_text_clipped(
+                    self.push_sidebar_line(
                         text,
+                        marker,
                         row.text_left,
                         text_top + line * index as f32,
                         text_width,
-                        text_width,
-                        text_height,
                         color,
-                        DrawStyleKind::Status(Wrap::None),
                         list,
+                        rectangles,
                     );
                 }
             }
@@ -1370,6 +1441,37 @@ mod tests {
             })
             .is_none()
         );
+    }
+
+    #[test]
+    fn sidebar_marker_follows_the_shaped_ink_of_either_direction() {
+        let mut fonts = FontSystem::new();
+        let metrics = CellMetrics::for_scale(1.0);
+        let width = 200.0;
+        let mut end = |text: &str| {
+            let mut buffer =
+                Buffer::new(&mut fonts, Metrics::new(metrics.font_size, metrics.height));
+            buffer.set_size(Some(width), Some(metrics.height));
+            buffer.set_wrap(Wrap::None);
+            buffer.set_text(
+                text,
+                &Attrs::new().family(Family::SansSerif),
+                shaping(text),
+                None,
+            );
+            buffer.shape_until_scroll(&mut fonts, false);
+            let line = buffer
+                .layout_runs()
+                .map(|run| run.line_w)
+                .fold(0.0, f32::max);
+            (shaped_end(&buffer), line)
+        };
+        // A left-to-right label ends where its shaped width does.
+        let (ltr, line) = end("2  site");
+        assert!(ltr > 0.0 && (ltr - line).abs() < 0.5 && ltr < width / 2.0);
+        // A right-to-left label is right-aligned, so its ink ends at the line's end, not its width.
+        let (rtl, line) = end("2  שלום");
+        assert!((rtl - width).abs() < 1.0 && line < width / 2.0);
     }
 
     #[test]

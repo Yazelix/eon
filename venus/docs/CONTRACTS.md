@@ -1727,7 +1727,9 @@ re-proved when that platform or feature is next touched.
   `eon-agent-sidebar-yx8.13` implements contents, row navigation, F6 and row
   accessibility; `eon-agent-sidebar-yx8.8` implements Alt+G and
   Alt+Shift+G; `eon-agent-sidebar-yx8.11` adds the name;
-  `eon-agent-sidebar-yx8.9` proves the epic on the installed product.
+  `eon-agent-sidebar-yx8.9` proves the epic on the installed product;
+  `eon-agent-sidebar-yx8.16` adds the shown-popup marker, approved by Lucca
+  on 2026-10-23.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -1793,6 +1795,11 @@ re-proved when that platform or feature is next touched.
     - A needs-input row adds one plain-text, truncated `msg` line.
     - Other records of a terminal fold into "+N".
     - Rows never reorder by priority.
+    - **Shown popup.** When a listed tab shows a popup (its snapshot
+      `selected_popup` is set), its header ends with one popup marker glyph,
+      and a row whose source terminal is that popup adds the same glyph after
+      its catalog label. A hidden popup gets no marker. The header's and the
+      row's accessible labels add "popup shown".
   - **Navigation.**
     - Activating a row sends `FocusAttention`, and keyboard focus moves to the
       target terminal, or stays on the tab when the covered-target rule only
@@ -1859,7 +1866,12 @@ re-proved when that platform or feature is next touched.
     `direct_workspace_shortcuts_use_stable_eon_actions`,
     `shortcut_hints_follow_bindings_catalog_and_native_focus` and
     `configured_popups_take_fixed_bindings_except_reserved_keys` to Alt+G and
-    Alt+Shift+G.
+    Alt+Shift+G. `eon-agent-sidebar-yx8.16` extends
+    `agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row`
+    to the shown-popup marker: which heading and row carry it, where it falls
+    in the row's detail line, and the "popup shown" names, and adds
+    `sidebar_marker_follows_the_shaped_ink_of_either_direction` for its
+    placement after right-to-left text.
   - **Installed (`eon-agent-sidebar-yx8.13`, on the sidebar batch's final
     revision):** isolated installed dogfood (edge `d6ce117`, code tree
     `a0d664d`, whose `nix build` gave
@@ -1965,6 +1977,21 @@ re-proved when that platform or feature is next touched.
       set of 10 captures with the sidebar open, taken 100 ms apart, gave 1
       distinct frame. An earlier set, taken right after the tab opened,
       spanned 10.6 s instead of 1 s and gave 2; its cause was not determined.
+  - **Installed (`eon-agent-sidebar-yx8.16`):** isolated installed dogfood
+    (edge `c94787b` with code tree `9cd204a`, whose `nix build` gave
+    `/nix/store/5cb6sdx4irfd8kd87nrldmz9ry94bi0v-eon-0.1.1`, x86_64 Linux,
+    private headless Sway 1.12 at 1280x720, the pixman renderer). The
+    commit's rebase onto edge `899818f` brought in only Runtime CLI, Nix,
+    Orbit and docs changes, none in Venus. Tab 2's Agent popup ran a fixture reporting
+    `app=claude-code` working.
+    - With the popup shown in tab 2, its heading read `2  w` and then the
+      window marker, and its row read `Claude` over `now · Agent` and then
+      the marker.
+    - After Alt+1, `eon workspace` read tab 1 active and tab 2 `popup=u3`,
+      and tab 2's heading and row still showed the marker.
+    - After the popup was hidden in tab 2 and Alt+1 pressed again, `eon
+      workspace` read tab 2 `popup=none`, still listing popup `u3` with its
+      working attention. Its row was still listed, and neither the heading nor the row showed a marker.
 - **Open proof:**
   - Compositor blur through the card: headless Sway has no blur, so only its
     translucency was measured. It waits on VEN-C15's native backdrop

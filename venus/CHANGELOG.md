@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C30: when a listed tab shows a popup (its `selected_popup` is set), its
+  sidebar heading ends with the popup marker, a small window glyph drawn from
+  quads, and a row whose source is that popup carries the same glyph after its
+  catalog label. A hidden popup gets no marker. The heading's and the row's
+  accessible names add "popup shown" (`eon-agent-sidebar-yx8.16`).
+
 - VEN-C21: on a software (CPU) wgpu adapter the working badge, in Eon Bar
   tabs and VEN-C30 sidebar rows, is a still ring with every segment lit, and
   no spinner tick or redraw is scheduled. Other adapters keep the 5 Hz

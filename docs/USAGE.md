@@ -227,7 +227,10 @@ as `3  site`, then one row per reporting terminal. A row shows:
 A needs-input row adds the agent's question. `+2` counts the terminal's other
 status records. A dimmed row marked `status stale` has not reported for more
 than 3 seconds. An Agent popup whose agent does not report shows `status
-unavailable`. While no agent reports, the sidebar says so.
+unavailable`. A small window mark after a tab's heading means that tab shows
+a popup now, so switching to it brings the popup up; the same mark follows the
+popup's name on the row of an agent running in it. While no agent reports, the
+sidebar says so.
 
 Click a row, or press Enter or Space on it, to jump to that agent: Eon selects
 its tab and shows its pane or popup, and keyboard focus moves to that terminal.

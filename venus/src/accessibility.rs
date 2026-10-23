@@ -479,7 +479,7 @@ impl Snapshot {
                 for heading in &workspace.sidebar_headings {
                     let id = self.sidebar_ids[heading.tab.as_str()];
                     let mut node = Node::new(Role::Heading);
-                    node.set_label(heading.label.as_str());
+                    node.set_label(heading.accessible_label.as_str());
                     if let Some(bounds) = heading.rect.intersection(workspace.sidebar_list) {
                         node.set_bounds(rect(bounds));
                     }

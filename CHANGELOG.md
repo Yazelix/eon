@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The agent sidebar marks a tab that shows a popup: its heading ends with a
+  small window mark, and the row of an agent running in that popup carries
+  the same mark after the popup's name. From another tab you can see which
+  tabs will open on a popup. A hidden popup gets no mark.
+
 - A program that prints long links across much of the screen no longer ends
   its terminal while a window shows it. When one screen's links are too large
   to send together, the text all shows and the links past that limit show as

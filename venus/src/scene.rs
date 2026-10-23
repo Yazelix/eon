@@ -137,6 +137,10 @@ pub(crate) struct SidebarHeading {
     pub(crate) tab: String,
     pub(crate) label: String,
     pub(crate) rect: SceneRect,
+    /// The tab shows a popup, so the heading ends with the popup marker.
+    pub(crate) popup_shown: bool,
+    /// The label, plus "popup shown" while the heading carries the marker.
+    pub(crate) accessible_label: String,
 }
 
 /// One terminal with attention in the agent sidebar (VEN-C30).
@@ -156,6 +160,9 @@ pub struct SidebarRow {
     pub(crate) title: String,
     /// The age, the source terminal, "+N" for other records and "status stale".
     pub(crate) detail: String,
+    /// Where in `detail` the popup marker follows the source's catalog label, while the row's
+    /// source is its tab's shown popup.
+    pub(crate) popup_marker: Option<usize>,
     /// A needs-input row's message line.
     pub(crate) message: Option<String>,
     pub(crate) focused: bool,
@@ -1091,6 +1098,8 @@ const SIDEBAR_MIN_CONTENT_CELLS: f32 = 80.0;
 pub(crate) const SIDEBAR_TITLE: &str = "Agents";
 pub(crate) const SIDEBAR_EMPTY: &str =
     "No agent needs attention. Agents that report their status show here while they work.";
+/// What a sidebar heading's and row's accessible names add while they carry the popup marker.
+const POPUP_SHOWN: &str = "popup shown";
 
 /// The clip box of one line of sidebar text: a quarter em taller than the font size, as the
 /// sans-serif face's ascent plus descent needs, so descenders such as g's are never cut.
@@ -1150,15 +1159,23 @@ fn sidebar_contents(
         if !headings.is_empty() {
             top += line / 2.0;
         }
+        let label = tab_labels(index, snapshot.tabs.len(), &tab.directory).0;
+        let popup_shown = tab.selected_popup.is_some();
         headings.push(SidebarHeading {
             tab: tab.id.clone(),
-            label: tab_labels(index, snapshot.tabs.len(), &tab.directory).0,
+            accessible_label: if popup_shown {
+                format!("{label}, {POPUP_SHOWN}")
+            } else {
+                label.clone()
+            },
+            label,
             rect: SceneRect {
                 left: content_left,
                 top,
                 width: content_width,
                 height: line,
             },
+            popup_shown,
         });
         top += line;
         let leaf = directory_leaf(&tab.directory);
@@ -1212,6 +1229,8 @@ fn sidebar_contents(
                 .as_ref()
                 .map_or_else(String::new, |(age, _)| format!("{age} · "));
             detail.push_str(source);
+            let popup_marker =
+                (tab.selected_popup.as_ref() == Some(target)).then_some(detail.len());
             if others > 0 {
                 let _ = write!(detail, " · +{others}");
             }
@@ -1243,6 +1262,9 @@ fn sidebar_contents(
                 if name.is_empty() { "" } else { " " },
                 index + 1,
             );
+            if popup_marker.is_some() {
+                let _ = write!(accessible_label, ", {POPUP_SHOWN}");
+            }
             if let Some(title) = reported_title {
                 let _ = write!(accessible_label, ", {title}");
             }
@@ -1296,6 +1318,7 @@ fn sidebar_contents(
                 icon,
                 title,
                 detail,
+                popup_marker,
                 message,
                 focused: view.focused == Some(target.as_str()),
                 age,
@@ -3475,9 +3498,9 @@ mod tests {
             sidebar: Sidebar::Open,
         };
         let metrics = CellMetrics::for_scale(1.0);
-        let project = |height, focused| {
+        let project = |snapshot: &Snapshot, height, focused| {
             WorkspaceScene::from_snapshot_with_zoom(
-                &snapshot,
+                snapshot,
                 EonBar::default(),
                 PhysicalSize::new(1400, height),
                 metrics,
@@ -3493,7 +3516,7 @@ mod tests {
 
         // Only tabs with attention are listed, each under its heading, with one row per
         // terminal with attention, in tab and terminal order.
-        let scene = project(800, None);
+        let scene = project(&snapshot, 800, None);
         assert!(!scene.sidebar_empty());
         assert_eq!(
             scene
@@ -3624,11 +3647,11 @@ mod tests {
         assert_eq!(scene.sidebar_age_wait(), Some(30_000));
 
         // In a short window the list clips, and the focused row scrolls just into view.
-        let short = project(260, None);
+        let short = project(&snapshot, 260, None);
         let list = short.sidebar_list;
         assert!(short.sidebar_rows()[3].rect.bottom() > list.bottom());
         assert!(short.sidebar_rows().iter().all(|row| !row.focused));
-        let revealed = project(260, Some("p5"));
+        let revealed = project(&snapshot, 260, Some("p5"));
         let focused = &revealed.sidebar_rows()[3];
         assert!(focused.focused);
         assert_eq!(focused.rect.bottom(), list.bottom());
@@ -3649,6 +3672,67 @@ mod tests {
         assert_ne!(
             revealed.hit_test(x, list.top - 1.0),
             Some(WorkspaceHit::SidebarRow("p2"))
+        );
+
+        // A hidden popup gets no marker. Once inactive tab 2 shows its Agent popup, its heading
+        // ends with the marker and the popup's row carries it after the catalog label; the
+        // accessible names say so.
+        let marked = |scene: &WorkspaceScene| {
+            (
+                scene
+                    .sidebar_headings
+                    .iter()
+                    .map(|heading| (heading.popup_shown, heading.accessible_label.clone()))
+                    .collect::<Vec<_>>(),
+                scene
+                    .sidebar_rows()
+                    .iter()
+                    .filter(|row| row.popup_marker.is_some())
+                    .map(|row| {
+                        let (before, after) = row.detail.split_at(row.popup_marker.unwrap());
+                        (row.target.clone(), before.to_owned(), after.to_owned())
+                    })
+                    .collect::<Vec<_>>(),
+            )
+        };
+        assert_eq!(
+            marked(&scene),
+            (
+                vec![(false, "2  site".into()), (false, "3  api".into())],
+                Vec::new()
+            )
+        );
+        let mut shown = snapshot.clone();
+        shown.tabs[1].selected_popup = Some("u2".into());
+        shown.tabs[1].popups[0].attention = Some(Attention {
+            state: AttentionState::Working,
+            record: Some(AttentionRecord {
+                others: 1,
+                ..record("claude-code", "", 4 * MINUTE_MS)
+            }),
+        });
+        let scene = project(&shown, 800, None);
+        assert_eq!(
+            marked(&scene),
+            (
+                vec![
+                    (true, "2  site, popup shown".into()),
+                    (false, "3  api".into())
+                ],
+                vec![("u2".into(), "4m · Agent popup".into(), " · +1".into())]
+            )
+        );
+        assert_eq!(
+            scene.sidebar_row("u2").unwrap().accessible_label,
+            "Working: Claude in tab 2, site, Agent popup, popup shown, changed 4 minutes ago, \
+             1 more record"
+        );
+        assert!(
+            !scene
+                .sidebar_row("p2")
+                .unwrap()
+                .accessible_label
+                .contains("popup shown")
         );
     }
 
