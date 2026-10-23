@@ -2,6 +2,8 @@
 
 *Build for Eons.*
 
+Website: [eonterm.com](https://eonterm.com)
+
 ![Glowing violet three-fold Eon loop](assets/eon.png)
 
 Eon is a native Wayland workspace for long-running work: coding agents, builds,
