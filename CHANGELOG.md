@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The working badge on tabs and in the agent sidebar is now a smooth open
+  arc that turns, in place of the small segmented ring that was hard to read.
+  On a software graphics adapter it shows the same arc, still.
+
 - `eon window attach ID` reopens a detached window after you install a newer
   Eon profile. It presents the window's running generation instead of only the
   new build's, and when the new `eon` cannot present it, it runs the `eon` of

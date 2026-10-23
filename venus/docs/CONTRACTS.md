@@ -1225,9 +1225,9 @@ re-proved when that platform or feature is next touched.
   - every tab whose rollup is needs input, error, finished or working shows a
     corner badge (◆, ✕, ✓, or a spinner), the active tab included. A stale
     tab's badge is dimmed;
-  - on a software (CPU) graphics adapter the working badge is a still segmented
-    ring that never repaints to animate; otherwise its spinner turns,
-    repainting at no more than 5 Hz under AP-PERF-001, and only the badge;
+  - on a software (CPU) graphics adapter the working badge is a still open arc
+    that never repaints to animate; otherwise the arc turns, repainting at no
+    more than 5 Hz under AP-PERF-001, and only the badge;
   - the badge changes neither the tab's width nor its label text;
   - with tab overflow, the scroll edge shows the most urgent hidden badge;
   - a tab's accessible name appends its state, for example

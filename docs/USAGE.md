@@ -219,8 +219,8 @@ coding agents report their status. Its card looks like a pane card, with the
 same outline, background and background opacity. Each tab gets a heading such
 as `3  site`, then one row per reporting terminal. A row shows:
 
-- the state: ◆ needs input, ✕ error, ✓ finished, a spinner while working (a
-  still ring without GPU rendering), or ○ idle;
+- the state: ◆ needs input, ✕ error, ✓ finished, a turning open arc while
+  working (a still arc without GPU rendering), or ○ idle;
 - the Claude or Codex icon;
 - a Claude Code session's name, such as `eon-9a` for a session started
   with `claude --name eon-9a`; otherwise the title the agent reports, and

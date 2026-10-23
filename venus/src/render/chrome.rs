@@ -88,8 +88,8 @@ pub(super) fn rasterize_quota_icon(
     })
 }
 
-/// The ring segments of a working badge's spinner; one phase per segment.
-const SPINNER_SEGMENTS: usize = 8;
+/// The phases of a working badge's arc, each turned 45° clockwise from the one before.
+const SPINNER_PHASES: usize = 8;
 
 /// A working badge's spinner within the static rectangle vertices: a tick rewrites only these
 /// bytes, which keep their length in every phase. The badge lies wholly inside its clip, so the
@@ -174,8 +174,8 @@ fn push_popup_marker(rectangles: &mut RectangleBatch, rect: SceneRect, color: Sc
 }
 
 /// Draws one attention badge's glyph inside its disc: ◆ needs input, ✕ error, ✓ finished, the
-/// spinner at `phase` for working, or every segment lit without one, and, in sidebar rows, ○ idle
-/// and · unavailable. Quads keep the glyphs independent of fonts.
+/// arc turned to `phase` for working, or at its first phase without one, and, in sidebar rows,
+/// ○ idle and · unavailable. Quads keep the glyphs independent of fonts.
 fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Option<usize>) {
     // The ring yields entirely on the smallest badges, so the glyph never leaves the badge.
     let ring = (badge.rect.width / 12.0).floor();
@@ -225,41 +225,11 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
             rectangles.push_stroke(at(0.4, 0.88), at(0.95, 0.15), stroke, green, alpha);
         }
         AttentionState::Working => {
-            // The lit segment at `phase` leads clockwise; the ones behind it fade. Without a phase
-            // every segment is lit.
-            let center = at(0.5, 0.5);
-            let outer = glyph.width / 2.0;
-            let inner = outer * 0.45;
-            let step = std::f32::consts::TAU / SPINNER_SEGMENTS as f32;
-            let point = |radius: f32, angle: f32| CursorPoint {
-                x: center.x + radius * angle.cos(),
-                y: center.y + radius * angle.sin(),
-            };
-            for segment in 0..SPINNER_SEGMENTS {
-                let start = segment as f32 * step - std::f32::consts::FRAC_PI_2 + step * 0.15;
-                let end = start + step * 0.7;
-                let behind = phase.map_or(0, |phase| {
-                    (phase + SPINNER_SEGMENTS - segment) % SPINNER_SEGMENTS
-                });
-                rectangles.push_quad(
-                    [
-                        point(outer, start),
-                        point(outer, end),
-                        point(inner, end),
-                        point(inner, start),
-                    ],
-                    SceneColor {
-                        r: 138,
-                        g: 180,
-                        b: 255,
-                    },
-                    alpha * (1.0 - behind as f32 * 0.11),
-                );
-            }
+            push_arc(rectangles, badge.rect, glyph, phase.unwrap_or(0), alpha)
         }
         AttentionState::Idle | AttentionState::Unavailable => {
-            // A thin ring for idle and a small round dot for unavailable, drawn as the spinner's
-            // segments joined.
+            // A thin ring for idle and a small round dot for unavailable, each drawn as 16 joined
+            // segments.
             let center = at(0.5, 0.5);
             let (outer, inner) = if badge.state == AttentionState::Idle {
                 let outer = glyph.width / 2.0;
@@ -267,12 +237,12 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
             } else {
                 (glyph.width * 0.15, 0.0)
             };
-            let step = std::f32::consts::TAU / (SPINNER_SEGMENTS * 2) as f32;
+            let step = std::f32::consts::TAU / 16.0;
             let point = |radius: f32, angle: f32| CursorPoint {
                 x: center.x + radius * angle.cos(),
                 y: center.y + radius * angle.sin(),
             };
-            for segment in 0..SPINNER_SEGMENTS * 2 {
+            for segment in 0..16 {
                 let start = segment as f32 * step;
                 let end = start + step;
                 rectangles.push_quad(
@@ -290,14 +260,66 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
     }
 }
 
+/// Draws a working badge's arc: a 270° band inside `glyph` that trails its head, which points up
+/// at phase 0 and turns clockwise. Every pixel the glyph touches inside `badge` is one 1x1 quad
+/// whose alpha is the arc's coverage of 8x8 samples, kept at zero outside it, so each phase writes
+/// the same vertices and only alpha turns. Pixels past `badge` stay undrawn, so its clip check
+/// covers them.
+fn push_arc(
+    rectangles: &mut RectangleBatch,
+    badge: SceneRect,
+    glyph: SceneRect,
+    phase: usize,
+    alpha: f32,
+) {
+    const SAMPLES: u16 = 8;
+    let blue = SceneColor {
+        r: 138,
+        g: 180,
+        b: 255,
+    };
+    let center_x = glyph.left + glyph.width / 2.0;
+    let center_y = glyph.top + glyph.height / 2.0;
+    let outer = glyph.width / 2.0;
+    let inner = (outer - (glyph.width * 0.2).max(1.6)).max(0.0);
+    let (sin, cos) = (phase as f32 * std::f32::consts::TAU / SPINNER_PHASES as f32
+        - std::f32::consts::FRAC_PI_2)
+        .sin_cos();
+    let left = glyph.left.floor().max(badge.left.ceil());
+    let right = glyph.right().ceil().min(badge.right().floor());
+    let top = glyph.top.floor().max(badge.top.ceil());
+    let bottom = glyph.bottom().ceil().min(badge.bottom().floor());
+    let mut y = top;
+    while y < bottom {
+        let mut x = left;
+        while x < right {
+            let mut covered = 0u16;
+            for sample in 0..SAMPLES * SAMPLES {
+                let dx = x + (f32::from(sample % SAMPLES) + 0.5) / f32::from(SAMPLES) - center_x;
+                let dy = y + (f32::from(sample / SAMPLES) + 0.5) / f32::from(SAMPLES) - center_y;
+                let radius = dx * dx + dy * dy;
+                // The quarter gap lies clockwise of the head, between it and 90° past it.
+                let gap = cos * dy - sin * dx > 0.0 && cos * dx + sin * dy > 0.0;
+                if radius <= outer * outer && radius >= inner * inner && !gap {
+                    covered += 1;
+                }
+            }
+            let coverage = f32::from(covered) / f32::from(SAMPLES * SAMPLES);
+            rectangles.push(x, y, 1.0, 1.0, blue, alpha * coverage);
+            x += 1.0;
+        }
+        y += 1.0;
+    }
+}
+
 impl Renderer {
-    /// Turns every drawn spinner one segment by rewriting only its own uploaded vertices, so the
+    /// Turns every drawn arc one phase by rewriting only its own uploaded vertices, so the
     /// scene, text and terminal layers stay cached.
     pub fn turn_spinners(&mut self) {
         let Some(phase) = &mut self.spinners.phase else {
             return;
         };
-        *phase = (*phase + 1) % SPINNER_SEGMENTS;
+        *phase = (*phase + 1) % SPINNER_PHASES;
         for slot in &self.spinners.slots {
             let mut batch = RectangleBatch::new(self.config.width, self.config.height);
             push_badge_glyph(&mut batch, slot.badge, self.spinners.phase);
@@ -1357,7 +1379,7 @@ mod tests {
             };
             assert!(badge_inside(badge, viewport));
             let first = glyph(0, None);
-            for phase in 0..SPINNER_SEGMENTS {
+            for phase in 0..SPINNER_PHASES {
                 let turned = glyph(phase, None);
                 assert_eq!(turned, glyph(phase, viewport));
                 assert_eq!(turned.len(), first.len());
@@ -1365,7 +1387,100 @@ mod tests {
                 for (vertex, first) in turned.chunks_exact(6).zip(first.chunks_exact(6)) {
                     assert_eq!(vertex[..5], first[..5]);
                 }
-                assert_eq!(phase == 0, turned == first);
+                // A one-pixel arc covers its pixel equally at every quarter turn.
+                if size > 1.0 {
+                    assert_eq!(phase == 0, turned == first);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn working_badges_draw_an_antialiased_open_arc() {
+        // The badges of the default typography at scales 1 and 2, as rows of coverage per pixel.
+        let coverage = |size: f32, phase| {
+            let badge = TabBadge {
+                state: AttentionState::Working,
+                dimmed: false,
+                rect: SceneRect {
+                    left: 4.0,
+                    top: 4.0,
+                    width: size,
+                    height: size,
+                },
+            };
+            let mut rectangles = RectangleBatch::new(800, 600);
+            push_badge_glyph(&mut rectangles, badge, phase);
+            // Each pixel is one quad of six vertices of x, y, r, g, b, alpha.
+            let alphas = rectangles
+                .bytes
+                .chunks_exact(24 * 6)
+                .map(|quad| f32::from_ne_bytes(quad[20..24].try_into().unwrap()))
+                .collect::<Vec<_>>();
+            let side = (alphas.len() as f32).sqrt() as usize;
+            assert_eq!(side * side, alphas.len());
+            alphas.chunks(side).map(<[f32]>::to_vec).collect::<Vec<_>>()
+        };
+        let art = |rows: Vec<Vec<f32>>| {
+            rows.iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|alpha| [' ', '.', '+', '*', '#'][(alpha * 4.0).round() as usize])
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+        };
+        // Phase 0, also the still form, opens a quarter between 12 and 3 o'clock.
+        assert_eq!(
+            art(coverage(12.0, None)),
+            [
+                "  .*#     ",
+                " +###     ",
+                ".##+      ",
+                "*#+       ",
+                "##        ",
+                "##      ##",
+                "*#+    +#*",
+                ".##+  +##.",
+                " +######+ ",
+                "  .*##*.  ",
+            ]
+        );
+        assert_eq!(
+            art(coverage(24.0, None)),
+            [
+                "      .*##          ",
+                "    .#####          ",
+                "   +######          ",
+                "  +#######          ",
+                " .#####+.           ",
+                " #####.             ",
+                ".####.              ",
+                "*###+               ",
+                "####.               ",
+                "####                ",
+                "####            ####",
+                "####.          .####",
+                "*###+          +###*",
+                ".####.        .####.",
+                " #####.      .##### ",
+                " .#####+.  .+#####. ",
+                "  +##############+  ",
+                "   +############+   ",
+                "    .##########.    ",
+                "      .*####*.      ",
+            ]
+        );
+        // Every second phase turns the arc a quarter clockwise.
+        for size in [12.0, 24.0] {
+            assert_eq!(coverage(size, None), coverage(size, Some(0)));
+            for phase in (0..SPINNER_PHASES).step_by(2) {
+                let rows = coverage(size, Some(phase));
+                let side = rows.len();
+                let turned = (0..side)
+                    .map(|y| (0..side).map(|x| rows[side - 1 - x][y]).collect())
+                    .collect::<Vec<Vec<f32>>>();
+                assert_eq!(turned, coverage(size, Some((phase + 2) % SPINNER_PHASES)));
             }
         }
     }
@@ -1397,9 +1512,7 @@ mod tests {
         // Only a turning badge is recorded, so a software adapter's frame reports no spinner and
         // `update_spinner` schedules no tick.
         assert_eq!((turning_slots, still_slots), (1, 0));
-        assert_eq!(turning.len(), still.len());
-        assert!(turning.iter().any(|alpha| *alpha < 1.0));
-        assert!(still.iter().all(|alpha| *alpha == 1.0));
+        assert_eq!(turning, still);
     }
 
     #[test]

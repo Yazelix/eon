@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C21: the working badge, in Eon Bar tabs and VEN-C30 sidebar rows, is
+  an antialiased open arc of 270° that turns clockwise in 45° steps. As
+  before, it repaints at most 5 times a second, and only the badge. It
+  replaces the segmented ring. On a software (CPU) adapter it is the same
+  arc, drawn without turning (`eon-arc-spinner-t6li`).
+
 - VEN-C30: Venus shows Eon's `no-attention` rejection of Alt+G or Alt+Shift+G
   as the bare VEN-C8 notice "No agent needs attention", without taking focus.
   Unlike other rejected-action notices, it also clears when a terminal's
