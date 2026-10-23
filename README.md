@@ -6,8 +6,9 @@ Website: [eonterm.com](https://eonterm.com)
 
 ![Glowing violet three-fold Eon loop](assets/eon.png)
 
-Eon is a native Wayland workspace for long-running work: coding agents, builds,
-servers and editors. Its **terminals keep running after you close the window**.
+Eon is the terminal for humans and agents to work together: a native Wayland
+workspace for long-running work such as coding agents, builds, servers and
+editors. Its **terminals keep running after you close the window**.
 Run `eon attach` and every tab, pane and terminal is where you left it.
 
 ## Demo
