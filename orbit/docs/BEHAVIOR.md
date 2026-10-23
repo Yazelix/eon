@@ -403,6 +403,16 @@ reads its text without it in the client's frame, and
 `vertical_preview_reads_history_nearest_first` reads the same in a preview
 row. Without the fallback, the late-observer step ended the terminal.
 
+A frame budgets every cell's text before any hyperlink, then keeps links in
+reading order while they fit its 4 MiB budget; from the first that does not,
+cells keep their text without a link, and the terminal keeps running.
+Each linked cell carries its URI, so one long link over much of the screen
+is enough to pass the budget.
+`hyperlinks_over_the_frame_budget_keep_the_frame` reads a 100x24 frame with
+one 2 KB link over 2399 cells and gets every cell's text and a reading-order
+prefix of the links. Without the budget order, the frame failed and the
+terminal ended.
+
 While detached and awaiting a connection, Bend waits on the listener, the PTY
 and the synchronized-output timer. It keeps reading PTY output, sends a
 metadata observer each change, and, when the direct child exits, reaps it before

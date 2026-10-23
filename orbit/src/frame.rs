@@ -91,6 +91,7 @@ impl FrameExtractor {
         let mut row_iter = self.rows.update(&snapshot).map_err(|_| errno(libc::EIO))?;
         let mut text = String::new();
         let mut frame_rows = Vec::with_capacity(usize::from(rows));
+        let mut link_bytes = 0;
         for y in 0..rows {
             size.add_row().map_err(|_| errno(libc::EOVERFLOW))?;
             let row = row_iter.next().ok_or_else(|| errno(libc::EPROTO))?;
@@ -111,13 +112,19 @@ impl FrameExtractor {
                 text.clear();
                 cell.graphemes_utf8(&mut text)
                     .map_err(|_| errno(libc::EOVERFLOW))?;
-                let hyperlink = if raw_cell.has_hyperlink().map_err(|_| errno(libc::EIO))? {
+                size.add_cell(&text, "")
+                    .map_err(|_| errno(libc::EOVERFLOW))?;
+                // The cell reserved an empty link, so a link adds only its
+                // bytes. Later text only shrinks the room for links, so once
+                // the links read pass the budget, none after them can fit.
+                let hyperlink = if size.bytes() + link_bytes <= MAX_FRAME_BYTES
+                    && raw_cell.has_hyperlink().map_err(|_| errno(libc::EIO))?
+                {
                     hyperlink(terminal, x, y)?
                 } else {
                     String::new()
                 };
-                size.add_cell(&text, &hyperlink)
-                    .map_err(|_| errno(libc::EOVERFLOW))?;
+                link_bytes += hyperlink.len();
                 frame_cells.push(ProtocolCell {
                     width: cell_width(raw_cell.wide().map_err(|_| errno(libc::EIO))?),
                     style: cell_style(
@@ -145,6 +152,16 @@ impl FrameExtractor {
         }
         if row_iter.next().is_some() {
             return Err(errno(libc::EPROTO));
+        }
+        // Every cell's text is budgeted; links follow in reading order, and
+        // from the first that does not fit, each cell keeps its text without
+        // a link. A program's many links never end its terminal (ORB-C6).
+        link_bytes = 0;
+        for cell in frame_rows.iter_mut().flat_map(|row| &mut row.cells) {
+            link_bytes += cell.hyperlink.len();
+            if size.bytes() + link_bytes > MAX_FRAME_BYTES {
+                cell.hyperlink.clear();
+            }
         }
         Ok(Frame {
             revision,
@@ -427,6 +444,33 @@ mod tests {
             session::decode_server_message(&encoded).unwrap(),
             ServerMessage::Frame(frame) if frame.revision == 1
         ));
+    }
+
+    /// A frame whose links exceed the budget keeps every cell's text, with
+    /// links kept in reading order until the first that does not fit
+    /// (ORB-C6). Each linked cell carries its URI, so one 2 KB link over
+    /// most of a 100x24 screen is enough.
+    #[test]
+    fn hyperlinks_over_the_frame_budget_keep_the_frame() {
+        let mut terminal = Terminal::new(100, 24).unwrap();
+        let uri = format!("https://example.test/{}", "x".repeat(2000));
+        terminal
+            .vt_write(format!("\x1b]8;;{uri}\x1b\\{}\x1b]8;;\x1b\\", "L".repeat(2399)).as_bytes());
+        let frame = FrameExtractor::new().unwrap().frame(1, &terminal).unwrap();
+        let cells: Vec<_> = frame
+            .rows
+            .iter()
+            .flat_map(|row| &row.cells)
+            .take(2399)
+            .collect();
+        assert!(cells.iter().all(|cell| cell.text == "L"));
+        let kept = cells
+            .iter()
+            .take_while(|cell| cell.hyperlink == uri)
+            .count();
+        assert!(kept > 0 && kept < cells.len());
+        assert!(cells[kept..].iter().all(|cell| cell.hyperlink.is_empty()));
+        assert!(frame.encode().unwrap().len() + uri.len() > MAX_FRAME_BYTES);
     }
 
     /// Rows read directly from libghostty's screen equal the canonical frame's

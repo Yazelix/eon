@@ -89,6 +89,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   client as no link, the cell keeps its text in frames and previews, and the
   terminal keeps running. Before, such a link ended the terminal while a
   client was attached (`eon-osc8-invalid-utf8-ymts`).
+- ORB-C6 adds a failure: when a frame's hyperlinks would take it past the
+  frame budget, every cell keeps its text, links are kept in reading order
+  while they fit, and the rest reach the client as no link. Before, such a
+  frame ended the terminal while a client was attached
+  (`eon-frame-budget-links-m62b`).
 
 ## Before this repository
 

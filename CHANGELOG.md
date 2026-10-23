@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A program that prints long links across much of the screen no longer ends
+  its terminal while a window shows it. When one screen's links are too large
+  to send together, the text all shows and the links past that limit show as
+  plain text.
+
 - `eon` commands run inside a window, including `pane create`, `edit` and
   agent scripts, keep working after you install a newer Eon profile. Each
   terminal's PATH now puts its own window's build first as `eon`. An `eon`
