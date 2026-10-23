@@ -2292,3 +2292,131 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     the installed observation recorded in `eon-igae.14.2`: a reordered list
     without `cpu` on window open, a leftover `show_version` refused on reattach
     with live terminals kept, and the corrected list on the next reattach.
+
+## EON-C33 — Several workspaces in one window
+
+- **Status:** Planned. Approved by Lucca on 2026-10-22
+  (`eon-workspace-switching-shn4.1`, shape D of `eon-n77e`). The children of
+  `eon-workspace-switching-shn4` implement it. Each child folds its part into
+  the contract it amends: EON-C8 the final-close and emptying rules, EON-C10
+  the workspace requests, targeting and exit statuses, EON-C11 attach, EON-C23
+  the workspaces a window holds, EON-C28 the `eon workspaces --json` fields,
+  EON-C31 focus, the queue and the rollup, VEN-C8 the shown workspace, and
+  VEN-C21 the label.
+- **Consumer:** One full-Eon user, or an agent working for them, who keeps
+  several separate sets of work in one Eon window.
+- **Trigger:** Alt+Shift+S or Commands > Switch workspace; Commands > New
+  workspace, Rename workspace or Close this workspace; `eon workspaces` or
+  `eon workspace new|switch|rename|close`; the final close or last exit in one
+  workspace; an attention jump to a terminal in a hidden workspace; detach,
+  attach or recovery of the window.
+- **Result:**
+  - **Model.** A window holds an ordered list of 1 to 32 workspaces and shows
+    exactly one. Each workspace has its own tabs, panes, popups, focus and
+    terminals, as EON-C8 describes. Each workspace has a stable `wN` identity,
+    which is unique for the life of the window's supervisor and never reused
+    in it, and an optional name of 1 to 64 characters with no control
+    characters. Names are display text, not identity, and need not be unique.
+    Tab, pane and popup identities are unique across the window's workspaces,
+    so a tab or pane action never reaches another workspace; only the Alt+G
+    jump below crosses workspaces. Where a name is shown, an unnamed workspace
+    shows its `wN`.
+  - **Showing.** Venus renders only the shown workspace's tabs and terminals.
+    Terminals in hidden workspaces keep running; only Venus's view of them is
+    detached, as for a background tab. Switching never starts, stops or
+    restarts a terminal. A snapshot change confined to hidden workspaces, such
+    as their terminals, attention or tab edits, keeps the shown workspace's
+    rejected-action notice and disturbs none of its navigation, scroll or
+    attachments. A new window holds one workspace, `w1`, and a window with one
+    unnamed workspace looks and behaves as before, without a label.
+  - **Listing.** `eon workspaces [--json]` lists this window's workspaces in
+    order. Each entry gives `id`, `name` (null when unnamed), `shown`, `tabs`
+    (the tab count) and `attention`. `attention` uses exactly the JSON spelling
+    of EON-C31 states that `eon workspace --json` gains with
+    `eon-agent-sidebar-yx8.7` (kebab-case values such as `needs-input`, null
+    when no terminal reports one) and carries no title or message. This window
+    means the caller's window
+    inside Eon, and otherwise the window `eon workspace` targets.
+    `eon workspace [--json]` keeps its meaning for the caller's workspace:
+    inside an Eon terminal the terminal's workspace, outside Eon the shown
+    one.
+  - **New.** `eon workspace new [--name NAME] [--no-focus]` and Commands >
+    New workspace add a workspace after the shown one. It opens with one
+    pending tab and a fresh directory picker, as a new window does (EON-C23),
+    and becomes the shown workspace unless `--no-focus` is given, as for
+    `pane create`. The reply names its `wN`.
+  - **Switch.** `eon workspace switch WS` shows WS. Switching to the shown
+    workspace returns the unchanged snapshot (EON-C10). Each workspace keeps
+    its active tab, selected pane and popups across switches; zoom ends, as on
+    any tab change (EON-C8).
+  - **Rename.** `eon workspace rename [WS] NAME` and Commands > Rename
+    workspace set the name; an empty NAME clears it. Without WS it renames the
+    caller's workspace.
+  - **Close.** `eon workspace close WS` and Commands > Close this workspace
+    list the workspace's terminals and ask for confirmation, as `eon stop`
+    does; `--json` asks nothing. Closing then stops every terminal of that
+    workspace, as closing each of its tabs does (EON-C8), and removes it.
+    Closing the last workspace is the window's final close (EON-C8).
+  - **Emptying.** When a workspace's final tab closes or its last terminal ends
+    while other workspaces remain, it is removed. If it was shown, the most
+    recently shown remaining workspace is shown; otherwise the shown workspace
+    stays. Only the last workspace's final close or last
+    exit ends the window. While other workspaces remain, the final-close
+    prompt reads "Close the last tab? This closes workspace NAME and stops N
+    terminals."; with one workspace it keeps "This quits the window".
+  - **Targeting.** Run from an Eon terminal, every workspace-scoped command
+    acts in that terminal's workspace, found through `EON_TERMINAL`, and
+    EON-C10's per-tab rules apply inside it. Run outside Eon, commands act on
+    the shown workspace. WS resolves an exact `wN` first, then an exact name.
+  - **Picker.** Alt+Shift+S and Commands > Switch workspace open an
+    Eon-owned fzf popup over the shown tab (VEN-C18). Rows show the name, or
+    `wN` when unnamed, the tab count, and a marker when the workspace needs
+    input. Rows are ordered most recently shown first, with the shown
+    workspace last and marked, so Alt+Shift+S then Enter returns to the
+    previous workspace; the Alt+G jump, not the picker, leads to agents that
+    need input. Enter shows the highlighted workspace, including on an empty
+    query. Enter on a non-empty query that matches no row creates a workspace
+    with that name and shows it. Esc or Ctrl+C runs nothing.
+  - **Eon Bar.** While the window holds two or more workspaces, or its one
+    workspace has a name, the Eon Bar shows a leading label before the tabs:
+    the shown workspace's name or `wN`, followed by `N/M` when there are
+    several. Its accessible name reads "Workspace NAME, N of M", clicking it
+    opens the picker, and it shows a badge while a hidden workspace needs
+    input.
+  - **Attention.** Each workspace carries the most urgent normalized EON-C31
+    state of its terminals. The Alt+G queue (EON-C31) spans every workspace of
+    the window, and a jump to a terminal in a hidden workspace shows that
+    workspace first. A raise becomes seen only while its terminal's workspace
+    is shown, under EON-C31's rules. The sidebar lists the shown workspace's
+    terminals only.
+  - **Detach, attach and recovery.** Closing the window, or Alt+Shift+D,
+    detaches every workspace together, and attach shows the last shown
+    workspace. `eon stop` and Commands > Quit this window stop every workspace
+    of the window. Same-boot recovery projects every recovered run into one
+    workspace `w1`, as EON-C8 projects them into `t1`; names and membership
+    are not recovered.
+- **Important failures:** These leave every workspace unchanged and return
+  EON-C10's typed failure: an unknown or stale `wN` or a name that matches
+  nothing (exit 3); a name that matches more than one workspace
+  (`ambiguous-workspace`, exit 1, naming the matching IDs); a 33rd workspace
+  (`workspace-limit`, exit 1); a malformed name (exit 2); and a tab, pane or
+  popup identity from another workspace (exit 3). A repeated request ID never
+  repeats a switch, creation or close. A failed stop while closing a
+  workspace keeps the workspace and its remaining terminals, as a partial tab
+  close does (EON-C8). Switching never moves desktop focus.
+- **Owner:** Eon Runtime owns the workspace list, identities, the shown
+  workspace, names, removal and the per-workspace attention rollup. Eon owns
+  the picker, the Commands entries and the CLI projection. Venus renders the
+  shown workspace and the bar label (VEN-C8, VEN-C21). Orbit owns every
+  terminal.
+- **Consumes:** EON-C8, EON-C10, EON-C11, EON-C15, EON-C23, EON-C31, the next
+  EONW version, VEN-C8, VEN-C18 and VEN-C21.
+- **Boundary:** No showing another window's or generation's workspace in this
+  window (Venus never changes supervisor), moving a workspace, tab or pane
+  between workspaces or windows, a window with zero workspaces, names or
+  membership kept past the supervisor's end or across a reboot
+  (`eon-reboot-restore-im8y`), unique names or names as identity,
+  next/previous/last-workspace shortcut beyond the picker's order,
+  per-workspace detach or configuration, or a second workspace in eonbase,
+  which keeps one workspace, no picker and no workspace commands.
+- **Proof:** None yet; `eon-workspace-switching-shn4.9` is the batch proof.

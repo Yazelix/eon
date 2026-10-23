@@ -217,6 +217,35 @@ instead of duplicating product pins. Implementing Beads record exact inspected r
   client-supplied commands, native directory ranking, simultaneous terminal composition, and
   a generic popup protocol.
 
+### How should one Eon window let a user find and switch between several workspaces?
+
+- **Owner:** Eon Runtime's workspace set (EON-C33); Eon owns the picker
+- **Read first:** [tmux 3.8 at
+  `7f2a35a`](https://github.com/tmux/tmux/tree/7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53)
+  (`cmd-switch-client.c`, `window-switch.c`), the [Zellij v0.45.1
+  session-manager at
+  `efd8fd5`](https://github.com/zellij-org/zellij/tree/efd8fd5a89a20c07a111d248ad7fce53848d2c18/default-plugins/session-manager),
+  and Rex's public docs snapshot
+  [`llms-full.txt`](https://www.superlogical.com/rex/docs/llms-full.txt) (sha256
+  `fc17b069a3c46efd37a4c9bdc934fbb7928f43c207a00f14f8378d5018e8ffe6`) for
+  session targeting
+- **Read additionally only if:** Read [kitty v0.49.2 sessions at
+  `b2cb871`](https://github.com/kovidgoyal/kitty/blob/b2cb871254fbdac19a085188813c8dfb258b95cd/kitty/session.py)
+  and [WezTerm workspace reconciliation at
+  `e2a98e1`](https://github.com/wezterm/wezterm/blob/e2a98e1b8af156988ad0ac778658ac27b60a55fb/wezterm-gui/src/frontend.rs)
+  only when behaviour across OS windows is in scope; read [herdr at
+  `143bf5f`](https://github.com/herdrdev/herdr/tree/143bf5fd4781d164260c63fe28e7dc08054ad32f)
+  and [TUIOS sessions at
+  `0047c40`](https://github.com/Gaurav-Gosain/tuios/blob/0047c409185f37e568933a566e0253b2a6e96a96/docs/SESSIONS.md)
+  only when persistence is in scope. `eon-n77e` records the full comparison.
+- **Preserve / reject:** Preserve one picker listing every workspace by
+  recency with the shown one marked, creation from an unmatched query, a
+  stable identity separate from the name with ambiguous names acting on
+  nothing, and agent creation that leaves the user's view alone. Reject Venus
+  re-targeting another supervisor, WezTerm-style OS-window reconciliation,
+  names as identity (Zellij renames sockets, kitty's basenames collide), and
+  restored structure presented as survival.
+
 ### How should shared popups extend the workspace wire contract without breaking the installed client?
 
 - **Owner:** Eon Runtime's canonical workspace protocol; Venus consumes its exact crate.

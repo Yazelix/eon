@@ -41,6 +41,10 @@ panes around a launch directory and arranges them in up to four side-by-side
 a persistent **terminal**.
 Orbit owns that terminal's process, PTY and terminal state. Closing its window
 detaches the view; explicitly stopping it ends the terminal.
+Under planned [EON-C33](CONTRACTS.md#eon-c33--several-workspaces-in-one-window),
+an Eon **window** holds one or more workspaces and shows one at a time;
+switching the shown workspace keeps every terminal running. A workspace may
+have a name, but its `wN` identity identifies it.
 
 Product text uses these terms without requiring subsystem names. Technical
 `session-N` identities and JSON `session` / `sessions` fields refer to terminals.
