@@ -22,9 +22,14 @@ installation, and proven contract changes.
   or hides it without taking focus from the terminal, and the shortcut viewer
   and hints list the key. The sidebar steps aside while the window leaves
   fewer than 80 cells for the terminals, and returns when it is wide enough.
-  For now it shows only its title and, while no agent reports its status, a
-  short explanation; the agent rows come next. `[sidebar] enabled = false` removes
-  it and frees Alt+Shift+H.
+  It lists, in tab order, each tab whose agents report their status, with one
+  row per agent: its state, the Claude or Codex icon or the app's name, its
+  title, how long ago it changed, and the pane or popup it runs in, plus the
+  question of an agent that needs input. Click a row, or reach it with F6 and
+  the arrow keys and press Enter, to jump to that agent. With no reporting
+  agent it explains what will show there. Its card has the pane cards' outline,
+  background and background opacity, so desktop blur shows through it.
+  `[sidebar] enabled = false` removes it and frees Alt+Shift+H.
 
 - The first time an Eon window detaches, by closing it or with Alt+Shift+D,
   a desktop notification says Eon is still running in the background and how

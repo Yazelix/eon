@@ -1235,6 +1235,7 @@ fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
             |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
             None,
             true,
+            yazelix_venus::SidebarView::default(),
         )
     };
     let zoom = zoomed(&snapshot);

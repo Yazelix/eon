@@ -4,8 +4,8 @@ use crate::{
     render::CellMetrics,
 };
 use eon_workspace_protocol::v18::{
-    ALT, AttentionState, ClaudeQuotaState, CodexQuotaState, Pane, PopupEntry, QuotaWindow, SHIFT,
-    Sidebar, Snapshot, Tab,
+    ALT, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState, Pane, PopupEntry,
+    QuotaWindow, SHIFT, Sidebar, Snapshot, Tab,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, Rgb, Row, Screen, StyleColor, Underline,
@@ -71,12 +71,13 @@ pub struct WorkspaceTab {
     pub(crate) badge: Option<TabBadge>,
 }
 
-/// An EON-C31 attention badge on a tab pill's corner, or on a scroll edge for hidden tabs.
+/// An EON-C31 attention badge on a tab pill's corner, on a scroll edge for hidden tabs, or as
+/// a sidebar row's state glyph.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct TabBadge {
-    /// Needs input, error, finished or working.
+    /// Needs input, error, finished or working; sidebar rows also show idle and unavailable.
     pub(crate) state: AttentionState,
-    /// Every terminal in the tab's rollup state is stale.
+    /// Every terminal in the tab's rollup state is stale, or the row's record is.
     pub(crate) dimmed: bool,
     pub(crate) rect: SceneRect,
 }
@@ -119,6 +120,83 @@ impl TabBadge {
             height: size,
         })
     }
+}
+
+/// What the agent sidebar's rows need besides the snapshot (VEN-C30).
+#[derive(Default)]
+pub struct SidebarView<'a> {
+    /// The wall-clock Unix milliseconds that row ages count to.
+    pub now: u64,
+    /// The keyboard-focused row's target while the sidebar holds focus.
+    pub focused: Option<&'a str>,
+}
+
+/// A tab's heading in the agent sidebar, such as `3  site`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SidebarHeading {
+    pub(crate) tab: String,
+    pub(crate) label: String,
+    pub(crate) rect: SceneRect,
+}
+
+/// One terminal with attention in the agent sidebar (VEN-C30).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SidebarRow {
+    pub tab: String,
+    /// The exact pane id or popup instance that `FocusAttention` names.
+    pub target: String,
+    pub(crate) rect: SceneRect,
+    /// The state glyph, dimmed while the record is stale.
+    pub(crate) glyph: TabBadge,
+    /// The Claude splat or Codex mark that stands for the reporting app.
+    pub(crate) icon: Option<(QuotaProvider, SceneRect)>,
+    /// Where the row's text lines start, after the glyph and any icon.
+    pub(crate) text_left: f32,
+    /// The app's name when no icon stands for it, then the title or the tab's directory leaf.
+    pub(crate) title: String,
+    /// The age, the source terminal, "+N" for other records and "status stale".
+    pub(crate) detail: String,
+    /// A needs-input row's message line.
+    pub(crate) message: Option<String>,
+    pub(crate) focused: bool,
+    /// Milliseconds since the record changed; unavailable rows have no age.
+    age: Option<u64>,
+    pub(crate) accessible_label: String,
+}
+
+const MINUTE_MS: u64 = 60_000;
+const HOUR_MS: u64 = 60 * MINUTE_MS;
+const DAY_MS: u64 = 24 * HOUR_MS;
+
+/// The unit an age `elapsed` long counts in: its length, shown suffix and word.
+fn age_unit(elapsed: u64) -> (u64, &'static str, &'static str) {
+    if elapsed < HOUR_MS {
+        (MINUTE_MS, "m", "minute")
+    } else if elapsed < DAY_MS {
+        (HOUR_MS, "h", "hour")
+    } else {
+        (DAY_MS, "d", "day")
+    }
+}
+
+/// A row's age as shown, such as "4m", and as spoken, such as "4 minutes ago".
+fn age_labels(elapsed: u64) -> (String, String) {
+    if elapsed < MINUTE_MS {
+        return ("now".into(), "just now".into());
+    }
+    let (step, short, unit) = age_unit(elapsed);
+    let count = elapsed / step;
+    let plural = if count == 1 { "" } else { "s" };
+    (
+        format!("{count}{short}"),
+        format!("{count} {unit}{plural} ago"),
+    )
+}
+
+/// Milliseconds until an age `elapsed` long next changes its label.
+fn age_wait(elapsed: u64) -> u64 {
+    let (step, _, _) = age_unit(elapsed);
+    step - elapsed % step
 }
 
 impl WorkspaceTab {
@@ -257,24 +335,32 @@ fn bounded_metadata_field(value: &str) -> String {
     format!("{prefix}{tail}")
 }
 
-fn tab_labels(index: usize, tab_count: usize, directory: &[u8]) -> (String, String) {
+fn clean_label(text: &str) -> String {
+    text.chars()
+        .map(|c| if c.is_control() { '\u{fffd}' } else { c })
+        .collect()
+}
+
+/// The last component of a tab's launch directory, or `/`.
+fn directory_leaf(directory: &[u8]) -> String {
     let path = Path::new(OsStr::from_bytes(directory));
-    let leaf = if path == Path::new("/") {
+    if path == Path::new("/") {
         "/".into()
     } else {
-        path.file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy()
-    };
+        clean_label(
+            &path
+                .file_name()
+                .unwrap_or(path.as_os_str())
+                .to_string_lossy(),
+        )
+    }
+}
+
+fn tab_labels(index: usize, tab_count: usize, directory: &[u8]) -> (String, String) {
     let position = index + 1;
-    let clean = |text: &str| {
-        text.chars()
-            .map(|c| if c.is_control() { '\u{fffd}' } else { c })
-            .collect::<String>()
-    };
-    let full_path = clean(&path.as_os_str().to_string_lossy());
+    let full_path = clean_label(&OsStr::from_bytes(directory).to_string_lossy());
     (
-        format!("{position}  {}", clean(&leaf)),
+        format!("{position}  {}", directory_leaf(directory)),
         format!("Tab {position} of {tab_count}  {full_path}"),
     )
 }
@@ -451,6 +537,8 @@ pub enum WorkspaceHit<'a> {
     Clock,
     Control(WorkspaceHeaderControl),
     Drag,
+    /// An agent sidebar row, named by its target.
+    SidebarRow(&'a str),
     Pane(&'a str),
     /// Another column's terminal area, named by that column's expanded pane.
     ColumnTerminal(&'a str),
@@ -465,6 +553,8 @@ pub enum WorkspaceFocus {
     Tabs,
     Header(WorkspaceHeaderControl),
     Panes,
+    /// The agent sidebar's rows; the application keeps which one.
+    Sidebar,
 }
 
 /// One read-only shortcut shown by the native viewer.
@@ -907,8 +997,11 @@ pub struct WorkspaceScene {
     pub(crate) chrome: SceneRect,
     /// The agent sidebar's card, while it is visible.
     sidebar: Option<SceneRect>,
-    /// No tab has attention, so a visible sidebar shows its empty state.
-    pub(crate) sidebar_empty: bool,
+    /// The visible sidebar's tab headings and rows, and the list area that clips them; with no
+    /// rows it shows its empty state.
+    pub(crate) sidebar_headings: Vec<SidebarHeading>,
+    sidebar_rows: Vec<SidebarRow>,
+    pub(crate) sidebar_list: SceneRect,
     card_radius: f32,
     tab_scroll: f32,
     pane_scroll: f32,
@@ -999,6 +1092,12 @@ pub(crate) const SIDEBAR_TITLE: &str = "Agents";
 pub(crate) const SIDEBAR_EMPTY: &str =
     "No agent needs attention. Agents that report their status show here while they work.";
 
+/// The clip box of one line of sidebar text: a quarter em taller than the font size, as the
+/// sans-serif face's ascent plus descent needs, so descenders such as g's are never cut.
+pub(crate) fn sidebar_text_height(metrics: CellMetrics) -> f32 {
+    metrics.height.max(metrics.font_size * 1.25)
+}
+
 /// The agent sidebar's card, one card gap from the window's left edge and as tall as `cards`,
 /// while `sidebar` is open and the content area to its right keeps enough cells.
 fn sidebar_rect(
@@ -1014,6 +1113,208 @@ fn sidebar_rect(
     };
     (sidebar == Sidebar::Open && width - rect.right() >= SIDEBAR_MIN_CONTENT_CELLS * metrics.width)
         .then_some(rect)
+}
+
+/// The agent sidebar's tab headings and rows inside its `card`, in tab and terminal order, and
+/// the list area that clips them. Only tabs with an attention rollup are listed, and only their
+/// terminals with attention; the keyboard-focused row scrolls into view.
+fn sidebar_contents(
+    snapshot: &Snapshot,
+    card: SceneRect,
+    metrics: CellMetrics,
+    view: SidebarView<'_>,
+) -> (Vec<SidebarHeading>, Vec<SidebarRow>, SceneRect) {
+    let line = metrics.height;
+    let padding = metrics.padding;
+    // The list starts where the empty state does, below the title.
+    let list_top = card.top + padding + line * 1.5;
+    let list = SceneRect {
+        left: card.left + padding / 2.0,
+        top: list_top,
+        width: (card.width - padding).max(0.0),
+        height: (card.bottom() - padding - list_top).max(0.0),
+    };
+    let content_left = card.left + padding;
+    let content_width = (card.right() - padding - content_left).max(0.0);
+    let row_gap = (padding / 2.0).round();
+    let glyph_size = (metrics.font_size * 0.75).round().max(1.0);
+    let icon_size = metrics.font_size.round().max(1.0);
+    let spacing = (metrics.width / 2.0).round();
+    let mut headings = Vec::new();
+    let mut rows = Vec::new();
+    let mut top = list.top;
+    for (index, tab) in snapshot.tabs.iter().enumerate() {
+        if tab.attention_rollup.is_none() {
+            continue;
+        }
+        if !headings.is_empty() {
+            top += line / 2.0;
+        }
+        headings.push(SidebarHeading {
+            tab: tab.id.clone(),
+            label: tab_labels(index, snapshot.tabs.len(), &tab.directory).0,
+            rect: SceneRect {
+                left: content_left,
+                top,
+                width: content_width,
+                height: line,
+            },
+        });
+        top += line;
+        let leaf = directory_leaf(&tab.directory);
+        let terminals = tab
+            .panes()
+            .map(|pane| (&pane.id, &pane.attention, pane.id.as_str()))
+            .chain(tab.popups.iter().map(|popup| {
+                let label = snapshot
+                    .entries
+                    .iter()
+                    .find(|entry| entry.id == popup.entry)
+                    .expect("EONW validates popup entries")
+                    .label
+                    .as_str();
+                (&popup.id, &popup.attention, label)
+            }));
+        for (target, attention, source) in terminals {
+            let Some(attention) = attention else {
+                continue;
+            };
+            let record = attention.record.as_ref();
+            let (icon, app) = match record.map(|record| record.app.as_str()) {
+                Some("claude-code") => (Some(QuotaProvider::Claude), "Claude"),
+                Some("codex") => (Some(QuotaProvider::Codex), "Codex"),
+                Some(app) => (None, app),
+                None => (None, ""),
+            };
+            let reported_title = record
+                .map(|record| record.title.as_str())
+                .filter(|title| !title.is_empty());
+            let shown_title = match (record, reported_title) {
+                (None, _) => "status unavailable",
+                (Some(_), Some(title)) => title,
+                (Some(_), None) => leaf.as_str(),
+            };
+            let title = if icon.is_none() && !app.is_empty() {
+                format!("{app} · {shown_title}")
+            } else {
+                shown_title.to_owned()
+            };
+            let age = record.map(|record| view.now.saturating_sub(record.changed_at));
+            let ages = age.map(age_labels);
+            let others = record.map_or(0, |record| record.others);
+            let stale = record.is_some_and(|record| record.stale);
+            let mut detail = ages
+                .as_ref()
+                .map_or_else(String::new, |(age, _)| format!("{age} · "));
+            detail.push_str(source);
+            if others > 0 {
+                let _ = write!(detail, " · +{others}");
+            }
+            if stale {
+                detail.push_str(" · status stale");
+            }
+            let message = record
+                .filter(|_| attention.state == AttentionState::NeedsInput)
+                .map(|record| record.message.clone())
+                .filter(|message| !message.is_empty());
+            let word = match (attention.state, record.and_then(|record| record.kind)) {
+                (AttentionState::NeedsInput, Some(AttentionKind::Permission)) => {
+                    "Needs input (permission)"
+                }
+                (AttentionState::NeedsInput, Some(AttentionKind::Question)) => {
+                    "Needs input (question)"
+                }
+                (AttentionState::NeedsInput, Some(AttentionKind::Auth)) => "Needs input (sign-in)",
+                (AttentionState::NeedsInput, None) => "Needs input",
+                (AttentionState::Error, _) => "Error",
+                (AttentionState::Finished, _) => "Finished",
+                (AttentionState::Working, _) => "Working",
+                (AttentionState::Idle, _) => "Idle",
+                (AttentionState::Unavailable, _) => "Status unavailable",
+            };
+            let mut accessible_label = format!(
+                "{word}: {} in tab {}, {leaf}, {source}",
+                if app.is_empty() { "agent" } else { app },
+                index + 1,
+            );
+            if let Some(title) = reported_title {
+                let _ = write!(accessible_label, ", {title}");
+            }
+            if let Some((_, spoken)) = &ages {
+                let _ = write!(accessible_label, ", changed {spoken}");
+            }
+            if others > 0 {
+                let plural = if others == 1 { "" } else { "s" };
+                let _ = write!(accessible_label, ", {others} more record{plural}");
+            }
+            if stale {
+                accessible_label.push_str(", status stale");
+            }
+            if let Some(message) = &message {
+                let _ = write!(accessible_label, ": {message}");
+            }
+            let lines = if message.is_some() { 3.0 } else { 2.0 };
+            let text_top = top + row_gap / 2.0;
+            let glyph = SceneRect {
+                left: content_left,
+                top: text_top + (line - glyph_size) / 2.0,
+                width: glyph_size,
+                height: glyph_size,
+            };
+            let icon = icon.map(|provider| {
+                (
+                    provider,
+                    SceneRect {
+                        left: glyph.right() + spacing,
+                        top: text_top + (line - icon_size) / 2.0,
+                        width: icon_size,
+                        height: icon_size,
+                    },
+                )
+            });
+            rows.push(SidebarRow {
+                tab: tab.id.clone(),
+                target: target.clone(),
+                rect: SceneRect {
+                    left: list.left,
+                    top,
+                    width: list.width,
+                    height: line * lines + row_gap,
+                },
+                glyph: TabBadge {
+                    state: attention.state,
+                    dimmed: stale,
+                    rect: glyph,
+                },
+                text_left: icon.map_or(glyph.right(), |(_, rect)| rect.right()) + spacing,
+                icon,
+                title,
+                detail,
+                message,
+                focused: view.focused == Some(target.as_str()),
+                age,
+                accessible_label,
+            });
+            top += line * lines + row_gap;
+        }
+    }
+    // Reveal the focused row: scroll just far enough to show its bottom, never past its top.
+    let scroll = rows.iter().find(|row| row.focused).map_or(0.0, |row| {
+        (row.rect.bottom() - list.bottom())
+            .min(row.rect.top - list.top)
+            .max(0.0)
+    });
+    for heading in &mut headings {
+        heading.rect.top -= scroll;
+    }
+    for row in &mut rows {
+        row.rect.top -= scroll;
+        row.glyph.rect.top -= scroll;
+        if let Some((_, rect)) = &mut row.icon {
+            rect.top -= scroll;
+        }
+    }
+    (headings, rows, list)
 }
 
 /// The area `count` cards share: inset from the content area's sides by the card gap, starting
@@ -1395,6 +1696,7 @@ impl WorkspaceScene {
             header_text,
             hints,
             false,
+            SidebarView::default(),
         )
     }
 
@@ -1413,6 +1715,7 @@ impl WorkspaceScene {
         mut header_text: impl FnMut(Option<&str>, &str) -> (String, f32),
         hints: Option<ShortcutHintsScene>,
         zoom: bool,
+        sidebar_view: SidebarView<'_>,
     ) -> Self {
         let width = size.width as f32;
         let height = size.height as f32;
@@ -1565,10 +1868,10 @@ impl WorkspaceScene {
         };
         let sidebar = sidebar_rect(snapshot.sidebar, width, cards(0.0), metrics);
         let pane_viewport = cards(sidebar.map_or(0.0, SceneRect::right));
-        let sidebar_empty = snapshot
-            .tabs
-            .iter()
-            .all(|tab| tab.attention_rollup.is_none());
+        let (sidebar_headings, sidebar_rows, sidebar_list) = sidebar.map_or_else(
+            || (Vec::new(), Vec::new(), SceneRect::default()),
+            |card| sidebar_contents(snapshot, card, metrics, sidebar_view),
+        );
         let mut tab_end = inset;
         let mut tabs: Vec<_> = snapshot
             .tabs
@@ -1783,7 +2086,9 @@ impl WorkspaceScene {
                 pane_viewport,
                 chrome: pane_viewport,
                 sidebar,
-                sidebar_empty,
+                sidebar_headings,
+                sidebar_rows,
+                sidebar_list,
                 card_radius,
                 tab_scroll,
                 pane_scroll: 0.0,
@@ -1940,7 +2245,9 @@ impl WorkspaceScene {
             pane_viewport,
             chrome,
             sidebar,
-            sidebar_empty,
+            sidebar_headings,
+            sidebar_rows,
+            sidebar_list,
             card_radius,
             tab_scroll,
             pane_scroll,
@@ -1958,6 +2265,33 @@ impl WorkspaceScene {
     #[must_use]
     pub fn sidebar(&self) -> Option<SceneRect> {
         self.sidebar
+    }
+
+    /// Whether a visible sidebar shows its empty state: no tab has attention.
+    pub(crate) fn sidebar_empty(&self) -> bool {
+        self.sidebar.is_some() && self.sidebar_rows.is_empty()
+    }
+
+    /// The visible sidebar's rows in tab and terminal order.
+    #[must_use]
+    pub fn sidebar_rows(&self) -> &[SidebarRow] {
+        &self.sidebar_rows
+    }
+
+    /// The row whose target is `target`.
+    #[must_use]
+    pub fn sidebar_row(&self, target: &str) -> Option<&SidebarRow> {
+        self.sidebar_rows.iter().find(|row| row.target == target)
+    }
+
+    /// Milliseconds until a row's age next changes its label.
+    #[must_use]
+    pub fn sidebar_age_wait(&self) -> Option<u64> {
+        self.sidebar_rows
+            .iter()
+            .filter_map(|row| row.age)
+            .map(age_wait)
+            .min()
     }
 
     /// The width the cards share: the window right of a visible sidebar.
@@ -2048,6 +2382,13 @@ impl WorkspaceScene {
         }
         if self.drag_region.contains(x, y) {
             return Some(WorkspaceHit::Drag);
+        }
+        if let Some(row) = self.sidebar_rows.iter().find(|row| {
+            row.rect
+                .intersection(self.sidebar_list)
+                .is_some_and(|rect| rect.contains(x, y))
+        }) {
+            return Some(WorkspaceHit::SidebarRow(&row.target));
         }
         for (panes, _) in self.column_panes() {
             for pane in panes {
@@ -2972,7 +3313,7 @@ mod tests {
             open.chrome.width,
             workspace_column_width(open.content_width(1400.0), 2, metrics)
         );
-        assert!(open.sidebar_empty);
+        assert!(open.sidebar_empty());
 
         // Closed, the cards take the window back; the first tab pill never moves.
         snapshot.sidebar = Sidebar::Closed;
@@ -3007,8 +3348,311 @@ mod tests {
 
         // Any attention replaces the empty state.
         snapshot.sidebar = Sidebar::Open;
-        snapshot.tabs[0].attention_rollup = Some(AttentionState::Working);
-        assert!(!project(&snapshot, 1400).sidebar_empty);
+        snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v18::Attention {
+            state: AttentionState::Unavailable,
+            record: None,
+        });
+        snapshot.tabs[0].attention_rollup = Some(AttentionState::Unavailable);
+        assert!(!project(&snapshot, 1400).sidebar_empty());
+    }
+
+    #[test]
+    fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
+        use eon_workspace_protocol::v18::{
+            Attention, AttentionRecord, Column, Popup, PopupEntry, PopupGeometry, Shortcut,
+        };
+
+        const NOW: u64 = 1_800_000_000_000;
+        let record = |app: &str, title: &str, age: u64| AttentionRecord {
+            kind: None,
+            progress: None,
+            app: app.into(),
+            title: title.into(),
+            message: String::new(),
+            changed_at: NOW - age,
+            stale: false,
+            others: 0,
+        };
+        let pane = |id: &str, attention: Option<Attention>| Pane {
+            id: id.into(),
+            session: format!("session-{id}"),
+            endpoint: format!("/run/{id}.sock").into_bytes(),
+            live: true,
+            attention,
+        };
+        let tab = |id: &str, directory: &str, panes: Vec<Pane>, popups, rollup| Tab {
+            id: id.into(),
+            directory: directory.as_bytes().to_vec(),
+            pending: false,
+            selected_pane: Some(panes[0].id.clone()),
+            selected_popup: None,
+            columns: panes
+                .into_iter()
+                .map(|pane| Column {
+                    expanded: pane.id.clone(),
+                    panes: vec![pane],
+                })
+                .collect(),
+            popups,
+            attention_rollup: rollup,
+        };
+        let needs_input = Attention {
+            state: AttentionState::NeedsInput,
+            record: Some(AttentionRecord {
+                kind: Some(AttentionKind::Permission),
+                message: "Allow Bash: cargo test?".into(),
+                others: 2,
+                ..record("claude-code", "Review PR", 4 * MINUTE_MS)
+            }),
+        };
+        let working = Attention {
+            state: AttentionState::Working,
+            record: Some(AttentionRecord {
+                stale: true,
+                ..record("codex", "Fix tests", 30_000)
+            }),
+        };
+        let idle = Attention {
+            state: AttentionState::Idle,
+            record: Some(record("aider", "", 2 * HOUR_MS)),
+        };
+        let snapshot = Snapshot {
+            active_tab: "t1".into(),
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: vec![PopupEntry {
+                id: "agent".into(),
+                label: "Agent popup".into(),
+                shortcut: Shortcut {
+                    modifiers: ALT,
+                    key: "KeyA".into(),
+                },
+            }],
+            tabs: vec![
+                tab("t1", "/work", vec![pane("p1", None)], Vec::new(), None),
+                tab(
+                    "t2",
+                    "/home/u/site",
+                    vec![pane("p2", Some(needs_input)), pane("p3", None)],
+                    vec![Popup {
+                        id: "u2".into(),
+                        entry: "agent".into(),
+                        session: "session-u2".into(),
+                        endpoint: b"/run/u2.sock".to_vec(),
+                        attention: Some(Attention {
+                            state: AttentionState::Unavailable,
+                            record: None,
+                        }),
+                    }],
+                    Some(AttentionState::NeedsInput),
+                ),
+                tab(
+                    "t3",
+                    "/srv/api",
+                    vec![pane("p4", Some(working)), pane("p5", Some(idle))],
+                    Vec::new(),
+                    Some(AttentionState::Working),
+                ),
+            ],
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: Sidebar::Open,
+        };
+        let metrics = CellMetrics::for_scale(1.0);
+        let project = |height, focused| {
+            WorkspaceScene::from_snapshot_with_zoom(
+                &snapshot,
+                EonBar::default(),
+                PhysicalSize::new(1400, height),
+                metrics,
+                0.0,
+                0.0,
+                |_| None,
+                |_, text| (text.into(), text.len() as f32 * 10.0),
+                None,
+                false,
+                SidebarView { now: NOW, focused },
+            )
+        };
+
+        // Only tabs with attention are listed, each under its heading, with one row per
+        // terminal with attention, in tab and terminal order.
+        let scene = project(800, None);
+        assert!(!scene.sidebar_empty());
+        assert_eq!(
+            scene
+                .sidebar_headings
+                .iter()
+                .map(|heading| (heading.tab.as_str(), heading.label.as_str()))
+                .collect::<Vec<_>>(),
+            [("t2", "2  site"), ("t3", "3  api")]
+        );
+        #[allow(clippy::type_complexity)]
+        fn summary(
+            row: &SidebarRow,
+        ) -> (
+            &str,
+            &str,
+            AttentionState,
+            bool,
+            Option<QuotaProvider>,
+            &str,
+            &str,
+            Option<&str>,
+        ) {
+            (
+                row.tab.as_str(),
+                row.target.as_str(),
+                row.glyph.state,
+                row.glyph.dimmed,
+                row.icon.map(|(provider, _)| provider),
+                row.title.as_str(),
+                row.detail.as_str(),
+                row.message.as_deref(),
+            )
+        }
+        assert_eq!(
+            scene.sidebar_rows().iter().map(summary).collect::<Vec<_>>(),
+            [
+                (
+                    "t2",
+                    "p2",
+                    AttentionState::NeedsInput,
+                    false,
+                    Some(QuotaProvider::Claude),
+                    "Review PR",
+                    "4m · p2 · +2",
+                    Some("Allow Bash: cargo test?"),
+                ),
+                (
+                    "t2",
+                    "u2",
+                    AttentionState::Unavailable,
+                    false,
+                    None,
+                    "status unavailable",
+                    "Agent popup",
+                    None,
+                ),
+                (
+                    "t3",
+                    "p4",
+                    AttentionState::Working,
+                    true,
+                    Some(QuotaProvider::Codex),
+                    "Fix tests",
+                    "now · p4 · status stale",
+                    None,
+                ),
+                // An unknown app shows verbatim; without a title the tab's directory leaf does.
+                (
+                    "t3",
+                    "p5",
+                    AttentionState::Idle,
+                    false,
+                    None,
+                    "aider · api",
+                    "2h · p5",
+                    None,
+                ),
+            ]
+        );
+        assert_eq!(
+            scene
+                .sidebar_rows()
+                .iter()
+                .map(|row| row.accessible_label.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Needs input (permission): Claude in tab 2, site, p2, Review PR, \
+                 changed 4 minutes ago, 2 more records: Allow Bash: cargo test?",
+                "Status unavailable: agent in tab 2, site, Agent popup",
+                "Working: Codex in tab 3, api, p4, Fix tests, changed just now, status stale",
+                "Idle: aider in tab 3, api, p5, changed 2 hours ago",
+            ]
+        );
+
+        // Rows stack inside the card below the title, the needs-input row one line taller;
+        // the icon sits after the glyph and the text after both.
+        let card = scene.sidebar().unwrap();
+        let rows = scene.sidebar_rows();
+        assert!(scene.sidebar_list.top > card.top && scene.sidebar_list.bottom() < card.bottom());
+        assert_eq!(scene.sidebar_headings[0].rect.top, scene.sidebar_list.top);
+        // Text clips to a box taller than the line pitch, which cut the descender of the
+        // title's g, and the title's box ends above the list.
+        assert!(sidebar_text_height(metrics) > metrics.height);
+        assert!(
+            card.top + metrics.padding + sidebar_text_height(metrics) <= scene.sidebar_list.top
+        );
+        for pair in rows.windows(2) {
+            assert!(pair[0].rect.bottom() <= pair[1].rect.top);
+        }
+        assert_eq!(rows[0].rect.height - rows[3].rect.height, metrics.height);
+        let (_, icon) = rows[0].icon.unwrap();
+        assert!(rows[0].glyph.rect.right() < icon.left && icon.right() < rows[0].text_left);
+        assert!(rows[1].text_left < rows[0].text_left);
+        assert!(
+            rows.iter()
+                .all(|row| row.rect.left >= card.left && row.rect.right() <= card.right())
+        );
+
+        // Rows are hit targets; the youngest age changes its label first.
+        let center = |rect: SceneRect| (rect.left + rect.width / 2.0, rect.top + rect.height / 2.0);
+        let (x, y) = center(rows[2].rect);
+        assert_eq!(scene.hit_test(x, y), Some(WorkspaceHit::SidebarRow("p4")));
+        assert_eq!(
+            scene.sidebar_row("u2").map(|row| row.tab.as_str()),
+            Some("t2")
+        );
+        assert_eq!(scene.sidebar_age_wait(), Some(30_000));
+
+        // In a short window the list clips, and the focused row scrolls just into view.
+        let short = project(260, None);
+        let list = short.sidebar_list;
+        assert!(short.sidebar_rows()[3].rect.bottom() > list.bottom());
+        assert!(short.sidebar_rows().iter().all(|row| !row.focused));
+        let revealed = project(260, Some("p5"));
+        let focused = &revealed.sidebar_rows()[3];
+        assert!(focused.focused);
+        assert_eq!(focused.rect.bottom(), list.bottom());
+        let (x, y) = center(focused.rect);
+        assert_eq!(
+            revealed.hit_test(x, y),
+            Some(WorkspaceHit::SidebarRow("p5"))
+        );
+        let offset = short.sidebar_rows()[3].rect.top - focused.rect.top;
+        assert!(offset > 0.0);
+        assert_eq!(
+            revealed.sidebar_headings[0].rect.top,
+            short.sidebar_headings[0].rect.top - offset
+        );
+        // A row scrolled above the list is no hit target.
+        let (x, _) = center(revealed.sidebar_rows()[0].rect);
+        assert!(revealed.sidebar_rows()[0].rect.top < list.top - 1.0);
+        assert_ne!(
+            revealed.hit_test(x, list.top - 1.0),
+            Some(WorkspaceHit::SidebarRow("p2"))
+        );
+    }
+
+    #[test]
+    fn agent_sidebar_ages_count_whole_minutes_hours_and_days() {
+        assert_eq!(age_labels(0), ("now".into(), "just now".into()));
+        assert_eq!(age_labels(MINUTE_MS - 1).0, "now");
+        assert_eq!(age_labels(MINUTE_MS), ("1m".into(), "1 minute ago".into()));
+        assert_eq!(age_labels(HOUR_MS - 1).0, "59m");
+        assert_eq!(age_labels(HOUR_MS).0, "1h");
+        assert_eq!(
+            age_labels(3 * DAY_MS + 1),
+            ("3d".into(), "3 days ago".into())
+        );
+        // Each label holds until the next whole unit.
+        assert_eq!(age_wait(0), MINUTE_MS);
+        assert_eq!(age_wait(MINUTE_MS + 1), MINUTE_MS - 1);
+        assert_eq!(age_wait(HOUR_MS + MINUTE_MS), HOUR_MS - MINUTE_MS);
+        assert_eq!(age_wait(DAY_MS), DAY_MS);
     }
 
     #[test]

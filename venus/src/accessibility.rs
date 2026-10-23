@@ -68,6 +68,8 @@ struct Snapshot {
     workspace_focus: WorkspaceFocus,
     tab_ids: HashMap<String, NodeId>,
     pane_ids: HashMap<String, NodeId>,
+    /// Agent sidebar headings by tab id and rows by target; EONW identities never collide.
+    sidebar_ids: HashMap<String, NodeId>,
     next_workspace_id: u64,
     links: Vec<AccessibleLink>,
     link_identity: Option<(u64, u64)>,
@@ -90,6 +92,7 @@ impl Snapshot {
             workspace_focus: WorkspaceFocus::Terminal,
             tab_ids: HashMap::new(),
             pane_ids: HashMap::new(),
+            sidebar_ids: HashMap::new(),
             next_workspace_id: WORKSPACE_NODE_START,
             links: Vec::new(),
             link_identity: None,
@@ -102,6 +105,7 @@ impl Snapshot {
             self.workspace = None;
             self.tab_ids.clear();
             self.pane_ids.clear();
+            self.sidebar_ids.clear();
             return;
         };
 
@@ -112,6 +116,22 @@ impl Snapshot {
                 .column_panes()
                 .any(|(panes, _)| panes.iter().any(|pane| pane.id == *id))
         });
+        let sidebar_keys = workspace
+            .sidebar_rows()
+            .iter()
+            .map(|row| row.target.as_str())
+            .chain(
+                workspace
+                    .sidebar_headings
+                    .iter()
+                    .map(|heading| heading.tab.as_str()),
+            )
+            .collect::<Vec<_>>();
+        self.sidebar_ids
+            .retain(|id, _| sidebar_keys.contains(&id.as_str()));
+        for key in sidebar_keys {
+            allocate_workspace_id(&mut self.sidebar_ids, &mut self.next_workspace_id, key);
+        }
         for tab in &workspace.tabs {
             allocate_workspace_id(&mut self.tab_ids, &mut self.next_workspace_id, &tab.id);
         }
@@ -447,12 +467,43 @@ impl Snapshot {
                 let mut sidebar = Node::new(Role::Complementary);
                 sidebar.set_label("Agent sidebar");
                 sidebar.set_bounds(rect(bounds));
-                if workspace.sidebar_empty {
+                if workspace.sidebar_empty() {
                     sidebar.set_children(vec![SIDEBAR_EMPTY_STATE]);
                     let mut empty = Node::new(Role::Label);
                     empty.set_value(SIDEBAR_EMPTY);
                     empty.set_bounds(rect(bounds));
                     nodes.push((SIDEBAR_EMPTY_STATE, empty));
+                }
+                // Each tab's heading, then its rows, in visual order.
+                let mut children = Vec::new();
+                for heading in &workspace.sidebar_headings {
+                    let id = self.sidebar_ids[heading.tab.as_str()];
+                    let mut node = Node::new(Role::Heading);
+                    node.set_label(heading.label.as_str());
+                    if let Some(bounds) = heading.rect.intersection(workspace.sidebar_list) {
+                        node.set_bounds(rect(bounds));
+                    }
+                    children.push(id);
+                    nodes.push((id, node));
+                    for row in workspace
+                        .sidebar_rows()
+                        .iter()
+                        .filter(|row| row.tab == heading.tab)
+                    {
+                        let id = self.sidebar_ids[row.target.as_str()];
+                        let mut node = Node::new(Role::Button);
+                        node.set_label(row.accessible_label.as_str());
+                        if let Some(bounds) = row.rect.intersection(workspace.sidebar_list) {
+                            node.set_bounds(rect(bounds));
+                        }
+                        node.add_action(Action::Click);
+                        node.add_action(Action::Focus);
+                        children.push(id);
+                        nodes.push((id, node));
+                    }
+                }
+                if !children.is_empty() {
+                    sidebar.set_children(children);
                 }
                 nodes.push((SIDEBAR, sidebar));
             }
@@ -566,6 +617,12 @@ impl Snapshot {
                         .unwrap_or(content),
                     WorkspaceFocus::Tabs => selected_tab,
                     WorkspaceFocus::Header(control) => control_node_id(control),
+                    WorkspaceFocus::Sidebar => workspace
+                        .sidebar_rows()
+                        .iter()
+                        .find(|row| row.focused)
+                        .and_then(|row| self.sidebar_ids.get(&row.target).copied())
+                        .unwrap_or(content),
                 }
             }),
         }
@@ -615,6 +672,17 @@ impl Snapshot {
         }
         if let Some((id, _)) = self.tab_ids.iter().find(|(_, node)| **node == target) {
             return Some(AccessibilityTarget::Tab(id.clone()));
+        }
+        if let Some(row) = self
+            .sidebar_ids
+            .iter()
+            .find(|(_, node)| **node == target)
+            .and_then(|(id, _)| workspace.sidebar_row(id))
+        {
+            return Some(AccessibilityTarget::SidebarRow {
+                target: row.target.clone(),
+                activate: action == Action::Click,
+            });
         }
         self.pane_ids
             .iter()
@@ -740,6 +808,11 @@ pub enum AccessibilityTarget {
     ReturnToLive,
     Tab(String),
     Pane(String),
+    /// An agent sidebar row by its target; `activate` jumps to it, otherwise it takes focus.
+    SidebarRow {
+        target: String,
+        activate: bool,
+    },
     HeaderControl {
         control: WorkspaceHeaderControl,
         activate: bool,
@@ -2610,15 +2683,73 @@ mod tests {
         );
         assert!(!sidebar.supports_action(Action::Click) && !sidebar.supports_action(Action::Focus));
 
+        // Attention replaces the empty state with each tab's heading and its rows, which are
+        // named buttons that take focus and jump.
+        workspace.tabs[0].columns[0].panes[0].attention =
+            Some(eon_workspace_protocol::v18::Attention {
+                state: AttentionState::NeedsInput,
+                record: Some(eon_workspace_protocol::v18::AttentionRecord {
+                    kind: None,
+                    progress: None,
+                    app: "claude-code".into(),
+                    title: "Review".into(),
+                    message: "Allow edits?".into(),
+                    changed_at: 0,
+                    stale: false,
+                    others: 0,
+                }),
+            });
         workspace.tabs[0].attention_rollup = Some(AttentionState::NeedsInput);
-        let (_, update) = tree(&workspace);
-        assert!(node(&update, SIDEBAR).children().is_empty());
+        let scene = WorkspaceScene::from_snapshot_with_zoom(
+            &workspace,
+            EonBar::default(),
+            size,
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_| None,
+            |_, text| (text.to_owned(), text.len() as f32 * 10.0),
+            None,
+            false,
+            crate::SidebarView {
+                now: 0,
+                focused: Some("p1"),
+            },
+        );
+        let mut snapshot = Snapshot::new(size);
+        snapshot.set_workspace(Some(&scene));
+        let update = snapshot.tree();
+        let (heading, row) = (snapshot.sidebar_ids["t1"], snapshot.sidebar_ids["p1"]);
+        assert_eq!(node(&update, SIDEBAR).children(), [heading, row]);
         assert!(
             update
                 .nodes
                 .iter()
                 .all(|(id, _)| *id != SIDEBAR_EMPTY_STATE)
         );
+        assert_eq!(node(&update, heading).role(), Role::Heading);
+        assert_eq!(node(&update, heading).label(), Some("1  t1"));
+        let button = node(&update, row);
+        assert_eq!(button.role(), Role::Button);
+        assert_eq!(
+            button.label(),
+            Some("Needs input: Claude in tab 1, t1, p1, Review, changed just now: Allow edits?")
+        );
+        assert!(button.supports_action(Action::Click) && button.supports_action(Action::Focus));
+        for (action, activate) in [(Action::Click, true), (Action::Focus, false)] {
+            assert_eq!(
+                snapshot.action_target(row, action),
+                Some(AccessibilityTarget::SidebarRow {
+                    target: "p1".into(),
+                    activate,
+                })
+            );
+        }
+        assert_eq!(snapshot.action_target(heading, Action::Click), None);
+        // The focused row is the tree's focus while the sidebar holds keyboard focus.
+        assert_eq!(update.focus, CONTENT);
+        snapshot.workspace_focus = WorkspaceFocus::Sidebar;
+        assert_eq!(snapshot.tree().focus, row);
 
         // Closed or hidden for width, the region leaves the tree.
         for (sidebar, width) in [(Sidebar::Closed, 1400), (Sidebar::Open, 1000)] {
@@ -2974,6 +3105,7 @@ mod tests {
             |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
             None,
             true,
+            crate::SidebarView::default(),
         );
         let mut snapshot = Snapshot::new(PhysicalSize::new(800, 600));
         snapshot.set_workspace(Some(&workspace));

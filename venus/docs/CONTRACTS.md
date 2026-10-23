@@ -720,10 +720,12 @@ re-proved when that platform or feature is next touched.
     Escape kept the window, Enter ended it, and Alt+Shift+D from the prompt
     detached it. With `warning_close_last_tab = false`, Alt+Shift+W ended the
     window at once.
-- **Open proof:** The agent sidebar's content-area layout is covered by
-  `agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state`;
-  its installed observation is pending `eon-agent-sidebar-yx8.13`.
-  Columns (`eon-splits-opwv`): layout, column attachments and
+  - **Agent sidebar layout (`eon-agent-sidebar-yx8.13`):**
+    `agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state`
+    and the installed dogfood recorded under VEN-C30: the sidebar pushed the
+    columns, Alt+Shift+H gave its width back, and at 1000x720 it hid for
+    width.
+- **Open proof:** Columns (`eon-splits-opwv`): layout, column attachments and
   the 40-column threshold are covered by
   `columns_sit_side_by_side_and_keep_the_selected_column_primary`,
   `other_columns_attach_their_expanded_panes_until_a_popup_covers_the_tab`,
@@ -827,8 +829,10 @@ re-proved when that platform or feature is next touched.
   `0.0..=1.0`.
 - **Result:** Omission equals `1.0`; the value applies only to terminal default
   background, later Orbit-authored background changes, and terminal padding.
-  Explicit cells, selection, inverse video, workspace chrome, notices, focus,
-  foreground effects, input, hit testing, and accessibility remain unchanged.
+  The agent sidebar's card background (VEN-C30) follows it too, as the
+  background of the terminal in the leftmost visible column. Explicit cells,
+  selection, inverse video, workspace chrome, notices, focus, foreground
+  effects, input, hit testing, and accessibility remain unchanged.
 - **Important failures:** Invalid values fail before window creation; values
   below `1.0` require a proved premultiplied surface and otherwise fail before
   presentation.
@@ -844,6 +848,11 @@ re-proved when that platform or feature is next touched.
     `background_opacity_provenance_distinguishes_default_explicit_selection_and_inverse`,
     and `arguments_are_complete_bounded_and_defaulted` in the workspace suite;
     dogfood checklist item 8.
+  - **Agent sidebar card (`eon-agent-sidebar-yx8.13`):**
+    `card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity` and
+    the installed dogfood recorded under VEN-C30: at Eon's default 0.80 the
+    card's background measured the same as the pane's, with and without pane
+    frames.
 
 ## VEN-C13 — Terminal-authored clipboard delivery
 
@@ -1104,13 +1113,14 @@ re-proved when that platform or feature is next touched.
     `workspace_worker_carries_actions_and_popup_transition`, and
     `structural_shortcuts_do_not_repeat_and_popup_focus_is_explicit` in the
     workspace suite; dogfood checklist items 1, 3 and 4.
+  - **Beside the agent sidebar (`eon-agent-sidebar-yx8.13`):**
+    `agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state`
+    and the installed dogfood recorded under VEN-C30, where the Git popup's
+    card sat beside the visible sidebar.
 - **Open proof:** Pending re-proof in this repository: installed v7
   multi-pending tabs, narrow and tiny popup geometry, and supervised empty-body
   startup and reopen. Native fractional
-  scale, other compositors and screen-reader interaction remain unproved. The
-  popup card area beside a visible agent sidebar is covered by
-  `agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state`;
-  its installed observation is pending `eon-agent-sidebar-yx8.13`.
+  scale, other compositors and screen-reader interaction remain unproved.
 
 ## VEN-C20 — Native shortcut viewer
 
@@ -1165,9 +1175,14 @@ re-proved when that platform or feature is next touched.
     `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`, private headless
     Sway, 1280x720): the viewer listed `Alt+Shift+D` `Detach: close the
     window, keep terminals running` under Host.
+  - **Sidebar rows (`eon-agent-sidebar-yx8.13`):** the installed dogfood
+    recorded under VEN-C30: the viewer listed `Alt+Shift+H` `Show or hide the
+    agent sidebar` under Host. F6 read `Cycle terminal, agent sidebar, tabs,
+    and panes`, and Up and Down read `Previous pane or agent row while panes
+    or the sidebar are focused` and `Next pane or agent row while panes or
+    the sidebar are focused`.
 - **Open proof:** Pending re-proof in this repository: AT-SPI dialog traversal
-  and tiny-surface clipping. The Alt+Shift+H row is pending
-  `eon-agent-sidebar-yx8.13`.
+  and tiny-surface clipping.
 
 ## VEN-C21 — Native Eon Bar workspace header
 
@@ -1419,10 +1434,12 @@ re-proved when that platform or feature is next touched.
   - **Override evidence (`eon-igae.10`):**
     `configured_popups_take_fixed_bindings_except_reserved_keys`; the installed
     observation is pending.
+  - **Sidebar hints (`eon-agent-sidebar-yx8.13`):** the installed dogfood
+    recorded under VEN-C30: the footer showed `H sidebar` in the Alt+Shift
+    group, and `Escape terminal` and `Up/Down agents` while a row had focus.
 - **Open proof:** Pending re-proof in this repository: native raster checks of
   the footer below the cards across widths and fractional scale, and read-only
-  AT-SPI footer lifecycle. The installed "sidebar" hint is pending
-  `eon-agent-sidebar-yx8.13`.
+  AT-SPI footer lifecycle.
 
 ## Rules
 
@@ -1665,14 +1682,12 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C30 — Agent sidebar
 
-- **Status:** Planned. Approved by Lucca on 2026-10-21 (draft 15 on
+- **Status:** Partially proved. Approved by Lucca on 2026-10-21 (draft 15 on
   `eon-agent-sidebar-yx8.1`, there named VEN-C29). `eon-agent-sidebar-yx8.3`
   implements visibility, layout and hiding for width, Alt+Shift+H, the
-  sidebar's AccessKit region and the empty state. Contents, row navigation and
-  row accessibility wait on `eon-agent-sidebar-yx8.13`; F6, Alt+G and
-  Alt+Shift+G on `eon-agent-sidebar-yx8.8`. Until those land, a visible
-  sidebar holds no focus target, so the focus rule's return cases cannot
-  occur.
+  sidebar's AccessKit region and the empty state;
+  `eon-agent-sidebar-yx8.13` implements contents, row navigation, F6 and row
+  accessibility. Alt+G and Alt+Shift+G wait on `eon-agent-sidebar-yx8.8`.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -1689,6 +1704,14 @@ re-proved when that platform or feature is next touched.
   - **Layout.**
     - A left sidebar 28 cells wide sits below the Eon Bar. The bar keeps its
       full width, its controls and its drag region.
+    - Its card is drawn like a column card: the same outline and corner
+      radius, and, where no row is highlighted, the background of the terminal
+      in the leftmost visible column at the terminal-background opacity
+      (VEN-C11), so it reads like the panes and compositor blur (VEN-C15)
+      shows through it as through them. Focused and hovered rows take an
+      opaque highlight. Without pane frames, where column cards have no
+      outline either, that column's background reaches across the sidebar's
+      area.
     - It pushes the tab columns, so opening or closing it resizes the visible
       terminals once.
     - Venus hides it when the total remaining column area would drop below 80
@@ -1729,7 +1752,8 @@ re-proved when that platform or feature is next touched.
       target terminal, or stays on the tab when the covered-target rule only
       selects the tab. It never stops a terminal.
     - F6 cycles Terminal → Sidebar → Tabs → Panes, and skips Sidebar while it
-      is not visible. This amends the F6 order in VEN-C18 and
+      is not visible or has no rows, since the empty state holds no focus
+      target. This amends the F6 order in VEN-C18 and
       `venus/docs/INTERACTION.md`, and the F6 label in
       `venus/src/application/shortcuts.rs`.
     - Arrows traverse rows, Enter activates and Esc returns focus to the
@@ -1765,10 +1789,64 @@ re-proved when that platform or feature is next touched.
     except mapping the reported `app` identifier to an icon;
   - no drag resizing, compact rail or vertical tabs;
   - no previews, no priority reordering and no notifications.
-- **Proof:** None yet. `eon-agent-sidebar-yx8.3` adds the automated checks
-  `agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state`,
-  `agent_sidebar_region_follows_the_header_and_names_its_empty_state`,
-  `direct_workspace_shortcuts_use_stable_eon_actions` and
-  `shortcut_hints_follow_bindings_catalog_and_native_focus`; the installed
-  dogfood runs once, in `eon-agent-sidebar-yx8.13`, on the final revision of
-  the sidebar batch.
+- **Proof:** The checks and observations below; Open proof lists what they
+  leave out.
+  - **Automated:** `eon-agent-sidebar-yx8.3` adds
+    `agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state`,
+    `agent_sidebar_region_follows_the_header_and_names_its_empty_state`,
+    `direct_workspace_shortcuts_use_stable_eon_actions` and
+    `shortcut_hints_follow_bindings_catalog_and_native_focus`;
+    `eon-agent-sidebar-yx8.13` adds
+    `agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row`,
+    `agent_sidebar_ages_count_whole_minutes_hours_and_days`,
+    `card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity`,
+    `sidebar_rows_take_f6_focus_step_by_arrow_and_follow_their_jump`, and the
+    row names in
+    `agent_sidebar_region_follows_the_header_and_names_its_empty_state`;
+    `quota_refresh_and_workspace_failures_preserve_structure` covers
+    attention-only refreshes. These automated checks alone prove stale rows
+    and AccessKit names; their pure helpers alone prove Up between rows and
+    focus ending on the tab strip after a covered-target jump.
+  - **Installed (`eon-agent-sidebar-yx8.13`, on the sidebar batch's final
+    revision):** isolated installed dogfood (edge `d6ce117`, code tree
+    `a0d664d`, whose `nix build` gave
+    `/nix/store/p6mzlpdlk24k6v12plxcc99hyq9m1ghi-eon-0.1.1`, x86_64 Linux,
+    private headless Sway at 1280x720, Eon's default `background_opacity`
+    0.80; three runs: the main run, one with `pane_frames = false`, and one
+    for the focus returns). Three tabs ran a
+    Claude Code fixture that needs input with a title, a `msg` and a second
+    record, a real Codex 0.163 turn, and an idle `app=aider` fixture.
+    - Rows showed the splat, the Codex mark, `aider · w`, the `msg` line,
+      `+1`, and the needs-input, working, finished and idle glyphs.
+    - The card's outline matched the pane card's. Its background measured
+      (4,5,7) over Sway's #141821, the same as the pane's, while the frame
+      stayed (10,13,20). Without pane frames, the first column's background
+      ran across the sidebar's area. The g in "Agents" was whole. A hovered
+      or focused row read (28,43,58), its highlight color unblended, and
+      went back to the card's (4,5,7) when the pointer or focus left.
+    - A click on a tab-1 row from tab 3 activated tab 1, and a typed character
+      echoed in its terminal.
+    - F6 focused the first row, Down the next, and Enter jumped to its tab,
+      where typing echoed. F6 then returned to that row and next to the tabs,
+      and Escape returned to the terminal. The footer showed `H sidebar` in
+      its Alt+Shift group, and `Escape terminal` and `Up/Down agents` while
+      a row had focus.
+    - Alt+Shift+H hid and showed the sidebar without moving terminal focus,
+      and from a focused row it returned focus to the terminal.
+    - At 1000x720 the sidebar hid for width, the tab badge returned and F6
+      skipped it; at 1280x720 it came back.
+    - With a row focused, hiding for width and `eon tab close` of the row's
+      target tab each returned focus to the terminal, where typing echoed.
+    - In an idle window, a `now` row read `1m` a minute later.
+    - The Git popup's card sat beside the sidebar.
+    - With no attention left, the empty state showed and F6 skipped the
+      sidebar.
+- **Open proof:**
+  - Alt+G and Alt+Shift+G (`eon-agent-sidebar-yx8.8`).
+  - Space on a row, which no check presses.
+  - Record text with markup or a URL rendering as plain text; the checks feed
+    only plain strings.
+  - The important failures that the sidebar never takes desktop focus, never
+    changes Orbit state and never stops a terminal; no check targets them.
+  - Compositor blur through the card: headless Sway has no blur, so only its
+    translucency was measured.

@@ -17,7 +17,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::Arc,
     thread,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 #[cfg(target_os = "linux")]
 use winit::platform::wayland::WindowAttributesExtWayland;
@@ -34,9 +34,10 @@ use yazelix_venus::{
     ConnectionState, CpuTimes, CpuUse, DialogKind, DialogScene, EonBar, FontSettings, FontSetup,
     Hyperlink, InputState, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, MetadataEvent,
     MetadataTransport, ModelError, PaneMetadata, PresentOutcome, RamUse, Renderer, Scene,
-    SceneRect, SessionModel, ShortcutHintsScene, Transport, TransportEvent, WorkspaceEvent,
-    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene,
-    WorkspaceTransport, active_popup, attention_only_change, validate_copy_uri, validate_open_uri,
+    SceneRect, SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent,
+    WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
+    WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change, validate_copy_uri,
+    validate_open_uri,
 };
 
 mod geometry;
@@ -415,6 +416,16 @@ struct ShortcutViewerState {
     scroll: f32,
 }
 
+/// A `FocusAttention` sent from a sidebar row. Keyboard focus stays on the row until a snapshot
+/// shows its target focused, then moves to the terminal; if the jump's own accepted answer only
+/// selected the target's tab, it moves to the tab strip instead.
+struct AttentionJump {
+    tab: String,
+    target: String,
+    /// The transport's ticket for the jump's `FocusAttention`.
+    ticket: u64,
+}
+
 /// A final close the prompt holds until Enter sends it.
 #[derive(Debug)]
 struct ClosePrompt {
@@ -542,6 +553,12 @@ struct Application {
     window_focused: bool,
     window_occluded: bool,
     workspace_focus: WorkspaceFocus,
+    /// The agent sidebar row that holds keyboard focus while `workspace_focus` is `Sidebar`.
+    sidebar_row: Option<String>,
+    /// A sidebar row's jump awaiting its result, which focus follows (VEN-C30).
+    attention_jump: Option<AttentionJump>,
+    /// When a sidebar row's age next changes its label.
+    next_age: Option<Instant>,
     header_press: Option<HeaderPress>,
     shortcut_viewer: ShortcutViewerState,
     warning_close_last_tab: bool,
@@ -626,6 +643,9 @@ impl Application {
             window_focused: false,
             window_occluded: false,
             workspace_focus: WorkspaceFocus::Terminal,
+            sidebar_row: None,
+            attention_jump: None,
+            next_age: None,
             header_press: None,
             shortcut_viewer: ShortcutViewerState::default(),
             warning_close_last_tab,
@@ -884,6 +904,7 @@ impl Application {
                 },
                 self.hints.clone(),
                 self.zoomed(),
+                sidebar_view(self.workspace_focus, self.sidebar_row.as_deref()),
             )
         })
     }
@@ -1262,6 +1283,7 @@ impl Application {
             },
             self.hints.clone(),
             zoom,
+            sidebar_view(self.workspace_focus, self.sidebar_row.as_deref()),
         ))
     }
 
@@ -1271,6 +1293,83 @@ impl Application {
         };
         self.tab_scroll = scene.active_tab_scroll();
         self.pane_scroll = scene.selected_pane_scroll();
+    }
+
+    /// Puts keyboard focus on the sidebar row whose target is `target`, while it shows.
+    fn focus_sidebar_row(&mut self, target: String) {
+        if self
+            .workspace_scene()
+            .is_none_or(|scene| scene.sidebar_row(&target).is_none())
+        {
+            return;
+        }
+        if self.workspace_focus != WorkspaceFocus::Sidebar {
+            self.sidebar_row = Some(target);
+            self.set_workspace_focus(WorkspaceFocus::Sidebar);
+        } else if self.sidebar_row.as_ref() != Some(&target) {
+            self.sidebar_row = Some(target);
+            // Revealing the row can scroll every row, and rows are hit targets.
+            self.presentation.invalidate();
+            self.refresh_client_view();
+        }
+    }
+
+    /// Sends `FocusAttention` for a sidebar row; focus follows the result (`AttentionJump`).
+    fn activate_sidebar_row(&mut self, target: &str) {
+        let Some(tab) = self
+            .workspace_scene()
+            .and_then(|scene| scene.sidebar_row(target).map(|row| row.tab.clone()))
+        else {
+            return;
+        };
+        if !self.presentation.has_presented_geometry() {
+            return;
+        }
+        if let Some(ticket) = self.queue_workspace_ticket(WorkspaceAction::FocusAttention {
+            tab: tab.clone(),
+            target: target.to_owned(),
+        }) {
+            self.attention_jump = Some(AttentionJump {
+                tab,
+                target: target.to_owned(),
+                ticket,
+            });
+        }
+    }
+
+    /// Settles a pending row jump: on any snapshot that focuses its exact target, or on its own
+    /// answer. A rejected or lost answer leaves focus on the row, beside its notice.
+    fn settle_attention_jump(&mut self, answer: Option<(u64, bool)>) {
+        let Some(jump) = &self.attention_jump else {
+            return;
+        };
+        let answered = answer.filter(|(ticket, _)| *ticket == jump.ticket);
+        let focus = match answered {
+            Some((_, false)) => None,
+            _ => self
+                .workspace_model
+                .snapshot()
+                .and_then(|snapshot| jump_focus(jump, snapshot, answered.is_some())),
+        };
+        if answered.is_some() || focus.is_some() {
+            self.attention_jump = None;
+        }
+        if let Some(focus) = focus {
+            self.set_workspace_focus(focus);
+        }
+    }
+
+    /// Returns keyboard focus to the terminal when the sidebar holds it but closes, hides for
+    /// width or loses the focused row.
+    fn retain_sidebar_focus(&mut self) {
+        if self.workspace_focus == WorkspaceFocus::Sidebar
+            && !self.sidebar_row.as_deref().is_some_and(|row| {
+                self.workspace_scene()
+                    .is_some_and(|scene| scene.sidebar_row(row).is_some())
+            })
+        {
+            self.set_workspace_focus(WorkspaceFocus::Terminal);
+        }
     }
 
     fn set_workspace_focus(&mut self, focus: WorkspaceFocus) {
@@ -1285,13 +1384,23 @@ impl Application {
         if self.workspace_focus == focus {
             return;
         }
+        // Focus left for somewhere other than the jump's row, so the jump no longer decides it.
+        if focus != WorkspaceFocus::Sidebar {
+            self.attention_jump = None;
+        }
         let was_focused =
             terminal_focused(self.window_focused, self.workspace_focus) && !self.dialog_open();
         self.cancel_terminal_scroll();
+        let was = self.workspace_focus;
         self.workspace_focus = focus;
         self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
-        // Focus changes hints and controls, not the terminal's presented geometry.
-        self.presentation.content_changed();
+        // Focus changes hints and controls, not the terminal's presented geometry; entering or
+        // leaving the sidebar can scroll its rows, which are hit targets.
+        if focus == WorkspaceFocus::Sidebar || was == WorkspaceFocus::Sidebar {
+            self.presentation.invalidate();
+        } else {
+            self.presentation.content_changed();
+        }
         let is_focused =
             terminal_focused(self.window_focused, self.workspace_focus) && !self.dialog_open();
         if was_focused != is_focused {
@@ -1663,16 +1772,24 @@ impl Application {
     }
 
     fn handle_workspace(&mut self, event: WorkspaceEvent) {
-        let (received_snapshot, snapshot_changed, attention_only) = match &event {
+        if let WorkspaceEvent::Answered { ticket, accepted } = event {
+            if self.attention_jump.is_some() {
+                self.settle_attention_jump(Some((ticket, accepted)));
+                self.refresh_client_view();
+            }
+            return;
+        }
+        let (received_snapshot, snapshot_changed, attention_only, sidebar_toggled) = match &event {
             WorkspaceEvent::Response(eon_workspace_protocol::v18::Response::Snapshot(snapshot)) => {
                 let current = self.workspace_model.snapshot();
                 (
                     true,
                     current != Some(snapshot),
                     current.is_some_and(|current| attention_only_change(current, snapshot)),
+                    current.is_some_and(|current| current.sidebar != snapshot.sidebar),
                 )
             }
-            _ => (false, false, false),
+            _ => (false, false, false, false),
         };
         let unavailable = matches!(&event, WorkspaceEvent::Unavailable(_));
         let quota_expired = unavailable
@@ -1684,6 +1801,7 @@ impl Application {
             WorkspaceEvent::Unavailable(detail) => {
                 (self.workspace_model.mark_unavailable(detail), false)
             }
+            WorkspaceEvent::Answered { .. } => unreachable!("answers return above"),
         };
         // Any change of the active tab, its column count or its selected column ends zoom.
         if self.zoom.is_some() && !self.zoomed() {
@@ -1712,6 +1830,10 @@ impl Application {
                 self.presentation.invalidate();
             }
         }
+        // Showing or hiding the sidebar moves every column, as the hints and zoom toggles do.
+        if sidebar_toggled {
+            self.cancel_pointer_sequence();
+        }
         if workspace_changed {
             self.cancel_terminal_scroll();
             self.reveal_workspace_selection();
@@ -1733,7 +1855,8 @@ impl Application {
                     (Some(endpoint.to_vec()), live)
                 });
                 self.set_orbit_attachment(endpoint, live);
-                if popup_visible {
+                // A pending row jump decides focus itself, below.
+                if popup_visible && self.attention_jump.is_none() {
                     self.set_workspace_focus(WorkspaceFocus::Terminal);
                 }
             }
@@ -1747,9 +1870,10 @@ impl Application {
             };
             self.tab_scroll = scene.tab_scroll();
             self.pane_scroll = scene.pane_scroll();
-            // Attention moves no presented geometry, so a held link press or a shortcut
-            // waiting on the presented scene survives it.
-            if attention_only {
+            // Attention moves no presented geometry outside a visible sidebar, so a held link
+            // press or a shortcut waiting on the presented scene survives it; the sidebar's rows
+            // are hit targets, so a refresh that moves them retires presses on them.
+            if attention_only && scene.sidebar().is_none() {
                 self.presentation.content_changed();
             } else {
                 self.presentation.invalidate();
@@ -1758,6 +1882,13 @@ impl Application {
                 self.send_resize();
             }
         }
+        if received_snapshot {
+            self.settle_attention_jump(None);
+        } else if unavailable {
+            // Workspace loss ends a pending jump with focus on its row, beside the notice.
+            self.attention_jump = None;
+        }
+        self.retain_sidebar_focus();
         if self.workspace_model.snapshot().is_some()
             && self.workspace_model.active_attachment().is_none()
         {
@@ -1901,11 +2032,14 @@ impl Application {
     }
 
     fn queue_workspace(&mut self, action: WorkspaceAction) -> bool {
-        let Some(transport) = &self.workspace_transport else {
-            return false;
-        };
+        self.queue_workspace_ticket(action).is_some()
+    }
+
+    /// Queues `action`, returning the ticket its answer carries.
+    fn queue_workspace_ticket(&mut self, action: WorkspaceAction) -> Option<u64> {
+        let transport = self.workspace_transport.as_ref()?;
         match transport.send(action) {
-            Ok(()) => true,
+            Ok(ticket) => Some(ticket),
             Err(error) => {
                 let quota_expired = self.workspace_model.snapshot().is_some_and(|snapshot| {
                     snapshot.codex_quota.is_some() || snapshot.claude_quota.is_some()
@@ -1919,7 +2053,7 @@ impl Application {
                     }
                     self.refresh_client_view();
                 }
-                false
+                None
             }
         }
     }
@@ -2034,11 +2168,19 @@ impl Application {
                 } else if toggles_zoom && !event.repeat {
                     self.toggle_zoom();
                 } else if cycles_focus && !event.repeat {
-                    self.set_workspace_focus(match focus {
-                        WorkspaceFocus::Terminal => WorkspaceFocus::Tabs,
-                        WorkspaceFocus::Tabs if has_panes => WorkspaceFocus::Panes,
-                        _ => WorkspaceFocus::Terminal,
+                    // F6 visits the sidebar only while it shows rows to focus, returning to the
+                    // row it last focused while that row remains.
+                    let row = self.workspace_scene().and_then(|scene| {
+                        self.sidebar_row
+                            .as_deref()
+                            .and_then(|row| scene.sidebar_row(row))
+                            .or_else(|| scene.sidebar_rows().first())
+                            .map(|row| row.target.clone())
                     });
+                    match (cycle_focus(focus, row.is_some(), has_panes), row) {
+                        (WorkspaceFocus::Sidebar, Some(row)) => self.focus_sidebar_row(row),
+                        (next, _) => self.set_workspace_focus(next),
+                    }
                 } else if returns_to_terminal {
                     self.set_workspace_focus(WorkspaceFocus::Terminal);
                 } else if let Some(action) = action
@@ -2083,9 +2225,30 @@ impl Application {
             if !event.repeat
                 && matches!(code, KeyCode::Enter | KeyCode::Space)
                 && modifiers == session::Modifiers::empty()
-                && let WorkspaceFocus::Header(control) = focus
             {
-                self.activate_workspace_header(control);
+                if let WorkspaceFocus::Header(control) = focus {
+                    self.activate_workspace_header(control);
+                    return true;
+                }
+                if focus == WorkspaceFocus::Sidebar
+                    && let Some(row) = self.sidebar_row.clone()
+                {
+                    self.activate_sidebar_row(&row);
+                    return true;
+                }
+            }
+            if focus == WorkspaceFocus::Sidebar
+                && let Some(NativeShortcutAction::TraverseChrome(
+                    direction @ (WorkspaceDirection::Up | WorkspaceDirection::Down),
+                )) = fixed.map(|shortcut| shortcut.action)
+            {
+                let down = direction == WorkspaceDirection::Down;
+                if let Some(row) = self.workspace_scene().and_then(|scene| {
+                    step_sidebar_row(scene.sidebar_rows(), self.sidebar_row.as_deref(), down)
+                        .map(str::to_owned)
+                }) {
+                    self.focus_sidebar_row(row);
+                }
                 return true;
             }
             let direction = match (focus, fixed.map(|shortcut| shortcut.action)) {
@@ -2643,6 +2806,17 @@ impl Application {
         let link_generation = self.link_scene().map(|(_, identity)| identity.generation);
         let status = self.status();
         let workspace = self.workspace_scene();
+        // Wake when a visible row's age next changes its label; every change to the rows or
+        // their visibility refreshes the view. Ages are not part of the presented content's
+        // identity, so a refresh at or past the deadline marks the content changed.
+        let now = Instant::now();
+        if self.next_age.is_some_and(|due| now >= due) {
+            self.presentation.content_changed();
+        }
+        self.next_age = workspace
+            .as_ref()
+            .and_then(WorkspaceScene::sidebar_age_wait)
+            .map(|wait| now + Duration::from_millis(wait));
         let dialog = self.dialog_scene();
         let scrollback_label = self.scrollback_label(workspace.as_ref());
         let scrollback_rect = self.scrollback_rect(workspace.as_ref());
@@ -3058,6 +3232,7 @@ impl Application {
         let hovered_header = match hovered_hit {
             Some(WorkspaceHit::Tab(id)) => Some((WorkspaceFocus::Tabs, id.to_owned())),
             Some(WorkspaceHit::Pane(id)) => Some((WorkspaceFocus::Panes, id.to_owned())),
+            Some(WorkspaceHit::SidebarRow(id)) => Some((WorkspaceFocus::Sidebar, id.to_owned())),
             Some(WorkspaceHit::Control(control)) => {
                 Some((WorkspaceFocus::Header(control), String::new()))
             }
@@ -3250,6 +3425,8 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.reveal_workspace_selection();
                 self.presentation.invalidate();
                 self.send_resize();
+                // A sidebar hidden for width gives its focus back to the terminal.
+                self.retain_sidebar_focus();
                 self.refresh_client_view();
             }
             WindowEvent::ScaleFactorChanged {
@@ -3601,6 +3778,13 @@ impl ApplicationHandler<UserEvent> for Application {
                             self.set_workspace_focus(WorkspaceFocus::Terminal);
                             None
                         }
+                        Some(WorkspaceHit::SidebarRow(id)) => {
+                            let id = id.to_owned();
+                            // Jump from the presented rows, then hold focus on the row.
+                            self.activate_sidebar_row(&id);
+                            self.focus_sidebar_row(id);
+                            return;
+                        }
                         Some(WorkspaceHit::Control(control)) => {
                             self.set_workspace_focus(WorkspaceFocus::Header(control));
                             self.header_press = Some(HeaderPress::Control(control));
@@ -3854,6 +4038,12 @@ impl ApplicationHandler<UserEvent> for Application {
                                     self.activate_workspace_header(control);
                                 }
                             }
+                            Some(AccessibilityTarget::SidebarRow { target, activate }) => {
+                                if activate {
+                                    self.activate_sidebar_row(&target);
+                                }
+                                self.focus_sidebar_row(target);
+                            }
                             Some(target) => {
                                 if let Some(focus) =
                                     accessibility_workspace_focus(target, |action| {
@@ -3962,6 +4152,9 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.refresh_client_view();
             }
         }
+        if self.next_age.is_some_and(|due| now >= due) {
+            self.refresh_client_view();
+        }
         self.drive_selection_autoscroll(now);
         let blinking = std::iter::once(&self.terminal)
             .chain(&self.column_views)
@@ -4002,6 +4195,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.next_spinner,
                 self.next_animation,
                 self.next_clock,
+                self.next_age,
                 self.next_reading,
                 self.terminal.selection_scroll.next,
                 self.terminal.orbit_retry.deadline,
@@ -4326,6 +4520,78 @@ fn native_ime_message(
     }
 }
 
+/// What the agent sidebar's rows need: the time their ages count to, and the focused row.
+fn sidebar_view(focus: WorkspaceFocus, row: Option<&str>) -> SidebarView<'_> {
+    SidebarView {
+        now: SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(0, |since| {
+                u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+            }),
+        focused: row.filter(|_| focus == WorkspaceFocus::Sidebar),
+    }
+}
+
+/// F6's next region: Terminal, Sidebar while it has rows, Tabs, then Panes while the active tab
+/// shows any.
+fn cycle_focus(focus: WorkspaceFocus, sidebar_rows: bool, has_panes: bool) -> WorkspaceFocus {
+    match focus {
+        WorkspaceFocus::Terminal if sidebar_rows => WorkspaceFocus::Sidebar,
+        WorkspaceFocus::Terminal | WorkspaceFocus::Sidebar => WorkspaceFocus::Tabs,
+        WorkspaceFocus::Tabs if has_panes => WorkspaceFocus::Panes,
+        _ => WorkspaceFocus::Terminal,
+    }
+}
+
+/// The sidebar row one below or above `current`; none past either end or without a current row.
+fn step_sidebar_row<'a>(
+    rows: &'a [yazelix_venus::SidebarRow],
+    current: Option<&str>,
+    down: bool,
+) -> Option<&'a str> {
+    let index = rows
+        .iter()
+        .position(|row| Some(row.target.as_str()) == current)?;
+    let next = if down {
+        index + 1
+    } else {
+        index.checked_sub(1)?
+    };
+    rows.get(next).map(|row| row.target.as_str())
+}
+
+/// Where a row jump moves focus once `snapshot` is current: the terminal when it focuses the
+/// jump's exact target; after the jump's own accepted `answer`, the tab strip when only the
+/// target's tab is selected; otherwise nowhere yet.
+fn jump_focus(
+    jump: &AttentionJump,
+    snapshot: &eon_workspace_protocol::v18::Snapshot,
+    answer: bool,
+) -> Option<WorkspaceFocus> {
+    if focused_terminal(snapshot) == Some(jump.target.as_str()) {
+        Some(WorkspaceFocus::Terminal)
+    } else if answer && snapshot.active_tab == jump.tab {
+        // The covered-target rule only selected the tab.
+        Some(WorkspaceFocus::Tabs)
+    } else {
+        None
+    }
+}
+
+/// The terminal a snapshot focuses: the active tab's shown popup, or else its selected pane.
+fn focused_terminal(snapshot: &eon_workspace_protocol::v18::Snapshot) -> Option<&str> {
+    active_popup(snapshot)
+        .map(|popup| popup.id.as_str())
+        .or_else(|| {
+            snapshot
+                .tabs
+                .iter()
+                .find(|tab| tab.id == snapshot.active_tab)?
+                .selected_pane
+                .as_deref()
+        })
+}
+
 fn terminal_focused(window_focused: bool, workspace_focus: WorkspaceFocus) -> bool {
     window_focused && workspace_focus == WorkspaceFocus::Terminal
 }
@@ -4339,6 +4605,7 @@ fn accessibility_workspace_focus(
         AccessibilityTarget::Tab(id) => (WorkspaceFocus::Tabs, id),
         AccessibilityTarget::Pane(id) => (WorkspaceFocus::Panes, id),
         AccessibilityTarget::HeaderControl { .. }
+        | AccessibilityTarget::SidebarRow { .. }
         | AccessibilityTarget::Link { .. }
         | AccessibilityTarget::ReturnToLive => {
             return None;
@@ -6817,6 +7084,128 @@ mod tests {
         fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
         assert!(run_new_window(&script).is_ok());
         fs::remove_file(script).unwrap();
+    }
+
+    #[test]
+    fn sidebar_rows_take_f6_focus_step_by_arrow_and_follow_their_jump() {
+        use eon_workspace_protocol::v18::{Attention, AttentionState, Column, PopupGeometry};
+
+        // F6 visits the sidebar between the terminal and the tabs, only while it has rows.
+        assert_eq!(
+            cycle_focus(WorkspaceFocus::Terminal, true, true),
+            WorkspaceFocus::Sidebar
+        );
+        assert_eq!(
+            cycle_focus(WorkspaceFocus::Sidebar, true, true),
+            WorkspaceFocus::Tabs
+        );
+        assert_eq!(
+            cycle_focus(WorkspaceFocus::Terminal, false, true),
+            WorkspaceFocus::Tabs
+        );
+        assert_eq!(
+            cycle_focus(WorkspaceFocus::Tabs, true, true),
+            WorkspaceFocus::Panes
+        );
+        assert_eq!(
+            cycle_focus(WorkspaceFocus::Tabs, true, false),
+            WorkspaceFocus::Terminal
+        );
+        assert_eq!(
+            cycle_focus(WorkspaceFocus::Panes, true, true),
+            WorkspaceFocus::Terminal
+        );
+
+        let pane = |id: &str, attention: bool| Pane {
+            id: id.into(),
+            session: format!("session-{id}"),
+            endpoint: format!("/run/{id}.sock").into_bytes(),
+            live: true,
+            attention: attention.then_some(Attention {
+                state: AttentionState::Unavailable,
+                record: None,
+            }),
+        };
+        let tab = |id: &str, panes: Vec<Pane>| Tab {
+            pending: false,
+            selected_popup: None,
+            popups: Vec::new(),
+            id: id.into(),
+            directory: format!("/work/{id}").into_bytes(),
+            selected_pane: Some(panes[0].id.clone()),
+            attention_rollup: panes
+                .iter()
+                .any(|pane| pane.attention.is_some())
+                .then_some(AttentionState::Unavailable),
+            columns: vec![Column {
+                expanded: panes[0].id.clone(),
+                panes,
+            }],
+        };
+        let mut snapshot = Snapshot {
+            active_tab: "t1".into(),
+            tabs: vec![
+                tab("t1", vec![pane("p1", false), pane("p2", true)]),
+                tab("t2", vec![pane("p3", true)]),
+            ],
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+        };
+        let scene = WorkspaceScene::from_snapshot(
+            &snapshot,
+            PhysicalSize::new(1400, 800),
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * 10.0),
+        );
+        // Arrows step through the rows in order and stop at either end.
+        let rows = scene.sidebar_rows();
+        assert_eq!(step_sidebar_row(rows, Some("p2"), true), Some("p3"));
+        assert_eq!(step_sidebar_row(rows, Some("p3"), false), Some("p2"));
+        assert_eq!(step_sidebar_row(rows, Some("p3"), true), None);
+        assert_eq!(step_sidebar_row(rows, Some("p2"), false), None);
+        assert_eq!(step_sidebar_row(rows, None, true), None);
+
+        // A jump focuses the terminal on any snapshot that focuses its exact target; only its
+        // own answer moves focus to the tab strip, when that selected just the target's tab.
+        let jump = AttentionJump {
+            tab: "t2".into(),
+            target: "p3".into(),
+            ticket: 7,
+        };
+        assert_eq!(focused_terminal(&snapshot), Some("p1"));
+        for answer in [false, true] {
+            assert_eq!(jump_focus(&jump, &snapshot, answer), None);
+        }
+        snapshot.active_tab = "t2".into();
+        for answer in [false, true] {
+            assert_eq!(
+                jump_focus(&jump, &snapshot, answer),
+                Some(WorkspaceFocus::Terminal)
+            );
+        }
+        show_test_popup(&mut snapshot);
+        snapshot.tabs[1].popups.push(Popup {
+            id: "u1".into(),
+            entry: "project".into(),
+            session: "session-u1".into(),
+            endpoint: b"/run/u1.sock".to_vec(),
+            attention: None,
+        });
+        snapshot.tabs[1].selected_popup = Some("u1".into());
+        assert_eq!(focused_terminal(&snapshot), Some("u1"));
+        assert_eq!(jump_focus(&jump, &snapshot, false), None);
+        assert_eq!(
+            jump_focus(&jump, &snapshot, true),
+            Some(WorkspaceFocus::Tabs)
+        );
     }
 
     #[test]

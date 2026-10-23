@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc,
     },
     thread,
@@ -58,12 +58,20 @@ pub struct Transport {
 pub enum WorkspaceEvent {
     Response(WorkspaceResponse),
     Unavailable(String),
+    /// Follows the event that answered the action `send` numbered `ticket`; `accepted` when that
+    /// answer was a snapshot.
+    Answered {
+        ticket: u64,
+        accepted: bool,
+    },
 }
 
 /// Bounded semantic-action handle for EONW v18.
 pub struct WorkspaceTransport {
-    actions: mpsc::SyncSender<WorkspaceAction>,
+    actions: mpsc::SyncSender<(WorkspaceAction, u64)>,
     events: Arc<WorkspaceEventQueue>,
+    /// The next action's ticket.
+    tickets: AtomicU64,
 }
 
 /// Latest event from one read-only ORBS metadata observation.
@@ -236,14 +244,23 @@ impl WorkspaceTransport {
                 "Cannot start the Eon workspace worker: {error}"
             )));
         }
-        Self { actions, events }
+        Self {
+            actions,
+            events,
+            tickets: AtomicU64::new(0),
+        }
     }
 
-    pub fn send(&self, action: WorkspaceAction) -> Result<(), SendError> {
-        self.actions.try_send(action).map_err(|error| match error {
-            mpsc::TrySendError::Full(_) => SendError::Full,
-            mpsc::TrySendError::Disconnected(_) => SendError::Closed,
-        })
+    /// Queues `action` and returns the ticket its `WorkspaceEvent::Answered` carries.
+    pub fn send(&self, action: WorkspaceAction) -> Result<u64, SendError> {
+        let ticket = self.tickets.fetch_add(1, Ordering::Relaxed);
+        self.actions
+            .try_send((action, ticket))
+            .map(|()| ticket)
+            .map_err(|error| match error {
+                mpsc::TrySendError::Full(_) => SendError::Full,
+                mpsc::TrySendError::Disconnected(_) => SendError::Closed,
+            })
     }
 
     pub fn drain_events(&self) -> Vec<WorkspaceEvent> {
@@ -256,7 +273,9 @@ struct WorkspaceEventQueue(Mutex<VecDeque<WorkspaceEvent>>);
 
 impl WorkspaceEventQueue {
     fn push(&self, event: WorkspaceEvent) -> bool {
-        const CAPACITY: usize = 64;
+        // A full action channel (32 queued and one in flight) answers with two events each, a
+        // response and its `Answered`, and still leaves room for refreshes.
+        const CAPACITY: usize = 128;
         let mut events = self.0.lock().expect("workspace event queue lock poisoned");
         let wake = events.is_empty();
         if events.len() == CAPACITY {
@@ -292,7 +311,7 @@ fn workspace_notifier(
 
 fn run_workspace(
     socket: PathBuf,
-    receiver: mpsc::Receiver<WorkspaceAction>,
+    receiver: mpsc::Receiver<(WorkspaceAction, u64)>,
     refresh_interval: Duration,
     notify: Arc<dyn Fn(WorkspaceEvent) + Send + Sync>,
 ) {
@@ -301,18 +320,28 @@ fn run_workspace(
         .unwrap_or_default()
         .as_nanos();
     let mut counter = 0;
+    // Refreshes carry no ticket.
     let mut action = WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect);
+    let mut ticket = None;
     loop {
         let event = workspace_exchange(&socket, nonce, counter, action)
             .map(WorkspaceEvent::Response)
             .unwrap_or_else(WorkspaceEvent::Unavailable);
+        let accepted = matches!(
+            event,
+            WorkspaceEvent::Response(WorkspaceResponse::Snapshot(_))
+        );
         notify(event);
+        if let Some(ticket) = ticket {
+            notify(WorkspaceEvent::Answered { ticket, accepted });
+        }
         counter = counter.wrapping_add(1);
-        action = match receiver.recv_timeout(refresh_interval) {
-            Ok(action) => action,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect)
-            }
+        (action, ticket) = match receiver.recv_timeout(refresh_interval) {
+            Ok((action, ticket)) => (action, Some(ticket)),
+            Err(mpsc::RecvTimeoutError::Timeout) => (
+                WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect),
+                None,
+            ),
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
     }
@@ -1271,12 +1300,25 @@ mod tests {
             transport.drain_events(),
             [WorkspaceEvent::Response(expected)]
         );
-        for (action, expected) in exchanges {
-            transport.send(action).unwrap();
-            receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        // Each action's answer is followed by its ticket; the refresh above carried none.
+        for (ticket, (action, expected)) in (0..).zip(exchanges) {
+            assert_eq!(transport.send(action).unwrap(), ticket);
+            // A drain between the two pushes sees only the response; the answer then wakes
+            // the queue again.
+            let mut events = Vec::new();
+            while events.len() < 2 {
+                receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+                events.extend(transport.drain_events());
+            }
             assert_eq!(
-                transport.drain_events(),
-                [WorkspaceEvent::Response(expected)]
+                events,
+                [
+                    WorkspaceEvent::Response(expected),
+                    WorkspaceEvent::Answered {
+                        ticket,
+                        accepted: true,
+                    },
+                ]
             );
         }
         server.join().unwrap();

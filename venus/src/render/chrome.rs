@@ -7,7 +7,10 @@ use super::{
 };
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
-    scene::{QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, inset_sides, pane_chrome_rect},
+    scene::{
+        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, inset_sides, pane_chrome_rect,
+        sidebar_text_height,
+    },
 };
 use eon_workspace_protocol::v18::AttentionState;
 use glyphon::{
@@ -108,8 +111,9 @@ fn badge_inside(badge: TabBadge, clip: Option<SceneRect>) -> bool {
     })
 }
 
-/// Draws one attention badge's glyph inside its header-colored disc: ◆ needs input, ✕ error,
-/// ✓ finished, or the spinner at `phase` for working. Quads keep the glyphs independent of fonts.
+/// Draws one attention badge's glyph inside its disc: ◆ needs input, ✕ error, ✓ finished, the
+/// spinner at `phase` for working, and, in sidebar rows, ○ idle and · unavailable. Quads keep the
+/// glyphs independent of fonts.
 fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: usize) {
     // The ring yields entirely on the smallest badges, so the glyph never leaves the badge.
     let ring = (badge.rect.width / 12.0).floor();
@@ -118,6 +122,11 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: usi
         top: badge.rect.top + ring,
         width: badge.rect.width - ring * 2.0,
         height: badge.rect.height - ring * 2.0,
+    };
+    let muted = SceneColor {
+        r: 162,
+        g: 174,
+        b: 190,
     };
     let alpha = if badge.dimmed { 0.45 } else { 1.0 };
     let at = |x: f32, y: f32| CursorPoint {
@@ -183,16 +192,53 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: usi
                 );
             }
         }
-        AttentionState::Idle | AttentionState::Unavailable => {}
+        AttentionState::Idle | AttentionState::Unavailable => {
+            // A thin ring for idle and a small round dot for unavailable, drawn as the spinner's
+            // segments joined.
+            let center = at(0.5, 0.5);
+            let (outer, inner) = if badge.state == AttentionState::Idle {
+                let outer = glyph.width / 2.0;
+                (outer, (outer - stroke / 2.0).max(0.0))
+            } else {
+                (glyph.width * 0.15, 0.0)
+            };
+            let step = std::f32::consts::TAU / (SPINNER_SEGMENTS * 2) as f32;
+            let point = |radius: f32, angle: f32| CursorPoint {
+                x: center.x + radius * angle.cos(),
+                y: center.y + radius * angle.sin(),
+            };
+            for segment in 0..SPINNER_SEGMENTS * 2 {
+                let start = segment as f32 * step;
+                let end = start + step;
+                rectangles.push_quad(
+                    [
+                        point(outer, start),
+                        point(outer, end),
+                        point(inner, end),
+                        point(inner, start),
+                    ],
+                    muted,
+                    alpha,
+                );
+            }
+        }
     }
 }
 
 impl Renderer {
-    fn push_badge(&mut self, badge: TabBadge, rectangles: &mut RectangleBatch) {
+    /// Draws `badge`, inside a disc of `ring` (the color of what it sits on) when given.
+    fn push_badge(
+        &mut self,
+        badge: TabBadge,
+        ring: Option<SceneColor>,
+        rectangles: &mut RectangleBatch,
+    ) {
         if !badge_inside(badge, rectangles.clip) {
             return;
         }
-        rectangles.push_rounded(badge.rect, badge.rect.width / 2.0, DEFAULT_BACKGROUND);
+        if let Some(ring) = ring {
+            rectangles.push_rounded(badge.rect, badge.rect.width / 2.0, ring);
+        }
         if badge.state == AttentionState::Working {
             self.spinners.push(SpinnerSlot {
                 offset: rectangles.bytes.len(),
@@ -667,51 +713,113 @@ impl Renderer {
             1.0,
         );
         if let Some(sidebar) = workspace.sidebar() {
-            rectangles.push_rounded(sidebar, workspace.card_radius(), idle);
+            // The card's translucent background and outline are drawn with the pane cards'.
             let padding = self.metrics.padding;
+            let line = self.metrics.height;
+            let text_height = sidebar_text_height(self.metrics);
             let width = (sidebar.width - padding * 2.0).max(0.0);
+            let bright = SceneColor {
+                r: 239,
+                g: 244,
+                b: 248,
+            };
+            let muted = SceneColor {
+                r: 162,
+                g: 174,
+                b: 190,
+            };
+            let dim = SceneColor {
+                r: 104,
+                g: 114,
+                b: 128,
+            };
             // The title takes one line; the empty state wraps below it.
-            let empty_top = sidebar.top + padding + self.metrics.height * 1.5;
-            for (text, top, height, color, wrap) in [
-                (
-                    SIDEBAR_TITLE,
-                    sidebar.top + padding,
-                    self.metrics.height,
-                    SceneColor {
-                        r: 239,
-                        g: 244,
-                        b: 248,
-                    },
-                    Wrap::None,
-                ),
-                (
-                    if workspace.sidebar_empty {
-                        SIDEBAR_EMPTY
-                    } else {
-                        ""
-                    },
-                    empty_top,
-                    (sidebar.bottom() - padding - empty_top).max(0.0),
-                    SceneColor {
-                        r: 162,
-                        g: 174,
-                        b: 190,
-                    },
-                    Wrap::WordOrGlyph,
-                ),
-            ] {
+            self.push_text_clipped(
+                SIDEBAR_TITLE,
+                sidebar.left + padding,
+                sidebar.top + padding,
+                width,
+                width,
+                text_height,
+                bright,
+                DrawStyleKind::Status(Wrap::None),
+                sidebar,
+            );
+            let list = workspace.sidebar_list;
+            if workspace.sidebar_empty() {
                 self.push_text_clipped(
-                    text,
+                    SIDEBAR_EMPTY,
                     sidebar.left + padding,
-                    top,
+                    list.top,
                     width,
                     width,
-                    height,
-                    color,
-                    DrawStyleKind::Status(wrap),
+                    list.height,
+                    muted,
+                    DrawStyleKind::Status(Wrap::WordOrGlyph),
                     sidebar,
                 );
             }
+            for heading in &workspace.sidebar_headings {
+                self.push_text_clipped(
+                    &heading.label,
+                    heading.rect.left,
+                    heading.rect.top,
+                    heading.rect.width,
+                    heading.rect.width,
+                    text_height,
+                    accent,
+                    DrawStyleKind::Status(Wrap::None),
+                    list,
+                );
+            }
+            rectangles.clip = Some(list);
+            for row in workspace.sidebar_rows() {
+                if row.rect.intersection(list).is_none() {
+                    continue;
+                }
+                let hovered = self.header.hovers(WorkspaceFocus::Sidebar, &row.target);
+                if row.focused || hovered {
+                    rectangles.push_rounded(row.rect, padding / 2.0, selected);
+                }
+                if row.focused {
+                    rectangles.push_rounded_outline(row.rect, padding / 2.0, accent);
+                }
+                // A glyph on the translucent card needs no disc; on a highlight it matches it.
+                let ring = (row.focused || hovered).then_some(selected);
+                self.push_badge(row.glyph, ring, rectangles);
+                if let Some((provider, rect)) = row.icon {
+                    self.push_quota_icon(provider, rect, Some(list));
+                }
+                let (title, detail) = if row.glyph.dimmed {
+                    (muted, dim)
+                } else {
+                    (bright, muted)
+                };
+                let text_width = (row.rect.right() - padding / 2.0 - row.text_left).max(0.0);
+                let text_top = row.glyph.rect.top - (line - row.glyph.rect.height) / 2.0;
+                for (index, (text, color)) in [
+                    (Some(row.title.as_str()), title),
+                    (Some(row.detail.as_str()), detail),
+                    (row.message.as_deref(), title),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    let Some(text) = text else { continue };
+                    self.push_text_clipped(
+                        text,
+                        row.text_left,
+                        text_top + line * index as f32,
+                        text_width,
+                        text_width,
+                        text_height,
+                        color,
+                        DrawStyleKind::Status(Wrap::None),
+                        list,
+                    );
+                }
+            }
+            rectangles.clip = None;
         }
         if let Some(hints) = &workspace.hints {
             // The hints sit bare in the margin below the cards.
@@ -817,11 +925,11 @@ impl Renderer {
                 workspace.tab_label_clip,
             );
             if let Some(badge) = tab.badge {
-                self.push_badge(badge, rectangles);
+                self.push_badge(badge, Some(DEFAULT_BACKGROUND), rectangles);
             }
         }
         for badge in &workspace.edge_badges {
-            self.push_badge(*badge, rectangles);
+            self.push_badge(*badge, Some(DEFAULT_BACKGROUND), rectangles);
         }
         rectangles.clip = None;
         // Quota chips and readings share one pill; the version label stays plain.
@@ -838,7 +946,7 @@ impl Renderer {
         for quota in &workspace.quotas {
             let visual = header_item_visual(quota.rect, self.metrics.padding);
             rectangles.push_rounded(visual, visual.height / 2.0, chip);
-            self.push_quota_icon(quota.provider, quota.logo);
+            self.push_quota_icon(quota.provider, quota.logo, None);
             let label_left = quota.logo.right() + self.metrics.padding / 2.0;
             let label_width = (quota.rect.right() - self.metrics.padding - label_left).max(0.0);
             self.push_text_clipped(
@@ -1049,7 +1157,16 @@ impl Renderer {
         }
     }
 
-    fn push_quota_icon(&mut self, provider: QuotaProvider, rect: SceneRect) {
+    /// Draws a provider icon in `rect`, cut to `clip` when one is given.
+    fn push_quota_icon(
+        &mut self,
+        provider: QuotaProvider,
+        rect: SceneRect,
+        clip: Option<SceneRect>,
+    ) {
+        let Some(bounds) = clip.map_or(Some(rect), |clip| rect.intersection(clip)) else {
+            return;
+        };
         let (id, color) = match provider {
             QuotaProvider::Codex => (OPENAI_BLOSSOM_ID, Color::rgb(255, 255, 255)),
             QuotaProvider::Claude => (CLAUDE_SPLAT_ID, Color::rgb(217, 119, 87)),
@@ -1067,10 +1184,10 @@ impl Renderer {
             }),
             left: rect.left,
             top: rect.top,
-            right: rect.right().ceil() as i32,
-            bottom: rect.bottom().ceil() as i32,
-            bound_left: rect.left.floor() as i32,
-            bound_top: rect.top.floor() as i32,
+            right: bounds.right().ceil() as i32,
+            bottom: bounds.bottom().ceil() as i32,
+            bound_left: bounds.left.floor() as i32,
+            bound_top: bounds.top.floor() as i32,
             color,
         });
     }

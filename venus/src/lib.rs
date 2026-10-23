@@ -23,9 +23,9 @@ pub use render::{CellMetrics, FontSettings, FontSetup, PresentOutcome, RenderErr
 pub use scene::{
     BarItem, Color, DialogKind, DialogScene, DrawCell, DrawCursor, DrawRow, DrawStyle, EonBar,
     GlyphRun, Hyperlink, LocalClock, PaneMetadata, Scene, ScenePreview, SceneRect, ShortcutGroup,
-    ShortcutHint, ShortcutHintsScene, ShortcutRow, WorkspaceColumn, WorkspaceFocus,
-    WorkspaceHeaderControl, WorkspaceHit, WorkspacePane, WorkspaceScene, WorkspaceTab,
-    validate_copy_uri, validate_open_uri, workspace_column_width,
+    ShortcutHint, ShortcutHintsScene, ShortcutRow, SidebarRow, SidebarView, WorkspaceColumn,
+    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspacePane, WorkspaceScene,
+    WorkspaceTab, validate_copy_uri, validate_open_uri, workspace_column_width,
 };
 pub use system::{CpuTimes, CpuUse, RamUse};
 pub use transport::{

@@ -72,8 +72,16 @@ the empty region between tabs and controls drags an undecorated window.
 
 Eon decides which actions are available and owns popup lifetime and directory
 changes. A repeated press does not duplicate a structural action. Switching
-tabs retains each tab's popup selection. F6 cycles terminal, tabs, and visible
-panes. Arrow keys traverse focused tabs or panes, and Left/Right with tabs
+tabs retains each tab's popup selection. F6 cycles terminal, agent sidebar,
+tabs, and visible panes, skipping the sidebar while it is hidden or has no
+rows and returning to the row it last focused while that row remains. Up/Down
+traverse sidebar rows, and Enter or Space sends `FocusAttention` for the
+focused one, as a click does; keyboard focus stays on the row until a snapshot
+shows the exact target focused, then moves to the terminal, or to the tabs
+when the jump's own accepted answer only selected the target's tab. A rejected
+jump leaves focus on the row beside its notice. Keyboard focus returns to the
+terminal when the sidebar closes or hides for width, or loses the focused
+row. Arrow keys traverse focused tabs or panes, and Left/Right with tabs
 focused walks columns before tabs like Alt+H/L; Tab and Shift+Tab traverse
 header controls; Enter or Space activates one. Escape returns chrome focus to
 the terminal. With terminal focus, Escape, Ctrl+C, Tab, and Enter reach Orbit as

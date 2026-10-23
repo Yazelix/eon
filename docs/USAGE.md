@@ -111,6 +111,7 @@ one, and clicking another column's terminal selects it.
 | Alt+/ | Open or close shortcut help |
 | Alt+Shift+B | Show or hide the bottom shortcut hints |
 | Alt+Shift+H | Show or hide the agent sidebar |
+| F6 | Move keyboard focus: terminal, agent sidebar, tabs, panes |
 | Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
 | Alt+H / Alt+L | Select the column to the left or right, continuing into the previous or next tab |
 | Alt+K / Alt+J | Select the previous or next pane in the column |
@@ -202,6 +203,34 @@ closes the popup first, as Alt+M does, and the pane joins the tab's selected
 column. Other actions close the popup when they succeed; listings, stopping
 older generations and failures stay until you press Enter. Esc closes it
 without running anything.
+
+### Agent sidebar
+
+In full Eon windows the agent sidebar lists, in tab order, the tabs whose
+coding agents report their status. Its card looks like a pane card, with the
+same outline, background and background opacity. Each tab gets a heading such
+as `3  site`, then one row per reporting terminal. A row shows:
+
+- the state: ◆ needs input, ✕ error, ✓ finished, a spinner while working, or
+  ○ idle;
+- the Claude or Codex icon, or the reporting app's name;
+- the agent's title, or the tab's folder when it reports none;
+- how long ago the state changed (`now`, `4m`, `2h`, `3d`);
+- the pane (`p3`) or popup it runs in.
+
+A needs-input row adds the agent's question. `+2` counts the terminal's other
+status records. A dimmed row marked `status stale` has not reported for more
+than 3 seconds. An Agent popup whose agent does not report shows `status
+unavailable`. While no agent reports, the sidebar says so.
+
+Click a row, or press Enter or Space on it, to jump to that agent: Eon selects
+its tab and shows its pane or popup, and keyboard focus moves to that terminal.
+If a transient popup or a pending directory picker covers the agent, the jump
+only selects the tab, and focus moves to the tabs. F6 moves keyboard focus from
+the terminal into the sidebar, back to the row it last focused while that row
+remains, then to the tabs and panes. Up and Down move between rows, and Escape
+returns to the terminal. Rows that don't fit are cut off at the bottom, and
+keyboard focus scrolls them into view.
 
 ### Scrolling and directory picker
 

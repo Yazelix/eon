@@ -1704,12 +1704,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`, private headless
     Sway, 1280x720): Alt+/ listed `Alt+Shift+D` `Detach: close the window,
     keep terminals running` under Host.
+  - **Sidebar row (`eon-agent-sidebar-yx8.13`):** the installed dogfood
+    recorded under Venus VEN-C30 (edge `d6ce117`, code tree `a0d664d`, whose
+    `nix build` gave `/nix/store/p6mzlpdlk24k6v12plxcc99hyq9m1ghi-eon-0.1.1`,
+    x86_64 Linux, private headless Sway, 1280x720): Alt+/ listed
+    `Alt+Shift+H` `Show or hide the agent sidebar` under Host.
 - **Open proof:** Pending re-proof in this repository: header spacing at
   compact sizes, rebound and disabled popup rows, and AT-SPI projection on an
-  installed surface. The Alt+Shift+H row is pending the sidebar batch's
-  installed proof in `eon-agent-sidebar-yx8.13`. No eonbase, fractional-scale,
-  screen-reader workflow, wider compositor, non-systemd, macOS or
-  direct-distribution proof is added.
+  installed surface. No eonbase, fractional-scale, screen-reader workflow,
+  wider compositor, non-systemd, macOS or direct-distribution proof is added.
 
 ## EON-C21 — Native workspace header
 
@@ -1899,10 +1902,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     installed `eon` profile
     `/nix/store/gfg385rm8mvdv6cfxqxnmc0bn033w7hv-eon-0.1.1`, private headless
     Sway, 1280x720) showed `D detach` in the footer's Alt+Shift group.
+  - **Sidebar hint (`eon-agent-sidebar-yx8.13`):** the installed dogfood
+    recorded under Venus VEN-C30 (edge `d6ce117`, code tree `a0d664d`, whose
+    `nix build` gave `/nix/store/p6mzlpdlk24k6v12plxcc99hyq9m1ghi-eon-0.1.1`,
+    x86_64 Linux, private headless Sway, 1280x720) showed `H sidebar` in the
+    footer's Alt+Shift group.
 - **Open proof:** Pending re-proof in this repository: footer placement below
   the cards across widths, fractional scales and minimum fonts on an installed
-  surface. No performance, macOS or screen-reader workflow claim. The installed
-  "sidebar" hint is pending `eon-agent-sidebar-yx8.13`.
+  surface. No performance, macOS or screen-reader workflow claim.
 
 ## EON-C25 — Running Eon version badge
 

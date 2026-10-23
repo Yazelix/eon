@@ -229,6 +229,31 @@ fn scene_grid(scene: &Scene, viewport: SceneRect, metrics: CellMetrics) -> Scene
     }
 }
 
+/// Paints `frame` opaque bar color where no card covers it, and each card in its background at
+/// the terminal-background `opacity`, so the frame reads as one piece around translucent cards.
+fn push_card_backdrop(
+    rectangles: &mut RectangleBatch,
+    frame: SceneRect,
+    cards: &[(SceneRect, SceneColor)],
+    radius: f32,
+    opacity: f32,
+) {
+    let rects = cards.iter().map(|(card, _)| *card).collect::<Vec<_>>();
+    for rect in uncovered(frame, &rects) {
+        rectangles.push(
+            rect.left,
+            rect.top,
+            rect.width,
+            rect.height,
+            DEFAULT_BACKGROUND,
+            1.0,
+        );
+    }
+    for (card, background) in cards {
+        rectangles.push_framed_rounded(*card, radius, *background, opacity, DEFAULT_BACKGROUND);
+    }
+}
+
 /// The parts of `area` that no card covers, as rectangles in horizontal bands. Cards never
 /// overlap; their rounded corners are the caller's to fill.
 fn uncovered(area: SceneRect, cards: &[SceneRect]) -> Vec<SceneRect> {
@@ -908,7 +933,7 @@ impl Renderer {
                 // Below the tab bar, everything no card covers is opaque bar color, so the bar,
                 // the gaps and the hints read as one frame; each card takes its own terminal's
                 // background.
-                let cards = std::iter::once((
+                let mut cards = std::iter::once((
                     workspace.chrome,
                     !workspace.panes.is_empty() || workspace.popup_label().is_some(),
                     scene,
@@ -920,38 +945,39 @@ impl Renderer {
                         .zip(columns)
                         .map(|(column, scene)| (column.chrome, !column.panes.is_empty(), *scene)),
                 )
-                .filter_map(|(card, shown, scene)| shown.then_some((card, scene)))
+                .filter_map(|(card, shown, scene)| {
+                    shown.then_some((
+                        card,
+                        scene.map_or(DEFAULT_BACKGROUND, |scene| scene.background),
+                    ))
+                })
                 .collect::<Vec<_>>();
+                // The agent sidebar's card takes the background of the card beside it (VEN-C11),
+                // so it reads like the panes and blur shows through it as through them.
+                if let Some(sidebar) = workspace.sidebar() {
+                    let beside = cards
+                        .iter()
+                        .min_by(|left, right| left.0.left.total_cmp(&right.0.left))
+                        .map_or(DEFAULT_BACKGROUND, |(_, background)| *background);
+                    cards.push((sidebar, beside));
+                }
                 let frame = SceneRect {
                     left: 0.0,
                     top: workspace.tab_viewport.bottom(),
                     width: self.config.width as f32,
                     height: self.config.height as f32 - workspace.tab_viewport.bottom(),
                 };
-                let rects = cards.iter().map(|(card, _)| *card).collect::<Vec<_>>();
-                for rect in uncovered(frame, &rects) {
-                    rectangles.push(
-                        rect.left,
-                        rect.top,
-                        rect.width,
-                        rect.height,
-                        DEFAULT_BACKGROUND,
-                        1.0,
-                    );
-                }
-                let radius = workspace.card_radius();
-                for (card, scene) in cards {
-                    rectangles.push_framed_rounded(
-                        card,
-                        radius,
-                        scene.map_or(DEFAULT_BACKGROUND, |scene| scene.background),
-                        self.background_opacity,
-                        DEFAULT_BACKGROUND,
-                    );
-                }
+                push_card_backdrop(
+                    &mut rectangles,
+                    frame,
+                    &cards,
+                    workspace.card_radius(),
+                    self.background_opacity,
+                );
             } else {
                 // Each column's strip takes its own terminal's background; strips meet in the
-                // middle of the gaps between columns and reach the window's sides.
+                // middle of the gaps between columns and reach the window's sides, so the first
+                // also lies under a visible agent sidebar (VEN-C11).
                 let mut strips = std::iter::once((workspace.terminal, scene))
                     .chain(
                         workspace
@@ -1044,7 +1070,9 @@ impl Renderer {
                         .map(|column| (column.chrome, column.panes.as_slice())),
                 )
                 .filter(|(_, panes)| self.pane_frames && !panes.is_empty());
-            for (card, panes) in columns {
+            // The agent sidebar's card takes the column cards' outline.
+            let sidebar = workspace.sidebar().filter(|_| self.pane_frames);
+            for (card, panes) in columns.chain(sidebar.map(|card| (card, &[][..]))) {
                 for pane in panes.iter().skip(1) {
                     let Some(row) = (SceneRect {
                         top: pane.rect.top,
@@ -2926,6 +2954,55 @@ mod tests {
         );
         assert!(surface_alpha_mode(0.0, &[CompositeAlphaMode::Opaque]).is_err());
         assert!(surface_alpha_mode(0.5, &[CompositeAlphaMode::PostMultiplied]).is_err());
+    }
+
+    #[test]
+    fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
+        // One sidebar-sized card in a frame: the frame stays opaque around it, and the card's
+        // interior takes the configured opacity, with no opaque fill under it.
+        let frame = SceneRect {
+            left: 0.0,
+            top: 40.0,
+            width: 400.0,
+            height: 260.0,
+        };
+        let card = SceneRect {
+            left: 8.0,
+            top: 48.0,
+            width: 280.0,
+            height: 244.0,
+        };
+        let mut rectangles = RectangleBatch::new(400, 300);
+        push_card_backdrop(
+            &mut rectangles,
+            frame,
+            &[(card, DEFAULT_BACKGROUND)],
+            8.0,
+            0.6,
+        );
+        // Each quad is two triangles of six vertices: x, y (clip space), r, g, b, alpha.
+        let floats = rectangles
+            .bytes
+            .chunks_exact(4)
+            .map(|value| f32::from_ne_bytes(value.try_into().unwrap()))
+            .collect::<Vec<_>>();
+        let covering = |x: f32, y: f32| {
+            floats
+                .chunks_exact(36)
+                .filter(move |quad| {
+                    let xs = quad.chunks_exact(6).map(|vertex| (vertex[0] + 1.0) * 200.0);
+                    let ys = quad.chunks_exact(6).map(|vertex| (1.0 - vertex[1]) * 150.0);
+                    let (left, right) =
+                        xs.fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(v), b.max(v)));
+                    let (top, bottom) =
+                        ys.fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(v), b.max(v)));
+                    (left..right).contains(&x) && (top..bottom).contains(&y)
+                })
+                .map(|quad| quad[5])
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(covering(148.0, 170.0), [0.6]);
+        assert_eq!(covering(350.0, 170.0), [1.0]);
     }
 
     #[test]

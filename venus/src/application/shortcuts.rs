@@ -140,7 +140,7 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
     ),
     NativeShortcut::key(
         "Navigate",
-        "Cycle terminal, tabs, and panes",
+        "Cycle terminal, agent sidebar, tabs, and panes",
         KeyCode::F6,
         session::Modifiers::empty(),
         NativeShortcutAction::CycleFocus,
@@ -168,14 +168,14 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
     ),
     NativeShortcut::key(
         "Navigate",
-        "Previous pane while panes are focused",
+        "Previous pane or agent row while panes or the sidebar are focused",
         KeyCode::ArrowUp,
         session::Modifiers::empty(),
         NativeShortcutAction::TraverseChrome(WorkspaceDirection::Up),
     ),
     NativeShortcut::key(
         "Navigate",
-        "Next pane while panes are focused",
+        "Next pane or agent row while panes or the sidebar are focused",
         KeyCode::ArrowDown,
         session::Modifiers::empty(),
         NativeShortcutAction::TraverseChrome(WorkspaceDirection::Down),
@@ -567,6 +567,7 @@ pub(super) fn shortcut_hints_for(
             Action::ReturnToTerminal if focus != WorkspaceFocus::Terminal => ("terminal", 0),
             Action::TraverseChrome(Left | Right) if focus == WorkspaceFocus::Tabs => ("tabs", 1),
             Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Panes => ("panes", 1),
+            Action::TraverseChrome(Up | Down) if focus == WorkspaceFocus::Sidebar => ("agents", 1),
             _ => continue,
         };
         let (modifiers, key) = match shortcut.trigger {
@@ -1143,7 +1144,11 @@ mod tests {
                     .iter()
                     .all(|hint| hint.label != entry.label)
             );
-            for focus in [WorkspaceFocus::Tabs, WorkspaceFocus::Panes] {
+            for focus in [
+                WorkspaceFocus::Tabs,
+                WorkspaceFocus::Panes,
+                WorkspaceFocus::Sidebar,
+            ] {
                 let chrome = shortcut_hints_for(platform, focus, &[], Sidebar::Open);
                 assert!(
                     chrome
@@ -1159,9 +1164,17 @@ mod tests {
                     chrome.iter().any(|hint| hint.key == "Left/Right"),
                     focus == WorkspaceFocus::Tabs
                 );
+                // Up/Down walk panes or, in the sidebar, its rows.
                 assert_eq!(
-                    chrome.iter().any(|hint| hint.key == "Up/Down"),
-                    focus == WorkspaceFocus::Panes
+                    chrome
+                        .iter()
+                        .find(|hint| hint.key == "Up/Down")
+                        .map(|hint| hint.label.as_str()),
+                    match focus {
+                        WorkspaceFocus::Panes => Some("panes"),
+                        WorkspaceFocus::Sidebar => Some("agents"),
+                        _ => None,
+                    }
                 );
             }
             for shortcut in FIXED_SHORTCUTS.iter().filter(|shortcut| {
