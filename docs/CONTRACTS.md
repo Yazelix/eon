@@ -533,19 +533,21 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   unknown or repeated terminal-exit notices remove nothing; losing a view never
   silently stops or substitutes a terminal. Rejected workspace actions retain
   their explanation across unchanged polls and announce it without moving
-  terminal focus; a changed workspace retires the notice.
+  terminal focus; a changed workspace retires the notice, but a snapshot that
+  differs only in EON-C31 attention or `sidebar` keeps it and disturbs no
+  navigation, scroll or attachment.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v17 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v18 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
   restoration, a per-pane terminal restart action, closing panes outside the
   active or calling tab, terminal
-  content/history, provider state, plugin surface, remote access,
-  reconstructed terminal state, or notifications other than the first-detach
-  notice.
+  content/history, provider state (except EON-C31's attention values), plugin
+  surface, remote access, reconstructed terminal state, or notifications other
+  than the first-detach notice.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** Topology and pruning
@@ -800,6 +802,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     exits 0. The caller's own
     terminal may end with it, as with Stop. Eon rejects a non-boolean
     `warning_close_last_tab` with the rest of `config.toml`.
+  - Both CLI projections, human and JSON, leave out the EONW attention fields
+    that EON-C31 excludes (kind, progress, `title`, `msg`, `changed_at`, the
+    stale flag and the record count), so `title` and `msg` never appear in CLI
+    output.
 - **Important failures:** A caller that names no live terminal of the
   addressed supervisor (ended, closed, from another generation or window,
   empty, or malformed) changes nothing and exits 3 (`unknown-caller`), with no fallback
@@ -819,14 +825,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v17 and accepted Orbit management operations.
+- **Consumes:** Current EONW v18 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
-  content, or direct child-protocol escape hatch.
+  content (except a program's own EON-C31 status report text), or direct
+  child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v17 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v18 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
   transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -904,11 +911,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   and endpoint bytes. At most 32 enabled entries and 256 combined pane/popup
   terminals are represented. Reject malformed framing, invalid or aliased
   identities/endpoints, broken selections, duplicate entry/chord assignments,
-  invalid geometry and stale popup targets. No terminal contents cross EONW.
+  invalid geometry and stale popup targets. No terminal contents cross EONW,
+  except a program's own status report text (`app`, `title`, `msg`), which is
+  not screen content: Orbit has validated, sanitized and bounded it under
+  ORB-C15.
 - **Popup snapshot:** The catalog carries enabled entries, normalized physical
   shortcuts and logical-pixel margins; per-tab popup terminals/selection and
   pending-tab state are explicit. Popup-only tabs are valid. Popup commands,
-  provider selection, cwd and lifetime remain runtime policy and never cross EONW. The
+  provider selection, cwd and lifetime remain runtime policy and never cross EONW;
+  the EON-C31 `app` that crosses is the program's own report, not Eon's
+  provider selection. The
   retired v4 picker opcode is unavailable; Project uses ordinary popup invocation.
   There is no negotiation or adapter.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`;
@@ -2155,7 +2167,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       It resets to `Open` after a supervisor restart.
     - `ToggleSidebar` flips `Open` and `Closed`. A toggle, rather than a set, cannot race a stale
       snapshot. In `Off` it is a no-op.
-  - **The next EONW version** (amends EON-C10; `eon-agent-sidebar-yx8.7` fixes its number) adds:
+  - **EONW v18** (amends EON-C10) adds:
     - an optional `attention` on `Pane` and `Popup`, holding:
       - `state`: the *normalized* EON-C31 state of the terminal's most urgent record, one of
         needs input, error, finished, working, idle or unavailable. Venus never normalizes,
@@ -2181,7 +2193,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       - `sidebar` on the snapshot.
 
       It leaves out `kind`, `progress`, `title`, `msg`, `changed_at`, the stale flag and the
-      record count. That version ships in 1.0, because `eon-agent-sidebar-yx8.9` gates
+      record count. v18 ships in 1.0, because `eon-agent-sidebar-yx8.9` gates
       eon-igae.7, .8 and .11, so EON-C28 freezes exactly these fields.
       - A program inside an Eon terminal can run `eon workspace`, so it can read every
         terminal's attention `state` and `app`. `title` and `msg` never appear through `eon
@@ -2261,8 +2273,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     counts as seen even while the window sits behind another app. This is accepted under D5.
   - **Detached windows.** While no Venus is attached, nothing becomes seen. The supervisor knows
     this because it holds the control stream (VEN-C14).
-  - **Older generations.** The new `eon` treats a still-running generation of the previous EONW
-    version as incompatible, exactly as it has since eon-igae.12.4. Nothing changes here.
+  - **Older generations.** The new `eon` treats a still-running EONW 17 generation as
+    incompatible, exactly as it has since eon-igae.12.4. Nothing changes here.
     `eon-agent-sidebar-yx8.7`'s rollout follows igae.12.4's precedent.
   - **No side effects.** Status changes never change focus, open the sidebar, raise the window or
     send terminal input.
@@ -2271,8 +2283,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records and their neutral facts.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 2, EON-C8 topology, and EON-C10 (the next EONW
-  version, still request and response, with no event stream).
+- **Consumes:** ORB-C15, ORB-C13 generation 2, EON-C8 topology, and EON-C10 (EONW v18, still
+  request and response, with no event stream).
 - **Boundary:**
   - no hooks and no edits to agent configuration;
   - no provider parsing; the Runtime passes `app` through unchanged, and Venus maps it for

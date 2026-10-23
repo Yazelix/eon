@@ -9,7 +9,7 @@ use std::{
     process::Command,
 };
 
-use eon_workspace_protocol::v17::{
+use eon_workspace_protocol::v18::{
     ALT, CTRL, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry, SHIFT, SUPER,
     Shortcut,
 };
@@ -28,6 +28,7 @@ struct EonConfig {
     bar: BarSettings,
     anima: AnimationSettings,
     workspace: WorkspaceSettings,
+    sidebar: SidebarSettings,
     popup: PopupSettings,
     popups: BTreeMap<String, PopupEntrySettings>,
 }
@@ -40,6 +41,8 @@ pub struct Defaults {
     pub anima: StartupAnimation,
     /// Whether closing the final tab, which quits its window, asks first.
     pub warning_close_last_tab: bool,
+    /// Whether full Eon offers the agent sidebar (EON-C31).
+    pub sidebar_enabled: bool,
     pub popups: PopupCatalog,
     pub custom_popup_keep_alive: bool,
     pub ansi_palette: &'static str,
@@ -99,6 +102,12 @@ struct AnimationSettings {
 #[serde(default, deny_unknown_fields)]
 struct WorkspaceSettings {
     warning_close_last_tab: Option<bool>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct SidebarSettings {
+    enabled: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -285,6 +294,13 @@ pub(crate) fn warning_close_last_tab(root: &Path, defaults: &Defaults) -> Result
         .workspace
         .warning_close_last_tab
         .unwrap_or(defaults.warning_close_last_tab))
+}
+
+pub(crate) fn sidebar_enabled(root: &Path, defaults: &Defaults) -> Result<bool, String> {
+    Ok(read_config(root)?
+        .sidebar
+        .enabled
+        .unwrap_or(defaults.sidebar_enabled))
 }
 
 pub(crate) fn terminal_presentation(
@@ -833,8 +849,8 @@ fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsSt
 mod tests {
     use super::{
         ManagedPrograms, PopupCommand, Tool, command as managed_command, integration_mask,
-        popup_catalog, prepare_popup_command, prepend_path, read_shell_config, startup_animation,
-        terminal_presentation, tool, warning_close_last_tab,
+        popup_catalog, prepare_popup_command, prepend_path, read_shell_config, sidebar_enabled,
+        startup_animation, terminal_presentation, tool, warning_close_last_tab,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -1015,6 +1031,26 @@ mod tests {
             warning_close_last_tab(&root, &inputs.defaults)
                 .unwrap_err()
                 .contains("warning_close_last_tab")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_sidebar_setting_reads_its_value_and_rejects_non_booleans() {
+        let inputs = crate::fixtures::inputs();
+        let root = std::env::temp_dir().join(format!(
+            "eon-managed-environment-test-{}-sidebar",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        assert!(sidebar_enabled(&root, &inputs.defaults).unwrap());
+        fs::write(root.join("config.toml"), "[sidebar]\nenabled = false\n").unwrap();
+        assert!(!sidebar_enabled(&root, &inputs.defaults).unwrap());
+        fs::write(root.join("config.toml"), "[sidebar]\nenabled = 'no'\n").unwrap();
+        assert!(
+            sidebar_enabled(&root, &inputs.defaults)
+                .unwrap_err()
+                .contains("enabled")
         );
         fs::remove_dir_all(root).unwrap();
     }

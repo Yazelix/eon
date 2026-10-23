@@ -5,7 +5,7 @@ use super::{
     },
     workspace,
 };
-use eon_workspace_protocol::v17::{
+use eon_workspace_protocol::v18::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
@@ -484,7 +484,7 @@ fn failure_status(code: &str) -> u8 {
     match code {
         "invalid-tab" | "malformed-action" => USAGE,
         "unknown-tab" | "unknown-pane" | "unknown-id" | "unknown-session" | "unknown-popup"
-        | "stale-popup" | "unknown-generation" | "unknown-caller" => MISSING,
+        | "stale-popup" | "stale-target" | "unknown-generation" | "unknown-caller" => MISSING,
         "missing-supervisor" | "supervisor-unavailable" => UNREACHABLE,
         _ => FAILED,
     }

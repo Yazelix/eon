@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v17::{
+use eon_workspace_protocol::v18::{
     self as workspace, Action as WorkspaceAction, Request as WorkspaceRequest,
     Response as WorkspaceResponse,
 };
@@ -60,7 +60,7 @@ pub enum WorkspaceEvent {
     Unavailable(String),
 }
 
-/// Bounded semantic-action handle for EONW v17.
+/// Bounded semantic-action handle for EONW v18.
 pub struct WorkspaceTransport {
     actions: mpsc::SyncSender<WorkspaceAction>,
     events: Arc<WorkspaceEventQueue>,
@@ -731,7 +731,7 @@ fn protocol_loss(error: session::Error) -> TransportEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v17::{
+    use eon_workspace_protocol::v18::{
         InvokeIntent, Pane, Popup, PopupEntry, Shortcut, Snapshot, Tab,
     };
     use orbit_protocol::{
@@ -1430,21 +1430,24 @@ mod tests {
                     entry: "agent".into(),
                     session: "popup-session".into(),
                     endpoint: b"/run/agent.sock".to_vec(),
+                    attention: None,
                 }],
                 id: "t1".into(),
                 directory: b"/tmp/eon".to_vec(),
                 selected_pane: Some("pane-1".into()),
-                columns: vec![eon_workspace_protocol::v17::Column {
+                columns: vec![eon_workspace_protocol::v18::Column {
                     panes: vec![Pane {
                         id: "pane-1".into(),
                         session: "session-1".into(),
                         endpoint: b"/run/eon/orbit.sock".to_vec(),
                         live: true,
+                        attention: None,
                     }],
                     expanded: "pane-1".into(),
                 }],
+                attention_rollup: None,
             }],
-            geometry: eon_workspace_protocol::v17::PopupGeometry {
+            geometry: eon_workspace_protocol::v18::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1458,6 +1461,7 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
+            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
         }
     }
 
@@ -1469,15 +1473,17 @@ mod tests {
             id: "t2".into(),
             directory: b"/tmp/nova".to_vec(),
             selected_pane: Some("pane-2".into()),
-            columns: vec![eon_workspace_protocol::v17::Column {
+            columns: vec![eon_workspace_protocol::v18::Column {
                 panes: vec![Pane {
                     id: "pane-2".into(),
                     session: "session-2".into(),
                     endpoint: b"/run/eon/session-2.sock".to_vec(),
                     live: true,
+                    attention: None,
                 }],
                 expanded: "pane-2".into(),
             }],
+            attention_rollup: None,
         }
     }
 

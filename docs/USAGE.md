@@ -250,7 +250,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
 | `eon stop previous [--json]` | Attempt every other non-dead generation |
 | `eon stop all [--json]` | Attempt every non-dead generation, including current |
-| `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping |
+| `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state and app |
 | `eon tab create [--json]` | Create a distinct pending tab with its directory picker, even while another picker is open |
 | `eon tab close TAB [--json]` | Close the expected active tab; the final tab quits the window, asking first from a terminal |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |

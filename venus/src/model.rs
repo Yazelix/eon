@@ -1,5 +1,5 @@
 use crate::scene::{DrawRow, Scene, ScenePreview};
-use eon_workspace_protocol::v17::{Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab};
+use eon_workspace_protocol::v18::{Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab};
 use orbit_protocol::FrameReducer;
 use orbit_protocol::session::{
     ClipboardLocation, FailureCode, PreviewOutcome, ScrollOutcome, ServerMessage, WheelOutcome,
@@ -106,6 +106,25 @@ pub(crate) fn presented_panes(tab: &Tab) -> &[Pane] {
         .map_or(&[], |column| &column.panes)
 }
 
+/// The tabs without EON-C31 attention: a snapshot that differs only in
+/// attention or the sidebar is no workspace change, so it keeps rejected-action
+/// notices and disturbs no navigation, scroll or attachment.
+fn without_attention(tabs: &[Tab]) -> Vec<Tab> {
+    tabs.iter()
+        .cloned()
+        .map(|mut tab| {
+            tab.attention_rollup = None;
+            for pane in tab.columns.iter_mut().flat_map(|column| &mut column.panes) {
+                pane.attention = None;
+            }
+            for popup in &mut tab.popups {
+                popup.attention = None;
+            }
+            tab
+        })
+        .collect()
+}
+
 #[must_use]
 pub fn active_popup(snapshot: &Snapshot) -> Option<&Popup> {
     let tab = snapshot
@@ -138,7 +157,9 @@ impl WorkspaceModel {
                     current.active_tab != snapshot.active_tab
                         || current.geometry != snapshot.geometry
                         || current.entries != snapshot.entries
-                        || current.tabs != snapshot.tabs
+                        || (current.tabs != snapshot.tabs
+                            && without_attention(&current.tabs)
+                                != without_attention(&snapshot.tabs))
                 });
                 let notice_cleared = (workspace_changed
                     || matches!(self.notice, Some(WorkspaceNotice::Unavailable(_))))
@@ -539,7 +560,7 @@ fn bounded(mut detail: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v17::{
+    use eon_workspace_protocol::v18::{
         self as workspace, CodexQuota, CodexQuotaState, Failure, Pane, PopupEntry, Shortcut, Tab,
     };
 
@@ -555,15 +576,17 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v17::Column {
+                    columns: vec![eon_workspace_protocol::v18::Column {
                         panes: vec![Pane {
                             id: "pane-1".into(),
                             session: "session-1".into(),
                             endpoint: b"/run/eon/orbit.sock".to_vec(),
                             live: true,
+                            attention: None,
                         }],
                         expanded: "pane-1".into(),
                     }],
+                    attention_rollup: None,
                 },
                 Tab {
                     pending: false,
@@ -572,18 +595,20 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-2".into()),
-                    columns: vec![eon_workspace_protocol::v17::Column {
+                    columns: vec![eon_workspace_protocol::v18::Column {
                         panes: vec![Pane {
                             id: "pane-2".into(),
                             session: "session-2".into(),
                             endpoint: b"/run/eon/nova.sock".to_vec(),
                             live: true,
+                            attention: None,
                         }],
                         expanded: "pane-2".into(),
                     }],
+                    attention_rollup: None,
                 },
             ],
-            geometry: eon_workspace_protocol::v17::PopupGeometry {
+            geometry: eon_workspace_protocol::v18::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -602,6 +627,7 @@ mod tests {
                     resets_at: Some(1_800_001_000),
                 }],
             }),
+            sidebar: workspace::Sidebar::Open,
         };
         let mut model = WorkspaceModel::default();
 
@@ -652,6 +678,26 @@ mod tests {
         assert_eq!(
             model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
             (false, false)
+        );
+        let mut attention = snapshot.clone();
+        attention.tabs[1].columns[0].panes[0].attention = Some(workspace::Attention {
+            state: workspace::AttentionState::Unavailable,
+            record: None,
+        });
+        attention.tabs[1].attention_rollup = Some(workspace::AttentionState::Unavailable);
+        attention.sidebar = workspace::Sidebar::Closed;
+        assert_eq!(
+            model.apply(WorkspaceResponse::Snapshot(attention)),
+            (true, false),
+            "attention and sidebar refreshes are not structural workspace changes"
+        );
+        assert!(
+            model.notice().is_some(),
+            "attention updates retain the failure"
+        );
+        assert_eq!(
+            model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
+            (true, false)
         );
 
         let mut selected = snapshot.clone();
@@ -704,7 +750,9 @@ mod tests {
                 entry: "project".into(),
                 session: format!("directory-picker-{number}"),
                 endpoint: format!("/run/eon/k{number}.sock").into_bytes(),
+                attention: None,
             }],
+            attention_rollup: None,
         };
         let mut snapshot = Snapshot {
             active_tab: "t2".into(),
@@ -723,6 +771,7 @@ mod tests {
             tabs: vec![pending(1), pending(2)],
             codex_quota: None,
             claude_quota: None,
+            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
         };
         let wire =
             workspace::encode_response(&WorkspaceResponse::Snapshot(snapshot.clone())).unwrap();
@@ -756,6 +805,7 @@ mod tests {
             session: format!("session-{id}"),
             endpoint: format!("/run/eon/{id}.sock").into_bytes(),
             live,
+            attention: None,
         };
         let column = |panes: Vec<Pane>, expanded: &str| workspace::Column {
             panes,
@@ -780,9 +830,11 @@ mod tests {
                     column(vec![pane("c", true), pane("d", false)], "d"),
                 ],
                 popups: Vec::new(),
+                attention_rollup: None,
             }],
             codex_quota: None,
             claude_quota: None,
+            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
         };
         let mut model = WorkspaceModel::default();
         model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
@@ -803,6 +855,7 @@ mod tests {
             entry: "project".into(),
             session: "popup".into(),
             endpoint: b"/run/eon/popup.sock".to_vec(),
+            attention: None,
         }];
         snapshot.tabs[0].selected_popup = Some("u1".into());
         model.apply(WorkspaceResponse::Snapshot(snapshot));

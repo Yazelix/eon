@@ -1,9 +1,9 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v17::{
-    Action, Column as SnapshotColumn, Direction, Failure, InvokeIntent, MAX_COLUMNS,
-    MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane, Popup as SnapshotPopup,
-    PopupEntry as SnapshotEntry, PopupTarget, Side, Snapshot, Tab as SnapshotTab, WorkspaceAction,
-    check_popup_action,
+use eon_workspace_protocol::v18::{
+    Action, Attention, AttentionState, Column as SnapshotColumn, Direction, Failure, InvokeIntent,
+    MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane,
+    Popup as SnapshotPopup, PopupEntry as SnapshotEntry, PopupTarget, Side, Sidebar, Snapshot,
+    Tab as SnapshotTab, WorkspaceAction, check_popup_action,
 };
 use std::{
     collections::VecDeque,
@@ -253,6 +253,7 @@ impl Workspace {
                                     session: pane.session.id.clone(),
                                     endpoint: pane.session.endpoint.as_os_str().as_bytes().to_vec(),
                                     live: true,
+                                    attention: None,
                                 })
                                 .collect(),
                             expanded: column.panes[column.expanded].id.clone(),
@@ -266,12 +267,15 @@ impl Workspace {
                             entry: popup.entry.clone(),
                             session: popup.session.id.clone(),
                             endpoint: popup.session.endpoint.as_os_str().as_bytes().to_vec(),
+                            attention: None,
                         })
                         .collect(),
+                    attention_rollup: None,
                 })
                 .collect(),
             codex_quota: None,
             claude_quota: None,
+            sidebar: Sidebar::Off,
         }
     }
 
@@ -335,6 +339,16 @@ impl Workspace {
                 return Err(action_error(
                     "unavailable",
                     "the supervisor stops a closed pane's terminal before pruning it",
+                ));
+            }
+            // The supervisor's attention owner flips visibility once this
+            // request is accepted.
+            Action::ToggleSidebar => {}
+            Action::FocusAttention { tab, target } => self.focus_attention(&tab, &target)?,
+            Action::NextAttention | Action::PreviousAttention => {
+                return Err(action_error(
+                    "unavailable",
+                    "the supervisor resolves queue jumps to their target first",
                 ));
             }
             Action::InvokePopup {
@@ -1085,6 +1099,42 @@ impl Workspace {
         ))
     }
 
+    /// Focuses the exact pane or popup `target` of `tab` (EON-C31). A shown
+    /// keep-alive popup that is not the target is hidden first; a shown
+    /// transient one, a pending picker included, is left alone, and only the
+    /// tab is selected.
+    fn focus_attention(&mut self, tab: &str, target: &str) -> Result<(), Failure> {
+        let stale = || action_error("stale-target", format!("{tab} holds no terminal {target}"));
+        let tab_index = self
+            .tabs
+            .iter()
+            .position(|item| item.id == tab)
+            .ok_or_else(stale)?;
+        let pane = self.tabs[tab_index].find_pane(|pane| pane.id == target);
+        let popup = self.tabs[tab_index]
+            .popups
+            .iter()
+            .any(|popup| popup.id == target);
+        if pane.is_none() && !popup {
+            return Err(stale());
+        }
+        let covered = self.displaced_transient(tab_index, Some(target))?.is_some();
+        self.active = tab_index;
+        if covered {
+            return Ok(());
+        }
+        let tab = &mut self.tabs[tab_index];
+        match pane {
+            Some((column, pane)) => {
+                tab.selected_popup = None;
+                tab.selected_column = Some(column);
+                tab.columns[column].expanded = pane;
+            }
+            None => tab.selected_popup = Some(target.into()),
+        }
+        Ok(())
+    }
+
     fn focus_direction(
         &mut self,
         direction: Direction,
@@ -1474,27 +1524,74 @@ fn column_panes(tab: &SnapshotTab) -> impl Iterator<Item = (usize, bool, &Snapsh
     })
 }
 
+/// The CLI's name for an attention state.
+fn attention_name(state: AttentionState) -> &'static str {
+    match state {
+        AttentionState::NeedsInput => "needs-input",
+        AttentionState::Error => "error",
+        AttentionState::Finished => "finished",
+        AttentionState::Working => "working",
+        AttentionState::Idle => "idle",
+        AttentionState::Unavailable => "unavailable",
+    }
+}
+
+/// A terminal's attention state and app, the only attention values the CLI
+/// projects (EON-C31); the program's report text never leaves EONW.
+fn attention_fields(attention: Option<&Attention>) -> (Option<&'static str>, Option<&str>) {
+    (
+        attention.map(|attention| attention_name(attention.state)),
+        attention
+            .and_then(|attention| attention.record.as_ref())
+            .map(|record| record.app.as_str())
+            .filter(|app| !app.is_empty()),
+    )
+}
+
+fn sidebar_name(sidebar: Sidebar) -> &'static str {
+    match sidebar {
+        Sidebar::Open => "open",
+        Sidebar::Closed => "closed",
+        Sidebar::Off => "off",
+    }
+}
+
+fn human_attention(attention: Option<&Attention>) -> String {
+    let (state, app) = attention_fields(attention);
+    format!(
+        "attention={} app={}",
+        state.unwrap_or("none"),
+        app.unwrap_or("none").escape_debug()
+    )
+}
+
 pub(crate) fn human(snapshot: &Snapshot) -> String {
-    let mut output = format!("active {}\n", snapshot.active_tab);
+    let mut output = format!(
+        "active {}\nsidebar {}\n",
+        snapshot.active_tab,
+        sidebar_name(snapshot.sidebar)
+    );
     for tab in &snapshot.tabs {
         output.push_str(&format!(
-            "tab {} directory={} selected={} popup={} pending={} active={}\n",
+            "tab {} directory={} selected={} popup={} pending={} active={} attention={}\n",
             tab.id,
             String::from_utf8_lossy(&tab.directory).escape_debug(),
             tab.selected_pane.as_deref().unwrap_or("none"),
             tab.selected_popup.as_deref().unwrap_or("none"),
             tab.pending,
             tab.id == snapshot.active_tab,
+            tab.attention_rollup.map_or("none", attention_name),
         ));
         for (column, expanded, pane) in column_panes(tab) {
             output.push_str(&format!(
-                "  pane {} column={} expanded={} terminal={} live={} endpoint={}\n",
+                "  pane {} column={} expanded={} terminal={} live={} endpoint={} {}\n",
                 pane.id,
                 column + 1,
                 expanded,
                 pane.session,
                 pane.live,
-                String::from_utf8_lossy(&pane.endpoint).escape_debug()
+                String::from_utf8_lossy(&pane.endpoint).escape_debug(),
+                human_attention(pane.attention.as_ref()),
             ));
         }
         for popup in &tab.popups {
@@ -1503,7 +1600,7 @@ pub(crate) fn human(snapshot: &Snapshot) -> String {
                 .iter()
                 .find(|entry| entry.id == popup.entry);
             output.push_str(&format!(
-                "  popup {} entry={} label={} key={} terminal={} chosen={} endpoint={}\n",
+                "  popup {} entry={} label={} key={} terminal={} chosen={} endpoint={} {}\n",
                 popup.id,
                 popup.entry,
                 entry.map_or("?", |entry| entry.label.as_str()),
@@ -1511,6 +1608,7 @@ pub(crate) fn human(snapshot: &Snapshot) -> String {
                 popup.session,
                 tab.selected_popup.as_deref() == Some(&popup.id),
                 String::from_utf8_lossy(&popup.endpoint).escape_debug(),
+                human_attention(popup.attention.as_ref()),
             ));
         }
     }
@@ -1549,13 +1647,15 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
         json_option(&mut output, tab.selected_pane.as_deref());
         output.push_str(",\"selected_popup\":");
         json_option(&mut output, tab.selected_popup.as_deref());
+        output.push_str(",\"attention_rollup\":");
+        json_option(&mut output, tab.attention_rollup.map(attention_name));
         output.push_str(",\"panes\":[");
         for (index, (column, expanded, pane)) in column_panes(tab).enumerate() {
             if index != 0 {
                 output.push(',');
             }
             output.push_str(&format!(
-                "{{\"id\":\"{}\",\"column\":{},\"expanded\":{},\"session\":\"{}\",\"endpoint\":{},\"live\":{}}}",
+                "{{\"id\":\"{}\",\"column\":{},\"expanded\":{},\"session\":\"{}\",\"endpoint\":{},\"live\":{},\"attention\":",
                 json_escape(&pane.id),
                 column + 1,
                 expanded,
@@ -1563,6 +1663,8 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
                 json_path(&pane.endpoint),
                 pane.live
             ));
+            json_attention(&mut output, pane.attention.as_ref());
+            output.push('}');
         }
         output.push_str("],\"popups\":[");
         for (index, popup) in tab.popups.iter().enumerate() {
@@ -1570,15 +1672,31 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
                 output.push(',');
             }
             output.push_str(&format!(
-                "{{\"id\":\"{}\",\"entry\":\"{}\",\"session\":\"{}\",\"endpoint\":{},\"chosen\":{}}}",
+                "{{\"id\":\"{}\",\"entry\":\"{}\",\"session\":\"{}\",\"endpoint\":{},\"chosen\":{},\"attention\":",
                 json_escape(&popup.id), json_escape(&popup.entry), json_escape(&popup.session),
                 json_path(&popup.endpoint), tab.selected_popup.as_deref() == Some(&popup.id)
             ));
+            json_attention(&mut output, popup.attention.as_ref());
+            output.push('}');
         }
         output.push_str("]}");
     }
-    output.push_str("]}\n");
+    output.push_str(&format!(
+        "],\"sidebar\":\"{}\"}}\n",
+        sidebar_name(snapshot.sidebar)
+    ));
     output
+}
+
+/// `{"state":...,"app":...}`, or `null` without attention.
+fn json_attention(output: &mut String, attention: Option<&Attention>) {
+    let (Some(state), app) = attention_fields(attention) else {
+        output.push_str("null");
+        return;
+    };
+    output.push_str(&format!("{{\"state\":\"{state}\",\"app\":"));
+    json_option(output, app);
+    output.push('}');
 }
 
 pub(crate) fn failure_human(failure: &Failure) -> String {
@@ -1661,13 +1779,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v17::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v18::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v17::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v17::ALT, "Alt"),
-        (eon_workspace_protocol::v17::SHIFT, "Shift"),
-        (eon_workspace_protocol::v17::SUPER, "Super"),
+        (eon_workspace_protocol::v18::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v18::ALT, "Alt"),
+        (eon_workspace_protocol::v18::SHIFT, "Shift"),
+        (eon_workspace_protocol::v18::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1727,12 +1845,68 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v17::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v18::{ALT, PopupGeometry, Shortcut};
 
     #[test]
     fn json_paths_are_strings_unless_their_bytes_are_not_utf8() {
         assert_eq!(json_path(b"/home/a \"b\""), "\"/home/a \\\"b\\\"\"");
         assert_eq!(json_path(b"/tmp/\xff"), "[47,116,109,112,47,255]");
+    }
+
+    #[test]
+    fn cli_output_carries_attention_state_and_app_but_never_report_text() {
+        let workspace = Workspace::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            None,
+            vec![
+                (
+                    1,
+                    Session {
+                        id: "session-1".into(),
+                        endpoint: "/runtime/orbit.sock".into(),
+                    },
+                ),
+                (
+                    2,
+                    Session {
+                        id: "session-2".into(),
+                        endpoint: "/runtime/session-2.sock".into(),
+                    },
+                ),
+            ],
+            catalog(),
+        )
+        .unwrap();
+        let mut snapshot = workspace.snapshot();
+        snapshot.tabs[0].columns[0].panes[0].attention = Some(Attention {
+            state: AttentionState::NeedsInput,
+            record: Some(eon_workspace_protocol::v18::AttentionRecord {
+                kind: None,
+                progress: Some(40),
+                app: "codex".into(),
+                title: "secret title".into(),
+                message: "secret message".into(),
+                changed_at: 1,
+                stale: true,
+                others: 3,
+            }),
+        });
+        snapshot.tabs[0].attention_rollup = Some(AttentionState::NeedsInput);
+        snapshot.sidebar = Sidebar::Closed;
+        let json = json(&snapshot);
+        assert!(json.contains(r#""attention_rollup":"needs-input","panes":[{"id":"p1","#));
+        assert!(json.contains(r#""attention":{"state":"needs-input","app":"codex"}}"#));
+        assert!(json.contains(r#""live":true,"attention":null}"#));
+        assert!(json.ends_with("],\"sidebar\":\"closed\"}\n"));
+        let human = human(&snapshot);
+        assert!(human.starts_with("active t1\nsidebar closed\ntab t1 "));
+        assert!(human.contains(" attention=needs-input\n"));
+        assert!(human.contains(" attention=needs-input app=codex\n"));
+        assert!(human.contains(" attention=none app=none\n"));
+        for output in [json, human] {
+            assert!(!output.contains("secret") && !output.contains("progress"));
+        }
     }
 
     fn catalog() -> PopupCatalog {
@@ -1855,8 +2029,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v17::encode_response(
-            &eon_workspace_protocol::v17::Response::Snapshot(after),
+        eon_workspace_protocol::v18::encode_response(
+            &eon_workspace_protocol::v18::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -2033,6 +2207,97 @@ mod tests {
             .remove(0);
         assert_eq!(tab.selected_pane.as_deref(), Some("p6"));
         assert_eq!(tab.selected_popup, None);
+    }
+
+    #[test]
+    fn attention_focus_hides_keep_alive_popups_and_never_stops_a_transient_one() {
+        let mut catalog = catalog();
+        catalog.entries.push(PopupDefinition {
+            id: "anima".into(),
+            label: "Anima".into(),
+            shortcut: Shortcut {
+                modifiers: ALT,
+                key: "KeyN".into(),
+            },
+            command: PopupCommand::Argv(vec!["anima".into()]),
+            keep_alive: false,
+        });
+        let mut workspace = Workspace::with_recovered_sessions(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            vec![(
+                1,
+                Session {
+                    id: "session-1".into(),
+                    endpoint: "/runtime/orbit.sock".into(),
+                },
+            )],
+            catalog,
+        )
+        .unwrap();
+        let mut stops = 0;
+        let mut request = |id: &str, action| {
+            workspace
+                .dispatch(id, None, action, prepared, |operation| {
+                    stops += usize::from(matches!(operation, SessionOperation::Stop(_)));
+                    Ok(())
+                })
+                .map(|()| workspace.snapshot())
+        };
+        let invoke = |entry: &str| Action::InvokePopup {
+            tab: "t1".into(),
+            entry: entry.into(),
+            expected_instance: None,
+            intent: InvokeIntent::Focus,
+        };
+        let focus = |tab: &str, target: &str| Action::FocusAttention {
+            tab: tab.into(),
+            target: target.into(),
+        };
+        request(
+            "p2",
+            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
+        )
+        .unwrap();
+        let agent = request("agent", invoke("agent")).unwrap().tabs[0].popups[0]
+            .id
+            .clone();
+
+        // A shown keep-alive popup is hidden, and survives, for another target.
+        let tab = request("f1", focus("t1", "p1")).unwrap().tabs.remove(0);
+        assert_eq!(tab.selected_pane.as_deref(), Some("p1"));
+        assert_eq!(tab.selected_popup, None);
+        assert_eq!(tab.popups.len(), 1);
+        let tab = request("f2", focus("t1", &agent)).unwrap().tabs.remove(0);
+        assert_eq!(tab.selected_popup.as_deref(), Some(agent.as_str()));
+
+        // A shown transient popup is left alone: the action only selects the
+        // tab, from another active tab too, and stops nothing.
+        request("anima", invoke("anima")).unwrap();
+        request("t2", Action::Workspace(WorkspaceAction::CreateTab)).unwrap();
+        for (id, target) in [("f3", "p2"), ("f4", agent.as_str())] {
+            let snapshot = request(id, focus("t1", target)).unwrap();
+            assert_eq!(snapshot.active_tab, "t1");
+            let tab = &snapshot.tabs[0];
+            assert_eq!(tab.selected_pane.as_deref(), Some("p1"));
+            assert_ne!(tab.selected_popup.as_deref(), Some(agent.as_str()));
+            assert_eq!(tab.popups.len(), 2);
+        }
+        assert_eq!(stops, 0);
+
+        // A target its tab does not hold is stale, with no fallback.
+        let before = workspace.snapshot();
+        let mut request = |id: &str, action| {
+            workspace
+                .dispatch(id, None, action, prepared, |_| Ok(()))
+                .unwrap_err()
+                .code
+        };
+        for (id, tab, target) in [("s1", "t1", "p9"), ("s2", "t2", "p1"), ("s3", "t9", "p1")] {
+            assert_eq!(request(id, focus(tab, target)), "stale-target");
+        }
+        assert_eq!(workspace.snapshot(), before);
     }
 
     #[test]
@@ -3531,8 +3796,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v17::encode_response(
-            &eon_workspace_protocol::v17::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v18::encode_response(
+            &eon_workspace_protocol::v18::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 

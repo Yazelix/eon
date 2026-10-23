@@ -16,7 +16,7 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, Workspace},
 };
-use eon_workspace_protocol::v17::{
+use eon_workspace_protocol::v18::{
     Action, Availability, Ended, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
     Stopped, VERSION, WorkspaceAction,
 };
@@ -519,7 +519,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v17::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v18::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -743,6 +743,15 @@ fn supervise(
     }
     let warning_close_last_tab =
         managed_environment::warning_close_last_tab(config, &inputs.defaults)?;
+    // Full Eon only; eonbase has no poller and no sidebar (EON-C31).
+    let mut attention = if mode == LaunchMode::Workspace {
+        Some(Attention::new(managed_environment::sidebar_enabled(
+            config,
+            &inputs.defaults,
+        )?))
+    } else {
+        None
+    };
     let popup_catalog = popups.unwrap_or_else(|| managed_environment::PopupCatalog {
         geometry: inputs.defaults.popups.geometry,
         entries: Vec::new(),
@@ -802,6 +811,12 @@ fn supervise(
         } else {
             None
         };
+        let snapshot = snapshot.map(|mut snapshot| {
+            if let Some(attention) = &mut attention {
+                attention.present(&mut snapshot, false, Instant::now());
+            }
+            snapshot
+        });
         let command = venus_command(
             inputs,
             config,
@@ -894,7 +909,7 @@ fn supervise(
         stopping: false,
         quotas: (mode == LaunchMode::Workspace)
             .then(|| quota::Quotas::start(&inputs.codexbar, bar_widgets)),
-        attention: (mode == LaunchMode::Workspace).then(Attention::new),
+        attention,
         log: Arc::clone(log),
     };
     let presentation = match admitted {
@@ -1001,11 +1016,15 @@ struct SupervisorState {
 }
 
 impl SupervisorState {
-    fn workspace_snapshot(&self) -> Option<Snapshot> {
+    /// The workspace with its quotas and attention.
+    fn workspace_snapshot(&mut self) -> Option<Snapshot> {
         self.workspace.as_ref().map(|workspace| {
             let mut snapshot = workspace.snapshot();
             if let Some(quotas) = &self.quotas {
                 quotas.apply(&mut snapshot);
+            }
+            if let Some(attention) = &mut self.attention {
+                attention.present(&mut snapshot, self.venus.is_some(), Instant::now());
             }
             snapshot
         })
@@ -1716,13 +1735,34 @@ fn dispatch_control_request(
             let Some(workspace) = &mut state.workspace else {
                 unreachable!("reconciliation keeps the workspace owner");
             };
+            // A queue jump is the FocusAttention of its target; an empty queue
+            // leaves the workspace unchanged (EON-C31).
+            let (action, jump) = match (request.action, &state.attention) {
+                (action @ (Action::NextAttention | Action::PreviousAttention), Some(attention)) => {
+                    attention
+                        .jump(
+                            &workspace.snapshot(),
+                            matches!(action, Action::NextAttention),
+                        )
+                        .map_or(
+                            (Action::Workspace(WorkspaceAction::Inspect), None),
+                            |(action, key)| (action, Some(key)),
+                        )
+                }
+                (action, _) => (action, None),
+            };
+            let accepted = matches!(
+                action,
+                Action::ToggleSidebar | Action::FocusAttention { .. }
+            )
+            .then(|| action.clone());
             let component_generation = &state.component_generation;
             let sessions = &mut state.sessions;
             let initial_child = &mut state.initial_child;
-            match workspace.dispatch(
+            let result = workspace.dispatch(
                 &request.id,
                 caller.as_deref(),
-                request.action,
+                action,
                 |command, directory| {
                     managed_environment::prepare_popup_command(
                         command,
@@ -1742,7 +1782,13 @@ fn dispatch_control_request(
                         None,
                     )
                 },
-            ) {
+            );
+            if result.is_ok()
+                && let (Some(action), Some(attention)) = (&accepted, &mut state.attention)
+            {
+                attention.handled(action, jump, &workspace.snapshot(), state.venus.is_some());
+            }
+            match result {
                 Ok(()) => (
                     ControlResponse::Workspace(Response::Snapshot(
                         state
@@ -1832,7 +1878,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v17::{
+        use eon_workspace_protocol::v18::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::{
@@ -1861,14 +1907,17 @@ mod tests {
                             session: format!("session-{number}"),
                             endpoint: format!("/runtime/orbit-{number}.sock").into_bytes(),
                             live: true,
+                            attention: None,
                         }],
                         expanded: format!("p{number}"),
                     }],
                     popups: Vec::new(),
+                    attention_rollup: None,
                 })
                 .collect(),
             codex_quota: None,
             claude_quota: None,
+            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
         let received = root.join("snapshot");

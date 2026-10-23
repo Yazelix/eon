@@ -1,5 +1,5 @@
 use super::{NATIVE_PLATFORM, NativePlatform};
-use eon_workspace_protocol::v17::{
+use eon_workspace_protocol::v18::{
     Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, PopupEntry, Side,
     Snapshot, Tab, WorkspaceAction as CommonAction,
 };
@@ -557,7 +557,7 @@ pub(super) fn shortcut_hints_for(
             NativeShortcutTrigger::Key(code, modifiers) => {
                 (wire_modifiers(modifiers), format!("{code:?}"))
             }
-            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v17::ALT, "1..9".into()),
+            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v18::ALT, "1..9".into()),
             _ => continue,
         };
         let modifiers = physical_modifiers_label_for(platform, modifiers, true);
@@ -628,7 +628,7 @@ fn physical_shortcut_label_for(platform: NativePlatform, modifiers: u8, key: &st
 }
 
 fn physical_modifiers_label_for(platform: NativePlatform, modifiers: u8, compact: bool) -> String {
-    use eon_workspace_protocol::v17 as wire;
+    use eon_workspace_protocol::v18 as wire;
 
     let mut parts = Vec::with_capacity(5);
     let labels = match (platform, compact) {
@@ -672,7 +672,7 @@ fn physical_key_label(key: &str) -> &str {
 }
 
 fn wire_modifiers(modifiers: session::Modifiers) -> u8 {
-    use eon_workspace_protocol::v17 as wire;
+    use eon_workspace_protocol::v18 as wire;
 
     [
         (session::Modifiers::SHIFT, wire::SHIFT),
@@ -931,13 +931,14 @@ mod tests {
 
     #[test]
     fn sideways_moves_open_a_column_only_for_a_stacked_outer_pane() {
-        use eon_workspace_protocol::v17::{Column, Pane};
+        use eon_workspace_protocol::v18::{Column, Pane};
 
         let pane = |id: &str| Pane {
             id: id.into(),
             session: format!("session-{id}"),
             endpoint: Vec::new(),
             live: true,
+            attention: None,
         };
         let column = |ids: &[&str]| Column {
             panes: ids.iter().map(|id| pane(id)).collect(),
@@ -951,6 +952,7 @@ mod tests {
             selected_popup: None,
             columns,
             popups: Vec::new(),
+            attention_rollup: None,
         };
         let stacked = tab(vec![column(&["p1", "p2"]), column(&["p3"])], "p1");
         assert!(sideways_move_opens_column(&stacked, Side::Left));
@@ -969,16 +971,16 @@ mod tests {
         let entry = PopupEntry {
             id: "agent".into(),
             label: "My agent".into(),
-            shortcut: eon_workspace_protocol::v17::Shortcut {
-                modifiers: eon_workspace_protocol::v17::SUPER,
+            shortcut: eon_workspace_protocol::v18::Shortcut {
+                modifiers: eon_workspace_protocol::v18::SUPER,
                 key: "KeyF".into(),
             },
         };
         let project = PopupEntry {
             id: "project".into(),
             label: "Folder chooser".into(),
-            shortcut: eon_workspace_protocol::v17::Shortcut {
-                modifiers: eon_workspace_protocol::v17::ALT,
+            shortcut: eon_workspace_protocol::v18::Shortcut {
+                modifiers: eon_workspace_protocol::v18::ALT,
                 key: "KeyZ".into(),
             },
         };
@@ -1121,7 +1123,7 @@ mod tests {
 
     #[test]
     fn configured_popups_take_fixed_bindings_except_reserved_keys() {
-        use eon_workspace_protocol::v17::{ALT, SHIFT, Shortcut};
+        use eon_workspace_protocol::v18::{ALT, SHIFT, Shortcut};
 
         let popup = |id: &str, modifiers, key: &str| PopupEntry {
             id: id.into(),
@@ -1208,7 +1210,7 @@ mod tests {
         let entries = vec![popup("closer", ALT, "KeyW")];
         let snapshot = Snapshot {
             active_tab: "t1".into(),
-            geometry: eon_workspace_protocol::v17::PopupGeometry {
+            geometry: eon_workspace_protocol::v18::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1221,9 +1223,11 @@ mod tests {
                 selected_popup: None,
                 columns: Vec::new(),
                 popups: Vec::new(),
+                attention_rollup: None,
             }],
             codex_quota: None,
             claude_quota: None,
+            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
         };
         assert!(matches!(
             popup_shortcut(KeyCode::KeyW, session::Modifiers::ALT, &snapshot, true),

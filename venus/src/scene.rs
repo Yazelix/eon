@@ -3,7 +3,7 @@ use crate::{
     model::{active_popup, presented_panes},
     render::CellMetrics,
 };
-use eon_workspace_protocol::v17::{
+use eon_workspace_protocol::v18::{
     ALT, ClaudeQuotaState, CodexQuotaState, Pane, PopupEntry, QuotaWindow, SHIFT, Snapshot, Tab,
 };
 use orbit_protocol::{
@@ -2718,7 +2718,7 @@ mod tests {
 
     #[test]
     fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
-        use eon_workspace_protocol::v17::{
+        use eon_workspace_protocol::v18::{
             ALT, Pane, Popup, PopupEntry, PopupGeometry, Shortcut, Tab,
         };
 
@@ -2742,12 +2742,13 @@ mod tests {
                 pending: false,
                 selected_pane: Some("p1".into()),
                 selected_popup: None,
-                columns: vec![eon_workspace_protocol::v17::Column {
+                columns: vec![eon_workspace_protocol::v18::Column {
                     panes: vec![Pane {
                         id: "p1".into(),
                         session: "session-1".into(),
                         endpoint: b"/run/pane.sock".to_vec(),
                         live: true,
+                        attention: None,
                     }],
                     expanded: "p1".into(),
                 }],
@@ -2756,10 +2757,13 @@ mod tests {
                     entry: "agent".into(),
                     session: "session-2".into(),
                     endpoint: b"/run/popup.sock".to_vec(),
+                    attention: None,
                 }],
+                attention_rollup: None,
             }],
             codex_quota: None,
             claude_quota: None,
+            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
         };
         let project = |snapshot: &Snapshot| {
             WorkspaceScene::from_snapshot(
@@ -2809,12 +2813,13 @@ mod tests {
         for index in 2..=3 {
             columns.tabs[0]
                 .columns
-                .push(eon_workspace_protocol::v17::Column {
+                .push(eon_workspace_protocol::v18::Column {
                     panes: vec![Pane {
                         id: format!("p{index}"),
                         session: format!("session-{}", index + 1),
                         endpoint: format!("/run/pane-{index}.sock").into_bytes(),
                         live: true,
+                        attention: None,
                     }],
                     expanded: format!("p{index}"),
                 });
@@ -3036,7 +3041,7 @@ mod tests {
 
     #[test]
     fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
-        use eon_workspace_protocol::v17::{Pane, PopupGeometry, Tab};
+        use eon_workspace_protocol::v18::{Pane, PopupGeometry, Tab};
 
         let snapshot = Snapshot {
             active_tab: "t2".into(),
@@ -3052,20 +3057,23 @@ mod tests {
                     pending: false,
                     selected_pane: Some(format!("p{index}")),
                     selected_popup: None,
-                    columns: vec![eon_workspace_protocol::v17::Column {
+                    columns: vec![eon_workspace_protocol::v18::Column {
                         panes: vec![Pane {
                             id: format!("p{index}"),
                             session: format!("s{index}"),
                             endpoint: format!("/tmp/p{index}.sock").into_bytes(),
                             live: true,
+                            attention: None,
                         }],
                         expanded: format!("p{index}"),
                     }],
                     popups: Vec::new(),
+                    attention_rollup: None,
                 })
                 .collect(),
             codex_quota: None,
             claude_quota: None,
+            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
         };
         let metrics = CellMetrics::for_scale(1.0);
 
@@ -3772,6 +3780,7 @@ mod tests {
             session: format!("session-{id}"),
             endpoint: id.as_bytes().to_vec(),
             live: true,
+            attention: None,
         };
         let tab = Tab {
             id: "t1".into(),
@@ -3779,21 +3788,23 @@ mod tests {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v17::Column {
+            columns: vec![eon_workspace_protocol::v18::Column {
                 panes: vec![pane("p1"), pane("p2")],
                 expanded: "p1".into(),
             }],
-            popups: vec![eon_workspace_protocol::v17::Popup {
+            popups: vec![eon_workspace_protocol::v18::Popup {
                 id: "u1".into(),
                 entry: "agent".into(),
                 session: "popup-session".into(),
                 endpoint: b"/tmp/popup.sock".to_vec(),
+                attention: None,
             }],
+            attention_rollup: None,
         };
         let entries = [PopupEntry {
             id: "agent".into(),
             label: "Agent".into(),
-            shortcut: eon_workspace_protocol::v17::Shortcut {
+            shortcut: eon_workspace_protocol::v18::Shortcut {
                 modifiers: ALT | SHIFT,
                 key: "KeyL".into(),
             },

@@ -34,6 +34,9 @@ duration_seconds = 3
 
 [workspace]
 warning_close_last_tab = true
+
+[sidebar]
+enabled = true
 ```
 
 `[bar] widgets` chooses which Eon Bar widgets show and their order, left to
@@ -90,6 +93,11 @@ will stop; `--json` never asks. In the window, Alt+Shift+W, the bar's `×` and
 Alt+W on the last pane show a prompt listing the same terminals: Enter quits,
 Escape cancels, and Alt+Shift+D keeps them running instead. With `false`, both
 close at once. The window reads the setting when it starts.
+
+`[sidebar] enabled = true`, the default, offers the agent sidebar, which lists
+the coding agents in the window's tabs that report their status. `false` turns
+it off. The window reads the setting when it starts. The sidebar itself is not
+drawn yet.
 
 ## Agent quota
 

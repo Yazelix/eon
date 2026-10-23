@@ -7,11 +7,16 @@ use super::{
     sessions::{self, ProgramStatusRead, RunningSession},
     workspace::is_directory_picker_session,
 };
-use eon_workspace_protocol::v17::Snapshot;
-use orbit_protocol::management::{MAX_PROGRAM_RECORDS, ProgramRecord, ProgramState, ProgramStatus};
+use eon_workspace_protocol::v18::{
+    self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
+    Snapshot,
+};
+use orbit_protocol::management::{
+    MAX_PROGRAM_RECORDS, ProgramKind, ProgramRecord, ProgramState, ProgramStatus,
+};
 use std::{
     cmp::Reverse,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 /// At most 2 Hz.
@@ -20,49 +25,13 @@ const POLL_DEADLINE: Duration = Duration::from_millis(250);
 const STALE_AFTER: Duration = Duration::from_secs(3);
 const AGENT_ENTRY: &str = "agent";
 
-/// A terminal's normalized attention, most urgent first.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum State {
-    NeedsInput,
-    Error,
-    Finished,
-    Working,
-    Idle,
-    /// An Agent popup with no records.
-    Unavailable,
-}
-
-/// This window's sidebar visibility, kept while the supervisor runs.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "EONW carries it and configuration sets Off from eon-agent-sidebar-yx8.7 on"
-    )
-)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Sidebar {
-    Open,
-    Closed,
-    /// `[sidebar] enabled = false`.
-    Off,
-}
-
 /// A pane or popup terminal, in workspace order: panes column by column, then
 /// popups.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "attention actions focus targets from eon-agent-sidebar-yx8.7 on"
-    )
-)]
 pub(super) struct Target {
     tab: usize,
     position: usize,
     /// The pane id, or the popup instance.
     id: String,
-    popup: bool,
     session: String,
     agent: bool,
 }
@@ -77,20 +46,19 @@ pub(super) fn targets(snapshot: &Snapshot) -> (Vec<Target>, Option<String>) {
         let panes = tab.panes().map(|pane| {
             let focused =
                 tab.selected_popup.is_none() && tab.selected_pane.as_ref() == Some(&pane.id);
-            (&pane.id, false, &pane.session, false, focused)
+            (&pane.id, &pane.session, false, focused)
         });
         let popups = tab.popups.iter().map(|popup| {
             let focused = tab.selected_popup.as_ref() == Some(&popup.id);
             (
                 &popup.id,
-                true,
                 &popup.session,
                 popup.entry == AGENT_ENTRY,
                 focused,
             )
         });
         let mut position = 0;
-        for (id, popup, session, agent, focused) in panes.chain(popups) {
+        for (id, session, agent, focused) in panes.chain(popups) {
             if active && focused {
                 focus = Some(session.clone());
             }
@@ -101,7 +69,6 @@ pub(super) fn targets(snapshot: &Snapshot) -> (Vec<Target>, Option<String>) {
                 tab: index,
                 position,
                 id: id.clone(),
-                popup,
                 session: session.clone(),
                 agent,
             });
@@ -109,6 +76,12 @@ pub(super) fn targets(snapshot: &Snapshot) -> (Vec<Target>, Option<String>) {
         }
     }
     (targets, focus)
+}
+
+/// Record text without control characters, which Orbit already rejects
+/// (ORB-C15) and EONW refuses to carry.
+fn plain(text: &str) -> String {
+    text.chars().filter(|c| !c.is_control()).collect()
 }
 
 #[derive(Clone, Copy)]
@@ -179,13 +152,6 @@ impl Terminal {
 }
 
 /// What one terminal shows.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "EONW carries attention from eon-agent-sidebar-yx8.7 on"
-    )
-)]
 struct Shown<'a> {
     state: State,
     /// The most urgent record; none for unavailable.
@@ -193,11 +159,11 @@ struct Shown<'a> {
     /// That record's fixed change time.
     changed_at: Option<Instant>,
     stale: bool,
-    others: usize,
+    others: u16,
 }
 
 /// A queue entry's total order: class, fixed time, tab and terminal position.
-type Key = (State, Instant, usize, usize);
+pub(super) type Key = (State, Instant, usize, usize);
 
 pub(super) struct Attention {
     terminals: Vec<Terminal>,
@@ -207,17 +173,26 @@ pub(super) struct Attention {
     cursor: Option<Key>,
     next_poll: Instant,
     sidebar: Sidebar,
+    /// One instant and its wall-clock Unix milliseconds, which turn every
+    /// fixed change time into the same `changed_at` in each snapshot.
+    epoch: (Instant, u64),
 }
 
 impl Attention {
-    pub(super) fn new() -> Self {
+    /// `enabled` is `[sidebar] enabled`; without it the sidebar is Off.
+    pub(super) fn new(enabled: bool) -> Self {
+        let now = Instant::now();
+        let wall = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_millis() as u64);
         Attention {
             terminals: Vec::new(),
             focus: None,
             attached: false,
             cursor: None,
-            next_poll: Instant::now(),
-            sidebar: Sidebar::Open,
+            next_poll: now,
+            sidebar: if enabled { Sidebar::Open } else { Sidebar::Off },
+            epoch: (now, wall),
         }
     }
 
@@ -390,18 +365,37 @@ impl Attention {
         self.attached = attached;
     }
 
-    /// `observe` after a queue jump, which keeps its cursor.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the queue actions land in eon-agent-sidebar-yx8.7"
-        )
-    )]
-    fn observe_jump(&mut self, focus: Option<String>, attached: bool) {
-        let cursor = self.cursor;
-        self.observe(focus, attached);
-        self.cursor = cursor;
+    /// Follows an accepted attention action, given the snapshot it left:
+    /// `ToggleSidebar` flips visibility, and `FocusAttention` follows focus,
+    /// moves the cursor to `jump` for a queue jump, and sees the target's
+    /// raises when it has focus, also when it had focus already.
+    pub(super) fn handled(
+        &mut self,
+        action: &Action,
+        jump: Option<Key>,
+        snapshot: &Snapshot,
+        attached: bool,
+    ) {
+        match action {
+            Action::ToggleSidebar => self.toggle_sidebar(),
+            Action::FocusAttention { target, .. } => {
+                let (targets, focus) = targets(snapshot);
+                self.observe(focus.clone(), attached);
+                if jump.is_some() {
+                    self.cursor = jump;
+                }
+                if let Some(session) = targets
+                    .iter()
+                    .find(|item| item.id == *target)
+                    .map(|item| &item.session)
+                    && attached
+                    && focus.as_ref() == Some(session)
+                {
+                    self.see(session);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Sees every raise cached for `session`, as focusing it does, also when
@@ -427,7 +421,7 @@ impl Attention {
                 record: Some(&record.record),
                 changed_at: Some(record.changed_at),
                 stale: now.duration_since(terminal.replied) > STALE_AFTER,
-                others: usize::from(terminal.count).saturating_sub(1),
+                others: terminal.count.saturating_sub(1),
             }),
             None => target.agent.then_some(Shown {
                 state: State::Unavailable,
@@ -441,13 +435,6 @@ impl Attention {
 
     /// A tab's highest-priority state; a stale terminal counts with its last
     /// state.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "EONW carries the rollup from eon-agent-sidebar-yx8.7 on"
-        )
-    )]
     fn rollup(&self, targets: &[Target], tab: usize, now: Instant) -> Option<State> {
         targets
             .iter()
@@ -468,22 +455,16 @@ impl Attention {
     }
 
     /// `NextAttention` (`forward`) or `PreviousAttention`: the entry after or
-    /// before the cursor, wrapping, or the front of the queue after a reset.
-    /// The cursor moves to it, and an empty queue changes nothing.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the queue actions land in eon-agent-sidebar-yx8.7"
-        )
-    )]
-    fn step<'a>(&mut self, targets: &'a [Target], forward: bool) -> Option<&'a Target> {
+    /// before the cursor, wrapping, or the front of the queue after a reset;
+    /// none for an empty queue. Its key becomes the cursor once the jump is
+    /// accepted.
+    fn next<'a>(&self, targets: &'a [Target], forward: bool) -> Option<(Key, &'a Target)> {
         let mut queue: Vec<(Key, &Target)> = targets
             .iter()
             .filter_map(|target| Some((self.entry(targets, &target.session)?, target)))
             .collect();
         queue.sort_by_key(|&(key, _)| key);
-        let (key, target) = match self.cursor {
+        match self.cursor {
             None => queue.first(),
             Some(cursor) if forward => queue
                 .iter()
@@ -495,19 +476,70 @@ impl Attention {
                 .find(|(key, _)| *key < cursor)
                 .or(queue.last()),
         }
-        .copied()?;
-        self.cursor = Some(key);
-        Some(target)
+        .copied()
+    }
+
+    /// The `FocusAttention` a queue jump performs, with the cursor it moves
+    /// to; none for an empty queue.
+    pub(super) fn jump(&self, snapshot: &Snapshot, forward: bool) -> Option<(Action, Key)> {
+        let (targets, _) = targets(snapshot);
+        let (key, target) = self.next(&targets, forward)?;
+        let action = Action::FocusAttention {
+            tab: snapshot.tabs[target.tab].id.clone(),
+            target: target.id.clone(),
+        };
+        Some((action, key))
+    }
+
+    /// Sets each terminal's attention, each tab's rollup and the sidebar,
+    /// after following the focus `snapshot` has: a reply to a focus change
+    /// already shows the newly focused terminal's raises as seen.
+    pub(super) fn present(&mut self, snapshot: &mut Snapshot, attached: bool, now: Instant) {
+        let (targets, focus) = targets(snapshot);
+        self.observe(focus, attached);
+        let attention = |id: &str| {
+            let target = targets.iter().find(|target| target.id == id)?;
+            let shown = self.shown(target, now)?;
+            Some(eonw::Attention {
+                state: shown.state,
+                record: shown.record.map(|record| AttentionRecord {
+                    kind: record.kind.map(|kind| match kind {
+                        ProgramKind::Permission => AttentionKind::Permission,
+                        ProgramKind::Question => AttentionKind::Question,
+                        ProgramKind::Auth => AttentionKind::Auth,
+                    }),
+                    progress: record.progress,
+                    app: plain(&record.app),
+                    title: plain(&record.title),
+                    message: plain(&record.message),
+                    changed_at: self.wall(shown.changed_at.unwrap_or(now)),
+                    stale: shown.stale,
+                    others: shown.others,
+                }),
+            })
+        };
+        for (index, tab) in snapshot.tabs.iter_mut().enumerate() {
+            for pane in tab.columns.iter_mut().flat_map(|column| &mut column.panes) {
+                pane.attention = attention(&pane.id);
+            }
+            for popup in &mut tab.popups {
+                popup.attention = attention(&popup.id);
+            }
+            tab.attention_rollup = self.rollup(&targets, index, now);
+        }
+        snapshot.sidebar = self.sidebar;
+    }
+
+    /// The wall-clock Unix milliseconds of `at`.
+    fn wall(&self, at: Instant) -> u64 {
+        let (instant, wall) = self.epoch;
+        match at.checked_duration_since(instant) {
+            Some(after) => wall.saturating_add(after.as_millis() as u64),
+            None => wall.saturating_sub(instant.duration_since(at).as_millis() as u64),
+        }
     }
 
     /// `ToggleSidebar`: flips Open and Closed; Off stays.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the ToggleSidebar action lands in eon-agent-sidebar-yx8.7"
-        )
-    )]
     fn toggle_sidebar(&mut self) {
         self.sidebar = match self.sidebar {
             Sidebar::Open => Sidebar::Closed,
@@ -521,7 +553,7 @@ impl Attention {
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v17::{Column, Pane, Popup, PopupGeometry, Tab};
+    use eon_workspace_protocol::v18::{Column, Pane, Popup, PopupGeometry, Tab};
     use std::{fs, thread};
 
     fn record(
@@ -572,6 +604,7 @@ mod tests {
                         session: (*session).into(),
                         endpoint: Vec::new(),
                         live: true,
+                        attention: None,
                     })
                     .collect(),
                 expanded: format!("pane-{}", panes[0]),
@@ -583,8 +616,10 @@ mod tests {
                     entry: (*entry).into(),
                     session: (*session).into(),
                     endpoint: Vec::new(),
+                    attention: None,
                 })
                 .collect(),
+            attention_rollup: None,
         }
     }
 
@@ -599,7 +634,19 @@ mod tests {
             tabs,
             codex_quota: None,
             claude_quota: None,
+            sidebar: Sidebar::Off,
         }
+    }
+
+    /// A queue jump the supervisor accepted.
+    fn step<'a>(
+        attention: &mut Attention,
+        targets: &'a [Target],
+        forward: bool,
+    ) -> Option<&'a Target> {
+        let (key, target) = attention.next(targets, forward)?;
+        attention.cursor = Some(key);
+        Some(target)
     }
 
     fn state(
@@ -634,7 +681,6 @@ mod tests {
                     target.tab,
                     target.position,
                     target.id.as_str(),
-                    target.popup,
                     target.agent,
                 )
             })
@@ -642,10 +688,10 @@ mod tests {
         assert_eq!(
             order,
             [
-                (0, 0, "pane-s1", false, false),
-                (0, 1, "pane-s2", false, false),
-                (1, 0, "pane-s3", false, false),
-                (1, 1, "popup-s4", true, true),
+                (0, 0, "pane-s1", false),
+                (0, 1, "pane-s2", false),
+                (1, 0, "pane-s3", false),
+                (1, 1, "popup-s4", true),
             ]
         );
         assert_eq!(focus.as_deref(), Some("s4"));
@@ -655,7 +701,7 @@ mod tests {
     #[test]
     fn raises_follow_the_changes_eon_c31_names() {
         let (targets, _) = targets(&snapshot("t", vec![tab("t", &["s"], &[], None)]));
-        let mut attention = Attention::new();
+        let mut attention = Attention::new(true);
         let base = Instant::now();
         let at = |attention: &mut Attention, update: u64, records: Vec<ProgramRecord>| {
             let now = base + Duration::from_secs(update);
@@ -726,7 +772,7 @@ mod tests {
     #[test]
     fn clears_drop_unseen_raises_and_a_restarted_provider_raises_anew() {
         let (targets, _) = targets(&snapshot("t", vec![tab("t", &["s"], &[], None)]));
-        let mut attention = Attention::new();
+        let mut attention = Attention::new(true);
         let base = Instant::now();
         let apply = |attention: &mut Attention, update: u64, records| {
             let now = base + Duration::from_secs(update);
@@ -769,7 +815,7 @@ mod tests {
     #[test]
     fn identity_fixes_change_times_and_discards_older_replies_until_a_new_run() {
         let (targets, _) = targets(&snapshot("t", vec![tab("t", &["s"], &[], None)]));
-        let mut attention = Attention::new();
+        let mut attention = Attention::new(true);
         let base = Instant::now();
         let done = |age| ProgramRecord {
             changed_age_ms: age,
@@ -883,7 +929,7 @@ mod tests {
             "t",
             vec![tab("t", &["s"], &[("agent", "a")], None)],
         ));
-        let mut attention = Attention::new();
+        let mut attention = Attention::new(true);
         let base = Instant::now();
         assert_eq!(state(&attention, &targets, "s", base), None);
         assert_eq!(
@@ -924,7 +970,7 @@ mod tests {
     #[test]
     fn seen_needs_an_attached_venus_and_the_exact_focused_terminal() {
         let (targets, _) = targets(&snapshot("t", vec![tab("t", &["s1", "s2"], &[], None)]));
-        let mut attention = Attention::new();
+        let mut attention = Attention::new(true);
         let now = Instant::now();
         let check = |attention: &Attention, session| state(attention, &targets, session, now);
         let apply = |attention: &mut Attention, session, update, records| {
@@ -992,6 +1038,30 @@ mod tests {
     }
 
     #[test]
+    fn a_focus_reply_already_shows_the_focused_finish_as_seen() {
+        let before = snapshot("t", vec![tab("t", &["s1", "s2"], &[], None)]);
+        let (targets, focus) = targets(&before);
+        let mut attention = Attention::new(true);
+        let now = Instant::now();
+        attention.observe(focus, true);
+        attention.apply(
+            &targets,
+            "s2",
+            "run",
+            status(1, vec![record("a", Done, None, 1)]),
+            now,
+        );
+        let mut after = before.clone();
+        after.tabs[0].selected_pane = Some("pane-s2".into());
+        after.tabs[0].columns[0].expanded = "pane-s2".into();
+        attention.present(&mut after, true, now);
+        let pane = &after.tabs[0].columns[0].panes[1];
+        assert_eq!(pane.attention.as_ref().unwrap().state, State::Idle);
+        assert_eq!(after.tabs[0].attention_rollup, Some(State::Idle));
+        assert_eq!(after.sidebar, Sidebar::Open);
+    }
+
+    #[test]
     fn the_queue_walks_its_total_order_and_its_cursor_resets() {
         let (targets, _) = targets(&snapshot(
             "t1",
@@ -1001,9 +1071,9 @@ mod tests {
             ],
         ));
         let base = Instant::now();
-        let mut attention = Attention::new();
+        let mut attention = Attention::new(true);
         assert!(
-            attention.step(&targets, true).is_none(),
+            step(&mut attention, &targets, true).is_none(),
             "an empty queue moves nothing"
         );
         let apply = |attention: &mut Attention, session, secs, record: ProgramRecord| {
@@ -1021,8 +1091,7 @@ mod tests {
         apply(&mut attention, "s2", 2, record("b", Blocked, None, 1));
         apply(&mut attention, "s4", 3, record("d", Error, None, 1));
         let walk = |attention: &mut Attention, forward| {
-            attention
-                .step(&targets, forward)
+            step(attention, &targets, forward)
                 .map(|target| target.session.clone())
                 .unwrap()
         };
@@ -1043,8 +1112,24 @@ mod tests {
         attention.observe(Some("s3".into()), true);
         assert_eq!(walk(&mut attention, true), "s2");
 
-        // A queue jump keeps the cursor, though its focus sees the target.
-        attention.observe_jump(Some("s4".into()), true);
+        // A queue jump focuses its target as FocusAttention, keeps its
+        // cursor though focus moved, and sees the target.
+        let jumped = snapshot(
+            "t2",
+            vec![
+                tab("t1", &["s1", "s2"], &[], None),
+                tab("t2", &["s3"], &[("agent", "s4")], Some("s4")),
+            ],
+        );
+        let (action, key) = attention.jump(&jumped, true).unwrap();
+        assert_eq!(
+            action,
+            Action::FocusAttention {
+                tab: "t2".into(),
+                target: "popup-s4".into(),
+            }
+        );
+        attention.handled(&action, Some(key), &jumped, true);
         assert_eq!(state(&attention, &targets, "s4", base), Some(State::Idle));
         assert_eq!(walk(&mut attention, true), "s1");
 
@@ -1067,7 +1152,7 @@ mod tests {
         assert_eq!(attention.rollup(&targets, 1, base), Some(State::Finished));
 
         assert_eq!(attention.sidebar, Sidebar::Open);
-        attention.toggle_sidebar();
+        attention.handled(&Action::ToggleSidebar, None, &jumped, true);
         assert_eq!(attention.sidebar, Sidebar::Closed);
         attention.toggle_sidebar();
         assert_eq!(attention.sidebar, Sidebar::Open);
@@ -1086,7 +1171,7 @@ mod tests {
             ],
         ));
         let now = Instant::now();
-        let mut attention = Attention::new();
+        let mut attention = Attention::new(true);
         for session in ["s3", "s2", "s1"] {
             attention.apply(
                 &targets,
@@ -1097,7 +1182,12 @@ mod tests {
             );
         }
         let order: Vec<_> = (0..3)
-            .map(|_| attention.step(&targets, true).unwrap().session.clone())
+            .map(|_| {
+                step(&mut attention, &targets, true)
+                    .unwrap()
+                    .session
+                    .clone()
+            })
             .collect();
         assert_eq!(order, ["s1", "s2", "s3"]);
     }
@@ -1145,7 +1235,7 @@ mod tests {
             "t",
             vec![tab("t", &["session-1", "session-2"], &[], None)],
         ));
-        let mut attention = Attention::new();
+        let mut attention = Attention::new(true);
         let current =
             |attention: &Attention, session| state(attention, &targets, session, Instant::now());
         poll_until(&mut attention, &targets, &mut sessions, |attention| {

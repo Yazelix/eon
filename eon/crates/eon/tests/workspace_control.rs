@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v17::{
+use eon_workspace_protocol::v18::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
@@ -1128,13 +1128,16 @@ printf '/selected-\377\n' > "$4"
                     session: "session-1".into(),
                     endpoint: b"/test.sock".to_vec(),
                     live: true,
+                    attention: None,
                 }],
                 expanded: "p1".into(),
             }],
             popups: Vec::new(),
+            attention_rollup: None,
         }],
         codex_quota: None,
         claude_quota: None,
+        sidebar: eon_workspace_protocol::v18::Sidebar::Open,
     }))
     .unwrap();
     stream.write_all(&response).unwrap();

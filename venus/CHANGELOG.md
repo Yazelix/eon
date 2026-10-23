@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Venus consumes EONW v18, which adds EON-C31 agent attention to panes,
+  popups and tabs, the window's sidebar visibility, and the `ToggleSidebar`,
+  `FocusAttention`, `NextAttention` and `PreviousAttention` actions. Venus
+  decodes them but neither renders nor sends them yet. VEN-C8 and VEN-C22: a
+  snapshot that differs only in attention or sidebar visibility keeps a
+  rejected-action notice and disturbs no navigation, scroll or attachment
+  (`eon-agent-sidebar-yx8.7`).
 - VEN-C8: a final close from Alt+Shift+W, the Eon Bar's Close tab or Alt+W
   first shows a native "Close the last tab?" alert dialog listing the tab's
   panes and popups; Enter sends the close and Escape dismisses it. The new

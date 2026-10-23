@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v17::{
+use eon_workspace_protocol::v18::{
     ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, QuotaWindow, Snapshot,
 };
 use serde::{Deserialize, Serialize};

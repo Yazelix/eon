@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v17 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v18 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -6,7 +6,7 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 17;
+pub const VERSION: u16 = 18;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -26,6 +26,12 @@ pub const MAX_KEY_BYTES: usize = 16;
 pub const MAX_CODEX_QUOTA_WINDOWS: usize = 2;
 pub const MAX_COMMAND_ARGUMENTS: usize = 256;
 pub const MAX_COMMAND_ARGUMENT_BYTES: usize = 32 * 1024;
+/// The bounds of a status record in Orbit's ProgramStatus reply (ORB-C15).
+const MAX_APP_BYTES: usize = 32;
+const MAX_TITLE_BYTES: usize = 96;
+const MAX_STATUS_MESSAGE_BYTES: usize = 256;
+/// Orbit keeps at most 256 records per terminal.
+const MAX_OTHER_RECORDS: u16 = 255;
 pub const PROJECT_ENTRY: &str = "project";
 pub const SHIFT: u8 = 1;
 pub const CTRL: u8 = 2;
@@ -48,6 +54,11 @@ const MOVE_PANE_LEFT: u8 = 24;
 const MOVE_PANE_RIGHT: u8 = 25;
 const EDIT: u8 = 26;
 const CREATE_COMMAND_PANE: u8 = 27;
+const TOGGLE_SIDEBAR: u8 = 28;
+const FOCUS_ATTENTION: u8 = 29;
+const NEXT_ATTENTION: u8 = 30;
+const PREVIOUS_ATTENTION: u8 = 31;
+const NO_PROGRESS: u8 = 255;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction {
@@ -142,6 +153,17 @@ pub enum Action {
         argv: Vec<Vec<u8>>,
         focus: bool,
     },
+    /// Flip the window's agent sidebar between open and closed (EON-C31).
+    ToggleSidebar,
+    /// Focus the exact pane id or popup instance `target` of `tab` under
+    /// EON-C31's covered-target rule.
+    FocusAttention {
+        tab: String,
+        target: String,
+    },
+    /// Jump along EON-C31's attention queue.
+    NextAttention,
+    PreviousAttention,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,12 +176,69 @@ pub struct Request {
     pub action: Action,
 }
 
+/// A terminal's normalized agent attention (EON-C31), most urgent first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum AttentionState {
+    NeedsInput,
+    Error,
+    Finished,
+    Working,
+    Idle,
+    /// An Agent popup with no records.
+    Unavailable,
+}
+
+/// What a program that needs input asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AttentionKind {
+    Permission,
+    Question,
+    Auth,
+}
+
+/// The terminal's most urgent program status record, as the program
+/// reported it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AttentionRecord {
+    /// Only needs input has a kind.
+    pub kind: Option<AttentionKind>,
+    /// From 0 through 100.
+    pub progress: Option<u8>,
+    /// Empty when the program reports none.
+    pub app: String,
+    pub title: String,
+    pub message: String,
+    /// The record's fixed change time, in wall-clock Unix milliseconds.
+    pub changed_at: u64,
+    /// No good status reply for more than 3 s.
+    pub stale: bool,
+    /// The terminal's other records.
+    pub others: u16,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Attention {
+    pub state: AttentionState,
+    /// Present for every state but unavailable.
+    pub record: Option<AttentionRecord>,
+}
+
+/// The window's agent sidebar visibility (EON-C31).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sidebar {
+    Open,
+    Closed,
+    /// `[sidebar] enabled = false`, and eonbase.
+    Off,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pane {
     pub id: String,
     pub session: String,
     pub endpoint: Vec<u8>,
     pub live: bool,
+    pub attention: Option<Attention>,
 }
 
 /// One accordion of panes; `expanded` names the pane it shows.
@@ -244,6 +323,7 @@ pub struct Popup {
     pub entry: String,
     pub session: String,
     pub endpoint: Vec<u8>,
+    pub attention: Option<Attention>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -263,6 +343,8 @@ pub struct Tab {
     pub selected_popup: Option<String>,
     pub columns: Vec<Column>,
     pub popups: Vec<Popup>,
+    /// The most urgent attention among the tab's terminals.
+    pub attention_rollup: Option<AttentionState>,
 }
 
 impl Tab {
@@ -316,6 +398,7 @@ pub struct Snapshot {
     pub tabs: Vec<Tab>,
     pub codex_quota: Option<CodexQuota>,
     pub claude_quota: Option<ClaudeQuota>,
+    pub sidebar: Sidebar,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -530,6 +613,16 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
                 payload.raw(argument);
             }
         }
+        Action::ToggleSidebar => payload.byte(TOGGLE_SIDEBAR),
+        Action::FocusAttention { tab, target } => {
+            identity("tab id", tab)?;
+            identity("attention target", target)?;
+            payload.byte(FOCUS_ATTENTION);
+            payload.string(tab);
+            payload.string(target);
+        }
+        Action::NextAttention => payload.byte(NEXT_ATTENTION),
+        Action::PreviousAttention => payload.byte(PREVIOUS_ATTENTION),
     }
     frame(REQUEST, payload.bytes)
 }
@@ -620,6 +713,13 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
                 .collect::<Result<_>>()?;
             Some(Action::CreateCommandPane { argv, focus })
         }
+        TOGGLE_SIDEBAR => Some(Action::ToggleSidebar),
+        FOCUS_ATTENTION => Some(Action::FocusAttention {
+            tab: decoder.string("tab id", MAX_ID_BYTES)?,
+            target: decoder.string("attention target", MAX_ID_BYTES)?,
+        }),
+        NEXT_ATTENTION => Some(Action::NextAttention),
+        PREVIOUS_ATTENTION => Some(Action::PreviousAttention),
         _ => None,
     };
     if let Some(action) = action {
@@ -629,6 +729,10 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
             Action::ClosePane { pane } => identity("pane id", pane)?,
             Action::Edit { file } => validate_file(file)?,
             Action::CreateCommandPane { argv, .. } => validate_command(argv)?,
+            Action::FocusAttention { tab, target } => {
+                identity("tab id", tab)?;
+                identity("attention target", target)?;
+            }
             _ => (),
         }
         return Ok(Request { id, caller, action });
@@ -748,7 +852,11 @@ fn validate_popup_action(action: &Action) -> Result<()> {
         | Action::ClosePane { .. }
         | Action::MovePaneSideways(_)
         | Action::Edit { .. }
-        | Action::CreateCommandPane { .. } => (),
+        | Action::CreateCommandPane { .. }
+        | Action::ToggleSidebar
+        | Action::FocusAttention { .. }
+        | Action::NextAttention
+        | Action::PreviousAttention => (),
     }
     Ok(())
 }
@@ -763,6 +871,7 @@ struct WireTab {
     selected_popup: Option<String>,
     panes: Vec<Pane>,
     popups: Vec<Popup>,
+    attention_rollup: Option<AttentionState>,
 }
 
 impl From<&Tab> for WireTab {
@@ -775,6 +884,7 @@ impl From<&Tab> for WireTab {
             selected_popup: tab.selected_popup.clone(),
             panes: tab.panes().cloned().collect(),
             popups: tab.popups.clone(),
+            attention_rollup: tab.attention_rollup,
         }
     }
 }
@@ -807,6 +917,7 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             encode_workspace(&mut payload, snapshot, &tabs);
             encode_quota(&mut payload, snapshot.codex_quota.as_ref());
             encode_quota(&mut payload, claude.as_ref());
+            encode_sidebar(&mut payload, snapshot.sidebar);
             SNAPSHOT
         }
         Response::Failure(failure) => {
@@ -855,6 +966,17 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
     let (mut snapshot, wire_tabs) = decode_workspace(&mut decoder)?;
     snapshot.codex_quota = decode_quota(&mut decoder)?;
     let claude = decode_quota(&mut decoder)?;
+    snapshot.sidebar = match decoder.byte()? {
+        0 => Sidebar::Open,
+        1 => Sidebar::Closed,
+        2 => Sidebar::Off,
+        value => {
+            return Err(Error::InvalidTag {
+                field: "sidebar",
+                value,
+            });
+        }
+    };
     validate_workspace(&snapshot, &wire_tabs)?;
     validate_quota(snapshot.codex_quota.as_ref())?;
     validate_claude(claude.as_ref())?;
@@ -898,6 +1020,7 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
             selected_popup: tab.selected_popup,
             columns,
             popups: tab.popups,
+            attention_rollup: tab.attention_rollup,
         };
         validate_columns(&tab)?;
         snapshot.tabs.push(tab);
@@ -933,6 +1056,7 @@ fn encode_workspace(encoder: &mut Encoder, snapshot: &Snapshot, tabs: &[WireTab]
             encoder.string(&pane.session);
             encoder.raw(&pane.endpoint);
             encoder.byte(u8::from(pane.live));
+            encode_attention(encoder, pane.attention.as_ref());
         }
         encoder.count(tab.popups.len());
         for popup in &tab.popups {
@@ -940,7 +1064,9 @@ fn encode_workspace(encoder: &mut Encoder, snapshot: &Snapshot, tabs: &[WireTab]
             encoder.string(&popup.entry);
             encoder.string(&popup.session);
             encoder.raw(&popup.endpoint);
+            encode_attention(encoder, popup.attention.as_ref());
         }
+        encode_state(encoder, tab.attention_rollup);
     }
 }
 
@@ -981,6 +1107,7 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
                 session: decoder.string("session id", MAX_ID_BYTES)?,
                 endpoint: decoder.raw("endpoint", MAX_ENDPOINT_BYTES)?.to_vec(),
                 live: decode_bool(decoder, "liveness")?,
+                attention: decode_attention(decoder)?,
             });
         }
         let count = decoder.count("sessions", (MAX_SESSIONS - sessions).min(MAX_ENTRIES))?;
@@ -992,8 +1119,10 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
                 entry: decoder.string("entry id", MAX_ENTRY_ID_BYTES)?,
                 session: decoder.string("session id", MAX_ID_BYTES)?,
                 endpoint: decoder.raw("endpoint", MAX_ENDPOINT_BYTES)?.to_vec(),
+                attention: decode_attention(decoder)?,
             });
         }
+        let attention_rollup = decode_state(decoder, "attention rollup")?;
         tabs.push(WireTab {
             id,
             directory,
@@ -1002,6 +1131,7 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
             selected_popup,
             panes,
             popups,
+            attention_rollup,
         });
     }
     let snapshot = Snapshot {
@@ -1011,6 +1141,7 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
         tabs: Vec::with_capacity(tabs.len()),
         codex_quota: None,
         claude_quota: None,
+        sidebar: Sidebar::Off,
     };
     Ok((snapshot, tabs))
 }
@@ -1104,15 +1235,26 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
                 });
             }
         }
-        for (id, session, endpoint) in tab
+        let surfaces = tab
             .panes
             .iter()
-            .map(|p| (&p.id, &p.session, &p.endpoint))
-            .chain(tab.popups.iter().map(|p| (&p.id, &p.session, &p.endpoint)))
-        {
+            .map(|p| (&p.id, &p.session, &p.endpoint, &p.attention))
+            .chain(
+                tab.popups
+                    .iter()
+                    .map(|p| (&p.id, &p.session, &p.endpoint, &p.attention)),
+            );
+        let mut rollup = None;
+        for (id, session, endpoint, attention) in surfaces {
             identity("surface id", id)?;
             identity("session id", session)?;
             validate_endpoint(endpoint)?;
+            if let Some(attention) = attention {
+                validate_attention(attention)?;
+                rollup = Some(rollup.map_or(attention.state, |state: AttentionState| {
+                    state.min(attention.state)
+                }));
+            }
             if !identities.insert(id.as_str())
                 || !sessions.insert(session.as_str())
                 || !endpoints.insert(endpoint.as_slice())
@@ -1124,6 +1266,11 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
             if sessions.len() > MAX_SESSIONS {
                 return Err(Error::InvalidSnapshot { field: "sessions" });
             }
+        }
+        if tab.attention_rollup != rollup {
+            return Err(Error::InvalidSnapshot {
+                field: "attention rollup",
+            });
         }
     }
     if !tabs.iter().any(|tab| tab.id == snapshot.active_tab) {
@@ -1277,6 +1424,139 @@ fn decode_quota(decoder: &mut Decoder<'_>) -> Result<Option<CodexQuota>> {
         observed_at,
         windows,
     }))
+}
+
+fn validate_attention(attention: &Attention) -> Result<()> {
+    let invalid = || Err(Error::InvalidSnapshot { field: "attention" });
+    let Some(record) = &attention.record else {
+        return if attention.state == AttentionState::Unavailable {
+            Ok(())
+        } else {
+            invalid()
+        };
+    };
+    if attention.state == AttentionState::Unavailable
+        || (record.kind.is_some() && attention.state != AttentionState::NeedsInput)
+        || record.progress.is_some_and(|progress| progress > 100)
+        || record.others > MAX_OTHER_RECORDS
+    {
+        return invalid();
+    }
+    for (field, value, maximum) in [
+        ("attention app", &record.app, MAX_APP_BYTES),
+        ("attention title", &record.title, MAX_TITLE_BYTES),
+        (
+            "attention message",
+            &record.message,
+            MAX_STATUS_MESSAGE_BYTES,
+        ),
+    ] {
+        if value.len() > maximum {
+            return Err(Error::FieldTooLong {
+                field,
+                length: value.len(),
+            });
+        }
+        if value.chars().any(char::is_control) {
+            return Err(Error::InvalidValue { field });
+        }
+    }
+    Ok(())
+}
+
+fn encode_state(encoder: &mut Encoder, state: Option<AttentionState>) {
+    encoder.byte(match state {
+        None => 0,
+        Some(AttentionState::NeedsInput) => 1,
+        Some(AttentionState::Error) => 2,
+        Some(AttentionState::Finished) => 3,
+        Some(AttentionState::Working) => 4,
+        Some(AttentionState::Idle) => 5,
+        Some(AttentionState::Unavailable) => 6,
+    });
+}
+
+fn decode_state(decoder: &mut Decoder<'_>, field: &'static str) -> Result<Option<AttentionState>> {
+    Ok(Some(match decoder.byte()? {
+        0 => return Ok(None),
+        1 => AttentionState::NeedsInput,
+        2 => AttentionState::Error,
+        3 => AttentionState::Finished,
+        4 => AttentionState::Working,
+        5 => AttentionState::Idle,
+        6 => AttentionState::Unavailable,
+        value => return Err(Error::InvalidTag { field, value }),
+    }))
+}
+
+/// The state, then, for every state but unavailable, the record.
+fn encode_attention(encoder: &mut Encoder, attention: Option<&Attention>) {
+    encode_state(encoder, attention.map(|attention| attention.state));
+    let Some(record) = attention.and_then(|attention| attention.record.as_ref()) else {
+        return;
+    };
+    encoder.byte(match record.kind {
+        None => 0,
+        Some(AttentionKind::Permission) => 1,
+        Some(AttentionKind::Question) => 2,
+        Some(AttentionKind::Auth) => 3,
+    });
+    encoder.byte(record.progress.unwrap_or(NO_PROGRESS));
+    encoder.string(&record.app);
+    encoder.string(&record.title);
+    encoder.string(&record.message);
+    encoder
+        .bytes
+        .extend_from_slice(&record.changed_at.to_le_bytes());
+    encoder.byte(u8::from(record.stale));
+    encoder.number(record.others);
+}
+
+fn decode_attention(decoder: &mut Decoder<'_>) -> Result<Option<Attention>> {
+    let Some(state) = decode_state(decoder, "attention state")? else {
+        return Ok(None);
+    };
+    if state == AttentionState::Unavailable {
+        return Ok(Some(Attention {
+            state,
+            record: None,
+        }));
+    }
+    let kind = match decoder.byte()? {
+        0 => None,
+        1 => Some(AttentionKind::Permission),
+        2 => Some(AttentionKind::Question),
+        3 => Some(AttentionKind::Auth),
+        value => {
+            return Err(Error::InvalidTag {
+                field: "attention kind",
+                value,
+            });
+        }
+    };
+    let progress = Some(decoder.byte()?).filter(|progress| *progress != NO_PROGRESS);
+    let record = AttentionRecord {
+        kind,
+        progress,
+        app: decoder.string("attention app", MAX_APP_BYTES)?,
+        title: decoder.string("attention title", MAX_TITLE_BYTES)?,
+        message: decoder.string("attention message", MAX_STATUS_MESSAGE_BYTES)?,
+        changed_at: decode_u64(decoder)?,
+        stale: decode_bool(decoder, "attention stale")?,
+        others: decoder.number()?,
+    };
+    Ok(Some(Attention {
+        state,
+        record: Some(record),
+    }))
+}
+
+fn encode_sidebar(encoder: &mut Encoder, sidebar: Sidebar) {
+    encoder.byte(match sidebar {
+        Sidebar::Open => 0,
+        Sidebar::Closed => 1,
+        Sidebar::Off => 2,
+    });
 }
 
 pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>> {
@@ -1706,6 +1986,7 @@ mod tests {
             session: format!("s{id}"),
             endpoint: format!("/{id}").into_bytes(),
             live: true,
+            attention: None,
         }
     }
 
@@ -1715,6 +1996,7 @@ mod tests {
             entry: entry.into(),
             session: format!("s{id}"),
             endpoint: format!("/{id}").into_bytes(),
+            attention: None,
         }
     }
 
@@ -1726,8 +2008,24 @@ mod tests {
         }
     }
 
-    /// Hidden and inactive popups, a popup-only tab, two pending tabs, columns
-    /// and both quotas.
+    fn attention(state: AttentionState) -> Option<Attention> {
+        Some(Attention {
+            state,
+            record: Some(AttentionRecord {
+                kind: None,
+                progress: None,
+                app: "codex".into(),
+                title: String::new(),
+                message: String::new(),
+                changed_at: 1,
+                stale: false,
+                others: 0,
+            }),
+        })
+    }
+
+    /// Hidden and inactive popups, a popup-only tab, two pending tabs, columns,
+    /// attention of every shape and both quotas.
     fn snapshot() -> Snapshot {
         let entry = |id: &str, key: &str| PopupEntry {
             id: id.into(),
@@ -1745,22 +2043,50 @@ mod tests {
             selected_popup: None,
             columns,
             popups,
+            attention_rollup: None,
         };
         let pending = |id: &str, popup_id: &str| Tab {
             pending: true,
             selected_popup: Some(popup_id.into()),
             ..tab(id, vec![], vec![popup(popup_id, PROJECT_ENTRY)])
         };
+        let mut asking = attention(AttentionState::NeedsInput);
+        let record = asking.as_mut().unwrap().record.as_mut().unwrap();
+        record.kind = Some(AttentionKind::Question);
+        record.title = "Allow?".into();
+        record.message = "Run make".into();
+        record.others = 2;
+        let mut working = attention(AttentionState::Working);
+        working.as_mut().unwrap().record.as_mut().unwrap().progress = Some(40);
+        let mut finished = attention(AttentionState::Finished);
+        finished.as_mut().unwrap().record.as_mut().unwrap().stale = true;
         let columns = vec![
             Column {
-                panes: vec![pane("p1"), pane("p2")],
+                panes: vec![
+                    pane("p1"),
+                    Pane {
+                        attention: asking,
+                        ..pane("p2")
+                    },
+                ],
                 expanded: "p2".into(),
             },
             Column {
-                panes: vec![pane("p3")],
+                panes: vec![Pane {
+                    attention: working,
+                    ..pane("p3")
+                }],
                 expanded: "p3".into(),
             },
         ];
+        let agent = |id: &str, attention| Popup {
+            attention,
+            ..popup(id, "agent")
+        };
+        let unavailable = Some(Attention {
+            state: AttentionState::Unavailable,
+            record: None,
+        });
         Snapshot {
             active_tab: "t1".into(),
             geometry: PopupGeometry {
@@ -1771,10 +2097,14 @@ mod tests {
             tabs: vec![
                 Tab {
                     selected_pane: Some("p3".into()),
-                    ..tab("t1", columns, vec![popup("u1", "agent")])
+                    attention_rollup: Some(AttentionState::NeedsInput),
+                    ..tab("t1", columns, vec![agent("u1", unavailable)])
                 },
                 pending("t2", "u2"),
-                tab("t3", vec![], vec![popup("u3", "agent")]),
+                Tab {
+                    attention_rollup: Some(AttentionState::Finished),
+                    ..tab("t3", vec![], vec![agent("u3", finished)])
+                },
                 pending("t4", "u4"),
             ],
             codex_quota: Some(CodexQuota {
@@ -1787,6 +2117,7 @@ mod tests {
                 observed_at: 100,
                 windows: vec![window(300, Some(200)), window(10080, None)],
             }),
+            sidebar: Sidebar::Closed,
         }
     }
 
@@ -1807,6 +2138,7 @@ mod tests {
         encode_quota(&mut payload, snapshot.codex_quota.as_ref());
         let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
         encode_quota(&mut payload, claude.as_ref());
+        encode_sidebar(&mut payload, snapshot.sidebar);
         frame(SNAPSHOT, payload.bytes).unwrap()
     }
 
@@ -1889,14 +2221,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57110001000a00000002007231001202007431",
+                "454f4e57120001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57110001001000000002007231000c0200743104002f746d70",
+                "454f4e57120001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -1905,36 +2237,55 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571100010015000000020072310013020074310300676974010200753101",
+                "454f4e571200010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e571100010014000000020072310015020074310200753104002f746d70",
+                "454f4e571200010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e571100010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571200010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57110001000a00000002007231001702007032",
+                "454f4e57120001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571100010006000000020072310019",
+                "454f4e571200010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57110001000e00000002007231001a06002f746d702f61",
+                "454f4e57120001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57110001001000000002007231001b00020002006878010061",
+                "454f4e57120001001000000002007231001b00020002006878010061",
+            ),
+            (
+                Action::ToggleSidebar,
+                "454f4e57120001000600000002007231001c",
+            ),
+            (
+                Action::FocusAttention {
+                    tab: "t1".into(),
+                    target: "p2".into(),
+                },
+                "454f4e57120001000e00000002007231001d0200743102007032",
+            ),
+            (
+                Action::NextAttention,
+                "454f4e57120001000600000002007231001e",
+            ),
+            (
+                Action::PreviousAttention,
+                "454f4e57120001000600000002007231001f",
             ),
         ] {
             let request = Request {
@@ -1954,7 +2305,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57110001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e57120001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -1991,11 +2342,27 @@ mod tests {
                         expanded: "p2".into(),
                     },
                     Column {
-                        panes: vec![pane("p3")],
+                        panes: vec![Pane {
+                            attention: Some(Attention {
+                                state: AttentionState::NeedsInput,
+                                record: Some(AttentionRecord {
+                                    kind: Some(AttentionKind::Question),
+                                    progress: None,
+                                    app: "codex".into(),
+                                    title: "t".into(),
+                                    message: "m".into(),
+                                    changed_at: 1,
+                                    stale: false,
+                                    others: 2,
+                                }),
+                            }),
+                            ..pane("p3")
+                        }],
                         expanded: "p3".into(),
                     },
                 ],
                 popups: vec![popup("u1", "git")],
+                attention_rollup: Some(AttentionState::NeedsInput),
             }],
             codex_quota: Some(CodexQuota {
                 state: CodexQuotaState::Fresh,
@@ -2015,6 +2382,7 @@ mod tests {
                     resets_at: None,
                 }],
             }),
+            sidebar: Sidebar::Closed,
         });
         let failure = Response::Failure(Failure {
             code: "busy".into(),
@@ -2024,20 +2392,21 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5711008100b20000000100020002000100010000000200743100000041",
+                    "454f4e5712008100d20000000100020002000100010000000200743100000041",
                     "000080400100030067697403004769740404004b65794701000200743104002f",
-                    "746d700001020070330102007531030002007031030073703103002f70310102",
-                    "007032030073703203002f70320102007033030073703303002f703301010002",
-                    "0075310300676974030073753103002f75310100640000000000000001002c01",
-                    "00002a01f40100000000000001015a000000000000000100602700000700",
+                    "746d700001020070330102007531030002007031030073703103002f70310100",
+                    "02007032030073703203002f7032010002007033030073703303002f70330101",
+                    "02ff0500636f64657801007401006d0100000000000000000200010002007531",
+                    "0300676974030073753103002f753100010100640000000000000001002c0100",
+                    "002a01f40100000000000001015a00000000000000010060270000070001",
                 ),
             ),
-            (failure, "454f4e57110082000a00000004006275737902006e6f"),
+            (failure, "454f4e57120082000a00000004006275737902006e6f"),
             (
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57110085000400000002006731",
+                "454f4e57120085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -2063,7 +2432,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e571100830026000000020067310500302e392e30110002006f6b010002",
+                    "454f4e571200830026000000020067310500302e392e30120002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -2072,7 +2441,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571100840006000000020067310000",
+                "454f4e571200840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -2371,7 +2740,7 @@ mod tests {
             assert_eq!(field(decoded), expected, "{request:?}");
         }
 
-        let decode_only: [(&[u8], Error); 9] = [
+        let decode_only: [(&[u8], Error); 10] = [
             // The retired picker opcode.
             (
                 &[13],
@@ -2381,10 +2750,16 @@ mod tests {
                 },
             ),
             (
-                &[28],
+                &[32],
                 Error::InvalidTag {
                     field: "action",
-                    value: 28,
+                    value: 32,
+                },
+            ),
+            (
+                &[29, 2, 0, b't', b'1', 0, 0],
+                Error::InvalidValue {
+                    field: "attention target",
                 },
             ),
             (
@@ -2498,8 +2873,19 @@ mod tests {
         let bytes = encode_response(&Response::Snapshot(state.clone())).unwrap();
         assert_eq!(forge(&state), bytes);
 
-        let valid: [fn(&mut Snapshot); 5] = [
+        let valid: [fn(&mut Snapshot); 8] = [
             |_| {},
+            |s| s.sidebar = Sidebar::Off,
+            // The states, kinds and visibility the fixture leaves out.
+            |s| {
+                s.sidebar = Sidebar::Open;
+                working_attention(s).state = AttentionState::Error;
+                asking(s).kind = Some(AttentionKind::Auth);
+            },
+            |s| {
+                working_attention(s).state = AttentionState::Idle;
+                asking(s).kind = Some(AttentionKind::Permission);
+            },
             |s| {
                 s.codex_quota = None;
                 s.claude_quota = None;
@@ -2533,8 +2919,21 @@ mod tests {
         fn claude(s: &mut Snapshot) -> &mut ClaudeQuota {
             s.claude_quota.as_mut().unwrap()
         }
+        /// p3's working attention.
+        fn working_attention(s: &mut Snapshot) -> &mut Attention {
+            s.tabs[0].columns[1].panes[0].attention.as_mut().unwrap()
+        }
+        /// p3's working record.
+        fn working(s: &mut Snapshot) -> &mut AttentionRecord {
+            working_attention(s).record.as_mut().unwrap()
+        }
+        /// p2's needs-input record.
+        fn asking(s: &mut Snapshot) -> &mut AttentionRecord {
+            let pane = &mut s.tabs[0].columns[0].panes[1];
+            pane.attention.as_mut().unwrap().record.as_mut().unwrap()
+        }
         type Change = fn(&mut Snapshot);
-        let invalid: [(&str, &[Change]); 21] = [
+        let invalid: [(&str, &[Change]); 26] = [
             // Every tab, pane and popup owns its identity, session and endpoint.
             (
                 "surface identity",
@@ -2673,6 +3072,47 @@ mod tests {
                     |s| claude(s).windows[1].duration_minutes = 300,
                 ],
             ),
+            // Unavailable alone has no record, and only needs input a kind.
+            (
+                "attention",
+                &[
+                    |s| {
+                        let record = Some(working(s).clone());
+                        s.tabs[0].popups[0].attention.as_mut().unwrap().record = record;
+                    },
+                    |s| working_attention(s).record = None,
+                    |s| working(s).kind = Some(AttentionKind::Auth),
+                    |s| working(s).progress = Some(101),
+                    |s| working(s).others = MAX_OTHER_RECORDS + 1,
+                ],
+            ),
+            // A tab's rollup is the most urgent state among its terminals.
+            (
+                "attention rollup",
+                &[
+                    |s| s.tabs[0].attention_rollup = Some(AttentionState::Working),
+                    |s| s.tabs[1].attention_rollup = Some(AttentionState::Idle),
+                    |s| s.tabs[2].attention_rollup = None,
+                ],
+            ),
+            (
+                "attention app",
+                &[|s| working(s).app = "a".repeat(MAX_APP_BYTES + 1)],
+            ),
+            (
+                "attention title",
+                &[
+                    |s| working(s).title = "t".repeat(MAX_TITLE_BYTES + 1),
+                    |s| working(s).title = "a\u{1b}[2J".into(),
+                ],
+            ),
+            (
+                "attention message",
+                &[
+                    |s| working(s).message = "m".repeat(MAX_STATUS_MESSAGE_BYTES + 1),
+                    |s| working(s).message = "line\nbreak".into(),
+                ],
+            ),
         ];
         for (expected, changes) in invalid {
             for (index, change) in changes.iter().enumerate() {
@@ -2704,6 +3144,8 @@ mod tests {
         let id = 2 + MAX_ID_BYTES;
         let entry_id = 2 + MAX_ENTRY_ID_BYTES;
         let quota = 1 + 1 + 8 + 2 + MAX_CODEX_QUOTA_WINDOWS * (4 + 1 + 1 + 8);
+        let attention =
+            3 + 2 + MAX_APP_BYTES + 2 + MAX_TITLE_BYTES + 2 + MAX_STATUS_MESSAGE_BYTES + 8 + 1 + 2;
         let upper_bound = HEADER_BYTES
             + 2
             + MAX_TABS * (2 + MAX_COLUMNS * 4)
@@ -2712,9 +3154,10 @@ mod tests {
             + 2
             + MAX_ENTRIES * (entry_id + 2 + MAX_LABEL_BYTES + 1 + 2 + MAX_KEY_BYTES)
             + 2
-            + MAX_TABS * (id + 2 + MAX_DIRECTORY_BYTES + 1 + 2 * (1 + id) + 2 + 2)
-            + MAX_SESSIONS * (id + entry_id + id + 2 + MAX_ENDPOINT_BYTES)
-            + 2 * quota;
+            + MAX_TABS * (id + 2 + MAX_DIRECTORY_BYTES + 1 + 2 * (1 + id) + 2 + 2 + 1)
+            + MAX_SESSIONS * (id + entry_id + id + 2 + MAX_ENDPOINT_BYTES + attention)
+            + 2 * quota
+            + 1;
         assert!(upper_bound <= MAX_MESSAGE_BYTES, "{upper_bound}");
 
         let name = |prefix: &str, n: usize, length: usize| {
@@ -2732,7 +3175,21 @@ mod tests {
                 },
             })
             .collect();
-        // Each tab holds two single-pane columns and two popups.
+        // Each tab holds two single-pane columns and two popups, each of them
+        // needing input with the longest record text.
+        let attention = Some(Attention {
+            state: AttentionState::NeedsInput,
+            record: Some(AttentionRecord {
+                kind: Some(AttentionKind::Permission),
+                progress: Some(100),
+                app: "a".repeat(MAX_APP_BYTES),
+                title: "t".repeat(MAX_TITLE_BYTES),
+                message: "m".repeat(MAX_STATUS_MESSAGE_BYTES),
+                changed_at: u64::MAX,
+                stale: true,
+                others: MAX_OTHER_RECORDS,
+            }),
+        });
         let per_tab = MAX_SESSIONS / MAX_TABS;
         state.tabs = (0..MAX_TABS)
             .map(|t| {
@@ -2753,6 +3210,7 @@ mod tests {
                                 session,
                                 endpoint,
                                 live: true,
+                                attention: attention.clone(),
                             }],
                         }
                     })
@@ -2765,6 +3223,7 @@ mod tests {
                             entry: state.entries[i].id.clone(),
                             session,
                             endpoint,
+                            attention: attention.clone(),
                         }
                     })
                     .collect();
@@ -2776,6 +3235,7 @@ mod tests {
                     selected_popup: Some(popups[0].id.clone()),
                     columns,
                     popups,
+                    attention_rollup: Some(AttentionState::NeedsInput),
                 }
             })
             .collect();

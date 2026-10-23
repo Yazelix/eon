@@ -12,6 +12,18 @@ installation, and proven contract changes.
 - A terminal whose Orbit receives a termination signal now ends on its own; it
   no longer brings down the supervisor and window.
 
+- `eon workspace` shows each terminal's agent attention, such as
+  `attention=needs-input app=codex`, each tab's most urgent one, and whether
+  the agent sidebar is open (`sidebar open`). With `--json` that is
+  `"attention":{"state":"needs-input","app":"codex"}` on panes and popups,
+  `"attention_rollup"` on tabs and `"sidebar"` on the workspace, or `null`
+  without attention. The states are `needs-input`, `error`, `finished`,
+  `working`, `idle` and `unavailable`. An agent's own status text never
+  appears there. `[sidebar] enabled = false` turns the coming agent sidebar
+  off. This changes the workspace protocol to EONW 18: the updated `eon`
+  cannot manage windows started by an earlier build, so stop the ones you no
+  longer need with the old `eon` first.
+
 - Closing the last tab from the window now asks first: Alt+Shift+W, the bar's
   `×` and Alt+W on the last pane show "Close the last tab?" with the
   terminals that will stop. Enter quits, Escape cancels. The new Alt+Shift+D
@@ -195,7 +207,7 @@ installation, and proven contract changes.
   130 interrupted. Structured failures exited 2 and
   every other failure 1; scripts that tested for those values need updating.
   `eon --help` and [Using Eon](docs/USAGE.md#exit-status) list the statuses.
-- `eon` speaks only EONW 17. A generation started by an older build that uses
+- `eon` speaks only EONW 18. A generation started by an older build that uses
   an earlier EONW is listed as incompatible and can no longer be inspected or
   stopped by this `eon`; stop it with the build that started it.
 - `eon claude-statusline` is gone; Claude quota has come from CodexBar since

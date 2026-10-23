@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v2 / ORBS v13 through the
-in-tree `orbit-protocol` crate and canonical EONW v17 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v18 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version.
@@ -667,10 +667,11 @@ re-proved when that platform or feature is next touched.
   liveness change, rejected close or movement, or incompatible metadata retires
   stale observations and never grants Venus topology or Session-lifecycle
   ownership. Repeats create no second structural action. Rejected-action notices
-  remain available through unchanged and quota-only refreshes until workspace
-  structure changes. Connection-unavailable notices clear on a successful
-  snapshot. Terminal-status alerts announce their actual error without moving
-  focus; routine polling does not repeat the announcement.
+  remain available through unchanged, quota-only, and EON-C31 attention- or
+  sidebar-only refreshes until workspace structure changes.
+  Connection-unavailable notices clear on a successful snapshot.
+  Terminal-status alerts announce their actual error without moving focus;
+  routine polling does not repeat the announcement.
 - **Owner:** Venus workspace materialization, bounded metadata observation,
   clipping, and accessibility projection; Eon owns topology and Orbit owns
   terminal metadata and Session lifetime.
@@ -1220,7 +1221,8 @@ re-proved when that platform or feature is next touched.
   action, focus target, or accessibility node. Missing resets remain explicit;
   unusual durations use exact minute labels. A stale label that cannot retain
   `old` disappears. Narrow and tiny widths retain the VEN-C21 tab and control
-  priority. Quota-only refreshes do not recenter workspace navigation, cancel
+  priority. Quota-only refreshes, and refreshes that differ only in EON-C31
+  attention or sidebar visibility, do not recenter workspace navigation, cancel
   terminal scroll, replace the attachment, or send an Orbit resize. Venus has
   no quota cache outside the current EONW snapshot and does not refresh or infer
   provider state.

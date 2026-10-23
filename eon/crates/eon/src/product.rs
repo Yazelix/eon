@@ -2,7 +2,7 @@ use eon_runtime::{
     Defaults, Inputs, ManagedPrograms, PopupCatalog, PopupCommand, PopupDefinition, ShellConfig,
     StartupAnimation, TerminalConfig,
 };
-use eon_workspace_protocol::v17::{ALT, PopupGeometry, SHIFT, Shortcut};
+use eon_workspace_protocol::v18::{ALT, PopupGeometry, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     const MANIFEST: &str = include_str!("../../../../components/eon-v4.json");
@@ -49,6 +49,7 @@ pub(crate) fn inputs() -> Inputs {
                 duration_seconds: 3,
             },
             warning_close_last_tab: true,
+            sidebar_enabled: true,
             popups: PopupCatalog {
                 geometry: PopupGeometry {
                     side_margin: 8.0,
