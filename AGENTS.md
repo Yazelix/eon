@@ -9,7 +9,7 @@ edit generated files directly. Edit `.agent-protocols.local.md` or
 ## Protocol import record
 
 - Source: `https://github.com/Yazelix/starcompass`
-- Source commit: `24b26e390737f81fa1aa9415a38a71c10282a3c4`
+- Source commit: `b102603a6276093973ede5f65ed4f254f841e500`
 - Profiles: `regular`, `release`
 - Manifest: `.agent-protocols.json` (schema 1)
 - Directory rules: `orbit/`, `runtime/`, `venus/`; read a directory's `AGENTS.md` before changing files under it.
@@ -26,6 +26,7 @@ edit generated files directly. Edit `.agent-protocols.local.md` or
 | `AP-PROOF-001` | 11 | `310e1f798c3334e08402f9e42f447ae9352d171fc92888afb141c6b228f84e56` |
 | `AP-PLAN-001` | 12 | `5ee8deccb4b3c61ddd4a52b8ed6f69ebd30e24b65ace867871a89c75ef02a984` |
 | `AP-SESSION-001` | 4 | `51c15e878070caaf372721c2eb083354f5f63492f5c4e694cf31aaefcefa53a7` |
+| `AP-COORDINATOR-001` | 1 | `bd80e64f9b50e617a37531c5e48e0bc2672397edbd2f75c1e511d588954432c7` |
 | `AP-EXCEPTION-001` | 2 | `2c4f00299922edac83286821af07ad485e5a630bca6acbbce918d87614abb395` |
 | `AP-GIT-001` | 5 | `f2c3254311de57a23a13aa382fe3285e65bb34e535ecd813d1be783ca79d4bf9` |
 | `AP-PERF-001` | 2 | `671ba2f59620007d1a0c7338056af7a2010ea1bd2c8320dcb06c342aaca385fa` |
