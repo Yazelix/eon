@@ -1733,7 +1733,8 @@ re-proved when that platform or feature is next touched.
 
 - **Status:** Partially proved: on x86_64 Linux Wayland every clause is proved
   except compositor blur through the card, which waits on VEN-C15's native
-  backdrop re-proof. Approved by Lucca on 2026-10-21 (draft 15 on
+  backdrop re-proof, and the current row's tint, which waits on its installed
+  observation (`eon-sidebar-you-are-here-3743`). Approved by Lucca on 2026-10-21 (draft 15 on
   `eon-agent-sidebar-yx8.1`, there named VEN-C29). `eon-agent-sidebar-yx8.3`
   implements visibility, layout and hiding for width, Alt+Shift+H, the
   sidebar's AccessKit region and the empty state;
@@ -1744,7 +1745,9 @@ re-proved when that platform or feature is next touched.
   `eon-agent-sidebar-yx8.16` adds the shown-popup marker, approved by Lucca
   on 2026-10-23; `eon-popup-marker-always-52rk` keeps the marker on every
   popup's row and lists popup rows first, approved by Lucca through
-  eon-overseer the same day.
+  eon-overseer the same day; `eon-sidebar-you-are-here-3743` replaces the
+  header marker with the current row, approved by Lucca through eon-overseer
+  on 2026-10-23.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -1813,11 +1816,15 @@ re-proved when that platform or feature is next touched.
     - Within a tab, a row whose source terminal is a popup comes first; pane
       rows follow in pane order.
     - **Popup marker.** A row whose source terminal is a popup always shows
-      the popup marker glyph after its catalog label. When a listed tab shows
-      a popup (its snapshot `selected_popup` is set), its header ends with the
-      same glyph; a tab whose popups are all hidden gets no header marker. The
-      row's accessible label adds "popup", and the header's adds "popup
-      shown".
+      the popup marker glyph after its catalog label, and its accessible label
+      adds "popup". Tab headers carry no marker.
+    - **Current row.** The row whose source terminal is the active tab's
+      focused terminal (its shown popup, else its selected pane) takes a faint
+      tint of the theme accent over the card background. The opaque highlight
+      of a focused or hovered row draws over it, so both stay
+      distinguishable, and the row keeps the tint while the sidebar holds
+      keyboard focus. Rows in other tabs never take it. Its accessible label
+      adds "current".
   - **Navigation.**
     - Activating a row sends `FocusAttention`, and keyboard focus moves to the
       target terminal, or stays on the tab when the covered-target rule only
@@ -1896,7 +1903,13 @@ re-proved when that platform or feature is next touched.
     placement after right-to-left text. `eon-popup-marker-always-52rk`
     changes the first test so a popup's row comes before its tab's pane rows,
     a hidden popup's row keeps the marker, and every popup row's name adds
-    "popup".
+    "popup". `eon-sidebar-you-are-here-3743` changes it so no heading carries
+    the marker, and extends it to the current row: none while the active tab
+    focuses a terminal without attention, the focused pane's row while the
+    sidebar's own focus is on another row, the shown popup's row, never a row
+    in another tab, and the "current" names; it extends
+    `agent_sidebar_region_follows_the_header_and_names_its_empty_state` to
+    the "current" name in the AccessKit tree.
   - **Installed (`eon-agent-sidebar-yx8.13`, on the sidebar batch's final
     revision):** isolated installed dogfood (edge `d6ce117`, code tree
     `a0d664d`, whose `nix build` gave
@@ -2037,3 +2050,5 @@ re-proved when that platform or feature is next touched.
   - Compositor blur through the card: headless Sway has no blur, so only its
     translucency was measured. It waits on VEN-C15's native backdrop
     re-proof.
+  - The current row's tint on the installed product
+    (`eon-sidebar-you-are-here-3743`), pending its installed observation.

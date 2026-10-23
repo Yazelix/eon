@@ -166,6 +166,21 @@ pub fn active_popup(snapshot: &Snapshot) -> Option<&Popup> {
     tab.popups.iter().find(|popup| popup.id == *selected)
 }
 
+/// The terminal a snapshot focuses: the active tab's shown popup, or else its selected pane.
+#[must_use]
+pub fn focused_terminal(snapshot: &Snapshot) -> Option<&str> {
+    active_popup(snapshot)
+        .map(|popup| popup.id.as_str())
+        .or_else(|| {
+            snapshot
+                .tabs
+                .iter()
+                .find(|tab| tab.id == snapshot.active_tab)?
+                .selected_pane
+                .as_deref()
+        })
+}
+
 impl WorkspaceModel {
     #[must_use]
     pub fn snapshot(&self) -> Option<&Snapshot> {

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- VEN-C30: the agent sidebar row of the terminal that has keyboard focus in
+  the active tab, a pane or the shown popup, takes a faint accent tint, and
+  its accessible name adds "current". A focused or hovered row's highlight
+  draws over it. Tab headings no longer end with the popup marker, and their
+  accessible names no longer add "popup shown"; popup rows keep the marker
+  (`eon-sidebar-you-are-here-3743`).
+
 - VEN-C5 and VEN-C8: a link success notice ("Link handed to the desktop
   handler." or "Link copied.") clears on its own after about 2 seconds;
   failure notices still wait for input. No notice disables link hover, open or

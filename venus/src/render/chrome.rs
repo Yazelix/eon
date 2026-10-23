@@ -90,6 +90,9 @@ pub(super) fn rasterize_quota_icon(
 
 /// The phases of a working badge's arc, each turned 45° clockwise from the one before.
 const SPINNER_PHASES: usize = 8;
+/// How much of the accent tints the agent sidebar row of the focused terminal (VEN-C30). It
+/// follows the accent and becomes themeable with it (`eon-eon-themes-or3q`).
+const CURRENT_ROW_TINT: f32 = 0.12;
 
 /// A working badge's spinner within the static rectangle vertices: a tick rewrites only these
 /// bytes, which keep their length in every phase. The badge lies wholly inside its clip, so the
@@ -885,7 +888,7 @@ impl Renderer {
             for heading in &workspace.sidebar_headings {
                 self.push_sidebar_line(
                     &heading.label,
-                    heading.popup_shown.then_some(heading.label.len()),
+                    None,
                     heading.rect.left,
                     heading.rect.top,
                     heading.rect.width,
@@ -899,6 +902,15 @@ impl Renderer {
                     continue;
                 }
                 let hovered = self.header.hovers(WorkspaceFocus::Sidebar, &row.target);
+                // The faint "you are here" tint; a focused or hovered row's highlight covers it.
+                if row.current {
+                    rectangles.push_rounded_alpha(
+                        row.rect,
+                        padding / 2.0,
+                        accent,
+                        CURRENT_ROW_TINT,
+                    );
+                }
                 if row.focused || hovered {
                     rectangles.push_rounded(row.rect, padding / 2.0, selected);
                 }

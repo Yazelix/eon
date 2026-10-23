@@ -479,7 +479,7 @@ impl Snapshot {
                 for heading in &workspace.sidebar_headings {
                     let id = self.sidebar_ids[heading.tab.as_str()];
                     let mut node = Node::new(Role::Heading);
-                    node.set_label(heading.accessible_label.as_str());
+                    node.set_label(heading.label.as_str());
                     if let Some(bounds) = heading.rect.intersection(workspace.sidebar_list) {
                         node.set_bounds(rect(bounds));
                     }
@@ -2734,7 +2734,10 @@ mod tests {
         assert_eq!(button.role(), Role::Button);
         assert_eq!(
             button.label(),
-            Some("Needs input: Claude in tab 1, t1, p1, Review, changed just now: Allow edits?")
+            Some(
+                "Needs input: Claude in tab 1, t1, p1, current, Review, changed just now: \
+                 Allow edits?"
+            )
         );
         assert!(button.supports_action(Action::Click) && button.supports_action(Action::Focus));
         for (action, activate) in [(Action::Click, true), (Action::Focus, false)] {

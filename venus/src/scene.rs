@@ -1,6 +1,6 @@
 use crate::{
     CpuUse, MAX_LINK_BYTES, RamUse,
-    model::{active_popup, presented_panes},
+    model::{active_popup, focused_terminal, presented_panes},
     render::CellMetrics,
 };
 use eon_workspace_protocol::v19::{
@@ -137,10 +137,6 @@ pub(crate) struct SidebarHeading {
     pub(crate) tab: String,
     pub(crate) label: String,
     pub(crate) rect: SceneRect,
-    /// The tab shows a popup, so the heading ends with the popup marker.
-    pub(crate) popup_shown: bool,
-    /// The label, plus "popup shown" while the heading carries the marker.
-    pub(crate) accessible_label: String,
 }
 
 /// One terminal with attention in the agent sidebar (VEN-C30).
@@ -166,6 +162,9 @@ pub struct SidebarRow {
     /// A needs-input row's message line.
     pub(crate) message: Option<String>,
     pub(crate) focused: bool,
+    /// The row's source terminal is the one the active tab focuses, so it takes the faint
+    /// "you are here" tint.
+    pub(crate) current: bool,
     /// Milliseconds since the record changed; unavailable rows have no age.
     age: Option<u64>,
     pub(crate) accessible_label: String,
@@ -1098,8 +1097,6 @@ const SIDEBAR_MIN_CONTENT_CELLS: f32 = 80.0;
 pub(crate) const SIDEBAR_TITLE: &str = "Agents";
 pub(crate) const SIDEBAR_EMPTY: &str =
     "No agent needs attention. Agents that report their status show here while they work.";
-/// What a sidebar heading's accessible name adds while it carries the popup marker.
-const POPUP_SHOWN: &str = "popup shown";
 
 /// The clip box of one line of sidebar text: a quarter em taller than the font size, as the
 /// sans-serif face's ascent plus descent needs, so descenders such as g's are never cut.
@@ -1152,6 +1149,7 @@ fn sidebar_contents(
     let mut headings = Vec::new();
     let mut rows = Vec::new();
     let mut top = list.top;
+    let focused_terminal = focused_terminal(snapshot);
     for (index, tab) in snapshot.tabs.iter().enumerate() {
         if tab.attention_rollup.is_none() {
             continue;
@@ -1160,14 +1158,8 @@ fn sidebar_contents(
             top += line / 2.0;
         }
         let label = tab_labels(index, snapshot.tabs.len(), &tab.directory).0;
-        let popup_shown = tab.selected_popup.is_some();
         headings.push(SidebarHeading {
             tab: tab.id.clone(),
-            accessible_label: if popup_shown {
-                format!("{label}, {POPUP_SHOWN}")
-            } else {
-                label.clone()
-            },
             label,
             rect: SceneRect {
                 left: content_left,
@@ -1175,7 +1167,6 @@ fn sidebar_contents(
                 width: content_width,
                 height: line,
             },
-            popup_shown,
         });
         top += line;
         let leaf = directory_leaf(&tab.directory);
@@ -1269,6 +1260,10 @@ fn sidebar_contents(
             if popup {
                 accessible_label.push_str(", popup");
             }
+            let current = focused_terminal == Some(target.as_str());
+            if current {
+                accessible_label.push_str(", current");
+            }
             if let Some(title) = reported_title {
                 let _ = write!(accessible_label, ", {title}");
             }
@@ -1325,6 +1320,7 @@ fn sidebar_contents(
                 popup_marker,
                 message,
                 focused: view.focused == Some(target.as_str()),
+                current,
                 age,
                 accessible_label,
             });
@@ -3684,14 +3680,13 @@ mod tests {
         );
 
         // A popup's row carries the marker after the catalog label whether or not the popup is
-        // shown, and no pane's row does. Only once inactive tab 2 shows its Agent popup does its
-        // heading end with the marker; the accessible names say so.
+        // shown, and no pane's row does; headings never carry it.
         let marked = |scene: &WorkspaceScene| {
             (
                 scene
                     .sidebar_headings
                     .iter()
-                    .map(|heading| (heading.popup_shown, heading.accessible_label.clone()))
+                    .map(|heading| heading.label.clone())
                     .collect::<Vec<_>>(),
                 scene
                     .sidebar_rows()
@@ -3707,7 +3702,7 @@ mod tests {
         assert_eq!(
             marked(&scene),
             (
-                vec![(false, "2  site".into()), (false, "3  api".into())],
+                vec!["2  site".into(), "3  api".into()],
                 vec![("u2".into(), "Agent popup".into(), String::new())]
             )
         );
@@ -3724,10 +3719,7 @@ mod tests {
         assert_eq!(
             marked(&scene),
             (
-                vec![
-                    (true, "2  site, popup shown".into()),
-                    (false, "3  api".into())
-                ],
+                vec!["2  site".into(), "3  api".into()],
                 vec![("u2".into(), "4m · Agent popup".into(), " · +1".into())]
             )
         );
@@ -3735,6 +3727,42 @@ mod tests {
             scene.sidebar_row("u2").unwrap().accessible_label,
             "Working: Claude in tab 2, site, Agent popup, popup, changed 4 minutes ago, \
              1 more record"
+        );
+
+        // Only the row of the active tab's focused terminal, its shown popup or else its
+        // selected pane, is current. A popup shown in another tab marks nothing, and the
+        // sidebar's own focus stays a separate state.
+        let current = |scene: &WorkspaceScene| {
+            scene
+                .sidebar_rows()
+                .iter()
+                .filter(|row| row.current)
+                .map(|row| row.target.clone())
+                .collect::<Vec<_>>()
+        };
+        assert!(current(&project(&snapshot, 800, None)).is_empty());
+        assert!(current(&scene).is_empty());
+        let mut pane_focused = snapshot.clone();
+        pane_focused.active_tab = "t2".into();
+        let scene = project(&pane_focused, 800, Some("p4"));
+        assert_eq!(current(&scene), ["p2"]);
+        let (p2, p4) = (
+            scene.sidebar_row("p2").unwrap(),
+            scene.sidebar_row("p4").unwrap(),
+        );
+        assert!(!p2.focused && p4.focused && !p4.current);
+        assert_eq!(
+            p2.accessible_label,
+            "Needs input (permission): Claude eon-9a in tab 2, site, p2, current, Review PR, \
+             changed 4 minutes ago, 2 more records: Allow Bash: cargo test?"
+        );
+        shown.active_tab = "t2".into();
+        let scene = project(&shown, 800, None);
+        assert_eq!(current(&scene), ["u2"]);
+        assert_eq!(
+            scene.sidebar_row("u2").unwrap().accessible_label,
+            "Working: Claude in tab 2, site, Agent popup, popup, current, \
+             changed 4 minutes ago, 1 more record"
         );
     }
 

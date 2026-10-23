@@ -36,8 +36,8 @@ use yazelix_venus::{
     MetadataTransport, ModelError, PaneMetadata, PresentOutcome, RamUse, Renderer, Scene,
     SceneRect, SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent,
     WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
-    WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change, validate_copy_uri,
-    validate_open_uri,
+    WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change, focused_terminal,
+    validate_copy_uri, validate_open_uri,
 };
 
 mod geometry;
@@ -4645,20 +4645,6 @@ fn jump_focus(
     } else {
         None
     }
-}
-
-/// The terminal a snapshot focuses: the active tab's shown popup, or else its selected pane.
-fn focused_terminal(snapshot: &eon_workspace_protocol::v19::Snapshot) -> Option<&str> {
-    active_popup(snapshot)
-        .map(|popup| popup.id.as_str())
-        .or_else(|| {
-            snapshot
-                .tabs
-                .iter()
-                .find(|tab| tab.id == snapshot.active_tab)?
-                .selected_pane
-                .as_deref()
-        })
 }
 
 fn terminal_focused(window_focused: bool, workspace_focus: WorkspaceFocus) -> bool {

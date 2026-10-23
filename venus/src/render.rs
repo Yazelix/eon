@@ -2042,34 +2042,41 @@ impl RectangleBatch {
             let outer = radius - (radius * radius - dy * dy).sqrt();
             for top in [rect.top + row as f32, rect.bottom() - row as f32 - 1.0] {
                 if row == 0 {
-                    self.push_span(rect.left + outer, rect.right() - outer, top, color);
+                    self.push_span(rect.left + outer, rect.right() - outer, top, color, 1.0);
                 } else {
                     let inner = radius - ((radius - 1.0).powi(2) - dy * dy).sqrt();
-                    self.push_span(rect.left + outer, rect.left + inner, top, color);
-                    self.push_span(rect.right() - inner, rect.right() - outer, top, color);
+                    self.push_span(rect.left + outer, rect.left + inner, top, color, 1.0);
+                    self.push_span(rect.right() - inner, rect.right() - outer, top, color, 1.0);
                 }
             }
         }
     }
 
-    fn push_span(&mut self, left: f32, right: f32, top: f32, color: SceneColor) {
+    /// One pixel-high span at `alpha`, its partly covered end pixels at their coverage of it.
+    fn push_span(&mut self, left: f32, right: f32, top: f32, color: SceneColor, alpha: f32) {
         if left.floor() == right.floor() {
-            self.push(left.floor(), top, 1.0, 1.0, color, right - left);
+            self.push(left.floor(), top, 1.0, 1.0, color, (right - left) * alpha);
         } else {
-            self.push(left.floor(), top, 1.0, 1.0, color, left.ceil() - left);
+            let start = (left.ceil() - left) * alpha;
+            self.push(left.floor(), top, 1.0, 1.0, color, start);
             self.push(
                 left.ceil(),
                 top,
                 right.floor() - left.ceil(),
                 1.0,
                 color,
-                1.0,
+                alpha,
             );
-            self.push(right.floor(), top, 1.0, 1.0, color, right - right.floor());
+            let end = (right - right.floor()) * alpha;
+            self.push(right.floor(), top, 1.0, 1.0, color, end);
         }
     }
 
     fn push_rounded(&mut self, rect: SceneRect, radius: f32, color: SceneColor) {
+        self.push_rounded_alpha(rect, radius, color, 1.0);
+    }
+
+    fn push_rounded_alpha(&mut self, rect: SceneRect, radius: f32, color: SceneColor, alpha: f32) {
         let radius = rounded_radius(rect, radius);
         self.push(
             rect.left,
@@ -2077,12 +2084,12 @@ impl RectangleBatch {
             rect.width,
             rect.height - radius * 2.0,
             color,
-            1.0,
+            alpha,
         );
         // Pixel-height bands reuse the existing clipped pipeline; fractional edge
         // coverage softens the curve without widening every terminal vertex.
         for (top, inset) in corner_rows(rect, radius) {
-            self.push_span(rect.left + inset, rect.right() - inset, top, color);
+            self.push_span(rect.left + inset, rect.right() - inset, top, color, alpha);
         }
     }
 

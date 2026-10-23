@@ -17,7 +17,7 @@ pub use accessibility::{Accessibility, AccessibilityTarget, Activation};
 pub use input::InputState;
 pub use model::{
     ClipboardEffect, ConnectionState, LocalNoticeSource, ModelError, SessionModel, WorkspaceModel,
-    active_popup, attention_only_change,
+    active_popup, attention_only_change, focused_terminal,
 };
 pub use render::{CellMetrics, FontSettings, FontSetup, PresentOutcome, RenderError, Renderer};
 pub use scene::{
