@@ -810,42 +810,44 @@ enum ReplyProgress {
 }
 
 /// Writes what remains of the request, then reads the reply without reading
-/// past its end. A lease that ends or fails reports `Closed`, which the EOF
+/// past its end. A header that does not decode ends the reply, which then
+/// fails to decode. A lease that ends or fails reports `Closed`, which the EOF
 /// probe owns.
 fn advance_program_status(
     lease: &mut UnixStream,
     request: &mut ProgramStatusRequest,
-) -> Result<ReplyProgress, String> {
+) -> ReplyProgress {
     while !request.unsent.is_empty() {
         match lease.write(&request.unsent) {
-            Ok(0) => return Ok(ReplyProgress::Closed),
+            Ok(0) => return ReplyProgress::Closed,
             Ok(written) => drop(request.unsent.drain(..written)),
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                return Ok(ReplyProgress::WouldBlock);
+                return ReplyProgress::WouldBlock;
             }
-            Err(_) => return Ok(ReplyProgress::Closed),
+            Err(_) => return ReplyProgress::Closed,
         }
     }
     loop {
-        let length = management::server_message_len(&request.reply)
-            .map_err(|error| format!("invalid terminal program status result: {error}"))?
-            .unwrap_or(management::HEADER_BYTES);
+        let Ok(length) = management::server_message_len(&request.reply) else {
+            return ReplyProgress::Complete;
+        };
+        let length = length.unwrap_or(management::HEADER_BYTES);
         let start = request.reply.len();
         if start == length {
-            return Ok(ReplyProgress::Complete);
+            return ReplyProgress::Complete;
         }
         request.reply.resize(length, 0);
         let read = lease.read(&mut request.reply[start..]);
         request.reply.truncate(start + *read.as_ref().unwrap_or(&0));
         match read {
-            Ok(0) => return Ok(ReplyProgress::Closed),
+            Ok(0) => return ReplyProgress::Closed,
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                return Ok(ReplyProgress::WouldBlock);
+                return ReplyProgress::WouldBlock;
             }
-            Err(_) => return Ok(ReplyProgress::Closed),
+            Err(_) => return ReplyProgress::Closed,
         }
     }
 }
@@ -879,7 +881,7 @@ pub(super) fn send_program_status(
         reply: Vec::new(),
         deadline,
     });
-    advance_program_status(&mut session.lease, request)?;
+    advance_program_status(&mut session.lease, request);
     Ok(true)
 }
 
@@ -890,7 +892,7 @@ pub(super) fn read_program_status(
     let Some(request) = &mut session.program_status else {
         return Ok(ProgramStatusRead::Missed);
     };
-    match advance_program_status(&mut session.lease, request)? {
+    match advance_program_status(&mut session.lease, request) {
         ReplyProgress::Complete => {}
         ReplyProgress::WouldBlock if Instant::now() < request.deadline => {
             return Ok(ProgramStatusRead::Pending);
@@ -917,7 +919,7 @@ fn drain_program_status(session: &mut RunningSession) -> Result<bool, String> {
     let Some(request) = &mut session.program_status else {
         return Ok(true);
     };
-    match advance_program_status(&mut session.lease, request)? {
+    match advance_program_status(&mut session.lease, request) {
         ReplyProgress::Complete => {
             session.program_status = None;
             Ok(true)
@@ -1257,13 +1259,14 @@ fn reap_untracked_child(process_id: u32, deadline: Instant) -> Result<(), String
     }
 }
 
+/// Waits for the run's tombstone, for `reason` or, given none, for either.
 fn wait_and_finalize_tombstone(
     session: &mut RunningSession,
-    reason: TerminationReason,
+    reason: Option<TerminationReason>,
     response: Option<&Tombstone>,
     deadline: Instant,
 ) -> Result<SessionEnd, String> {
-    let (outcome, record_object) = loop {
+    let (reason, outcome, record_object) = loop {
         let snapshot = read_management_record(&session.record)?.ok_or_else(|| {
             format!(
                 "ended terminal record {} disappeared",
@@ -1289,7 +1292,7 @@ fn wait_and_finalize_tombstone(
                         "terminal {}: Orbit exited without publishing a terminal result",
                         session.id
                     );
-                    return if reason == TerminationReason::NaturalExit {
+                    return if reason != Some(TerminationReason::ExplicitStop) {
                         Ok(SessionEnd::OwnerLost)
                     } else {
                         Err("terminal owner exited without completing Stop".into())
@@ -1299,12 +1302,13 @@ fn wait_and_finalize_tombstone(
                 thread::sleep(Duration::from_millis(25));
             }
             ManagementRecord::Tombstone(tombstone)
-                if tombstone.identity == session.identity && tombstone.reason == reason =>
+                if tombstone.identity == session.identity
+                    && reason.is_none_or(|reason| tombstone.reason == reason) =>
             {
                 if response.is_some_and(|response| response != &tombstone) {
                     return Err("terminal stop result differs from its final record".into());
                 }
-                break (tombstone.outcome, snapshot.object);
+                break (tombstone.reason, tombstone.outcome, snapshot.object);
             }
             _ => return Err("terminal final record does not match the acquired run".into()),
         }
@@ -1344,16 +1348,21 @@ pub(super) fn session_finished(session: &mut RunningSession) -> Result<Option<i3
     let end = if let Some(end) = session.finished {
         end
     } else {
-        // An in-flight reply's bytes belong to its request; only bytes after
-        // it are unsolicited.
+        // An in-flight reply's bytes belong to its request; bytes after it are
+        // unsolicited, such as the Stopped an Orbit sends when a signal stops
+        // it (ORB-C12), and are discarded. Only the record says how the run
+        // ended.
         let progress = match &mut session.program_status {
-            Some(request) => advance_program_status(&mut session.lease, request)?,
+            Some(request) => advance_program_status(&mut session.lease, request),
             None => ReplyProgress::Complete,
         };
         match progress {
-            ReplyProgress::Complete => match session.lease.read(&mut [0]) {
+            ReplyProgress::Complete => match session
+                .lease
+                .read(&mut [0; management::MAX_MESSAGE_BYTES])
+            {
                 Ok(0) => {}
-                Ok(_) => return Err("terminal sent an unsolicited management result".into()),
+                Ok(_) => return Ok(None),
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return Ok(None),
                 Err(error) if error.kind() == std::io::ErrorKind::Interrupted => return Ok(None),
                 Err(_) => {}
@@ -1361,12 +1370,7 @@ pub(super) fn session_finished(session: &mut RunningSession) -> Result<Option<i3
             ReplyProgress::WouldBlock => return Ok(None),
             ReplyProgress::Closed => {}
         }
-        wait_and_finalize_tombstone(
-            session,
-            TerminationReason::NaturalExit,
-            None,
-            Instant::now() + SESSION_START_TIMEOUT,
-        )?
+        wait_and_finalize_tombstone(session, None, None, Instant::now() + SESSION_START_TIMEOUT)?
     };
     Ok(Some(match end {
         SessionEnd::Managed(_, ProcessOutcome::ExitCode(code)) => code,
@@ -1459,14 +1463,14 @@ pub(super) fn stop_managed_sessions(
         let result = match response {
             Some(Ok(tombstone)) => wait_and_finalize_tombstone(
                 session,
-                TerminationReason::ExplicitStop,
+                Some(TerminationReason::ExplicitStop),
                 Some(&tombstone),
                 deadline,
             ),
             Some(Err(error)) => Err(error),
             None => wait_and_finalize_tombstone(
                 session,
-                TerminationReason::ExplicitStop,
+                Some(TerminationReason::ExplicitStop),
                 None,
                 deadline,
             ),
@@ -1477,7 +1481,7 @@ pub(super) fn stop_managed_sessions(
             })) if tombstone.identity == session.identity && tombstone.reason == TerminationReason::NaturalExit)
                 && let Err(cleanup) = wait_and_finalize_tombstone(
                     session,
-                    TerminationReason::NaturalExit,
+                    Some(TerminationReason::NaturalExit),
                     None,
                     deadline,
                 )
@@ -1532,7 +1536,7 @@ pub(crate) mod tests {
     use std::{
         ffi::{OsStr, OsString},
         fs,
-        io::Write,
+        io::{Read, Write},
         os::{
             fd::AsRawFd,
             unix::{
@@ -1614,7 +1618,7 @@ pub(crate) mod tests {
         assert!(
             super::wait_and_finalize_tombstone(
                 &mut session,
-                TerminationReason::NaturalExit,
+                Some(TerminationReason::NaturalExit),
                 None,
                 Instant::now() + Duration::from_millis(10),
             )
@@ -1662,7 +1666,7 @@ pub(crate) mod tests {
         assert!(
             super::wait_and_finalize_tombstone(
                 &mut session,
-                TerminationReason::ExplicitStop,
+                Some(TerminationReason::ExplicitStop),
                 None,
                 Instant::now() + Duration::from_secs(1),
             )
@@ -1882,6 +1886,77 @@ pub(crate) mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
+    /// A leased run of `session-<number>` whose tombstone for `reason` is
+    /// already recorded, with the lease's other end as Orbit's.
+    fn tombstoned_session(
+        root: &Path,
+        number: usize,
+        reason: TerminationReason,
+    ) -> (RunningSession, UnixStream, Tombstone) {
+        let endpoint = root.join(format!("session-{number}.sock"));
+        let identity = LiveIdentity {
+            session_id: format!("session-{number}"),
+            run_id: format!("run-{number}"),
+            component_generation: "component-1".into(),
+            record_generation: management::RECORD_GENERATION,
+            management_generation: management::VERSION,
+            process_id: std::process::id(),
+            process_start: 1,
+            uid: super::effective_uid(),
+            presentation: EndpointIdentity {
+                path: endpoint.as_os_str().as_bytes().to_vec(),
+                object: ObjectIdentity {
+                    device: 1,
+                    inode: 1,
+                },
+            },
+            management: EndpointIdentity {
+                path: root
+                    .join(format!("management-{number}"))
+                    .as_os_str()
+                    .as_bytes()
+                    .to_vec(),
+                object: ObjectIdentity {
+                    device: 1,
+                    inode: 2,
+                },
+            },
+        };
+        let tombstone = Tombstone {
+            identity: identity.clone(),
+            reason,
+            outcome: ProcessOutcome::ExitCode(0),
+        };
+        let record = root.join(format!("session-{number}.record"));
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&record)
+            .unwrap()
+            .write_all(
+                &management::encode_record(&ManagementRecord::Tombstone(tombstone.clone()))
+                    .unwrap(),
+            )
+            .unwrap();
+        let (lease, peer) = UnixStream::pair().unwrap();
+        lease.set_nonblocking(true).unwrap();
+        let session = RunningSession {
+            number: Some(number),
+            id: identity.session_id.clone(),
+            endpoint,
+            record_object: super::object_identity(&fs::symlink_metadata(&record).unwrap()),
+            record,
+            identity,
+            lease,
+            program_status: None,
+            stop_sent: false,
+            child: None,
+            finished: None,
+        };
+        (session, peer, tombstone)
+    }
+
     #[test]
     fn failed_natural_cleanup_still_finalizes_other_runs_and_restores_leases() {
         let root = temporary_directory();
@@ -1894,73 +1969,14 @@ pub(crate) mod tests {
         .into_iter()
         .enumerate()
         {
-            let number = index + 1;
-            let endpoint = root.join(format!("session-{number}.sock"));
-            let identity = LiveIdentity {
-                session_id: format!("session-{number}"),
-                run_id: format!("run-{number}"),
-                component_generation: "component-1".into(),
-                record_generation: management::RECORD_GENERATION,
-                management_generation: management::VERSION,
-                process_id: std::process::id(),
-                process_start: 1,
-                uid: super::effective_uid(),
-                presentation: EndpointIdentity {
-                    path: endpoint.as_os_str().as_bytes().to_vec(),
-                    object: ObjectIdentity {
-                        device: 1,
-                        inode: 1,
-                    },
-                },
-                management: EndpointIdentity {
-                    path: root
-                        .join(format!("management-{number}"))
-                        .as_os_str()
-                        .as_bytes()
-                        .to_vec(),
-                    object: ObjectIdentity {
-                        device: 1,
-                        inode: 2,
-                    },
-                },
-            };
-            let tombstone = Tombstone {
-                identity: identity.clone(),
-                reason,
-                outcome: ProcessOutcome::ExitCode(0),
-            };
-            let record = root.join(format!("session-{number}.record"));
-            fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&record)
-                .unwrap()
-                .write_all(
-                    &management::encode_record(&ManagementRecord::Tombstone(tombstone.clone()))
-                        .unwrap(),
-                )
-                .unwrap();
-            let (lease, mut peer) = UnixStream::pair().unwrap();
+            let (session, mut peer, tombstone) = tombstoned_session(&root, index + 1, reason);
             peer.write_all(
                 &management::encode_server_message(&ManagementServerMessage::Stopped(tombstone))
                     .unwrap(),
             )
             .unwrap();
             peers.push(peer);
-            sessions.push(RunningSession {
-                number: Some(number),
-                id: identity.session_id.clone(),
-                endpoint,
-                record_object: super::object_identity(&fs::symlink_metadata(&record).unwrap()),
-                record,
-                identity,
-                lease,
-                program_status: None,
-                stop_sent: false,
-                child: None,
-                finished: None,
-            });
+            sessions.push(session);
         }
         fs::write(&sessions[0].endpoint, "replacement").unwrap();
         let error = stop_managed_sessions(&mut sessions, Duration::from_secs(1)).unwrap_err();
@@ -2107,6 +2123,106 @@ pub(crate) mod tests {
         for root in roots {
             fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    #[test]
+    fn an_orbit_stopped_by_a_signal_ends_only_its_terminal() {
+        let roots = [temporary_directory(), temporary_directory()];
+        let mut sessions = roots
+            .iter()
+            .map(|root| leased_orbit(root, "exec sleep 30"))
+            .collect::<Vec<_>>();
+        // Orbit answers its lease Stopped, unasked, and records the stop
+        // (ORB-C12).
+        // SAFETY: signals the test-owned Orbit process.
+        assert_eq!(
+            unsafe { libc::kill(orbit_pid(&sessions[0]), libc::SIGTERM) },
+            0
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while super::session_finished(&mut sessions[0]).unwrap().is_none() {
+            assert!(
+                Instant::now() < deadline,
+                "the stopped terminal never ended"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!sessions[0].record.exists());
+
+        assert_eq!(super::session_finished(&mut sessions[1]).unwrap(), None);
+        poll(&mut sessions[1]);
+        assert_eq!(
+            stop_managed_sessions(&mut sessions[1..], Duration::from_secs(5)).unwrap(),
+            ["session-1"]
+        );
+        for root in roots {
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn an_undecodable_or_unsolicited_result_ends_only_its_request() {
+        let root = temporary_directory();
+        let request =
+            management::encode_client_message(&management::ClientMessage::ProgramStatus).unwrap();
+        let mut sent = vec![0; request.len()];
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let (mut session, mut peer, tombstone) =
+            tombstoned_session(&root, 1, TerminationReason::ExplicitStop);
+        assert!(super::send_program_status(&mut session, deadline).unwrap());
+        peer.read_exact(&mut sent).unwrap();
+        assert_eq!(sent, request);
+        peer.write_all(&[0xff; management::HEADER_BYTES]).unwrap();
+        assert_eq!(super::session_finished(&mut session).unwrap(), None);
+        assert!(!matches!(
+            super::read_program_status(&mut session),
+            Ok(ProgramStatusRead::Reply(_))
+        ));
+
+        // The next poll sends a fresh request and reads its reply.
+        assert!(super::send_program_status(&mut session, deadline).unwrap());
+        peer.read_exact(&mut sent).unwrap();
+        assert_eq!(sent, request);
+        peer.write_all(
+            &management::encode_server_message(&ManagementServerMessage::ProgramStatus(
+                management::ProgramStatus {
+                    count: 0,
+                    update: 1,
+                    omitted: 0,
+                    records: Vec::new(),
+                },
+            ))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            super::read_program_status(&mut session).unwrap(),
+            ProgramStatusRead::Reply(_)
+        ));
+
+        // Stop on that lease still succeeds.
+        peer.write_all(
+            &management::encode_server_message(&ManagementServerMessage::Stopped(tombstone))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            stop_managed_sessions(std::slice::from_mut(&mut session), Duration::from_secs(1))
+                .unwrap(),
+            ["session-1"]
+        );
+
+        // An unsolicited byte before EOF only delays the end.
+        let (mut session, mut peer, _) =
+            tombstoned_session(&root, 2, TerminationReason::NaturalExit);
+        peer.write_all(&[0x42]).unwrap();
+        drop(peer);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while super::session_finished(&mut session).unwrap().is_none() {
+            assert!(Instant::now() < deadline, "the terminal never ended");
+        }
+        assert!(session.is_finished());
+        fs::remove_dir_all(root).unwrap();
     }
 
     // A debug Orbit takes about 100 s per turn of a flood, so this measures the

@@ -1237,12 +1237,20 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     pruning; healthy terminals and their native workspace remain usable.
     Owner loss is a local failure, not a canonical terminal outcome or
     successful Stop.
+  - When an acquired Orbit stops on its own termination signal (`ORB-C12`),
+    Runtime reconciles its stop tombstone as it does a natural exit. Full Eon
+    logs the terminal's status and prunes the ended pane as usual. This is not
+    a Stop that Eon requested.
 - **Important failures:** Unsafe, missing, replaced, malformed, oversized,
   incompatible, duplicate, zero, noncanonical, overflowing, wrong-generation,
   wrong-UID, wrong-process, Busy, partial acquisition, unreconciled Orbit exit,
   deadline, or transport failures publish no partial workspace, launch no
   duplicate run, and authorize no PID, signal, pathname, process-name, group, cgroup, or pidfd
   fallback. A lost response after completed Stop cannot revive the supervisor.
+  Unsolicited, undecodable or unexpected management bytes on one terminal's
+  lease fail only that terminal's in-flight request. Runtime discards them,
+  keeps the lease, and still reaps, polls and stops that terminal. They never
+  fail the supervisor or affect other terminals.
   A marked Live record rejected after spawn is stopped through canonical
   management using its published identity and is never published as a terminal.
   Failed Stop retains its supervisor and unfinished leases for explicit retry;
@@ -1291,7 +1299,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `failed_directory_picker_stop_is_retried_during_supervisor_cleanup`,
     `failed_natural_cleanup_still_finalizes_other_runs_and_restores_leases`);
     owner loss (`lost_owner_cleanup_requires_death_and_original_owned_objects`,
-    `discovery_reaps_untracked_ended_children_before_removing_records`).
+    `discovery_reaps_untracked_ended_children_before_removing_records`);
+    self-stop and lease anomalies, `eon-wt6l`
+    (`an_orbit_stopped_by_a_signal_ends_only_its_terminal`,
+    `an_undecodable_or_unsolicited_result_ends_only_its_request`).
     Installed checklist items 2 and 12. Installed upgrade between two
     generations sharing EONW v9 and identical Orbit and Venus builds, then
     rollback: the older generation's terminals kept running and stayed listed
