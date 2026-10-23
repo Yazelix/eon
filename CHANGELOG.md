@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon pane close PANE`, run from a popup such as Agent or from a pane of the
+  same tab, now closes that pane while the popup stays shown. Alt+W under a
+  popup, and closing the tab's last pane from there, are still refused.
+
 - Full Eon windows show the agent sidebar on the left, below the Eon Bar, 28
   cells wide; the terminal columns move right to make room. Alt+Shift+H shows
   or hides it without taking focus from the terminal, and the shortcut viewer

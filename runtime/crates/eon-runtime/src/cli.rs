@@ -846,7 +846,7 @@ fn final_close_terminals(socket: &Path, action: &Action) -> Result<Option<Vec<St
     };
     let last = match action {
         Action::Workspace(WorkspaceAction::CloseTab { tab: id }) => *id == tab.id,
-        // Runtime refuses a pane close under a popup, so it is not asked about.
+        // Runtime refuses closing the last pane under a popup, so it is not asked about.
         Action::ClosePane { pane } => {
             let mut panes = tab.panes();
             tab.selected_popup.is_none()

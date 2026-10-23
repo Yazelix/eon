@@ -503,7 +503,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     owner, so its column, its tab and focus follow the ended-terminal rules
     below. Closing the final tab's last pane ends the window as final-tab
     close does, stopping that tab's popups with it. Closing is unavailable
-    while a popup or picker covers the tab. A failed stop reports
+    while a popup or picker covers the tab, except that a calling terminal
+    of that tab, pane or popup (EON-C10), may close a named pane other than
+    the tab's last; the popup stays shown and selected, and the tab's pane
+    selection follows the ended-terminal rules below. A failed stop reports
     failure and keeps the pane; a terminal that ended naturally during the
     request is reconciled as an exit. Venus maps Alt+W directly to the
     selected pane without a mode; `eon pane close PANE` sends the same EONW
@@ -521,7 +524,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     bar while retaining the selected terminal title for compositor semantics.
 - **Important failures:** Unknown or stale identity, a close target other than
   the active tab, a pane outside the active or calling tab,
-  pane close under a popup or picker, creating a fifth column,
+  pane close under a popup or picker other than a calling terminal's close
+  of a non-last pane in its tab, creating a fifth column,
   durable close in the picker-bound tab,
   invalid transition, unavailable endpoint, duplicate identity, or partial
   recovery leaves accepted topology unchanged. A repeated request ID never
@@ -783,9 +787,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     caller's own pane or tab, and `pane close` resolves PANE in the caller's
     tab. A popup terminal acts for its tab and that tab's selected column and
     pane. Within that tab each action behaves as it does for the active tab,
-    so `pane create` selects the new pane and dismisses the tab's popup; the
-    active tab and desktop focus never change. Other commands, and commands
-    run outside Eon terminals, ignore it. Every popup terminal's environment
+    so `pane create` selects the new pane and dismisses the tab's popup;
+    `pane close PANE` also works while a popup covers the caller's tab and
+    leaves that popup shown (EON-C8); the active tab and desktop focus never
+    change. Other commands, and commands run outside Eon terminals, ignore
+    it. Every popup terminal's environment
     also carries `EON_TAB`, the `tN` identity of the tab that owned it when it
     started.
   - `eon edit [--json] -- FILE` opens FILE in the packaged Helix in a new
@@ -833,10 +839,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   to the active tab. In a tab without panes, a popup caller's `pane move`
   refuses, and so does its `pane create` without `--no-focus` when dismissing
   that popup would end the tab's last terminal; both change nothing and
-  exit 1. An unavailable editor changes nothing and exits 1. An empty
-  COMMAND is a usage error (exit 2); a command pane requested without a
-  calling terminal, or whose program is missing or not executable, changes
-  nothing and exits 1.
+  exit 1. While a popup covers the caller's tab, `pane close` naming that
+  tab's last pane changes nothing and exits 1, and so does a close sent
+  without a calling terminal, including Alt+W. An unavailable editor
+  changes nothing and exits 1. An empty COMMAND is a usage error (exit 2);
+  a command pane requested without a calling terminal, or whose program is
+  missing or not executable, changes nothing and exits 1.
   Malformed, oversized, incompatible, unavailable,
   rejected, timed-out, partially read, or response-lost operations fail within
   the shared bound without reconstructing hidden state or reviving completed

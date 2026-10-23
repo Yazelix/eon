@@ -288,6 +288,8 @@ Every Eon terminal names itself in `EON_TERMINAL`, an opaque value. Run inside
 an Eon terminal, `pane create`, `edit`, `pane close`, `pane move` and `tab move` act on
 that terminal's own tab rather than the active one: a pane adds the new pane to
 its own column and moves itself, and a popup acts for its tab's selected pane.
+`pane close PANE` works from these terminals even while a popup covers the
+tab, and the popup stays shown; it refuses the tab's last pane there.
 The active tab and desktop focus stay where they are. When the terminal has
 ended, or belongs to another generation or window, the command changes nothing
 and exits 3. Other commands ignore `EON_TERMINAL`; run

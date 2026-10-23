@@ -914,11 +914,22 @@ impl Workspace {
                 },
             );
         };
+        // A covering popup hides the pane Alt+W would close, and closing the
+        // tab's last pane would stop the popup too, so only the tab's own
+        // terminals may close a named pane under it, and never its last.
         if tab.selected_popup.is_some() {
-            return Err(action_error(
-                "unavailable",
-                "close the popup before closing a pane",
-            ));
+            if caller.is_none() {
+                return Err(action_error(
+                    "unavailable",
+                    "close the popup before closing a pane",
+                ));
+            }
+            if tab.panes().count() == 1 {
+                return Err(action_error(
+                    "unavailable",
+                    "close the popup before closing the tab's last pane",
+                ));
+            }
         }
         let sessions = if self.tabs.len() == 1 && tab.panes().count() == 1 {
             self.tab_sessions(tab_index)
@@ -2532,6 +2543,44 @@ mod tests {
             refused(&mut workspace, "x5", "p1").detail,
             "close the popup before closing a pane"
         );
+        // Under the popup, the tab's own terminals may close a named pane but not its last.
+        let agent = workspace.snapshot().tabs[0].popups[0].session.clone();
+        let before = workspace.snapshot();
+        assert_eq!(
+            workspace
+                .prepare_close_pane("x5a", Some(&agent), "p1")
+                .unwrap_err()
+                .detail,
+            "close the popup before closing the tab's last pane"
+        );
+        assert_eq!(workspace.snapshot(), before);
+        for (id, caller) in [("x5b", agent.as_str()), ("x5c", "session-1")] {
+            request(
+                &mut workspace,
+                id,
+                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+            );
+            let pane = workspace.snapshot().tabs[0]
+                .panes()
+                .last()
+                .unwrap()
+                .id
+                .clone();
+            // Alt+W, which names no caller, still may not close a hidden pane.
+            assert_eq!(
+                refused(&mut workspace, &format!("{id}-alt-w"), &pane).detail,
+                "close the popup before closing a pane"
+            );
+            let [session] = workspace
+                .prepare_close_pane(&format!("{id}-close"), Some(caller), &pane)
+                .unwrap()
+                .try_into()
+                .unwrap();
+            workspace
+                .session_ended(&session, SessionEnd::Closed, ok)
+                .unwrap();
+            assert_eq!(workspace.snapshot(), before);
+        }
         request(
             &mut workspace,
             "t2",
