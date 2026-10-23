@@ -160,8 +160,8 @@ pub struct SidebarRow {
     pub(crate) title: String,
     /// The age, the source terminal, "+N" for other records and "status stale".
     pub(crate) detail: String,
-    /// Where in `detail` the popup marker follows the source's catalog label, while the row's
-    /// source is its tab's shown popup.
+    /// Where in `detail` the popup marker follows the source's catalog label, when the row's
+    /// source is a popup.
     pub(crate) popup_marker: Option<usize>,
     /// A needs-input row's message line.
     pub(crate) message: Option<String>,
@@ -1098,7 +1098,7 @@ const SIDEBAR_MIN_CONTENT_CELLS: f32 = 80.0;
 pub(crate) const SIDEBAR_TITLE: &str = "Agents";
 pub(crate) const SIDEBAR_EMPTY: &str =
     "No agent needs attention. Agents that report their status show here while they work.";
-/// What a sidebar heading's and row's accessible names add while they carry the popup marker.
+/// What a sidebar heading's accessible name adds while it carries the popup marker.
 const POPUP_SHOWN: &str = "popup shown";
 
 /// The clip box of one line of sidebar text: a quarter em taller than the font size, as the
@@ -1179,10 +1179,11 @@ fn sidebar_contents(
         });
         top += line;
         let leaf = directory_leaf(&tab.directory);
+        // Popup rows come first, then pane rows in pane order.
         let terminals = tab
-            .panes()
-            .map(|pane| (&pane.id, &pane.attention, pane.id.as_str()))
-            .chain(tab.popups.iter().map(|popup| {
+            .popups
+            .iter()
+            .map(|popup| {
                 let label = snapshot
                     .entries
                     .iter()
@@ -1190,9 +1191,13 @@ fn sidebar_contents(
                     .expect("EONW validates popup entries")
                     .label
                     .as_str();
-                (&popup.id, &popup.attention, label)
-            }));
-        for (target, attention, source) in terminals {
+                (&popup.id, &popup.attention, label, true)
+            })
+            .chain(
+                tab.panes()
+                    .map(|pane| (&pane.id, &pane.attention, pane.id.as_str(), false)),
+            );
+        for (target, attention, source, popup) in terminals {
             let Some(attention) = attention else {
                 continue;
             };
@@ -1229,8 +1234,7 @@ fn sidebar_contents(
                 .as_ref()
                 .map_or_else(String::new, |(age, _)| format!("{age} · "));
             detail.push_str(source);
-            let popup_marker =
-                (tab.selected_popup.as_ref() == Some(target)).then_some(detail.len());
+            let popup_marker = popup.then_some(detail.len());
             if others > 0 {
                 let _ = write!(detail, " · +{others}");
             }
@@ -1262,8 +1266,8 @@ fn sidebar_contents(
                 if name.is_empty() { "" } else { " " },
                 index + 1,
             );
-            if popup_marker.is_some() {
-                let _ = write!(accessible_label, ", {POPUP_SHOWN}");
+            if popup {
+                accessible_label.push_str(", popup");
             }
             if let Some(title) = reported_title {
                 let _ = write!(accessible_label, ", {title}");
@@ -3515,7 +3519,8 @@ mod tests {
         };
 
         // Only tabs with attention are listed, each under its heading, with one row per
-        // terminal with attention, in tab and terminal order.
+        // terminal with attention, in tab order: a popup's row first, then the panes' rows in
+        // pane order.
         let scene = project(&snapshot, 800, None);
         assert!(!scene.sidebar_empty());
         assert_eq!(
@@ -3555,16 +3560,6 @@ mod tests {
             [
                 (
                     "t2",
-                    "p2",
-                    AttentionState::NeedsInput,
-                    false,
-                    Some(QuotaProvider::Claude),
-                    "eon-9a",
-                    "4m · p2 · +2",
-                    Some("Allow Bash: cargo test?"),
-                ),
-                (
-                    "t2",
                     "u2",
                     AttentionState::Unavailable,
                     false,
@@ -3572,6 +3567,16 @@ mod tests {
                     "status unavailable",
                     "Agent popup",
                     None,
+                ),
+                (
+                    "t2",
+                    "p2",
+                    AttentionState::NeedsInput,
+                    false,
+                    Some(QuotaProvider::Claude),
+                    "eon-9a",
+                    "4m · p2 · +2",
+                    Some("Allow Bash: cargo test?"),
                 ),
                 (
                     "t3",
@@ -3604,9 +3609,9 @@ mod tests {
                 .map(|row| row.accessible_label.as_str())
                 .collect::<Vec<_>>(),
             [
+                "Status unavailable: agent in tab 2, site, Agent popup, popup",
                 "Needs input (permission): Claude eon-9a in tab 2, site, p2, Review PR, \
                  changed 4 minutes ago, 2 more records: Allow Bash: cargo test?",
-                "Status unavailable: agent in tab 2, site, Agent popup",
                 "Working: Codex in tab 3, api, p4, Fix tests, changed just now, status stale",
                 "Idle: aider in tab 3, api, p5, changed 2 hours ago",
             ]
@@ -3627,10 +3632,10 @@ mod tests {
         for pair in rows.windows(2) {
             assert!(pair[0].rect.bottom() <= pair[1].rect.top);
         }
-        assert_eq!(rows[0].rect.height - rows[3].rect.height, metrics.height);
-        let (_, icon) = rows[0].icon.unwrap();
-        assert!(rows[0].glyph.rect.right() < icon.left && icon.right() < rows[0].text_left);
-        assert!(rows[1].text_left < rows[0].text_left);
+        assert_eq!(rows[1].rect.height - rows[3].rect.height, metrics.height);
+        let (_, icon) = rows[1].icon.unwrap();
+        assert!(rows[1].glyph.rect.right() < icon.left && icon.right() < rows[1].text_left);
+        assert!(rows[0].text_left < rows[1].text_left);
         assert!(
             rows.iter()
                 .all(|row| row.rect.left >= card.left && row.rect.right() <= card.right())
@@ -3666,17 +3671,21 @@ mod tests {
             revealed.sidebar_headings[0].rect.top,
             short.sidebar_headings[0].rect.top - offset
         );
-        // A row scrolled above the list is no hit target.
-        let (x, _) = center(revealed.sidebar_rows()[0].rect);
-        assert!(revealed.sidebar_rows()[0].rect.top < list.top - 1.0);
+        // The part of a row scrolled above the list is no hit target.
+        let cut = revealed
+            .sidebar_rows()
+            .iter()
+            .find(|row| row.rect.top < list.top - 1.0 && row.rect.bottom() > list.top)
+            .unwrap();
+        let (x, _) = center(cut.rect);
         assert_ne!(
             revealed.hit_test(x, list.top - 1.0),
-            Some(WorkspaceHit::SidebarRow("p2"))
+            Some(WorkspaceHit::SidebarRow(cut.target.as_str()))
         );
 
-        // A hidden popup gets no marker. Once inactive tab 2 shows its Agent popup, its heading
-        // ends with the marker and the popup's row carries it after the catalog label; the
-        // accessible names say so.
+        // A popup's row carries the marker after the catalog label whether or not the popup is
+        // shown, and no pane's row does. Only once inactive tab 2 shows its Agent popup does its
+        // heading end with the marker; the accessible names say so.
         let marked = |scene: &WorkspaceScene| {
             (
                 scene
@@ -3699,7 +3708,7 @@ mod tests {
             marked(&scene),
             (
                 vec![(false, "2  site".into()), (false, "3  api".into())],
-                Vec::new()
+                vec![("u2".into(), "Agent popup".into(), String::new())]
             )
         );
         let mut shown = snapshot.clone();
@@ -3724,15 +3733,8 @@ mod tests {
         );
         assert_eq!(
             scene.sidebar_row("u2").unwrap().accessible_label,
-            "Working: Claude in tab 2, site, Agent popup, popup shown, changed 4 minutes ago, \
+            "Working: Claude in tab 2, site, Agent popup, popup, changed 4 minutes ago, \
              1 more record"
-        );
-        assert!(
-            !scene
-                .sidebar_row("p2")
-                .unwrap()
-                .accessible_label
-                .contains("popup shown")
         );
     }
 

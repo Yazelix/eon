@@ -14,11 +14,13 @@
   attention state changes and on the next input Venus sends to the terminal,
   as the clipboard notice does (`eon-empty-attention-notice-opy3`).
 
-- VEN-C30: when a listed tab shows a popup (its `selected_popup` is set), its
-  sidebar heading ends with the popup marker, a small window glyph drawn from
-  quads, and a row whose source is that popup carries the same glyph after its
-  catalog label. A hidden popup gets no marker. The heading's and the row's
-  accessible names add "popup shown" (`eon-agent-sidebar-yx8.16`).
+- VEN-C30: within a tab, a sidebar row whose source is a popup comes first,
+  above the pane rows, which keep pane order. It carries the popup marker, a
+  small window glyph drawn from quads, after its catalog label, whether or not
+  the popup is shown, and its accessible name adds "popup". When a listed tab
+  shows a popup (its `selected_popup` is set), its heading ends with the same
+  glyph and its accessible name adds "popup shown" (`eon-agent-sidebar-yx8.16`,
+  `eon-popup-marker-always-52rk`).
 
 - VEN-C21: on a software (CPU) wgpu adapter the working badge, in Eon Bar
   tabs and VEN-C30 sidebar rows, is a still ring with every segment lit, and

@@ -1730,7 +1730,9 @@ re-proved when that platform or feature is next touched.
   Alt+Shift+G; `eon-agent-sidebar-yx8.11` adds the name;
   `eon-agent-sidebar-yx8.9` proves the epic on the installed product;
   `eon-agent-sidebar-yx8.16` adds the shown-popup marker, approved by Lucca
-  on 2026-10-23.
+  on 2026-10-23; `eon-popup-marker-always-52rk` keeps the marker on every
+  popup's row and lists popup rows first, approved by Lucca through
+  eon-overseer the same day.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -1796,11 +1798,14 @@ re-proved when that platform or feature is next touched.
     - A needs-input row adds one plain-text, truncated `msg` line.
     - Other records of a terminal fold into "+N".
     - Rows never reorder by priority.
-    - **Shown popup.** When a listed tab shows a popup (its snapshot
-      `selected_popup` is set), its header ends with one popup marker glyph,
-      and a row whose source terminal is that popup adds the same glyph after
-      its catalog label. A hidden popup gets no marker. The header's and the
-      row's accessible labels add "popup shown".
+    - Within a tab, a row whose source terminal is a popup comes first; pane
+      rows follow in pane order.
+    - **Popup marker.** A row whose source terminal is a popup always shows
+      the popup marker glyph after its catalog label. When a listed tab shows
+      a popup (its snapshot `selected_popup` is set), its header ends with the
+      same glyph; a tab whose popups are all hidden gets no header marker. The
+      row's accessible label adds "popup", and the header's adds "popup
+      shown".
   - **Navigation.**
     - Activating a row sends `FocusAttention`, and keyboard focus moves to the
       target terminal, or stays on the tab when the covered-target rule only
@@ -1876,7 +1881,10 @@ re-proved when that platform or feature is next touched.
     to the shown-popup marker: which heading and row carry it, where it falls
     in the row's detail line, and the "popup shown" names, and adds
     `sidebar_marker_follows_the_shaped_ink_of_either_direction` for its
-    placement after right-to-left text.
+    placement after right-to-left text. `eon-popup-marker-always-52rk`
+    changes the first test so a popup's row comes before its tab's pane rows,
+    a hidden popup's row keeps the marker, and every popup row's name adds
+    "popup".
   - **Installed (`eon-agent-sidebar-yx8.13`, on the sidebar batch's final
     revision):** isolated installed dogfood (edge `d6ce117`, code tree
     `a0d664d`, whose `nix build` gave
@@ -1997,6 +2005,22 @@ re-proved when that platform or feature is next touched.
     - After the popup was hidden in tab 2 and Alt+1 pressed again, `eon
       workspace` read tab 2 `popup=none`, still listing popup `u3` with its
       working attention. Its row was still listed, and neither the heading nor the row showed a marker.
+  - **Installed (`eon-popup-marker-always-52rk`):** isolated installed
+    dogfood (edge `6ec880b` with code tree `cc5bded`, whose `nix build` gave
+    `/nix/store/gw7yy7vznacjk1nm5537jhr2zzpbg53f-eon-0.1.1`, x86_64 Linux,
+    private headless Sway 1.12 at 1280x720, the pixman renderer). Tab 2's
+    Agent popup ran a fixture reporting `app=claude-code` working, and its
+    pane `p2` ran one reporting `app=codex` working. The
+    `eon-agent-sidebar-yx8.16` record's unmarked hidden-popup row no longer
+    holds.
+    - With the popup shown in tab 2 (`eon workspace`: `popup=u3`), its
+      heading read `2  w` and then the marker; the first row read `Claude`
+      over `now · Agent` and then the marker, and the second row read
+      `Codex` over `now · p2`, with no marker.
+    - After the popup was hidden (`popup=none`, still listing `u3` with its
+      working attention), the heading read `2  w` with no marker, and the
+      Agent row stayed first and kept its marker, above the `p2` row. After
+      Alt+1, with tab 1 active, the sidebar showed the same.
 - **Open proof:**
   - Compositor blur through the card: headless Sway has no blur, so only its
     translucency was measured. It waits on VEN-C15's native backdrop
