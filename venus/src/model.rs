@@ -1,5 +1,5 @@
 use crate::scene::{DrawRow, Scene, ScenePreview};
-use eon_workspace_protocol::v18::{Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab};
+use eon_workspace_protocol::v19::{Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab};
 use orbit_protocol::FrameReducer;
 use orbit_protocol::session::{
     ClipboardLocation, FailureCode, PreviewOutcome, ScrollOutcome, ServerMessage, WheelOutcome,
@@ -571,7 +571,7 @@ fn bounded(mut detail: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v18::{
+    use eon_workspace_protocol::v19::{
         self as workspace, CodexQuota, CodexQuotaState, Failure, Pane, PopupEntry, Shortcut, Tab,
     };
 
@@ -587,7 +587,7 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v18::Column {
+                    columns: vec![eon_workspace_protocol::v19::Column {
                         panes: vec![Pane {
                             id: "pane-1".into(),
                             session: "session-1".into(),
@@ -606,7 +606,7 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-2".into()),
-                    columns: vec![eon_workspace_protocol::v18::Column {
+                    columns: vec![eon_workspace_protocol::v19::Column {
                         panes: vec![Pane {
                             id: "pane-2".into(),
                             session: "session-2".into(),
@@ -619,7 +619,7 @@ mod tests {
                     attention_rollup: None,
                 },
             ],
-            geometry: eon_workspace_protocol::v18::PopupGeometry {
+            geometry: eon_workspace_protocol::v19::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -788,7 +788,7 @@ mod tests {
             tabs: vec![pending(1), pending(2)],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
         };
         let wire =
             workspace::encode_response(&WorkspaceResponse::Snapshot(snapshot.clone())).unwrap();
@@ -851,7 +851,7 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
         };
         let mut model = WorkspaceModel::default();
         model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));

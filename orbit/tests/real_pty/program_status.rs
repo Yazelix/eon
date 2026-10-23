@@ -96,28 +96,38 @@ pub fn run() {
 }
 
 /// A prompt mark drops the `working` and `blocked` records before it in the
-/// stream, and a report after it in the same write survives.
+/// stream, and a report after it in the same write survives. The reply
+/// carries the window title the child set, and an empty one, without ending
+/// the run, for a title whose 1024-byte cut in libghostty splits a character.
 fn prompt_marks_drop_in_stream_order() {
     let directory = TempDir::new();
     let gate = Gate::new(&directory, "gate");
     let (server, mut lease) = managed(
         &directory,
         "read -r _ < \"$ORBIT_GATE\"\n\
-         printf '\\033]7501;state=working:id=a\\007\\033]7501;state=blocked:kind=permission:id=b\\007\
+         printf '\\033]0;eon-9a\\007\\033]7501;state=working:id=a\\007\\033]7501;state=blocked:kind=permission:id=b\\007\
          \\033]7501;state=done:id=c\\007\\033]133;A\\007\\033]7501;state=working:id=d\\007'\n\
+         read -r _ < \"$ORBIT_GATE\"\n\
+         t=$(printf '%1023s' '')\n\
+         printf '\\033]0;%s\\303\\251\\007\\033]7501;state=working:id=e\\007' \"${t// /a}\"\n\
          read -r _ < \"$ORBIT_GATE\"\n",
         &[("ORBIT_GATE", gate.path())],
     );
     let empty = status(&mut lease);
     assert_eq!((empty.count, empty.omitted.len(), empty.records.len()), (0, 0, 0), "{empty:?}");
+    assert_eq!(empty.terminal_title, "");
     gate.release();
     let status = until_reported(&mut lease, "d");
+    assert_eq!(status.terminal_title, "eon-9a");
     assert_eq!(
         records(&status),
         [("c", ProgramState::Done), ("d", ProgramState::Working)],
         "{status:?}"
     );
     assert_eq!((status.count, status.omitted.len()), (2, 0));
+    gate.release();
+    let status = until_reported(&mut lease, "e");
+    assert_eq!(status.terminal_title, "", "{status:?}");
     stop(server, lease);
 }
 

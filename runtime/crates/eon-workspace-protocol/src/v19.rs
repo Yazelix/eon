@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v18 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v19 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -6,7 +6,7 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 18;
+pub const VERSION: u16 = 19;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -26,8 +26,10 @@ pub const MAX_KEY_BYTES: usize = 16;
 pub const MAX_CODEX_QUOTA_WINDOWS: usize = 2;
 pub const MAX_COMMAND_ARGUMENTS: usize = 256;
 pub const MAX_COMMAND_ARGUMENT_BYTES: usize = 32 * 1024;
-/// The bounds of a status record in Orbit's ProgramStatus reply (ORB-C15).
+/// The bounds of a status record and the terminal title in Orbit's
+/// ProgramStatus reply (ORB-C15).
 const MAX_APP_BYTES: usize = 32;
+const MAX_NAME_BYTES: usize = 64;
 const MAX_TITLE_BYTES: usize = 96;
 const MAX_STATUS_MESSAGE_BYTES: usize = 256;
 /// Orbit keeps at most 256 records per terminal.
@@ -206,6 +208,9 @@ pub struct AttentionRecord {
     pub progress: Option<u8>,
     /// Empty when the program reports none.
     pub app: String,
+    /// The terminal's window title, such as Claude Code's session name;
+    /// empty when it has none.
+    pub name: String,
     pub title: String,
     pub message: String,
     /// The record's fixed change time, in wall-clock Unix milliseconds.
@@ -1444,6 +1449,7 @@ fn validate_attention(attention: &Attention) -> Result<()> {
     }
     for (field, value, maximum) in [
         ("attention app", &record.app, MAX_APP_BYTES),
+        ("attention name", &record.name, MAX_NAME_BYTES),
         ("attention title", &record.title, MAX_TITLE_BYTES),
         (
             "attention message",
@@ -1503,6 +1509,7 @@ fn encode_attention(encoder: &mut Encoder, attention: Option<&Attention>) {
     });
     encoder.byte(record.progress.unwrap_or(NO_PROGRESS));
     encoder.string(&record.app);
+    encoder.string(&record.name);
     encoder.string(&record.title);
     encoder.string(&record.message);
     encoder
@@ -1539,6 +1546,7 @@ fn decode_attention(decoder: &mut Decoder<'_>) -> Result<Option<Attention>> {
         kind,
         progress,
         app: decoder.string("attention app", MAX_APP_BYTES)?,
+        name: decoder.string("attention name", MAX_NAME_BYTES)?,
         title: decoder.string("attention title", MAX_TITLE_BYTES)?,
         message: decoder.string("attention message", MAX_STATUS_MESSAGE_BYTES)?,
         changed_at: decode_u64(decoder)?,
@@ -2015,6 +2023,7 @@ mod tests {
                 kind: None,
                 progress: None,
                 app: "codex".into(),
+                name: String::new(),
                 title: String::new(),
                 message: String::new(),
                 changed_at: 1,
@@ -2053,6 +2062,7 @@ mod tests {
         let mut asking = attention(AttentionState::NeedsInput);
         let record = asking.as_mut().unwrap().record.as_mut().unwrap();
         record.kind = Some(AttentionKind::Question);
+        record.name = "eon-9a".into();
         record.title = "Allow?".into();
         record.message = "Run make".into();
         record.others = 2;
@@ -2221,14 +2231,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57120001000a00000002007231001202007431",
+                "454f4e57130001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57120001001000000002007231000c0200743104002f746d70",
+                "454f4e57130001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -2237,55 +2247,55 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571200010015000000020072310013020074310300676974010200753101",
+                "454f4e571300010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e571200010014000000020072310015020074310200753104002f746d70",
+                "454f4e571300010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e571200010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571300010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57120001000a00000002007231001702007032",
+                "454f4e57130001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571200010006000000020072310019",
+                "454f4e571300010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57120001000e00000002007231001a06002f746d702f61",
+                "454f4e57130001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57120001001000000002007231001b00020002006878010061",
+                "454f4e57130001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57120001000600000002007231001c",
+                "454f4e57130001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57120001000e00000002007231001d0200743102007032",
+                "454f4e57130001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57120001000600000002007231001e",
+                "454f4e57130001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57120001000600000002007231001f",
+                "454f4e57130001000600000002007231001f",
             ),
         ] {
             let request = Request {
@@ -2305,7 +2315,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57120001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e57130001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -2349,6 +2359,7 @@ mod tests {
                                     kind: Some(AttentionKind::Question),
                                     progress: None,
                                     app: "codex".into(),
+                                    name: "eon-9a".into(),
                                     title: "t".into(),
                                     message: "m".into(),
                                     changed_at: 1,
@@ -2392,21 +2403,22 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5712008100d20000000100020002000100010000000200743100000041",
+                    "454f4e5713008100da0000000100020002000100010000000200743100000041",
                     "000080400100030067697403004769740404004b65794701000200743104002f",
                     "746d700001020070330102007531030002007031030073703103002f70310100",
                     "02007032030073703203002f7032010002007033030073703303002f70330101",
-                    "02ff0500636f64657801007401006d0100000000000000000200010002007531",
+                    "02ff0500636f6465780600656f6e2d3961",
+                    "01007401006d0100000000000000000200010002007531",
                     "0300676974030073753103002f753100010100640000000000000001002c0100",
                     "002a01f40100000000000001015a00000000000000010060270000070001",
                 ),
             ),
-            (failure, "454f4e57120082000a00000004006275737902006e6f"),
+            (failure, "454f4e57130082000a00000004006275737902006e6f"),
             (
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57120085000400000002006731",
+                "454f4e57130085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -2432,7 +2444,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e571200830026000000020067310500302e392e30120002006f6b010002",
+                    "454f4e571300830026000000020067310500302e392e30130002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -2441,7 +2453,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571200840006000000020067310000",
+                "454f4e571300840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -2933,7 +2945,7 @@ mod tests {
             pane.attention.as_mut().unwrap().record.as_mut().unwrap()
         }
         type Change = fn(&mut Snapshot);
-        let invalid: [(&str, &[Change]); 26] = [
+        let invalid: [(&str, &[Change]); 27] = [
             // Every tab, pane and popup owns its identity, session and endpoint.
             (
                 "surface identity",
@@ -3100,6 +3112,13 @@ mod tests {
                 &[|s| working(s).app = "a".repeat(MAX_APP_BYTES + 1)],
             ),
             (
+                "attention name",
+                &[
+                    |s| working(s).name = "n".repeat(MAX_NAME_BYTES + 1),
+                    |s| working(s).name = "eon\u{7}".into(),
+                ],
+            ),
+            (
                 "attention title",
                 &[
                     |s| working(s).title = "t".repeat(MAX_TITLE_BYTES + 1),
@@ -3144,8 +3163,18 @@ mod tests {
         let id = 2 + MAX_ID_BYTES;
         let entry_id = 2 + MAX_ENTRY_ID_BYTES;
         let quota = 1 + 1 + 8 + 2 + MAX_CODEX_QUOTA_WINDOWS * (4 + 1 + 1 + 8);
-        let attention =
-            3 + 2 + MAX_APP_BYTES + 2 + MAX_TITLE_BYTES + 2 + MAX_STATUS_MESSAGE_BYTES + 8 + 1 + 2;
+        let attention = 3
+            + 2
+            + MAX_APP_BYTES
+            + 2
+            + MAX_NAME_BYTES
+            + 2
+            + MAX_TITLE_BYTES
+            + 2
+            + MAX_STATUS_MESSAGE_BYTES
+            + 8
+            + 1
+            + 2;
         let upper_bound = HEADER_BYTES
             + 2
             + MAX_TABS * (2 + MAX_COLUMNS * 4)
@@ -3183,6 +3212,7 @@ mod tests {
                 kind: Some(AttentionKind::Permission),
                 progress: Some(100),
                 app: "a".repeat(MAX_APP_BYTES),
+                name: "n".repeat(MAX_NAME_BYTES),
                 title: "t".repeat(MAX_TITLE_BYTES),
                 message: "m".repeat(MAX_STATUS_MESSAGE_BYTES),
                 changed_at: u64::MAX,

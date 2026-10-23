@@ -16,7 +16,7 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, Workspace},
 };
-use eon_workspace_protocol::v18::{
+use eon_workspace_protocol::v19::{
     Action, Availability, Ended, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
     Stopped, VERSION, WorkspaceAction,
 };
@@ -519,7 +519,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v18::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v19::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -1878,7 +1878,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v18::{
+        use eon_workspace_protocol::v19::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::{
@@ -1917,7 +1917,7 @@ mod tests {
                 .collect(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
         let received = root.join("snapshot");

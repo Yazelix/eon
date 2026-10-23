@@ -5,6 +5,19 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Claude Code rows in the agent sidebar lead with the session's name, so
+  agents in one project are easy to tell apart. A session started with
+  `claude --name eon-9a`, or renamed with `/rename`, shows `eon-9a`;
+  otherwise it shows Claude's session title, or `Claude Code` before it has
+  one. Other agents' rows show the title the agent reports, else its app,
+  such as `Codex`; rows no longer repeat the tab's folder, which the tab's
+  heading already shows. `eon workspace` adds `name=` and `--json` adds
+  `"name"` to each terminal's attention: the title its terminal sets. This
+  changes the workspace protocol to EONW 19. The updated `eon` cannot manage
+  a window started before the update: it reports that the supervisor uses
+  EONW 18 and that the Eon build that started it can stop it. Restart such a
+  window to use the updated `eon` there.
+
 - Alt+G jumps to the next coding agent that needs attention, and Alt+Shift+G
   to the previous one, whether the agent sidebar is shown, hidden or turned
   off. Agents that need input come first, then errors, then finished agents,
@@ -29,8 +42,8 @@ installation, and proven contract changes.
   and hints list the key. The sidebar steps aside while the window leaves
   fewer than 80 cells for the terminals, and returns when it is wide enough.
   It lists, in tab order, each tab whose agents report their status, with one
-  row per agent: its state, the Claude or Codex icon or the app's name, its
-  title, how long ago it changed, and the pane or popup it runs in, plus the
+  row per agent: its state, the Claude or Codex icon, its name, title or
+  app, how long ago it changed, and the pane or popup it runs in, plus the
   question of an agent that needs input. Click a row, or reach it with F6 and
   the arrow keys and press Enter, to jump to that agent. With no reporting
   agent it explains what will show there. Its card has the pane cards' outline,

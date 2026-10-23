@@ -214,8 +214,10 @@ as `3  site`, then one row per reporting terminal. A row shows:
 
 - the state: ◆ needs input, ✕ error, ✓ finished, a spinner while working, or
   ○ idle;
-- the Claude or Codex icon, or the reporting app's name;
-- the agent's title, or the tab's folder when it reports none;
+- the Claude or Codex icon;
+- a Claude Code session's name, such as `eon-9a` for a session started
+  with `claude --name eon-9a`; otherwise the title the agent reports, and
+  without that, the app's name, such as `Codex`;
 - how long ago the state changed (`now`, `4m`, `2h`, `3d`);
 - the pane (`p3`) or popup it runs in.
 
@@ -293,7 +295,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
 | `eon stop previous [--json]` | Attempt every other non-dead generation |
 | `eon stop all [--json]` | Attempt every non-dead generation, including current |
-| `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state and app |
+| `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name |
 | `eon tab create [--json]` | Create a distinct pending tab with its directory picker, even while another picker is open |
 | `eon tab close TAB [--json]` | Close the expected active tab; the final tab quits the window, asking first from a terminal |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |

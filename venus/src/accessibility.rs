@@ -937,7 +937,7 @@ mod tests {
     use crate::{
         Color, DrawCell, DrawRow, DrawStyle, EonBar, PaneMetadata, ShortcutGroup, ShortcutRow,
     };
-    use eon_workspace_protocol::v18::{
+    use eon_workspace_protocol::v19::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, CodexQuotaWindow, Pane, Popup,
         PopupEntry, PopupGeometry, Shortcut, Snapshot as WorkspaceSnapshot, Tab,
     };
@@ -951,7 +951,7 @@ mod tests {
             id: id.into(),
             directory: format!("/tmp/{id}").into_bytes(),
             selected_pane: Some(selected_pane.into()),
-            columns: vec![eon_workspace_protocol::v18::Column {
+            columns: vec![eon_workspace_protocol::v19::Column {
                 panes: panes
                     .iter()
                     .map(|id| Pane {
@@ -973,14 +973,14 @@ mod tests {
             &WorkspaceSnapshot {
                 active_tab: active_tab.into(),
                 tabs,
-                geometry: eon_workspace_protocol::v18::PopupGeometry {
+                geometry: eon_workspace_protocol::v19::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
                 entries: Vec::new(),
                 codex_quota: None,
                 claude_quota: None,
-                sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+                sidebar: eon_workspace_protocol::v19::Sidebar::Open,
             },
             PhysicalSize::new(800, 600),
             CellMetrics::for_scale(1.0),
@@ -1053,7 +1053,7 @@ mod tests {
                                     resets_at: None,
                                 }],
                             }),
-                            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+                            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
                         };
                         let size =
                             PhysicalSize::new((logical_width as f32 * metrics.scale) as u32, 600);
@@ -1218,7 +1218,7 @@ mod tests {
                     tabs: vec![workspace_tab("t1", &["p1"], "p1")],
                     codex_quota: None,
                     claude_quota: None,
-                    sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+                    sidebar: eon_workspace_protocol::v19::Sidebar::Open,
                 },
                 EonBar {
                     clock: Some(&clock),
@@ -1278,7 +1278,7 @@ mod tests {
                                 observed_at: 1,
                                 windows: window(),
                             }),
-                            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+                            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
                         };
                         let project = |logical_width: u32, version, clock| {
                             WorkspaceScene::from_snapshot_with_metadata(
@@ -1445,7 +1445,7 @@ mod tests {
                 }],
             }),
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
         };
         let project = |logical_width: u32, version, cpu, ram, clock| {
             WorkspaceScene::from_snapshot_with_metadata(
@@ -1612,7 +1612,7 @@ mod tests {
                 observed_at: 1,
                 windows: windows(),
             }),
-            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
         };
         let metrics = CellMetrics::for_scale(1.0);
         let size = PhysicalSize::new(3000, 600);
@@ -1804,7 +1804,7 @@ mod tests {
                 tabs: vec![workspace_tab("t1", &["p1"], "p1")],
                 codex_quota,
                 claude_quota: None,
-                sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+                sidebar: eon_workspace_protocol::v19::Sidebar::Open,
             };
             let size = PhysicalSize::new(width, 600);
             let metrics = CellMetrics::for_scale(1.0);
@@ -1887,7 +1887,7 @@ mod tests {
 
     #[test]
     fn two_provider_chips_share_layout_without_losing_identity_or_freshness() {
-        use eon_workspace_protocol::v18::{ClaudeQuota, ClaudeQuotaState};
+        use eon_workspace_protocol::v19::{ClaudeQuota, ClaudeQuotaState};
         let five_hour = CodexQuotaWindow {
             duration_minutes: 300,
             remaining_percent: 98,
@@ -1938,7 +1938,7 @@ mod tests {
                                 observed_at: 1000,
                                 windows: windows.clone(),
                             }),
-                            sidebar: eon_workspace_protocol::v18::Sidebar::Closed,
+                            sidebar: eon_workspace_protocol::v19::Sidebar::Closed,
                         };
                         let project = |snapshot: &WorkspaceSnapshot, width| {
                             WorkspaceScene::from_snapshot(
@@ -2531,14 +2531,14 @@ mod tests {
                 workspace_tab("t2", &["pane-7"], "pane-7"),
                 workspace_tab("t3", &["pane-8"], "pane-8"),
             ],
-            geometry: eon_workspace_protocol::v18::PopupGeometry {
+            geometry: eon_workspace_protocol::v19::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
             entries: Vec::new(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
         };
         for scale in [1.0, 1.25, 1.5, 2.0] {
             let metrics = CellMetrics::for_scale(scale);
@@ -2638,7 +2638,7 @@ mod tests {
 
     #[test]
     fn agent_sidebar_region_follows_the_header_and_names_its_empty_state() {
-        use eon_workspace_protocol::v18::{AttentionState, Sidebar};
+        use eon_workspace_protocol::v19::{AttentionState, Sidebar};
 
         let mut workspace = WorkspaceSnapshot {
             active_tab: "t1".into(),
@@ -2686,12 +2686,13 @@ mod tests {
         // Attention replaces the empty state with each tab's heading and its rows, which are
         // named buttons that take focus and jump.
         workspace.tabs[0].columns[0].panes[0].attention =
-            Some(eon_workspace_protocol::v18::Attention {
+            Some(eon_workspace_protocol::v19::Attention {
                 state: AttentionState::NeedsInput,
-                record: Some(eon_workspace_protocol::v18::AttentionRecord {
+                record: Some(eon_workspace_protocol::v19::AttentionRecord {
                     kind: None,
                     progress: None,
                     app: "claude-code".into(),
+                    name: String::new(),
                     title: "Review".into(),
                     message: "Allow edits?".into(),
                     changed_at: 0,
@@ -2784,7 +2785,7 @@ mod tests {
             entries: Vec::new(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
         };
         let hint = crate::ShortcutHint {
             modifiers: "Alt".into(),
@@ -2913,14 +2914,14 @@ mod tests {
                     id: "files".into(),
                     label: "Files".into(),
                     shortcut: Shortcut {
-                        modifiers: eon_workspace_protocol::v18::ALT
-                            | eon_workspace_protocol::v18::SHIFT,
+                        modifiers: eon_workspace_protocol::v19::ALT
+                            | eon_workspace_protocol::v19::SHIFT,
                         key: "KeyT".into(),
                     },
                 }],
                 codex_quota: None,
                 claude_quota: None,
-                sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+                sidebar: eon_workspace_protocol::v19::Sidebar::Open,
             },
             PhysicalSize::new(800, 600),
             CellMetrics::for_scale(1.0),
@@ -2953,7 +2954,7 @@ mod tests {
                         id: "t1".into(),
                         directory: b"/tmp/eon".to_vec(),
                         selected_pane: Some("p2".into()),
-                        columns: vec![eon_workspace_protocol::v18::Column {
+                        columns: vec![eon_workspace_protocol::v19::Column {
                             panes: vec![
                                 Pane {
                                     id: "p1".into(),
@@ -2981,18 +2982,19 @@ mod tests {
                         id: "t2".into(),
                         directory: b"/tmp/nova".to_vec(),
                         selected_pane: Some("p3".into()),
-                        columns: vec![eon_workspace_protocol::v18::Column {
+                        columns: vec![eon_workspace_protocol::v19::Column {
                             panes: vec![Pane {
                                 id: "p3".into(),
                                 session: "session-3".into(),
                                 endpoint: b"/run/eon/three.sock".to_vec(),
                                 live: false,
-                                attention: Some(eon_workspace_protocol::v18::Attention {
-                                    state: eon_workspace_protocol::v18::AttentionState::Finished,
-                                    record: Some(eon_workspace_protocol::v18::AttentionRecord {
+                                attention: Some(eon_workspace_protocol::v19::Attention {
+                                    state: eon_workspace_protocol::v19::AttentionState::Finished,
+                                    record: Some(eon_workspace_protocol::v19::AttentionRecord {
                                         kind: None,
                                         progress: None,
                                         app: "claude-code".into(),
+                                        name: String::new(),
                                         title: String::new(),
                                         message: String::new(),
                                         changed_at: 1,
@@ -3004,18 +3006,18 @@ mod tests {
                             expanded: "p3".into(),
                         }],
                         attention_rollup: Some(
-                            eon_workspace_protocol::v18::AttentionState::Finished,
+                            eon_workspace_protocol::v19::AttentionState::Finished,
                         ),
                     },
                 ],
-                geometry: eon_workspace_protocol::v18::PopupGeometry {
+                geometry: eon_workspace_protocol::v19::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
                 entries: Vec::new(),
                 codex_quota: None,
                 claude_quota: None,
-                sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+                sidebar: eon_workspace_protocol::v19::Sidebar::Open,
             },
             EonBar::default(),
             PhysicalSize::new(800, 600),
@@ -3087,14 +3089,14 @@ mod tests {
             &WorkspaceSnapshot {
                 active_tab: "t1".into(),
                 tabs: vec![tab],
-                geometry: eon_workspace_protocol::v18::PopupGeometry {
+                geometry: eon_workspace_protocol::v19::PopupGeometry {
                     side_margin: 8.0,
                     vertical_margin: 4.0,
                 },
                 entries: Vec::new(),
                 codex_quota: None,
                 claude_quota: None,
-                sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+                sidebar: eon_workspace_protocol::v19::Sidebar::Open,
             },
             EonBar::default(),
             PhysicalSize::new(800, 600),
@@ -3133,7 +3135,7 @@ mod tests {
                 id: "project".into(),
                 label: "Project".into(),
                 shortcut: Shortcut {
-                    modifiers: eon_workspace_protocol::v18::ALT,
+                    modifiers: eon_workspace_protocol::v19::ALT,
                     key: "KeyZ".into(),
                 },
             }],
@@ -3155,7 +3157,7 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
         };
         let workspace = WorkspaceScene::from_snapshot(
             &state,

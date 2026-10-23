@@ -1339,7 +1339,7 @@ impl Host {
                 Decision::ManageLease => self.managed()?.lease()?,
                 Decision::ManageStatus => self.managed()?.status()?,
                 Decision::ManageProgramStatus => {
-                    let status = self.orbit.status.reply(Instant::now());
+                    let status = self.orbit.status.reply(self.orbit.title(), Instant::now());
                     self.managed()?.program_status(status)?
                 }
                 Decision::ManageRefuse => self.managed()?.refuse()?,

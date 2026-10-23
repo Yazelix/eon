@@ -70,6 +70,16 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   attention stays stale; if the Runtime never had a good reply, it has none,
   and an Agent popup shows unavailable. Stop and recovery are unaffected.
   Venus and Eon do not read the reply.
+- ORB-C15's `ProgramStatus` reply carries the terminal title, the window
+  title that ORBS metadata publishes, after the update sequence: without
+  control or invisible format characters, cut to 64 bytes at a UTF-8
+  boundary, and empty when the terminal has none or its title is not valid
+  UTF-8. It counts toward the 4 KiB, so at their bounds 7 records fit while
+  the terminal holds 14 or fewer. The reply moves from server tag 70 to 71,
+  a breaking change for its one consumer, Eon Runtime, with no compatibility
+  window (`eon-agent-sidebar-yx8.11`). Management stays generation 2; a
+  tag-70 reply from an older Orbit is refused as an unknown tag, as yx8.12's
+  tag-69 reply was. Stop and recovery are unaffected.
 
 ## Before this repository
 

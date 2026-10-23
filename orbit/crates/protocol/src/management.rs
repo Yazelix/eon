@@ -21,6 +21,9 @@ pub const MAX_PROGRAM_APP_BYTES: usize = 32;
 /// UTF-8 boundary.
 pub const MAX_PROGRAM_TITLE_BYTES: usize = 96;
 pub const MAX_PROGRAM_MESSAGE_BYTES: usize = 256;
+/// The reply's bound on the terminal title, which Orbit cuts at a UTF-8
+/// boundary.
+pub const MAX_TERMINAL_TITLE_BYTES: usize = 64;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ObjectIdentity {
@@ -126,12 +129,14 @@ pub struct ProgramRecord {
 }
 
 /// The `ProgramStatus` reply: the terminal's record count, its latest update
-/// sequence, and as many records as fit in 4 KiB in ORB-C15's fill order;
-/// `omitted` holds the creation sequence of each of the rest.
+/// sequence, its title, and as many records as fit in 4 KiB in ORB-C15's
+/// fill order; `omitted` holds the creation sequence of each of the rest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProgramStatus {
     pub count: u16,
     pub update: u64,
+    /// The terminal's window title, sanitized; empty when it has none.
+    pub terminal_title: String,
     pub omitted: Vec<u64>,
     pub records: Vec<ProgramRecord>,
 }
@@ -299,7 +304,7 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
             out.text("failure detail", &failure.detail, MAX_DETAIL_BYTES, true)
         }),
         ServerMessage::ProgramStatus(status) => {
-            encode(MESSAGE_MAGIC, 70, MAX_MESSAGE_BYTES, |out| {
+            encode(MESSAGE_MAGIC, 71, MAX_MESSAGE_BYTES, |out| {
                 encode_program_status(out, status)
             })
         }
@@ -326,7 +331,7 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
             },
             detail: input.text("failure detail", MAX_DETAIL_BYTES, true)?,
         }),
-        70 => ServerMessage::ProgramStatus(decode_program_status(&mut input)?),
+        71 => ServerMessage::ProgramStatus(decode_program_status(&mut input)?),
         value => {
             return Err(Error::InvalidTag {
                 field: "server message",
@@ -567,9 +572,9 @@ pub fn program_record_len(record: &ProgramRecord) -> usize {
         + 5 * 8
 }
 
-/// The bytes a reply's message takes before its records and omitted creation
-/// sequences.
-pub const PROGRAM_STATUS_HEADER_BYTES: usize = HEADER_BYTES + 2 + 8 + 2;
+/// The bytes a reply's message takes before its terminal title's text, its
+/// records and omitted creation sequences.
+pub const PROGRAM_STATUS_HEADER_BYTES: usize = HEADER_BYTES + 2 + 8 + 2 + 2;
 
 /// The bytes one omitted record's creation sequence takes in a reply.
 pub const PROGRAM_OMITTED_BYTES: usize = 8;
@@ -578,6 +583,12 @@ fn encode_program_status(out: &mut Encoder, status: &ProgramStatus) -> Result<()
     validate_program_counts(status.count, status.omitted.len(), status.records.len())?;
     out.u16(status.count);
     out.u64(status.update);
+    out.text(
+        "terminal title",
+        &status.terminal_title,
+        MAX_TERMINAL_TITLE_BYTES,
+        true,
+    )?;
     out.u16(status.omitted.len() as u16);
     for &created in &status.omitted {
         out.u64(created);
@@ -626,6 +637,7 @@ fn encode_program_status(out: &mut Encoder, status: &ProgramStatus) -> Result<()
 fn decode_program_status(input: &mut Decoder<'_>) -> Result<ProgramStatus> {
     let count = input.u16()?;
     let update = input.u64()?;
+    let terminal_title = input.text("terminal title", MAX_TERMINAL_TITLE_BYTES, true)?;
     let omitted = input.u16()?;
     let included = usize::from(count.checked_sub(omitted).ok_or(Error::InvalidValue {
         field: "program record counts",
@@ -682,6 +694,7 @@ fn decode_program_status(input: &mut Decoder<'_>) -> Result<ProgramStatus> {
     Ok(ProgramStatus {
         count,
         update,
+        terminal_title,
         omitted,
         records,
     })

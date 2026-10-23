@@ -34,6 +34,15 @@
   the previous agent needing attention", and the hints as "next agent" and
   "previous agent" (VEN-C20, VEN-C24, `eon-agent-sidebar-yx8.8`).
 
+- Venus consumes EONW v19, whose attention carries `name`, the terminal
+  title. A sidebar row's first line shows one label: for `app=claude-code`
+  the name, which is the session's name, else the record title, else the
+  app's name (`Claude`, `Codex`, or the `app` verbatim). Other apps'
+  terminal titles, such as Codex's spinner title, never lead a row, and the
+  row no longer falls back to the tab's directory leaf, which the tab's
+  heading shows. The row's accessible name includes Claude Code's session
+  name (VEN-C30, `eon-agent-sidebar-yx8.11`).
+
 - Venus consumes EONW v18, which adds EON-C31 agent attention to panes,
   popups and tabs, the window's sidebar visibility, and the `ToggleSidebar`,
   `FocusAttention`, `NextAttention` and `PreviousAttention` actions; the

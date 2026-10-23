@@ -540,6 +540,15 @@ impl Orbit {
         })
     }
 
+    /// The terminal's title, empty when libghostty refuses it as invalid
+    /// UTF-8, which a title cut inside a character at libghostty's 1024 bytes
+    /// is, so a program's bad title never fails the reader. The ProgramStatus
+    /// answer reads it; `eon-title-utf8-ends-terminal-atq2` moves the metadata
+    /// observer onto this fallback too.
+    pub(crate) fn title(&self) -> &str {
+        self.terminal.title().unwrap_or_default()
+    }
+
     /// The terminal's title and working directory.
     pub(crate) fn title_and_directory(&self) -> io::Result<(&str, &str)> {
         Ok((

@@ -1,5 +1,5 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v18::{
+use eon_workspace_protocol::v19::{
     Action, Attention, AttentionState, Column as SnapshotColumn, Direction, Failure, InvokeIntent,
     MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane,
     Popup as SnapshotPopup, PopupEntry as SnapshotEntry, PopupTarget, Side, Sidebar, Snapshot,
@@ -1547,15 +1547,18 @@ fn attention_name(state: AttentionState) -> &'static str {
     }
 }
 
-/// A terminal's attention state and app, the only attention values the CLI
-/// projects (EON-C31); the program's report text never leaves EONW.
-fn attention_fields(attention: Option<&Attention>) -> (Option<&'static str>, Option<&str>) {
+/// A terminal's attention state, app and name, the only attention values the
+/// CLI projects (EON-C31); the program's report text never leaves EONW. An
+/// empty app or name is none.
+fn attention_fields(
+    attention: Option<&Attention>,
+) -> (Option<&'static str>, Option<&str>, Option<&str>) {
+    let record = attention.and_then(|attention| attention.record.as_ref());
+    let nonempty = |text: &&str| !text.is_empty();
     (
         attention.map(|attention| attention_name(attention.state)),
-        attention
-            .and_then(|attention| attention.record.as_ref())
-            .map(|record| record.app.as_str())
-            .filter(|app| !app.is_empty()),
+        record.map(|record| record.app.as_str()).filter(nonempty),
+        record.map(|record| record.name.as_str()).filter(nonempty),
     )
 }
 
@@ -1568,11 +1571,12 @@ fn sidebar_name(sidebar: Sidebar) -> &'static str {
 }
 
 fn human_attention(attention: Option<&Attention>) -> String {
-    let (state, app) = attention_fields(attention);
+    let (state, app, name) = attention_fields(attention);
     format!(
-        "attention={} app={}",
+        "attention={} app={} name={}",
         state.unwrap_or("none"),
-        app.unwrap_or("none").escape_debug()
+        app.unwrap_or("none").escape_debug(),
+        name.unwrap_or("none").escape_debug()
     )
 }
 
@@ -1699,14 +1703,16 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
     output
 }
 
-/// `{"state":...,"app":...}`, or `null` without attention.
+/// `{"state":...,"app":...,"name":...}`, or `null` without attention.
 fn json_attention(output: &mut String, attention: Option<&Attention>) {
-    let (Some(state), app) = attention_fields(attention) else {
+    let (Some(state), app, name) = attention_fields(attention) else {
         output.push_str("null");
         return;
     };
     output.push_str(&format!("{{\"state\":\"{state}\",\"app\":"));
     json_option(output, app);
+    output.push_str(",\"name\":");
+    json_option(output, name);
     output.push('}');
 }
 
@@ -1790,13 +1796,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v18::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v19::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v18::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v18::ALT, "Alt"),
-        (eon_workspace_protocol::v18::SHIFT, "Shift"),
-        (eon_workspace_protocol::v18::SUPER, "Super"),
+        (eon_workspace_protocol::v19::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v19::ALT, "Alt"),
+        (eon_workspace_protocol::v19::SHIFT, "Shift"),
+        (eon_workspace_protocol::v19::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -1856,7 +1862,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v18::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v19::{ALT, PopupGeometry, Shortcut};
 
     #[test]
     fn json_paths_are_strings_unless_their_bytes_are_not_utf8() {
@@ -1892,10 +1898,11 @@ mod tests {
         let mut snapshot = workspace.snapshot();
         snapshot.tabs[0].columns[0].panes[0].attention = Some(Attention {
             state: AttentionState::NeedsInput,
-            record: Some(eon_workspace_protocol::v18::AttentionRecord {
+            record: Some(eon_workspace_protocol::v19::AttentionRecord {
                 kind: None,
                 progress: Some(40),
                 app: "codex".into(),
+                name: "eon \"9a\"".into(),
                 title: "secret title".into(),
                 message: "secret message".into(),
                 changed_at: 1,
@@ -1907,14 +1914,18 @@ mod tests {
         snapshot.sidebar = Sidebar::Closed;
         let json = json(&snapshot);
         assert!(json.contains(r#""attention_rollup":"needs-input","panes":[{"id":"p1","#));
-        assert!(json.contains(r#""attention":{"state":"needs-input","app":"codex"}}"#));
+        assert!(
+            json.contains(
+                r#""attention":{"state":"needs-input","app":"codex","name":"eon \"9a\""}}"#
+            )
+        );
         assert!(json.contains(r#""live":true,"attention":null}"#));
         assert!(json.ends_with("],\"sidebar\":\"closed\"}\n"));
         let human = human(&snapshot);
         assert!(human.starts_with("active t1\nsidebar closed\ntab t1 "));
         assert!(human.contains(" attention=needs-input\n"));
-        assert!(human.contains(" attention=needs-input app=codex\n"));
-        assert!(human.contains(" attention=none app=none\n"));
+        assert!(human.contains(" attention=needs-input app=codex name=eon \\\"9a\\\"\n"));
+        assert!(human.contains(" attention=none app=none name=none\n"));
         for output in [json, human] {
             assert!(!output.contains("secret") && !output.contains("progress"));
         }
@@ -2040,8 +2051,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v18::encode_response(
-            &eon_workspace_protocol::v18::Response::Snapshot(after),
+        eon_workspace_protocol::v19::encode_response(
+            &eon_workspace_protocol::v19::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -3845,8 +3856,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v18::encode_response(
-            &eon_workspace_protocol::v18::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v19::encode_response(
+            &eon_workspace_protocol::v19::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 

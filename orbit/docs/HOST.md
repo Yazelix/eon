@@ -172,8 +172,8 @@ sample, live in Bend ([src/status.bend](../src/status.bend)). A management
 `ProgramStatus` request arrives as fact `ProgramStatus` with a foreground
 sample taken when the host reads it; Bend leads its answer with that sample's
 `StatusLifetime`, then answers `ManageProgramStatus`, for which the host
-builds the reply from the records, or `ManageRefuse`, for which it sends Busy
-and keeps the lease.
+builds the reply from the records and the terminal title, or `ManageRefuse`,
+for which it sends Busy and keeps the lease.
 
 Bend's session holds the pointer sequence's route, whether a host selection
 is presented, and whether a finished host sequence froze a copy. Rust keeps

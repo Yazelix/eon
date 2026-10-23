@@ -93,6 +93,7 @@ fn management_messages_and_records_round_trip_canonically() {
         ServerMessage::ProgramStatus(ProgramStatus {
             count: 3,
             update: 9,
+            terminal_title: "eon-9a 🪐".into(),
             omitted: vec![2],
             records: vec![
                 program_record("agent/1", ProgramState::Blocked),
@@ -206,9 +207,10 @@ fn management_codec_rejects_incompatible_or_noncanonical_bytes() {
     ));
 }
 
-/// Orbit fills a reply by `program_record_len` and `PROGRAM_OMITTED_BYTES`,
-/// so they must match the encoding; at the reply's text bounds seven records
-/// fit in 4 KiB, and three beside the creation sequences of 253 more.
+/// Orbit fills a reply by `PROGRAM_STATUS_HEADER_BYTES`, `program_record_len`
+/// and `PROGRAM_OMITTED_BYTES`, so they must match the encoding; at the
+/// reply's text bounds seven records fit in 4 KiB, and three beside the
+/// creation sequences of 253 more.
 #[test]
 fn program_status_replies_keep_their_bounds() {
     let full = ProgramRecord {
@@ -218,10 +220,12 @@ fn program_status_replies_keep_their_bounds() {
         message: "a".repeat(management::MAX_PROGRAM_MESSAGE_BYTES),
         ..program_record("", ProgramState::Blocked)
     };
+    let title = "a".repeat(management::MAX_TERMINAL_TITLE_BYTES);
     let reply = |records: Vec<ProgramRecord>, omitted: usize| {
         ServerMessage::ProgramStatus(ProgramStatus {
             count: (records.len() + omitted) as u16,
             update: 1,
+            terminal_title: title.clone(),
             omitted: (0..omitted as u64).collect(),
             records,
         })
@@ -229,7 +233,9 @@ fn program_status_replies_keep_their_bounds() {
     let seven = management::encode_server_message(&reply(vec![full.clone(); 7], 0)).unwrap();
     assert_eq!(
         seven.len(),
-        management::PROGRAM_STATUS_HEADER_BYTES + 7 * management::program_record_len(&full)
+        management::PROGRAM_STATUS_HEADER_BYTES
+            + title.len()
+            + 7 * management::program_record_len(&full)
     );
     assert!(matches!(
         management::encode_server_message(&reply(vec![full.clone(); 8], 0)),
@@ -240,6 +246,7 @@ fn program_status_replies_keep_their_bounds() {
     assert_eq!(
         bytes.len(),
         management::PROGRAM_STATUS_HEADER_BYTES
+            + title.len()
             + 3 * management::program_record_len(&full)
             + 253 * management::PROGRAM_OMITTED_BYTES
     );
@@ -261,6 +268,7 @@ fn program_status_replies_keep_their_bounds() {
             refused(ProgramStatus {
                 count: 1,
                 update: 1,
+                terminal_title: String::new(),
                 omitted: Vec::new(),
                 records
             }),
@@ -271,9 +279,20 @@ fn program_status_replies_keep_their_bounds() {
         refused(ProgramStatus {
             count: 2,
             update: 1,
+            terminal_title: String::new(),
             omitted: Vec::new(),
             records: vec![full]
         }),
         Err(Error::InvalidValue { .. })
+    ));
+    assert!(matches!(
+        refused(ProgramStatus {
+            count: 0,
+            update: 1,
+            terminal_title: "a".repeat(management::MAX_TERMINAL_TITLE_BYTES + 1),
+            omitted: Vec::new(),
+            records: Vec::new()
+        }),
+        Err(Error::ValueTooLarge { .. })
     ));
 }

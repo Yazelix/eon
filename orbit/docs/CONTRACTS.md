@@ -795,7 +795,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Status:** Proved. Approved on 2026-10-21 (draft 15 on
   `eon-agent-sidebar-yx8.1`). `eon-agent-sidebar-yx8.4` stores the records
   and decides their lifetime; `eon-agent-sidebar-yx8.5` serves the
-  `ProgramStatus` reply.
+  `ProgramStatus` reply; `eon-agent-sidebar-yx8.11` adds the terminal title
+  to the reply.
 - **Consumer:**
   - a program in an Orbit terminal that speaks the Program Status Protocol
     (OSC 7501, rev 0.4), such as Claude Code 2.1.295 or later, or Codex 0.163
@@ -891,17 +892,24 @@ in this repository. Each contract below states the current ORBS v13 behavior.
     when to stop showing `done` or `error`; EON-C31 decides that.
   - **ProgramStatus reply.** One request gets one reply of at most 4 KiB. It
     carries the record count, the terminal's latest update sequence, the
-    creation sequence of each record omitted for size, and as many records as
-    fit in a neutral fill order: first `blocked`, `error` and `done`, most
-    recent change first; then every other record, most recent change first.
+    terminal title, the creation sequence of each record omitted for size, and
+    as many records as fit in a neutral fill order: first `blocked`, `error`
+    and `done`, most recent change first; then every other record, most
+    recent change first.
     Each record carries its full `id`, `state`, `kind`, `progress`, `app`
     (32 bytes or less), `title` (96 or less) and `msg` (256 or less), its
     update sequence, creation sequence, change sequence, previous state and
     both ages. Orbit truncates only `title` and `msg`, at UTF-8 boundaries.
     The omitted creation sequences count toward the 4 KiB and let a reader
-    tell a record omitted for size from one Orbit no longer holds. With
-    every record at its bounds, a reply carries up to 7 records while the
-    terminal holds 22 or fewer, and at least 3 when it holds 256.
+    tell a record omitted for size from one Orbit no longer holds. The
+    terminal title is the window title that ORBS metadata publishes (OSC 0
+    and 2), empty when the terminal has none or its title is not valid
+    UTF-8. Orbit removes its control characters and the invisible characters
+    it removes from record text, and cuts it to 64 bytes at a UTF-8
+    boundary. It is a neutral terminal fact, not a record, and Orbit gives
+    it no status meaning. With every record and
+    the terminal title at their bounds, a reply carries up to 7 records while
+    the terminal holds 14 or fewer, and at least 3 when it holds 256.
 - **Important failures:**
   - Orbit ignores any report over 4096 bytes.
   - Past 256 records, Orbit evicts the least-recently-updated one.
@@ -912,7 +920,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   - The Rust host owns raw observation and mechanism
     ([HOST.md](HOST.md#what-rust-holds)): it parses reports through
     libghostty, stores records with their neutral facts, applies the spec's
-    eviction, and assembles reply content by the fixed fill order.
+    eviction, and assembles reply content, the terminal title included, by
+    the fixed fill order.
   - The Bend worker decides from one-line numeric facts:
     - whether a prompt mark or foreground-group edge drops the `working` and
       `blocked` records;
@@ -939,17 +948,19 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   records across Orbit restarts. Portability is neutral: `tcgetpgrp` and the
   PTY are POSIX, and macOS stays deferred.
 - **Proof:** the `eon-agent-sidebar-yx8.5` commit, with the
-  `eon-agent-sidebar-yx8.4` commit for the records and their lifetime and
-  the `eon-agent-sidebar-yx8.12` commit for creation sequences
+  `eon-agent-sidebar-yx8.4` commit for the records and their lifetime, the
+  `eon-agent-sidebar-yx8.12` commit for creation sequences and the
+  `eon-agent-sidebar-yx8.11` commit for the terminal title
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, every `orbit-<name>` real-PTY check); sandboxed
     `nix develop -c eon-test` (workspace and installer)
   - **Evidence:**
     - Real-PTY check [`orbit-program-status`](../tests/real_pty/program_status.rs):
-      through a management lease, a prompt mark drops in stream order, a
-      foreground return drops once on a terminal without prompt marks, a
-      return inside a detached turn ends the turn there, and requests are
-      answered within the worker-stall bound while the child floods the PTY
+      through a management lease, the reply carries the child's window title,
+      a prompt mark drops in stream order, a foreground return drops once on
+      a terminal without prompt marks, a return inside a detached turn ends
+      the turn there, and requests are answered within the worker-stall
+      bound while the child floods the PTY
       ([BEHAVIOR.md](BEHAVIOR.md#program-status) records the measured
       answer times)
     - Real-PTY check [`orbit-terminal-replies`](../tests/real_pty/terminal_replies.rs):
@@ -958,8 +969,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
       libghostty terminals: the report rules and limits, the neutral facts,
       clears and RIS, app inheritance and disarmed text, eviction past 256
       records, drops in stream order, a real PTY child's reports, Claude
-      Code's and Codex's recorded reports, and the reply's fill order, cuts
-      and omitted creation sequences;
+      Code's and Codex's recorded reports, the reply's fill order, cuts
+      and omitted creation sequences, and its cleaned and cut terminal title;
       `the_worker_leads_each_output_with_its_status_lifetime`
       ([src/host.rs](../src/host.rs)) against the built worker
     - Protocol test `program_status_replies_keep_their_bounds` and the

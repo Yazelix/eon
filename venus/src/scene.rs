@@ -3,7 +3,7 @@ use crate::{
     model::{active_popup, presented_panes},
     render::CellMetrics,
 };
-use eon_workspace_protocol::v18::{
+use eon_workspace_protocol::v19::{
     ALT, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState, Pane, PopupEntry,
     QuotaWindow, SHIFT, Sidebar, Snapshot, Tab,
 };
@@ -152,7 +152,7 @@ pub struct SidebarRow {
     pub(crate) icon: Option<(QuotaProvider, SceneRect)>,
     /// Where the row's text lines start, after the glyph and any icon.
     pub(crate) text_left: f32,
-    /// The app's name when no icon stands for it, then the title or the tab's directory leaf.
+    /// Claude Code's session name, else the reported title, else the app's name.
     pub(crate) title: String,
     /// The age, the source terminal, "+N" for other records and "status stale".
     pub(crate) detail: String,
@@ -1189,16 +1189,21 @@ fn sidebar_contents(
             let reported_title = record
                 .map(|record| record.title.as_str())
                 .filter(|title| !title.is_empty());
-            let shown_title = match (record, reported_title) {
-                (None, _) => "status unavailable",
-                (Some(_), Some(title)) => title,
-                (Some(_), None) => leaf.as_str(),
-            };
-            let title = if icon.is_none() && !app.is_empty() {
-                format!("{app} · {shown_title}")
-            } else {
-                shown_title.to_owned()
-            };
+            // Only Claude Code's terminal title names its session; other programs'
+            // titles are status lines, such as Codex's spinner, or shell command lines.
+            let name = record
+                .filter(|record| record.app == "claude-code")
+                .map_or("", |record| record.name.as_str());
+            // The first of the name, the reported title and the app label, never the
+            // directory leaf that the tab's heading already shows.
+            let title = match record {
+                None => "status unavailable",
+                Some(_) => [name, reported_title.unwrap_or_default(), app]
+                    .into_iter()
+                    .find(|text| !text.is_empty())
+                    .unwrap_or("agent"),
+            }
+            .to_owned();
             let age = record.map(|record| view.now.saturating_sub(record.changed_at));
             let ages = age.map(age_labels);
             let others = record.map_or(0, |record| record.others);
@@ -1233,8 +1238,9 @@ fn sidebar_contents(
                 (AttentionState::Unavailable, _) => "Status unavailable",
             };
             let mut accessible_label = format!(
-                "{word}: {} in tab {}, {leaf}, {source}",
+                "{word}: {}{}{name} in tab {}, {leaf}, {source}",
                 if app.is_empty() { "agent" } else { app },
+                if name.is_empty() { "" } else { " " },
                 index + 1,
             );
             if let Some(title) = reported_title {
@@ -3232,7 +3238,7 @@ mod tests {
 
     #[test]
     fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
-        use eon_workspace_protocol::v18::{
+        use eon_workspace_protocol::v19::{
             AttentionState, Column, Popup, PopupEntry, PopupGeometry, Shortcut,
         };
 
@@ -3348,7 +3354,7 @@ mod tests {
 
         // Any attention replaces the empty state.
         snapshot.sidebar = Sidebar::Open;
-        snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v18::Attention {
+        snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v19::Attention {
             state: AttentionState::Unavailable,
             record: None,
         });
@@ -3358,7 +3364,7 @@ mod tests {
 
     #[test]
     fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
-        use eon_workspace_protocol::v18::{
+        use eon_workspace_protocol::v19::{
             Attention, AttentionRecord, Column, Popup, PopupEntry, PopupGeometry, Shortcut,
         };
 
@@ -3367,6 +3373,7 @@ mod tests {
             kind: None,
             progress: None,
             app: app.into(),
+            name: String::new(),
             title: title.into(),
             message: String::new(),
             changed_at: NOW - age,
@@ -3400,21 +3407,28 @@ mod tests {
             state: AttentionState::NeedsInput,
             record: Some(AttentionRecord {
                 kind: Some(AttentionKind::Permission),
+                name: "eon-9a".into(),
                 message: "Allow Bash: cargo test?".into(),
                 others: 2,
                 ..record("claude-code", "Review PR", 4 * MINUTE_MS)
             }),
         };
+        // Other apps' terminal titles, such as Codex's spinner title or a shell's command
+        // line, never lead a row.
         let working = Attention {
             state: AttentionState::Working,
             record: Some(AttentionRecord {
                 stale: true,
+                name: "⠼ w".into(),
                 ..record("codex", "Fix tests", 30_000)
             }),
         };
         let idle = Attention {
             state: AttentionState::Idle,
-            record: Some(record("aider", "", 2 * HOUR_MS)),
+            record: Some(AttentionRecord {
+                name: "~/w> ./i".into(),
+                ..record("aider", "", 2 * HOUR_MS)
+            }),
         };
         let snapshot = Snapshot {
             active_tab: "t1".into(),
@@ -3522,7 +3536,7 @@ mod tests {
                     AttentionState::NeedsInput,
                     false,
                     Some(QuotaProvider::Claude),
-                    "Review PR",
+                    "eon-9a",
                     "4m · p2 · +2",
                     Some("Allow Bash: cargo test?"),
                 ),
@@ -3546,14 +3560,15 @@ mod tests {
                     "now · p4 · status stale",
                     None,
                 ),
-                // An unknown app shows verbatim; without a title the tab's directory leaf does.
+                // A non-Claude terminal title is ignored; without a title, the app shows
+                // verbatim, never the tab's directory leaf.
                 (
                     "t3",
                     "p5",
                     AttentionState::Idle,
                     false,
                     None,
-                    "aider · api",
+                    "aider",
                     "2h · p5",
                     None,
                 ),
@@ -3566,7 +3581,7 @@ mod tests {
                 .map(|row| row.accessible_label.as_str())
                 .collect::<Vec<_>>(),
             [
-                "Needs input (permission): Claude in tab 2, site, p2, Review PR, \
+                "Needs input (permission): Claude eon-9a in tab 2, site, p2, Review PR, \
                  changed 4 minutes ago, 2 more records: Allow Bash: cargo test?",
                 "Status unavailable: agent in tab 2, site, Agent popup",
                 "Working: Codex in tab 3, api, p4, Fix tests, changed just now, status stale",
@@ -3657,7 +3672,7 @@ mod tests {
 
     #[test]
     fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
-        use eon_workspace_protocol::v18::{
+        use eon_workspace_protocol::v19::{
             ALT, Pane, Popup, PopupEntry, PopupGeometry, Shortcut, Tab,
         };
 
@@ -3681,7 +3696,7 @@ mod tests {
                 pending: false,
                 selected_pane: Some("p1".into()),
                 selected_popup: None,
-                columns: vec![eon_workspace_protocol::v18::Column {
+                columns: vec![eon_workspace_protocol::v19::Column {
                     panes: vec![Pane {
                         id: "p1".into(),
                         session: "session-1".into(),
@@ -3702,7 +3717,7 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
         };
         let project = |snapshot: &Snapshot| {
             WorkspaceScene::from_snapshot(
@@ -3752,7 +3767,7 @@ mod tests {
         for index in 2..=3 {
             columns.tabs[0]
                 .columns
-                .push(eon_workspace_protocol::v18::Column {
+                .push(eon_workspace_protocol::v19::Column {
                     panes: vec![Pane {
                         id: format!("p{index}"),
                         session: format!("session-{}", index + 1),
@@ -3980,7 +3995,7 @@ mod tests {
 
     #[test]
     fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
-        use eon_workspace_protocol::v18::{Pane, PopupGeometry, Tab};
+        use eon_workspace_protocol::v19::{Pane, PopupGeometry, Tab};
 
         let snapshot = Snapshot {
             active_tab: "t2".into(),
@@ -3996,7 +4011,7 @@ mod tests {
                     pending: false,
                     selected_pane: Some(format!("p{index}")),
                     selected_popup: None,
-                    columns: vec![eon_workspace_protocol::v18::Column {
+                    columns: vec![eon_workspace_protocol::v19::Column {
                         panes: vec![Pane {
                             id: format!("p{index}"),
                             session: format!("s{index}"),
@@ -4012,7 +4027,7 @@ mod tests {
                 .collect(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
         };
         let metrics = CellMetrics::for_scale(1.0);
 
@@ -4109,7 +4124,7 @@ mod tests {
 
     #[test]
     fn attention_badges_mark_tab_corners_without_moving_tabs() {
-        use eon_workspace_protocol::v18::{
+        use eon_workspace_protocol::v19::{
             Attention, AttentionRecord, AttentionState as State, Column, Pane, PopupGeometry,
         };
 
@@ -4119,6 +4134,7 @@ mod tests {
                 kind: None,
                 progress: None,
                 app: "codex".into(),
+                name: String::new(),
                 title: String::new(),
                 message: String::new(),
                 changed_at: 1,
@@ -4176,7 +4192,7 @@ mod tests {
                 .collect(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v18::Sidebar::Closed,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Closed,
         };
         let metrics = CellMetrics::for_scale(1.0);
         let project = |snapshot: &Snapshot, width, scroll| {
@@ -4236,7 +4252,7 @@ mod tests {
         );
         // While the sidebar shows, the tabs carry no badge or state; hidden for width, they do.
         let mut open = snapshot.clone();
-        open.sidebar = eon_workspace_protocol::v18::Sidebar::Open;
+        open.sidebar = eon_workspace_protocol::v19::Sidebar::Open;
         let beside = project(&open, 1600, 0.0);
         assert!(beside.sidebar().is_some());
         assert!(beside.tabs.iter().all(|tab| tab.badge.is_none()));
@@ -4921,11 +4937,11 @@ mod tests {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v18::Column {
+            columns: vec![eon_workspace_protocol::v19::Column {
                 panes: vec![pane("p1"), pane("p2")],
                 expanded: "p1".into(),
             }],
-            popups: vec![eon_workspace_protocol::v18::Popup {
+            popups: vec![eon_workspace_protocol::v19::Popup {
                 id: "u1".into(),
                 entry: "agent".into(),
                 session: "popup-session".into(),
@@ -4937,7 +4953,7 @@ mod tests {
         let entries = [PopupEntry {
             id: "agent".into(),
             label: "Agent".into(),
-            shortcut: eon_workspace_protocol::v18::Shortcut {
+            shortcut: eon_workspace_protocol::v19::Shortcut {
                 modifiers: ALT | SHIFT,
                 key: "KeyL".into(),
             },

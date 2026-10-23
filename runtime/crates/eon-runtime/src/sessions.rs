@@ -7,7 +7,7 @@ use super::{
     },
     workspace::{is_directory_picker_endpoint, is_directory_picker_session},
 };
-use eon_workspace_protocol::v18::MAX_SESSIONS;
+use eon_workspace_protocol::v19::MAX_SESSIONS;
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LiveIdentity,
     ObjectIdentity, ProcessOutcome, ProgramStatus, Record as ManagementRecord,
@@ -2188,6 +2188,7 @@ pub(crate) mod tests {
                 management::ProgramStatus {
                     count: 0,
                     update: 1,
+                    terminal_title: String::new(),
                     omitted: Vec::new(),
                     records: Vec::new(),
                 },

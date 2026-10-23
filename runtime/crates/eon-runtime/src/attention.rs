@@ -7,7 +7,7 @@ use super::{
     sessions::{self, ProgramStatusRead, RunningSession},
     workspace::is_directory_picker_session,
 };
-use eon_workspace_protocol::v18::{
+use eon_workspace_protocol::v19::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
@@ -116,6 +116,8 @@ struct Terminal {
     run: String,
     update: u64,
     count: u16,
+    /// The terminal title, which the attention carries as `name`.
+    name: String,
     records: Vec<Record>,
     /// Records the reply omitted for size, kept while Orbit still holds them
     /// so their change times and seen raises survive until they return.
@@ -151,6 +153,8 @@ impl Terminal {
 /// What one terminal shows.
 struct Shown<'a> {
     state: State,
+    /// The terminal title; empty for unavailable.
+    name: &'a str,
     /// The most urgent record; none for unavailable.
     record: Option<&'a ProgramRecord>,
     /// That record's fixed change time.
@@ -314,6 +318,7 @@ impl Attention {
             run: run.into(),
             update: status.update,
             count: status.count,
+            name: status.terminal_title,
             records: fresh,
             omitted,
             replied: now,
@@ -407,6 +412,7 @@ impl Attention {
         match terminal.and_then(|terminal| Some((terminal, terminal.most_urgent()?))) {
             Some((terminal, (record, state, _))) => Some(Shown {
                 state,
+                name: &terminal.name,
                 record: Some(&record.record),
                 changed_at: Some(record.changed_at),
                 stale: now.duration_since(terminal.replied) > STALE_AFTER,
@@ -414,6 +420,7 @@ impl Attention {
             }),
             None => target.agent.then_some(Shown {
                 state: State::Unavailable,
+                name: "",
                 record: None,
                 changed_at: None,
                 stale: false,
@@ -499,6 +506,7 @@ impl Attention {
                     }),
                     progress: record.progress,
                     app: plain(&record.app),
+                    name: plain(shown.name),
                     title: plain(&record.title),
                     message: plain(&record.message),
                     changed_at: self.wall(shown.changed_at.unwrap_or(now)),
@@ -542,7 +550,7 @@ impl Attention {
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v18::{Column, Pane, Popup, PopupGeometry, Tab};
+    use eon_workspace_protocol::v19::{Column, Pane, Popup, PopupGeometry, Tab};
     use std::{fs, thread};
 
     fn record(
@@ -572,6 +580,7 @@ mod tests {
         ProgramStatus {
             count: records.len() as u16,
             update,
+            terminal_title: String::new(),
             omitted: Vec::new(),
             records,
         }
@@ -850,6 +859,7 @@ mod tests {
         let crowded = ProgramStatus {
             count: 2,
             update: 7,
+            terminal_title: String::new(),
             omitted: vec![5],
             records: vec![record("b", Idle, None, 7)],
         };
@@ -879,6 +889,7 @@ mod tests {
             let churning = ProgramStatus {
                 count: 2,
                 update,
+                terminal_title: String::new(),
                 omitted: vec![5],
                 records: vec![record(&format!("r{update}"), Done, Some(Working), update)],
             };
@@ -916,10 +927,8 @@ mod tests {
 
     #[test]
     fn stale_results_keep_their_state_and_only_agent_popups_start_unavailable() {
-        let (targets, _) = targets(&snapshot(
-            "t",
-            vec![tab("t", &["s"], &[("agent", "a")], None)],
-        ));
+        let shown_snapshot = snapshot("t", vec![tab("t", &["s"], &[("agent", "a")], None)]);
+        let (targets, _) = targets(&shown_snapshot);
         let mut attention = Attention::new(true);
         let base = Instant::now();
         assert_eq!(state(&attention, &targets, "s", base), None);
@@ -930,6 +939,7 @@ mod tests {
 
         let working = ProgramStatus {
             count: 3,
+            terminal_title: "eon-9a 🪐".into(),
             ..status(1, vec![record("w", Working, None, 1)])
         };
         attention.apply(&targets, "s", "run", working.clone(), base);
@@ -940,8 +950,24 @@ mod tests {
         let shown = attention.shown(&targets[0], late).unwrap();
         assert!(shown.stale);
         assert_eq!(shown.state, State::Working);
-        attention.apply(&targets, "s", "run", working, late);
+        // The terminal title passes through unchanged as the name, which a
+        // stale terminal keeps and the next reply replaces.
+        let name = |attention: &mut Attention| {
+            let mut presented = shown_snapshot.clone();
+            attention.present(&mut presented, false, late);
+            let pane = &presented.tabs[0].columns[0].panes[0];
+            let record = pane.attention.as_ref().unwrap().record.as_ref().unwrap();
+            (record.name.clone(), record.stale)
+        };
+        assert_eq!(name(&mut attention), ("eon-9a 🪐".into(), true));
+        attention.apply(&targets, "s", "run", working.clone(), late);
         assert!(!attention.shown(&targets[0], late).unwrap().stale);
+        let renamed = ProgramStatus {
+            terminal_title: "eon-9b".into(),
+            ..working
+        };
+        attention.apply(&targets, "s", "run", renamed, late);
+        assert_eq!(name(&mut attention), ("eon-9b".into(), false));
 
         attention.apply(&targets, "a", "run", status(1, Vec::new()), base);
         assert_eq!(

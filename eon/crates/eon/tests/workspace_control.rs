@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v18::{
+use eon_workspace_protocol::v19::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
@@ -1137,7 +1137,7 @@ printf '/selected-\377\n' > "$4"
         }],
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v19::Sidebar::Open,
     }))
     .unwrap();
     stream.write_all(&response).unwrap();

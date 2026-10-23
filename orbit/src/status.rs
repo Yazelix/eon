@@ -197,11 +197,19 @@ impl Records {
         }
     }
 
-    /// The `ProgramStatus` reply: as many records as fit in one 4 KiB
-    /// message beside the creation sequences of the rest, first blocked,
-    /// error and done, then the rest, each group most recent change first,
-    /// with `title` and `msg` cut to their reply bounds.
-    pub(crate) fn reply(&self, now: Instant) -> protocol::ProgramStatus {
+    /// The `ProgramStatus` reply: the terminal title, sanitized and cut to
+    /// its bound, and as many records as fit in one 4 KiB message beside the
+    /// creation sequences of the rest, first blocked, error and done, then
+    /// the rest, each group most recent change first, with each record's
+    /// `title` and `msg` cut to their reply bounds.
+    pub(crate) fn reply(&self, title: &str, now: Instant) -> protocol::ProgramStatus {
+        let terminal_title = truncated(
+            &title
+                .chars()
+                .filter(|&character| !character.is_control() && !invisible(character))
+                .collect::<String>(),
+            protocol::MAX_TERMINAL_TITLE_BYTES,
+        );
         let mut order: Vec<&Record> = self.records.values().collect();
         order.sort_unstable_by_key(|record| {
             (
@@ -216,6 +224,7 @@ impl Records {
         // that fits gives its own back.
         let mut room = protocol::MAX_MESSAGE_BYTES
             - protocol::PROGRAM_STATUS_HEADER_BYTES
+            - terminal_title.len()
             - order.len() * protocol::PROGRAM_OMITTED_BYTES;
         let mut records = Vec::new();
         for &record in &order {
@@ -230,6 +239,7 @@ impl Records {
         protocol::ProgramStatus {
             count: self.records.len() as u16,
             update: self.update,
+            terminal_title,
             omitted: order[records.len()..]
                 .iter()
                 .map(|record| record.created)
@@ -569,7 +579,7 @@ mod tests {
             report(&format!("state=working:id=i/w2:title={title}")),
         ];
         fixture.turn(&[&reports.concat()], false);
-        let reply = fixture.records.reply(Instant::now());
+        let reply = fixture.records.reply("", Instant::now());
         let ids: Vec<_> = reply
             .records
             .iter()
@@ -597,7 +607,7 @@ mod tests {
             .map(|n| report(&format!("state=working:id=r{n}:msg={}", "bW1t".repeat(100))))
             .collect();
         fixture.turn(&[&reports], false);
-        let reply = fixture.records.reply(Instant::now());
+        let reply = fixture.records.reply("", Instant::now());
         assert_eq!((reply.count, reply.records.len()), (20, 12));
         assert_eq!(reply.omitted, [8, 7, 6, 5, 4, 3, 2, 1]);
         assert_eq!(reply.records[0].id, "r19");
@@ -607,6 +617,53 @@ mod tests {
                 .iter()
                 .all(|record| record.message.len() == 256)
         );
+        assert!(
+            management::encode_server_message(&management::ServerMessage::ProgramStatus(reply))
+                .is_ok()
+        );
+    }
+
+    /// The reply carries the terminal's window title without control or
+    /// invisible characters, cut to 64 bytes at a UTF-8 boundary, and the
+    /// fill leaves room for it.
+    #[test]
+    fn replies_carry_the_sanitized_terminal_title() {
+        let mut fixture = Fixture::new();
+        fixture.turn(&["\x1b]0;\u{202e}eon\u{200b}-9a\x07"], false);
+        let title = fixture.terminal.title().unwrap();
+        assert_eq!(
+            fixture.records.reply(title, Instant::now()).terminal_title,
+            "eon-9a"
+        );
+        let cut = format!("{}é", "a".repeat(63));
+        fixture.turn(&[&format!("\x1b]2;{cut}\x1b\\")], false);
+        let title = fixture.terminal.title().unwrap();
+        assert_eq!(title, cut);
+        assert_eq!(
+            fixture.records.reply(title, Instant::now()).terminal_title,
+            "a".repeat(63)
+        );
+        assert_eq!(
+            fixture
+                .records
+                .reply("a\tb\x1bc\u{7f}", Instant::now())
+                .terminal_title,
+            "abc"
+        );
+
+        // Twenty working records with 252-byte messages: thirteen fit beside
+        // an empty title and twelve beside a 64-byte one.
+        let mut fixture = Fixture::new();
+        let reports: String = (10..30)
+            .map(|n| report(&format!("state=working:id=r{n}:msg={}", "bW1t".repeat(84))))
+            .collect();
+        fixture.turn(&[&reports], false);
+        assert_eq!(fixture.records.reply("", Instant::now()).records.len(), 13);
+        let reply = fixture.records.reply(
+            &"a".repeat(protocol::MAX_TERMINAL_TITLE_BYTES),
+            Instant::now(),
+        );
+        assert_eq!((reply.count, reply.records.len()), (20, 12));
         assert!(
             management::encode_server_message(&management::ServerMessage::ProgramStatus(reply))
                 .is_ok()

@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v2 / ORBS v13 through the
-in-tree `orbit-protocol` crate and canonical EONW v18 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v19 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version.
@@ -1250,7 +1250,7 @@ re-proved when that platform or feature is next touched.
 - **Boundary:** No second row, widget framework, status/quota data, polling,
   configuration, Nova compatibility, inactive-tab close, protocol change,
   dependency, native-decoration policy, or platform-support expansion. The one
-  exception is the EON-C31 tab attention marker, read from the EONW v18
+  exception is the EON-C31 tab attention marker, read from the EONW v19
   snapshot that Venus already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** Automated and installed.
@@ -1429,7 +1429,7 @@ re-proved when that platform or feature is next touched.
 - **Consumes:** Existing VEN-C19/C20/C21, canonical EONW, and ORBF v2 / ORBS v13.
 - **Boundary:** No new input mode, child-application key discovery, interactive
   hints, durable preference, generic widget registry, dependency, wire change
-  or platform expansion, except that the hints read `sidebar` from EONW v18.
+  or platform expansion, except that the hints read `sidebar` from EONW v19.
   Future Eon modes supply hints from their own actual bindings and replace
   contents at the same footer height.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
@@ -1699,13 +1699,13 @@ re-proved when that platform or feature is next touched.
   sidebar's AccessKit region and the empty state;
   `eon-agent-sidebar-yx8.13` implements contents, row navigation, F6 and row
   accessibility; `eon-agent-sidebar-yx8.8` implements Alt+G and
-  Alt+Shift+G.
+  Alt+Shift+G; `eon-agent-sidebar-yx8.11` adds the name.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
 - **Trigger:**
   - Alt+Shift+H;
-  - a new EONW v18 snapshot;
+  - a new EONW v19 snapshot;
   - the pointer, keyboard or AccessKit acts on the sidebar;
   - the window is resized.
 - **Result:**
@@ -1745,11 +1745,17 @@ re-proved when that platform or feature is next touched.
       terminal with attention.
     - A row shows:
       - the state glyph;
-      - the app icon or name. Venus maps `app=claude-code` to the Claude splat
-        (VEN-C26) and `app=codex` to the Codex mark (VEN-C22), and shows any
-        other `app` verbatim;
-      - the record title, or the tab's directory leaf when there is none
-        (EONW panes carry no cwd);
+      - the app icon: Venus maps `app=claude-code` to the Claude splat
+        (VEN-C26) and `app=codex` to the Codex mark (VEN-C22);
+      - one label, the first that is not empty of: the attention `name`, for
+        `app=claude-code` only, which Claude Code sets to its session name or
+        title; the record title; and the app's name (`Claude`, `Codex`, or any
+        other `app` verbatim), else `agent`. Venus maps `app` to an icon and to whether its
+        terminal title names the session; other programs' terminal titles,
+        such as Codex's spinner title or a shell's command line, never lead a
+        row. It never falls back to the tab's directory leaf, which the tab's
+        header shows. An Agent popup without records shows "status
+        unavailable";
       - the age;
       - the source terminal, by the pane's `pN` identity as in pane headers
         and AccessKit (VEN-C8), or, for a popup, its catalog label such as
@@ -1780,7 +1786,7 @@ re-proved when that platform or feature is next touched.
       whether the sidebar is visible or not.
   - **Accessibility.** The sidebar is one named AccessKit region after the
     header and before the panes. Each row's accessible name gives the state
-    word, app, tab, source terminal and message.
+    word, app, Claude Code's session name, tab, source terminal and message.
 - **Important failures:**
   - With no attention, the sidebar shows an explanatory empty state.
   - The sidebar never takes desktop focus and never changes Orbit state.
@@ -1794,11 +1800,12 @@ re-proved when that platform or feature is next touched.
   scroll, attachment or resize, as quota-only refreshes already do (VEN-C22);
   a change in the sidebar's visibility resizes the columns as Layout says.
   VEN-C8, VEN-C22 and EON-C8 carry this clause.
-- **Consumes:** EONW v18 and the VEN-C22 and VEN-C26 icons, under the
+- **Consumes:** EONW v19 and the VEN-C22 and VEN-C26 icons, under the
   exceptions those contracts record for sidebar rows.
 - **Boundary:**
   - no interpretation of provider events, terminal output or process data,
-    except mapping the reported `app` identifier to an icon;
+    except mapping the reported `app` identifier to an icon and to whether
+    its terminal title names the session;
   - no drag resizing, compact rail or vertical tabs;
   - no previews, no priority reordering and no notifications.
 - **Proof:** The checks and observations below; Open proof lists what they

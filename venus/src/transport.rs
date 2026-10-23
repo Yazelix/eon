@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v18::{
+use eon_workspace_protocol::v19::{
     self as workspace, Action as WorkspaceAction, Request as WorkspaceRequest,
     Response as WorkspaceResponse,
 };
@@ -66,7 +66,7 @@ pub enum WorkspaceEvent {
     },
 }
 
-/// Bounded semantic-action handle for EONW v18.
+/// Bounded semantic-action handle for EONW v19.
 pub struct WorkspaceTransport {
     actions: mpsc::SyncSender<(WorkspaceAction, u64)>,
     events: Arc<WorkspaceEventQueue>,
@@ -760,7 +760,7 @@ fn protocol_loss(error: session::Error) -> TransportEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v18::{
+    use eon_workspace_protocol::v19::{
         InvokeIntent, Pane, Popup, PopupEntry, Shortcut, Snapshot, Tab,
     };
     use orbit_protocol::{
@@ -1477,7 +1477,7 @@ mod tests {
                 id: "t1".into(),
                 directory: b"/tmp/eon".to_vec(),
                 selected_pane: Some("pane-1".into()),
-                columns: vec![eon_workspace_protocol::v18::Column {
+                columns: vec![eon_workspace_protocol::v19::Column {
                     panes: vec![Pane {
                         id: "pane-1".into(),
                         session: "session-1".into(),
@@ -1489,7 +1489,7 @@ mod tests {
                 }],
                 attention_rollup: None,
             }],
-            geometry: eon_workspace_protocol::v18::PopupGeometry {
+            geometry: eon_workspace_protocol::v19::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1503,7 +1503,7 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
         }
     }
 
@@ -1515,7 +1515,7 @@ mod tests {
             id: "t2".into(),
             directory: b"/tmp/nova".to_vec(),
             selected_pane: Some("pane-2".into()),
-            columns: vec![eon_workspace_protocol::v18::Column {
+            columns: vec![eon_workspace_protocol::v19::Column {
                 panes: vec![Pane {
                     id: "pane-2".into(),
                     session: "session-2".into(),

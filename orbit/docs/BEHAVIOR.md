@@ -582,13 +582,28 @@ made it fail; `records_keep_neutral_facts` checks that a record keeps its
 creation sequence through a state change and gets a new one after a clear.
 The protocol test `program_status_replies_keep_their_bounds` shows that
 seven records at their bounds fit and an eighth does not, and that three fit
-beside 253 creation sequences and a fourth does not.
+beside 253 creation sequences and a fourth does not, each beside a 64-byte
+terminal title.
+
+The reply also carries the terminal title, the window title that ORBS
+metadata publishes, without control or invisible format characters and cut
+to 64 bytes at a UTF-8 boundary; its bytes come out of the records' room.
+`replies_carry_the_sanitized_terminal_title` sets the title with OSC 0 and
+OSC 2 on a real libghostty terminal and checks the cleaning and the cut, and
+that twenty records with 252-byte messages fit thirteen beside an empty title
+and twelve beside a 64-byte one. Leaving the title out of the fill made it
+fail, and so did keeping the invisible characters.
 
 The real-PTY program-status check reads the records through a
 `--management-v2` lease:
 
 - One write carrying `working`, `blocked` and `done` reports, a prompt mark
-  and a `working` report leaves the `done` record and the last report.
+  and a `working` report leaves the `done` record and the last report. The
+  reply before it carries an empty terminal title, and the reply after it the
+  title the child set with OSC 0 in the same write. A later write sets a
+  title of 1023 ASCII bytes and `é`, which libghostty's 1024-byte cut leaves
+  invalid UTF-8, and the next reply carries an empty title and the run goes
+  on.
 - In a Bash with job control and no prompt marks, a request while a job leads
   keeps a `working` record; the request after the job returns drops it and
   advances the update sequence by one; a report after the return survives the
