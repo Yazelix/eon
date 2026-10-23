@@ -111,6 +111,7 @@ one, and clicking another column's terminal selects it.
 | Alt+/ | Open or close shortcut help |
 | Alt+Shift+B | Show or hide the bottom shortcut hints |
 | Alt+Shift+H | Show or hide the agent sidebar |
+| Alt+G / Alt+Shift+G | Jump to the next or previous agent needing attention |
 | F6 | Move keyboard focus: terminal, agent sidebar, tabs, panes |
 | Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
 | Alt+H / Alt+L | Select the column to the left or right, continuing into the previous or next tab |
@@ -231,6 +232,18 @@ the terminal into the sidebar, back to the row it last focused while that row
 remains, then to the tabs and panes. Up and Down move between rows, and Escape
 returns to the terminal. Rows that don't fit are cut off at the bottom, and
 keyboard focus scrolls them into view.
+
+Alt+G jumps to the next agent that needs attention, whether the sidebar is
+shown, hidden or turned off. Agents that need input come first, then errors,
+then finished agents, each oldest first; an error or a finish leaves the walk
+once you have looked at that agent. Each press moves one agent further,
+wrapping around; Alt+Shift+G steps back. The walk starts again from the front
+once you select another terminal some other way, such as with a click, a
+sidebar row or Alt+H, or when an agent needs something more urgent than the one
+you last jumped to, for example input while you were walking finished agents.
+A jump to an agent under a
+transient popup or a pending directory picker only selects its tab. With no
+agent waiting, the keys do nothing.
 
 ### Scrolling and directory picker
 

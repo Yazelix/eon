@@ -27,13 +27,17 @@
   AccessKit buttons under tab headings. The card takes the column cards'
   outline, and the leftmost column's terminal background at the
   terminal-background opacity, which VEN-C11 now covers
-  (`eon-agent-sidebar-yx8.13`). Alt+G and Alt+Shift+G remain planned in
-  `eon-agent-sidebar-yx8.8`.
+  (`eon-agent-sidebar-yx8.13`). Alt+G and Alt+Shift+G send `NextAttention`
+  and `PreviousAttention` under every `sidebar`, `Off` included, and move no
+  keyboard focus themselves; a configured popup on either key takes it. The
+  viewer lists them as "Jump to the next agent needing attention" and "Jump to
+  the previous agent needing attention", and the hints as "next agent" and
+  "previous agent" (VEN-C20, VEN-C24, `eon-agent-sidebar-yx8.8`).
 
 - Venus consumes EONW v18, which adds EON-C31 agent attention to panes,
   popups and tabs, the window's sidebar visibility, and the `ToggleSidebar`,
-  `FocusAttention`, `NextAttention` and `PreviousAttention` actions. Venus
-  decodes them but neither renders nor sends them yet. VEN-C8 and VEN-C22: a
+  `FocusAttention`, `NextAttention` and `PreviousAttention` actions; the
+  VEN-C21 and VEN-C30 entries above render and send them. VEN-C8 and VEN-C22: a
   snapshot that differs only in attention or sidebar visibility keeps a
   rejected-action notice and disturbs no navigation, scroll or attachment
   (`eon-agent-sidebar-yx8.7`).

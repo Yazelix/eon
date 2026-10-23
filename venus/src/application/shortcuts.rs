@@ -25,6 +25,8 @@ pub(super) enum NativeShortcutAction {
     ToggleViewer,
     ToggleHints,
     ToggleSidebar,
+    NextAttention,
+    PreviousAttention,
     ToggleZoom,
     NewWindow,
     Detach,
@@ -137,6 +139,20 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         KeyCode::KeyJ,
         session::Modifiers::ALT,
         NativeShortcutAction::Focus(WorkspaceDirection::Down),
+    ),
+    NativeShortcut::key(
+        "Navigate",
+        "Jump to the next agent needing attention",
+        KeyCode::KeyG,
+        session::Modifiers::ALT,
+        NativeShortcutAction::NextAttention,
+    ),
+    NativeShortcut::key(
+        "Navigate",
+        "Jump to the previous agent needing attention",
+        KeyCode::KeyG,
+        ALT_SHIFT,
+        NativeShortcutAction::PreviousAttention,
     ),
     NativeShortcut::key(
         "Navigate",
@@ -551,6 +567,8 @@ pub(super) fn shortcut_hints_for(
             Action::ToggleViewer => ("keys", 0),
             Action::ToggleHints => ("hints", 0),
             Action::ToggleSidebar => ("sidebar", 2),
+            Action::NextAttention => ("next agent", 2),
+            Action::PreviousAttention => ("previous agent", 3),
             Action::Focus(Left | Right) => ("tabs", 1),
             Action::Focus(Up | Down) => ("panes", 1),
             Action::CreatePane => ("new pane", 1),
@@ -733,6 +751,10 @@ pub(super) fn workspace_shortcut(
             return selected_pane.map(|pane| WorkspaceAction::ClosePane { pane: pane.into() });
         }
         NativeShortcutAction::ToggleSidebar => return Some(WorkspaceAction::ToggleSidebar),
+        NativeShortcutAction::NextAttention => return Some(WorkspaceAction::NextAttention),
+        NativeShortcutAction::PreviousAttention => {
+            return Some(WorkspaceAction::PreviousAttention);
+        }
         _ => return None,
     };
     Some(WorkspaceAction::Workspace(action))
@@ -971,6 +993,19 @@ mod tests {
                 ),
                 action
             );
+            // Alt+G and Alt+Shift+G walk the attention queue under every `sidebar`, `Off` too.
+            for (modifiers, action) in [
+                (Modifiers::ALT, WorkspaceAction::NextAttention),
+                (
+                    Modifiers::ALT.union(Modifiers::SHIFT),
+                    WorkspaceAction::PreviousAttention,
+                ),
+            ] {
+                assert_eq!(
+                    workspace_shortcut(KeyCode::KeyG, modifiers, &[], "t2", None, sidebar),
+                    Some(action)
+                );
+            }
         }
     }
 
@@ -1053,6 +1088,27 @@ mod tests {
                         ),
                     bound
                 );
+                for (label, short) in [
+                    ("Jump to the next agent needing attention", "next agent"),
+                    (
+                        "Jump to the previous agent needing attention",
+                        "previous agent",
+                    ),
+                ] {
+                    assert!(
+                        shortcut_groups_for(platform, &entries, sidebar)
+                            .iter()
+                            .flat_map(|group| &group.rows)
+                            .any(|row| row.action == label)
+                    );
+                    assert!(
+                        shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, sidebar)
+                            .iter()
+                            .any(
+                                |hint| hint.label == short && hint.accessible_label.contains(label)
+                            )
+                    );
+                }
             }
             for action in [
                 NativeShortcutAction::Copy,
@@ -1219,6 +1275,7 @@ mod tests {
                 popup("clip", wire_modifiers(copy), "KeyC"),
                 popup("hints", ALT | SHIFT, "KeyB"),
                 popup("closer", ALT, "KeyW"),
+                popup("git", ALT, "KeyG"),
                 // Runtime rejects these; Venus still keeps the reserved bindings.
                 popup("viewer", ALT, "Slash"),
                 popup("third", ALT, "Digit3"),
@@ -1232,6 +1289,7 @@ mod tests {
                 (new_window, ALT_SHIFT),
                 (PhysicalKey::Code(KeyCode::KeyC), copy),
                 (PhysicalKey::Code(KeyCode::KeyB), ALT_SHIFT),
+                (PhysicalKey::Code(KeyCode::KeyG), session::Modifiers::ALT),
             ] {
                 assert!(native_key_shortcut_for(platform, key, modifiers, &entries).is_none());
             }
@@ -1266,23 +1324,34 @@ mod tests {
                 "Show or close shortcuts",
                 "Focus tab by position",
                 "Paste",
+                "Jump to the next agent needing attention (overridden by Files)",
+                "Jump to the previous agent needing attention",
             ] {
                 assert!(rows.iter().any(|row| row == action), "missing {action}");
             }
             let hints =
                 shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, Sidebar::Open);
-            for taken in ["Open new Eon window", "Show or hide shortcut hints"] {
+            for taken in [
+                "Open new Eon window",
+                "Show or hide shortcut hints",
+                "Jump to the next agent needing attention",
+            ] {
                 assert!(
                     hints
                         .iter()
                         .all(|hint| !hint.accessible_label.contains(taken))
                 );
             }
-            assert!(
-                hints
-                    .iter()
-                    .any(|hint| hint.accessible_label.contains("Show or close shortcuts"))
-            );
+            for kept in [
+                "Show or close shortcuts",
+                "Jump to the previous agent needing attention",
+            ] {
+                assert!(
+                    hints
+                        .iter()
+                        .any(|hint| hint.accessible_label.contains(kept))
+                );
+            }
         }
 
         // Dispatch tries the popup first, and the fixed Alt+W no longer resolves.

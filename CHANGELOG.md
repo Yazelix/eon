@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Alt+G jumps to the next coding agent that needs attention, and Alt+Shift+G
+  to the previous one, whether the agent sidebar is shown, hidden or turned
+  off. Agents that need input come first, then errors, then finished agents,
+  each oldest first. The shortcut viewer and hints list both keys, and a
+  popup configured on either key takes it.
+
 - While the agent sidebar is hidden, Eon Bar tabs show what their agents are
   doing. A corner badge marks a tab whose agent needs input (◆), hit an error
   (✕), finished (✓) or is working (a spinner), including the active tab. A

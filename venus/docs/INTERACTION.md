@@ -69,6 +69,7 @@ the empty region between tabs and controls drags an undecorated window.
 | Alt+/ | Open or close Shortcuts |
 | Alt+Shift+B | Show or hide the bottom shortcut hints |
 | Alt+Shift+H | Show or hide the agent sidebar, unless Eon turned it off |
+| Alt+G / Alt+Shift+G | Send `NextAttention` or `PreviousAttention`, even with the sidebar off |
 
 Eon decides which actions are available and owns popup lifetime and directory
 changes. A repeated press does not duplicate a structural action. Switching

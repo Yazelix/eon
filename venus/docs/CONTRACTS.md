@@ -1141,7 +1141,9 @@ re-proved when that platform or feature is next touched.
   separate readable vertical space. The fixed bindings include Alt+Shift+D,
   listed as "Detach: close the window, keep terminals running", and
   Alt+Shift+H, listed as "Show or hide the agent sidebar" (VEN-C30) and
-  omitted while the EONW snapshot's `sidebar` is `Off`.
+  omitted while the EONW snapshot's `sidebar` is `Off`, and Alt+G and
+  Alt+Shift+G, listed as "Jump to the next agent needing attention" and "Jump
+  to the previous agent needing attention" (VEN-C30) under every `sidebar`.
 - **Important failures:** Repeated toggle events do not oscillate the viewer.
   Workspace loss, empty or maximum-size catalogs, long labels, resize, scale,
   focus loss, and tiny surfaces retain local dismissal and clipped, scrollable
@@ -1181,6 +1183,10 @@ re-proved when that platform or feature is next touched.
     and panes`, and Up and Down read `Previous pane or agent row while panes
     or the sidebar are focused` and `Next pane or agent row while panes or
     the sidebar are focused`.
+  - **Attention-key rows (`eon-agent-sidebar-yx8.8`):** the installed dogfood
+    recorded under VEN-C30: the viewer listed `Alt+G` `Jump to the next agent
+    needing attention` and `Alt+Shift+G` `Jump to the previous agent needing
+    attention` under Navigate, also with `sidebar` `Off`.
 - **Open proof:** Pending re-proof in this repository: AT-SPI dialog traversal
   and tiny-surface clipping.
 
@@ -1403,7 +1409,8 @@ re-proved when that platform or feature is next touched.
   F6 stays in full help and keyboard navigation, without a footer hint.
   Project is omitted from hints; Alt+Z and its full-help entry remain available.
   Alt+Shift+H has the hint "sidebar", omitted while the EONW snapshot's
-  `sidebar` is `Off` (VEN-C30).
+  `sidebar` is `Off` (VEN-C30). Alt+G and Alt+Shift+G have the hints "next
+  agent" and "previous agent" under every `sidebar`.
   The header Shortcuts button is omitted only when the visible footer covers
   every applicable hint and that button lacks keyboard focus; otherwise it
   remains. Alt+/ and the complete viewer
@@ -1437,6 +1444,10 @@ re-proved when that platform or feature is next touched.
   - **Sidebar hints (`eon-agent-sidebar-yx8.13`):** the installed dogfood
     recorded under VEN-C30: the footer showed `H sidebar` in the Alt+Shift
     group, and `Escape terminal` and `Up/Down agents` while a row had focus.
+  - **Attention-key hints (`eon-agent-sidebar-yx8.8`):** the installed
+    dogfood recorded under VEN-C30: the footer showed `G next agent` in the
+    Alt group and `G previous agent` in the Alt+Shift group, also with
+    `sidebar` `Off`.
 - **Open proof:** Pending re-proof in this repository: native raster checks of
   the footer below the cards across widths and fractional scale, and read-only
   AT-SPI footer lifecycle.
@@ -1687,7 +1698,8 @@ re-proved when that platform or feature is next touched.
   implements visibility, layout and hiding for width, Alt+Shift+H, the
   sidebar's AccessKit region and the empty state;
   `eon-agent-sidebar-yx8.13` implements contents, row navigation, F6 and row
-  accessibility. Alt+G and Alt+Shift+G wait on `eon-agent-sidebar-yx8.8`.
+  accessibility; `eon-agent-sidebar-yx8.8` implements Alt+G and
+  Alt+Shift+G.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -1807,6 +1819,11 @@ re-proved when that platform or feature is next touched.
     attention-only refreshes. These automated checks alone prove stale rows
     and AccessKit names; their pure helpers alone prove Up between rows and
     focus ending on the tab strip after a covered-target jump.
+    `eon-agent-sidebar-yx8.8` extends
+    `direct_workspace_shortcuts_use_stable_eon_actions`,
+    `shortcut_hints_follow_bindings_catalog_and_native_focus` and
+    `configured_popups_take_fixed_bindings_except_reserved_keys` to Alt+G and
+    Alt+Shift+G.
   - **Installed (`eon-agent-sidebar-yx8.13`, on the sidebar batch's final
     revision):** isolated installed dogfood (edge `d6ce117`, code tree
     `a0d664d`, whose `nix build` gave
@@ -1841,8 +1858,28 @@ re-proved when that platform or feature is next touched.
     - The Git popup's card sat beside the sidebar.
     - With no attention left, the empty state showed and F6 skipped the
       sidebar.
+  - **Installed (`eon-agent-sidebar-yx8.8`):** isolated installed dogfood
+    (edge `0e3912b`, code tree `bce96f9`, whose `nix build` gave
+    `/nix/store/r18mya95p393gbd2jsmhmjw785cazk4g-eon-0.1.1`, x86_64 Linux,
+    private headless Sway, 1280x720; two runs, the second
+    with `[sidebar] enabled = false`). Tabs 1 and 2 each ran a Claude Code
+    fixture that needs input, and tab 3, the active one, an idle `app=aider`
+    fixture.
+    - From tab 3, Alt+G selected tab 1, then tab 2, then tab 1 again;
+      Alt+Shift+G then selected tab 2 and tab 1. `eon workspace` read the
+      active tab after each press.
+    - After Alt+G reached tab 1, a typed `x` echoed in its terminal, where
+      no `g` appeared.
+    - With the cursor on tab 1, Alt+3 selected tab 3, and the next Alt+G
+      started again at tab 1 rather than going on to tab 2.
+    - The footer showed `G next agent` in its Alt group and `G previous
+      agent` in its Alt+Shift group. Alt+/ listed `Alt+G` `Jump to the next
+      agent needing attention` and `Alt+Shift+G` `Jump to the previous agent
+      needing attention` under Navigate.
+    - With `sidebar` `Off`, no sidebar showed and the tab badges did; Alt+G
+      selected tab 1 and then tab 2, and Alt+Shift+G selected tab 1. The
+      footer and viewer listed both keys, and the footer omitted `H sidebar`.
 - **Open proof:**
-  - Alt+G and Alt+Shift+G (`eon-agent-sidebar-yx8.8`).
   - Space on a row, which no check presses.
   - Record text with markup or a URL rendering as plain text; the checks feed
     only plain strings.

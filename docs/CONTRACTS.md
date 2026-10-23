@@ -1666,8 +1666,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   fixed binding is unbound while that configuration is active, and the viewer
   lists it as overridden by the popup. The fixed bindings include
   Alt+Shift+D, listed as "Detach: close the window, keep terminals running",
-  and Alt+Shift+H, listed as "Show or hide the agent sidebar" (EON-C31,
-  VEN-C30) and omitted while `sidebar` is `Off`.
+  Alt+Shift+H, listed as "Show or hide the agent sidebar" (EON-C31,
+  VEN-C30) and omitted while `sidebar` is `Off`, and Alt+G and Alt+Shift+G,
+  listed as "Jump to the next agent needing attention" and "Jump to the
+  previous agent needing attention" (EON-C31, VEN-C30) under every `sidebar`.
 - **Important failures:** Eon rejects configured popup shortcuts on Alt+Slash
   or positional Alt+0 through Alt+9, a reserved set no 1.x release enlarges,
   before workspace mutation.
@@ -1709,6 +1711,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `nix build` gave `/nix/store/p6mzlpdlk24k6v12plxcc99hyq9m1ghi-eon-0.1.1`,
     x86_64 Linux, private headless Sway, 1280x720): Alt+/ listed
     `Alt+Shift+H` `Show or hide the agent sidebar` under Host.
+  - **Attention-key rows (`eon-agent-sidebar-yx8.8`):** the installed dogfood
+    recorded under Venus VEN-C30 (edge `0e3912b`, code tree `bce96f9`, whose
+    `nix build` gave `/nix/store/r18mya95p393gbd2jsmhmjw785cazk4g-eon-0.1.1`,
+    x86_64 Linux, private headless Sway, 1280x720): Alt+/ listed `Alt+G`
+    `Jump to the next agent needing attention` and `Alt+Shift+G` `Jump to the
+    previous agent needing attention` under Navigate, also with
+    `[sidebar] enabled = false`.
 - **Open proof:** Pending re-proof in this repository: header spacing at
   compact sizes, rebound and disabled popup rows, and AT-SPI projection on an
   installed surface. No eonbase, fractional-scale, screen-reader workflow,
@@ -1867,7 +1876,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   help and keyboard navigation, without a footer hint.
   Project is omitted from hints; Alt+Z and its full-help entry remain available.
   Alt+Shift+D has the hint "detach", derived like the others. Alt+Shift+H has
-  the hint "sidebar", omitted while `sidebar` is `Off`.
+  the hint "sidebar", omitted while `sidebar` is `Off`. Alt+G and Alt+Shift+G
+  have the hints "next agent" and "previous agent" under every `sidebar`.
 - **Important failures:** The toggle is captured once per press, without repeat
   or release leakage. Visibility changes preserve focus, selected identities
   and live terminals; normal resizing is their only terminal effect. Popup
@@ -1907,6 +1917,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `nix build` gave `/nix/store/p6mzlpdlk24k6v12plxcc99hyq9m1ghi-eon-0.1.1`,
     x86_64 Linux, private headless Sway, 1280x720) showed `H sidebar` in the
     footer's Alt+Shift group.
+  - **Attention-key hints (`eon-agent-sidebar-yx8.8`):** the installed dogfood
+    recorded under Venus VEN-C30 (edge `0e3912b`, code tree `bce96f9`, whose
+    `nix build` gave `/nix/store/r18mya95p393gbd2jsmhmjw785cazk4g-eon-0.1.1`,
+    x86_64 Linux, private headless Sway, 1280x720) showed `G next agent` in
+    the footer's Alt group and `G previous agent` in its Alt+Shift group, also
+    with `[sidebar] enabled = false`.
 - **Open proof:** Pending re-proof in this repository: footer placement below
   the cards across widths, fractional scales and minimum fonts on an installed
   surface. No performance, macOS or screen-reader workflow claim.
