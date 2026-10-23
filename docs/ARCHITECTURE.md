@@ -272,6 +272,12 @@ Paths below are relative to the repository root.
   configuration parsing, validation and overrides of assembly-supplied defaults;
   Nix generates the selected tools' startup files
 - **Does not own:** Shell, prompt, editor, file-manager, or Git-TUI native behavior
+- **Configurability:** Runtime is the only configuration parser. Venus and
+  Orbit receive resolved values as launch inputs or over EONW and parse none.
+  Each user-visible value must be a documented setting or recorded as fixed
+  with a reason. See
+  [Configurability](../AGENTS.md#configurability). Open gaps:
+  `eon-configurability-qkq8`.
 
 ### Nix composition
 
