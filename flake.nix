@@ -709,6 +709,8 @@
             ln -s ${zoxidePackage}/bin/zoxide "$out/libexec/eon/bin/zoxide"
             ln -s ${fzfPackage}/bin/fzf "$out/libexec/eon/bin/fzf"
             ln -s ${animaPackage}/bin/anima "$out/libexec/eon/bin/anima"
+            # A terminal's own build answers `eon` there after the profile changes.
+            ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon"
             ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-directory-picker"
             ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-files"
             ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-commands"
@@ -803,6 +805,7 @@
       '';
       managedCommandPathCheck = pkgs.runCommand "eon-managed-command-path-check" { } ''
         export HOME="$TMPDIR" EON_CONFIG_HOME="$TMPDIR/config" PATH=${eonPackage}/libexec/eon/bin
+        test "$(${pkgs.coreutils}/bin/readlink -f "$(command -v eon)")" = "$(${pkgs.coreutils}/bin/readlink -f ${eonPackage}/bin/eon)"
         for command in nu bash; do
           version_output=$("$command" --version)
           test -n "$version_output" && test "$("eon-$command" --version)" = "$version_output"

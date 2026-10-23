@@ -750,8 +750,9 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
         Ok(caller) => caller,
         Err(error) => return report_failure(&error, json),
     };
+    let calling = caller.is_some();
     let final_close = if !json && std::io::stdin().is_terminal() {
-        match final_close_terminals(&socket, &action) {
+        match final_close_terminals(&socket, &action, &generation, calling) {
             Ok(terminals) => terminals,
             Err(error) => return report_failure(&error, json),
         }
@@ -781,7 +782,9 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
         Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
             return report_failure(&failure("malformed-action", error.detail), json);
         }
-        Err(error) => return report_failure(&unreachable_supervisor(error), json),
+        Err(error) => {
+            return report_failure(&unreachable_supervisor(error, &generation, calling), json);
+        }
     };
     match response {
         ControlResponse::Workspace(Response::Snapshot(snapshot)) => {
@@ -810,20 +813,44 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
     }
 }
 
-fn unreachable_supervisor(error: EndpointFailure) -> Failure {
-    let code = if error.kind == EndpointFailureKind::Dead {
-        "missing-supervisor"
-    } else {
-        "supervisor-unavailable"
-    };
-    failure(code, format!("{}; run `eon` first", error.detail))
+/// Inside an Eon terminal, a missing supervisor of this build means the
+/// terminal's window runs another build or has ended, so starting this build
+/// would not help: the terminal's own `eon` would. A calling terminal is then
+/// one this build's supervisor does not know.
+fn unreachable_supervisor(error: EndpointFailure, generation: &str, caller: bool) -> Failure {
+    let dead = error.kind == EndpointFailureKind::Dead;
+    if !dead || env::var_os(TERMINAL_VARIABLE).is_none() {
+        let code = if dead {
+            "missing-supervisor"
+        } else {
+            "supervisor-unavailable"
+        };
+        return failure(code, format!("{}; run `eon` first", error.detail));
+    }
+    failure(
+        if caller {
+            "unknown-caller"
+        } else {
+            "missing-supervisor"
+        },
+        format!(
+            "this eon build (generation {generation}) has no supervisor in this terminal's \
+             window; use the terminal's own `eon` from its PATH, or restart the window if \
+             that `eon` is this build"
+        ),
+    )
 }
 
 /// The terminals a tab or pane close would stop when it closes the final tab,
 /// labelled by pane identity and popup entry, and `None` for any other action.
 /// A close that cannot inspect the workspace first fails rather than skip the
 /// question.
-fn final_close_terminals(socket: &Path, action: &Action) -> Result<Option<Vec<String>>, Failure> {
+fn final_close_terminals(
+    socket: &Path,
+    action: &Action,
+    generation: &str,
+    caller: bool,
+) -> Result<Option<Vec<String>>, Failure> {
     if !matches!(
         action,
         Action::Workspace(WorkspaceAction::CloseTab { .. }) | Action::ClosePane { .. }
@@ -839,7 +866,7 @@ fn final_close_terminals(socket: &Path, action: &Action) -> Result<Option<Vec<St
                 "Eon returned the wrong result for workspace inspection",
             ));
         }
-        Err(error) => return Err(unreachable_supervisor(error)),
+        Err(error) => return Err(unreachable_supervisor(error, generation, caller)),
     };
     let [tab] = snapshot.tabs.as_slice() else {
         return Ok(None);

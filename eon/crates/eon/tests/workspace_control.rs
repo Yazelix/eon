@@ -2011,6 +2011,27 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
             }
         }
     }
+    // Inside an Eon terminal whose window has no supervisor of this build, a
+    // caller's command names an unknown caller and other commands miss their
+    // supervisor; both point to the terminal's own `eon`, not to starting one.
+    for (arguments, status, code) in [
+        (&["pane", "create", "--json"][..], 3, "unknown-caller"),
+        (&["workspace", "--json"], 4, "missing-supervisor"),
+    ] {
+        let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .args(arguments)
+            .env("EON_RUNTIME_DIR", root.join("runtime"))
+            .env("EON_CONFIG_HOME", root.join("config"))
+            .env("EON_TERMINAL", "session-1.other-build")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(status), "{arguments:?}");
+        let output = stdout(&output);
+        assert!(output.contains(&format!("\"code\":\"{code}\"")), "{output}");
+        assert!(output.contains("(generation g1-"), "{output}");
+        assert!(output.contains("the terminal's own `eon`"), "{output}");
+        assert!(!output.contains("run `eon` first"), "{output}");
+    }
     // An unknown window is missing whether or not the windows directory exists.
     let windows = root.join("runtime").join("w");
     for windows_exist in [false, true] {

@@ -84,8 +84,11 @@ A generation from a build with another EONW version is listed as incompatible;
 stop it with the build that started it.
 The runtime extraction changes the component graph and selects a new generation.
 Reattach earlier work with its retained exact Eon or eonbase executable.
-`previous` attempts every non-dead generation except the installed build's exact
-current generation, including when current has not started.
+`previous` attempts every non-dead generation except the exact current
+generation of the `eon` that runs it, including when current has not started.
+Inside an Eon terminal that `eon` is the terminal's own build, so `previous`
+run from an older window can stop a newer generation in the same runtime
+directory; each confirmation names the generation.
 `all` includes current and stops it last. Each generation gets its own
 confirmation. Declining one skips that generation; earlier Stops remain and
 later prompts continue. A failed Stop does not prevent later attempts.
@@ -339,6 +342,17 @@ ended, or belongs to another generation or window, the command changes nothing
 and exits 3. Other commands ignore `EON_TERMINAL`; run
 `env -u EON_TERMINAL eon ...` to act on the active tab from inside Eon.
 
+An Eon terminal's PATH puts that terminal's own Eon build first as `eon`, so
+`eon` keeps acting on its own window after you install a newer profile. That
+includes `eon` and `eon window new` typed there, which open that same build;
+open the newer build from the launcher or from a shell outside Eon. A workspace
+command from another build, run by path inside that terminal, acts on that
+build's own supervisor when one runs in the terminal's runtime directory.
+When none does, it changes nothing and says to use the terminal's own `eon`,
+or to restart the window when that `eon` is the same build. It exits 3 for
+`pane create`, `edit`, `pane close`, `pane move` and `tab move`, and 4 for the
+rest.
+
 ### Exit status
 
 `eon` and `eonbase` commands exit with the same status with or without
@@ -350,7 +364,7 @@ and exits 3. Other commands ignore `EON_TERMINAL`; run
 | 1 | The command was understood but refused or failed |
 | 2 | Invalid command or arguments, such as a malformed tab or generation ID |
 | 3 | The named tab, pane, terminal, popup, generation or window was not found |
-| 4 | The supervisor is not running or did not answer; run `eon` first |
+| 4 | The supervisor is not running or did not answer; outside Eon, run `eon` first |
 | 130 | Interrupted with Ctrl+C |
 
 The `code` in an `error` result, such as `unknown-tab`, names the failure more

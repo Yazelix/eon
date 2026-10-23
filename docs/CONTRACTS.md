@@ -794,6 +794,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     it. Every popup terminal's environment
     also carries `EON_TAB`, the `tN` identity of the tab that owned it when it
     started.
+  - Every Eon terminal's PATH names that terminal's own Eon build as `eon`,
+    ahead of any installed one, so `eon` run by name there acts on that
+    terminal's own window and generation after the installed profile changes.
+    An `eon` run by path, or put first by a shell or script, is that build's.
   - `eon edit [--json] -- FILE` opens FILE in the packaged Helix in a new
     pane, as `pane create` would for the same caller, with the tab directory
     as its working directory. A relative FILE resolves against the caller's
@@ -836,7 +840,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Important failures:** A caller that names no live terminal of the
   addressed supervisor (ended, closed, from another generation or window,
   empty, or malformed) changes nothing and exits 3 (`unknown-caller`), with no fallback
-  to the active tab. In a tab without panes, a popup caller's `pane move`
+  to the active tab. This includes a caller whose CLI build has no supervisor in that
+  terminal's window, as when an `eon` from another build runs inside an Eon
+  terminal: its detail names that build's generation and points to the
+  terminal's own `eon`, never to running `eon` first. Other commands run inside
+  an Eon terminal that find no supervisor of their build still exit 4, with the
+  same detail. In a tab without panes, a popup caller's `pane move`
   refuses, and so does its `pane create` without `--no-focus` when dismissing
   that popup would end the tab's last terminal; both change nothing and
   exit 1. While a popup covers the caller's tab, `pane close` naming that

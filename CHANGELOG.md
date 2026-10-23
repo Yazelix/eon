@@ -5,6 +5,16 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon` commands run inside a window, including `pane create`, `edit` and
+  agent scripts, keep working after you install a newer Eon profile. Each
+  terminal's PATH now puts its own window's build first as `eon`. An `eon`
+  from another build, run by path there, that finds no supervisor of its own
+  no longer says to run `eon` first: it says to use the terminal's own `eon`,
+  and `pane create`, `edit`, `pane close`, `pane move` and `tab move` exit 3.
+  `eon`, `eon window new` and `eon versions` typed in a window use that
+  window's build too; open the newer build from the launcher or a shell
+  outside Eon. Windows started before this change still need a restart.
+
 - Agent attention (EON-C31) is proven on the installed product, x86_64 Linux
   Wayland. In it, Eon follows real Claude Code and Codex sessions through
   working, needs input and finished, and the agent sidebar lists them. Stale
