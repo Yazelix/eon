@@ -1064,6 +1064,23 @@ fn report_session_end(result: Result<(), Failure>, log: &DiagnosticLog) -> Resul
     }
 }
 
+/// Notes once that a terminal which cannot be stopped or reconciled stays in
+/// its tab for a retry.
+fn report_kept_terminal(session: &mut RunningSession, log: &DiagnosticLog, error: &str) {
+    if !session.reap_failure_reported {
+        session.reap_failure_reported = true;
+        log.note(&format!(
+            "terminal {} stays in its tab {}: {error}",
+            session.id,
+            if session.stop_failed() {
+                "after a failed stop"
+            } else {
+                "until its end reconciles"
+            }
+        ));
+    }
+}
+
 fn reap_finished_sessions(
     state: &mut SupervisorState,
     inputs: &Inputs,
@@ -1077,18 +1094,7 @@ fn reap_finished_sessions(
             // exit of its own, stays in its tab for a retry and must not end
             // the supervisor or other tabs (EON-C8).
             Err(error) => {
-                if !session.reap_failure_reported {
-                    session.reap_failure_reported = true;
-                    state.log.note(&format!(
-                        "terminal {} stays in its tab {}: {error}",
-                        session.id,
-                        if session.stop_failed() {
-                            "after a failed stop"
-                        } else {
-                            "until its end reconciles"
-                        }
-                    ));
-                }
+                report_kept_terminal(session, &state.log, &error);
                 None
             }
             Ok(finished) => finished,
@@ -1409,7 +1415,17 @@ fn cancel_transient_popups(
         .map(Workspace::transient_sessions)
         .unwrap_or_default();
     for id in ids {
-        stop_owned_session(&mut state.sessions, &id)?;
+        if let Some(index) = state.sessions.iter().position(|session| session.id == id) {
+            // A picker that cannot be stopped stays in its tab, where the reap
+            // and the next detachment retry it, and must not end the
+            // supervisor or keep the other pickers from being cleaned
+            // (EON-C18).
+            if let Err(error) = stop_workspace_session(&mut state.sessions[index]) {
+                report_kept_terminal(&mut state.sessions[index], &state.log, &error);
+                continue;
+            }
+            state.sessions.remove(index);
+        }
         let SupervisorState {
             component_generation,
             workspace,
@@ -1899,9 +1915,10 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        DiagnosticLog, LaunchMode, SupervisorState, effective_uid, prepare_configuration,
-        prepare_runtime, reap_finished_sessions, stop_owned_session, temporary_directory,
-        venus_command, window_bar_widgets, xdg_path,
+        Action, DiagnosticLog, LaunchMode, SupervisorState, Workspace, WorkspaceAction,
+        cancel_transient_popups, effective_uid, prepare_configuration, prepare_runtime,
+        reap_finished_sessions, stop_owned_session, temporary_directory, venus_command,
+        window_bar_widgets, xdg_path,
     };
     use crate::sessions::{
         self,
@@ -2112,6 +2129,119 @@ mod tests {
             Ok(None)
         );
         for root in roots {
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_picker_whose_stop_fails_on_detach_stays_only_in_its_tab() {
+        fn prepared(_: &crate::PopupCommand, _: &Path) -> Result<Vec<OsString>, String> {
+            Ok(Vec::new())
+        }
+        let roots = [
+            temporary_directory(),
+            temporary_directory(),
+            temporary_directory(),
+        ];
+        let runtime = temporary_directory();
+        let inputs = crate::fixtures::inputs();
+        let mut workspace = Workspace::pending(
+            runtime.clone(),
+            runtime.clone(),
+            Some(runtime.clone()),
+            inputs.defaults.popups.clone(),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        workspace
+            .dispatch(
+                "t2",
+                None,
+                Action::Workspace(WorkspaceAction::CreateTab),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        assert_eq!(
+            workspace.transient_sessions(),
+            ["directory-picker-1", "directory-picker-2"]
+        );
+        let mut sessions = roots
+            .iter()
+            .map(|root| leased_orbit(root, "exec sleep 30"))
+            .collect::<Vec<_>>();
+        sessions[0].id = "directory-picker-1".into();
+        sessions[1].id = "directory-picker-2".into();
+        sessions[2].id = "session-3".into();
+        // A record that no longer validates makes the first picker's stop fail.
+        let record = sessions::tests::record(&sessions[0]).to_path_buf();
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
+        let mut state = SupervisorState {
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspace: Some(workspace),
+            sessions,
+            venus: None,
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: false,
+            quotas: None,
+            attention: None,
+            log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
+        };
+        let ids = |state: &SupervisorState| {
+            state
+                .sessions
+                .iter()
+                .map(|session| session.id.clone())
+                .collect::<Vec<_>>()
+        };
+        for _ in 0..2 {
+            assert_eq!(
+                cancel_transient_popups(&mut state, &inputs, &runtime),
+                Ok(())
+            );
+        }
+        // The other picker was cleaned and its tab, whose fixture first pane
+        // cannot start, removed; the failed picker keeps its pending tab.
+        assert_eq!(ids(&state), ["directory-picker-1", "session-3"]);
+        let snapshot = state.workspace.as_ref().unwrap().snapshot();
+        assert_eq!(snapshot.tabs.len(), 1);
+        assert!(snapshot.tabs[0].pending);
+        assert_eq!(snapshot.tabs[0].popups.len(), 1);
+        let log = fs::read_dir(roots[0].join("logs"))
+            .unwrap()
+            .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect::<String>();
+        assert_eq!(
+            log.matches("terminal directory-picker-1 stays in its tab after a failed stop")
+                .count(),
+            1
+        );
+
+        // Once the record validates again, a later detachment cleans it after
+        // its stopped run ends; each retry takes one look.
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while state.sessions.len() > 1 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the failed picker was never cleaned"
+            );
+            assert_eq!(
+                cancel_transient_popups(&mut state, &inputs, &runtime),
+                Ok(())
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(ids(&state), ["session-3"]);
+        assert_eq!(
+            stop_owned_session(&mut state.sessions, "session-3"),
+            Ok(None)
+        );
+        for root in roots.into_iter().chain([runtime]) {
             fs::remove_dir_all(root).unwrap();
         }
     }

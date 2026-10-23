@@ -1686,7 +1686,7 @@ cat >/dev/null
 }
 
 #[test]
-fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
+fn failed_directory_picker_stop_on_detach_keeps_the_supervisor_and_picker() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
     let config = root.join("config");
@@ -1749,15 +1749,39 @@ fn failed_directory_picker_stop_is_retried_during_supervisor_cleanup() {
     // SAFETY: the PID came from this test's live Venus child.
     assert_eq!(unsafe { libc::kill(venus, libc::SIGTERM) }, 0);
 
-    let status = wait_for_exit(&mut supervisor.child);
-    assert!(!status.success());
-    let picker_survived_cleanup = Path::new("/proc")
-        .join(picker.process_id.to_string())
-        .exists();
+    // The picker's stop fails on detachment: it stays in its pending tab and
+    // the supervisor keeps running (EON-C18).
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while fail_stop_once.exists() {
+        assert!(Instant::now() < deadline, "the picker stop was never sent");
+        thread::sleep(Duration::from_millis(10));
+    }
+    assert!(matches!(
+        workspace_action(&control, "kept", Action::Inspect),
+        Response::Snapshot(snapshot)
+            if project_popup(&snapshot).is_some() && snapshot.tabs[0].pending
+    ));
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    assert!(
+        Path::new("/proc")
+            .join(picker.process_id.to_string())
+            .exists()
+    );
+
+    // Stopping the generation still stops the kept picker.
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["stop", generation_id, "--json"],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    wait_for_successful_exit(&mut supervisor.child);
+    wait_for_process_removal(picker.process_id, "the kept picker did not stop");
+    assert!(!generation.exists());
     fs::write(&stop, "").unwrap();
-    wait_for_process_removal(picker.process_id, "test Session did not exit");
     fs::remove_dir_all(root).unwrap();
-    assert!(!picker_survived_cleanup);
 }
 
 fn stdout(output: &Output) -> &str {

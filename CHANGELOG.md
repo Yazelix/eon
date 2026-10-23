@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Closing the window while a Project picker can't be stopped no longer ends
+  Eon in the background. That picker stays in its tab, Eon logs why once and
+  tries again at the next detach, the other pickers are still cleaned, and
+  the other tabs keep running.
+
 - The agent sidebar shows where you are: the row of the agent whose terminal
   has keyboard focus, in a pane or the shown popup, takes a faint mint tint.
   Tab headings no longer carry the popup mark; popup rows keep it.

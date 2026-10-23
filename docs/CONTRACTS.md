@@ -1578,6 +1578,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   duplicate or stale results cannot mutate another tab or its terminals.
   Dismissal, picker exit or presentation detachment cleans the transient picker
   and attempts the first pane at the pending tab's starting directory.
+  If presentation detachment cannot stop a picker, Eon reports the failure
+  once and keeps that picker in its tab for a retry at the next detachment;
+  it still cleans the other pickers, and the supervisor and other tabs remain.
   If that pane cannot start, report the error and remove only the unstartable
   tab; other tabs and terminals remain.
   Left/right with only one live tab succeeds unchanged. A duplicate close
