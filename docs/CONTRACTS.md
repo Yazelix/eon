@@ -2212,7 +2212,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       in the Alt+G queue.
     - Stale clears on the next good reply.
     - When the run ends or the target is removed, the attention is removed.
-  - **Identity and time.** State is keyed by the exact Orbit run ID plus record `id`.
+  - **Identity and time.** State is keyed by the exact Orbit run ID plus record `id` and creation
+    sequence (ORB-C15), so a record cleared and reported again is a new record and inherits no
+    cached raise.
     - A new run starts empty.
     - A reply whose update sequence is lower than the cached one for the same run is discarded.
     - On first sight of a (run, `id`, change sequence), the Runtime fixes the change time on its

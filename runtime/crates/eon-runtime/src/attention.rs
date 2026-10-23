@@ -262,17 +262,15 @@ impl Attention {
             }
             _ => Default::default(),
         };
-        let known = |id: &str| {
-            records
-                .iter()
-                .chain(&omitted)
-                .find(|record| record.record.id == id)
-        };
         let fresh: Vec<Record> = status
             .records
             .into_iter()
             .map(|record| {
-                let cached = known(&record.id);
+                // A cleared and re-reported record comes back with a new
+                // creation sequence, so it is a new record and inherits nothing.
+                let cached = records.iter().chain(&omitted).find(|cached| {
+                    cached.record.id == record.id && cached.record.created == record.created
+                });
                 if let Some(cached) =
                     cached.filter(|cached| cached.record.changed == record.changed)
                 {
@@ -553,6 +551,7 @@ mod tests {
     use eon_workspace_protocol::v19::{Column, Pane, Popup, PopupGeometry, Tab};
     use std::{fs, thread};
 
+    /// A record created at its change `changed`.
     fn record(
         id: &str,
         state: ProgramState,
@@ -708,15 +707,20 @@ mod tests {
             state(attention, &targets, "s", now)
         };
         let secs = |secs| Some(base + Duration::from_secs(secs));
+        // One record, created at update 1, through its state changes.
+        let a = |state, previous, changed| ProgramRecord {
+            created: 1,
+            ..record("a", state, previous, changed)
+        };
 
         // Created in done; an idle from that done keeps its raise, which
         // orders the queue, while the row shows the idle's own change.
         assert_eq!(
-            at(&mut attention, 1, vec![record("a", Done, None, 1)]),
+            at(&mut attention, 1, vec![a(Done, None, 1)]),
             Some(State::Finished)
         );
         assert_eq!(
-            at(&mut attention, 2, vec![record("a", Idle, Some(Done), 2)]),
+            at(&mut attention, 2, vec![a(Idle, Some(Done), 2)]),
             Some(State::Finished)
         );
         assert_eq!(attention.entry(&targets, "s").map(|key| key.1), secs(1));
@@ -726,33 +730,33 @@ mod tests {
         );
         attention.see("s");
         // A same-state re-report keeps the seen raise.
-        let mut repeat = record("a", Idle, Some(Done), 2);
+        let mut repeat = a(Idle, Some(Done), 2);
         repeat.updated = 3;
         assert_eq!(at(&mut attention, 3, vec![repeat]), Some(State::Idle));
         // working -> idle raises; blocked -> idle and error -> idle do not.
         assert_eq!(
-            at(&mut attention, 4, vec![record("a", Working, Some(Idle), 4)]),
+            at(&mut attention, 4, vec![a(Working, Some(Idle), 4)]),
             Some(State::Working)
         );
         assert_eq!(
-            at(&mut attention, 5, vec![record("a", Idle, Some(Working), 5)]),
+            at(&mut attention, 5, vec![a(Idle, Some(Working), 5)]),
             Some(State::Finished)
         );
         attention.see("s");
         assert_eq!(
-            at(&mut attention, 6, vec![record("a", Blocked, Some(Idle), 6)]),
+            at(&mut attention, 6, vec![a(Blocked, Some(Idle), 6)]),
             Some(State::NeedsInput)
         );
         assert_eq!(
-            at(&mut attention, 7, vec![record("a", Idle, Some(Blocked), 7)]),
+            at(&mut attention, 7, vec![a(Idle, Some(Blocked), 7)]),
             Some(State::Idle)
         );
         assert_eq!(
-            at(&mut attention, 8, vec![record("a", Error, Some(Idle), 8)]),
+            at(&mut attention, 8, vec![a(Error, Some(Idle), 8)]),
             Some(State::Error)
         );
         assert_eq!(
-            at(&mut attention, 9, vec![record("a", Idle, Some(Error), 9)]),
+            at(&mut attention, 9, vec![a(Idle, Some(Error), 9)]),
             Some(State::Idle)
         );
         // Created idle never raises; an idle from a done never seen raises at
@@ -796,12 +800,27 @@ mod tests {
             state(&attention, &targets, "s", base),
             Some(State::Finished)
         );
+        // So does one that clears and reports again within one poll and
+        // arrives as an idle from its new done.
+        attention.see("s");
+        let again = ProgramRecord {
+            created: 7,
+            ..record("a", Idle, Some(Done), 8)
+        };
+        apply(&mut attention, 8, vec![again]);
+        assert_eq!(
+            state(&attention, &targets, "s", base),
+            Some(State::Finished)
+        );
 
         // Within one terminal, a tie in state goes to the most recent change.
         apply(
             &mut attention,
-            7,
-            vec![record("x", Blocked, None, 6), record("y", Blocked, None, 7)],
+            11,
+            vec![
+                record("x", Blocked, None, 10),
+                record("y", Blocked, None, 11),
+            ],
         );
         let shown = attention.shown(&targets[0], base).unwrap();
         assert_eq!(shown.record.unwrap().id, "y");
