@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Closing a tab no longer ends the whole window when one of its terminals
+  fails to stop. A terminal whose Orbit failed and exited without a result is
+  closed as an ended terminal. One that still can't be accounted for stays in
+  its tab, the close reports the failure, and the window and other tabs keep
+  running.
+
 - The working badge on tabs and in the agent sidebar is now a smooth open
   arc that turns, in place of the small segmented ring that was hard to read.
   On a software graphics adapter it shows the same arc, still.

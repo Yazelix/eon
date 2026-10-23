@@ -1071,7 +1071,23 @@ fn reap_finished_sessions(
 ) -> Result<(), String> {
     let mut index = 0;
     while index < state.sessions.len() {
-        if let Some(code) = session_finished(&mut state.sessions[index])? {
+        let session = &mut state.sessions[index];
+        let finished = match session_finished(session) {
+            // A terminal whose Stop failed stays in its tab for a retry and
+            // must not end the supervisor or other tabs (EON-C8).
+            Err(error) if session.stop_failed() => {
+                if !session.stop_failure_reported {
+                    session.stop_failure_reported = true;
+                    state.log.note(&format!(
+                        "terminal {} stays in its tab after a failed stop: {error}",
+                        session.id
+                    ));
+                }
+                None
+            }
+            finished => finished?,
+        };
+        if let Some(code) = finished {
             let session = state.sessions.remove(index);
             state.log.record(&format!(
                 "terminal {} ended with status {code}{}",
@@ -1877,8 +1893,13 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        DiagnosticLog, LaunchMode, effective_uid, prepare_configuration, prepare_runtime,
-        temporary_directory, venus_command, window_bar_widgets, xdg_path,
+        DiagnosticLog, LaunchMode, SupervisorState, effective_uid, prepare_configuration,
+        prepare_runtime, reap_finished_sessions, stop_owned_session, temporary_directory,
+        venus_command, window_bar_widgets, xdg_path,
+    };
+    use crate::sessions::{
+        self,
+        tests::{leased_orbit, orbit_pid},
     };
     use std::{
         ffi::OsString,
@@ -1886,6 +1907,86 @@ mod tests {
         os::unix::fs::{MetadataExt, PermissionsExt},
         path::{Path, PathBuf},
     };
+
+    #[test]
+    fn a_terminal_whose_stop_fails_during_a_close_ends_or_stays_only_in_its_tab() {
+        let roots = [
+            temporary_directory(),
+            temporary_directory(),
+            temporary_directory(),
+        ];
+        let mut sessions = roots
+            .iter()
+            .map(|root| leased_orbit(root, "exec sleep 30"))
+            .collect::<Vec<_>>();
+        sessions[1].id = "session-2".into();
+        sessions[2].id = "session-3".into();
+        // A dead worker sends Orbit down its failure path, which removes its
+        // Live record and publishes no result: the run reconciles as ended.
+        let orbit = orbit_pid(&sessions[0]);
+        let worker = fs::read_to_string(format!("/proc/{orbit}/task/{orbit}/children"))
+            .unwrap()
+            .split_whitespace()
+            .map(|pid| pid.parse::<i32>().unwrap())
+            .find(|pid| {
+                fs::read(format!("/proc/{pid}/cmdline"))
+                    .unwrap_or_default()
+                    .split(|byte| *byte == 0)
+                    .next()
+                    .is_some_and(|program| program.ends_with(b"yazelix-orbit-worker"))
+            })
+            .expect("Orbit runs its worker");
+        // SAFETY: signals the test-owned Orbit's worker process.
+        assert_eq!(unsafe { libc::kill(worker, libc::SIGKILL) }, 0);
+        assert_eq!(stop_owned_session(&mut sessions, "session-1"), Ok(Some(1)));
+        assert_eq!(sessions.len(), 2);
+
+        // A record that no longer validates leaves the stopped run
+        // unreconcilable: the close fails and the terminal stays tracked.
+        let record = sessions::tests::record(&sessions[0]).to_path_buf();
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(stop_owned_session(&mut sessions, "session-2").is_err());
+        assert_eq!(sessions.len(), 2);
+        let mut state = SupervisorState {
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspace: None,
+            sessions,
+            venus: None,
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: false,
+            quotas: None,
+            attention: None,
+            log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
+        };
+        let inputs = crate::fixtures::inputs();
+        for _ in 0..2 {
+            assert_eq!(
+                reap_finished_sessions(&mut state, &inputs, &roots[0]),
+                Ok(())
+            );
+        }
+        assert_eq!(state.sessions.len(), 2);
+        let log = fs::read_dir(roots[0].join("logs"))
+            .unwrap()
+            .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect::<String>();
+        assert_eq!(
+            log.matches("terminal session-2 stays in its tab after a failed stop")
+                .count(),
+            1
+        );
+        assert_eq!(
+            stop_owned_session(&mut state.sessions, "session-3"),
+            Ok(None)
+        );
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
+        for root in roots {
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {

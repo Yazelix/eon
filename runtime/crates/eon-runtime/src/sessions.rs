@@ -523,6 +523,7 @@ fn acquire_management(
         lease: stream,
         program_status: None,
         stop_sent: false,
+        stop_failure_reported: false,
         child: None,
         finished: None,
     })
@@ -785,6 +786,9 @@ pub(super) struct RunningSession {
     lease: UnixStream,
     program_status: Option<ProgramStatusRequest>,
     stop_sent: bool,
+    /// The supervisor reported that this terminal's failed Stop cannot be
+    /// reconciled yet.
+    pub(super) stop_failure_reported: bool,
     child: Option<Child>,
     finished: Option<SessionEnd>,
 }
@@ -937,6 +941,11 @@ impl RunningSession {
 
     pub(super) fn is_finished(&self) -> bool {
         self.finished.is_some()
+    }
+
+    /// A tracked terminal that was sent Stop is one whose Stop failed.
+    pub(super) fn stop_failed(&self) -> bool {
+        self.stop_sent && !self.is_finished()
     }
 
     pub(super) fn run_id(&self) -> &str {
@@ -1259,6 +1268,24 @@ fn reap_untracked_child(process_id: u32, deadline: Instant) -> Result<(), String
     }
 }
 
+/// Ends a run whose Orbit exited without publishing a result. A Stop it
+/// never completed fails, but the run is still reconciled as ended.
+fn owner_lost(
+    session: &mut RunningSession,
+    reason: Option<TerminationReason>,
+) -> Result<SessionEnd, String> {
+    session.finished = Some(SessionEnd::OwnerLost);
+    eprintln!(
+        "terminal {}: Orbit exited without publishing a terminal result",
+        session.id
+    );
+    if reason != Some(TerminationReason::ExplicitStop) {
+        Ok(SessionEnd::OwnerLost)
+    } else {
+        Err("terminal owner exited without completing Stop".into())
+    }
+}
+
 /// Waits for the run's tombstone, for `reason` or, given none, for either.
 fn wait_and_finalize_tombstone(
     session: &mut RunningSession,
@@ -1267,36 +1294,39 @@ fn wait_and_finalize_tombstone(
     deadline: Instant,
 ) -> Result<SessionEnd, String> {
     let (reason, outcome, record_object) = loop {
-        let snapshot = read_management_record(&session.record)?.ok_or_else(|| {
-            format!(
-                "ended terminal record {} disappeared",
-                session.record.display()
-            )
-        })?;
+        let Some(snapshot) = read_management_record(&session.record)? else {
+            // A failed Orbit removes its own Live record as it exits, and
+            // publishes no result.
+            if recorded_process_is_dead(&session.identity)? {
+                remove_dead_endpoints(&session.identity)?;
+                reap_untracked_child(session.identity.process_id, deadline)?;
+                return owner_lost(session, reason);
+            }
+            if Instant::now() >= deadline {
+                return Err(format!(
+                    "ended terminal record {} disappeared while its Orbit still runs",
+                    session.record.display()
+                ));
+            }
+            thread::sleep(Duration::from_millis(25));
+            continue;
+        };
         match snapshot.record {
             ManagementRecord::Live(identity) if identity == session.identity => {
                 if recorded_process_is_dead(&identity)? {
                     // Death can race Orbit's final atomic record publication.
-                    let current = read_management_record(&session.record)?
-                        .ok_or("ended terminal record disappeared")?;
-                    if current.record != ManagementRecord::Live(identity.clone()) {
+                    let current = read_management_record(&session.record)?;
+                    let Some(current) = current.filter(|current| {
+                        current.record == ManagementRecord::Live(identity.clone())
+                    }) else {
                         operation_timeout(deadline, "terminal tombstone reconciliation")?;
                         continue;
-                    }
+                    };
                     if current.object != session.record_object {
                         return Err("terminal Live record changed before cleanup".into());
                     }
                     retire_dead_run(&session.record, current.object, &identity, deadline)?;
-                    session.finished = Some(SessionEnd::OwnerLost);
-                    eprintln!(
-                        "terminal {}: Orbit exited without publishing a terminal result",
-                        session.id
-                    );
-                    return if reason != Some(TerminationReason::ExplicitStop) {
-                        Ok(SessionEnd::OwnerLost)
-                    } else {
-                        Err("terminal owner exited without completing Stop".into())
-                    };
+                    return owner_lost(session, reason);
                 }
                 operation_timeout(deadline, "terminal tombstone reconciliation")?;
                 thread::sleep(Duration::from_millis(25));
@@ -1612,6 +1642,7 @@ pub(crate) mod tests {
             lease,
             program_status: None,
             stop_sent: false,
+            stop_failure_reported: false,
             child: None,
             finished: None,
         };
@@ -1951,6 +1982,7 @@ pub(crate) mod tests {
             lease,
             program_status: None,
             stop_sent: false,
+            stop_failure_reported: false,
             child: None,
             finished: None,
         };
@@ -2024,6 +2056,11 @@ pub(crate) mod tests {
             Instant::now() + Duration::from_secs(5),
         )
         .unwrap()
+    }
+
+    /// The run record of a leased Orbit this test started.
+    pub(crate) fn record(session: &RunningSession) -> &Path {
+        &session.record
     }
 
     /// The process id of a leased Orbit this test started.
