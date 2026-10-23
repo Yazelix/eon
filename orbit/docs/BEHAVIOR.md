@@ -403,15 +403,21 @@ reads its text without it in the client's frame, and
 `vertical_preview_reads_history_nearest_first` reads the same in a preview
 row. Without the fallback, the late-observer step ended the terminal.
 
-A frame budgets every cell's text before any hyperlink, then keeps links in
-reading order while they fit its 4 MiB budget; from the first that does not,
-cells keep their text without a link, and the terminal keeps running.
+A frame budgets every cell's first codepoint, then keeps full cell text and
+then links in reading order while they fit its 4 MiB budget. From the first
+cell whose text does not fit, cells keep only their first codepoint; from the
+first link that does not fit, cells have no link; the terminal keeps running.
 Each linked cell carries its URI, so one long link over much of the screen
 is enough to pass the budget.
 `hyperlinks_over_the_frame_budget_keep_the_frame` reads a 100x24 frame with
 one 2 KB link over 2399 cells and gets every cell's text and a reading-order
 prefix of the links. Without the budget order, the frame failed and the
-terminal ended.
+terminal ended. Libghostty keeps up to 64 extra codepoints a cell, so a
+screen of about 19k cells with 64 combining marks each passes the budget on
+text alone. `cell_text_over_the_frame_budget_keeps_first_codepoints` reads
+such a 10x5 screen against a small budget and gets full text in the first
+cells, the first codepoint in the rest, and no link even on the first cell.
+Before, such text failed the frame and ended the terminal.
 
 While detached and awaiting a connection, Bend waits on the listener, the PTY
 and the synchronized-output timer. It keeps reading PTY output, sends a

@@ -94,6 +94,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   while they fit, and the rest reach the client as no link. Before, such a
   frame ended the terminal while a client was attached
   (`eon-frame-budget-links-m62b`).
+- ORB-C6 widens that failure to cell text: when a frame would pass the frame
+  budget, every cell keeps its first codepoint; full cell text and then
+  hyperlinks are kept in reading order while they fit, and the rest reach the
+  client as their first codepoint and as no link. Before, a screen of cells
+  heavy with combining marks ended the terminal while a client was attached
+  (`eon-frame-budget-text-kzze`).
 
 ## Before this repository
 

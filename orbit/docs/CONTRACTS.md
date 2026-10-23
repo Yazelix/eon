@@ -241,9 +241,10 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   - A hyperlink URI that is not valid UTF-8 reaches the client as no link: the
     cell keeps its text, in frames and previews, and the terminal keeps
     running.
-  - When a frame's hyperlinks would take it past the frame budget, every cell
-    keeps its text; links are kept in reading order while they fit, the rest
-    reach the client as no link, and the terminal keeps running.
+  - When a frame would pass the frame budget, every cell keeps its first
+    codepoint; full cell text and then hyperlinks are kept in reading order
+    while they fit; the rest reach the client as their first codepoint and as
+    no link, and the terminal keeps running.
 - **Owner:** Orbit's authoritative extraction and synchronized publication with
   canonical `orbit-protocol` values and codecs.
 - **Consumes:** Canonical ORBF v2 in ORBS v13; Venus and Eon consume it in this
@@ -252,7 +253,8 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.2` commit
   for direct rows, width roles, protection and reflow, the
   `eon-osc8-invalid-utf8-ymts` commit for invalid hyperlink URIs, and the
-  `eon-frame-budget-links-m62b` commit for hyperlinks past the frame budget
+  `eon-frame-budget-links-m62b` and `eon-frame-budget-text-kzze` commits for
+  hyperlinks and cell text past the frame budget
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,
@@ -273,6 +275,10 @@ in this repository. Each contract below states the current ORBS v13 behavior.
       reads a frame whose one 2 KB link over most of the screen exceeds the
       budget: every cell keeps its text and a reading-order prefix of the
       links.
+    - [`cell_text_over_the_frame_budget_keeps_first_codepoints`](../src/frame.rs)
+      reads cells with 64 combining marks against a budget their text
+      exceeds: full text in reading order while it fits, the first codepoint
+      in the rest, and links only after the text.
     - Canonical ORBF-in-ORBS codec checks in the workspace suite
 
 ## ORB-C7 — Bounded attachment pressure

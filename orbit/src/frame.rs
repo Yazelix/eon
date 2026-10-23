@@ -38,6 +38,20 @@ impl FrameExtractor {
         revision: u64,
         terminal: &Terminal<'static, '_>,
     ) -> io::Result<Frame> {
+        self.frame_within(revision, terminal, MAX_FRAME_BYTES)
+    }
+
+    /// A frame that fits `budget` bytes: every cell's first codepoint, then
+    /// full cell text and then links in reading order while they fit. From
+    /// the first cell whose text does not fit, cells keep only their first
+    /// codepoint, and from the first link that does not fit, cells have no
+    /// link. A program's output never ends its terminal (ORB-C6).
+    fn frame_within(
+        &mut self,
+        revision: u64,
+        terminal: &Terminal<'static, '_>,
+        budget: usize,
+    ) -> io::Result<Frame> {
         let snapshot = self.state.update(terminal).map_err(|_| errno(libc::EIO))?;
         let cols = snapshot.cols().map_err(|_| errno(libc::EIO))?;
         let rows = snapshot.rows().map_err(|_| errno(libc::EIO))?;
@@ -91,6 +105,7 @@ impl FrameExtractor {
         let mut row_iter = self.rows.update(&snapshot).map_err(|_| errno(libc::EIO))?;
         let mut text = String::new();
         let mut frame_rows = Vec::with_capacity(usize::from(rows));
+        let mut text_bytes = 0;
         let mut link_bytes = 0;
         for y in 0..rows {
             size.add_row().map_err(|_| errno(libc::EOVERFLOW))?;
@@ -112,12 +127,18 @@ impl FrameExtractor {
                 text.clear();
                 cell.graphemes_utf8(&mut text)
                     .map_err(|_| errno(libc::EOVERFLOW))?;
-                size.add_cell(&text, "")
+                // The cell reserves its first codepoint and an empty link, so
+                // its other codepoints and its link add only their bytes.
+                // Later cells only shrink the room, so once the text or the
+                // links read pass the budget, none after them can fit.
+                let base = first_codepoint_len(&text);
+                size.add_cell(&text[..base], "")
                     .map_err(|_| errno(libc::EOVERFLOW))?;
-                // The cell reserved an empty link, so a link adds only its
-                // bytes. Later text only shrinks the room for links, so once
-                // the links read pass the budget, none after them can fit.
-                let hyperlink = if size.bytes() + link_bytes <= MAX_FRAME_BYTES
+                text_bytes += text.len() - base;
+                if size.bytes() + text_bytes > budget {
+                    text.truncate(base);
+                }
+                let hyperlink = if size.bytes() + link_bytes <= budget
                     && raw_cell.has_hyperlink().map_err(|_| errno(libc::EIO))?
                 {
                     hyperlink(terminal, x, y)?
@@ -153,13 +174,21 @@ impl FrameExtractor {
         if row_iter.next().is_some() {
             return Err(errno(libc::EPROTO));
         }
-        // Every cell's text is budgeted; links follow in reading order, and
-        // from the first that does not fit, each cell keeps its text without
-        // a link. A program's many links never end its terminal (ORB-C6).
+        let mut bytes = size.bytes();
+        text_bytes = 0;
+        for cell in frame_rows.iter_mut().flat_map(|row| &mut row.cells) {
+            let base = first_codepoint_len(&cell.text);
+            text_bytes += cell.text.len() - base;
+            if size.bytes() + text_bytes <= budget {
+                bytes = size.bytes() + text_bytes;
+            } else {
+                cell.text.truncate(base);
+            }
+        }
         link_bytes = 0;
         for cell in frame_rows.iter_mut().flat_map(|row| &mut row.cells) {
             link_bytes += cell.hyperlink.len();
-            if size.bytes() + link_bytes > MAX_FRAME_BYTES {
+            if bytes + link_bytes > budget {
                 cell.hyperlink.clear();
             }
         }
@@ -327,6 +356,10 @@ pub(crate) fn viewport_preview(
     })
 }
 
+fn first_codepoint_len(text: &str) -> usize {
+    text.chars().next().map_or(0, char::len_utf8)
+}
+
 fn hyperlink(terminal: &Terminal<'static, '_>, x: u16, y: u16) -> io::Result<String> {
     let reference = terminal
         .grid_ref(Point::Viewport(PointCoordinate { x, y: u32::from(y) }))
@@ -471,6 +504,39 @@ mod tests {
         assert!(kept > 0 && kept < cells.len());
         assert!(cells[kept..].iter().all(|cell| cell.hyperlink.is_empty()));
         assert!(frame.encode().unwrap().len() + uri.len() > MAX_FRAME_BYTES);
+    }
+
+    /// A frame whose cell text exceeds its budget keeps every cell's first
+    /// codepoint and full text in reading order while it fits, before any
+    /// link (ORB-C6). A full screen of cells with 64 combining marks passes
+    /// the 4 MiB budget; a small budget keeps the debug build fast.
+    #[test]
+    fn cell_text_over_the_frame_budget_keeps_first_codepoints() {
+        let mut terminal = Terminal::new(10, 5).unwrap();
+        let marked = format!("a{}", "\u{20D0}".repeat(64));
+        let uri = format!("https://example.test/{}", "x".repeat(130));
+        terminal.vt_write(
+            format!(
+                "\x1b]8;;{uri}\x1b\\{marked}\x1b]8;;\x1b\\{}",
+                marked.repeat(48)
+            )
+            .as_bytes(),
+        );
+        let mut extractor = FrameExtractor::new().unwrap();
+        let whole = extractor
+            .frame(1, &terminal)
+            .unwrap()
+            .encode()
+            .unwrap()
+            .len();
+        let extra = marked.len() - 1;
+        let budget = whole - 49 * extra - uri.len() + 3 * extra + 100;
+        let frame = extractor.frame_within(1, &terminal, budget).unwrap();
+        let cells: Vec<_> = frame.rows.iter().flat_map(|row| &row.cells).collect();
+        assert!(cells[..3].iter().all(|cell| cell.text == marked));
+        assert!(cells[3..49].iter().all(|cell| cell.text == "a"));
+        assert!(cells.iter().all(|cell| cell.hyperlink.is_empty()));
+        assert!(frame.encode().unwrap().len() <= budget);
     }
 
     /// Rows read directly from libghostty's screen equal the canonical frame's
