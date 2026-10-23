@@ -1073,19 +1073,25 @@ fn reap_finished_sessions(
     while index < state.sessions.len() {
         let session = &mut state.sessions[index];
         let finished = match session_finished(session) {
-            // A terminal whose Stop failed stays in its tab for a retry and
-            // must not end the supervisor or other tabs (EON-C8).
-            Err(error) if session.stop_failed() => {
-                if !session.stop_failure_reported {
-                    session.stop_failure_reported = true;
+            // A terminal that cannot be reconciled, after a failed Stop or an
+            // exit of its own, stays in its tab for a retry and must not end
+            // the supervisor or other tabs (EON-C8).
+            Err(error) => {
+                if !session.reap_failure_reported {
+                    session.reap_failure_reported = true;
                     state.log.note(&format!(
-                        "terminal {} stays in its tab after a failed stop: {error}",
-                        session.id
+                        "terminal {} stays in its tab {}: {error}",
+                        session.id,
+                        if session.stop_failed() {
+                            "after a failed stop"
+                        } else {
+                            "until its end reconciles"
+                        }
                     ));
                 }
                 None
             }
-            finished => finished?,
+            Ok(finished) => finished,
         };
         if let Some(code) = finished {
             let session = state.sessions.remove(index);
@@ -1908,6 +1914,26 @@ mod tests {
         path::{Path, PathBuf},
     };
 
+    /// Kills a test-owned Orbit's worker, which sends Orbit down its failure
+    /// path: it removes its Live record and exits without a result.
+    fn kill_worker(session: &sessions::RunningSession) {
+        let orbit = orbit_pid(session);
+        let worker = fs::read_to_string(format!("/proc/{orbit}/task/{orbit}/children"))
+            .unwrap()
+            .split_whitespace()
+            .map(|pid| pid.parse::<i32>().unwrap())
+            .find(|pid| {
+                fs::read(format!("/proc/{pid}/cmdline"))
+                    .unwrap_or_default()
+                    .split(|byte| *byte == 0)
+                    .next()
+                    .is_some_and(|program| program.ends_with(b"yazelix-orbit-worker"))
+            })
+            .expect("Orbit runs its worker");
+        // SAFETY: signals the test-owned Orbit's worker process.
+        assert_eq!(unsafe { libc::kill(worker, libc::SIGKILL) }, 0);
+    }
+
     #[test]
     fn a_terminal_whose_stop_fails_during_a_close_ends_or_stays_only_in_its_tab() {
         let roots = [
@@ -1923,21 +1949,7 @@ mod tests {
         sessions[2].id = "session-3".into();
         // A dead worker sends Orbit down its failure path, which removes its
         // Live record and publishes no result: the run reconciles as ended.
-        let orbit = orbit_pid(&sessions[0]);
-        let worker = fs::read_to_string(format!("/proc/{orbit}/task/{orbit}/children"))
-            .unwrap()
-            .split_whitespace()
-            .map(|pid| pid.parse::<i32>().unwrap())
-            .find(|pid| {
-                fs::read(format!("/proc/{pid}/cmdline"))
-                    .unwrap_or_default()
-                    .split(|byte| *byte == 0)
-                    .next()
-                    .is_some_and(|program| program.ends_with(b"yazelix-orbit-worker"))
-            })
-            .expect("Orbit runs its worker");
-        // SAFETY: signals the test-owned Orbit's worker process.
-        assert_eq!(unsafe { libc::kill(worker, libc::SIGKILL) }, 0);
+        kill_worker(&sessions[0]);
         assert_eq!(stop_owned_session(&mut sessions, "session-1"), Ok(Some(1)));
         assert_eq!(sessions.len(), 2);
 
@@ -1983,6 +1995,122 @@ mod tests {
             Ok(None)
         );
         fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
+        for root in roots {
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_terminal_whose_own_exit_cannot_be_reconciled_stays_only_in_its_tab() {
+        let roots = [
+            temporary_directory(),
+            temporary_directory(),
+            temporary_directory(),
+        ];
+        let go = roots[0].join("go");
+        let mut sessions = vec![
+            leased_orbit(
+                &roots[0],
+                &format!(
+                    "while [ ! -e '{}' ]; do sleep 0.02; done; exit 7",
+                    go.display()
+                ),
+            ),
+            leased_orbit(&roots[1], "exec sleep 30"),
+            leased_orbit(&roots[2], "exec sleep 30"),
+        ];
+        sessions[1].id = "session-2".into();
+        sessions[2].id = "session-3".into();
+        // A closed lease whose run still holds its Live record leaves the end
+        // pending: the first reap waits for it, later reaps must not.
+        sessions::tests::close_lease(&sessions[2]);
+        // The terminal exits on its own, never sent Stop, and its final record
+        // then no longer validates.
+        let orbit = orbit_pid(&sessions[0]);
+        fs::write(&go, "").unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !fs::read_to_string(format!("/proc/{orbit}/stat"))
+            .unwrap()
+            .contains(") Z ")
+        {
+            assert!(std::time::Instant::now() < deadline, "Orbit never exited");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let record = sessions::tests::record(&sessions[0]).to_path_buf();
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
+        let mut state = SupervisorState {
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspace: None,
+            sessions,
+            venus: None,
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: false,
+            quotas: None,
+            attention: None,
+            log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
+        };
+        let inputs = crate::fixtures::inputs();
+        for _ in 0..2 {
+            assert_eq!(
+                reap_finished_sessions(&mut state, &inputs, &roots[0]),
+                Ok(())
+            );
+        }
+        let retry = std::time::Instant::now();
+        assert_eq!(
+            reap_finished_sessions(&mut state, &inputs, &roots[0]),
+            Ok(())
+        );
+        assert!(retry.elapsed() < std::time::Duration::from_secs(1));
+        assert_eq!(state.sessions.len(), 3);
+        let log = || {
+            fs::read_dir(roots[0].join("logs"))
+                .unwrap()
+                .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+                .collect::<String>()
+        };
+        assert_eq!(
+            log()
+                .matches("terminal session-1 stays in its tab until its end reconciles")
+                .count(),
+            1
+        );
+        assert_eq!(
+            log()
+                .matches("terminal session-3 stays in its tab until its end reconciles")
+                .count(),
+            1
+        );
+
+        // Once the record validates again, a later reap ends the terminal.
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            reap_finished_sessions(&mut state, &inputs, &roots[0]),
+            Ok(())
+        );
+        assert_eq!(state.sessions.len(), 2);
+        assert_eq!(state.initial_status, Some(7));
+        kill_worker(&state.sessions[1]);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while state.sessions.len() > 1 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the pending end never reconciled"
+            );
+            assert_eq!(
+                reap_finished_sessions(&mut state, &inputs, &roots[0]),
+                Ok(())
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(state.sessions[0].id, "session-2");
+        assert_eq!(
+            stop_owned_session(&mut state.sessions, "session-2"),
+            Ok(None)
+        );
         for root in roots {
             fs::remove_dir_all(root).unwrap();
         }

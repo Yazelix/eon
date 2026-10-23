@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A terminal whose end can't be accounted for, after it exits on its own or a
+  close of it fails, no longer ends the whole window. It stays in its tab, Eon
+  logs why once and keeps checking, and the window and other tabs keep running.
+
 - The "Link handed to the desktop handler." and "Link copied." notices go
   away on their own after about 2 seconds, so returning from the browser no
   longer finds them waiting. A notice in the status line no longer stops you

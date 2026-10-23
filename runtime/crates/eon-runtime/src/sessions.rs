@@ -523,7 +523,7 @@ fn acquire_management(
         lease: stream,
         program_status: None,
         stop_sent: false,
-        stop_failure_reported: false,
+        reap_failure_reported: false,
         child: None,
         finished: None,
     })
@@ -786,9 +786,9 @@ pub(super) struct RunningSession {
     lease: UnixStream,
     program_status: Option<ProgramStatusRequest>,
     stop_sent: bool,
-    /// The supervisor reported that this terminal's failed Stop cannot be
-    /// reconciled yet.
-    pub(super) stop_failure_reported: bool,
+    /// The supervisor reported that this terminal cannot be reconciled yet;
+    /// later reaps retry without waiting.
+    pub(super) reap_failure_reported: bool,
     child: Option<Child>,
     finished: Option<SessionEnd>,
 }
@@ -1400,7 +1400,14 @@ pub(super) fn session_finished(session: &mut RunningSession) -> Result<Option<i3
             ReplyProgress::WouldBlock => return Ok(None),
             ReplyProgress::Closed => {}
         }
-        wait_and_finalize_tombstone(session, None, None, Instant::now() + SESSION_START_TIMEOUT)?
+        // A run that already failed to reconcile gets one more look per reap,
+        // so it cannot stall the supervisor's loop and requests.
+        let wait = if session.reap_failure_reported {
+            Duration::ZERO
+        } else {
+            SESSION_START_TIMEOUT
+        };
+        wait_and_finalize_tombstone(session, None, None, Instant::now() + wait)?
     };
     Ok(Some(match end {
         SessionEnd::Managed(_, ProcessOutcome::ExitCode(code)) => code,
@@ -1642,7 +1649,7 @@ pub(crate) mod tests {
             lease,
             program_status: None,
             stop_sent: false,
-            stop_failure_reported: false,
+            reap_failure_reported: false,
             child: None,
             finished: None,
         };
@@ -1982,7 +1989,7 @@ pub(crate) mod tests {
             lease,
             program_status: None,
             stop_sent: false,
-            stop_failure_reported: false,
+            reap_failure_reported: false,
             child: None,
             finished: None,
         };
@@ -2061,6 +2068,11 @@ pub(crate) mod tests {
     /// The run record of a leased Orbit this test started.
     pub(crate) fn record(session: &RunningSession) -> &Path {
         &session.record
+    }
+
+    /// Shuts the lease's read side, so the Runtime reads it as closed.
+    pub(crate) fn close_lease(session: &RunningSession) {
+        session.lease.shutdown(std::net::Shutdown::Read).unwrap();
     }
 
     /// The process id of a leased Orbit this test started.
