@@ -4339,6 +4339,9 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     let venus = root.join("venus");
     managed_orbit_executable(&orbit);
     executable(&venus, "#!/bin/sh\nexit 0\n");
+    let session_bin = root.join("bin");
+    fs::create_dir(&session_bin).unwrap();
+    executable(&session_bin.join("eon"), "#!/bin/sh\nexit 1\n");
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
     let command = || {
         let mut command = eon_command(&binary);
@@ -4347,6 +4350,7 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
             .env("EON_CONFIG_HOME", &config)
             .env("EON_ORBIT", &orbit)
             .env("EON_VENUS", &venus)
+            .env("EON_SESSION_BIN", &session_bin)
             .env("EON_TEST_STOP", &stop);
         command
     };
@@ -4379,6 +4383,12 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     assert_ne!(first_control, second_control);
     wait_for_connection(&first_control);
     wait_for_connection(&second_control);
+    // Each generation records its own build's `eon` for later builds to run.
+    let first_generation = first_control.parent().unwrap().to_owned();
+    assert_eq!(
+        fs::read_link(first_generation.join("eon")).unwrap(),
+        session_bin.join("eon")
+    );
     let listed = invoke(&binary, &runtime, &config, &["windows", "--json"]);
     assert!(listed.status.success());
     assert!(stdout(&listed).contains(&format!("\"id\":\"{first}\"")));
@@ -4396,6 +4406,14 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     );
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     assert!(stdout(&stopped).contains("\"stopped\""));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while first_generation.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "a stopped generation kept its directory"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
     assert!(
         invoke(&binary, &runtime, &config, &["workspace", "--json"])
             .status
@@ -4588,6 +4606,217 @@ fn generations_from_another_eonw_are_incompatible_and_not_stopped() {
     assert_eq!(stopped.status.code(), Some(1), "{}", stdout(&stopped));
     let stopped: serde_json::Value = serde_json::from_str(stdout(&stopped)).unwrap();
     assert_eq!(stopped["error"]["code"], "stop-unavailable", "{stopped}");
+    server.join().unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn window_attach_runs_the_build_that_started_its_generation() {
+    let root = temporary_directory();
+    let runtime = root.join("r");
+    let config = root.join("config");
+    let windows = runtime.join("w");
+    let ended = windows.join("0000dcba");
+    fs::create_dir_all(ended.join("generations")).unwrap();
+    for directory in [&runtime, &windows, &ended, &ended.join("generations")] {
+        fs::set_permissions(directory, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let window = windows.join("0000abcd");
+    let id = format!("g1-{:032x}", 12);
+    let listener = generation_listener(&window, &id);
+    let done = root.join("done");
+    // An older build's supervisor rejects each request in its own framing.
+    let server_done = done.clone();
+    let server = thread::spawn(move || {
+        loop {
+            let (mut stream, _) = listener.accept().unwrap();
+            if server_done.exists() {
+                return;
+            }
+            read_request(&mut stream);
+            let mut failure = encode_response(&Response::Failure(ProtocolFailure {
+                code: "unsupported-version".into(),
+                detail: format!("unsupported EONW version {VERSION}"),
+            }))
+            .unwrap();
+            failure[4..6].copy_from_slice(&11u16.to_le_bytes());
+            stream.write_all(&failure).unwrap();
+        }
+    });
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let listed = |window: &str| {
+        let output = invoke(&binary, &runtime, &config, &["windows", "--json"]);
+        assert!(output.status.success(), "{}", stdout(&output));
+        let listed: serde_json::Value = serde_json::from_str(stdout(&output)).unwrap();
+        listed["windows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|candidate| candidate["id"] == window)
+            .unwrap()
+            .clone()
+    };
+
+    // A window with no supervisor is listed as ended, never as the current generation.
+    let ended_window = listed("0000dcba");
+    assert_eq!(ended_window["ended"], true, "{ended_window}");
+    assert_eq!(
+        ended_window["inventory"]["generations"],
+        serde_json::json!([])
+    );
+    let human = invoke(&binary, &runtime, &config, &["windows"]);
+    assert!(
+        stdout(&human).contains("window 0000dcba ended\n"),
+        "{}",
+        stdout(&human)
+    );
+    assert!(
+        stdout(&human).contains(&format!("window 0000abcd\n  previous {id} incompatible")),
+        "{}",
+        stdout(&human)
+    );
+    let attach_ended = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "attach", "0000dcba"],
+    );
+    assert_eq!(attach_ended.status.code(), Some(4));
+    assert!(String::from_utf8_lossy(&attach_ended.stderr).contains("has ended"));
+
+    // Without a record of its build, attach names the generation and the recovery.
+    let older = listed("0000abcd");
+    assert_eq!(older["ended"], false, "{older}");
+    let generations = older["inventory"]["generations"].as_array().unwrap();
+    assert_eq!(generations.len(), 1, "{older}");
+    assert_eq!(generations[0]["id"], id.as_str());
+    assert_eq!(generations[0]["attach"]["available"], false);
+    let unrecorded = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "attach", "0000abcd"],
+    );
+    assert_eq!(unrecorded.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&unrecorded.stderr);
+    assert!(error.contains(&id), "{error}");
+    assert!(error.contains("EONW 11"), "{error}");
+    assert!(
+        error.contains("the Eon build that started it can attach or stop it"),
+        "{error}"
+    );
+
+    // With the record, attach runs that build's `eon` in the window.
+    let attached = root.join("attached");
+    let older_eon = root.join("older-eon");
+    executable(
+        &older_eon,
+        &format!(
+            "#!/bin/sh\nprintf '%s %s|%s' \"$1\" \"$2\" \"$EON_WINDOW_RUNTIME_DIR\" > '{}'\nexit 7\n",
+            attached.display()
+        ),
+    );
+    // A relative record is not trusted.
+    let record = window.join("generations").join(&id).join("eon");
+    symlink("older-eon", &record).unwrap();
+    assert_eq!(
+        listed("0000abcd")["inventory"]["generations"][0]["attach"]["available"],
+        false
+    );
+    fs::remove_file(&record).unwrap();
+    symlink(&older_eon, &record).unwrap();
+    let recorded = &listed("0000abcd")["inventory"]["generations"][0];
+    assert_eq!(recorded["attach"]["available"], true, "{recorded}");
+    assert_eq!(recorded["executable"], older_eon.to_str().unwrap());
+    let human = invoke(&binary, &runtime, &config, &["windows"]);
+    assert!(
+        stdout(&human).contains(&format!("  executable {}\n", older_eon.display())),
+        "{}",
+        stdout(&human)
+    );
+    let delegated = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "attach", "0000abcd"],
+    );
+    assert_eq!(
+        delegated.status.code(),
+        Some(7),
+        "{}",
+        String::from_utf8_lossy(&delegated.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&attached).unwrap(),
+        format!("attach {id}|{}", window.display())
+    );
+
+    // A generation with the current EONW and another component graph is
+    // presented by its own build too, but a delegated attach never delegates again.
+    let previous = format!("g1-{:032x}", 13);
+    let previous_server = previous_supervisor(&runtime, &previous);
+    symlink(
+        &older_eon,
+        runtime.join("generations").join(&previous).join("eon"),
+    )
+    .unwrap();
+    let delegated = invoke(&binary, &runtime, &config, &["attach", &previous]);
+    assert_eq!(delegated.status.code(), Some(7));
+    assert_eq!(
+        fs::read_to_string(&attached).unwrap(),
+        format!("attach {previous}|")
+    );
+    let again = eon_command(&binary)
+        .args(["attach", &previous])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ATTACH_DELEGATED", &previous)
+        .output()
+        .unwrap();
+    assert_eq!(again.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&again.stderr).contains("different component graph"));
+    let stopped = invoke(&binary, &runtime, &config, &["stop", &previous, "--json"]);
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    previous_server.join().unwrap();
+
+    // A window running several generations names each one's `eon`.
+    let shared = windows.join("0000beef");
+    let (first, second) = (format!("g1-{:032x}", 14), format!("g1-{:032x}", 15));
+    let servers = [
+        previous_supervisor(&shared, &first),
+        previous_supervisor(&shared, &second),
+    ];
+    symlink(
+        &older_eon,
+        shared.join("generations").join(&first).join("eon"),
+    )
+    .unwrap();
+    let several = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "attach", "0000beef"],
+    );
+    assert_eq!(several.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&several.stderr);
+    assert!(
+        error.contains(&format!("{first} (its eon: {})", older_eon.display())),
+        "{error}"
+    );
+    assert!(error.contains(&second), "{error}");
+    let stopped = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["window", "stop", "0000beef", "--json"],
+    );
+    assert!(stopped.status.success(), "{}", stdout(&stopped));
+    for server in servers {
+        server.join().unwrap();
+    }
+
+    fs::write(&done, "").unwrap();
+    drop(UnixStream::connect(window.join("generations").join(&id).join("eon.sock")).unwrap());
     server.join().unwrap();
     fs::remove_dir_all(root).unwrap();
 }

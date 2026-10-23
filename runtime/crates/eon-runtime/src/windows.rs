@@ -1,7 +1,10 @@
 use super::{
     cli::Inputs,
     control::{Error, failure, write_stdout},
-    generation::{current_generation, generation_directory, private_directory_exists},
+    generation::{
+        current_generation, generation_directory, private_directory_exists, window_generation,
+        window_inventory,
+    },
     supervisor::{
         LaunchMode, SESSION_START_TIMEOUT, base_runtime_directory, prepare_runtime,
         probe_supervisor, request_id, runtime_directory, validate_private_directory,
@@ -173,18 +176,27 @@ pub(super) fn new_window(inputs: &Inputs) -> Result<i32, String> {
     }
 }
 
-pub(super) fn window_action(id: &OsStr, stop: bool, json: bool) -> Result<i32, Error> {
+pub(super) fn attach_window(inputs: &Inputs, id: &OsStr) -> Result<i32, Error> {
     let root = selected_window(id)?;
-    let mut command = window_command(&root)?;
-    command.args(if stop {
-        &["stop", "all"][..]
-    } else {
-        &["attach"][..]
-    });
-    if json {
-        command.arg("--json");
-    }
-    let status = command
+    let generation = window_generation(inputs, &id.to_string_lossy(), &root)?;
+    run_in_window(&root, &["attach", &generation])
+}
+
+pub(super) fn stop_window(id: &OsStr, json: bool) -> Result<i32, Error> {
+    let root = selected_window(id)?;
+    run_in_window(
+        &root,
+        if json {
+            &["stop", "all", "--json"]
+        } else {
+            &["stop", "all"]
+        },
+    )
+}
+
+fn run_in_window(root: &Path, arguments: &[&str]) -> Result<i32, Error> {
+    let status = window_command(root)?
+        .args(arguments)
         .status()
         .map_err(|error| format!("cannot run Eon window action: {error}"))?;
     Ok(status.code().unwrap_or(1))
@@ -209,7 +221,7 @@ pub(super) fn stop_all_windows(json: bool) -> Result<i32, Error> {
             status = status.max(code);
         } else {
             eprintln!("Stop Eon window {id}:");
-            status = status.max(window_action(OsStr::new(&id), true, false)?);
+            status = status.max(stop_window(OsStr::new(&id), false)?);
         }
     }
     if json {
@@ -252,43 +264,34 @@ fn stop_window_json(root: &Path) -> (i32, String) {
     (code, format!("[{}]", report.trim_end()))
 }
 
-pub(super) fn list_windows(json: bool) -> Result<i32, String> {
+pub(super) fn list_windows(inputs: &Inputs, json: bool) -> Result<i32, String> {
     let mut output = if json {
         String::from("{\"windows\":[")
     } else {
         String::new()
     };
     for (index, (id, root)) in existing_windows()?.iter().enumerate() {
-        let mut command = window_command(root)?;
-        command.arg("generations");
-        if json {
-            command.arg("--json");
-        }
-        let listing = command
-            .output()
+        let inventory = window_inventory(inputs, root, json)
             .map_err(|error| format!("cannot inspect Eon window {id}: {error}"))?;
-        if !listing.status.success() {
-            return Err(format!(
-                "cannot inspect Eon window {id}: {}",
-                String::from_utf8_lossy(&listing.stderr)
-            ));
-        }
-        let generations = String::from_utf8(listing.stdout)
-            .map_err(|_| format!("Eon window {id} returned non-UTF-8 generations"))?;
         if json {
             if index > 0 {
                 output.push(',');
             }
             output.push_str(&format!(
-                "{{\"id\":\"{}\",\"inventory\":{}}}",
+                "{{\"id\":\"{}\",\"ended\":{},\"inventory\":{}}}",
                 json_escape(id),
-                generations.trim()
+                inventory.is_none(),
+                inventory
+                    .as_deref()
+                    .map_or("{\"generations\":[]}", str::trim)
             ));
-        } else {
+        } else if let Some(generations) = inventory {
             output.push_str(&format!("window {id}\n"));
             for line in generations.lines() {
                 output.push_str(&format!("  {line}\n"));
             }
+        } else {
+            output.push_str(&format!("window {id} ended\n"));
         }
     }
     if json {

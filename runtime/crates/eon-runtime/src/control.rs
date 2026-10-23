@@ -227,7 +227,7 @@ fn protocol_endpoint_failure(error: ProtocolError) -> EndpointFailure {
             EndpointFailureKind::Incompatible,
             format!(
                 "supervisor uses EONW {version}, this Eon uses EONW {VERSION}; \
-                 the Eon build that started it can stop it"
+                 the Eon build that started it can attach or stop it"
             ),
         ),
         _ => EndpointFailure::new(
@@ -513,6 +513,13 @@ impl Error {
     pub(super) fn missing(message: impl Into<String>) -> Self {
         Self {
             status: MISSING,
+            message: message.into(),
+        }
+    }
+
+    pub(super) fn unreachable(message: impl Into<String>) -> Self {
+        Self {
+            status: UNREACHABLE,
             message: message.into(),
         }
     }

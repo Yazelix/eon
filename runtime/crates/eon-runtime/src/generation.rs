@@ -13,13 +13,15 @@ use eon_workspace_protocol::v19::{
     Action, Availability, LifecycleResponse, Stopped, WorkspaceAction,
 };
 use std::{
-    fs,
+    env, fs,
     os::unix::{
         ffi::OsStrExt,
-        fs::{FileTypeExt, MetadataExt},
+        fs::{FileTypeExt, MetadataExt, symlink},
         net::UnixStream,
+        process::CommandExt,
     },
     path::{Path, PathBuf},
+    process::Command,
 };
 
 pub(super) fn current_generation(inputs: &Inputs) -> Result<String, String> {
@@ -50,6 +52,43 @@ pub(super) fn generation_directory(root: &Path, generation: &str) -> PathBuf {
     root.join("generations").join(generation)
 }
 
+/// The link in a generation's directory to the `eon` of the build that started
+/// it, which a later build runs to present a generation it cannot present.
+const LAUNCHER: &str = "eon";
+/// Set on a delegated attach to the generation it presents.
+const DELEGATED: &str = "EON_ATTACH_DELEGATED";
+
+/// Records this build's `eon`, from its session bin, in the workspace
+/// generation directory `runtime`.
+pub(super) fn record_launcher(inputs: &Inputs, runtime: &Path) -> Result<(), String> {
+    let Some(eon) = inputs.managed.shell_bin.as_ref().map(|bin| bin.join("eon")) else {
+        return Ok(());
+    };
+    if !eon.is_absolute() || !eon.is_file() {
+        return Ok(());
+    }
+    remove_launcher(runtime);
+    let link = runtime.join(LAUNCHER);
+    symlink(&eon, &link).map_err(|error| format!("cannot record {}: {error}", link.display()))
+}
+
+/// Removes a generation's launcher record so its directory can be removed.
+pub(super) fn remove_launcher(runtime: &Path) {
+    let link = runtime.join(LAUNCHER);
+    if fs::symlink_metadata(&link).is_ok_and(|metadata| metadata.file_type().is_symlink()) {
+        let _ = fs::remove_file(link);
+    }
+}
+
+fn recorded_launcher(runtime: &Path) -> Option<PathBuf> {
+    let link = runtime.join(LAUNCHER);
+    let metadata = fs::symlink_metadata(&link).ok()?;
+    if !metadata.file_type().is_symlink() || metadata.uid() != effective_uid() {
+        return None;
+    }
+    fs::read_link(link).ok().filter(|eon| eon.is_absolute())
+}
+
 const MAX_GENERATIONS: usize = 256;
 #[derive(Debug)]
 struct GenerationRecord {
@@ -64,6 +103,9 @@ struct GenerationRecord {
     attach: Availability,
     stop: Availability,
     detail: String,
+    /// The recorded `eon` of the other build that started it, which presents
+    /// it when this build cannot.
+    launcher: Option<PathBuf>,
 }
 
 fn discover_generations(
@@ -198,7 +240,7 @@ fn inspect_generation(
     }
 
     let socket = runtime.join("eon.sock");
-    match probe_generation_runtime(&socket) {
+    let mut record = match probe_generation_runtime(&socket) {
         Ok(info) if info.generation != id => failed_generation(
             id,
             kind,
@@ -212,17 +254,20 @@ fn inspect_generation(
             ),
         ),
         Ok(mut info) => {
-            if info.component_report != current_components {
+            // A supervisor that refuses presentation itself keeps its reason.
+            let other_build = info.component_report != current_components && info.attach.available;
+            if other_build {
                 info.attach = Availability {
                     available: false,
-                    reason: "component graph differs from the current Eon build".into(),
+                    reason: "component graph differs from the current Eon build; \
+                             the Eon build that started it can attach or stop it"
+                        .into(),
                 };
             }
             GenerationRecord {
                 id: id.into(),
                 kind,
                 state: "live",
-                runtime,
                 eon_version: Some(info.eon_version),
                 workspace_protocol: Some(info.workspace_protocol),
                 component_report: Some(info.component_report),
@@ -230,19 +275,32 @@ fn inspect_generation(
                 attach: info.attach,
                 stop: info.stop,
                 detail: "live supervisor validated its generation identity".into(),
+                launcher: other_build.then(|| recorded_launcher(&runtime)).flatten(),
+                runtime,
             }
         }
         Err(error) => {
             let dead = error.kind == EndpointFailureKind::Dead;
-            let record = failed_generation(id, kind, runtime.clone(), error);
+            let mut record = failed_generation(id, kind, runtime.clone(), error);
+            if record.state == "incompatible" {
+                record.launcher = recorded_launcher(&runtime);
+            }
             if dead && let Ok(Some(_lifecycle_lock)) = try_lock_supervisor_lifecycle(lifecycle_lock)
             {
                 remove_dead_socket(&socket);
+                remove_launcher(&runtime);
                 let _ = fs::remove_dir(&runtime);
             }
             record
         }
+    };
+    if record.launcher.is_some() {
+        record.attach = Availability {
+            available: true,
+            reason: "attach runs the Eon build that started it".into(),
+        };
     }
+    record
 }
 
 fn dead_generation(
@@ -298,6 +356,7 @@ fn failed_generation(
             reason: error.detail.clone(),
         },
         detail: error.detail,
+        launcher: None,
     }
 }
 
@@ -374,6 +433,9 @@ fn generations_human(records: &[GenerationRecord]) -> String {
                 version.escape_debug()
             ));
         }
+        if let Some(eon) = &record.launcher {
+            output.push_str(&format!("  executable {}\n", eon.display()));
+        }
         for session in &record.sessions {
             output.push_str(&format!("  terminal {session}\n"));
         }
@@ -393,13 +455,20 @@ fn generations_json(records: &[GenerationRecord]) -> String {
             output.push(',');
         }
         output.push_str(&format!(
-            "{{\"id\":\"{}\",\"kind\":\"{}\",\"state\":\"{}\",\"eon_version\":{},\"workspace_protocol\":{},\"component_report\":{},\"sessions\":[",
+            "{{\"id\":\"{}\",\"kind\":\"{}\",\"state\":\"{}\",\"eon_version\":{},\"workspace_protocol\":{},\"component_report\":{},\"executable\":{},\"sessions\":[",
             json_escape(&record.id),
             record.kind,
             record.state,
             json_option(record.eon_version.as_deref()),
             record.workspace_protocol.map_or_else(|| "null".into(), |value| value.to_string()),
             json_option(record.component_report.as_deref()),
+            json_option(
+                record
+                    .launcher
+                    .as_ref()
+                    .map(|eon| eon.to_string_lossy())
+                    .as_deref()
+            ),
         ));
         for (session_index, session) in record.sessions.iter().enumerate() {
             if session_index != 0 {
@@ -438,15 +507,81 @@ pub(super) fn attach_generation(
     let record = inspect_selected_generation(inputs, &root, &current, target)?
         .ok_or_else(|| Error::missing(format!("generation {target} was not found")))?;
     if !record.attach.available {
+        let versions = match (&record.eon_version, record.workspace_protocol) {
+            (Some(version), Some(protocol)) => format!(" (Eon {version}, EONW {protocol})"),
+            _ => String::new(),
+        };
         return Err(format!(
-            "generation {target} is not attachable: {}",
+            "generation {target}{versions} is not attachable: {}",
             record.attach.reason
         )
         .into());
     }
+    // That build presents its own generation with its own components. The
+    // marker stops a record that names this build from delegating again.
+    if let Some(eon) = &record.launcher
+        && env::var_os(DELEGATED).is_none_or(|delegated| delegated != target)
+    {
+        let error = Command::new(eon)
+            .env(DELEGATED, target)
+            .arg("attach")
+            .arg(target)
+            .exec();
+        return Err(format!("cannot run {}: {error}", eon.display()).into());
+    }
     let (mode, supervisor) = probe_supervisor(inputs, &record.runtime.join("eon.sock"), target)
         .map_err(|error| error.detail)?;
     present_at(inputs, &record.runtime, target, mode, supervisor).map_err(Error::from)
+}
+
+/// The generations of the window at `root` whose supervisor has not ended,
+/// current first.
+fn running_generations(inputs: &Inputs, root: &Path) -> Result<Vec<GenerationRecord>, String> {
+    let mut records = discover_generations(inputs, root, &current_generation(inputs)?)?;
+    records.retain(|record| record.state != "dead");
+    Ok(records)
+}
+
+/// The generation `eon window attach` presents: current unless it has ended,
+/// else the window's one other running generation.
+pub(super) fn window_generation(inputs: &Inputs, id: &str, root: &Path) -> Result<String, Error> {
+    let records = running_generations(inputs, root)?;
+    match records.as_slice() {
+        [] => Err(Error::unreachable(format!(
+            "Eon window {id} has ended; no supervisor runs in it"
+        ))),
+        [record, ..] if record.kind == "current" => Ok(record.id.clone()),
+        [record] => Ok(record.id.clone()),
+        records => Err(format!(
+            "Eon window {id} runs generations {}; run `eon window attach {id}` with the `eon` of the one to present",
+            records
+                .iter()
+                .map(|record| match &record.launcher {
+                    Some(eon) => format!("{} (its eon: {})", record.id, eon.display()),
+                    None => record.id.clone(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .into()),
+    }
+}
+
+/// The `eon windows` inventory of the window at `root`: its running
+/// generations, or `None` once the window has ended.
+pub(super) fn window_inventory(
+    inputs: &Inputs,
+    root: &Path,
+    json: bool,
+) -> Result<Option<String>, String> {
+    let records = running_generations(inputs, root)?;
+    Ok((!records.is_empty()).then(|| {
+        if json {
+            generations_json(&records)
+        } else {
+            generations_human(&records)
+        }
+    }))
 }
 
 pub(super) fn stop_generation(

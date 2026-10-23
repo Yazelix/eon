@@ -497,7 +497,7 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
         [] => launch_current(inputs, LaunchMode::Workspace, &[], true, false, "eon"),
         [command, action] if command == "window" && action == "new" => windows::new_window(inputs),
         [command, action, id] if command == "window" && action == "attach" => {
-            Ok(windows::window_action(id, false, false)?)
+            Ok(windows::attach_window(inputs, id)?)
         }
         [command, action, all] if command == "window" && action == "stop" && all == "all" => {
             Ok(windows::stop_all_windows(false)?)
@@ -508,15 +508,17 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             Ok(windows::stop_all_windows(true)?)
         }
         [command, action, id] if command == "window" && action == "stop" => {
-            Ok(windows::window_action(id, true, false)?)
+            Ok(windows::stop_window(id, false)?)
         }
         [command, action, id, flag]
             if command == "window" && action == "stop" && flag == "--json" =>
         {
-            Ok(windows::window_action(id, true, true)?)
+            Ok(windows::stop_window(id, true)?)
         }
-        [command] if command == "windows" => windows::list_windows(false),
-        [command, flag] if command == "windows" && flag == "--json" => windows::list_windows(true),
+        [command] if command == "windows" => windows::list_windows(inputs, false),
+        [command, flag] if command == "windows" && flag == "--json" => {
+            windows::list_windows(inputs, true)
+        }
         [command, child @ ..] if command == "anima" => {
             let error = Command::new(&inputs.anima)
                 .args(child)

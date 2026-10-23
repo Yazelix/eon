@@ -81,7 +81,11 @@ generation, with the same confirmation, and stops only that window.
 Previous generations that use the current EONW can be stopped
 through their own supervisor even when the current desktop cannot attach to them.
 A generation from a build with another EONW version is listed as incompatible;
-stop it with the build that started it.
+stop it with the build that started it. Each generation records its own
+build's `eon`, and `eon generations` lists it as the executable of a generation
+this `eon` cannot present. `eon attach GENERATION` and `eon window attach ID`
+present such a generation by running that build's `eon`. Generations started
+before Eon recorded it need that build's `eon` by hand.
 The runtime extraction changes the component graph and selects a new generation.
 Reattach earlier work with its retained exact Eon or eonbase executable.
 `previous` attempts every non-dead generation except the exact current
@@ -292,8 +296,8 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon anima [STYLE] [CHILD OPTIONS...]` | Run pinned Anima in the caller's terminal without starting a workspace; `--help` lists styles and options |
 | `eon run [-- COMMAND...]` | Start a fresh workspace picker, optionally for an exact first command |
 | `eon window new` | Open an independent Eon window and print its window ID |
-| `eon windows [--json]` | List independent windows and their generations |
-| `eon window attach ID` | Present one window's current generation after detach |
+| `eon windows [--json]` | List independent windows and their running generations, or that a window has ended |
+| `eon window attach ID` | Present one window's live generation after detach, through the Eon build that started it when needed |
 | `eon window stop ID [--json]` | Stop only the selected window's terminals |
 | `eon window stop all [--json]` | Attempt Stop in every independent window |
 | `eon attach [GENERATION]` | Present the current or one selected compatible generation |
@@ -373,9 +377,11 @@ rest.
 The `code` in an `error` result, such as `unknown-tab`, names the failure more
 precisely. `eon stop previous|all` and `eon window stop all` exit with the
 largest status among their attempts. `eon window attach|stop ID` exits with the
-selected window's status. Commands that run another program instead exit with
-its status: `eon anima` with Anima's, and `eon run -- COMMAND` or
-`eonbase -- COMMAND` with the initial command's once it has ended.
+selected window's status, and `eon window attach ID` exits 4 once that window
+has ended. An `eon attach` that runs the `eon` of another build exits with that
+`eon`'s status. Commands that run another program instead exit with its status:
+`eon anima` with Anima's, and `eon run -- COMMAND` or `eonbase -- COMMAND` with
+the initial command's once it has ended.
 
 ### Accelerando glyphs
 

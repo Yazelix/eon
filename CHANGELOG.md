@@ -5,6 +5,17 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon window attach ID` reopens a detached window after you install a newer
+  Eon profile. It presents the window's running generation instead of only the
+  new build's, and when the new `eon` cannot present it, it runs the `eon` of
+  the build that started the window. `eon attach GENERATION` does the same.
+  A window started before this change by a build this `eon` cannot present
+  has no such record: the command exits 1 and says that the build that started
+  the window can attach or stop it. `eon windows` lists a window whose
+  supervisor has ended as ended instead of as a current generation that has
+  not started, and workspace commands no longer leave an empty generation
+  folder behind for a build that isn't running.
+
 - The agent sidebar marks a tab that shows a popup: its heading ends with a
   small window mark, and the row of an agent running in that popup carries
   the same mark after the popup's name. From another tab you can see which
@@ -59,8 +70,8 @@ installation, and proven contract changes.
   `"name"` to each terminal's attention: the title its terminal sets. This
   changes the workspace protocol to EONW 19. The updated `eon` cannot manage
   a window started before the update: it reports that the supervisor uses
-  EONW 18 and that the Eon build that started it can stop it. Restart such a
-  window to use the updated `eon` there.
+  EONW 18 and that the Eon build that started it can attach or stop it.
+  Restart such a window to use the updated `eon` there.
 
 - Alt+G jumps to the next coding agent that needs attention, and Alt+Shift+G
   to the previous one, whether the agent sidebar is shown, hidden or turned

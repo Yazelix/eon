@@ -1089,6 +1089,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     generation from a build with another EONW version is listed as
     incompatible; this `eon` neither inspects nor stops it, and the build that
     started it can.
+  - A generation records the `eon` executable of the build that started it, an
+    opaque launch input, so a later build can name or run it; `eon attach
+    GENERATION` delegates to it when this build cannot present that
+    generation.
   - `eon stop previous` attempts every non-dead generation except the exact
     current one, whether current is live or not. `eon stop all` includes
     current. Each selected generation uses the existing validated
@@ -1151,6 +1155,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `generations_from_another_eonw_are_incompatible_and_not_stopped`.
     Installed checklist items 2 and 12: detach and attach of one live
     generation, and Stop of that one exact generation.
+- **Launcher record proof:** `eon-reattach-after-upgrade-n5qv`; that bead's
+  commit is its revision.
+  - **Environment:** Automated tier; isolated installed tier (private headless
+    Sway, x86_64 Linux), builds of that revision and of it plus a comment-only
+    change.
+  - **Evidence:** `window_attach_runs_the_build_that_started_its_generation`.
+    Installed: a detached window was presented again by a later build's
+    `eon window attach ID` and by the `eon` its generation recorded; see
+    EON-C23.
 - **Open proof:** Pending re-proof in this repository: native Present of a live
   surface and launch with `/sys/fs/cgroup` hidden.
 
@@ -1825,8 +1838,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Result:** A fresh directory picker opens in a second native window with its
   own Eon supervisor, tabs, focus, and durable Orbit terminals. The original
   window and its terminals remain unchanged. `window new` reports a stable ID;
-  `eon windows` discovers it, `eon window attach ID` presents its current
-  generation after detach, and `eon window stop ID` stops only its terminals.
+  `eon windows` discovers it and `eon window stop ID` stops only its
+  terminals. `eon window attach ID` presents the window's live generation,
+  whichever Eon build started it. When this `eon` cannot present it (another
+  EONW version or component graph), the command runs the `eon` of the build
+  that started it, as that generation recorded it, to present it. When no such
+  record exists, it exits 1 and names the generation, the versions it
+  reports, and that the build that started it can attach or stop it.
+  `eon windows` shows each window's live generation, and lists a window with
+  no live supervisor as ended instead of as the current generation.
   `eon window stop all` covers independent windows and attempts the caller's
   own window last; existing `eon stop all` remains scoped to the caller's
   current runtime namespace. Piped confirmations remain available to later
@@ -1863,6 +1883,20 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `eon window stop all --json` stopped two windows with one result object
     each, then reported each stopped window with empty `results`; with no
     windows it printed `[]`. The `stop-failed` path has no automated check.
+- **Reattach across builds proof:** `eon-reattach-after-upgrade-n5qv`; that
+  bead's commit is its revision.
+  - **Environment:** Automated tier; isolated installed tier (private headless
+    Sway, x86_64 Linux), with a build of that revision (B1), B1 plus a
+    comment-only change for a new generation (B2), and a pre-change EONW 18
+    build.
+  - **Evidence:** `window_attach_runs_the_build_that_started_its_generation`
+    and the record assertions in
+    `new_windows_keep_independent_supervisors_and_stop_by_window_id`.
+    Installed: B1's window recorded B1's session-bin `eon`. After detach, B2
+    listed the window's B1 generation as live, and `eon window attach ID` from
+    B2 presented it again, as did the recorded `eon` run as `attach
+    GENERATION`. A window from the EONW 18 build made B2's attach exit 1 naming
+    the recovery. A stopped window was listed as ended and its attach exited 4.
 - **Open proof:** Pending re-proof in this repository: the launcher's New Eon
   Window action, and native `eon window stop all` with piped confirmations
   stopping the caller's window last.

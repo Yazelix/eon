@@ -7,7 +7,7 @@ use super::{
         socket_identity,
     },
     diagnostics::DiagnosticLog,
-    generation::{current_generation, generation_directory},
+    generation::{current_generation, generation_directory, record_launcher, remove_launcher},
     managed_environment::{self, nonempty_environment_path},
     notification, quota,
     sessions::{
@@ -244,6 +244,11 @@ pub(super) fn launch_current(
             .transpose()?
             .flatten();
         prepare_generation_runtime(&root, &generation)?;
+        if mode == LaunchMode::Workspace
+            && let Err(error) = record_launcher(inputs, &runtime)
+        {
+            log.record(&error);
+        }
         prepare_configuration(&config)?;
         supervise(
             inputs,
@@ -938,6 +943,7 @@ fn supervise(
             let session_cleanup = stop_managed_sessions(&mut state.sessions, SESSION_START_TIMEOUT);
             drop(control_listener);
             if session_cleanup.is_ok() {
+                remove_launcher(runtime);
                 let _ = fs::remove_dir(runtime);
             }
             let mut errors = vec![error];
@@ -989,6 +995,7 @@ fn supervise(
         drop(process);
     }
     let popup_cleanup = stop_transient_popups(&mut state);
+    remove_launcher(runtime);
     let _ = fs::remove_dir(runtime);
     match (status, popup_cleanup) {
         (Ok(code), Ok(())) => Ok(code),
