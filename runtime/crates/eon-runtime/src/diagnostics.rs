@@ -265,7 +265,9 @@ mod tests {
         let logs = root.join("logs");
         drop(create(&logs, GENERATION).unwrap());
         let own = format!("-{}.log", std::process::id());
-        let name = |seconds: u64| format!("{GENERATION}-{seconds}-7.log");
+        // Fixtures carry another PID, so none can pass for the log create() made.
+        let pid = std::process::id() + 1;
+        let name = |seconds: u64| format!("{GENERATION}-{seconds}-{pid}.log");
         for seconds in 1..=4 {
             File::create(logs.join(name(seconds))).unwrap();
         }
@@ -275,9 +277,9 @@ mod tests {
         symlink(root.join("target"), logs.join(name(0))).unwrap();
         let foreign = [
             "notes.log".to_string(),
-            "g1-abc-2-7.log".into(),
-            "grocery-1-7.log".into(),
-            format!("{GENERATION}-x-7.log"),
+            format!("g1-abc-2-{pid}.log"),
+            format!("grocery-1-{pid}.log"),
+            format!("{GENERATION}-x-{pid}.log"),
         ];
         for name in &foreign {
             File::create(logs.join(name)).unwrap();
