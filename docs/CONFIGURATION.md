@@ -96,8 +96,9 @@ close at once. The window reads the setting when it starts.
 
 `[sidebar] enabled = true`, the default, offers the agent sidebar, which lists
 the coding agents in the window's tabs that report their status. `false` turns
-it off. The window reads the setting when it starts. The sidebar itself is not
-drawn yet.
+it off. The window reads the setting when it starts. Alt+Shift+H shows or
+hides the sidebar; it also steps aside while the window leaves fewer than 80
+cells for the terminals beside it. Its agent rows are not drawn yet.
 
 ## Agent quota
 

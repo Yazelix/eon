@@ -7,7 +7,7 @@ use super::{
 };
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
-    scene::{QuotaProvider, inset_sides, pane_chrome_rect},
+    scene::{QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, inset_sides, pane_chrome_rect},
 };
 use glyphon::{
     Attrs, Buffer, Color, ContentType, CustomGlyph, Family, FontSystem, Metrics,
@@ -529,6 +529,53 @@ impl Renderer {
             DEFAULT_BACKGROUND,
             1.0,
         );
+        if let Some(sidebar) = workspace.sidebar() {
+            rectangles.push_rounded(sidebar, workspace.card_radius(), idle);
+            let padding = self.metrics.padding;
+            let width = (sidebar.width - padding * 2.0).max(0.0);
+            // The title takes one line; the empty state wraps below it.
+            let empty_top = sidebar.top + padding + self.metrics.height * 1.5;
+            for (text, top, height, color, wrap) in [
+                (
+                    SIDEBAR_TITLE,
+                    sidebar.top + padding,
+                    self.metrics.height,
+                    SceneColor {
+                        r: 239,
+                        g: 244,
+                        b: 248,
+                    },
+                    Wrap::None,
+                ),
+                (
+                    if workspace.sidebar_empty {
+                        SIDEBAR_EMPTY
+                    } else {
+                        ""
+                    },
+                    empty_top,
+                    (sidebar.bottom() - padding - empty_top).max(0.0),
+                    SceneColor {
+                        r: 162,
+                        g: 174,
+                        b: 190,
+                    },
+                    Wrap::WordOrGlyph,
+                ),
+            ] {
+                self.push_text_clipped(
+                    text,
+                    sidebar.left + padding,
+                    top,
+                    width,
+                    width,
+                    height,
+                    color,
+                    DrawStyleKind::Status(wrap),
+                    sidebar,
+                );
+            }
+        }
         if let Some(hints) = &workspace.hints {
             // The hints sit bare in the margin below the cards.
             for hint in &hints.pieces {

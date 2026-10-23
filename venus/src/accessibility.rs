@@ -3,7 +3,7 @@ use crate::{
     WorkspaceHeaderControl, WorkspaceScene,
     scene::{
         AccessiblePosition, AccessibleRow, AccessibleSelection, AccessibleText, QuotaProvider,
-        WorkspaceQuota,
+        SIDEBAR_EMPTY, WorkspaceQuota,
     },
 };
 use accesskit::{
@@ -35,6 +35,8 @@ const CLOCK: NodeId = NodeId(14);
 const CPU: NodeId = NodeId(15);
 const RAM: NodeId = NodeId(16);
 const CLAUDE_SEVEN_DAY_QUOTA: NodeId = NodeId(17);
+const SIDEBAR: NodeId = NodeId(18);
+const SIDEBAR_EMPTY_STATE: NodeId = NodeId(19);
 // Scene rows are u16, so this range cannot collide with fixed or text-run nodes.
 const WORKSPACE_NODE_START: u64 = 1 << 32;
 const LINK_NODE_START: u64 = 1 << 48;
@@ -275,7 +277,11 @@ impl Snapshot {
             if workspace.has_control(WorkspaceHeaderControl::Shortcuts) {
                 children.push(SHORTCUTS);
             }
-            children.extend([CLOSE_TAB, PANE_PANEL]);
+            children.push(CLOSE_TAB);
+            if workspace.sidebar().is_some() {
+                children.push(SIDEBAR);
+            }
+            children.push(PANE_PANEL);
             if workspace
                 .hints
                 .as_ref()
@@ -435,6 +441,20 @@ impl Snapshot {
                 );
                 node.set_bounds(rect(hints.rect));
                 nodes.push((HINTS, node));
+            }
+
+            if let Some(bounds) = workspace.sidebar() {
+                let mut sidebar = Node::new(Role::Complementary);
+                sidebar.set_label("Agent sidebar");
+                sidebar.set_bounds(rect(bounds));
+                if workspace.sidebar_empty {
+                    sidebar.set_children(vec![SIDEBAR_EMPTY_STATE]);
+                    let mut empty = Node::new(Role::Label);
+                    empty.set_value(SIDEBAR_EMPTY);
+                    empty.set_bounds(rect(bounds));
+                    nodes.push((SIDEBAR_EMPTY_STATE, empty));
+                }
+                nodes.push((SIDEBAR, sidebar));
             }
 
             let mut panel = Node::new(Role::TabPanel);
@@ -1845,7 +1865,7 @@ mod tests {
                                 observed_at: 1000,
                                 windows: windows.clone(),
                             }),
-                            sidebar: eon_workspace_protocol::v18::Sidebar::Open,
+                            sidebar: eon_workspace_protocol::v18::Sidebar::Closed,
                         };
                         let project = |snapshot: &WorkspaceSnapshot, width| {
                             WorkspaceScene::from_snapshot(
@@ -2540,6 +2560,82 @@ mod tests {
             assert_eq!(node(&update, text_run_id(0)).value(), Some("one\n"));
             assert_eq!(node(&update, PANE_PANEL).children().first(), Some(&pane));
             assert_eq!(update.focus, pane);
+        }
+    }
+
+    #[test]
+    fn agent_sidebar_region_follows_the_header_and_names_its_empty_state() {
+        use eon_workspace_protocol::v18::{AttentionState, Sidebar};
+
+        let mut workspace = WorkspaceSnapshot {
+            active_tab: "t1".into(),
+            tabs: vec![workspace_tab("t1", &["p1"], "p1")],
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: Sidebar::Open,
+        };
+        let size = PhysicalSize::new(1400, 600);
+        let tree = |workspace: &WorkspaceSnapshot| {
+            let scene = WorkspaceScene::from_snapshot(
+                workspace,
+                size,
+                CellMetrics::for_scale(1.0),
+                0.0,
+                0.0,
+                |_, text| (text.to_owned(), text.len() as f32 * 10.0),
+            );
+            let mut snapshot = Snapshot::new(size);
+            snapshot.set_workspace(Some(&scene));
+            (scene, snapshot.tree())
+        };
+
+        let (scene, update) = tree(&workspace);
+        assert_eq!(
+            node(&update, WINDOW).children(),
+            [TAB_LIST, NEW_TAB, SHORTCUTS, CLOSE_TAB, SIDEBAR, PANE_PANEL]
+        );
+        let sidebar = node(&update, SIDEBAR);
+        assert_eq!(sidebar.role(), Role::Complementary);
+        assert_eq!(sidebar.label(), Some("Agent sidebar"));
+        assert_eq!(sidebar.bounds(), Some(rect(scene.sidebar().unwrap())));
+        assert_eq!(sidebar.children(), [SIDEBAR_EMPTY_STATE]);
+        assert_eq!(
+            node(&update, SIDEBAR_EMPTY_STATE).value(),
+            Some(SIDEBAR_EMPTY)
+        );
+        assert!(!sidebar.supports_action(Action::Click) && !sidebar.supports_action(Action::Focus));
+
+        workspace.tabs[0].attention_rollup = Some(AttentionState::NeedsInput);
+        let (_, update) = tree(&workspace);
+        assert!(node(&update, SIDEBAR).children().is_empty());
+        assert!(
+            update
+                .nodes
+                .iter()
+                .all(|(id, _)| *id != SIDEBAR_EMPTY_STATE)
+        );
+
+        // Closed or hidden for width, the region leaves the tree.
+        for (sidebar, width) in [(Sidebar::Closed, 1400), (Sidebar::Open, 1000)] {
+            workspace.sidebar = sidebar;
+            let scene = WorkspaceScene::from_snapshot(
+                &workspace,
+                PhysicalSize::new(width, 600),
+                CellMetrics::for_scale(1.0),
+                0.0,
+                0.0,
+                |_, text| (text.to_owned(), text.len() as f32 * 10.0),
+            );
+            let mut snapshot = Snapshot::new(PhysicalSize::new(width, 600));
+            snapshot.set_workspace(Some(&scene));
+            let update = snapshot.tree();
+            assert!(!node(&update, WINDOW).children().contains(&SIDEBAR));
+            assert!(update.nodes.iter().all(|(id, _)| *id != SIDEBAR));
         }
     }
 

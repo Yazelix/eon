@@ -20,12 +20,12 @@ One native window per Venus process shows either one standalone Orbit session
 or an Eon workspace: horizontal tabs above one to four side-by-side columns,
 each an accordion of pane headers around one expanded Orbit surface, with
 Eon-authored popups, pickers, Eon Bar, shortcut viewer, hints, version label,
-and quota chips. Typography, geometry, opacity, blur, and cursor trail are
-startup inputs; Eon owns persistent configuration. Arbitrary split trees,
-vertical splits, column resizing, sidebars, settings, configuration files,
-remote or web access, plugins, shell integration, compatibility windows,
-packaging, and distribution are outside Venus. A new Venus module is product
-scope.
+quota chips, and agent sidebar. Typography, geometry, opacity, blur, and cursor
+trail are startup inputs; Eon owns persistent configuration. Arbitrary split
+trees, vertical splits, column resizing, other sidebars, settings,
+configuration files, remote or web access, plugins, shell integration,
+compatibility windows, packaging, and distribution are outside Venus. A new
+Venus module is product scope.
 
 ## Rendering and tests
 

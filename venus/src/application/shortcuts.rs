@@ -1,7 +1,7 @@
 use super::{NATIVE_PLATFORM, NativePlatform};
 use eon_workspace_protocol::v18::{
     Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, PopupEntry, Side,
-    Snapshot, Tab, WorkspaceAction as CommonAction,
+    Sidebar, Snapshot, Tab, WorkspaceAction as CommonAction,
 };
 use orbit_protocol::session;
 use winit::{
@@ -24,6 +24,7 @@ pub(super) fn paste_shortcut(
 pub(super) enum NativeShortcutAction {
     ToggleViewer,
     ToggleHints,
+    ToggleSidebar,
     ToggleZoom,
     NewWindow,
     Detach,
@@ -291,6 +292,13 @@ pub(super) static FIXED_SHORTCUTS: &[NativeShortcut] = &[
         ALT_SHIFT,
         NativeShortcutAction::ToggleHints,
     ),
+    NativeShortcut::key(
+        "Host",
+        "Show or hide the agent sidebar",
+        KeyCode::KeyH,
+        ALT_SHIFT,
+        NativeShortcutAction::ToggleSidebar,
+    ),
     NativeShortcut {
         group: "Host",
         label: "Copy selected text or focused link",
@@ -325,6 +333,11 @@ impl NativeShortcut {
             trigger: NativeShortcutTrigger::Key(code, modifiers),
             action,
         }
+    }
+
+    /// Whether the binding exists: `[sidebar] enabled = false` unbinds the sidebar toggle.
+    fn bound(self, sidebar: Sidebar) -> bool {
+        self.action != NativeShortcutAction::ToggleSidebar || sidebar != Sidebar::Off
     }
 
     fn matches_key(
@@ -465,13 +478,14 @@ pub(super) fn native_pointer_shortcut_for(
         .find(|shortcut| shortcut.matches_pointer(platform, button, modifiers))
 }
 
-pub(super) fn shortcut_groups(entries: &[PopupEntry]) -> Vec<ShortcutGroup> {
-    shortcut_groups_for(NATIVE_PLATFORM, entries)
+pub(super) fn shortcut_groups(entries: &[PopupEntry], sidebar: Sidebar) -> Vec<ShortcutGroup> {
+    shortcut_groups_for(NATIVE_PLATFORM, entries, sidebar)
 }
 
 pub(super) fn shortcut_groups_for(
     platform: NativePlatform,
     entries: &[PopupEntry],
+    sidebar: Sidebar,
 ) -> Vec<ShortcutGroup> {
     let mut groups = ["Navigate", "Tabs and panes", "Host"]
         .into_iter()
@@ -480,7 +494,7 @@ pub(super) fn shortcut_groups_for(
                 title,
                 FIXED_SHORTCUTS
                     .iter()
-                    .filter(|shortcut| shortcut.group == title)
+                    .filter(|shortcut| shortcut.group == title && shortcut.bound(sidebar))
                     .map(|shortcut| {
                         ShortcutRow::new(
                             shortcut.trigger.display_label_for(platform),
@@ -524,10 +538,11 @@ pub(super) fn shortcut_hints_for(
     platform: NativePlatform,
     focus: WorkspaceFocus,
     entries: &[PopupEntry],
+    sidebar: Sidebar,
 ) -> Vec<ShortcutHint> {
     let mut hints: Vec<ShortcutHint> = Vec::new();
     for shortcut in FIXED_SHORTCUTS {
-        if shortcut.overriding_popup(platform, entries).is_some() {
+        if !shortcut.bound(sidebar) || shortcut.overriding_popup(platform, entries).is_some() {
             continue;
         }
         use NativeShortcutAction as Action;
@@ -535,6 +550,7 @@ pub(super) fn shortcut_hints_for(
         let (label, priority) = match shortcut.action {
             Action::ToggleViewer => ("keys", 0),
             Action::ToggleHints => ("hints", 0),
+            Action::ToggleSidebar => ("sidebar", 2),
             Action::Focus(Left | Right) => ("tabs", 1),
             Action::Focus(Up | Down) => ("panes", 1),
             Action::CreatePane => ("new pane", 1),
@@ -696,8 +712,11 @@ pub(super) fn workspace_shortcut(
     entries: &[PopupEntry],
     active_tab: &str,
     selected_pane: Option<&str>,
+    sidebar: Sidebar,
 ) -> Option<WorkspaceAction> {
-    let action = match native_key_shortcut(PhysicalKey::Code(code), modifiers, entries)?.action {
+    let shortcut = native_key_shortcut(PhysicalKey::Code(code), modifiers, entries)
+        .filter(|shortcut| shortcut.bound(sidebar))?;
+    let action = match shortcut.action {
         NativeShortcutAction::Focus(direction) => CommonAction::Focus(direction),
         NativeShortcutAction::Move(direction) => CommonAction::Move(direction),
         NativeShortcutAction::CreatePane => CommonAction::CreatePane { focus: true },
@@ -712,6 +731,7 @@ pub(super) fn workspace_shortcut(
         NativeShortcutAction::ClosePane => {
             return selected_pane.map(|pane| WorkspaceAction::ClosePane { pane: pane.into() });
         }
+        NativeShortcutAction::ToggleSidebar => return Some(WorkspaceAction::ToggleSidebar),
         _ => return None,
     };
     Some(WorkspaceAction::Workspace(action))
@@ -863,7 +883,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                workspace_shortcut(key, modifiers, &[], "t2", Some("p3")),
+                workspace_shortcut(key, modifiers, &[], "t2", Some("p3"), Sidebar::Open),
                 Some(WorkspaceAction::Workspace(action))
             );
         }
@@ -874,6 +894,7 @@ mod tests {
                 &[],
                 "t2",
                 Some("p3"),
+                Sidebar::Open
             ),
             Some(WorkspaceAction::CreateColumn)
         );
@@ -884,17 +905,32 @@ mod tests {
                     Modifiers::CTRL.union(Modifiers::ALT),
                     &[],
                     "t2",
-                    Some("p3")
+                    Some("p3"),
+                    Sidebar::Open
                 ),
                 Some(WorkspaceAction::MovePaneSideways(side))
             );
         }
         assert_eq!(
-            workspace_shortcut(KeyCode::KeyW, Modifiers::ALT, &[], "t2", Some("p3")),
+            workspace_shortcut(
+                KeyCode::KeyW,
+                Modifiers::ALT,
+                &[],
+                "t2",
+                Some("p3"),
+                Sidebar::Open
+            ),
             Some(WorkspaceAction::ClosePane { pane: "p3".into() })
         );
         assert_eq!(
-            workspace_shortcut(KeyCode::KeyW, Modifiers::ALT, &[], "t2", None),
+            workspace_shortcut(
+                KeyCode::KeyW,
+                Modifiers::ALT,
+                &[],
+                "t2",
+                None,
+                Sidebar::Open
+            ),
             None
         );
         for (key, modifiers) in [KeyCode::KeyT, KeyCode::KeyW]
@@ -913,20 +949,28 @@ mod tests {
             .filter(|&(key, modifiers)| (key, modifiers) != (KeyCode::KeyW, Modifiers::ALT))
         {
             assert_eq!(
-                workspace_shortcut(key, modifiers, &[], "t2", Some("p3")),
+                workspace_shortcut(key, modifiers, &[], "t2", Some("p3"), Sidebar::Open),
                 None
             );
         }
-        assert_eq!(
-            workspace_shortcut(
-                KeyCode::KeyH,
-                Modifiers::ALT.union(Modifiers::SHIFT),
-                &[],
-                "t2",
-                Some("p3"),
-            ),
-            None
-        );
+        // Alt+Shift+H toggles the sidebar and is unbound under `Off`.
+        for (sidebar, action) in [
+            (Sidebar::Open, Some(WorkspaceAction::ToggleSidebar)),
+            (Sidebar::Closed, Some(WorkspaceAction::ToggleSidebar)),
+            (Sidebar::Off, None),
+        ] {
+            assert_eq!(
+                workspace_shortcut(
+                    KeyCode::KeyH,
+                    Modifiers::ALT.union(Modifiers::SHIFT),
+                    &[],
+                    "t2",
+                    Some("p3"),
+                    sidebar,
+                ),
+                action
+            );
+        }
     }
 
     #[test]
@@ -986,8 +1030,29 @@ mod tests {
         };
         let entries = [entry.clone(), project.clone()];
         for platform in [NativePlatform::Linux, NativePlatform::Macos] {
-            let terminal = shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries);
+            let terminal =
+                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, Sidebar::Open);
             assert!(terminal.iter().all(|hint| hint.label != project.label));
+            // The viewer and hints list the sidebar toggle unless `[sidebar]` turned it off.
+            for sidebar in [Sidebar::Open, Sidebar::Closed, Sidebar::Off] {
+                let label = "Show or hide the agent sidebar";
+                let bound = sidebar != Sidebar::Off;
+                assert_eq!(
+                    shortcut_groups_for(platform, &entries, sidebar)
+                        .iter()
+                        .flat_map(|group| &group.rows)
+                        .any(|row| row.action == label),
+                    bound
+                );
+                assert_eq!(
+                    shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, sidebar)
+                        .iter()
+                        .any(
+                            |hint| hint.label == "sidebar" && hint.accessible_label.contains(label)
+                        ),
+                    bound
+                );
+            }
             for action in [
                 NativeShortcutAction::Copy,
                 NativeShortcutAction::Paste,
@@ -1003,7 +1068,7 @@ mod tests {
                         .all(|hint| !hint.accessible_label.contains(shortcut.label))
                 );
                 assert!(
-                    shortcut_groups_for(platform, &entries)
+                    shortcut_groups_for(platform, &entries, Sidebar::Open)
                         .iter()
                         .flat_map(|group| &group.rows)
                         .any(|row| {
@@ -1013,7 +1078,7 @@ mod tests {
                 );
             }
             assert!(
-                shortcut_groups_for(platform, &entries)
+                shortcut_groups_for(platform, &entries, Sidebar::Open)
                     .iter()
                     .flat_map(|group| &group.rows)
                     .any(|row| row.action == project.label
@@ -1074,12 +1139,12 @@ mod tests {
                     && !hint.key.contains("Left")
             }));
             assert!(
-                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &[])
+                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &[], Sidebar::Open)
                     .iter()
                     .all(|hint| hint.label != entry.label)
             );
             for focus in [WorkspaceFocus::Tabs, WorkspaceFocus::Panes] {
-                let chrome = shortcut_hints_for(platform, focus, &[]);
+                let chrome = shortcut_hints_for(platform, focus, &[], Sidebar::Open);
                 assert!(
                     chrome
                         .iter()
@@ -1177,7 +1242,7 @@ mod tests {
                 );
             }
 
-            let rows = shortcut_groups_for(platform, &entries)
+            let rows = shortcut_groups_for(platform, &entries, Sidebar::Open)
                 .into_iter()
                 .flat_map(|group| group.rows)
                 .map(|row| row.action)
@@ -1191,7 +1256,8 @@ mod tests {
             ] {
                 assert!(rows.iter().any(|row| row == action), "missing {action}");
             }
-            let hints = shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries);
+            let hints =
+                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, Sidebar::Open);
             for taken in ["Open new Eon window", "Show or hide shortcut hints"] {
                 assert!(
                     hints
@@ -1239,7 +1305,8 @@ mod tests {
                 session::Modifiers::ALT,
                 &entries,
                 "t1",
-                Some("p1")
+                Some("p1"),
+                Sidebar::Open
             ),
             None
         );

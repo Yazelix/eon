@@ -110,7 +110,7 @@
     },
     {
       "path": "venus",
-      "sha256": "530bad3594aed7ec1fa8cc6ec38f1059ab5a8797a8ff47c4601851f2cae72af8"
+      "sha256": "36ce467750f12802cf78786a2f9c5eda56dc4e8ab60fbbd4c286a4f8f1329a4b"
     }
   ],
   "protocol_file": "docs/AGENT-PROTOCOLS.md"

@@ -110,6 +110,7 @@ one, and clicking another column's terminal selects it.
 |---|---|
 | Alt+/ | Open or close shortcut help |
 | Alt+Shift+B | Show or hide the bottom shortcut hints |
+| Alt+Shift+H | Show or hide the agent sidebar |
 | Alt+1 … Alt+9, Alt+0 | Select tab positions 1 … 10 |
 | Alt+H / Alt+L | Select the column to the left or right, continuing into the previous or next tab |
 | Alt+K / Alt+J | Select the previous or next pane in the column |

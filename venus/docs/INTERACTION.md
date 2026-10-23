@@ -68,6 +68,7 @@ the empty region between tabs and controls drags an undecorated window.
 | Alt+Z | Open Project; Eon supplies other popup shortcuts |
 | Alt+/ | Open or close Shortcuts |
 | Alt+Shift+B | Show or hide the bottom shortcut hints |
+| Alt+Shift+H | Show or hide the agent sidebar, unless Eon turned it off |
 
 Eon decides which actions are available and owns popup lifetime and directory
 changes. A repeated press does not duplicate a structural action. Switching

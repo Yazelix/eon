@@ -612,6 +612,10 @@ re-proved when that platform or feature is next touched.
     opaque frame with `true` and terminal background with `false`.
     Missing, duplicate or invalid values fail before window creation. Eon owns
     persistent configuration and composed-launch policy.
+  - While the agent sidebar is visible (VEN-C30), the cards share the content
+    area to its right: the side gaps and the 40-column CreateColumn check are
+    measured from that area, and the first tab pill keeps its window-edge
+    position, so its alignment with the first card is suspended.
   - Headers and AccessKit names show the opaque `pN` identity, two ASCII spaces,
     and one compact working-directory label.
   - Home displays `~`; descendants use `~/`; paths outside
@@ -716,7 +720,10 @@ re-proved when that platform or feature is next touched.
     Escape kept the window, Enter ended it, and Alt+Shift+D from the prompt
     detached it. With `warning_close_last_tab = false`, Alt+Shift+W ended the
     window at once.
-- **Open proof:** Columns (`eon-splits-opwv`): layout, column attachments and
+- **Open proof:** The agent sidebar's content-area layout is covered by
+  `agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state`;
+  its installed observation is pending `eon-agent-sidebar-yx8.13`.
+  Columns (`eon-splits-opwv`): layout, column attachments and
   the 40-column threshold are covered by
   `columns_sit_side_by_side_and_keep_the_selected_column_primary`,
   `other_columns_attach_their_expanded_panes_until_a_popup_covers_the_tab`,
@@ -1069,7 +1076,9 @@ re-proved when that platform or feature is next touched.
   shrink to preserve a usable cell grid; tiny surfaces omit the label. Exposed
   margins share the terminal default background and opacity, with the existing
   best-effort surface-wide compositor blur request. Pane-frame configuration
-  has no effect on the popup outline.
+  has no effect on the popup outline. While the agent sidebar is visible, the
+  card area is the content area to its right (VEN-C30), so popups never cover
+  the sidebar.
 - **Important failures:** Hidden or replaced endpoints retain no active
   presentation or input. Stale popup actions carry exact instance guards;
   canonical EONW validation and failure responses preserve the last coherent
@@ -1098,7 +1107,10 @@ re-proved when that platform or feature is next touched.
 - **Open proof:** Pending re-proof in this repository: installed v7
   multi-pending tabs, narrow and tiny popup geometry, and supervised empty-body
   startup and reopen. Native fractional
-  scale, other compositors and screen-reader interaction remain unproved.
+  scale, other compositors and screen-reader interaction remain unproved. The
+  popup card area beside a visible agent sidebar is covered by
+  `agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state`;
+  its installed observation is pending `eon-agent-sidebar-yx8.13`.
 
 ## VEN-C20 — Native shortcut viewer
 
@@ -1117,7 +1129,9 @@ re-proved when that platform or feature is next touched.
   action; matching releases remain captured and prior terminal/chrome focus is
   restored on dismissal. The title, subtitle, and first group heading occupy
   separate readable vertical space. The fixed bindings include Alt+Shift+D,
-  listed as "Detach: close the window, keep terminals running".
+  listed as "Detach: close the window, keep terminals running", and
+  Alt+Shift+H, listed as "Show or hide the agent sidebar" (VEN-C30) and
+  omitted while the EONW snapshot's `sidebar` is `Off`.
 - **Important failures:** Repeated toggle events do not oscillate the viewer.
   Workspace loss, empty or maximum-size catalogs, long labels, resize, scale,
   focus loss, and tiny surfaces retain local dismissal and clipped, scrollable
@@ -1152,7 +1166,8 @@ re-proved when that platform or feature is next touched.
     Sway, 1280x720): the viewer listed `Alt+Shift+D` `Detach: close the
     window, keep terminals running` under Host.
 - **Open proof:** Pending re-proof in this repository: AT-SPI dialog traversal
-  and tiny-surface clipping.
+  and tiny-surface clipping. The Alt+Shift+H row is pending
+  `eon-agent-sidebar-yx8.13`.
 
 ## VEN-C21 — Native Eon Bar workspace header
 
@@ -1247,7 +1262,8 @@ re-proved when that platform or feature is next touched.
   `old` disappears. Narrow and tiny widths retain the VEN-C21 tab and control
   priority. Quota-only refreshes, and refreshes that differ only in EON-C31
   attention or sidebar visibility, do not recenter workspace navigation, cancel
-  terminal scroll, replace the attachment, or send an Orbit resize. Venus has
+  terminal scroll, replace the attachment, or send an Orbit resize, except that
+  a change in whether the agent sidebar shows resizes the columns (VEN-C30). Venus has
   no quota cache outside the current EONW snapshot and does not refresh or infer
   provider state.
 - **Owner:** Under EON-C27, pinned CodexBar owns provider collection; Eon
@@ -1261,7 +1277,9 @@ re-proved when that platform or feature is next touched.
   system, decoder, provider parsing, process, filesystem or network access,
   timer, cache, quota mutation, account identity, click action, focus target,
   alert, threshold color, chart, configuration, widget framework, second row,
-  other provider, Orbit change, or platform expansion. Workspace transport loss
+  other provider, Orbit change, or platform expansion. One exception: the mark
+  may also sit in the clickable, focusable rows of the agent sidebar
+  (VEN-C30). Workspace transport loss
   expires the optional quota while retaining the last useful workspace.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** Automated.
@@ -1336,6 +1354,8 @@ re-proved when that platform or feature is next touched.
   toggle. Native focus-specific keys appear only in their applicable context.
   F6 stays in full help and keyboard navigation, without a footer hint.
   Project is omitted from hints; Alt+Z and its full-help entry remain available.
+  Alt+Shift+H has the hint "sidebar", omitted while the EONW snapshot's
+  `sidebar` is `Off` (VEN-C30).
   The header Shortcuts button is omitted only when the visible footer covers
   every applicable hint and that button lacks keyboard focus; otherwise it
   remains. Alt+/ and the complete viewer
@@ -1354,8 +1374,9 @@ re-proved when that platform or feature is next touched.
 - **Consumes:** Existing VEN-C19/C20/C21, canonical EONW, and ORBF v2 / ORBS v13.
 - **Boundary:** No new input mode, child-application key discovery, interactive
   hints, durable preference, generic widget registry, dependency, wire change
-  or platform expansion. Future Eon modes supply hints from their own actual
-  bindings and replace contents at the same footer height.
+  or platform expansion, except that the hints read `sidebar` from EONW v18.
+  Future Eon modes supply hints from their own actual bindings and replace
+  contents at the same footer height.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** Automated and installed.
   - **Evidence:** `shortcut_hints_follow_bindings_catalog_and_native_focus`,
@@ -1367,7 +1388,8 @@ re-proved when that platform or feature is next touched.
     observation is pending.
 - **Open proof:** Pending re-proof in this repository: native raster checks of
   the footer below the cards across widths and fractional scale, and read-only
-  AT-SPI footer lifecycle.
+  AT-SPI footer lifecycle. The installed "sidebar" hint is pending
+  `eon-agent-sidebar-yx8.13`.
 
 ## Rules
 
@@ -1487,7 +1509,9 @@ re-proved when that platform or feature is next touched.
   text, both available windows, hover/accessibility identity, freshness, compact
   and hidden states, and static no-action behavior.
 - **Owner:** Venus's existing custom-glyph renderer and bundled alpha mask.
-  No provider, protocol, dependency, module or platform change.
+  No provider, protocol, dependency, module or platform change. One exception
+  to that and to the static no-action behavior: the splat may also sit in the
+  clickable, focusable rows of the agent sidebar (VEN-C30).
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** Automated.
   - **Evidence:** `quota_icons_preserve_transparency_and_shape_across_scales` in
@@ -1605,3 +1629,113 @@ re-proved when that platform or feature is next touched.
     `eon_orders_and_omits_bar_items` in the Venus suite; the existing
     VEN-C25, VEN-C27 and VEN-C28 tests for the default order; the installed
     observation recorded in `eon-igae.14.1`.
+
+## VEN-C30 — Agent sidebar
+
+- **Status:** Planned. Approved by Lucca on 2026-10-21 (draft 15 on
+  `eon-agent-sidebar-yx8.1`, there named VEN-C29). `eon-agent-sidebar-yx8.3`
+  implements visibility, layout and hiding for width, Alt+Shift+H, the
+  sidebar's AccessKit region and the empty state. Contents, row navigation and
+  row accessibility wait on `eon-agent-sidebar-yx8.13`; F6, Alt+G and
+  Alt+Shift+G on `eon-agent-sidebar-yx8.8`. Until those land, a visible
+  sidebar holds no focus target, so the focus rule's return cases cannot
+  occur.
+- **Consumer:** One person using a Venus window attached to a full Eon
+  workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
+  Alt+Shift+G work under `Off` too.
+- **Trigger:**
+  - Alt+Shift+H;
+  - a new EONW v18 snapshot;
+  - the pointer, keyboard or AccessKit acts on the sidebar;
+  - the window is resized.
+- **Result:**
+  - **Visibility.** The sidebar shows while the snapshot's `sidebar` is
+    `Open`, on every tab of the window. Alt+Shift+H sends `ToggleSidebar`, so
+    one press always flips the choice between open and closed. That shows on
+    screen unless the window is too narrow (see Layout).
+  - **Layout.**
+    - A left sidebar 28 cells wide sits below the Eon Bar. The bar keeps its
+      full width, its controls and its drag region.
+    - It pushes the tab columns, so opening or closing it resizes the visible
+      terminals once.
+    - Venus hides it when the total remaining column area would drop below 80
+      cells. This leaves `sidebar` unchanged, and VEN-C21's markers then show.
+    - Above that threshold, individual columns may still drop below 40 cells,
+      as VEN-C8 already allows when the window shrinks.
+    - While the sidebar is hidden for width, Alt+Shift+H still toggles
+      `sidebar`. The new value applies once the window is wide enough.
+    - **VEN-C8 and VEN-C18 amendment.** While the sidebar is visible:
+      - the side gaps and the 40-column CreateColumn check are measured from
+        the content area to its right;
+      - the first tab pill keeps its window-edge position, and its alignment
+        with the first card is suspended;
+      - VEN-C18's popup card area is that content area, so popups never cover
+        the sidebar.
+  - **Contents.**
+    - It lists, in tab order, only tabs that have attention or an Agent popup.
+    - Each such tab gets a header (`3  site`), followed by one row per
+      terminal with attention.
+    - A row shows:
+      - the state glyph;
+      - the app icon or name. Venus maps `app=claude-code` to the Claude splat
+        (VEN-C26) and `app=codex` to the Codex mark (VEN-C22), and shows any
+        other `app` verbatim;
+      - the record title, or the tab's directory leaf when there is none
+        (EONW panes carry no cwd);
+      - the age;
+      - the source terminal, by the pane's `pN` identity as in pane headers
+        and AccessKit (VEN-C8), or, for a popup, its catalog label such as
+        "Agent popup", because the spec says shown status should name its
+        source terminal.
+    - A stale record is dimmed and labelled "status stale".
+    - A needs-input row adds one plain-text, truncated `msg` line.
+    - Other records of a terminal fold into "+N".
+    - Rows never reorder by priority.
+  - **Navigation.**
+    - Activating a row sends `FocusAttention`, and keyboard focus moves to the
+      target terminal, or stays on the tab when the covered-target rule only
+      selects the tab. It never stops a terminal.
+    - F6 cycles Terminal → Sidebar → Tabs → Panes, and skips Sidebar while it
+      is not visible. This amends the F6 order in VEN-C18 and
+      `venus/docs/INTERACTION.md`, and the F6 label in
+      `venus/src/application/shortcuts.rs`.
+    - Arrows traverse rows, Enter activates and Esc returns focus to the
+      terminal.
+    - **Focus rule.** Alt+Shift+H never moves keyboard focus into the sidebar;
+      focus stays on the terminal. Keyboard focus returns to the terminal in
+      three cases:
+      - the sidebar closes while it holds focus;
+      - it is hidden for width while it holds focus;
+      - the focused row's target is removed.
+    - Alt+G and Alt+Shift+G send `NextAttention` and `PreviousAttention`,
+      whether the sidebar is visible or not.
+  - **Accessibility.** The sidebar is one named AccessKit region after the
+    header and before the panes. Each row's accessible name gives the state
+    word, app, tab, source terminal and message.
+- **Important failures:**
+  - With no attention, the sidebar shows an explanatory empty state.
+  - The sidebar never takes desktop focus and never changes Orbit state.
+  - Record text renders only as plain text, never as markup or links.
+- **Owner:**
+  - **Venus** owns layout, hiding for width, rendering, input and
+    accessibility.
+  - **Eon** owns state, visibility and actions (EON-C31).
+- **Attention-only refreshes.** A snapshot that differs only in attention or
+  `sidebar` keeps rejected-action notices (VEN-C8) and disturbs no navigation,
+  scroll, attachment or resize, as quota-only refreshes already do (VEN-C22);
+  a change in the sidebar's visibility resizes the columns as Layout says.
+  VEN-C8, VEN-C22 and EON-C8 carry this clause.
+- **Consumes:** EONW v18 and the VEN-C22 and VEN-C26 icons, under the
+  exceptions those contracts record for sidebar rows.
+- **Boundary:**
+  - no interpretation of provider events, terminal output or process data,
+    except mapping the reported `app` identifier to an icon;
+  - no drag resizing, compact rail or vertical tabs;
+  - no previews, no priority reordering and no notifications.
+- **Proof:** None yet. `eon-agent-sidebar-yx8.3` adds the automated checks
+  `agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state`,
+  `agent_sidebar_region_follows_the_header_and_names_its_empty_state`,
+  `direct_workspace_shortcuts_use_stable_eon_actions` and
+  `shortcut_hints_follow_bindings_catalog_and_native_focus`; the installed
+  dogfood runs once, in `eon-agent-sidebar-yx8.13`, on the final revision of
+  the sidebar batch.

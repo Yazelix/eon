@@ -1,7 +1,7 @@
 use crate::{Result, launch::LaunchArguments};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
 use eon_workspace_protocol::v18::{
-    Action as WorkspaceAction, Direction as WorkspaceDirection, PopupEntry,
+    Action as WorkspaceAction, Direction as WorkspaceDirection, PopupEntry, Sidebar,
     WorkspaceAction as CommonAction,
 };
 use orbit_protocol::session::{
@@ -928,7 +928,12 @@ impl Application {
         self.shortcut_viewer.open.then(|| {
             DialogScene::new(
                 DialogKind::Shortcuts,
-                shortcut_groups(self.popup_entries()),
+                shortcut_groups(
+                    self.popup_entries(),
+                    self.workspace_model
+                        .snapshot()
+                        .map_or(Sidebar::Off, |snapshot| snapshot.sidebar),
+                ),
                 state.renderer.size(),
                 state.renderer.metrics(),
                 self.shortcut_viewer.scroll,
@@ -1210,7 +1215,12 @@ impl Application {
         let snapshot = self.workspace_model.snapshot()?;
         self.hints = self.hints_visible.then(|| {
             ShortcutHintsScene::new(
-                shortcut_hints_for(NATIVE_PLATFORM, self.workspace_focus, &snapshot.entries),
+                shortcut_hints_for(
+                    NATIVE_PLATFORM,
+                    self.workspace_focus,
+                    &snapshot.entries,
+                    snapshot.sidebar,
+                ),
                 state.renderer.size(),
                 state.renderer.metrics(),
                 self.workspace_focus,
@@ -1729,6 +1739,9 @@ impl Application {
             self.tab_scroll = scene.tab_scroll();
             self.pane_scroll = scene.pane_scroll();
             self.presentation.invalidate();
+            // Showing or hiding the sidebar resizes the columns; other refreshes leave every
+            // size as it was, so nothing is sent.
+            self.send_resize();
         }
         if self.workspace_model.snapshot().is_some()
             && self.workspace_model.active_attachment().is_none()
@@ -1824,16 +1837,24 @@ impl Application {
 
     /// Whether Venus lets a column request for the active tab reach Eon.
     fn fits_another_column(&self) -> bool {
-        let (Some(state), Some(snapshot)) = (&self.window, self.workspace_model.snapshot()) else {
+        let (Some(state), Some(snapshot), Some(scene)) = (
+            &self.window,
+            self.workspace_model.snapshot(),
+            self.workspace_scene(),
+        ) else {
             return false;
         };
+        let window = state.renderer.size();
         snapshot
             .tabs
             .iter()
             .find(|tab| tab.id == snapshot.active_tab)
             .is_some_and(|tab| {
                 admits_column(
-                    state.renderer.size(),
+                    PhysicalSize::new(
+                        scene.content_width(window.width as f32) as u32,
+                        window.height,
+                    ),
                     tab.columns.len(),
                     state.renderer.metrics(),
                 )
@@ -1964,6 +1985,7 @@ impl Application {
                     &snapshot.entries,
                     &snapshot.active_tab,
                     selected_pane,
+                    snapshot.sidebar,
                 )
             }),
         };
@@ -6708,10 +6730,14 @@ mod tests {
         .unwrap();
         assert_eq!(shortcut.action, NativeShortcutAction::NewWindow);
         assert!(
-            shortcut_groups_for(NativePlatform::Linux, &[])
-                .iter()
-                .flat_map(|group| &group.rows)
-                .any(|row| row.shortcut == "Alt+Shift+N" && row.action == "Open new Eon window")
+            shortcut_groups_for(
+                NativePlatform::Linux,
+                &[],
+                eon_workspace_protocol::v18::Sidebar::Open
+            )
+            .iter()
+            .flat_map(|group| &group.rows)
+            .any(|row| row.shortcut == "Alt+Shift+N" && row.action == "Open new Eon window")
         );
 
         let script = std::env::temp_dir().join(format!(
@@ -6796,7 +6822,11 @@ mod tests {
                 key: "KeyZ".into(),
             },
         }];
-        let groups = shortcut_groups_for(NativePlatform::Linux, &entries);
+        let groups = shortcut_groups_for(
+            NativePlatform::Linux,
+            &entries,
+            eon_workspace_protocol::v18::Sidebar::Open,
+        );
         let key_shortcut = |key, modifiers| {
             native_key_shortcut_for(NativePlatform::Linux, key, modifiers, &[]).unwrap()
         };
@@ -6873,10 +6903,14 @@ mod tests {
         assert!(rows.contains(&("Ctrl+click", "Open link")));
         assert!(rows.contains(&("Alt+Z", "Money ops")));
         assert!(
-            shortcut_groups_for(NativePlatform::Linux, &[])
-                .iter()
-                .flat_map(|group| &group.rows)
-                .all(|row| row.action != "Money ops")
+            shortcut_groups_for(
+                NativePlatform::Linux,
+                &[],
+                eon_workspace_protocol::v18::Sidebar::Open
+            )
+            .iter()
+            .flat_map(|group| &group.rows)
+            .all(|row| row.action != "Money ops")
         );
 
         assert_eq!(
@@ -6896,7 +6930,14 @@ mod tests {
             None
         );
         assert_eq!(
-            workspace_shortcut(KeyCode::Slash, Modifiers::ALT, &[], "t1", None),
+            workspace_shortcut(
+                KeyCode::Slash,
+                Modifiers::ALT,
+                &[],
+                "t1",
+                None,
+                Sidebar::Open
+            ),
             None
         );
 
@@ -6952,11 +6993,15 @@ mod tests {
                 .is_none()
         );
 
-        let rows = shortcut_groups_for(NativePlatform::Macos, &[])
-            .into_iter()
-            .flat_map(|group| group.rows)
-            .map(|row| row.shortcut)
-            .collect::<Vec<_>>();
+        let rows = shortcut_groups_for(
+            NativePlatform::Macos,
+            &[],
+            eon_workspace_protocol::v18::Sidebar::Open,
+        )
+        .into_iter()
+        .flat_map(|group| group.rows)
+        .map(|row| row.shortcut)
+        .collect::<Vec<_>>();
         for label in [
             "Command+C",
             "Command+V or Paste",

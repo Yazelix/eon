@@ -90,8 +90,9 @@ under VEN-C1; complete composed screen-reader qualification and native reader-ke
 ## Platform and limits
 
 This slice excludes arbitrary split trees, vertical splits, column resizing,
-sidebars, popup command/lifetime policy, persistent Venus configuration,
-background images, plugins, remote or web access, packaging, and distribution.
+sidebars other than the agent sidebar (VEN-C30), popup command/lifetime
+policy, persistent Venus configuration, background images, plugins, remote or
+web access, packaging, and distribution.
 Blur strength and live blur changes are also outside its scope.
 
 The proved Linux host uses winit, wgpu, glyphon, AccessKit, and wl-clipboard-rs

@@ -136,17 +136,17 @@ pub(super) fn initial_window_size(
 /// Whether a column request beside `columns` existing columns may reach Eon. A
 /// tab without columns gets a pane and a full tab gets Eon's capacity refusal;
 /// otherwise one more column must leave each `MIN_COLUMN_CELLS` terminal
-/// columns wide.
+/// columns wide within the `content` area the cards share.
 pub(super) fn admits_column(
-    window: PhysicalSize<u32>,
+    content: PhysicalSize<u32>,
     columns: usize,
     metrics: CellMetrics,
 ) -> bool {
     if columns == 0 || columns >= MAX_COLUMNS {
         return true;
     }
-    let width = workspace_column_width(window.width as f32, columns + 1, metrics);
-    surface_size(PhysicalSize::new(width as u32, window.height), metrics)
+    let width = workspace_column_width(content.width as f32, columns + 1, metrics);
+    surface_size(PhysicalSize::new(width as u32, content.height), metrics)
         .is_some_and(|size| size.cols >= MIN_COLUMN_CELLS)
 }
 

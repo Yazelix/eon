@@ -4,7 +4,8 @@ use crate::{
     render::CellMetrics,
 };
 use eon_workspace_protocol::v18::{
-    ALT, ClaudeQuotaState, CodexQuotaState, Pane, PopupEntry, QuotaWindow, SHIFT, Snapshot, Tab,
+    ALT, ClaudeQuotaState, CodexQuotaState, Pane, PopupEntry, QuotaWindow, SHIFT, Sidebar,
+    Snapshot, Tab,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, Rgb, Row, Screen, StyleColor, Underline,
@@ -848,6 +849,10 @@ pub struct WorkspaceScene {
     pub pane_viewport: SceneRect,
     /// The selected column's card, or the popup's; `other_columns` hold their own.
     pub(crate) chrome: SceneRect,
+    /// The agent sidebar's card, while it is visible.
+    sidebar: Option<SceneRect>,
+    /// No tab has attention, so a visible sidebar shows its empty state.
+    pub(crate) sidebar_empty: bool,
     card_radius: f32,
     tab_scroll: f32,
     pane_scroll: f32,
@@ -930,11 +935,39 @@ fn side_gap(width: f32, count: usize, metrics: CellMetrics) -> f32 {
     card_gap(metrics).min((spare / (count + 1) as f32).max(0.0))
 }
 
-/// The area `count` cards share: inset from the window's sides by the card gap, starting one gap
-/// below the tab pills and ending one gap above the window's bottom, or at the footer, whose
-/// band is the bottom margin when hints show. Gaps yield before a card loses the `minimum_height`
-/// its last padded terminal row needs.
+/// The agent sidebar's width (VEN-C30).
+const SIDEBAR_CELLS: f32 = 28.0;
+/// The fewest cells the content area keeps beside a visible sidebar; any narrower and it hides.
+const SIDEBAR_MIN_CONTENT_CELLS: f32 = 80.0;
+pub(crate) const SIDEBAR_TITLE: &str = "Agents";
+pub(crate) const SIDEBAR_EMPTY: &str =
+    "No agent needs attention. Agents that report their status show here while they work.";
+
+/// The agent sidebar's card, one card gap from the window's left edge and as tall as `cards`,
+/// while `sidebar` is open and the content area to its right keeps enough cells.
+fn sidebar_rect(
+    sidebar: Sidebar,
+    width: f32,
+    cards: SceneRect,
+    metrics: CellMetrics,
+) -> Option<SceneRect> {
+    let rect = SceneRect {
+        left: card_gap(metrics),
+        width: SIDEBAR_CELLS * metrics.width,
+        ..cards
+    };
+    (sidebar == Sidebar::Open && width - rect.right() >= SIDEBAR_MIN_CONTENT_CELLS * metrics.width)
+        .then_some(rect)
+}
+
+/// The area `count` cards share: inset from the content area's sides by the card gap, starting
+/// one gap below the tab pills and ending one gap above the window's bottom, or at the footer,
+/// whose band is the bottom margin when hints show. Gaps yield before a card loses the
+/// `minimum_height` its last padded terminal row needs. The content area starts at `left` and is
+/// `width` wide.
+#[allow(clippy::too_many_arguments)]
 fn card_area(
+    left: f32,
     width: f32,
     count: usize,
     tab_height: f32,
@@ -951,7 +984,7 @@ fn card_area(
     let top = (tab_height + (gap - tab_inset(metrics, tab_height)).max(0.0).min(spare))
         .min(content_height);
     SceneRect {
-        left: side,
+        left: left + side,
         top,
         width: (width - side * 2.0).max(0.0),
         height: (content_height - below - top).max(0.0),
@@ -1427,6 +1460,28 @@ impl WorkspaceScene {
             .position(|tab| tab.id == snapshot.active_tab)
             .expect("EONW validates the active tab");
         let zoomed = zoom && active_popup(snapshot).is_none() && active.columns.len() > 1;
+        // Every card shares this area; a popup or an empty tab uses all of it as one card. The
+        // area follows the tab's columns whether or not a popup covers them, so toggling a popup
+        // keeps the outer card edges: each column needs one padded cell below its first header.
+        // A visible sidebar narrows it to the content area at its right.
+        let cards = |left: f32| {
+            card_area(
+                left,
+                width - left,
+                active.columns.len().max(1),
+                tab_height,
+                content_height,
+                hints.is_some(),
+                minimum_height,
+                metrics,
+            )
+        };
+        let sidebar = sidebar_rect(snapshot.sidebar, width, cards(0.0), metrics);
+        let pane_viewport = cards(sidebar.map_or(0.0, SceneRect::right));
+        let sidebar_empty = snapshot
+            .tabs
+            .iter()
+            .all(|tab| tab.attention_rollup.is_none());
         let mut tab_end = inset;
         let mut tabs: Vec<_> = snapshot
             .tabs
@@ -1567,18 +1622,6 @@ impl WorkspaceScene {
         }
         let active = &snapshot.tabs[active_tab];
         let popup = active_popup(snapshot);
-        // Every card shares this area; a popup or an empty tab uses all of it as one card. The
-        // area follows the tab's columns whether or not a popup covers them, so toggling a popup
-        // keeps the outer card edges: each column needs one padded cell below its first header.
-        let pane_viewport = card_area(
-            width,
-            active.columns.len().max(1),
-            tab_height,
-            content_height,
-            hints.is_some(),
-            minimum_height,
-            metrics,
-        );
         let card_radius = card_gap(metrics);
         if popup.is_some() || active.columns.is_empty() {
             let horizontal_inset = (snapshot.geometry.side_margin * metrics.scale).min(
@@ -1629,6 +1672,8 @@ impl WorkspaceScene {
                 tab_viewport,
                 pane_viewport,
                 chrome: pane_viewport,
+                sidebar,
+                sidebar_empty,
                 card_radius,
                 tab_scroll,
                 pane_scroll: 0.0,
@@ -1661,8 +1706,9 @@ impl WorkspaceScene {
             .position(|column| column.expanded == *selected)
             .expect("EONW validates the selected pane");
         let count = active.columns.len();
-        let column_gap = side_gap(width, count, metrics);
-        let column_width = workspace_column_width(width, count, metrics);
+        let content_width = width - sidebar.map_or(0.0, SceneRect::right);
+        let column_gap = side_gap(content_width, count, metrics);
+        let column_width = workspace_column_width(content_width, count, metrics);
         let maximum_terminal_height = (pane_viewport.height - pane_height).max(0.0);
         let minimum_terminal_height =
             minimum_terminal(metrics, metrics.height).min(maximum_terminal_height);
@@ -1781,6 +1827,8 @@ impl WorkspaceScene {
             tab_viewport,
             pane_viewport,
             chrome,
+            sidebar,
+            sidebar_empty,
             card_radius,
             tab_scroll,
             pane_scroll,
@@ -1791,6 +1839,19 @@ impl WorkspaceScene {
             popup_label: None,
             zoomed: zoomed.then_some(count),
         }
+    }
+
+    /// The agent sidebar's card while it is visible: `snapshot.sidebar` is `Open` and the window
+    /// is wide enough.
+    #[must_use]
+    pub fn sidebar(&self) -> Option<SceneRect> {
+        self.sidebar
+    }
+
+    /// The width the cards share: the window right of a visible sidebar.
+    #[must_use]
+    pub fn content_width(&self, window: f32) -> f32 {
+        window - self.sidebar.map_or(0.0, SceneRect::right)
     }
 
     /// Corner radius of every pane and popup card.
@@ -2714,6 +2775,128 @@ mod tests {
                 "fresh"
             }));
         }
+    }
+
+    #[test]
+    fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
+        use eon_workspace_protocol::v18::{
+            AttentionState, Column, Popup, PopupEntry, PopupGeometry, Shortcut,
+        };
+
+        let pane = |id: &str| Pane {
+            id: id.into(),
+            session: format!("session-{id}"),
+            endpoint: format!("/run/{id}.sock").into_bytes(),
+            live: true,
+            attention: None,
+        };
+        let mut snapshot = Snapshot {
+            active_tab: "t1".into(),
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: vec![PopupEntry {
+                id: "agent".into(),
+                label: "Agent".into(),
+                shortcut: Shortcut {
+                    modifiers: ALT,
+                    key: "KeyA".into(),
+                },
+            }],
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/work".to_vec(),
+                pending: false,
+                selected_pane: Some("p1".into()),
+                selected_popup: None,
+                columns: ["p1", "p2"]
+                    .map(|id| Column {
+                        panes: vec![pane(id)],
+                        expanded: id.into(),
+                    })
+                    .into(),
+                popups: vec![Popup {
+                    id: "u1".into(),
+                    entry: "agent".into(),
+                    session: "session-u1".into(),
+                    endpoint: b"/run/u1.sock".to_vec(),
+                    attention: None,
+                }],
+                attention_rollup: None,
+            }],
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: Sidebar::Open,
+        };
+        let metrics = CellMetrics::for_scale(1.0);
+        let project = |snapshot: &Snapshot, width| {
+            WorkspaceScene::from_snapshot(
+                snapshot,
+                PhysicalSize::new(width, 600),
+                metrics,
+                0.0,
+                0.0,
+                |_, text| (text.into(), text.len() as f32 * 10.0),
+            )
+        };
+        let gap = card_gap(metrics);
+
+        // A visible sidebar is 28 cells wide, one card gap from the window's left edge and as
+        // tall as the cards, which it pushes right; the columns share the content area.
+        let open = project(&snapshot, 1400);
+        let sidebar = open.sidebar().unwrap();
+        assert_eq!((sidebar.left, sidebar.width), (gap, 280.0));
+        assert_eq!(
+            (sidebar.top, sidebar.bottom()),
+            (open.pane_viewport.top, open.pane_viewport.bottom())
+        );
+        assert_eq!(open.content_width(1400.0), 1400.0 - sidebar.right());
+        assert_eq!(
+            (open.pane_viewport.left, open.pane_viewport.right()),
+            (sidebar.right() + gap, 1400.0 - gap)
+        );
+        assert_eq!(
+            open.chrome.width,
+            workspace_column_width(open.content_width(1400.0), 2, metrics)
+        );
+        assert!(open.sidebar_empty);
+
+        // Closed, the cards take the window back; the first tab pill never moves.
+        snapshot.sidebar = Sidebar::Closed;
+        let closed = project(&snapshot, 1400);
+        assert_eq!(closed.sidebar(), None);
+        assert_eq!(closed.content_width(1400.0), 1400.0);
+        assert_eq!(closed.pane_viewport.left, gap);
+        assert_eq!(closed.tabs[0].rect, open.tabs[0].rect);
+        snapshot.sidebar = Sidebar::Off;
+        assert_eq!(project(&snapshot, 1400).pane_viewport, closed.pane_viewport);
+
+        // A popup's card is the content area, so it never covers the sidebar.
+        snapshot.sidebar = Sidebar::Open;
+        snapshot.tabs[0].selected_popup = Some("u1".into());
+        let popup = project(&snapshot, 1400);
+        assert_eq!(popup.sidebar(), Some(sidebar));
+        assert_eq!(popup.chrome, open.pane_viewport);
+        assert!(popup.terminal.left > sidebar.right());
+        snapshot.tabs[0].selected_popup = None;
+
+        // The sidebar hides once the content area would keep fewer than 80 cells, leaving the
+        // layout it would have closed.
+        let narrowest = (gap + 280.0 + 800.0) as u32;
+        assert!(project(&snapshot, narrowest).sidebar().is_some());
+        let hidden = project(&snapshot, narrowest - 1);
+        assert_eq!(hidden.sidebar(), None);
+        snapshot.sidebar = Sidebar::Closed;
+        assert_eq!(
+            hidden.pane_viewport,
+            project(&snapshot, narrowest - 1).pane_viewport
+        );
+
+        // Any attention replaces the empty state.
+        snapshot.sidebar = Sidebar::Open;
+        snapshot.tabs[0].attention_rollup = Some(AttentionState::Working);
+        assert!(!project(&snapshot, 1400).sidebar_empty);
     }
 
     #[test]

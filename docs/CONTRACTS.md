@@ -1657,7 +1657,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   popup shortcut on the key of any other fixed binding takes that key; the
   fixed binding is unbound while that configuration is active, and the viewer
   lists it as overridden by the popup. The fixed bindings include
-  Alt+Shift+D, listed as "Detach: close the window, keep terminals running".
+  Alt+Shift+D, listed as "Detach: close the window, keep terminals running",
+  and Alt+Shift+H, listed as "Show or hide the agent sidebar" (EON-C31,
+  VEN-C30) and omitted while `sidebar` is `Off`.
 - **Important failures:** Eon rejects configured popup shortcuts on Alt+Slash
   or positional Alt+0 through Alt+9, a reserved set no 1.x release enlarges,
   before workspace mutation.
@@ -1673,7 +1675,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Orbit update, child-application bindings, rebinding UI, command palette,
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
-  EONW.
+  EONW. One exception: the viewer reads `sidebar` from EONW v18.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -1696,7 +1698,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     keep terminals running` under Host.
 - **Open proof:** Pending re-proof in this repository: header spacing at
   compact sizes, rebound and disabled popup rows, and AT-SPI projection on an
-  installed surface. No eonbase, fractional-scale,
+  installed surface. The Alt+Shift+H row is pending the sidebar batch's
+  installed proof in `eon-agent-sidebar-yx8.13`. No eonbase, fractional-scale,
   screen-reader workflow, wider compositor, non-systemd, macOS or
   direct-distribution proof is added.
 
@@ -1839,7 +1842,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   focus. Alt+/ and the complete modal viewer remain available. F6 stays in full
   help and keyboard navigation, without a footer hint.
   Project is omitted from hints; Alt+Z and its full-help entry remain available.
-  Alt+Shift+D has the hint "detach", derived like the others.
+  Alt+Shift+D has the hint "detach", derived like the others. Alt+Shift+H has
+  the hint "sidebar", omitted while `sidebar` is `Off`.
 - **Important failures:** The toggle is captured once per press, without repeat
   or release leakage. Visibility changes preserve focus, selected identities
   and live terminals; normal resizing is their only terminal effect. Popup
@@ -1853,7 +1857,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Consumes:** EON-C19/C20/C21, VEN-C24, existing EONW v7 and ORBF2/ORBS13.
 - **Boundary:** No minor-mode framework, child-application key discovery,
   interactive hints, durable preference, configuration option, dependency,
-  wire change or platform expansion. Future real modes replace contents from
+  wire change or platform expansion, except that the hints read `sidebar` from
+  EONW v18. Future real modes replace contents from
   their actual bindings at the same footer height.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -1875,7 +1880,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Sway, 1280x720) showed `D detach` in the footer's Alt+Shift group.
 - **Open proof:** Pending re-proof in this repository: footer placement below
   the cards across widths, fractional scales and minimum fonts on an installed
-  surface. No performance, macOS or screen-reader workflow claim.
+  surface. No performance, macOS or screen-reader workflow claim. The installed
+  "sidebar" hint is pending `eon-agent-sidebar-yx8.13`.
 
 ## EON-C25 — Running Eon version badge
 

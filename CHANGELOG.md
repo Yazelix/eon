@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Full Eon windows show the agent sidebar on the left, below the Eon Bar, 28
+  cells wide; the terminal columns move right to make room. Alt+Shift+H shows
+  or hides it without taking focus from the terminal, and the shortcut viewer
+  and hints list the key. The sidebar steps aside while the window leaves
+  fewer than 80 cells for the terminals, and returns when it is wide enough.
+  For now it shows only its title and, while no agent reports its status, a
+  short explanation; the agent rows come next. `[sidebar] enabled = false` removes
+  it and frees Alt+Shift+H.
+
 - The first time an Eon window detaches, by closing it or with Alt+Shift+D,
   a desktop notification says Eon is still running in the background and how
   to return or stop it. It appears once per user and never takes focus.

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- VEN-C30 (Planned): the agent sidebar's frame. While the snapshot's
+  `sidebar` is `Open` and the window keeps at least 80 cells right of it, a
+  28-cell sidebar sits below the Eon Bar and the cards share the content area
+  to its right (VEN-C8 side gaps and CreateColumn check, VEN-C18 popup card
+  area). Alt+Shift+H sends `ToggleSidebar`; it is unbound, and missing from
+  the viewer and hints, under `Off` (VEN-C20, VEN-C24). The sidebar is an
+  AccessKit region between the header and the panes, with an empty state when
+  no tab has attention (`eon-agent-sidebar-yx8.3`). Rows and their
+  navigation remain planned in `eon-agent-sidebar-yx8.13`, and F6, Alt+G and
+  Alt+Shift+G in `eon-agent-sidebar-yx8.8`.
+
 - Venus consumes EONW v18, which adds EON-C31 agent attention to panes,
   popups and tabs, the window's sidebar visibility, and the `ToggleSidebar`,
   `FocusAttention`, `NextAttention` and `PreviousAttention` actions. Venus
