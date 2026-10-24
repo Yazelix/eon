@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A collapsed last pane's label sits in the stack's rounded bottom edge, closing
+  it with one line. Columns and the Agents card share that bottom line; a last
+  expanded frame ends there inside terminal padding. Fractional-scale resize
+  rounding keeps strokes clear of every visible grid. A short, scrolled viewport
+  clips a bottom stroke that cannot fit below the grid. Terminal layout and grids
+  stay unchanged, as do frameless and popup paint.
+
 - Tab pills and quota, CPU, RAM and clock widgets share one centred height,
   with equal space above and below to the cards' shared top line. Tabs keep
   their fills; widgets use neutral rounded outlines sized by `[terminal] border_width`.

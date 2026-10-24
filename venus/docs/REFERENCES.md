@@ -186,11 +186,24 @@ allocated card area. A collapsed pane shows a rounded title edge whose corners t
 expanded pane; its sides join the next card in that direction. The expanded
 pane has a full rounded frame with its title in the top edge.
 `border_width` sizes neutral outlines and `focus_border_width` sizes the
-selected pane's whole outline. The existing Scene viewport/header/body
-allocation and padding retain grid sizing, hit targets and AccessKit ownership.
+selected pane's whole outline. Scene owns viewport/header/body allocation,
+padding, whole-cell grid sizing, hit targets and AccessKit bounds.
 Scene owns the outer gap around and between allocated column areas and includes
 it in initial grid overhead. Scene owns each column's fill from its first
-rounded top edge to its rounded bottom, fixed during header scrolling. One
+rounded top edge to its rounded bottom. The allocated area stays fixed during
+header scrolling.
+The last collapsed pane's label sits in that bottom edge, closing the stack with
+one line. At the unscrolled bottom, columns and the Agents card share one snapped
+painted bottom line. Its inset is half the title height, bounded by terminal
+bottom padding minus the widest stroke, so frames stay clear of grid cells.
+After resize rounding, the shared line moves outward as needed to leave a
+full stroke beyond every visible terminal grid, within the allocated bottom.
+A last expanded frame ends there inside its bottom padding when space permits.
+If a short, scrolled viewport cannot fit its bottom stroke below the grid, the
+stroke stays below the grid and the card clips it. Terminal layout,
+grids, header bands, hit targets and AccessKit bounds stay unchanged, as do
+popup and frameless paint. Last collapsed labels center on the line, clamped
+so their text boxes end at or above the bottom of their unchanged title bands. One
 continuous terminal background at terminal opacity covers title rows and the
 space between stacked cards; Renderer paints it once. Popup and sidebar fills
 follow their own rounded outer edges. Above and outside those fills, the gaps

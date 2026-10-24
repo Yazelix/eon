@@ -21,10 +21,7 @@ pub(super) fn terminal_screen(
 }
 
 pub(super) fn rect_screen(rect: SceneRect) -> PhysicalSize<u32> {
-    PhysicalSize::new(
-        rect.width.max(0.0).round() as u32,
-        rect.height.max(0.0).round() as u32,
-    )
+    rect.screen_size()
 }
 
 pub(super) fn initial_window_size(
@@ -151,39 +148,7 @@ pub(super) fn admits_column(
 }
 
 pub(super) fn surface_size(screen: PhysicalSize<u32>, metrics: CellMetrics) -> Option<SurfaceSize> {
-    if screen.width == 0
-        || screen.height == 0
-        || screen.width > u32::from(u16::MAX)
-        || screen.height > u32::from(u16::MAX)
-    {
-        return None;
-    }
-    let cell_width = metrics.width.round() as u32;
-    let cell_height = metrics.height.round() as u32;
-    let padding = metrics.padding.round() as u32;
-    let horizontal_padding = padding.checked_mul(2)?;
-    let vertical_padding = padding.checked_mul(2)?;
-    if horizontal_padding >= screen.width || vertical_padding >= screen.height {
-        return None;
-    }
-    let columns = (screen.width - horizontal_padding) / cell_width;
-    let mut rows = (screen.height - vertical_padding) / cell_height;
-    if columns == 0 || rows == 0 {
-        return None;
-    }
-    rows = rows.min(MAX_CELLS as u32 / columns);
-    Some(SurfaceSize {
-        cols: u16::try_from(columns).ok()?,
-        rows: u16::try_from(rows).ok()?,
-        screen_width: screen.width,
-        screen_height: screen.height,
-        cell_width,
-        cell_height,
-        padding_top: padding,
-        padding_bottom: screen.height - padding - rows * cell_height,
-        padding_left: padding,
-        padding_right: screen.width - padding - columns * cell_width,
-    })
+    metrics.surface_size(screen)
 }
 
 #[cfg(test)]

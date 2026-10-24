@@ -427,6 +427,15 @@ pub(super) fn fit_header_text(
     best
 }
 
+pub(super) fn bottom_title_row(row: SceneRect, bottom: f32, text_height: f32) -> SceneRect {
+    SceneRect {
+        top: (bottom - row.height / 2.0)
+            .min(row.top)
+            .min(row.bottom() - (row.height + text_height) / 2.0),
+        ..row
+    }
+}
+
 impl Renderer {
     pub fn set_hovered_header(&mut self, header: Option<(WorkspaceFocus, String)>) {
         self.header.hovered_header = header;
@@ -884,7 +893,7 @@ impl Renderer {
             if self.pane_frames {
                 rectangles.clip = Some(area);
                 rectangles.push_card_outline(
-                    sidebar,
+                    workspace.card_rect(area, self.metrics, self.card_stroke_width()),
                     workspace.card_radius(),
                     &[gap],
                     physical_outline_width(self.border_width, self.metrics.scale),
@@ -1266,17 +1275,20 @@ impl Renderer {
                 left: card.right(),
                 ..SceneRect::default()
             };
-            let fill = workspace.card_fill(card, self.metrics);
+            let fill = workspace.card_fill(card, self.metrics, self.card_stroke_width());
             let mut rules = pane_outlines(
                 panes,
                 terminal,
                 fill,
                 physical_outline_width(self.border_width, self.metrics.scale),
+                workspace.pane_viewport,
+                self.metrics,
+                self.card_stroke_width(),
             )
             .into_iter()
             .map(|outline| (outline, [empty_gap; 2]))
             .collect::<Vec<_>>();
-            for (pane, (_, rule_gaps)) in panes.iter().zip(&mut rules) {
+            for (index, (pane, (outline, rule_gaps))) in panes.iter().zip(&mut rules).enumerate() {
                 // Only the selected column's expanded header shows selection and scrollback.
                 let current = pane.selected && selected_column;
                 let Some(rect) = pane.rect.intersection(workspace.pane_viewport) else {
@@ -1319,7 +1331,16 @@ impl Renderer {
                         b: 190,
                     }
                 };
-                let pill = self.build_border_title(pane.label(), pane.rect, rect, width, color);
+                let row = if self.pane_frames && index + 1 == panes.len() && !pane.selected {
+                    bottom_title_row(
+                        pane.rect,
+                        outline.bounds.bottom(),
+                        chrome_title_metrics(self.metrics).text_height,
+                    )
+                } else {
+                    pane.rect
+                };
+                let pill = self.build_border_title(pane.label(), row, rect, width, color);
                 let gaps = [
                     pill,
                     if scrollback_width > 0.0 {

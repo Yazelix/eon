@@ -115,6 +115,19 @@ their interaction feedback. The hints sit bare in the margin below the cards. Hi
 
 With pane frames on, each column has one continuous terminal-background fill,
 from its first pane's rounded top edge down to the column's rounded bottom.
+The last collapsed pane's label sits in that bottom edge, closing the stack with
+one line. At the unscrolled bottom, columns and the Agents card share one snapped
+painted bottom line. Its inset is half the title height, bounded by terminal
+bottom padding minus the widest stroke, so frames stay clear of grid cells.
+After resize rounding, the shared line moves outward as needed to leave a
+full stroke beyond every visible terminal grid, within the allocated bottom.
+A last expanded frame ends there inside its bottom padding when space permits.
+If a short, scrolled viewport cannot fit its bottom stroke below the grid, the
+stroke stays below the grid and the card clips it. Terminal layout,
+grids, header bands, hit targets and AccessKit bounds stay unchanged, as do
+popup and frameless paint.
+Last collapsed labels center on the line, clamped so their text boxes end at
+or above the bottom of their unchanged title bands.
 Stacked title rows and the space between cards share the expanded terminal's
 background colour and opacity. Above that edge and outside the outer corners,
 the gaps and footer stay the opaque bar colour. The first title sits on that

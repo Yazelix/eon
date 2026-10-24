@@ -591,7 +591,9 @@ re-proved when that platform or feature is next touched.
     stacked without gaps in its column's allocated card area. A collapsed pane
     is one title row showing a rounded edge with its label in it; its corners turn
     toward the column's expanded pane and its sides continue to the next card in
-    that direction;
+    that direction; when the column's last pane is collapsed, its
+    label sits in the column's bottom edge instead, so the stack closes with one line;
+    at the unscrolled bottom that line shares one snapped line with the agent sidebar card's bottom;
     the expanded pane is a full rounded frame with its label in the top edge.
     Pane titles use the same shared
     chrome title metric as the agent sidebar title (VEN-C30). Scene owns one card gap (8

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- VEN-C8: a collapsed last pane's label closes the stack in its rounded bottom
+  edge, with no second line below it. Column and Agents cards share that snapped
+  painted bottom line, bounded by terminal padding to keep strokes clear of grid
+  cells after fractional-scale resize rounding; a last expanded frame ends there too
+  when space permits. Short, scrolled viewports clip bottom strokes below the grid.
+  Terminal layout, grids, hit targets
+  and AccessKit bounds stay unchanged, as do frameless and popup paint (`eon-glp0`).
+
 - VEN-C8, VEN-C21, VEN-C27 and VEN-C28: tab pills and Eon Bar widgets share
   one centred height. Tabs keep their fills; quota, CPU, RAM and clock widgets
   use unfilled rounded outlines in the pane cards' neutral colour and configured

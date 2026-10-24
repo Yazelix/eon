@@ -59,13 +59,36 @@ pub(crate) fn pane_outlines(
     terminal: SceneRect,
     fill: CardFill,
     border_width: f32,
+    viewport: SceneRect,
+    metrics: CellMetrics,
+    stroke_width: f32,
 ) -> Vec<PaneOutline> {
     let Some(expanded) = panes.iter().position(|pane| pane.selected) else {
         return Vec::new();
     };
-    let mut outlines = Vec::with_capacity(panes.len() + 1);
+    let mut outlines = Vec::with_capacity(panes.len());
     for (index, pane) in panes.iter().enumerate() {
-        let frame = pane.frame(terminal);
+        let mut frame = pane.frame(terminal);
+        if pane.selected {
+            let bottom = frame.bottom().min(fill.bounds.bottom());
+            // Scrolling may leave no room for a bottom stroke inside the fixed card.
+            let bottom = metrics
+                .surface_size(terminal.screen_size())
+                .map_or(bottom, |size| {
+                    bottom.max(
+                        metrics
+                            .grid_rect(terminal, size.cols, size.rows)
+                            .bottom()
+                            .ceil()
+                            + stroke_width,
+                    )
+                });
+            frame.height = (bottom - frame.top).max(0.0);
+        } else if index + 1 == panes.len() {
+            // Move paint with the scrolled row, keeping its allocated title band unchanged.
+            frame.top += fill.bounds.bottom()
+                - title_rule_y(viewport.bottom() - pane.rect.height, pane.rect.height);
+        }
         let radius = rounded_radius(frame, fill.radius);
         let (bounds, clip) = if pane.selected {
             (frame, frame)
@@ -90,7 +113,11 @@ pub(crate) fn pane_outlines(
             } else {
                 previous_frame.top + border_width
             } - rounded_radius(previous_frame, fill.radius);
-            let bottom = frame.top + border_width;
+            let bottom = if index + 1 == panes.len() {
+                frame.top
+            } else {
+                frame.top + border_width
+            };
             (
                 SceneRect {
                     top: join - radius,
@@ -108,29 +135,27 @@ pub(crate) fn pane_outlines(
             bounds,
             clip,
             radius,
-            title_y: Some(frame.top),
+            title_y: Some(if index + 1 == panes.len() && !pane.selected {
+                frame.top - border_width
+            } else {
+                frame.top
+            }),
             expanded: pane.selected,
-        });
-    }
-    if let Some(last) = panes.last().filter(|pane| !pane.selected) {
-        let frame = last.frame(terminal);
-        let top = frame.top + border_width - rounded_radius(frame, fill.radius);
-        outlines.push(PaneOutline {
-            bounds: fill.bounds,
-            radius: rounded_radius(fill.bounds, fill.radius),
-            clip: SceneRect {
-                top,
-                height: fill.bounds.bottom() - top,
-                ..fill.bounds
-            },
-            title_y: None,
-            expanded: false,
         });
     }
     outlines
 }
 
 impl SceneRect {
+    /// Rounded native dimensions used by Orbit resize admission.
+    #[must_use]
+    pub fn screen_size(self) -> PhysicalSize<u32> {
+        PhysicalSize::new(
+            self.width.max(0.0).round() as u32,
+            self.height.max(0.0).round() as u32,
+        )
+    }
+
     #[must_use]
     pub fn right(self) -> f32 {
         self.left + self.width
@@ -1249,26 +1274,12 @@ pub(crate) fn title_rule_y(top: f32, height: f32) -> f32 {
     (top + height / 2.0).floor()
 }
 
-/// Every painted card starts on the shared title line, independent of header scrolling.
-/// The allocated area still owns column layout, hit targets and popup margins.
-pub(crate) fn card_rect(allocated: SceneRect, metrics: CellMetrics) -> SceneRect {
-    let top = title_rule_y(
-        allocated.top,
-        chrome_title_metrics(metrics)
-            .text_height
-            .min(allocated.height),
-    );
-    SceneRect {
-        top,
-        height: (allocated.bottom() - top).max(0.0),
-        ..allocated
-    }
-}
-
 pub(crate) fn popup_card_rect(allocated: SceneRect, metrics: CellMetrics) -> SceneRect {
-    let card = card_rect(allocated, metrics);
+    let title_height = chrome_title_metrics(metrics)
+        .text_height
+        .min(allocated.height);
     // Keep one padded cell when the window cannot also fit the shared top edge.
-    let top = card.top.min(
+    let top = title_rule_y(allocated.top, title_height).min(
         (allocated.bottom() - minimum_terminal(metrics, metrics.height))
             .max(allocated.top)
             .floor(),
@@ -1276,7 +1287,7 @@ pub(crate) fn popup_card_rect(allocated: SceneRect, metrics: CellMetrics) -> Sce
     SceneRect {
         top,
         height: (allocated.bottom() - top).max(0.0),
-        ..card
+        ..allocated
     }
 }
 
@@ -1294,7 +1305,17 @@ fn sidebar_rect(
         ..cards
     };
     (sidebar == Sidebar::Open && width - rect.right() >= SIDEBAR_MIN_CONTENT_CELLS * metrics.width)
-        .then_some(card_rect(rect, metrics))
+        .then(|| {
+            let top = title_rule_y(
+                rect.top,
+                chrome_title_metrics(metrics).text_height.min(rect.height),
+            );
+            SceneRect {
+                top,
+                height: (rect.bottom() - top).max(0.0),
+                ..rect
+            }
+        })
 }
 
 /// The agent sidebar's tab headings and rows inside its `card`, in tab and terminal order, and
@@ -2668,12 +2689,51 @@ impl WorkspaceScene {
             .any(|control| control.kind == kind && control.rect.width > 0.0)
     }
 
+    /// Column and sidebar paint share one bottom, clear of every visible column's grid.
+    pub(crate) fn card_rect(
+        &self,
+        allocated: SceneRect,
+        metrics: CellMetrics,
+        stroke_width: f32,
+    ) -> SceneRect {
+        let title_height = chrome_title_metrics(metrics)
+            .text_height
+            .min(allocated.height);
+        let top = title_rule_y(allocated.top, title_height)
+            .max(allocated.top)
+            .min(allocated.bottom());
+        let inset =
+            (chrome_title_metrics(metrics).text_height / 2.0).min(metrics.padding - stroke_width);
+        let grid_bottom = std::iter::once(self.terminal)
+            .chain(self.other_columns.iter().map(|column| column.terminal))
+            .filter(|terminal| terminal.intersection(self.pane_viewport).is_some())
+            .filter_map(|terminal| {
+                let size = metrics.surface_size(terminal.screen_size())?;
+                Some(metrics.grid_rect(terminal, size.cols, size.rows).bottom())
+            })
+            .reduce(f32::max);
+        let bottom = (allocated.bottom() - inset).floor();
+        let bottom = grid_bottom
+            .map_or(bottom, |grid| bottom.max(grid.ceil() + stroke_width))
+            .min(allocated.bottom());
+        SceneRect {
+            top,
+            height: (bottom - top).max(0.0),
+            ..allocated
+        }
+    }
+
     /// Paint geometry is separate from terminal layout, input and accessibility bounds.
-    pub(crate) fn card_fill(&self, allocated: SceneRect, metrics: CellMetrics) -> CardFill {
+    pub(crate) fn card_fill(
+        &self,
+        allocated: SceneRect,
+        metrics: CellMetrics,
+        stroke_width: f32,
+    ) -> CardFill {
         let bounds = if self.popup_label.is_some() {
             popup_card_rect(allocated, metrics)
         } else {
-            card_rect(allocated, metrics)
+            self.card_rect(allocated, metrics, stroke_width)
         };
         CardFill {
             bounds,
@@ -3480,7 +3540,11 @@ mod tests {
                 "{scale}/{line_height}"
             );
             assert!((band.end - band.start - expected.1).abs() < 0.001);
-            assert!((band.start - (card_rect(cards, metrics).top - band.end)).abs() < 1.0);
+            let shared_top = title_rule_y(
+                cards.top,
+                chrome_title_metrics(metrics).text_height.min(cards.height),
+            );
+            assert!((band.start - (shared_top - band.end)).abs() < 1.0);
             assert_eq!(band.end, cards.top);
             assert!(band.end - band.start >= metrics.height);
         }
@@ -3642,7 +3706,13 @@ mod tests {
             assert_eq!(scene.panes[1].rect.bottom(), scene.terminal.top);
             assert_eq!(scene.terminal.bottom(), scene.panes[2].rect.top);
             assert_eq!(
-                card_rect(scene.chrome, metrics).top,
+                scene
+                    .card_rect(
+                        scene.chrome,
+                        metrics,
+                        crate::render::physical_outline_width(2, metrics.scale)
+                    )
+                    .top,
                 (scene.pane_viewport.top + chrome_title_metrics(metrics).text_height / 2.0).floor(),
                 "painted pane top at scale {scale}"
             );
@@ -3657,7 +3727,14 @@ mod tests {
             let outlines = pane_outlines(
                 &scene.panes,
                 scene.terminal,
-                scene.card_fill(scene.chrome, metrics),
+                scene.card_fill(
+                    scene.chrome,
+                    metrics,
+                    crate::render::physical_outline_width(2, metrics.scale),
+                ),
+                3.0,
+                scene.pane_viewport,
+                metrics,
                 3.0,
             );
             assert!(
@@ -3706,12 +3783,19 @@ mod tests {
                 "1280x720, {count} panes: {before} -> {after} rows, allocated height {}",
                 scene.chrome.height
             );
-            let painted = card_rect(scene.chrome, metrics);
+            let painted = scene.card_rect(
+                scene.chrome,
+                metrics,
+                crate::render::physical_outline_width(2, metrics.scale),
+            );
             assert_eq!(
                 painted.top,
                 (scene.panes[0].rect.top + scene.panes[0].rect.height / 2.0).floor()
             );
-            assert_eq!(painted.bottom(), scene.chrome.bottom());
+            assert_eq!(
+                painted.bottom(),
+                (scene.chrome.bottom() - chrome_title_metrics(metrics).text_height / 2.0).floor()
+            );
             assert_eq!(painted.top - scene.chrome.top, 10.0);
         }
     }
@@ -3815,7 +3899,12 @@ mod tests {
         assert_eq!(
             (sidebar.top, sidebar.bottom()),
             (
-                card_rect(open.chrome, metrics).top,
+                open.card_rect(
+                    open.chrome,
+                    metrics,
+                    crate::render::physical_outline_width(2, metrics.scale)
+                )
+                .top,
                 open.pane_viewport.bottom()
             )
         );
@@ -4369,7 +4458,11 @@ mod tests {
                                         .map(|column| (column.chrome, column.terminal)),
                                 )
                             {
-                                let fill = scene.card_fill(allocated, metrics);
+                                let fill = scene.card_fill(
+                                    allocated,
+                                    metrics,
+                                    crate::render::physical_outline_width(2, metrics.scale),
+                                );
                                 assert!(
                                     metrics.padding >= fill.radius,
                                     "padding below radius at scale {scale}, size {size:?}, columns {count}"
@@ -4403,14 +4496,17 @@ mod tests {
         let popup = project(&snapshot);
 
         assert_eq!(popup.chrome, stack.chrome);
-        let painted = card_rect(stack.chrome, CellMetrics::for_scale(1.0));
+        let painted = stack.card_rect(stack.chrome, CellMetrics::for_scale(1.0), 2.0);
         assert_eq!(
             painted.top,
             stack.panes[0].rect.top + stack.panes[0].rect.height / 2.0
         );
-        assert_eq!(painted.bottom(), popup.chrome.bottom());
         assert_eq!(
-            card_rect(popup.chrome, CellMetrics::for_scale(1.0)),
+            popup_card_rect(popup.chrome, CellMetrics::for_scale(1.0)).bottom(),
+            popup.chrome.bottom()
+        );
+        assert_eq!(
+            popup.card_rect(popup.chrome, CellMetrics::for_scale(1.0), 2.0),
             painted
         );
         for scale in [1.0, 1.3] {
@@ -4439,12 +4535,34 @@ mod tests {
                 let panes = project(&snapshot);
                 snapshot.tabs[0].selected_popup = Some("u1".into());
                 let popup = project(&snapshot);
-                let painted = card_rect(panes.chrome, metrics);
+                let painted = panes.card_rect(
+                    panes.chrome,
+                    metrics,
+                    crate::render::physical_outline_width(2, metrics.scale),
+                );
                 assert_eq!(popup.pane_viewport, panes.pane_viewport);
-                assert_eq!(card_rect(popup.chrome, metrics).top, painted.top);
+                assert_eq!(
+                    popup
+                        .card_rect(
+                            popup.chrome,
+                            metrics,
+                            crate::render::physical_outline_width(2, metrics.scale)
+                        )
+                        .top,
+                    painted.top
+                );
                 assert_eq!(popup.sidebar().unwrap().top, painted.top);
                 for column in &panes.other_columns {
-                    assert_eq!(card_rect(column.chrome, metrics).top, painted.top);
+                    assert_eq!(
+                        panes
+                            .card_rect(
+                                column.chrome,
+                                metrics,
+                                crate::render::physical_outline_width(2, metrics.scale)
+                            )
+                            .top,
+                        painted.top
+                    );
                 }
                 assert!(
                     (popup.terminal.top
@@ -4504,7 +4622,11 @@ mod tests {
                     };
                     snapshot.tabs[0].selected_popup = None;
                     let panes = project(&snapshot);
-                    let pane_card = card_rect(panes.chrome, metrics);
+                    let pane_card = panes.card_rect(
+                        panes.chrome,
+                        metrics,
+                        crate::render::physical_outline_width(2, metrics.scale),
+                    );
                     for (headers, _) in panes.column_panes() {
                         let first = &headers[0];
                         assert_eq!(
@@ -4579,7 +4701,14 @@ mod tests {
             let old_height = popup.chrome.height
                 - 2.0 * snapshot.geometry.vertical_margin * metrics.scale
                 - popup_title_gutter(metrics);
-            let moved_edge = card_rect(popup.chrome, metrics).top - popup.chrome.top;
+            let moved_edge = popup
+                .card_rect(
+                    popup.chrome,
+                    metrics,
+                    crate::render::physical_outline_width(2, metrics.scale),
+                )
+                .top
+                - popup.chrome.top;
             assert_eq!(popup.terminal.height, old_height - moved_edge);
             assert_eq!(
                 popup.terminal.bottom(),
