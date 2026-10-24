@@ -9,7 +9,6 @@ use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
         QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, card_rect, chrome_title_metrics,
-        title_rule_y,
     },
 };
 use eon_workspace_protocol::v19::AttentionState;
@@ -1191,18 +1190,15 @@ impl Renderer {
                 },
                 self.metrics,
             );
-            let neutral = SceneColor {
-                r: 58,
-                g: 75,
-                b: 91,
-            };
             let empty_gap = SceneRect {
                 left: card.right(),
                 ..SceneRect::default()
             };
-            let mut top_gaps = [empty_gap; 2];
-            let mut top_rule = None;
-            for pane in panes {
+            let mut rules = panes
+                .iter()
+                .map(|pane| (pane.rect, [empty_gap; 2], pane.selected && selected_column))
+                .collect::<Vec<_>>();
+            for (pane, (_, rule_gaps, _)) in panes.iter().zip(&mut rules) {
                 // Only the selected column's expanded header shows selection and scrollback.
                 let current = pane.selected && selected_column;
                 let Some(rect) = pane.rect.intersection(workspace.pane_viewport) else {
@@ -1246,21 +1242,8 @@ impl Renderer {
                         empty_gap
                     },
                 ];
-                let rule_y = title_rule_y(pane.rect.top, pane.rect.height);
-                if pane.rect.top <= card.top && pane.rect.bottom() > card.top {
-                    top_gaps = gaps;
-                    top_rule = Some((pane.rect, if current { accent } else { neutral }));
-                }
+                *rule_gaps = gaps;
                 rectangles.clip = Some(rect);
-                if self.pane_frames && rule_y != card.top {
-                    rectangles.push_title_rule(
-                        card,
-                        workspace.card_radius(),
-                        pane.rect,
-                        &gaps,
-                        if current { accent } else { neutral },
-                    );
-                }
                 if !label.is_empty() {
                     if self.header.hovers(WorkspaceFocus::Panes, &pane.id) {
                         rectangles.push_rounded(pill, self.metrics.padding / 2.0, selected);
@@ -1301,15 +1284,13 @@ impl Renderer {
                     rect,
                 );
             }
-            if self.pane_frames {
-                rectangles.push_pane_card_outline(
-                    card,
-                    workspace.card_radius(),
-                    &top_gaps,
-                    top_rule,
-                    neutral,
-                );
-            }
+            rectangles.push_pane_outlines(
+                card,
+                workspace.card_radius(),
+                workspace.pane_viewport,
+                &rules,
+                self.pane_frames.then_some(self.focus_color),
+            );
         }
     }
 
@@ -1683,6 +1664,11 @@ mod tests {
                     1.0,
                     None,
                     true,
+                    SceneColor {
+                        r: 178,
+                        g: 7,
+                        b: 251,
+                    },
                     FontSetup::new(&FontSettings::default()).unwrap(),
                 ))
                 .unwrap();
@@ -1909,11 +1895,11 @@ mod tests {
                     assert_eq!(
                         rule,
                         if frames {
-                            vec![[126, 231, 185]]
+                            vec![[58, 75, 91], [178, 7, 251]]
                         } else {
                             vec![]
                         },
-                        "single first top rule; frameless has none"
+                        "first top rule takes the focus colour; frameless has none"
                     );
                     assert!(
                         colors_at(label.left + line.line_w / 2.0, rule_y).is_empty(),

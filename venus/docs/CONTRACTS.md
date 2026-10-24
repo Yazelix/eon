@@ -606,7 +606,10 @@ re-proved when that platform or feature is next touched.
     space beyond the corner curves and the footer band, takes the header's
     opaque color, so header, gaps and footer form one frame. The selected
     pane in the selected column has a brighter label and, with pane frames
-    enabled, an accent title rule. Hover adds a pill behind the label;
+    enabled, an outline in the focus color around the whole pane, twice
+    the card border's width: its title rule, the card's sides beside it,
+    and the next pane's title rule or the card's bottom. Hover adds a pill
+    behind the label;
     keyboard focus adds a distinct accent pill outline. Title rules stay
     straight during scrolling; card borders stay fixed while overflowing
     headers scroll within each card. `--pane-frames true|false` defaults to

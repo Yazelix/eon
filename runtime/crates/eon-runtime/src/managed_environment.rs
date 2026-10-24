@@ -182,6 +182,7 @@ pub struct TerminalConfig {
     pub background_opacity: f32,
     pub background_blur: bool,
     pub pane_frames: bool,
+    pub focus_color: Option<String>,
     pub cursor_trail_color: Option<String>,
     pub cursor_trail_duration: Option<f32>,
     pub font_family: Option<String>,
@@ -198,6 +199,7 @@ struct TerminalSettings {
     background_opacity: Option<f32>,
     background_blur: Option<bool>,
     pane_frames: Option<bool>,
+    focus_color: Option<String>,
     cursor_trail_color: Option<String>,
     cursor_trail_duration: Option<f32>,
     font_family: Option<String>,
@@ -210,7 +212,8 @@ struct TerminalSettings {
 
 impl TerminalConfig {
     pub(crate) fn requires_startup_admission(&self) -> bool {
-        self.cursor_trail_color.is_some()
+        self.focus_color.is_some()
+            || self.cursor_trail_color.is_some()
             || self.font_family.is_some()
             || !self.font_fallbacks.is_empty()
             || self.font_size.is_some()
@@ -315,6 +318,7 @@ pub(crate) fn terminal_presentation(
             .unwrap_or(base.background_opacity),
         background_blur: settings.background_blur.unwrap_or(base.background_blur),
         pane_frames: settings.pane_frames.unwrap_or(base.pane_frames),
+        focus_color: settings.focus_color.or_else(|| base.focus_color.clone()),
         cursor_trail_color: settings
             .cursor_trail_color
             .or_else(|| base.cursor_trail_color.clone()),

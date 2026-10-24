@@ -55,6 +55,8 @@ const DEFAULT_METRICS: CellMetrics = CellMetrics {
     font_size: 16.0,
     padding: 12.0,
 };
+const OUTLINE_WIDTH: f32 = 1.0;
+
 const DEFAULT_BACKGROUND: SceneColor = SceneColor {
     r: 10,
     g: 13,
@@ -388,6 +390,7 @@ pub struct Renderer {
     clear: wgpu::Color,
     background_opacity: f32,
     pane_frames: bool,
+    focus_color: SceneColor,
     metrics: CellMetrics,
     cell_font: CellFont,
     window: Arc<Window>,
@@ -440,6 +443,7 @@ impl Renderer {
         background_opacity: f32,
         cursor_tail: Option<(SceneColor, f32)>,
         pane_frames: bool,
+        focus_color: SceneColor,
         mut fonts: FontSetup,
     ) -> Result<Self, RenderError> {
         let size = nonzero(window.inner_size());
@@ -619,6 +623,7 @@ impl Renderer {
             clear: clear_color(DEFAULT_BACKGROUND, background_opacity, srgb_target),
             background_opacity,
             pane_frames,
+            focus_color,
             metrics,
             cell_font,
             window,
@@ -1946,43 +1951,128 @@ struct RectangleBatch {
 }
 
 impl RectangleBatch {
-    fn push_pane_card_outline(
+    fn push_pane_outlines(
         &mut self,
         card: SceneRect,
         radius: f32,
-        gaps: &[SceneRect],
-        top_rule: Option<(SceneRect, SceneColor)>,
-        neutral: SceneColor,
+        viewport: SceneRect,
+        rules: &[(SceneRect, [SceneRect; 2], bool)],
+        focus_color: Option<SceneColor>,
     ) {
-        self.clip = Some(SceneRect {
-            top: card.top + 1.0,
-            height: (card.height - 1.0).max(0.0),
-            ..card
-        });
-        self.push_rounded_outline(card, radius, neutral);
-        self.clip = None;
-        let color = top_rule
-            .filter(|(row, _)| title_rule_y(row.top, row.height) == card.top)
-            .map_or(neutral, |(_, color)| color);
-        self.push_title_rule(
-            card,
-            radius,
+        let Some(focus_color) = focus_color else {
+            return;
+        };
+        let clip = self.clip;
+        let neutral = SceneColor {
+            r: 58,
+            g: 75,
+            b: 91,
+        };
+        let empty_gap = SceneRect {
+            left: card.right(),
+            ..SceneRect::default()
+        };
+        let mut top_gaps = [empty_gap; 2];
+        let selected = rules.iter().position(|(_, _, selected)| *selected);
+        for (index, (row, gaps, _)) in rules.iter().enumerate() {
+            if row.intersection(viewport).is_none() {
+                continue;
+            }
+            if row.top <= card.top && row.bottom() > card.top {
+                top_gaps = *gaps;
+            }
+            self.clip = row.intersection(viewport);
+            if title_rule_y(row.top, row.height) != card.top
+                && !selected.is_some_and(|selected| index == selected || index == selected + 1)
+            {
+                self.push_title_rule(card, radius, *row, gaps, OUTLINE_WIDTH, neutral);
+            }
+        }
+        let width = OUTLINE_WIDTH * 2.0;
+        let focus_rules = selected
+            .into_iter()
+            .flat_map(|selected| rules.iter().skip(selected).take(2))
+            .filter_map(|(row, _, _)| {
+                SceneRect {
+                    top: title_rule_y(row.top, row.height),
+                    height: width,
+                    ..card
+                }
+                .intersection(viewport)
+            })
+            .collect::<Vec<_>>();
+        let focus_sides = selected.and_then(|selected| {
+            let (row, _, _) = &rules[selected];
+            let top = title_rule_y(row.top, row.height).max(card.top + width);
+            let bottom = rules
+                .get(selected + 1)
+                .map_or(card.bottom(), |(row, _, _)| {
+                    title_rule_y(row.top, row.height) + width
+                })
+                .min(card.bottom());
             SceneRect {
-                height: 0.0,
+                top,
+                height: (bottom - top).max(0.0),
+                ..card
+            }
+            .intersection(viewport)
+        });
+        let border = SceneRect {
+            top: card.top + OUTLINE_WIDTH,
+            height: (card.height - OUTLINE_WIDTH).max(0.0),
+            ..card
+        };
+        // Title rules own their bands; every remaining side or corner is painted once.
+        for segment in uncovered(border, &focus_rules) {
+            let focused = focus_sides.and_then(|focus| segment.intersection(focus));
+            for neutral_segment in uncovered(segment, focused.as_slice()) {
+                self.clip = Some(neutral_segment);
+                self.push_rounded_outline(card, radius, neutral);
+            }
+            if let Some(focused) = focused {
+                self.clip = Some(focused);
+                self.push_rounded_outline_width(card, radius, width, focus_color);
+            }
+        }
+        for top in uncovered(
+            SceneRect {
+                height: OUTLINE_WIDTH,
                 ..card
             },
-            gaps,
-            color,
-        );
+            &focus_rules,
+        ) {
+            self.clip = Some(top);
+            self.push_title_rule(
+                card,
+                radius,
+                SceneRect {
+                    height: 0.0,
+                    ..card
+                },
+                &top_gaps,
+                OUTLINE_WIDTH,
+                neutral,
+            );
+        }
+        if let Some(selected) = selected {
+            let (row, gaps, _) = &rules[selected];
+            self.clip = Some(viewport);
+            self.push_title_rule(card, radius, *row, gaps, width, focus_color);
+            if let Some((row, gaps, _)) = rules.get(selected + 1) {
+                self.push_title_rule(card, radius, *row, gaps, width, focus_color);
+            }
+        }
+        self.clip = clip;
     }
 
-    /// Interrupt a one-pixel rule around the measured label, clipping its ends to the card.
+    /// Interrupt a physical-pixel rule around the measured label, clipping its ends to the card.
     fn push_title_rule(
         &mut self,
         card: SceneRect,
         radius: f32,
         row: SceneRect,
         gaps: &[SceneRect],
+        width: f32,
         color: SceneColor,
     ) {
         let clip = self.clip;
@@ -1997,7 +2087,7 @@ impl RectangleBatch {
                 left: left.max(row.left),
                 top,
                 width: (right.min(row.right()) - left.max(row.left)).max(0.0),
-                height: 1.0,
+                height: width,
             };
             self.clip = clip.map_or(Some(segment), |clip| segment.intersection(clip));
             if self.clip.is_some() {
@@ -2010,13 +2100,23 @@ impl RectangleBatch {
 
     /// A one-physical-pixel stroke, leaving the translucent interior untouched.
     fn push_rounded_outline(&mut self, rect: SceneRect, radius: f32, color: SceneColor) {
+        self.push_rounded_outline_width(rect, radius, OUTLINE_WIDTH, color);
+    }
+
+    fn push_rounded_outline_width(
+        &mut self,
+        rect: SceneRect,
+        radius: f32,
+        width: f32,
+        color: SceneColor,
+    ) {
         if self
             .clip
             .is_some_and(|clip| rect.intersection(clip).is_none())
         {
             return;
         }
-        if rect.width <= 2.0 || rect.height <= 2.0 {
+        if rect.width <= width * 2.0 || rect.height <= width * 2.0 {
             self.push_rounded(rect, radius, color);
             return;
         }
@@ -2026,14 +2126,14 @@ impl RectangleBatch {
             .max(0.0)
             .floor();
         if radius < 1.0 {
-            self.push_hollow(rect.left, rect.top, rect.width, rect.height, 1.0, color);
+            self.push_hollow(rect.left, rect.top, rect.width, rect.height, width, color);
             return;
         }
-        for left in [rect.left, rect.right() - 1.0] {
+        for left in [rect.left, rect.right() - width] {
             self.push(
                 left,
                 rect.top + radius,
-                1.0,
+                width,
                 rect.height - radius * 2.0,
                 color,
                 1.0,
@@ -2043,10 +2143,10 @@ impl RectangleBatch {
             let dy = radius - row as f32 - 0.5;
             let outer = radius - (radius * radius - dy * dy).sqrt();
             for top in [rect.top + row as f32, rect.bottom() - row as f32 - 1.0] {
-                if row == 0 {
+                if (row as f32) < width {
                     self.push_span(rect.left + outer, rect.right() - outer, top, color);
                 } else {
-                    let inner = radius - ((radius - 1.0).powi(2) - dy * dy).sqrt();
+                    let inner = radius - ((radius - width).powi(2) - dy * dy).sqrt();
                     self.push_span(rect.left + outer, rect.left + inner, top, color);
                     self.push_span(rect.right() - inner, rect.right() - outer, top, color);
                 }
@@ -2830,92 +2930,315 @@ mod tests {
     }
 
     #[test]
-    fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
+    fn selected_pane_outline_colors_the_whole_boundary_at_physical_double_width() {
         use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
-
-        let metrics = CellMetrics::for_scale(1.3);
-        let snapshot = Snapshot {
-            active_tab: "t1".into(),
-            tabs: vec![Tab {
-                id: "t1".into(),
-                directory: b"/tmp".to_vec(),
-                pending: false,
-                selected_pane: Some("p1".into()),
-                selected_popup: None,
-                columns: vec![Column {
-                    panes: vec![Pane {
-                        id: "p1".into(),
-                        session: "s1".into(),
-                        endpoint: b"/tmp/p1.sock".to_vec(),
-                        live: true,
-                        attention: None,
-                    }],
-                    expanded: "p1".into(),
-                }],
-                popups: Vec::new(),
-                attention_rollup: None,
-            }],
-            geometry: PopupGeometry {
-                side_margin: 8.0,
-                vertical_margin: 4.0,
-            },
-            entries: Vec::new(),
-            codex_quota: None,
-            claude_quota: None,
-            sidebar: Sidebar::Open,
+        let focus = SceneColor {
+            r: 178,
+            g: 7,
+            b: 251,
         };
-        let workspace = WorkspaceScene::from_snapshot(
-            &snapshot,
-            PhysicalSize::new(1600, 900),
-            metrics,
-            0.0,
-            0.0,
-            |_, text| (text.into(), text.len() as f32 * metrics.width),
-        );
-        let card = card_rect(workspace.chrome, metrics);
-        let row = workspace.panes[0].rect;
-        let accent = SceneColor {
-            r: 126,
-            g: 231,
-            b: 185,
+        let neutral = SceneColor {
+            r: 58,
+            g: 75,
+            b: 91,
         };
-        let mut batch = RectangleBatch::new(1600, 900);
-        batch.push_pane_card_outline(
-            card,
-            workspace.card_radius(),
-            &[],
-            Some((row, accent)),
-            SceneColor::default(),
-        );
-        let y = (row.top + row.height / 2.0).floor();
-        let colors = batch
-            .bytes
-            .chunks_exact(VERTEX_SIZE as usize * 6)
-            .filter_map(|quad| {
-                let value = |vertex: usize, component: usize| {
-                    let offset = vertex * VERTEX_SIZE as usize + component * 4;
-                    f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
-                };
-                let rect = SceneRect {
-                    left: (value(0, 0) + 1.0) * 800.0,
-                    top: (1.0 - value(0, 1)) * 450.0,
-                    width: (value(2, 0) - value(0, 0)) * 800.0,
-                    height: (value(0, 1) - value(2, 1)) * 450.0,
-                };
-                rect.contains(card.right() - 20.0, y + 0.5)
-                    .then(|| [2, 3, 4].map(|component| (value(0, component) * 255.0).round() as u8))
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            colors,
-            vec![[126, 231, 185]],
-            "first selected rule survives the card outline at 1.3"
-        );
-        assert_eq!(
-            card.top, y,
-            "first title rule is the painted card top at 1.3"
-        );
+        for scale in [1.0, 1.3] {
+            let metrics = CellMetrics::for_scale(scale);
+            for column_count in [1, 2] {
+                for pane_count in [1, 3] {
+                    for selected in 0..pane_count {
+                        for selected_column in 0..column_count {
+                            let pane_id =
+                                |column, pane| format!("p{}", column * pane_count + pane + 1);
+                            let snapshot = Snapshot {
+                                active_tab: "t1".into(),
+                                tabs: vec![Tab {
+                                    id: "t1".into(),
+                                    directory: b"/tmp".to_vec(),
+                                    pending: false,
+                                    selected_pane: Some(pane_id(selected_column, selected)),
+                                    selected_popup: None,
+                                    columns: (0..column_count)
+                                        .map(|column| Column {
+                                            panes: (0..pane_count)
+                                                .map(|pane| Pane {
+                                                    id: pane_id(column, pane),
+                                                    session: format!("s{column}-{pane}"),
+                                                    endpoint: format!("/tmp/{column}-{pane}.sock")
+                                                        .into_bytes(),
+                                                    live: true,
+                                                    attention: None,
+                                                })
+                                                .collect(),
+                                            expanded: pane_id(column, selected),
+                                        })
+                                        .collect(),
+                                    popups: Vec::new(),
+                                    attention_rollup: None,
+                                }],
+                                geometry: PopupGeometry {
+                                    side_margin: 8.0,
+                                    vertical_margin: 4.0,
+                                },
+                                entries: Vec::new(),
+                                codex_quota: None,
+                                claude_quota: None,
+                                sidebar: Sidebar::Closed,
+                            };
+                            let workspace = WorkspaceScene::from_snapshot(
+                                &snapshot,
+                                PhysicalSize::new(1600, 900),
+                                metrics,
+                                0.0,
+                                0.0,
+                                |_, text| (text.into(), text.len() as f32 * metrics.width),
+                            );
+                            for frames in [true, false] {
+                                for (panes, current_column) in workspace.column_panes() {
+                                    let card = card_rect(
+                                        SceneRect {
+                                            left: panes[0].rect.left,
+                                            width: panes[0].rect.width,
+                                            ..workspace.pane_viewport
+                                        },
+                                        metrics,
+                                    );
+                                    let rules = panes
+                                        .iter()
+                                        .map(|pane| {
+                                            let label = SceneRect {
+                                                left: pane.rect.left + metrics.padding / 2.0,
+                                                width: 80.0 * metrics.scale,
+                                                ..pane.rect
+                                            };
+                                            let scrollback = SceneRect {
+                                                left: card.right() - 60.0 * metrics.scale,
+                                                width: 40.0 * metrics.scale,
+                                                ..pane.rect
+                                            };
+                                            (
+                                                pane.rect,
+                                                [label, scrollback],
+                                                pane.selected && current_column,
+                                            )
+                                        })
+                                        .collect::<Vec<_>>();
+                                    let mut batch = RectangleBatch::new(1600, 900);
+                                    batch.push_pane_outlines(
+                                        card,
+                                        workspace.card_radius(),
+                                        workspace.pane_viewport,
+                                        &rules,
+                                        frames.then_some(focus),
+                                    );
+                                    let decode = |batch: &RectangleBatch| {
+                                        let quads = batch
+                                            .bytes
+                                            .chunks_exact(VERTEX_SIZE as usize * 6)
+                                            .map(|quad| {
+                                                let value = |vertex: usize, component: usize| {
+                                                    let offset = vertex * VERTEX_SIZE as usize
+                                                        + component * 4;
+                                                    f32::from_ne_bytes(
+                                                        quad[offset..offset + 4]
+                                                            .try_into()
+                                                            .unwrap(),
+                                                    )
+                                                };
+                                                (
+                                                    SceneRect {
+                                                        left: (value(0, 0) + 1.0) * 800.0,
+                                                        top: (1.0 - value(0, 1)) * 450.0,
+                                                        width: (value(2, 0) - value(0, 0)) * 800.0,
+                                                        height: (value(0, 1) - value(2, 1)) * 450.0,
+                                                    },
+                                                    SceneColor {
+                                                        r: (value(0, 2) * 255.0).round() as u8,
+                                                        g: (value(0, 3) * 255.0).round() as u8,
+                                                        b: (value(0, 4) * 255.0).round() as u8,
+                                                    },
+                                                    value(0, 5),
+                                                )
+                                            })
+                                            .collect::<Vec<_>>();
+                                        assert!(
+                                            quads
+                                                .iter()
+                                                .all(|(_, _, alpha)| (0.0..=1.0).contains(alpha))
+                                        );
+                                        for (edge, _, coverage) in
+                                            quads.iter().filter(|(_, color, alpha)| {
+                                                *color == focus && *alpha > 0.0
+                                            })
+                                        {
+                                            for (under, _, alpha) in
+                                                quads.iter().filter(|(_, color, alpha)| {
+                                                    *color == neutral && *alpha > 0.0
+                                                })
+                                            {
+                                                if let Some(overlap) = edge.intersection(*under) {
+                                                    assert!(
+                                                        overlap.width < 0.001
+                                                            || overlap.height < 0.001,
+                                                        "neutral alpha {alpha} under focus coverage {coverage} at {overlap:?}: scale={scale}, panes={pane_count}, selected={selected}"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        quads
+                                    };
+                                    let color_at =
+                                        |quads: &[(SceneRect, SceneColor, f32)], x, y| {
+                                            let mut rgba = [0.0; 4];
+                                            for (_, color, alpha) in quads
+                                                .iter()
+                                                .filter(|(rect, _, _)| rect.contains(x, y))
+                                            {
+                                                for (target, source) in rgba[..3]
+                                                    .iter_mut()
+                                                    .zip([color.r, color.g, color.b])
+                                                {
+                                                    *target = f32::from(source) * alpha
+                                                        + *target * (1.0 - alpha);
+                                                }
+                                                rgba[3] = alpha + rgba[3] * (1.0 - alpha);
+                                            }
+                                            (rgba[3] > 0.0).then(|| SceneColor {
+                                                r: (rgba[0] / rgba[3]).round() as u8,
+                                                g: (rgba[1] / rgba[3]).round() as u8,
+                                                b: (rgba[2] / rgba[3]).round() as u8,
+                                            })
+                                        };
+                                    let quads = decode(&batch);
+                                    let top = title_rule_y(
+                                        panes[selected].rect.top,
+                                        panes[selected].rect.height,
+                                    );
+                                    let bottom = panes
+                                        .get(selected + 1)
+                                        .map(|pane| title_rule_y(pane.rect.top, pane.rect.height));
+                                    let side_y = (top.max(card.top + workspace.card_radius())
+                                        + bottom
+                                            .unwrap_or(card.bottom() - workspace.card_radius()))
+                                        / 2.0;
+                                    for offset in [0.5, 1.5, 2.5] {
+                                        let expected = if !frames {
+                                            None
+                                        } else if current_column && offset < 2.0 {
+                                            Some(focus)
+                                        } else if offset < 1.0 {
+                                            Some(neutral)
+                                        } else {
+                                            None
+                                        };
+                                        for (x, y, part) in [
+                                            (card.left + offset, side_y, "left"),
+                                            (card.right() - offset, side_y, "right"),
+                                            (card.left + card.width / 2.0, top + offset, "top"),
+                                            (
+                                                card.left + card.width / 2.0,
+                                                bottom
+                                                    .map_or(card.bottom() - offset, |y| y + offset),
+                                                "bottom",
+                                            ),
+                                        ] {
+                                            assert_eq!(
+                                                color_at(&quads, x, y),
+                                                expected,
+                                                "{part}: scale={scale}, columns={column_count}, panes={pane_count}, selected={selected}, column={current_column}, frames={frames}, offset={offset}"
+                                            );
+                                        }
+                                    }
+                                    for index in [selected, (selected + 1).min(pane_count - 1)] {
+                                        let (row, gaps, _) = rules[index];
+                                        for gap in gaps {
+                                            for offset in [0.5, 1.5] {
+                                                assert_eq!(
+                                                    color_at(
+                                                        &quads,
+                                                        gap.left + gap.width / 2.0,
+                                                        title_rule_y(row.top, row.height) + offset
+                                                    ),
+                                                    None,
+                                                    "outline crosses a label or scrollback gap"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    assert_eq!(
+                                        color_at(&quads, card.left + 0.5, card.top + 0.5),
+                                        None,
+                                        "top corner must stay rounded"
+                                    );
+                                    assert_eq!(
+                                        color_at(&quads, card.right() - 0.5, card.bottom() - 0.5),
+                                        None,
+                                        "bottom corner must stay rounded"
+                                    );
+                                    for (index, pane) in
+                                        panes.iter().enumerate().filter(|(index, _)| {
+                                            *index != selected && *index != selected + 1
+                                        })
+                                    {
+                                        let y = title_rule_y(pane.rect.top, pane.rect.height);
+                                        assert_eq!(
+                                            color_at(&quads, card.left + card.width / 2.0, y + 0.5),
+                                            frames.then_some(neutral),
+                                            "collapsed pane {index}'s rule changed"
+                                        );
+                                    }
+                                    if frames && current_column {
+                                        let mut scrolled = rules.clone();
+                                        let scroll = top - card.top + panes[selected].rect.height;
+                                        for (row, _, _) in &mut scrolled {
+                                            row.top -= scroll;
+                                        }
+                                        let mut batch = RectangleBatch::new(1600, 900);
+                                        batch.push_pane_outlines(
+                                            card,
+                                            workspace.card_radius(),
+                                            workspace.pane_viewport,
+                                            &scrolled,
+                                            Some(focus),
+                                        );
+                                        let quads = decode(&batch);
+                                        assert_eq!(
+                                            color_at(
+                                                &quads,
+                                                card.left + card.width / 2.0,
+                                                card.top + 0.5
+                                            ),
+                                            Some(neutral),
+                                            "scrolling must not pin the selected title rule to the card top"
+                                        );
+                                        assert_eq!(
+                                            color_at(
+                                                &quads,
+                                                card.left + 1.5,
+                                                card.top + workspace.card_radius() + 0.5
+                                            ),
+                                            Some(focus),
+                                            "selected sides remain visible when its header is clipped"
+                                        );
+                                        assert!(
+                                            quads
+                                                .iter()
+                                                .all(|(rect, _, _)| rect.top >= card.top - 0.001
+                                                    && rect.bottom() <= card.bottom() + 0.001),
+                                            "outline escaped the fixed card"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
+    #[test]
+    fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
         let card = SceneRect {
             left: 10.0,
             top: 30.0,
@@ -2950,6 +3273,7 @@ mod tests {
                     ..card
                 },
                 &[label, scrollback],
+                OUTLINE_WIDTH,
                 SceneColor::default(),
             );
             assert_eq!(batch.clip, Some(viewport));

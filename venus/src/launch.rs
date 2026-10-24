@@ -22,7 +22,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--warning-close-last-tab true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--background-opacity VALUE] [--background-blur] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--warning-close-last-tab true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--background-opacity VALUE] [--background-blur] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -33,6 +33,7 @@ pub(super) struct LaunchArguments {
     pub(super) startup_admission: bool,
     pub(super) decorations: bool,
     pub(super) pane_frames: bool,
+    pub(super) focus_color: Color,
     pub(super) warning_close_last_tab: bool,
     pub(super) eon_version: Option<String>,
     pub(super) bar_items: Vec<BarItem>,
@@ -54,6 +55,7 @@ pub(super) fn launch_arguments(
     let mut workspace_socket = None;
     let mut decorations = true;
     let mut pane_frames = None;
+    let mut focus_color = None;
     let mut warning_close_last_tab = None;
     let mut eon_version = None;
     let mut bar_items = None;
@@ -112,6 +114,17 @@ pub(super) fn launch_arguments(
             }
         } else if argument == "--pane-frames" {
             option_value(&mut pane_frames, arguments.next())?;
+        } else if argument == "--focus-color" {
+            if focus_color.is_some() {
+                return Err(USAGE.into());
+            }
+            focus_color = arguments
+                .next()
+                .and_then(|value| value.into_string().ok())
+                .and_then(|value| parse_cursor_color_choice(&value).flatten());
+            if focus_color.is_none() {
+                return Err(USAGE.into());
+            }
         } else if argument == "--warning-close-last-tab" {
             option_value(&mut warning_close_last_tab, arguments.next())?;
         } else if argument == "--application-id" {
@@ -264,6 +277,7 @@ pub(super) fn launch_arguments(
         startup_admission,
         decorations,
         pane_frames: pane_frames.unwrap_or(true),
+        focus_color: focus_color.unwrap_or_else(|| rgb(0xb207fb)),
         warning_close_last_tab: warning_close_last_tab.unwrap_or(true),
         eon_version,
         bar_items: bar_items.unwrap_or_else(|| BarItem::DEFAULT.into()),
@@ -520,6 +534,45 @@ mod tests {
             }
             assert!(launch_arguments([flag.into(), OsString::from_vec(vec![0xff])], None).is_err());
         }
+    }
+
+    #[test]
+    fn focus_color_reuses_fixed_cursor_colors_and_rejects_random() {
+        use std::os::unix::ffi::OsStringExt;
+        let parse = |args: &[&str]| launch_arguments(args.iter().map(OsString::from), None);
+        for (value, expected) in CURSOR_COLOR_PRESETS
+            .iter()
+            .map(|(name, color)| (format!("preset:{name}"), *color))
+            .chain([(String::from("custom:#12aBcF"), rgb(0x12abcf))])
+        {
+            assert_eq!(
+                parse(&["--focus-color", &value]).unwrap().focus_color,
+                expected
+            );
+        }
+        assert_eq!(parse(&[]).unwrap().focus_color, rgb(0xb207fb));
+        for args in [
+            vec!["--focus-color"],
+            vec!["--focus-color", ""],
+            vec!["--focus-color", "random"],
+            vec!["--focus-color", "preset:unknown"],
+            vec!["--focus-color", "preset:ICE"],
+            vec!["--focus-color", "#12abcf"],
+            vec!["--focus-color", "custom:#12345"],
+            vec!["--focus-color", "custom:#1234567"],
+            vec!["--focus-color", "custom:#12345g"],
+            vec!["--focus-color", "custom:#12abcf "],
+            vec!["--focus-color", "preset:ice", "--focus-color", "preset:ice"],
+        ] {
+            assert!(parse(&args).is_err(), "accepted {args:?}");
+        }
+        assert!(
+            launch_arguments(
+                ["--focus-color".into(), OsString::from_vec(vec![0xff])],
+                None
+            )
+            .is_err()
+        );
     }
 
     #[test]

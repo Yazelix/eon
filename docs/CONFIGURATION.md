@@ -11,6 +11,7 @@ widgets = ["codex_quota", "claude_quota", "cpu", "ram", "clock", "version"]
 background_opacity = 0.80
 background_blur = true
 pane_frames = true
+focus_color = "custom:#b207fb"
 cursor_trail_color = "preset:ice"
 cursor_trail_duration = 1.5
 font_family = "Iosevka"
@@ -60,6 +61,13 @@ values are `random`, `preset:<name>`, or `custom:#RRGGBB`. The presets are
 the terminal adds a contrasting cursor outline automatically. The cursor body
 uses the chosen color with a shape-aware contrasting edge unless Orbit supplies
 an explicit cursor color.
+
+`focus_color` colours the selected pane's whole outline in the selected column
+when pane frames are on, at twice the neutral card border's width. It accepts
+`preset:<name>` from the cursor presets above or `custom:#RRGGBB`; `random` is
+invalid. The default is `custom:#b207fb`. F6 keyboard focus in the chrome keeps
+its mint pill outline. This setting applies to full-Eon workspace surfaces;
+eonbase has no pane outline.
 
 `cursor_trail_duration` is a finite multiplier from `0.25` through `4.0`,
 defaulting to `1.5`. Larger values keep the tail visible longer. Eon owns this

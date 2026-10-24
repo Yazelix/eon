@@ -549,6 +549,7 @@ struct Application {
     startup_admission: bool,
     decorations: bool,
     pane_frames: bool,
+    focus_color: Color,
     eon_version: Option<String>,
     bar_items: Vec<BarItem>,
     background_opacity: f32,
@@ -621,6 +622,7 @@ impl Application {
             startup_admission,
             decorations,
             pane_frames,
+            focus_color,
             warning_close_last_tab,
             eon_version,
             bar_items,
@@ -649,6 +651,7 @@ impl Application {
             startup_admission,
             decorations,
             pane_frames,
+            focus_color,
             eon_version,
             bar_items,
             background_opacity,
@@ -740,6 +743,7 @@ impl Application {
             self.background_opacity,
             self.cursor_tail,
             self.pane_frames,
+            self.focus_color,
             fonts,
         ))?;
         window.set_visible(true);

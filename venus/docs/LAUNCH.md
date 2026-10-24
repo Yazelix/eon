@@ -88,6 +88,13 @@ Missing, duplicate or invalid boolean values fail before window creation.
 Standalone and popup presentation have no pane frames; popups retain their own
 rounded card outline. This is a startup option; Eon owns persistent product configuration.
 
+Pass `--focus-color preset:NAME|custom:#RRGGBB` to colour the selected pane's
+whole outline in the selected column, at twice the neutral border's width.
+The default is `custom:#b207fb`; presets are the cursor colours listed below,
+and `random` is invalid. Missing, duplicate or invalid values fail before window
+creation. F6 keyboard-focus pills stay mint. With pane frames off, no pane
+outline is drawn. Eon passes its `[terminal] focus_color` when configured.
+
 Pass `--warning-close-last-tab false` to send a final-tab close at once instead
 of first showing the close prompt (VEN-C8). The default is `true`. Missing,
 duplicate or invalid boolean values fail before window creation. Eon passes its

@@ -104,8 +104,9 @@ Compact groups spread across the bar with equal gaps and the outer
 groups near its edges; a lone group stays centered. Hint spacing stays compact.
 Only modifier headers have padded rounded backgrounds. Each column is its own
 rounded card with an even gap around its allocated area. Compact pane titles
-sit in thin rules, with a brighter selected label and accent rule, a hover pill
-and a keyboard-focus pill outline. Turning pane frames off leaves labels and
+sit in thin rules. The selected pane has a brighter label and a whole outline in
+its focus colour, twice the neutral border's width; hover adds a label pill and
+F6 keyboard focus keeps a mint pill outline. Turning pane frames off leaves labels and
 their interaction feedback. The hints sit bare in the margin below the cards. Hiding the footer returns its row to terminal content.
 Coral red modifier badges use plain aliases, such as C-A, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects

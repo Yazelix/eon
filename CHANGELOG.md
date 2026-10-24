@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The selected pane's whole outline uses `[terminal] focus_color`, defaulting to
+  violet `custom:#b207fb`, at twice the neutral card border's width. Preset and
+  custom colours are supported; F6 keyboard-focus pills stay mint. Frameless
+  mode keeps labels without outlines.
+
 - Pane titles sit in thin rules instead of filled header bars, sharing the agent
   sidebar title size. Compact rows leave more space for terminal content; hover
   and keyboard focus highlight the label. Turning pane frames off keeps labels

@@ -396,8 +396,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     request. Everything below the tab bar outside the cards, the gaps and
     footer band included, is the top bar's opaque color, so the bar, gaps
     and hints read as one frame. On a window too small for them the gaps
-    yield before a terminal cell does. Pane selection, hover and keyboard
-    focus use VEN-C8's title-label and pill feedback. A selected popup or
+    yield before a terminal cell does. The selected pane's outline uses
+    `[terminal] focus_color`, `preset:<name>` or `custom:#RRGGBB`, default
+    `custom:#b207fb`. Pane hover and keyboard focus use VEN-C8's pill
+    feedback. A selected popup or
     picker draws as one card over the same allocated area. `false` removes
     the card borders, title rules and frame (a popup keeps its outline over
     terminal background) while retaining label-only headers and their

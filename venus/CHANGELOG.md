@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C8: the selected pane's title rule, sides and bottom form an outline in
+  the focus colour at twice the neutral card border's width. `--focus-color`
+  accepts cursor presets or custom hex colours and defaults to `custom:#b207fb`;
+  F6 focus pills stay mint, and frameless mode draws no outline (`eon-e8hh`).
+
 - VEN-C8: compact pane headers share the VEN-C30 title metric. Mid-row rules
   break around each label; the first forms the card top. Selection brightens
   the label and accents its rule, hover adds a label pill, and keyboard focus

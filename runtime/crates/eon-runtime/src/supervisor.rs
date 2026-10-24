@@ -442,6 +442,9 @@ fn venus_command(
         }
     }
     if mode == LaunchMode::Workspace {
+        if let Some(color) = &terminal.focus_color {
+            command.arg("--focus-color").arg(color);
+        }
         if bar_widgets.contains(&"version") {
             command.arg("--eon-version").arg(inputs.version);
         }
@@ -2868,6 +2871,78 @@ rows = 30
             .get_args()
             .all(|argument| argument != "--cursor-trail-color")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_focus_color_reaches_only_workspace_launches() {
+        let inputs = crate::fixtures::inputs();
+        let root = temporary_directory();
+        for value in [None, Some("preset:ice"), Some("custom:#12ABCF")] {
+            fs::write(
+                root.join("config.toml"),
+                value.map_or_else(String::new, |value| {
+                    format!("[terminal]\nfocus_color = '{value}'\n")
+                }),
+            )
+            .unwrap();
+            let terminal =
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).unwrap();
+            for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
+                let command = venus_command(
+                    &inputs,
+                    &root,
+                    Path::new("/runtime.sock"),
+                    mode,
+                    &terminal,
+                    inputs.defaults.bar_widgets,
+                    "eon",
+                    true,
+                    true,
+                );
+                let args = command.get_args().collect::<Vec<_>>();
+                assert_eq!(
+                    args.windows(2)
+                        .find(|pair| pair[0] == "--focus-color")
+                        .map(|pair| pair[1].to_str().unwrap()),
+                    value.filter(|_| mode == LaunchMode::Workspace)
+                );
+            }
+            assert_eq!(terminal.requires_startup_admission(), value.is_some());
+        }
+        // Like cursor-trail colors, invalid strings must reach Venus's parser through
+        // startup admission, before the runtime creates any fresh terminal.
+        for value in ["random", "preset:unknown", "custom:#12345g"] {
+            fs::write(
+                root.join("config.toml"),
+                format!("[terminal]\nfocus_color = '{value}'\n"),
+            )
+            .unwrap();
+            let terminal =
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).unwrap();
+            assert!(
+                terminal.requires_startup_admission(),
+                "{value} bypasses Venus validation"
+            );
+            let command = venus_command(
+                &inputs,
+                &root,
+                Path::new("/runtime.sock"),
+                LaunchMode::Workspace,
+                &terminal,
+                inputs.defaults.bar_widgets,
+                "eon",
+                true,
+                true,
+            );
+            assert!(
+                command
+                    .get_args()
+                    .collect::<Vec<_>>()
+                    .windows(2)
+                    .any(|pair| pair == ["--focus-color", value])
+            );
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

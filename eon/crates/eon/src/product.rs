@@ -31,6 +31,7 @@ pub(crate) fn inputs() -> Inputs {
                 background_opacity: 0.8,
                 background_blur: true,
                 pane_frames: true,
+                focus_color: None,
                 cursor_trail_color: None,
                 cursor_trail_duration: Some(1.5),
                 font_family: None,
