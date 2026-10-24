@@ -1,5 +1,6 @@
 use super::{
     cli::Inputs,
+    diagnostics::{self, DiagnosticLog},
     managed_environment,
     supervisor::{
         LaunchMode, SESSION_START_TIMEOUT, effective_uid, request_id, status_code, stop,
@@ -452,8 +453,10 @@ fn validate_management_peer(stream: &UnixStream, identity: &LiveIdentity) -> Res
     Ok(())
 }
 
+/// Leases `candidate`, whose Orbit log is found in `orbit_logs` when given.
 fn acquire_management(
     candidate: ManagedCandidate,
+    orbit_logs: Option<&Path>,
     deadline: Instant,
 ) -> Result<RunningSession, String> {
     let current = read_management_record(&candidate.record_path)?.ok_or_else(|| {
@@ -513,6 +516,14 @@ fn acquire_management(
         .and_then(|()| stream.set_write_timeout(None))
         .and_then(|()| stream.set_nonblocking(true))
         .map_err(|error| format!("cannot configure terminal management lease: {error}"))?;
+    let orbit_log = orbit_logs.map(|directory| {
+        diagnostics::orbit_log_path(
+            directory,
+            &candidate.identity.component_generation,
+            &candidate.identity.session_id,
+            &candidate.identity.run_id,
+        )
+    });
     Ok(RunningSession {
         number: candidate.number,
         id: candidate.identity.session_id.clone(),
@@ -520,6 +531,7 @@ fn acquire_management(
         record: candidate.record_path,
         record_object: candidate.record,
         identity: candidate.identity,
+        orbit_log,
         lease: stream,
         program_status: None,
         stop_sent: false,
@@ -634,10 +646,17 @@ pub(super) fn recover_sessions(
     runtime: &Path,
     mode: LaunchMode,
     component_generation: &str,
+    orbit_logs: Option<&Path>,
     deadline: Instant,
 ) -> Result<(Vec<RunningSession>, bool), String> {
-    let mut sessions =
-        acquire_generation_sessions(runtime, mode, component_generation, &[], deadline)?;
+    let mut sessions = acquire_generation_sessions(
+        runtime,
+        mode,
+        component_generation,
+        &[],
+        orbit_logs,
+        deadline,
+    )?;
     let mut recovered_picker = false;
     for picker in sessions
         .iter_mut()
@@ -658,6 +677,7 @@ pub(super) fn acquire_generation_sessions(
     mode: LaunchMode,
     component_generation: &str,
     owned: &[RunningSession],
+    orbit_logs: Option<&Path>,
     deadline: Instant,
 ) -> Result<Vec<RunningSession>, String> {
     let mut paths = fs::read_dir(runtime)
@@ -770,7 +790,7 @@ pub(super) fn acquire_generation_sessions(
     candidates
         .into_iter()
         .chain(pickers)
-        .map(|candidate| acquire_management(candidate, deadline))
+        .map(|candidate| acquire_management(candidate, orbit_logs, deadline))
         .collect()
 }
 
@@ -781,6 +801,7 @@ pub(super) struct RunningSession {
     record: PathBuf,
     record_object: ObjectIdentity,
     identity: LiveIdentity,
+    pub(super) orbit_log: Option<PathBuf>,
     /// This Runtime is the lease's one reader and keeps at most one request
     /// in flight on it (EON-C31 Polling).
     lease: UnixStream,
@@ -943,6 +964,14 @@ impl RunningSession {
         self.finished.is_some()
     }
 
+    /// Whether this run ended by an explicit Stop.
+    pub(super) fn stopped(&self) -> bool {
+        matches!(
+            self.finished,
+            Some(SessionEnd::Managed(TerminationReason::ExplicitStop, _))
+        )
+    }
+
     /// A tracked terminal that was sent Stop is one whose Stop failed.
     pub(super) fn stop_failed(&self) -> bool {
         self.stop_sent && !self.is_finished()
@@ -950,6 +979,11 @@ impl RunningSession {
 
     pub(super) fn run_id(&self) -> &str {
         &self.identity.run_id
+    }
+
+    /// The suffix a failure line carries to name this run's Orbit log.
+    pub(super) fn orbit_log_suffix(&self) -> String {
+        diagnostics::orbit_log_suffix(self.orbit_log.as_deref())
     }
 
     /// Whether this live terminal is the one an `EON_TERMINAL` value names.
@@ -980,6 +1014,7 @@ pub(super) fn start_orbit(
     directory: &Path,
     child: &[OsString],
     tab: Option<&str>,
+    log: &DiagnosticLog,
     deadline: Instant,
 ) -> Result<RunningSession, String> {
     let run_id = request_id();
@@ -995,8 +1030,25 @@ pub(super) fn start_orbit(
         child,
         tab,
     )?;
+    let (orbit_stderr, orbit_log) = log
+        .orbit_directory()
+        .map_err(str::to_string)
+        .and_then(|directory| {
+            diagnostics::open_orbit_log(directory, component_generation, session_id, &run_id)
+        })
+        .map(|(file, path)| (Stdio::from(file), Some(path)))
+        .unwrap_or_else(|error| {
+            log.note(&format!(
+                "terminal {session_id}: {error}; continuing without an Orbit log"
+            ));
+            (Stdio::null(), None)
+        });
+    orbit_command.stderr(orbit_stderr);
     let claim = ReadyClaim::create(&record_path)?;
-    let mut orbit = match orbit_command.spawn() {
+    let spawned = orbit_command.spawn();
+    // Only Orbit should retain the log's open file description and liveness lock.
+    drop(orbit_command);
+    let mut orbit = match spawned {
         Ok(orbit) => orbit,
         Err(error) => {
             return match claim.remove_empty() {
@@ -1045,6 +1097,7 @@ pub(super) fn start_orbit(
                             record: object,
                             identity,
                         },
+                        None,
                         deadline,
                     );
                 }
@@ -1090,17 +1143,24 @@ pub(super) fn start_orbit(
     match result {
         Ok(mut session) => {
             session.child = Some(orbit);
+            session.orbit_log = orbit_log;
             Ok(session)
         }
-        Err(error) => match rollback_unleased_orbit(
-            orbit,
-            claim,
-            (&run_id, component_generation, socket),
-            deadline,
-        ) {
-            Ok(()) => Err(error),
-            Err(stop_error) => Err(format!("{error}; cannot roll back terminal: {stop_error}")),
-        },
+        Err(error) => {
+            let error = match rollback_unleased_orbit(
+                orbit,
+                claim,
+                (&run_id, component_generation, socket),
+                deadline,
+            ) {
+                Ok(()) => error,
+                Err(stop_error) => format!("{error}; cannot roll back terminal: {stop_error}"),
+            };
+            Err(format!(
+                "{error}{}",
+                diagnostics::orbit_log_suffix(orbit_log.as_deref())
+            ))
+        }
     }
 }
 
@@ -1170,6 +1230,7 @@ fn rollback_unleased_orbit(
             record: object,
             identity,
         },
+        None,
         deadline,
     )?;
     session.child = Some(orbit);
@@ -1205,8 +1266,7 @@ fn orbit_command(
         .env_remove(TAB_VARIABLE)
         .current_dir(directory)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::null());
     if let Some(tab) = tab {
         orbit_command.env(TAB_VARIABLE, tab);
     }
@@ -1534,12 +1594,7 @@ pub(super) fn stop_managed_sessions(
     if errors.is_empty() {
         Ok(sessions
             .iter()
-            .filter(|session| {
-                matches!(
-                    session.finished,
-                    Some(SessionEnd::Managed(TerminationReason::ExplicitStop, _))
-                )
-            })
+            .filter(|session| session.stopped())
             .map(|session| session.id.clone())
             .collect())
     } else {
@@ -1568,7 +1623,7 @@ pub(crate) mod tests {
         is_directory_picker_endpoint, managed_session_number, management, orbit_command,
         read_management_response, session_number, stop_managed_sessions, unix_connect_with_timeout,
     };
-    use crate::supervisor::temporary_directory;
+    use crate::{diagnostics::DiagnosticLog, supervisor::temporary_directory};
     use orbit_protocol::management::ServerMessage as ManagementServerMessage;
     use std::{
         ffi::{OsStr, OsString},
@@ -1646,6 +1701,7 @@ pub(crate) mod tests {
             record: record.clone(),
             record_object: super::object_identity(&fs::symlink_metadata(&record).unwrap()),
             identity,
+            orbit_log: None,
             lease,
             program_status: None,
             stop_sent: false,
@@ -1810,6 +1866,7 @@ pub(crate) mod tests {
                     super::LaunchMode::Workspace,
                     "component-1",
                     &[],
+                    None,
                     deadline,
                 )
                 .err()
@@ -1827,6 +1884,7 @@ pub(crate) mod tests {
                 super::LaunchMode::Workspace,
                 "component-1",
                 &[],
+                None,
                 deadline,
             )
             .unwrap();
@@ -1986,6 +2044,7 @@ pub(crate) mod tests {
             record_object: super::object_identity(&fs::symlink_metadata(&record).unwrap()),
             record,
             identity,
+            orbit_log: None,
             lease,
             program_status: None,
             stop_sent: false,
@@ -2046,11 +2105,20 @@ pub(crate) mod tests {
     /// A real Orbit run of `script`, leased by this Runtime. Orbit is the one
     /// at `ORBIT_BIN`, which eon-test and the eon package's check set.
     pub(crate) fn leased_orbit(root: &Path, script: &str) -> RunningSession {
+        let orbit =
+            PathBuf::from(std::env::var_os("ORBIT_BIN").expect("ORBIT_BIN names the Orbit to run"));
+        leased_orbit_with_program(root, script, &orbit)
+    }
+
+    pub(crate) fn leased_orbit_with_program(
+        root: &Path,
+        script: &str,
+        orbit: &Path,
+    ) -> RunningSession {
         fs::set_permissions(root, fs::Permissions::from_mode(0o700)).unwrap();
         let mut inputs = crate::fixtures::inputs();
-        inputs.orbit = std::env::var_os("ORBIT_BIN")
-            .expect("ORBIT_BIN names the Orbit to run")
-            .into();
+        inputs.orbit = orbit.into();
+        let log = DiagnosticLog::open_in(Ok(root.join("launch-logs")), "g1-test", "workspace");
         super::start_orbit(
             &inputs,
             root,
@@ -2060,9 +2128,56 @@ pub(crate) mod tests {
             root,
             &["sh".into(), "-c".into(), script.into()],
             None,
+            &log,
             Instant::now() + Duration::from_secs(5),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn startup_failure_names_the_orbit_log() {
+        let root = temporary_directory();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let launcher = root.join("orbit-startup-failure");
+        fs::write(
+            &launcher,
+            "#!/bin/sh\nprintf '%s\\n' 'orbit startup diagnostic' >&2\nexit 9\n",
+        )
+        .unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+        let mut inputs = crate::fixtures::inputs();
+        inputs.orbit = launcher;
+        let log = DiagnosticLog::open_in(Ok(root.join("launch-logs")), "g1-test", "workspace");
+        let error = super::start_orbit(
+            &inputs,
+            &root,
+            &root.join("orbit.sock"),
+            "session-1",
+            "component-1",
+            &root,
+            &["sh".into(), "-c".into(), "exec sleep 30".into()],
+            None,
+            &log,
+            Instant::now() + Duration::from_secs(5),
+        )
+        .err()
+        .expect("an Orbit that exits before Ready started a terminal");
+        assert!(
+            error.contains("terminal exited before publishing Ready (status 9)"),
+            "{error}"
+        );
+        let (_, orbit_log) = error
+            .rsplit_once("; Orbit log: ")
+            .expect("the startup failure names the Orbit log");
+        assert!(
+            Path::new(orbit_log).starts_with(root.join("launch-logs/orbit")),
+            "{error}"
+        );
+        assert_eq!(
+            fs::read_to_string(orbit_log).unwrap(),
+            "orbit startup diagnostic\n"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     /// The run record of a leased Orbit this test started.

@@ -431,7 +431,11 @@ composition.
   `GENERATION-SECONDS-PID.log`. It records when the window started and how it
   exited, with its error output and any crash backtrace, when terminals exit on
   their own, and how long each tab close took. Eon keeps the newest 20 logs
-  plus those of running supervisors, and stops a log at 1 MiB.
+  plus those of running supervisors, and stops a log at 1 MiB. Orbit's own
+  diagnostics go to `$XDG_STATE_HOME/eon/logs/orbit`
+  (`~/.local/state/eon/logs/orbit` by default), named
+  `GENERATION-SESSION-RUN.log`; Eon keeps the newest 100 plus those of running
+  Orbit hosts.
 - **A replacement window rejects configuration:** fix `config.toml` and run
   `eon attach`; the existing terminals remain alive.
 - **Graphics fail outside native Wayland or on unproved hardware:** that

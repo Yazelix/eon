@@ -765,6 +765,7 @@ fn supervise(
         runtime,
         mode,
         generation,
+        log.orbit_directory().ok(),
         Instant::now() + SESSION_START_TIMEOUT,
     )?;
     let control_listener = ControlListener::bind(&runtime.join("eon.sock"))?;
@@ -858,6 +859,7 @@ fn supervise(
             &launch_directory,
             &initial_child,
             None,
+            log,
             // Starts after admission, which may have used most of its own deadline.
             Instant::now() + SESSION_START_TIMEOUT,
         )?);
@@ -882,6 +884,7 @@ fn supervise(
                     apply_session_operation(
                         inputs,
                         config,
+                        log,
                         generation,
                         &mut sessions,
                         &mut initial_child,
@@ -1064,19 +1067,37 @@ fn report_session_end(result: Result<(), Failure>, log: &DiagnosticLog) -> Resul
     }
 }
 
+/// The line that records a terminal's end, naming Orbit's log when Orbit
+/// exited without publishing its result.
+fn session_end_line(session: &RunningSession, code: i32) -> String {
+    format!(
+        "terminal {} ended with status {code}{}",
+        session.id,
+        if session.owner_lost() {
+            format!(
+                "; Orbit exited without publishing a terminal result{}",
+                session.orbit_log_suffix()
+            )
+        } else {
+            String::new()
+        }
+    )
+}
+
 /// Notes once that a terminal which cannot be stopped or reconciled stays in
 /// its tab for a retry.
 fn report_kept_terminal(session: &mut RunningSession, log: &DiagnosticLog, error: &str) {
     if !session.reap_failure_reported {
         session.reap_failure_reported = true;
         log.note(&format!(
-            "terminal {} stays in its tab {}: {error}",
+            "terminal {} stays in its tab {}: {error}{}",
             session.id,
             if session.stop_failed() {
                 "after a failed stop"
             } else {
                 "until its end reconciles"
-            }
+            },
+            session.orbit_log_suffix()
         ));
     }
 }
@@ -1101,24 +1122,18 @@ fn reap_finished_sessions(
         };
         if let Some(code) = finished {
             let session = state.sessions.remove(index);
-            state.log.record(&format!(
-                "terminal {} ended with status {code}{}",
-                session.id,
-                if session.owner_lost() {
-                    "; Orbit exited without publishing a terminal result"
-                } else {
-                    ""
-                }
-            ));
+            state.log.record(&session_end_line(&session, code));
             if let Some(workspace) = &mut state.workspace {
                 let component_generation = &state.component_generation;
                 let sessions = &mut state.sessions;
                 let initial_child = &mut state.initial_child;
+                let log = &state.log;
                 let result =
                     workspace.session_ended(&session.id, SessionEnd::Exited, |operation| {
                         apply_session_operation(
                             inputs,
                             config,
+                            log,
                             component_generation,
                             sessions,
                             initial_child,
@@ -1138,20 +1153,34 @@ fn reap_finished_sessions(
     Ok(())
 }
 
-fn stop_workspace_session(session: &mut RunningSession) -> Result<Option<i32>, String> {
-    if let Some(status) = session_finished(session)? {
-        return Ok(Some(status));
-    }
-    match stop_managed_sessions(std::slice::from_mut(session), SESSION_START_TIMEOUT) {
-        Ok(_) => Ok(None),
-        Err(stop_error) => match session_finished(session) {
-            Ok(Some(status)) => Ok(Some(status)),
-            Ok(None) => Err(stop_error),
-            Err(reconcile_error) => Err(format!(
-                "{stop_error}; cannot reconcile terminal after failed stop: {reconcile_error}"
-            )),
+/// Stops a terminal, or reconciles the end it reached first. The caller
+/// removes an ended terminal before a reap would see it, so an Orbit lost on
+/// the way is recorded here.
+fn stop_workspace_session(
+    session: &mut RunningSession,
+    log: &DiagnosticLog,
+) -> Result<Option<i32>, String> {
+    let status = match session_finished(session)? {
+        Some(status) => Some(status),
+        None => match stop_managed_sessions(std::slice::from_mut(session), SESSION_START_TIMEOUT) {
+            Ok(_) => None,
+            Err(stop_error) => match session_finished(session) {
+                Ok(Some(status)) => Some(status),
+                Ok(None) => return Err(stop_error),
+                Err(reconcile_error) => {
+                    return Err(format!(
+                        "{stop_error}; cannot reconcile terminal after failed stop: {reconcile_error}"
+                    ));
+                }
+            },
         },
+    };
+    if let Some(code) = status
+        && session.owner_lost()
+    {
+        log.record(&session_end_line(session, code));
     }
+    Ok(status)
 }
 
 fn close_workspace_tab(
@@ -1220,7 +1249,7 @@ fn stop_closed_sessions(
     code: &str,
 ) -> Result<(), Failure> {
     for id in sessions {
-        let natural_status = stop_owned_session(&mut state.sessions, &id)
+        let natural_status = stop_owned_session(&mut state.sessions, &id, &state.log)
             .map_err(|detail| failure(code, format!("{id}: {detail}")))?;
         state
             .workspace
@@ -1275,13 +1304,39 @@ fn stop_generation_sessions(
         mode,
         &state.component_generation,
         &state.sessions,
+        state.log.orbit_directory().ok(),
         deadline,
     )?;
     state.sessions.extend(untracked);
-    let stopped = stop_managed_sessions(
+    let running = state
+        .sessions
+        .iter()
+        .map(|session| !session.is_finished())
+        .collect::<Vec<_>>();
+    let result = stop_managed_sessions(
         &mut state.sessions,
         deadline.saturating_duration_since(Instant::now()),
-    )?;
+    );
+    // Reaping pauses once the generation stops, so a run whose Orbit was
+    // lost on the way is recorded here, and a failure names the Orbit log of
+    // each run this Stop left unstopped.
+    let mut orbit_logs = String::new();
+    for session in state
+        .sessions
+        .iter_mut()
+        .zip(running)
+        .filter_map(|(session, running)| running.then_some(session))
+    {
+        if session.owner_lost()
+            && let Ok(Some(code)) = session_finished(session)
+        {
+            state.log.record(&session_end_line(session, code));
+        }
+        if !session.stopped() {
+            orbit_logs.push_str(&session.orbit_log_suffix());
+        }
+    }
+    let stopped = result.map_err(|error| format!("{error}{orbit_logs}"))?;
     state.sessions.clear();
     Ok(stopped)
 }
@@ -1346,6 +1401,7 @@ fn directory_picker_command(
 fn apply_session_operation(
     inputs: &Inputs,
     config: &Path,
+    log: &DiagnosticLog,
     component_generation: &str,
     sessions: &mut Vec<RunningSession>,
     initial_child: &mut Vec<OsString>,
@@ -1359,7 +1415,7 @@ fn apply_session_operation(
             command,
             tab,
         } => (session, directory, command, tab),
-        SessionOperation::Stop(id) => return stop_owned_session(sessions, &id).map(|_| ()),
+        SessionOperation::Stop(id) => return stop_owned_session(sessions, &id, log).map(|_| ()),
     };
     let child = match command {
         LaunchCommand::Project { tab, instance } => directory_picker_command(
@@ -1385,6 +1441,7 @@ fn apply_session_operation(
         &directory,
         &child,
         tab.as_deref(),
+        log,
         Instant::now() + SESSION_START_TIMEOUT,
     )?;
     sessions.push(running);
@@ -1394,12 +1451,18 @@ fn apply_session_operation(
     Ok(())
 }
 
-fn stop_owned_session(sessions: &mut Vec<RunningSession>, id: &str) -> Result<Option<i32>, String> {
+fn stop_owned_session(
+    sessions: &mut Vec<RunningSession>,
+    id: &str,
+    log: &DiagnosticLog,
+) -> Result<Option<i32>, String> {
     let index = sessions
         .iter()
         .position(|session| session.id == id)
         .ok_or_else(|| format!("terminal {id} is missing from the supervisor"))?;
-    let status = stop_workspace_session(&mut sessions[index])?;
+    let session = &mut sessions[index];
+    let status = stop_workspace_session(session, log)
+        .map_err(|error| format!("{error}{}", session.orbit_log_suffix()))?;
     sessions.remove(index);
     Ok(status)
 }
@@ -1420,7 +1483,7 @@ fn cancel_transient_popups(
             // and the next detachment retry it, and must not end the
             // supervisor or keep the other pickers from being cleaned
             // (EON-C18).
-            if let Err(error) = stop_workspace_session(&mut state.sessions[index]) {
+            if let Err(error) = stop_workspace_session(&mut state.sessions[index], &state.log) {
                 report_kept_terminal(&mut state.sessions[index], &state.log, &error);
                 continue;
             }
@@ -1441,6 +1504,7 @@ fn cancel_transient_popups(
                 apply_session_operation(
                     inputs,
                     config,
+                    log,
                     component_generation,
                     sessions,
                     initial_child,
@@ -1461,7 +1525,7 @@ fn stop_transient_popups(state: &mut SupervisorState) -> Result<(), String> {
         .unwrap_or_default();
     for id in ids {
         if state.sessions.iter().any(|session| session.id == id) {
-            stop_owned_session(&mut state.sessions, &id)?;
+            stop_owned_session(&mut state.sessions, &id, &state.log)?;
         }
     }
     Ok(())
@@ -1808,6 +1872,7 @@ fn dispatch_control_request(
             let component_generation = &state.component_generation;
             let sessions = &mut state.sessions;
             let initial_child = &mut state.initial_child;
+            let log = &state.log;
             let result = workspace.dispatch(
                 &request.id,
                 caller.as_deref(),
@@ -1824,6 +1889,7 @@ fn dispatch_control_request(
                     apply_session_operation(
                         inputs,
                         config,
+                        log,
                         component_generation,
                         sessions,
                         initial_child,
@@ -1917,8 +1983,8 @@ mod tests {
     use super::{
         Action, DiagnosticLog, LaunchMode, SupervisorState, Workspace, WorkspaceAction,
         cancel_transient_popups, effective_uid, prepare_configuration, prepare_runtime,
-        reap_finished_sessions, stop_owned_session, temporary_directory, venus_command,
-        window_bar_widgets, xdg_path,
+        reap_finished_sessions, stop_generation_sessions, stop_owned_session, temporary_directory,
+        venus_command, window_bar_widgets, xdg_path,
     };
     use crate::sessions::{
         self,
@@ -1934,7 +2000,10 @@ mod tests {
     /// Kills a test-owned Orbit's worker, which sends Orbit down its failure
     /// path: it removes its Live record and exits without a result.
     fn kill_worker(session: &sessions::RunningSession) {
-        let orbit = orbit_pid(session);
+        kill_orbit_worker(orbit_pid(session));
+    }
+
+    fn kill_orbit_worker(orbit: i32) {
         let worker = fs::read_to_string(format!("/proc/{orbit}/task/{orbit}/children"))
             .unwrap()
             .split_whitespace()
@@ -1964,17 +2033,39 @@ mod tests {
             .collect::<Vec<_>>();
         sessions[1].id = "session-2".into();
         sessions[2].id = "session-3".into();
+        let log = DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace");
         // A dead worker sends Orbit down its failure path, which removes its
         // Live record and publishes no result: the run reconciles as ended.
+        let first_orbit_log = sessions[0].orbit_log.clone().unwrap();
         kill_worker(&sessions[0]);
-        assert_eq!(stop_owned_session(&mut sessions, "session-1"), Ok(Some(1)));
+        assert_eq!(
+            stop_owned_session(&mut sessions, "session-1", &log),
+            Ok(Some(1))
+        );
         assert_eq!(sessions.len(), 2);
+        let owner_loss = fs::read_dir(roots[0].join("logs"))
+            .unwrap()
+            .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect::<String>();
+        assert!(
+            owner_loss.lines().any(|line| {
+                line.contains("terminal session-1 ended with status 1; Orbit exited without publishing a terminal result")
+                    && line.ends_with(&format!("; Orbit log: {}", first_orbit_log.display()))
+            }),
+            "{owner_loss}"
+        );
 
         // A record that no longer validates leaves the stopped run
         // unreconcilable: the close fails and the terminal stays tracked.
+        // Only the tracked id is renamed, so its Orbit log still says session-1.
+        let second_orbit_log = sessions[0].orbit_log.clone().unwrap();
         let record = sessions::tests::record(&sessions[0]).to_path_buf();
         fs::set_permissions(&record, fs::Permissions::from_mode(0o644)).unwrap();
-        assert!(stop_owned_session(&mut sessions, "session-2").is_err());
+        let error = stop_owned_session(&mut sessions, "session-2", &log).unwrap_err();
+        assert!(
+            error.ends_with(&format!("; Orbit log: {}", second_orbit_log.display())),
+            "{error}"
+        );
         assert_eq!(sessions.len(), 2);
         let mut state = SupervisorState {
             component_generation: "component-1".into(),
@@ -1988,7 +2079,7 @@ mod tests {
             stopping: false,
             quotas: None,
             attention: None,
-            log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
+            log,
         };
         let inputs = crate::fixtures::inputs();
         for _ in 0..2 {
@@ -2008,7 +2099,7 @@ mod tests {
             1
         );
         assert_eq!(
-            stop_owned_session(&mut state.sessions, "session-3"),
+            stop_owned_session(&mut state.sessions, "session-3", &state.log),
             Ok(None)
         );
         fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
@@ -2125,12 +2216,142 @@ mod tests {
         }
         assert_eq!(state.sessions[0].id, "session-2");
         assert_eq!(
-            stop_owned_session(&mut state.sessions, "session-2"),
+            stop_owned_session(&mut state.sessions, "session-2", &state.log),
             Ok(None)
         );
         for root in roots {
             fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    #[test]
+    fn orbit_stderr_is_logged_and_owner_loss_names_the_file() {
+        let root = temporary_directory();
+        let launcher = root.join("orbit-with-stderr");
+        fs::write(
+            &launcher,
+            "#!/bin/sh\nprintf '%s\\n' 'orbit test diagnostic' >&2\nexec \"$ORBIT_BIN\" \"$@\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+        let session = sessions::tests::leased_orbit_with_program(&root, "exec sleep 30", &launcher);
+        let orbit = orbit_pid(&session);
+        let orbit_logs = root.join("launch-logs/orbit");
+        let orbit_log = orbit_logs.join(format!("component-1-session-1-{}.log", session.run_id()));
+        assert_eq!(session.orbit_log.as_ref(), Some(&orbit_log));
+        // A supervisor that recovers the run rebuilds its log path. Orbit may
+        // refuse the new lease as Busy until it sees the old one close.
+        drop(session);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let sessions = loop {
+            match sessions::recover_sessions(
+                &root,
+                LaunchMode::Workspace,
+                "component-1",
+                Some(&orbit_logs),
+                deadline,
+            ) {
+                Ok((sessions, _)) => break sessions,
+                Err(error)
+                    if error.ends_with("is already managed")
+                        && std::time::Instant::now() < deadline =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(error) => panic!("{error}"),
+            }
+        };
+        assert_eq!(sessions[0].orbit_log.as_ref(), Some(&orbit_log));
+        kill_orbit_worker(orbit);
+        let mut state = SupervisorState {
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspace: None,
+            sessions,
+            venus: None,
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: false,
+            quotas: None,
+            attention: None,
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
+        };
+        let inputs = crate::fixtures::inputs();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !state.sessions.is_empty() {
+            assert!(std::time::Instant::now() < deadline, "Orbit never exited");
+            assert_eq!(reap_finished_sessions(&mut state, &inputs, &root), Ok(()));
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let stderr = fs::read_to_string(&orbit_log).unwrap();
+        assert!(stderr.contains("orbit test diagnostic\n"), "{stderr}");
+        assert_eq!(
+            fs::metadata(&orbit_log).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let supervisor_log = fs::read_dir(root.join("logs"))
+            .unwrap()
+            .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect::<String>();
+        let failure = supervisor_log
+            .lines()
+            .find(|line| line.contains("Orbit exited without publishing a terminal result"))
+            .expect("the supervisor recorded Orbit's owner loss");
+        assert!(
+            failure.ends_with(&format!("; Orbit log: {}", orbit_log.display())),
+            "{failure}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_generation_stop_that_loses_orbit_names_its_log() {
+        let root = temporary_directory();
+        let session = leased_orbit(&root, "exec sleep 30");
+        let orbit_log = session.orbit_log.clone().unwrap();
+        kill_worker(&session);
+        let mut state = SupervisorState {
+            component_generation: "component-1".into(),
+            application_id: String::new(),
+            decorations: false,
+            workspace: None,
+            sessions: vec![session],
+            venus: None,
+            initial_child: Vec::new(),
+            initial_status: None,
+            stopping: false,
+            quotas: None,
+            attention: None,
+            log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
+        };
+
+        let error = stop_generation_sessions(&mut state, &root, LaunchMode::Workspace).unwrap_err();
+        assert!(
+            error.contains("session-1: terminal owner exited without completing Stop")
+                && error.ends_with(&format!("; Orbit log: {}", orbit_log.display())),
+            "{error}"
+        );
+        assert!(state.stopping);
+        let supervisor_log = fs::read_dir(root.join("logs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_file())
+            .map(|path| fs::read_to_string(path).unwrap())
+            .collect::<String>();
+        assert_eq!(
+            supervisor_log
+                .lines()
+                .filter(|line| {
+                    line.contains("terminal session-1 ended with status 1; Orbit exited without publishing a terminal result")
+                        && line.ends_with(&format!("; Orbit log: {}", orbit_log.display()))
+                })
+                .count(),
+            1,
+            "{supervisor_log}"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2211,9 +2432,13 @@ mod tests {
         assert_eq!(snapshot.tabs.len(), 1);
         assert!(snapshot.tabs[0].pending);
         assert_eq!(snapshot.tabs[0].popups.len(), 1);
+        // The failed first-pane start left an Orbit log directory beside the
+        // supervisor's log.
         let log = fs::read_dir(roots[0].join("logs"))
             .unwrap()
-            .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.is_file())
+            .map(|path| fs::read_to_string(path).unwrap())
             .collect::<String>();
         assert_eq!(
             log.matches("terminal directory-picker-1 stays in its tab after a failed stop")
@@ -2238,7 +2463,7 @@ mod tests {
         }
         assert_eq!(ids(&state), ["session-3"]);
         assert_eq!(
-            stop_owned_session(&mut state.sessions, "session-3"),
+            stop_owned_session(&mut state.sessions, "session-3", &state.log),
             Ok(None)
         );
         for root in roots.into_iter().chain([runtime]) {

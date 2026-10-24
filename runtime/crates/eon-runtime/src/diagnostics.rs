@@ -18,12 +18,18 @@ use std::{
 };
 
 const RETAINED_LOGS: usize = 20;
+const RETAINED_ORBIT_LOGS: usize = 100;
 const LOG_BYTES: u64 = 1 << 20;
 /// Copied output stops this far below the bound, so a full log still records
 /// how Eon Desktop and the supervisor ended.
 const RECORD_RESERVE: u64 = 64 << 10;
 
-pub(super) struct DiagnosticLog(Mutex<Option<Sink>>);
+pub(super) struct DiagnosticLog {
+    sink: Mutex<Option<Sink>>,
+    /// Where this supervisor's Orbit hosts keep their stderr: the `orbit`
+    /// directory inside the log's own, which the log prune never enters.
+    orbit_directory: Result<PathBuf, String>,
+}
 
 struct Sink {
     file: File,
@@ -46,6 +52,10 @@ impl DiagnosticLog {
         generation: &str,
         mode: &str,
     ) -> Arc<Self> {
+        let orbit_directory = directory
+            .as_ref()
+            .map(|directory| directory.join("orbit"))
+            .map_err(Clone::clone);
         let sink = directory
             .and_then(|directory| create(&directory, generation))
             .inspect_err(|error| {
@@ -55,12 +65,19 @@ impl DiagnosticLog {
                 );
             })
             .ok();
-        let log = Arc::new(Self(Mutex::new(sink)));
+        let log = Arc::new(Self {
+            sink: Mutex::new(sink),
+            orbit_directory,
+        });
         log.record(&format!(
             "supervisor started: generation {generation}, {mode} mode, pid {}",
             process::id()
         ));
         log
+    }
+
+    pub(super) fn orbit_directory(&self) -> Result<&Path, &str> {
+        self.orbit_directory.as_deref().map_err(String::as_str)
     }
 
     /// Appends one timestamped line.
@@ -100,7 +117,7 @@ impl DiagnosticLog {
     }
 
     fn append(&self, bytes: &[u8], record: bool) {
-        let mut sink = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut sink = self.sink.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(sink) = sink.as_mut() else {
             return;
         };
@@ -143,7 +160,7 @@ pub(super) fn state_directory() -> Option<PathBuf> {
         .map(|state| state.join("eon"))
 }
 
-fn create(directory: &Path, generation: &str) -> Result<Sink, String> {
+fn prepare_directory(directory: &Path) -> Result<(), String> {
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
@@ -158,7 +175,50 @@ fn create(directory: &Path, generation: &str) -> Result<Sink, String> {
         ));
     }
     fs::set_permissions(directory, fs::Permissions::from_mode(0o700))
-        .map_err(|error| format!("cannot protect {}: {error}", directory.display()))?;
+        .map_err(|error| format!("cannot protect {}: {error}", directory.display()))
+}
+
+/// The stderr log of one Orbit run in `directory`.
+pub(super) fn orbit_log_path(
+    directory: &Path,
+    component_generation: &str,
+    session_id: &str,
+    run_id: &str,
+) -> PathBuf {
+    directory.join(format!("{component_generation}-{session_id}-{run_id}.log"))
+}
+
+/// The suffix a failure line carries to name an Orbit log that exists.
+pub(super) fn orbit_log_suffix(path: Option<&Path>) -> String {
+    path.filter(|path| path.exists())
+        .map(|path| format!("; Orbit log: {}", path.display()))
+        .unwrap_or_default()
+}
+
+pub(super) fn open_orbit_log(
+    directory: &Path,
+    component_generation: &str,
+    session_id: &str,
+    run_id: &str,
+) -> Result<(File, PathBuf), String> {
+    prepare_directory(directory)?;
+    let path = orbit_log_path(directory, component_generation, session_id, run_id);
+    let file = fs::OpenOptions::new()
+        .append(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&path)
+        .map_err(|error| format!("cannot create {}: {error}", path.display()))?;
+    // Orbit inherits this open file description, so its lock outlives the spawn.
+    file.try_lock()
+        .map_err(|error| format!("cannot lock {}: {error}", path.display()))?;
+    prune_orbit(directory, RETAINED_ORBIT_LOGS);
+    Ok((file, path))
+}
+
+fn create(directory: &Path, generation: &str) -> Result<Sink, String> {
+    prepare_directory(directory)?;
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -181,26 +241,21 @@ fn create(directory: &Path, generation: &str) -> Result<Sink, String> {
     })
 }
 
-/// Deletes all but the newest `keep` Eon logs, skipping logs a live supervisor holds.
-fn prune(directory: &Path, keep: usize) {
+/// Deletes all but the newest `keep` ordered logs, skipping logs a live process holds.
+fn prune_by<K: Ord>(
+    directory: &Path,
+    keep: usize,
+    mut order: impl FnMut(&fs::DirEntry) -> Option<K>,
+) {
     let Ok(entries) = fs::read_dir(directory) else {
         return;
     };
     let mut logs = entries
         .flatten()
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        .filter_map(|entry| {
-            let name = entry.file_name();
-            let mut fields = name.to_str()?.strip_suffix(".log")?.rsplitn(3, '-');
-            let pid = fields.next()?.parse::<u32>().ok()?;
-            let seconds = fields.next()?.parse::<u64>().ok()?;
-            fields
-                .next()
-                .filter(|generation| valid_generation(generation))?;
-            Some(((seconds, pid), entry.path()))
-        })
+        .filter_map(|entry| Some((order(&entry)?, entry.path())))
         .collect::<Vec<_>>();
-    logs.sort_unstable_by_key(|(order, _)| std::cmp::Reverse(*order));
+    logs.sort_unstable_by(|(left, _), (right, _)| right.cmp(left));
     for (_, path) in logs.into_iter().skip(keep) {
         let finished = fs::OpenOptions::new()
             .read(true)
@@ -211,6 +266,30 @@ fn prune(directory: &Path, keep: usize) {
             let _ = fs::remove_file(path);
         }
     }
+}
+
+/// Deletes all but the newest `keep` Eon logs, skipping logs a live supervisor holds.
+fn prune(directory: &Path, keep: usize) {
+    prune_by(directory, keep, |entry| {
+        let name = entry.file_name();
+        let mut fields = name.to_str()?.strip_suffix(".log")?.rsplitn(3, '-');
+        let pid = fields.next()?.parse::<u32>().ok()?;
+        let seconds = fields.next()?.parse::<u64>().ok()?;
+        fields
+            .next()
+            .filter(|generation| valid_generation(generation))?;
+        Some((seconds, pid))
+    });
+}
+
+fn prune_orbit(directory: &Path, keep: usize) {
+    prune_by(directory, keep, |entry| {
+        let name = entry.file_name();
+        if !name.to_str()?.ends_with(".log") {
+            return None;
+        }
+        entry.metadata().ok()?.modified().ok()
+    });
 }
 
 fn timestamp() -> String {

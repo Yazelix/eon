@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Orbit host stderr now goes to a private per-terminal log, and Eon's terminal
+  failure diagnostics name that file.
+
 - Closing the window while a Project picker can't be stopped no longer ends
   Eon in the background. That picker stays in its tab, Eon logs why once and
   tries again at the next detach, the other pickers are still cleaned, and
