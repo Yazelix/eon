@@ -39,6 +39,17 @@ expanded pane has a full rounded frame, with each title in its pane's top edge.
 pane's outline. The visible shortcut footer sits bare in the margin below
 the allocated column areas.
 Selection, hover, and keyboard focus have distinct fills or outlines.
+
+With pane frames on, each column has one continuous terminal-background fill,
+from its first pane's rounded top edge down to the column's rounded bottom.
+Stacked title rows and the space between cards share the expanded terminal's
+background colour and opacity. Above that edge and outside the outer corners,
+the gaps and footer stay the opaque bar colour. The first title sits on that
+boundary. Popup and Agents fills follow their rounded outer edges in the same
+way, with their titles on the boundary. Header scrolling keeps the fill's top
+fixed. Frameless mode keeps terminal-background strips across the window below
+the bar, including the sidebar and footer.
+
 Visible headers pair Eon's opaque pane
 identity with Orbit's working directory. Home displays `~`, and its descendants
 use `~/`; without `HOME`, paths stay absolute. Every column's expanded pane

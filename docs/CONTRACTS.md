@@ -393,12 +393,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     typography, also their corner radius) from the window's sides, from
     each other and from the tab pills above; below them the footer's band
     is the margin, or one gap when hints are hidden. The tab pills keep the
-    same gap from the window's top and left edges, in both modes. The whole
-    allocated card areas use terminal background color/opacity as VEN-C8,
+    same gap from the window's top and left edges, in both modes. Card fills start at
+    each card's rounded top edge and use terminal background color/opacity as VEN-C8,
     VEN-C18 and VEN-C30 describe, under the existing surface-wide blur request.
-    Everything below the tab bar outside those allocated areas, the gaps and
-    footer band included, is the top bar's opaque color, so the bar, gaps and
-    hints read as one frame. On a window too small for them the gaps
+    Everything below the tab bar outside those fills, the gaps and footer band
+    included, is the top bar's opaque color, so the bar, gaps and hints read as one
+    frame. On a window too small for them the gaps
     yield before a terminal cell does. The selected pane's outline is
     `[terminal] focus_border_width` logical pixels wide (1 to 3, default 2).
     The selected pane's outline uses `[terminal] focus_color`, `preset:<name>` or `custom:#RRGGBB`, default

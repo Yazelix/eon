@@ -605,12 +605,15 @@ re-proved when that platform or feature is next touched.
     middle of its title row, breaks around its label and follows its own rounded
     corners. At the unscrolled top, each column's first pane, the popup card and
     the agent sidebar card share one snapped top line, subject to VEN-C18's
-    tiny-window popup exception. The whole allocated column card area fills with
-    its expanded terminal's background color/opacity under the surface-wide blur
-    request, including the title rows and the space around the pane curves.
-    Everything below the tab bar outside the allocated card areas, including the
-    gaps and footer band, takes the header's opaque color, so header, gaps and
-    footer form one frame. The selected pane in the selected column has a
+    tiny-window popup exception. Each column's fill starts at its first pane's top
+    edge and follows that pane's rounded top corners down to the column's rounded
+    bottom; inside it, title rows and the space between stacked pane cards share the
+    expanded terminal's background color/opacity under the surface-wide blur request,
+    so the stack has one background. Nothing above that top edge or outside those
+    outer corners takes the terminal background: everything below the tab bar outside
+    the column fills, including the gaps and footer band, takes the header's opaque
+    color, so header, gaps and footer form one frame. The first pane's label sits on
+    the boundary between the two. The selected pane in the selected column has a
     brighter label and, with pane frames enabled, its whole frame in the focus
     color at the focus border width. Eon supplies both
     widths in logical pixels. Hover adds a pill behind the label;
@@ -1111,11 +1114,11 @@ re-proved when that platform or feature is next touched.
   metric. It keeps a small top gutter before terminal padding. Scene owns
   both rectangles: chrome drives the outline, while terminal drives resize,
   clipping, pointer input, IME and accessibility. Margins and the title gutter
-  shrink to preserve a usable cell grid; tiny surfaces omit the label. The whole
-  allocated popup card area, including its title row and exposed margins, shares
-  the terminal default background and opacity, with the existing best-effort
-  surface-wide compositor blur request. Pane-frame configuration
-  has no effect on the popup outline. While the agent sidebar is visible, the
+  shrink to preserve a usable cell grid; tiny surfaces omit the label. The popup's
+  fill starts at its rounded top edge; inside it, its exposed margins share the
+  terminal default background and opacity, with the existing best-effort surface-wide
+  compositor blur request, and its title sits on the boundary. Pane-frame
+  configuration has no effect on the popup outline. While the agent sidebar is visible, the
   card area is the content area to its right (VEN-C30), so popups never cover
   the sidebar.
 - **Important failures:** Hidden or replaced endpoints retain no active
@@ -1785,9 +1788,9 @@ re-proved when that platform or feature is next touched.
       full width, its controls and its drag region.
     - Its card uses the border width and the pane cards' corner radius, with
       "Agents" in its rounded top edge in the pane-title style, using the shared
-      chrome title metric. Where no row is highlighted, its whole allocated card
-      area takes the background of the terminal in the leftmost visible column
-      at the terminal-background opacity (VEN-C11), so it reads like the panes
+      chrome title metric. Where no row is highlighted, its fill, from its rounded
+      top edge down, takes the background of the terminal in the leftmost visible
+      column at the terminal-background opacity (VEN-C11), so it reads like the panes
       and compositor blur (VEN-C15) shows through it as through them. Focused
       and hovered rows take an
       opaque highlight. Without pane frames, where pane cards have no outline

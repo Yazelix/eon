@@ -85,6 +85,16 @@ keep their one-physical-pixel outlines.
 defaulting to `1.5`. Larger values keep the tail visible longer. Eon owns this
 setting for both products; no Venus or Orbit configuration is needed.
 
+With pane frames on, each column has one continuous terminal-background fill,
+from its first pane's rounded top edge down to the column's rounded bottom.
+Stacked title rows and the space between cards share the expanded terminal's
+background colour and opacity. Above that edge and outside the outer corners,
+the gaps and footer stay the opaque bar colour. The first title sits on that
+boundary. Popup and Agents fills follow their rounded outer edges in the same
+way, with their titles on the boundary. Header scrolling keeps the fill's top
+fixed. Frameless mode keeps terminal-background strips across the window below
+the bar, including the sidebar and footer.
+
 Opacity accepts `0.0` through `1.0`. Blur and pane frames are booleans. Font size
 accepts 6–96 logical pixels, line height accepts 1–3, and a supplied columns and
 rows pair must fit 100,000 cells. `font_fallbacks` accepts an ordered array of at

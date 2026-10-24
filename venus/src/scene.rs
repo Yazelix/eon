@@ -30,6 +30,13 @@ pub struct SceneRect {
     pub height: f32,
 }
 
+/// The single outer shape shared by a card's backdrop and terminal paint.
+#[derive(Clone, Copy)]
+pub(crate) struct CardFill {
+    pub bounds: SceneRect,
+    pub radius: f32,
+}
+
 impl SceneRect {
     #[must_use]
     pub fn right(self) -> f32 {
@@ -1090,7 +1097,10 @@ fn tab_inset(metrics: CellMetrics, tab_height: f32) -> f32 {
 /// The even gap around and between pane cards, which is also their corner radius: 8 logical
 /// pixels at default typography, always less than the label padding so no label meets a curve.
 fn card_gap(metrics: CellMetrics) -> f32 {
-    (metrics.padding * 2.0 / 3.0).round()
+    let radius = (metrics.padding * 2.0 / 3.0).round();
+    // Horizontal terminal padding keeps text clear of the rounded corners.
+    debug_assert!(metrics.padding >= radius);
+    radius
 }
 
 /// The width or height a terminal needs for one padded cell.
@@ -2355,7 +2365,7 @@ impl WorkspaceScene {
         self.sidebar
     }
 
-    /// The sidebar's fill includes the title row above its painted top edge.
+    /// The sidebar's title layout and clipping include the area above its painted top edge.
     pub(crate) fn sidebar_area(&self) -> Option<SceneRect> {
         self.sidebar.map(|sidebar| SceneRect {
             left: sidebar.left,
@@ -2518,6 +2528,19 @@ impl WorkspaceScene {
         self.controls
             .iter()
             .any(|control| control.kind == kind && control.rect.width > 0.0)
+    }
+
+    /// Paint geometry is separate from terminal layout, input and accessibility bounds.
+    pub(crate) fn card_fill(&self, allocated: SceneRect, metrics: CellMetrics) -> CardFill {
+        let bounds = if self.popup_label.is_some() {
+            popup_card_rect(allocated, metrics)
+        } else {
+            card_rect(allocated, metrics)
+        };
+        CardFill {
+            bounds,
+            radius: self.card_radius,
+        }
     }
 
     #[must_use]
@@ -4026,6 +4049,74 @@ mod tests {
             claude_quota: None,
             sidebar: eon_workspace_protocol::v19::Sidebar::Open,
         };
+        // Even the smallest windows keep terminal padding; only the gaps and empty grid yield.
+        for scale in [1.0, 1.25, 1.3, 2.0] {
+            let metrics = CellMetrics::for_scale(scale);
+            for count in 1..=4 {
+                let mut snapshot = snapshot.clone();
+                snapshot.tabs[0].columns = (1..=count)
+                    .map(|index| {
+                        let mut column = snapshot.tabs[0].columns[0].clone();
+                        column.panes[0].id = format!("p{index}");
+                        column.expanded = format!("p{index}");
+                        column
+                    })
+                    .collect();
+                for size in [
+                    PhysicalSize::new(1, 1),
+                    PhysicalSize::new(120, 600),
+                    PhysicalSize::new(800, 105),
+                    PhysicalSize::new(320, 180),
+                    PhysicalSize::new(2000, 900),
+                ] {
+                    for selected_popup in [None, Some("u1".into())] {
+                        snapshot.tabs[0].selected_popup = selected_popup;
+                        for scroll in [0.0, 247.5, f32::MAX] {
+                            let hints = ShortcutHintsScene::new(
+                                Vec::new(),
+                                size,
+                                metrics,
+                                WorkspaceFocus::Terminal,
+                                |_| 0.0,
+                            );
+                            let scene = WorkspaceScene::from_snapshot_with_metadata(
+                                &snapshot,
+                                EonBar::default(),
+                                size,
+                                metrics,
+                                0.0,
+                                scroll,
+                                |_| None,
+                                |_, text| (text.into(), text.len() as f32 * metrics.width),
+                                Some(hints),
+                            );
+                            for (allocated, terminal) in
+                                std::iter::once((scene.chrome, scene.terminal)).chain(
+                                    scene
+                                        .other_columns
+                                        .iter()
+                                        .map(|column| (column.chrome, column.terminal)),
+                                )
+                            {
+                                let fill = scene.card_fill(allocated, metrics);
+                                assert!(
+                                    metrics.padding >= fill.radius,
+                                    "padding below radius at scale {scale}, size {size:?}, columns {count}"
+                                );
+                                assert!(
+                                    terminal.left + metrics.padding
+                                        >= fill.bounds.left + fill.radius
+                                );
+                                assert!(
+                                    terminal.right() - metrics.padding
+                                        <= fill.bounds.right() - fill.radius
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let project = |snapshot: &Snapshot| {
             WorkspaceScene::from_snapshot(
                 snapshot,

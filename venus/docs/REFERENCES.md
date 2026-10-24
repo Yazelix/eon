@@ -188,9 +188,12 @@ pane has a full rounded frame. Each title sits in its pane's top edge.
 selected pane's whole outline. The existing Scene viewport/header/body
 allocation and padding retain grid sizing, hit targets and AccessKit ownership.
 Scene owns the outer gap around and between allocated column areas and includes
-it in initial grid overhead. The whole allocated column area, including title
-rows and the space around pane curves, takes the terminal background and
-opacity. The outer gaps and footer take the header's opaque color. Hover adds
+it in initial grid overhead. Scene owns each column's fill from its first
+rounded top edge to its rounded bottom, fixed during header scrolling. One
+continuous terminal background at terminal opacity covers title rows and the
+space between stacked cards; Renderer paints it once. Popup and sidebar fills
+follow their own rounded outer edges. Above and outside those fills, the gaps
+and footer take the header's opaque color. Hover adds
 a label pill; keyboard focus adds a mint pill outline.
 Pinned winit `7c209ec5bebbd2963f75a39f79b320af6b03f72c`, Wayland
 `window/state.rs::set_blur`, already requests blur over the entire surface; its

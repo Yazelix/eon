@@ -1,6 +1,7 @@
 use crate::{
     Color as SceneColor, DialogScene, DrawRow, DrawStyle, Scene, ScenePreview, SceneRect,
-    WorkspaceFocus, WorkspaceScene, scene::chrome_title_metrics,
+    WorkspaceFocus, WorkspaceScene,
+    scene::{CardFill, chrome_title_metrics},
 };
 use glyphon::{
     Attrs, Buffer, Cache, Color, ColorMode, CustomGlyph, Family, Metrics, Resolution, Shaping,
@@ -234,15 +235,67 @@ fn scene_grid(scene: &Scene, viewport: SceneRect, metrics: CellMetrics) -> Scene
     }
 }
 
+fn card_backdrops(
+    workspace: &WorkspaceScene,
+    scene: Option<&Scene>,
+    columns: &[Option<&Scene>],
+    metrics: CellMetrics,
+) -> Vec<(CardFill, SceneColor)> {
+    let mut cards = std::iter::once((
+        workspace.card_fill(workspace.chrome, metrics),
+        !workspace.panes.is_empty() || workspace.popup_label().is_some(),
+        scene,
+    ))
+    .chain(
+        workspace
+            .other_columns
+            .iter()
+            .zip(columns)
+            .map(|(column, scene)| {
+                (
+                    workspace.card_fill(column.chrome, metrics),
+                    !column.panes.is_empty(),
+                    *scene,
+                )
+            }),
+    )
+    .filter_map(|(card, shown, scene)| {
+        shown.then_some((
+            card,
+            scene.map_or(DEFAULT_BACKGROUND, |scene| scene.background),
+        ))
+    })
+    .collect::<Vec<_>>();
+    // The agent sidebar's card takes the background of the card beside it (VEN-C11),
+    // so it reads like the panes and blur shows through it as through them.
+    if let Some(sidebar) = workspace.sidebar() {
+        let beside = cards
+            .iter()
+            .min_by(|left, right| left.0.bounds.left.total_cmp(&right.0.bounds.left))
+            .map_or(DEFAULT_BACKGROUND, |(_, background)| *background);
+        cards.push((
+            CardFill {
+                bounds: sidebar,
+                radius: workspace.card_radius(),
+            },
+            beside,
+        ));
+    }
+    cards
+}
+
 /// Paints `frame` opaque bar color where no card covers it, and each card in its background at
 /// the terminal-background `opacity`, so the frame reads as one piece around translucent cards.
 fn push_card_backdrop(
     rectangles: &mut RectangleBatch,
     frame: SceneRect,
-    cards: &[(SceneRect, SceneColor)],
+    cards: &[(CardFill, SceneColor)],
     opacity: f32,
 ) {
-    let rects = cards.iter().map(|(card, _)| *card).collect::<Vec<_>>();
+    let rects = cards
+        .iter()
+        .map(|(card, _)| card.bounds)
+        .collect::<Vec<_>>();
     for rect in uncovered(frame, &rects) {
         rectangles.push(
             rect.left,
@@ -253,15 +306,74 @@ fn push_card_backdrop(
             1.0,
         );
     }
-    for (card, background) in cards {
-        rectangles.push(
-            card.left,
-            card.top,
-            card.width,
-            card.height,
-            *background,
-            opacity,
-        );
+    for (fill, background) in cards {
+        for band in fill.bands() {
+            rectangles.push(
+                band.left,
+                band.top,
+                band.width,
+                band.height,
+                *background,
+                opacity,
+            );
+        }
+        let card = fill.bounds;
+        let radius = rounded_radius(card, fill.radius);
+        // Partition each corner row: an opaque underpaint would apply alpha twice.
+        for (top, inset) in corner_rows(card, radius) {
+            for (left, width, color, alpha) in [
+                (card.left, inset, DEFAULT_BACKGROUND, 1.0),
+                (card.right() - inset, inset, DEFAULT_BACKGROUND, 1.0),
+            ] {
+                rectangles.push(left, top, width, 1.0, color, alpha);
+            }
+        }
+    }
+}
+
+fn terminal_paint_clip(
+    workspace: &WorkspaceScene,
+    allocated: SceneRect,
+    terminal: SceneRect,
+    metrics: CellMetrics,
+    pane_frames: bool,
+) -> Option<(SceneRect, Option<CardFill>)> {
+    let card = pane_frames.then(|| workspace.card_fill(allocated, metrics));
+    let viewport = card.map_or(workspace.pane_viewport, |card| card.bounds);
+    Some((
+        terminal
+            .intersection(workspace.pane_viewport)?
+            .intersection(viewport)?,
+        card,
+    ))
+}
+
+fn terminal_text_clip(
+    terminal: SceneRect,
+    clip: SceneRect,
+    metrics: CellMetrics,
+    pane_frames: bool,
+) -> SceneRect {
+    if !pane_frames {
+        return clip;
+    }
+    // A retained frame can be wider than the current terminal after a resize.
+    let left = clip.left.max(terminal.left + metrics.padding);
+    let right = clip.right().min(terminal.right() - metrics.padding);
+    SceneRect {
+        left,
+        width: (right - left).max(0.0),
+        ..clip
+    }
+}
+
+fn text_clip_bounds(bounds: SceneRect) -> TextBounds {
+    // A pixel belongs to the half-open fill only when its center is inside it.
+    TextBounds {
+        left: (bounds.left - 0.5).ceil() as i32,
+        top: (bounds.top - 0.5).ceil() as i32,
+        right: (bounds.right() - 0.5).ceil() as i32,
+        bottom: (bounds.bottom() - 0.5).ceil() as i32,
     }
 }
 
@@ -952,34 +1064,7 @@ impl Renderer {
                 // Below the tab bar, everything no card covers is opaque bar color, so the bar,
                 // the gaps and the hints read as one frame; each card takes its own terminal's
                 // background.
-                let mut cards = std::iter::once((
-                    workspace.chrome,
-                    !workspace.panes.is_empty() || workspace.popup_label().is_some(),
-                    scene,
-                ))
-                .chain(
-                    workspace
-                        .other_columns
-                        .iter()
-                        .zip(columns)
-                        .map(|(column, scene)| (column.chrome, !column.panes.is_empty(), *scene)),
-                )
-                .filter_map(|(card, shown, scene)| {
-                    shown.then_some((
-                        card,
-                        scene.map_or(DEFAULT_BACKGROUND, |scene| scene.background),
-                    ))
-                })
-                .collect::<Vec<_>>();
-                // The agent sidebar's card takes the background of the card beside it (VEN-C11),
-                // so it reads like the panes and blur shows through it as through them.
-                if let Some(sidebar) = workspace.sidebar_area() {
-                    let beside = cards
-                        .iter()
-                        .min_by(|left, right| left.0.left.total_cmp(&right.0.left))
-                        .map_or(DEFAULT_BACKGROUND, |(_, background)| *background);
-                    cards.push((sidebar, beside));
-                }
+                let cards = card_backdrops(workspace, scene, columns, self.metrics);
                 let frame = SceneRect {
                     left: 0.0,
                     top: workspace.tab_viewport.bottom(),
@@ -1024,14 +1109,23 @@ impl Renderer {
                 let Some(scene) = scene else {
                     continue;
                 };
-                let Some(terminal) = column.terminal.intersection(workspace.pane_viewport) else {
+                let Some((terminal, card_clip)) = terminal_paint_clip(
+                    workspace,
+                    column.chrome,
+                    column.terminal,
+                    self.metrics,
+                    self.pane_frames,
+                ) else {
                     continue;
                 };
                 let clip = scene_grid(scene, column.terminal, self.metrics)
                     .intersection(terminal)
                     .unwrap_or(terminal);
                 rectangles.clip = Some(clip);
-                self.build_scene_text(scene, blink_visible, column.terminal, clip);
+                rectangles.card_clip = card_clip;
+                let text_clip =
+                    terminal_text_clip(column.terminal, clip, self.metrics, self.pane_frames);
+                self.build_scene_text(scene, blink_visible, column.terminal, text_clip);
                 // The cursor trail follows the selected column; other columns draw a static cursor.
                 build_scene_rectangles(
                     &mut rectangles,
@@ -1042,17 +1136,26 @@ impl Renderer {
                     true,
                 );
                 rectangles.clip = None;
+                rectangles.card_clip = None;
             }
-            if let Some(terminal) = workspace.visible_terminal()
-                && let Some(scene) = scene
+            if let Some((terminal, card_clip)) = terminal_paint_clip(
+                workspace,
+                workspace.chrome,
+                workspace.terminal,
+                self.metrics,
+                self.pane_frames,
+            ) && let Some(scene) = scene
             {
                 let clip = scene_grid(scene, workspace.terminal, self.metrics)
                     .intersection(terminal)
                     .unwrap_or(terminal);
                 rectangles.clip = Some(clip);
+                rectangles.card_clip = card_clip;
                 let origin = shifted(workspace.terminal, scroll_offset);
-                self.build_scene_text(scene, blink_visible, origin, clip);
-                self.build_preview_text(scene, scroll_preview, blink_visible, origin, clip);
+                let text_clip =
+                    terminal_text_clip(workspace.terminal, clip, self.metrics, self.pane_frames);
+                self.build_scene_text(scene, blink_visible, origin, text_clip);
+                self.build_preview_text(scene, scroll_preview, blink_visible, origin, text_clip);
                 cursor_vertex_boundary = build_scene_rectangles(
                     &mut rectangles,
                     scene,
@@ -1069,9 +1172,10 @@ impl Renderer {
                     self.metrics,
                     origin,
                 );
-                self.build_preedit(scene, preedit, &mut rectangles, origin, clip);
+                self.build_preedit(scene, preedit, &mut rectangles, origin, text_clip);
                 self.build_hyperlink(scene, &mut rectangles, origin);
                 rectangles.clip = None;
+                rectangles.card_clip = None;
             }
             if !status.is_empty() {
                 self.build_notice(status, &mut rectangles, Some(workspace));
@@ -1080,9 +1184,19 @@ impl Renderer {
             if workspace.popup_label().is_some()
                 && status.is_empty()
                 && self.text_overlay.is_none()
-                && let Some(terminal) = workspace.visible_terminal()
+                && let Some((terminal, card_clip)) = terminal_paint_clip(
+                    workspace,
+                    workspace.chrome,
+                    workspace.terminal,
+                    self.metrics,
+                    self.pane_frames,
+                )
             {
+                rectangles.clip = Some(terminal);
+                rectangles.card_clip = card_clip;
                 self.build_scrollback(terminal, terminal, false, cursor, &mut rectangles);
+                rectangles.clip = None;
+                rectangles.card_clip = None;
             }
         } else if let Some(scene) = scene {
             self.clear = clear_color(
@@ -1171,12 +1285,18 @@ impl Renderer {
             self.reset_cursor_animation();
             return;
         };
-        let (viewport, clip) = if let Some(workspace) = workspace {
-            let Some(clip) = workspace.visible_terminal() else {
+        let (viewport, clip, card_clip) = if let Some(workspace) = workspace {
+            let Some((clip, card_clip)) = terminal_paint_clip(
+                workspace,
+                workspace.chrome,
+                workspace.terminal,
+                self.metrics,
+                self.pane_frames,
+            ) else {
                 self.reset_cursor_animation();
                 return;
             };
-            (workspace.terminal, Some(clip))
+            (workspace.terminal, Some(clip), card_clip)
         } else {
             (
                 SceneRect {
@@ -1185,6 +1305,7 @@ impl Renderer {
                     width: self.config.width as f32,
                     height: self.config.height as f32,
                 },
+                None,
                 None,
             )
         };
@@ -1200,6 +1321,7 @@ impl Renderer {
             .map_or(0.0, |last| now.duration_since(last).as_secs_f32());
         let mut rectangles = RectangleBatch::new(self.config.width, self.config.height);
         rectangles.clip = clip;
+        rectangles.card_clip = card_clip;
         if let Some(scene) = scene {
             build_tail_cursor(
                 &mut rectangles,
@@ -1552,11 +1674,12 @@ impl Renderer {
             kind,
         );
         if self.text.len() > previous_len {
+            let bounds = text_clip_bounds(bounds);
             for text in &mut self.text[previous_len..] {
-                text.bound_left = bounds.left.floor() as i32;
-                text.bound_top = bounds.top.floor() as i32;
-                text.right = bounds.right().ceil() as i32;
-                text.bottom = bounds.bottom().ceil() as i32;
+                text.bound_left = bounds.left;
+                text.bound_top = bounds.top;
+                text.right = bounds.right;
+                text.bottom = bounds.bottom;
             }
         }
         width
@@ -1895,11 +2018,77 @@ fn corner_rows(rect: SceneRect, radius: f32) -> impl Iterator<Item = (f32, f32)>
     })
 }
 
+impl CardFill {
+    fn middle(self) -> SceneRect {
+        let radius = rounded_radius(self.bounds, self.radius);
+        SceneRect {
+            top: self.bounds.top + radius,
+            height: self.bounds.height - radius * 2.0,
+            ..self.bounds
+        }
+    }
+
+    fn bands(self) -> impl Iterator<Item = SceneRect> {
+        let rect = self.bounds;
+        std::iter::once(self.middle()).chain(
+            corner_rows(rect, rounded_radius(rect, self.radius)).map(move |(top, inset)| {
+                SceneRect {
+                    left: rect.left + inset,
+                    top,
+                    width: rect.width - inset * 2.0,
+                    height: 1.0,
+                }
+            }),
+        )
+    }
+}
+
+/// Clip triangles to a fill band without moving vertices that are already inside it.
+fn clip_polygon(points: &[CursorPoint], clip: SceneRect) -> Vec<CursorPoint> {
+    let mut polygon = points.to_vec();
+    for (axis, edge, minimum) in [
+        (0, clip.left, true),
+        (0, clip.right(), false),
+        (1, clip.top, true),
+        (1, clip.bottom(), false),
+    ] {
+        let coordinate = |p: CursorPoint| if axis == 0 { p.x } else { p.y };
+        let inside = |p: CursorPoint| {
+            if minimum {
+                coordinate(p) >= edge
+            } else {
+                coordinate(p) <= edge
+            }
+        };
+        let Some(mut previous) = polygon.last().copied() else {
+            break;
+        };
+        let mut output = Vec::new();
+        for current in polygon {
+            if inside(previous) != inside(current) {
+                let t =
+                    (edge - coordinate(previous)) / (coordinate(current) - coordinate(previous));
+                output.push(CursorPoint {
+                    x: previous.x + t * (current.x - previous.x),
+                    y: previous.y + t * (current.y - previous.y),
+                });
+            }
+            if inside(current) {
+                output.push(current);
+            }
+            previous = current;
+        }
+        polygon = output;
+    }
+    polygon
+}
+
 struct RectangleBatch {
     bytes: Vec<u8>,
     width: u32,
     height: u32,
     clip: Option<SceneRect>,
+    card_clip: Option<CardFill>,
 }
 
 impl RectangleBatch {
@@ -2080,6 +2269,7 @@ impl RectangleBatch {
             width,
             height,
             clip: None,
+            card_clip: None,
         }
     }
 
@@ -2170,6 +2360,35 @@ impl RectangleBatch {
     }
 
     fn push_points(&mut self, points: [CursorPoint; 6], color: SceneColor, alpha: f32) {
+        if let Some(card) = self.card_clip {
+            let left = points.iter().map(|p| p.x).fold(f32::INFINITY, f32::min);
+            let top = points.iter().map(|p| p.y).fold(f32::INFINITY, f32::min);
+            let bounds = SceneRect {
+                left,
+                top,
+                width: points.iter().map(|p| p.x).fold(f32::NEG_INFINITY, f32::max) - left,
+                height: points.iter().map(|p| p.y).fold(f32::NEG_INFINITY, f32::max) - top,
+            };
+            if bounds.intersection(card.middle()) != Some(bounds) {
+                for band in card.bands().filter_map(|band| band.intersection(bounds)) {
+                    for triangle in points.chunks_exact(3) {
+                        let polygon = clip_polygon(triangle, band);
+                        for index in 1..polygon.len().saturating_sub(1) {
+                            self.write_points(
+                                &[polygon[0], polygon[index], polygon[index + 1]],
+                                color,
+                                alpha,
+                            );
+                        }
+                    }
+                }
+                return;
+            }
+        }
+        self.write_points(&points, color, alpha);
+    }
+
+    fn write_points(&mut self, points: &[CursorPoint], color: SceneColor, alpha: f32) {
         let to_x = |value: f32| value / self.width as f32 * 2.0 - 1.0;
         let to_y = |value: f32| 1.0 - value / self.height as f32 * 2.0;
         let rgba = [
@@ -3319,67 +3538,1031 @@ mod tests {
         assert!(surface_alpha_mode(0.5, &[CompositeAlphaMode::PostMultiplied]).is_err());
     }
 
-    #[test]
-    fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
-        // Adjacent allocated areas include title rows and curve exteriors, each filled once.
-        let frame = SceneRect {
-            left: 0.0,
-            top: 40.0,
-            width: 400.0,
-            height: 260.0,
+    fn clipping_test_fonts() -> FontSetup {
+        FontSetup::new(&FontSettings {
+            family: Some("DejaVu Sans Mono".into()),
+            ..FontSettings::default()
+        })
+        .unwrap()
+    }
+
+    fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRect) {
+        use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+
+        let metrics = CellMetrics::for_scale(1.0);
+        let snapshot = Snapshot {
+            active_tab: "t1".into(),
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/tmp".to_vec(),
+                pending: false,
+                selected_pane: Some("p1".into()),
+                selected_popup: None,
+                columns: vec![Column {
+                    panes: vec![Pane {
+                        id: "p1".into(),
+                        session: "s1".into(),
+                        endpoint: b"/tmp/s1.sock".to_vec(),
+                        live: true,
+                        attention: None,
+                    }],
+                    expanded: "p1".into(),
+                }],
+                popups: vec![],
+                attention_rollup: None,
+            }],
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: vec![],
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: Sidebar::Closed,
         };
-        let card = SceneRect {
-            left: 8.0,
-            top: 48.0,
-            width: 280.0,
-            height: 244.0,
+        let workspace = |size| {
+            WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
+                (text.into(), text.len() as f32 * metrics.width)
+            })
         };
-        let mut rectangles = RectangleBatch::new(400, 300);
-        let adjacent = SceneRect {
-            left: card.right(),
-            width: 80.0,
-            ..card
+        let old = workspace(PhysicalSize::new(2000, 1000));
+        let scene = Scene {
+            revision: 1,
+            columns: ((old.terminal.width - metrics.padding * 2.0) / metrics.width).floor() as u16,
+            rows: ((old.terminal.height - metrics.padding * 2.0) / metrics.height).floor() as u16,
+            screen: Screen::Primary,
+            title: String::new(),
+            working_directory: String::new(),
+            background: DEFAULT_BACKGROUND,
+            foreground: CARD_OUTLINE,
+            cursor: None,
+            content: vec![],
         };
-        push_card_backdrop(
-            &mut rectangles,
-            frame,
-            &[(card, DEFAULT_BACKGROUND), (adjacent, CARD_OUTLINE)],
-            0.6,
+        assert_eq!((scene.columns, scene.rows), (196, 50));
+        let current = workspace(size);
+        let (terminal, _) =
+            terminal_paint_clip(&current, current.chrome, current.terminal, metrics, true).unwrap();
+        let clip = scene_grid(&scene, current.terminal, metrics)
+            .intersection(terminal)
+            .unwrap_or(terminal);
+        assert_eq!(
+            terminal_text_clip(current.terminal, clip, metrics, false),
+            clip
         );
-        // Each quad is two triangles of six vertices: x, y (clip space), r, g, b, alpha.
-        let floats = rectangles
-            .bytes
-            .chunks_exact(4)
-            .map(|value| f32::from_ne_bytes(value.try_into().unwrap()))
-            .collect::<Vec<_>>();
-        let covering = |x: f32, y: f32| {
-            floats
-                .chunks_exact(36)
-                .filter(move |quad| {
-                    let xs = quad.chunks_exact(6).map(|vertex| (vertex[0] + 1.0) * 200.0);
-                    let ys = quad.chunks_exact(6).map(|vertex| (1.0 - vertex[1]) * 150.0);
-                    let (left, right) =
-                        xs.fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(v), b.max(v)));
-                    let (top, bottom) =
-                        ys.fold((f32::MAX, f32::MIN), |(a, b), v| (a.min(v), b.max(v)));
-                    (left..right).contains(&x) && (top..bottom).contains(&y)
-                })
-                .map(|quad| quad[5])
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(covering(148.0, 170.0), [0.6]);
-        for (x, y) in [(8.5, 48.5), (287.5, 48.5), (8.5, 291.5), (148.0, 49.5)] {
-            assert_eq!(
-                covering(x, y),
-                [0.6],
-                "allocated title rows and hooks share one fill"
+        let clip = terminal_text_clip(current.terminal, clip, metrics, true);
+        (current, clip)
+    }
+
+    #[test]
+    fn retained_frame_text_preserves_padding_after_resize() {
+        let metrics = CellMetrics::for_scale(1.0);
+        let (workspace, clip) = retained_frame_text_clip(PhysicalSize::new(1014, 900));
+        let fill = workspace.card_fill(workspace.chrome, metrics);
+        assert_eq!(
+            fill.bounds,
+            SceneRect {
+                left: 8.0,
+                top: 50.0,
+                width: 998.0,
+                height: 842.0,
+            }
+        );
+        let mut fonts = clipping_test_fonts();
+        let cell_font = fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, false);
+        let mut text = Vec::new();
+        for column in [96, 98] {
+            let cell = SceneRect {
+                left: workspace.terminal.left + metrics.padding + column as f32 * metrics.width,
+                top: workspace.terminal.top + metrics.padding + 45.0 * metrics.height,
+                width: metrics.width,
+                height: metrics.height,
+            };
+            let attrs = cell_font.attrs();
+            let box_attrs = attrs
+                .clone()
+                .metrics(Metrics::new(cell_font.box_size, metrics.height))
+                .letter_spacing(cell_font.box_letter_spacing);
+            let mut buffer = Buffer::new(
+                &mut fonts.font_system,
+                Metrics::new(cell_font.size, metrics.height),
+            );
+            buffer.set_size(Some(metrics.width), Some(metrics.height));
+            buffer.set_wrap(Wrap::None);
+            buffer.set_monospace_width(Some(metrics.width));
+            set_cell_layer(
+                &mut buffer,
+                "│",
+                &cell_text_segments("│"),
+                &attrs,
+                &attrs,
+                &box_attrs,
+                true,
+            );
+            buffer.shape_until_scroll(&mut fonts.font_system, false);
+            if column == 98 {
+                assert_eq!((cell.left, cell.top), (1000.0, 882.0));
+                let run = buffer.layout_runs().next().unwrap();
+                let physical = run.glyphs[0].physical((cell.left, cell.top), 1.0);
+                let image = SwashCache::new()
+                    .get_image_uncached(&mut fonts.font_system, physical.cache_key)
+                    .unwrap();
+                let ink_left = physical.x + image.placement.left;
+                let ink_top = run.line_y.round() as i32 + physical.y - image.placement.top;
+                let x = 1004 - ink_left;
+                let y = 891 - ink_top;
+                assert!(x >= 0 && x < image.placement.width as i32);
+                assert!(y >= 0 && y < image.placement.height as i32);
+                assert_ne!(
+                    image.data[y as usize * image.placement.width as usize + x as usize],
+                    0
+                );
+                assert!(!fill.bands().any(|band| band.contains(1004.5, 891.5)));
+            }
+            if let Some(bounds) = cell.intersection(clip) {
+                text.push(PlacedText {
+                    buffer,
+                    custom_glyph: None,
+                    left: cell.left,
+                    top: cell.top,
+                    right: text_clip_bounds(bounds).right,
+                    bottom: text_clip_bounds(bounds).bottom,
+                    bound_left: text_clip_bounds(bounds).left,
+                    bound_top: text_clip_bounds(bounds).top,
+                    color: Color::rgb(255, 255, 255),
+                });
+            }
+        }
+        let areas = text_areas(&text, None).collect::<Vec<_>>();
+        assert!(
+            areas
+                .iter()
+                .all(|area| area.bounds.right <= 1004 || area.bounds.bottom <= 891),
+            "retained-frame text admits ink at (1004,891) outside the rounded fill"
+        );
+        assert_eq!(areas.len(), 1, "the inset interior glyph must survive");
+        assert!(areas.iter().all(|area| {
+            area.bounds.left as f32 >= workspace.terminal.left + metrics.padding
+                && area.bounds.right as f32 <= workspace.terminal.right() - metrics.padding
+        }));
+    }
+
+    #[test]
+    fn retained_frame_text_does_not_paint_in_an_empty_padded_interior() {
+        let metrics = CellMetrics::for_scale(1.0);
+        for width in [24, 23, 1] {
+            let (workspace, clip) = retained_frame_text_clip(PhysicalSize::new(width, 300));
+            assert!(workspace.terminal.width <= metrics.padding * 2.0);
+            let cell = SceneRect {
+                left: workspace.terminal.left + metrics.padding,
+                top: workspace.terminal.top + metrics.padding,
+                width: metrics.width,
+                height: metrics.height,
+            };
+            assert!(
+                cell.intersection(clip).is_none(),
+                "no retained text may paint when the padded interior is empty: width {width}"
             );
         }
-        assert_eq!(covering(287.5, 170.0), [0.6]);
-        assert_eq!(covering(288.5, 170.0), [0.6]);
-        assert_eq!(covering(350.0, 170.0), [0.6]);
-        assert_eq!(covering(380.0, 170.0), [1.0]);
-        assert_eq!(covering(148.0, 295.0), [1.0]);
+    }
+
+    fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
+        use crate::scene::{EonBar, ShortcutHintsScene};
+        use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+
+        let snapshot = Snapshot {
+            active_tab: "t1".into(),
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/tmp".to_vec(),
+                pending: false,
+                selected_pane: Some("p40".into()),
+                selected_popup: None,
+                columns: vec![Column {
+                    panes: (0..80)
+                        .map(|index| Pane {
+                            id: format!("p{index}"),
+                            session: format!("s{index}"),
+                            endpoint: format!("/tmp/{index}.sock").into_bytes(),
+                            live: true,
+                            attention: None,
+                        })
+                        .collect(),
+                    expanded: "p40".into(),
+                }],
+                popups: vec![],
+                attention_rollup: None,
+            }],
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: vec![],
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: Sidebar::Closed,
+        };
+        let size = PhysicalSize::new(2000, 900);
+        let metrics = CellMetrics::for_scale(scale);
+        let hints =
+            ShortcutHintsScene::new(vec![], size, metrics, WorkspaceFocus::Terminal, |text| {
+                text.len() as f32 * metrics.width
+            });
+        WorkspaceScene::from_snapshot_with_metadata(
+            &snapshot,
+            EonBar::default(),
+            size,
+            metrics,
+            0.0,
+            scroll,
+            |_| None,
+            |_, text| (text.into(), text.len() as f32 * metrics.width),
+            Some(hints),
+        )
+    }
+
+    #[test]
+    fn fractional_text_bounds_admit_only_pixel_centers_inside_the_clip() {
+        for edge in [-1.75, -1.5, -1.25, 0.0, 0.25, 0.5, 0.75, 1.0] {
+            for width in [0.25, 1.0, 2.5] {
+                let clip = SceneRect {
+                    left: edge,
+                    top: edge,
+                    width,
+                    height: width,
+                };
+                let bounds = text_clip_bounds(clip);
+                for y in -4..6 {
+                    for x in -4..6 {
+                        assert_eq!(
+                            x >= bounds.left
+                                && x < bounds.right
+                                && y >= bounds.top
+                                && y < bounds.bottom,
+                            clip.contains(x as f32 + 0.5, y as f32 + 0.5),
+                            "pixel ({x},{y}), clip {clip:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fractional_card_text_has_no_exterior_ink_with_hints_and_header_scroll() {
+        let mut fonts = clipping_test_fonts();
+        let mut swash = SwashCache::new();
+        let mut exterior_ink = Vec::new();
+        for (scale, bottom_scroll) in [(1.25, 247.5), (1.3, 300.0)] {
+            let metrics = CellMetrics::for_scale(scale);
+            let workspace = fractional_card_workspace(scale, bottom_scroll);
+            let fill = workspace.card_fill(workspace.chrome, metrics).bounds;
+            if scale == 1.25 {
+                assert_eq!(fill.bottom(), 857.5);
+            }
+            let top_scroll = bottom_scroll + workspace.terminal.top + metrics.padding
+                - (fill.top - metrics.height / 2.0);
+            for (scroll, at_bottom) in [(bottom_scroll, true), (top_scroll, false)] {
+                let workspace = fractional_card_workspace(scale, scroll);
+                let (clip, _) = terminal_paint_clip(
+                    &workspace,
+                    workspace.chrome,
+                    workspace.terminal,
+                    metrics,
+                    true,
+                )
+                .unwrap();
+                let clip = terminal_text_clip(workspace.terminal, clip, metrics, true);
+                let cell = SceneRect {
+                    left: workspace.terminal.left + metrics.padding,
+                    top: workspace.terminal.top + metrics.padding,
+                    width: metrics.width,
+                    height: metrics.height,
+                };
+                let bounds = text_clip_bounds(cell.intersection(clip).unwrap());
+                let cell_font =
+                    fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, false);
+                let attrs = cell_font.attrs();
+                let box_attrs = attrs
+                    .clone()
+                    .metrics(Metrics::new(cell_font.box_size, metrics.height))
+                    .letter_spacing(cell_font.box_letter_spacing);
+                let mut buffer = Buffer::new(
+                    &mut fonts.font_system,
+                    Metrics::new(cell_font.size, metrics.height),
+                );
+                buffer.set_size(Some(metrics.width), Some(metrics.height));
+                buffer.set_wrap(Wrap::None);
+                buffer.set_monospace_width(Some(metrics.width));
+                set_cell_layer(
+                    &mut buffer,
+                    "│",
+                    &cell_text_segments("│"),
+                    &attrs,
+                    &attrs,
+                    &box_attrs,
+                    true,
+                );
+                buffer.shape_until_scroll(&mut fonts.font_system, false);
+                let text = [PlacedText {
+                    buffer,
+                    custom_glyph: None,
+                    left: cell.left,
+                    top: cell.top,
+                    right: bounds.right,
+                    bottom: bounds.bottom,
+                    bound_left: bounds.left,
+                    bound_top: bounds.top,
+                    color: Color::rgb(255, 255, 255),
+                }];
+                let mut unclipped_exterior_ink = 0;
+                let mut interior_ink = 0;
+                // Rasterize the same Swash glyphs and half-open bounds consumed by Glyphon.
+                for area in text_areas(&text, None) {
+                    for run in area.buffer.layout_runs() {
+                        for glyph in run.glyphs {
+                            let physical = glyph.physical((area.left, area.top), area.scale);
+                            let image = swash
+                                .get_image_uncached(&mut fonts.font_system, physical.cache_key)
+                                .unwrap();
+                            assert_eq!(image.content, glyphon::SwashContent::Mask);
+                            let left = physical.x + image.placement.left;
+                            let top = run.line_y.round() as i32 + physical.y - image.placement.top;
+                            for (index, alpha) in image.data.iter().enumerate() {
+                                if *alpha == 0 {
+                                    continue;
+                                }
+                                let x = left + (index as u32 % image.placement.width) as i32;
+                                let y = top + (index as u32 / image.placement.width) as i32;
+                                let center_y = y as f32 + 0.5;
+                                if (at_bottom && center_y >= fill.bottom())
+                                    || (!at_bottom && center_y < fill.top)
+                                {
+                                    unclipped_exterior_ink += 1;
+                                }
+                                if x >= area.bounds.left
+                                    && x < area.bounds.right
+                                    && y >= area.bounds.top
+                                    && y < area.bounds.bottom
+                                {
+                                    if fill.contains(x as f32 + 0.5, center_y) {
+                                        interior_ink += 1;
+                                    } else {
+                                        exterior_ink.push((scale, scroll, x, y));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                assert!(
+                    unclipped_exterior_ink > 0,
+                    "fixture must cross the fill edge"
+                );
+                assert!(interior_ink > 0, "clipped interior ink must survive");
+            }
+        }
+        assert!(exterior_ink.is_empty(), "exterior ink: {exterior_ink:?}");
+    }
+
+    #[test]
+    fn fractional_card_text_survives_glyphon_preparation_with_hints_and_header_scroll() {
+        let (device, queue) = wgpu::Device::noop(&DeviceDescriptor::default());
+        let cache = Cache::new(&device);
+        let mut viewport = Viewport::new(&device, &cache);
+        viewport.update(
+            &queue,
+            Resolution {
+                width: 2000,
+                height: 900,
+            },
+        );
+        let mut atlas = TextAtlas::new(&device, &queue, &cache, wgpu::TextureFormat::Rgba8Unorm);
+        let mut renderer =
+            TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
+        let mut fonts = clipping_test_fonts();
+        let mut swash = SwashCache::new();
+        for (scale, scroll) in [(1.25, 256.0), (1.25, 247.5), (1.3, 300.0)] {
+            let metrics = CellMetrics::for_scale(scale);
+            let workspace = fractional_card_workspace(scale, scroll);
+            let (clip, card) = terminal_paint_clip(
+                &workspace,
+                workspace.chrome,
+                workspace.terminal,
+                metrics,
+                true,
+            )
+            .unwrap();
+            let clip = terminal_text_clip(workspace.terminal, clip, metrics, true);
+            let card = card.unwrap();
+            if scale == 1.25 {
+                assert_eq!(card.bounds.bottom(), 857.5);
+            }
+            let cell_font = fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, false);
+            let left = workspace.terminal.left + metrics.padding;
+            let top = workspace.terminal.top + metrics.padding;
+            if scale == 1.25 && scroll == 256.0 {
+                assert_eq!(top, 834.0);
+                assert_eq!(top - cell_font.top_offset, 832.0);
+                assert_eq!(metrics.height, 23.0);
+            }
+            let mut buffer = Buffer::new(
+                &mut fonts.font_system,
+                Metrics::new(cell_font.size, metrics.height),
+            );
+            buffer.set_size(Some(metrics.width), Some(metrics.height));
+            buffer.set_wrap(Wrap::None);
+            buffer.set_monospace_width(Some(metrics.width));
+            buffer.set_text("g\u{323}", &cell_font.attrs(), Shaping::Advanced, None);
+            buffer.shape_until_scroll(&mut fonts.font_system, false);
+            assert!(buffer.layout_runs().any(|run| !run.glyphs.is_empty()));
+            if scale == 1.25 && scroll == 256.0 {
+                let run = buffer.layout_runs().next().unwrap();
+                assert!(
+                    run.glyphs.iter().any(|glyph| {
+                        let physical = glyph.physical((left, top - cell_font.top_offset), 1.0);
+                        let image = swash
+                            .get_image_uncached(&mut fonts.font_system, physical.cache_key)
+                            .unwrap();
+                        let ink_top = run.line_y.round() as i32 + physical.y - image.placement.top;
+                        let row = 856 - ink_top;
+                        row >= 0
+                            && row < image.placement.height as i32
+                            && image.data[(row as u32 * image.placement.width) as usize
+                                ..((row as u32 + 1) * image.placement.width) as usize]
+                                .iter()
+                                .any(|alpha| *alpha != 0)
+                    }),
+                    "the regression must contain ink in the dropped row at y=856"
+                );
+            }
+            let rect = SceneRect {
+                left,
+                top,
+                width: metrics.width,
+                height: metrics.height,
+            }
+            .intersection(clip)
+            .unwrap();
+            let text = [PlacedText {
+                buffer,
+                custom_glyph: None,
+                left,
+                top: top - cell_font.top_offset,
+                right: text_clip_bounds(rect).right,
+                bottom: text_clip_bounds(rect).bottom,
+                bound_left: text_clip_bounds(rect).left,
+                bound_top: text_clip_bounds(rect).top,
+                color: Color::rgb(255, 255, 255),
+            }];
+            // The depth callback is reached once per glyph admitted by Glyphon's preparation.
+            let mut prepare = |areas: Vec<TextArea<'_>>| {
+                let mut glyphs = 0;
+                renderer
+                    .prepare_with_depth(
+                        &device,
+                        &queue,
+                        &mut fonts.font_system,
+                        &mut atlas,
+                        &viewport,
+                        areas,
+                        &mut swash,
+                        |_| {
+                            glyphs += 1;
+                            0.0
+                        },
+                    )
+                    .unwrap();
+                glyphs
+            };
+            let reference = TextArea {
+                buffer: &text[0].buffer,
+                left: text[0].left,
+                top: text[0].top,
+                scale: 1.0,
+                bounds: TextBounds {
+                    left: text[0].bound_left,
+                    top: text[0].bound_top,
+                    right: text[0].right,
+                    bottom: text[0].bottom,
+                },
+                default_color: text[0].color,
+                custom_glyphs: &[],
+            };
+            let expected = prepare(vec![reference]);
+            assert!(expected > 0);
+            if scale == 1.25 && scroll == 256.0 {
+                assert_eq!(expected, 2, "both g and its combining dot must be prepared");
+            }
+            let areas: Vec<_> = text_areas(&text, None).collect();
+            let actual = prepare(areas);
+            assert_eq!(
+                actual, expected,
+                "Glyphon preparation at scale {scale}, scroll {scroll}"
+            );
+            assert_eq!(text_areas(&text, None).count(), 1);
+        }
+    }
+
+    #[test]
+    fn terminal_paint_stays_inside_rounded_fill_during_cursor_handoff() {
+        use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+
+        let pane = |column, index| Pane {
+            id: format!("p{column}-{index}"),
+            session: format!("s{column}-{index}"),
+            endpoint: format!("/tmp/{column}-{index}.sock").into_bytes(),
+            live: true,
+            attention: None,
+        };
+        let mut snapshot = Snapshot {
+            active_tab: "t1".into(),
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/tmp".to_vec(),
+                pending: false,
+                selected_pane: Some("p0-40".into()),
+                selected_popup: None,
+                columns: vec![
+                    Column {
+                        panes: (0..80).map(|index| pane(0, index)).collect(),
+                        expanded: "p0-40".into(),
+                    },
+                    Column {
+                        panes: vec![pane(1, 0)],
+                        expanded: "p1-0".into(),
+                    },
+                ],
+                popups: vec![],
+                attention_rollup: None,
+            }],
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: vec![],
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: Sidebar::Closed,
+        };
+        let mut scene = Scene {
+            revision: 1,
+            columns: 80,
+            rows: 60,
+            screen: Screen::Primary,
+            title: String::new(),
+            working_directory: String::new(),
+            background: DEFAULT_BACKGROUND,
+            foreground: CARD_OUTLINE,
+            cursor: Some(DrawCursor {
+                visible: true,
+                blinking: false,
+                password_input: false,
+                shape: CursorShape::Block,
+                column: 0,
+                row: 0,
+                at_wide_tail: false,
+                color: CARD_OUTLINE,
+                explicit_color: false,
+            }),
+            content: vec![DrawRow {
+                wrapped: false,
+                wrap_continuation: false,
+                kitty_virtual_placeholder: false,
+                cells: vec![DrawCell {
+                    width: CellWidth::Narrow,
+                    text: "█".into(),
+                    hyperlink: String::new(),
+                    style: DrawStyle {
+                        background_is_default: false,
+                        selected: true,
+                        ..plain_style()
+                    },
+                }],
+            }],
+        };
+        let covers = |batch: &RectangleBatch, x: f32, y: f32| {
+            batch
+                .bytes
+                .chunks_exact(3 * VERTEX_SIZE as usize)
+                .any(|triangle| {
+                    let points = [0, 1, 2].map(|index| {
+                        let vertex = &triangle[index * VERTEX_SIZE as usize..];
+                        CursorPoint {
+                            x: (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0) * 1000.0,
+                            y: (1.0 - f32::from_ne_bytes(vertex[4..8].try_into().unwrap())) * 450.0,
+                        }
+                    });
+                    let cross = |a: CursorPoint, b: CursorPoint| {
+                        (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x)
+                    };
+                    let signs = [
+                        cross(points[0], points[1]),
+                        cross(points[1], points[2]),
+                        cross(points[2], points[0]),
+                    ];
+                    let area = (points[1].x - points[0].x) * (points[2].y - points[0].y)
+                        - (points[1].y - points[0].y) * (points[2].x - points[0].x);
+                    area.abs() > 0.0001
+                        && (signs.iter().all(|v| *v >= 0.0) || signs.iter().all(|v| *v <= 0.0))
+                })
+        };
+        for scale in [1.0, 1.3] {
+            let metrics = CellMetrics::for_scale(scale);
+            let workspace = |snapshot: &Snapshot| {
+                WorkspaceScene::from_snapshot(
+                    snapshot,
+                    PhysicalSize::new(2000, 900),
+                    metrics,
+                    0.0,
+                    0.0,
+                    |_, label| (label.into(), label.len() as f32 * metrics.width),
+                )
+            };
+            snapshot.tabs[0].selected_pane = Some("p0-40".into());
+            let source = workspace(&snapshot);
+            snapshot.tabs[0].selected_pane = Some("p1-0".into());
+            let destination = workspace(&snapshot);
+            let card = crate::scene::card_rect(destination.chrome, metrics);
+            let assert_corners_clear = |batch: &RectangleBatch| {
+                let radius = destination.card_radius().floor();
+                for row in 0..radius as u32 {
+                    let dy = radius - row as f32 - 0.5;
+                    for offset in 0..radius as u32 {
+                        let dx = radius - offset as f32 - 0.5;
+                        if dx * dx + dy * dy <= radius * radius {
+                            continue;
+                        }
+                        for x in [
+                            card.left + offset as f32 + 0.5,
+                            card.right() - offset as f32 - 0.5,
+                        ] {
+                            for y in [
+                                card.top + row as f32 + 0.5,
+                                card.bottom() - row as f32 - 0.5,
+                            ] {
+                                assert!(
+                                    !covers(batch, x, y),
+                                    "paint outside fill at ({x},{y}), scale={scale}"
+                                );
+                            }
+                        }
+                    }
+                }
+            };
+            let mut animation = CursorAnimation::default();
+            scene.cursor.as_mut().unwrap().row = 0;
+            let mut initial = RectangleBatch::new(2000, 900);
+            build_tail_cursor(
+                &mut initial,
+                &mut animation,
+                &scene,
+                true,
+                metrics,
+                source.terminal,
+                CARD_OUTLINE,
+                DEFAULT_BACKGROUND,
+                1.0,
+                0.0,
+            );
+            scene.cursor.as_mut().unwrap().row = 43;
+            for frame in 0..24 {
+                let mut moving = RectangleBatch::new(2000, 900);
+                let (clip, card_clip) = terminal_paint_clip(
+                    &destination,
+                    destination.chrome,
+                    destination.terminal,
+                    metrics,
+                    true,
+                )
+                .unwrap();
+                moving.clip = Some(clip);
+                moving.card_clip = card_clip;
+                let active = build_tail_cursor(
+                    &mut moving,
+                    &mut animation,
+                    &scene,
+                    true,
+                    metrics,
+                    destination.terminal,
+                    CARD_OUTLINE,
+                    DEFAULT_BACKGROUND,
+                    1.0,
+                    1.0 / 240.0,
+                );
+                if frame == 0 {
+                    assert!(active, "the regression must exercise a moving cursor");
+                    if scale == 1.0 {
+                        assert!(
+                            !covers(&moving, 1004.5, 888.5),
+                            "cursor handoff paints outside the rounded fill"
+                        );
+                    }
+                }
+                assert_corners_clear(&moving);
+            }
+            for left in [card.left, card.right() - metrics.width] {
+                for top in [card.top, card.bottom() - metrics.height] {
+                    let mut cells = RectangleBatch::new(2000, 900);
+                    cells.clip = Some(card);
+                    cells.card_clip = Some(destination.card_fill(destination.chrome, metrics));
+                    build_scene_rectangles(
+                        &mut cells,
+                        &scene,
+                        true,
+                        metrics,
+                        SceneRect {
+                            left: left - metrics.padding,
+                            top: top - metrics.padding,
+                            ..card
+                        },
+                        false,
+                    );
+                    assert_corners_clear(&cells);
+                    assert!(
+                        covers(
+                            &cells,
+                            left + metrics.width / 2.0,
+                            top + metrics.height / 2.0
+                        ),
+                        "interior cell paint must survive clipping"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
+        use eon_workspace_protocol::v19::{
+            ALT, Column, Pane, Popup, PopupEntry, PopupGeometry, Shortcut, Sidebar, Snapshot, Tab,
+        };
+        let terminal_scene = Scene {
+            revision: 1,
+            columns: 1,
+            rows: 1,
+            screen: orbit_protocol::Screen::Primary,
+            title: String::new(),
+            working_directory: String::new(),
+            background: DEFAULT_BACKGROUND,
+            foreground: CARD_OUTLINE,
+            cursor: None,
+            content: vec![DrawRow {
+                wrapped: false,
+                wrap_continuation: false,
+                kitty_virtual_placeholder: false,
+                cells: vec![crate::DrawCell {
+                    width: orbit_protocol::CellWidth::Narrow,
+                    text: " ".into(),
+                    hyperlink: String::new(),
+                    style: DrawStyle {
+                        foreground: CARD_OUTLINE,
+                        background: CARD_OUTLINE,
+                        underline_color: CARD_OUTLINE,
+                        bold: false,
+                        italic: false,
+                        faint: false,
+                        blink: false,
+                        invisible: false,
+                        strikethrough: false,
+                        overline: false,
+                        selected: false,
+                        background_is_default: false,
+                        protected: false,
+                        underline: orbit_protocol::Underline::None,
+                    },
+                }],
+            }],
+        };
+        // Exercise the actual backdrop collection: inner card curves must never cut its fill.
+        for scale in [1.0, 1.3] {
+            let metrics = CellMetrics::for_scale(scale);
+            for column_count in [1, 2] {
+                for pane_count in [1, 3, 4, 5, 80] {
+                    for selected in [0, pane_count / 2, pane_count - 1] {
+                        let pane_id = |column, pane| format!("p{column}-{pane}");
+                        let mut snapshot = Snapshot {
+                            active_tab: "t1".into(),
+                            tabs: vec![Tab {
+                                id: "t1".into(),
+                                directory: b"/tmp".to_vec(),
+                                pending: false,
+                                selected_pane: Some(pane_id(0, selected)),
+                                selected_popup: None,
+                                columns: (0..column_count)
+                                    .map(|column| Column {
+                                        panes: (0..pane_count)
+                                            .map(|pane| Pane {
+                                                id: pane_id(column, pane),
+                                                session: format!("s{column}-{pane}"),
+                                                endpoint: format!("/tmp/{column}-{pane}.sock")
+                                                    .into_bytes(),
+                                                live: true,
+                                                attention: None,
+                                            })
+                                            .collect(),
+                                        expanded: pane_id(column, selected),
+                                    })
+                                    .collect(),
+                                popups: vec![Popup {
+                                    id: "u1".into(),
+                                    entry: "files".into(),
+                                    session: "files".into(),
+                                    endpoint: b"/tmp/files.sock".to_vec(),
+                                    attention: None,
+                                }],
+                                attention_rollup: None,
+                            }],
+                            geometry: PopupGeometry {
+                                side_margin: 8.0,
+                                vertical_margin: 4.0,
+                            },
+                            entries: vec![PopupEntry {
+                                id: "files".into(),
+                                label: "Files".into(),
+                                shortcut: Shortcut {
+                                    modifiers: ALT,
+                                    key: "KeyF".into(),
+                                },
+                            }],
+                            codex_quota: None,
+                            claude_quota: None,
+                            sidebar: Sidebar::Open,
+                        };
+                        for popup in [false, true] {
+                            snapshot.tabs[0].selected_popup = popup.then(|| "u1".into());
+                            for scroll in [0.0, 36.0 * metrics.scale, 4000.0] {
+                                let workspace = WorkspaceScene::from_snapshot(
+                                    &snapshot,
+                                    PhysicalSize::new(2000, 900),
+                                    metrics,
+                                    0.0,
+                                    scroll,
+                                    |_, text| (text.into(), text.len() as f32 * metrics.width),
+                                );
+                                let fill_top = if popup {
+                                    crate::scene::popup_card_rect(workspace.chrome, metrics).top
+                                } else {
+                                    crate::scene::card_rect(workspace.chrome, metrics).top
+                                };
+                                for (terminal, allocated) in
+                                    std::iter::once((workspace.terminal, workspace.chrome)).chain(
+                                        workspace
+                                            .other_columns
+                                            .iter()
+                                            .map(|column| (column.terminal, column.chrome)),
+                                    )
+                                {
+                                    assert_eq!(
+                                        terminal_paint_clip(
+                                            &workspace, allocated, terminal, metrics, false
+                                        )
+                                        .map(|(clip, card)| (clip, card.is_none())),
+                                        terminal
+                                            .intersection(workspace.pane_viewport)
+                                            .map(|clip| (clip, true))
+                                    );
+                                    let Some((clip, card_clip)) = terminal_paint_clip(
+                                        &workspace, allocated, terminal, metrics, true,
+                                    ) else {
+                                        continue;
+                                    };
+                                    let mut cells = RectangleBatch::new(2000, 900);
+                                    cells.clip = Some(clip);
+                                    cells.card_clip = card_clip;
+                                    build_scene_rectangles(
+                                        &mut cells,
+                                        &terminal_scene,
+                                        true,
+                                        metrics,
+                                        terminal,
+                                        true,
+                                    );
+                                    for vertex in cells.bytes.chunks_exact(VERTEX_SIZE as usize) {
+                                        let y = (1.0
+                                            - f32::from_ne_bytes(vertex[4..8].try_into().unwrap()))
+                                            * 450.0;
+                                        assert!(
+                                            y >= fill_top - 0.001,
+                                            "terminal paint above fixed fill: y={y}, fill={fill_top}, scale={scale}, panes={pane_count}, scroll={scroll}"
+                                        );
+                                    }
+                                }
+                                let columns = vec![None; workspace.other_columns.len()];
+                                let cards = card_backdrops(&workspace, None, &columns, metrics);
+                                let frame = SceneRect {
+                                    left: 0.0,
+                                    top: workspace.tab_viewport.bottom(),
+                                    width: 2000.0,
+                                    height: 900.0 - workspace.tab_viewport.bottom(),
+                                };
+                                let mut rectangles = RectangleBatch::new(2000, 900);
+                                push_card_backdrop(&mut rectangles, frame, &cards, 0.6);
+                                let floats = rectangles
+                                    .bytes
+                                    .chunks_exact(4)
+                                    .map(|v| f32::from_ne_bytes(v.try_into().unwrap()))
+                                    .collect::<Vec<_>>();
+                                let quads = floats
+                                    .chunks_exact(36)
+                                    .map(|quad| {
+                                        let x = |i: usize| (quad[i * 6] + 1.0) * 1000.0;
+                                        let y = |i: usize| (1.0 - quad[i * 6 + 1]) * 450.0;
+                                        (
+                                            SceneRect {
+                                                left: x(0),
+                                                top: y(0),
+                                                width: x(2) - x(0),
+                                                height: y(2) - y(0),
+                                            },
+                                            quad[5],
+                                        )
+                                    })
+                                    .collect::<Vec<_>>();
+                                let covering = |x, y| {
+                                    quads
+                                        .iter()
+                                        .filter(|(rect, _)| rect.contains(x, y))
+                                        .map(|(_, alpha)| *alpha)
+                                        .collect::<Vec<_>>()
+                                };
+                                let mut expected = vec![if popup {
+                                    crate::scene::popup_card_rect(workspace.chrome, metrics)
+                                } else {
+                                    crate::scene::card_rect(workspace.chrome, metrics)
+                                }];
+                                expected.extend(
+                                    workspace.other_columns.iter().map(|column| {
+                                        crate::scene::card_rect(column.chrome, metrics)
+                                    }),
+                                );
+                                expected.extend(workspace.sidebar());
+                                assert_eq!(cards.len(), expected.len());
+                                for card in expected {
+                                    let center = card.left + card.width / 2.0;
+                                    assert_eq!(
+                                        covering(center, card.top - 0.5),
+                                        [1.0],
+                                        "fill above top: scale={scale}, popup={popup}, scroll={scroll}"
+                                    );
+                                    for x in [card.left + 0.5, card.right() - 0.5] {
+                                        for y in [card.top + 0.5, card.bottom() - 0.5] {
+                                            assert_eq!(
+                                                covering(x, y),
+                                                [1.0],
+                                                "fill outside rounded corner"
+                                            );
+                                        }
+                                    }
+                                    let radius = workspace.card_radius().floor();
+                                    for row in 0..radius as u32 {
+                                        let dy = radius - row as f32 - 0.5;
+                                        for offset in [0.5, radius / 2.0 + 0.5, radius - 0.5] {
+                                            let inside = (radius - offset).powi(2) + dy * dy
+                                                < radius * radius;
+                                            for x in [card.left + offset, card.right() - offset] {
+                                                for y in [
+                                                    card.top + row as f32 + 0.5,
+                                                    card.bottom() - row as f32 - 0.5,
+                                                ] {
+                                                    assert_eq!(
+                                                        covering(x, y),
+                                                        [if inside { 0.6 } else { 1.0 }],
+                                                        "outer curve coverage"
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                    // All rows, including titles, inner corners and all four collapsed panes.
+                                    for row in (card.top.ceil() as u32 + 1)
+                                        ..(card.bottom().floor() as u32 - 1)
+                                    {
+                                        let y = row as f32 + 0.5;
+                                        assert_eq!(
+                                            covering(center, y),
+                                            [0.6],
+                                            "band or double alpha at row {row}"
+                                        );
+                                        if y > card.top + workspace.card_radius()
+                                            && y < card.bottom() - workspace.card_radius()
+                                        {
+                                            for x in [card.left + 0.5, card.right() - 0.5] {
+                                                assert_eq!(
+                                                    covering(x, y),
+                                                    [0.6],
+                                                    "notch beside an inner pane curve"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    assert_eq!(covering(center, card.bottom() + 0.5), [1.0]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

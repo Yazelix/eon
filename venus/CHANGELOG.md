@@ -5,9 +5,12 @@
 - VEN-C8: each pane has its own rounded frame without added stack spacing;
   collapsed panes show title hooks and the expanded pane owns its bottom corners.
   Configured neutral/focus widths paint each frame once. VEN-C18 and VEN-C30
-  popup/sidebar titles share the pane-title treatment. Allocated areas, including
-  title rows and curve exteriors, keep terminal opacity; grids, full-row targets
-  and AccessKit bounds stay unchanged (`eon-2x6h`).
+  popup/sidebar titles share the pane-title treatment. Each column has one
+  continuous terminal-background fill from its first rounded top edge to its
+  rounded bottom, including stacked title rows and the space between cards.
+  Popup and sidebar fills follow their outer curves too; the space above and
+  outside stays opaque frame (`eon-54jv`). Grids, full-row targets and AccessKit
+  bounds stay unchanged (`eon-2x6h`).
 
 - VEN-C8: `--border-width` and `--focus-border-width` accept 1–3 logical pixels
   (defaults 1 and 2) for neutral card outlines/title rules and the selected pane
