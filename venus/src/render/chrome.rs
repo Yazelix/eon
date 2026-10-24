@@ -8,7 +8,7 @@ use super::{
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
-        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics,
+        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics, pane_outlines,
         popup_card_rect,
     },
 };
@@ -1247,11 +1247,17 @@ impl Renderer {
                 left: card.right(),
                 ..SceneRect::default()
             };
-            let mut rules = panes
-                .iter()
-                .map(|pane| (pane.frame(terminal), [empty_gap; 2], pane.selected))
-                .collect::<Vec<_>>();
-            for (pane, (_, rule_gaps, _)) in panes.iter().zip(&mut rules) {
+            let fill = workspace.card_fill(card, self.metrics);
+            let mut rules = pane_outlines(
+                panes,
+                terminal,
+                fill,
+                physical_outline_width(self.border_width, self.metrics.scale),
+            )
+            .into_iter()
+            .map(|outline| (outline, [empty_gap; 2]))
+            .collect::<Vec<_>>();
+            for (pane, (_, rule_gaps)) in panes.iter().zip(&mut rules) {
                 // Only the selected column's expanded header shows selection and scrollback.
                 let current = pane.selected && selected_column;
                 let Some(rect) = pane.rect.intersection(workspace.pane_viewport) else {
@@ -1316,7 +1322,7 @@ impl Renderer {
                 rectangles.clip = None;
             }
             rectangles.push_pane_outlines(
-                workspace.card_radius(),
+                fill,
                 workspace.pane_viewport,
                 &rules,
                 self.pane_frames.then_some(if selected_column {

@@ -33,8 +33,9 @@ A tab shows one to four equal-width columns side by side. In each column one
 pane expands in a vertical stack while every fitting pane header stays
 visible. Each pane is its own rounded card, stacked without gaps in its
 column's allocated card area. Even outer gaps surround and separate the
-allocated column areas. Collapsed panes show their rounded top edge; the
-expanded pane has a full rounded frame, with each title in its pane's top edge.
+allocated column areas. Collapsed panes show a rounded title edge with corners turning toward the
+expanded pane and sides continuing to the next card in that direction. The
+expanded pane has a full rounded frame with its title in the top edge.
 `border_width` sizes neutral outlines; `focus_border_width` sizes the selected
 pane's outline. The visible shortcut footer sits bare in the margin below
 the allocated column areas.

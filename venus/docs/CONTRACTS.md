@@ -589,7 +589,9 @@ re-proved when that platform or feature is next touched.
     popup on the key takes it (VEN-C20).
   - Pane frames draw each pane as its own rounded card at the border width,
     stacked without gaps in its column's allocated card area. A collapsed pane
-    is one title row showing its card's rounded top edge with its label in it;
+    is one title row showing a rounded edge with its label in it; its corners turn
+    toward the column's expanded pane and its sides continue to the next card in
+    that direction;
     the expanded pane is a full rounded frame with its label in the top edge.
     Pane titles use the same shared
     chrome title metric as the agent sidebar title (VEN-C30). Scene owns one card gap (8

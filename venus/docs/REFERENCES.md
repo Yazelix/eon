@@ -182,8 +182,9 @@ Bitdoze's article, https://www.bitdoze.com/superlogical-rex/, checked
 2026-10-18; look only, no source).
 
 Each pane is its own rounded card, stacked without gaps in its column's
-allocated card area. A collapsed pane shows its rounded top edge; the expanded
-pane has a full rounded frame. Each title sits in its pane's top edge.
+allocated card area. A collapsed pane shows a rounded title edge whose corners turn toward the
+expanded pane; its sides join the next card in that direction. The expanded
+pane has a full rounded frame with its title in the top edge.
 `border_width` sizes neutral outlines and `focus_border_width` sizes the
 selected pane's whole outline. The existing Scene viewport/header/body
 allocation and padding retain grid sizing, hit targets and AccessKit ownership.

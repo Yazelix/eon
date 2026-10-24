@@ -3,7 +3,9 @@
 ## Unreleased
 
 - VEN-C8: each pane has its own rounded frame without added stack spacing;
-  collapsed panes show title hooks and the expanded pane owns its bottom corners.
+  collapsed title edges turn toward the expanded pane and their sides join the
+  next card, continuing around the column's bottom. The expanded frame stays
+  unchanged (`eon-m5bv`).
   Configured neutral/focus widths paint each frame once. VEN-C18 and VEN-C30
   popup/sidebar titles share the pane-title treatment. Each column has one
   continuous terminal-background fill from its first rounded top edge to its

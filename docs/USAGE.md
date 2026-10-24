@@ -173,7 +173,9 @@ equal gaps and the outer groups near its edges; a lone group stays centered. Hin
 Only modifier headers have padded rounded backgrounds. Each pane is its own
 rounded card, stacked without gaps in its column's allocated card area. Even
 outer gaps surround and separate the allocated column areas. Pane titles sit
-in their cards' rounded top edges, with neutral outlines sized by `border_width`.
+in rounded edges, with neutral outlines sized by `border_width`. Collapsed rows'
+corners turn toward the expanded pane, and their sides join the next card in
+that direction.
 The selected pane has a brighter label and a whole outline in
 its focus colour, at the configured focus border width; hover adds a label pill and
 F6 keyboard focus keeps a mint pill outline. Turning pane frames off leaves labels and

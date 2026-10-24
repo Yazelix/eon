@@ -1,7 +1,7 @@
 use crate::{
     Color as SceneColor, DialogScene, DrawRow, DrawStyle, Scene, ScenePreview, SceneRect,
     WorkspaceFocus, WorkspaceScene,
-    scene::{CardFill, chrome_title_metrics},
+    scene::{CardFill, PaneOutline, chrome_title_metrics, rounded_radius},
 };
 use glyphon::{
     Attrs, Buffer, Cache, Color, ColorMode, CustomGlyph, Family, Metrics, Resolution, Shaping,
@@ -377,8 +377,7 @@ fn text_clip_bounds(bounds: SceneRect) -> TextBounds {
     }
 }
 
-/// The parts of `area` that no card covers, as rectangles in horizontal bands. Cards never
-/// overlap; their rounded corners are the caller's to fill.
+/// The parts of `area` that no rectangle covers, as horizontal bands; covers may overlap.
 fn uncovered(area: SceneRect, cards: &[SceneRect]) -> Vec<SceneRect> {
     let cards = cards
         .iter()
@@ -1996,15 +1995,6 @@ fn physical_outline_width(logical_width: u8, scale: f32) -> f32 {
     (f32::from(logical_width) * scale).round().max(1.0)
 }
 
-/// A rounded rectangle's corner radius in whole pixels, at most half its shorter side.
-fn rounded_radius(rect: SceneRect, radius: f32) -> f32 {
-    radius
-        .min(rect.width / 2.0)
-        .min(rect.height / 2.0)
-        .max(0.0)
-        .floor()
-}
-
 /// Each pixel row of a rounded rectangle's top and bottom corner bands, with how far the curve
 /// sits in from the sides at that row.
 fn corner_rows(rect: SceneRect, radius: f32) -> impl Iterator<Item = (f32, f32)> {
@@ -2041,6 +2031,91 @@ impl CardFill {
             }),
         )
     }
+}
+
+fn span_rects(left: f32, right: f32, top: f32) -> impl Iterator<Item = (SceneRect, f32)> {
+    let parts = if left.floor() == right.floor() {
+        [
+            (left.floor(), 1.0, right - left),
+            (0.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0),
+        ]
+    } else {
+        [
+            (left.floor(), 1.0, left.ceil() - left),
+            (left.ceil(), right.floor() - left.ceil(), 1.0),
+            (right.floor(), 1.0, right - right.floor()),
+        ]
+    };
+    parts
+        .into_iter()
+        .filter(|(_, width, alpha)| *width > 0.0 && *alpha > 0.0)
+        .map(move |(left, width, alpha)| {
+            (
+                SceneRect {
+                    left,
+                    top,
+                    width,
+                    height: 1.0,
+                },
+                alpha,
+            )
+        })
+}
+
+fn rounded_outline_rects(rect: SceneRect, radius: f32, width: f32) -> Vec<(SceneRect, f32)> {
+    let radius = rounded_radius(rect, radius);
+    if rect.width <= width * 2.0 || rect.height <= width * 2.0 {
+        let fill = CardFill {
+            bounds: rect,
+            radius,
+        };
+        let mut rects = vec![(fill.middle(), 1.0)];
+        for (top, inset) in corner_rows(rect, radius) {
+            rects.extend(span_rects(rect.left + inset, rect.right() - inset, top));
+        }
+        return rects;
+    }
+    let mut rects = Vec::new();
+    for left in [rect.left, rect.right() - width] {
+        rects.push((
+            SceneRect {
+                left,
+                top: rect.top + radius,
+                width,
+                height: rect.height - radius * 2.0,
+            },
+            1.0,
+        ));
+    }
+    if radius < 1.0 {
+        for top in [rect.top, rect.bottom() - width] {
+            rects.push((
+                SceneRect {
+                    left: rect.left + width,
+                    top,
+                    width: rect.width - width * 2.0,
+                    height: width,
+                },
+                1.0,
+            ));
+        }
+        return rects;
+    }
+    for row in 0..radius as u32 {
+        let dy = radius - row as f32 - 0.5;
+        let outer = radius - (radius * radius - dy * dy).sqrt();
+        for top in [rect.top + row as f32, rect.bottom() - row as f32 - 1.0] {
+            if (row as f32) < width {
+                rects.extend(span_rects(rect.left + outer, rect.right() - outer, top));
+            } else {
+                let inner = radius - ((radius - width).powi(2) - dy * dy).sqrt();
+                rects.extend(span_rects(rect.left + outer, rect.left + inner, top));
+                rects.extend(span_rects(rect.right() - inner, rect.right() - outer, top));
+            }
+        }
+    }
+    rects
 }
 
 /// Clip triangles to a fill band without moving vertices that are already inside it.
@@ -2094,9 +2169,9 @@ struct RectangleBatch {
 impl RectangleBatch {
     fn push_pane_outlines(
         &mut self,
-        radius: f32,
+        fill: CardFill,
         viewport: SceneRect,
-        frames: &[(SceneRect, [SceneRect; 2], bool)],
+        frames: &[(PaneOutline, [SceneRect; 2])],
         focus_color: Option<SceneColor>,
         border_width: f32,
         focus_width: f32,
@@ -2104,34 +2179,98 @@ impl RectangleBatch {
         let Some(focus_color) = focus_color else {
             return;
         };
-        let clip = self.clip;
-        for (frame, gaps, expanded) in frames {
-            let visible = if *expanded {
-                *frame
-            } else {
-                SceneRect {
-                    height: rounded_radius(*frame, radius),
-                    ..*frame
-                }
-            };
-            let Some(visible) = visible.intersection(viewport) else {
+        let mut focus = Vec::new();
+        let mut neutral = Vec::new();
+        // Header scrolling keeps its viewport; only the fixed bottom curve bounds joins.
+        let radius = rounded_radius(fill.bounds, fill.radius);
+        let bottom = fill.bounds.bottom() - radius;
+        let neutral_clip = std::iter::once(SceneRect {
+            top: viewport.top,
+            height: (bottom - viewport.top).max(0.0),
+            ..fill.bounds
+        })
+        .chain(fill.bands().filter(|band| band.top >= bottom))
+        .map(|band| SceneRect {
+            left: band.left.floor().max(fill.bounds.left),
+            width: band.right().ceil().min(fill.bounds.right())
+                - band.left.floor().max(fill.bounds.left),
+            ..band
+        })
+        .collect::<Vec<_>>();
+        for (outline, gaps) in frames {
+            let Some(clip) = outline
+                .clip
+                .intersection(viewport)
+                .and_then(|clip| self.clip.map_or(Some(clip), |old| clip.intersection(old)))
+            else {
                 continue;
             };
-            self.clip = match clip {
-                Some(clip) => visible.intersection(clip),
-                None => Some(visible),
+            let width = if outline.expanded {
+                focus_width
+            } else {
+                border_width
             };
-            if self.clip.is_some() {
-                self.push_card_outline(
-                    *frame,
-                    radius,
-                    gaps,
-                    if *expanded { focus_width } else { border_width },
-                    if *expanded { focus_color } else { CARD_OUTLINE },
-                );
+            let gaps = gaps.map(|gap| {
+                let left = gap.left.max(outline.bounds.left + outline.radius);
+                SceneRect {
+                    left,
+                    top: outline.title_y.unwrap_or(0.0),
+                    width: (gap.right() - left).max(0.0),
+                    height: if outline.title_y.is_some() {
+                        width
+                    } else {
+                        0.0
+                    },
+                }
+            });
+            let target = if outline.expanded {
+                &mut focus
+            } else {
+                &mut neutral
+            };
+            for (rect, alpha) in rounded_outline_rects(outline.bounds, outline.radius, width) {
+                let Some(rect) = rect.intersection(clip) else {
+                    continue;
+                };
+                if outline.expanded {
+                    target.extend(uncovered(rect, &gaps).into_iter().map(|rect| (rect, alpha)));
+                    continue;
+                }
+                for band in &neutral_clip {
+                    if let Some(rect) = rect.intersection(*band) {
+                        target.extend(uncovered(rect, &gaps).into_iter().map(|rect| (rect, alpha)));
+                    }
+                }
             }
         }
-        self.clip = clip;
+        let mut painted = Vec::new();
+        for (rect, alpha) in focus {
+            self.push(
+                rect.left,
+                rect.top,
+                rect.width,
+                rect.height,
+                focus_color,
+                alpha,
+            );
+            painted.push(rect);
+        }
+        // A join is a union of strokes: reserve focus coverage, then paint neutral coverage once.
+        neutral.sort_by(|a, b| b.1.total_cmp(&a.1));
+        for (rect, alpha) in neutral {
+            let pieces = uncovered(rect, &painted);
+            for piece in &pieces {
+                self.push(
+                    piece.left,
+                    piece.top,
+                    piece.width,
+                    piece.height,
+                    CARD_OUTLINE,
+                    alpha,
+                );
+            }
+            painted.extend(pieces);
+        }
     }
 
     /// Paint one frame, interrupting only its top stroke around shaped title/scrollback gaps.
@@ -2185,64 +2324,14 @@ impl RectangleBatch {
         width: f32,
         color: SceneColor,
     ) {
-        if self
-            .clip
-            .is_some_and(|clip| rect.intersection(clip).is_none())
-        {
-            return;
-        }
-        if rect.width <= width * 2.0 || rect.height <= width * 2.0 {
-            self.push_rounded(rect, radius, color);
-            return;
-        }
-        let radius = radius
-            .min(rect.width / 2.0)
-            .min(rect.height / 2.0)
-            .max(0.0)
-            .floor();
-        if radius < 1.0 {
-            self.push_hollow(rect.left, rect.top, rect.width, rect.height, width, color);
-            return;
-        }
-        for left in [rect.left, rect.right() - width] {
-            self.push(
-                left,
-                rect.top + radius,
-                width,
-                rect.height - radius * 2.0,
-                color,
-                1.0,
-            );
-        }
-        for row in 0..radius as u32 {
-            let dy = radius - row as f32 - 0.5;
-            let outer = radius - (radius * radius - dy * dy).sqrt();
-            for top in [rect.top + row as f32, rect.bottom() - row as f32 - 1.0] {
-                if (row as f32) < width {
-                    self.push_span(rect.left + outer, rect.right() - outer, top, color);
-                } else {
-                    let inner = radius - ((radius - width).powi(2) - dy * dy).sqrt();
-                    self.push_span(rect.left + outer, rect.left + inner, top, color);
-                    self.push_span(rect.right() - inner, rect.right() - outer, top, color);
-                }
-            }
+        for (rect, alpha) in rounded_outline_rects(rect, radius, width) {
+            self.push(rect.left, rect.top, rect.width, rect.height, color, alpha);
         }
     }
 
     fn push_span(&mut self, left: f32, right: f32, top: f32, color: SceneColor) {
-        if left.floor() == right.floor() {
-            self.push(left.floor(), top, 1.0, 1.0, color, right - left);
-        } else {
-            self.push(left.floor(), top, 1.0, 1.0, color, left.ceil() - left);
-            self.push(
-                left.ceil(),
-                top,
-                right.floor() - left.ceil(),
-                1.0,
-                color,
-                1.0,
-            );
-            self.push(right.floor(), top, 1.0, 1.0, color, right - right.floor());
+        for (rect, alpha) in span_rects(left, right, top) {
+            self.push(rect.left, rect.top, rect.width, rect.height, color, alpha);
         }
     }
 
@@ -3109,29 +3198,38 @@ mod tests {
                                         width: panes[0].rect.width,
                                         ..workspace.pane_viewport
                                     };
-                                    let rules = panes
-                                        .iter()
-                                        .map(|pane| {
-                                            let label = SceneRect {
-                                                left: pane.rect.left + metrics.padding / 2.0,
-                                                width: 80.0 * metrics.scale,
-                                                ..pane.rect
-                                            };
-                                            let scrollback = SceneRect {
-                                                left: card.right() - 60.0 * metrics.scale,
-                                                width: 40.0 * metrics.scale,
-                                                ..pane.rect
-                                            };
-                                            (
-                                                pane.frame(terminal),
-                                                [label, scrollback],
-                                                pane.selected,
-                                            )
-                                        })
-                                        .collect::<Vec<_>>();
+                                    let fill = workspace.card_fill(card, metrics);
+                                    let rules = crate::scene::pane_outlines(
+                                        panes,
+                                        terminal,
+                                        fill,
+                                        border_width,
+                                    )
+                                    .into_iter()
+                                    .enumerate()
+                                    .map(|(index, outline)| {
+                                        let pane = &panes[index.min(panes.len() - 1)];
+                                        let label = SceneRect {
+                                            left: pane.rect.left + metrics.padding / 2.0,
+                                            width: 80.0 * metrics.scale,
+                                            ..pane.rect
+                                        };
+                                        let scrollback = SceneRect {
+                                            left: card.right() - 60.0 * metrics.scale,
+                                            width: 40.0 * metrics.scale,
+                                            ..pane.rect
+                                        };
+                                        let gaps = if outline.title_y.is_some() {
+                                            [label, scrollback]
+                                        } else {
+                                            [SceneRect::default(); 2]
+                                        };
+                                        (outline, gaps)
+                                    })
+                                    .collect::<Vec<_>>();
                                     let mut batch = RectangleBatch::new(1600, 900);
                                     batch.push_pane_outlines(
-                                        workspace.card_radius(),
+                                        fill,
                                         workspace.pane_viewport,
                                         &rules,
                                         frames.then_some(if current_column {
@@ -3225,6 +3323,45 @@ mod tests {
                                             })
                                         };
                                     let quads = decode(&batch);
+                                    let outer = fill
+                                        .bands()
+                                        .map(|band| SceneRect {
+                                            left: band.left.floor().max(fill.bounds.left),
+                                            width: band.right().ceil().min(fill.bounds.right())
+                                                - band.left.floor().max(fill.bounds.left),
+                                            ..band
+                                        })
+                                        .collect::<Vec<_>>();
+                                    for (index, (rect, _, _)) in quads.iter().enumerate() {
+                                        assert!(
+                                            uncovered(*rect, &outer)
+                                                .iter()
+                                                .all(|outside| outside.width < 0.001
+                                                    || outside.height < 0.001),
+                                            "outline escaped the column outer edge: {rect:?}, scale={scale}, selected={selected}"
+                                        );
+                                        for (other, _, _) in &quads[..index] {
+                                            if let Some(overlap) = rect.intersection(*other) {
+                                                assert!(
+                                                    overlap.width < 0.001 || overlap.height < 0.001,
+                                                    "stack strokes must paint once: {overlap:?}, scale={scale}, selected={selected}"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    for y in ((fill.bounds.top + workspace.card_radius()).ceil()
+                                        as u32
+                                        ..(card.bottom() - workspace.card_radius()).floor() as u32)
+                                        .map(|y| y as f32 + 0.5)
+                                    {
+                                        for x in [card.left + 0.5, card.right() - 0.5] {
+                                            assert_eq!(
+                                                color_at(&quads, x, y).is_some(),
+                                                frames,
+                                                "column sides must be continuous: scale={scale}, selected={selected}, x={x}, y={y}"
+                                            );
+                                        }
+                                    }
                                     for (index, pane) in panes.iter().enumerate() {
                                         let frame = pane.frame(terminal);
                                         let width = if pane.selected && current_column {
@@ -3272,32 +3409,66 @@ mod tests {
                                                         "expanded side/bottom: scale={scale}, selected={selected}, column={current_column}, offset={offset}"
                                                     );
                                                 }
-                                                assert_eq!(
+                                                assert_ne!(
                                                     color_at(
                                                         &quads,
                                                         frame.right() - 0.5,
                                                         frame.bottom() - 0.5
                                                     ),
-                                                    None,
-                                                    "expanded bottom corner must be rounded at every stack position"
+                                                    Some(focus),
+                                                    "expanded bottom corner must stay rounded"
                                                 );
                                             } else {
-                                                assert_eq!(
-                                                    color_at(
-                                                        &quads,
-                                                        frame.left + offset,
-                                                        frame.top + workspace.card_radius() + 0.5
-                                                    ),
-                                                    None,
-                                                    "collapsed pane must paint only its top hooks"
-                                                );
+                                                if index > selected {
+                                                    assert_eq!(
+                                                        color_at(
+                                                            &quads,
+                                                            frame.left + offset,
+                                                            frame.top
+                                                                - workspace.card_radius()
+                                                                - 0.5
+                                                        ),
+                                                        (frames && offset < width)
+                                                            .then_some(neutral),
+                                                        "lower collapsed sides must extend up toward the expanded pane"
+                                                    );
+                                                }
+                                                if index < selected {
+                                                    assert_eq!(
+                                                        color_at(
+                                                            &quads,
+                                                            frame.left + offset,
+                                                            frame.top
+                                                                + workspace.card_radius()
+                                                                + 0.5
+                                                        ),
+                                                        (frames && offset < width)
+                                                            .then_some(neutral),
+                                                        "collapsed sides must continue toward the expanded pane"
+                                                    );
+                                                }
                                             }
                                         }
-                                        assert_eq!(
-                                            color_at(&quads, frame.left + 0.5, frame.top + 0.5),
-                                            None,
-                                            "every pane owns rounded top corners"
-                                        );
+                                        if frames && !pane.selected {
+                                            let radius = workspace.card_radius();
+                                            let arc = SceneRect {
+                                                left: frame.left + width + 0.01,
+                                                top: if index < selected {
+                                                    frame.top + width
+                                                } else {
+                                                    frame.top + width - radius
+                                                },
+                                                width: radius - width - 0.01,
+                                                height: radius - width,
+                                            };
+                                            assert!(
+                                                quads
+                                                    .iter()
+                                                    .any(|(rect, color, _)| *color == neutral
+                                                        && rect.intersection(arc).is_some()),
+                                                "collapsed corners must turn toward the expanded pane: scale={scale}, selected={selected}, index={index}"
+                                            );
+                                        }
                                         for gap in rules[index].1 {
                                             assert_eq!(
                                                 color_at(
@@ -3312,14 +3483,28 @@ mod tests {
                                     }
                                     if frames && current_column {
                                         for delta in [-workspace.card_radius(), -1.0, 1.0] {
-                                            let mut scrolled = rules.clone();
-                                            let scroll = rules[selected].0.top - card.top - delta;
-                                            for (frame, _, _) in &mut scrolled {
-                                                frame.top -= scroll;
+                                            let scroll =
+                                                rules[selected].0.bounds.top - card.top - delta;
+                                            let mut scrolled_panes = panes.to_vec();
+                                            for pane in &mut scrolled_panes {
+                                                pane.rect.top -= scroll;
                                             }
+                                            let scrolled_terminal = SceneRect {
+                                                top: terminal.top - scroll,
+                                                ..terminal
+                                            };
+                                            let scrolled = crate::scene::pane_outlines(
+                                                &scrolled_panes,
+                                                scrolled_terminal,
+                                                fill,
+                                                border_width,
+                                            )
+                                            .into_iter()
+                                            .zip(rules.iter().map(|(_, gaps)| *gaps))
+                                            .collect::<Vec<_>>();
                                             let mut batch = RectangleBatch::new(1600, 900);
                                             batch.push_pane_outlines(
-                                                workspace.card_radius(),
+                                                fill,
                                                 workspace.pane_viewport,
                                                 &scrolled,
                                                 Some(focus),
@@ -3333,7 +3518,7 @@ mod tests {
                                                     && rect.bottom() <= card.bottom() + 0.001),
                                                 "scrolled frames escaped the allocation"
                                             );
-                                            let frame = scrolled[selected].0;
+                                            let frame = scrolled[selected].0.bounds;
                                             assert_eq!(
                                                 color_at(
                                                     &quads,
@@ -3400,9 +3585,21 @@ mod tests {
                 ..card
             };
             batch.push_pane_outlines(
-                8.0,
+                CardFill {
+                    bounds: viewport,
+                    radius: 8.0,
+                },
                 viewport,
-                &[(frame, [label, scrollback], true)],
+                &[(
+                    PaneOutline {
+                        bounds: frame,
+                        clip: frame,
+                        radius: rounded_radius(frame, 8.0),
+                        title_y: Some(top),
+                        expanded: true,
+                    },
+                    [label, scrollback],
+                )],
                 Some(SceneColor::default()),
                 1.0,
                 1.0,

@@ -37,6 +37,99 @@ pub(crate) struct CardFill {
     pub radius: f32,
 }
 
+/// A rounded frame and the part of it that belongs to one stacked edge and its joins.
+pub(crate) struct PaneOutline {
+    pub bounds: SceneRect,
+    pub clip: SceneRect,
+    pub radius: f32,
+    pub title_y: Option<f32>,
+    pub expanded: bool,
+}
+
+pub(crate) fn rounded_radius(rect: SceneRect, radius: f32) -> f32 {
+    radius
+        .min(rect.width / 2.0)
+        .min(rect.height / 2.0)
+        .max(0.0)
+        .floor()
+}
+
+pub(crate) fn pane_outlines(
+    panes: &[WorkspacePane],
+    terminal: SceneRect,
+    fill: CardFill,
+    border_width: f32,
+) -> Vec<PaneOutline> {
+    let Some(expanded) = panes.iter().position(|pane| pane.selected) else {
+        return Vec::new();
+    };
+    let mut outlines = Vec::with_capacity(panes.len() + 1);
+    for (index, pane) in panes.iter().enumerate() {
+        let frame = pane.frame(terminal);
+        let radius = rounded_radius(frame, fill.radius);
+        let (bounds, clip) = if pane.selected {
+            (frame, frame)
+        } else if index < expanded {
+            let next = panes[index + 1].frame(terminal);
+            let join = next.top + rounded_radius(next, fill.radius);
+            (
+                SceneRect {
+                    height: join + radius - frame.top,
+                    ..frame
+                },
+                SceneRect {
+                    height: join - frame.top,
+                    ..frame
+                },
+            )
+        } else {
+            let previous = &panes[index - 1];
+            let previous_frame = previous.frame(terminal);
+            let join = if previous.selected {
+                previous_frame.bottom()
+            } else {
+                previous_frame.top + border_width
+            } - rounded_radius(previous_frame, fill.radius);
+            let bottom = frame.top + border_width;
+            (
+                SceneRect {
+                    top: join - radius,
+                    height: bottom - join + radius,
+                    ..frame
+                },
+                SceneRect {
+                    top: join,
+                    height: bottom - join,
+                    ..frame
+                },
+            )
+        };
+        outlines.push(PaneOutline {
+            bounds,
+            clip,
+            radius,
+            title_y: Some(frame.top),
+            expanded: pane.selected,
+        });
+    }
+    if let Some(last) = panes.last().filter(|pane| !pane.selected) {
+        let frame = last.frame(terminal);
+        let top = frame.top + border_width - rounded_radius(frame, fill.radius);
+        outlines.push(PaneOutline {
+            bounds: fill.bounds,
+            radius: rounded_radius(fill.bounds, fill.radius),
+            clip: SceneRect {
+                top,
+                height: fill.bounds.bottom() - top,
+                ..fill.bounds
+            },
+            title_y: None,
+            expanded: false,
+        });
+    }
+    outlines
+}
+
 impl SceneRect {
     #[must_use]
     pub fn right(self) -> f32 {
@@ -251,7 +344,7 @@ impl WorkspacePane {
             height: if self.selected {
                 (terminal.bottom() - top).max(0.0)
             } else {
-                // Keep the full curve before clipping a collapsed pane to its top hooks.
+                // The base curve size is independent of the adjacent card's join.
                 self.rect.height
             },
             ..self.rect
@@ -3394,6 +3487,26 @@ mod tests {
                 card_rect(scene.chrome, metrics).top,
                 (scene.pane_viewport.top + chrome_title_metrics(metrics).text_height / 2.0).floor(),
                 "painted pane top at scale {scale}"
+            );
+        }
+        // Resizing can collapse every header to the same Y; direction still follows pane order.
+        for size in [PhysicalSize::new(1280, 1), PhysicalSize::new(1, 720)] {
+            let metrics = CellMetrics::for_scale(1.3);
+            let scene =
+                WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
+                    (text.into(), text.len() as f32 * metrics.width)
+                });
+            let outlines = pane_outlines(
+                &scene.panes,
+                scene.terminal,
+                scene.card_fill(scene.chrome, metrics),
+                3.0,
+            );
+            assert!(
+                outlines
+                    .iter()
+                    .all(|outline| outline.bounds.top.is_finite()
+                        && outline.bounds.height.is_finite())
             );
         }
         let metrics = CellMetrics::for_scale(1.0);

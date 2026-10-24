@@ -6,7 +6,8 @@ installation, and proven contract changes.
 ## Unreleased
 
 - Each pane has its own rounded frame, with collapsed panes showing rounded
-  title hooks and the expanded pane fully outlined. Popup and Agents titles sit
+  title edges whose corners turn toward the expanded pane and whose sides join
+  the next card. The expanded pane stays fully outlined. Popup and Agents titles sit
   in matching top borders. Each column shares one terminal background and opacity
   from its first rounded top edge down to its rounded bottom, including stacked
   title rows and the space between cards. Popup and sidebar fills follow their
