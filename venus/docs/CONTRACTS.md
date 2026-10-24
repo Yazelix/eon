@@ -1733,7 +1733,7 @@ re-proved when that platform or feature is next touched.
 
 - **Status:** Partially proved: on x86_64 Linux Wayland every clause is proved
   except compositor blur through the card, which waits on VEN-C15's native
-  backdrop re-proof, and the current row's tint, which waits on its installed
+  backdrop re-proof, and the current row's outline, which waits on its installed
   observation (`eon-sidebar-you-are-here-3743`). Approved by Lucca on 2026-10-21 (draft 15 on
   `eon-agent-sidebar-yx8.1`, there named VEN-C29). `eon-agent-sidebar-yx8.3`
   implements visibility, layout and hiding for width, Alt+Shift+H, the
@@ -1747,7 +1747,8 @@ re-proved when that platform or feature is next touched.
   popup's row and lists popup rows first, approved by Lucca through
   eon-overseer the same day; `eon-sidebar-you-are-here-3743` replaces the
   header marker with the current row, approved by Lucca through eon-overseer
-  on 2026-10-23.
+  on 2026-10-23; after installed dogfood the same day, Lucca replaced its
+  first tint with an outline.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. Alt+G and
   Alt+Shift+G work under `Off` too.
@@ -1819,10 +1820,10 @@ re-proved when that platform or feature is next touched.
       the popup marker glyph after its catalog label, and its accessible label
       adds "popup". Tab headers carry no marker.
     - **Current row.** The row whose source terminal is the active tab's
-      focused terminal (its shown popup, else its selected pane) takes a faint
-      tint of the theme accent over the card background. The opaque highlight
-      of a focused or hovered row draws over it, so both stay
-      distinguishable, and the row keeps the tint while the sidebar holds
+      focused terminal (its shown popup, else its selected pane) takes a
+      one-pixel outline in the pane cards' outline color. It draws over the
+      opaque highlight of a focused or hovered row, and a focused row's accent
+      outline draws over it; the row keeps the outline while the sidebar holds
       keyboard focus. Rows in other tabs never take it. Its accessible label
       adds "current".
   - **Navigation.**
@@ -2050,5 +2051,5 @@ re-proved when that platform or feature is next touched.
   - Compositor blur through the card: headless Sway has no blur, so only its
     translucency was measured. It waits on VEN-C15's native backdrop
     re-proof.
-  - The current row's tint on the installed product
+  - The current row's outline on the installed product
     (`eon-sidebar-you-are-here-3743`), pending its installed observation.

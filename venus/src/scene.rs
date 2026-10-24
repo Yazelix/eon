@@ -162,8 +162,8 @@ pub struct SidebarRow {
     /// A needs-input row's message line.
     pub(crate) message: Option<String>,
     pub(crate) focused: bool,
-    /// The row's source terminal is the one the active tab focuses, so it takes the faint
-    /// "you are here" tint.
+    /// The row's source terminal is the one the active tab focuses, so it takes the "you are
+    /// here" outline.
     pub(crate) current: bool,
     /// Milliseconds since the record changed; unavailable rows have no age.
     age: Option<u64>,
@@ -1168,7 +1168,8 @@ fn sidebar_contents(
                 height: line,
             },
         });
-        top += line;
+        // A small gap sets the heading apart from its first row.
+        top += line + (padding / 3.0).round();
         let leaf = directory_leaf(&tab.directory);
         // Popup rows come first, then pane rows in pane order.
         let terminals = tab

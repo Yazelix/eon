@@ -11,7 +11,7 @@ installation, and proven contract changes.
   the other tabs keep running.
 
 - The agent sidebar shows where you are: the row of the agent whose terminal
-  has keyboard focus, in a pane or the shown popup, takes a faint mint tint.
+  has keyboard focus, in a pane or the shown popup, takes a thin slate outline.
   Tab headings no longer carry the popup mark; popup rows keep it.
 
 - Closing a tab whose terminal's program is slow to die after it is killed,
