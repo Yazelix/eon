@@ -390,10 +390,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     its shared chrome title metric. Pane-card titles and the shared top line
     follow VEN-C8, including VEN-C18's tiny-window popup exception.
     Allocated column card areas keep one even gap (8 logical pixels at default
-    typography, also their corner radius) from the window's sides, from
-    each other and from the tab pills above; below them the footer's band
+    typography, also their corner radius) from the window's sides and from
+    each other; below them the footer's band
     is the margin, or one gap when hints are hidden. The tab pills keep the
-    same gap from the window's top and left edges, in both modes. Card fills start at
+    same gap from the window's left edge, in both modes, and are centred
+    with the Eon Bar widgets as VEN-C21 describes. Card fills start at
     each card's rounded top edge and use terminal background color/opacity as VEN-C8,
     VEN-C18 and VEN-C30 describe, under the existing surface-wide blur request.
     Everything below the tab bar outside those fills, the gaps and footer band

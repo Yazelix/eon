@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Tab pills and quota, CPU, RAM and clock widgets share one centred height,
+  with equal space above and below to the cards' shared top line. Tabs keep
+  their fills; widgets use neutral rounded outlines sized by `[terminal] border_width`.
+  The version label and header controls share their centre line. On short windows,
+  the top gap yields before the pills shrink.
+
 - The selected pane's outline defaults to 1 logical pixel instead of 2.
 
 - Each pane has its own rounded frame, with collapsed panes showing rounded
@@ -357,7 +363,7 @@ installation, and proven contract changes.
 - The Eon Bar shows whole-machine CPU and memory use, such as `CPU 12%` and
   `RAM 43%`, before the clock, updated every 2 seconds. Hover them for
   details. When the window is narrow, RAM hides right after the clock, then
-  CPU. The readings and the clock sit on rounded chips like the quota chips,
+  CPU. The readings and the clock use unfilled rounded outlines like the quota chips,
   and the `EON <version>` label moves to the edge, just before `?` and `×`.
 - A popup keybinding may now use the key of a built-in Eon shortcut, such as
   Alt+Shift+N or Alt+W, instead of failing to load: the popup takes the key,
@@ -450,13 +456,14 @@ installation, and proven contract changes.
   terminal columns. Ctrl+Alt+M no longer reaches terminal programs in a full
   Eon workspace.
 - Pane frames draw each column as its own rounded card, with an even 8-pixel
-  gap around and between the cards; popups and the Project picker draw as one
-  card. The shortcut hints sit bare in the margin below the cards. Everything
+  gap from the window's sides and between column card areas; popups and the
+  Project picker draw as one card. The shortcut hints sit bare in the margin
+  below the cards. Everything
   outside the cards takes the top bar's color, so the bar, the gaps and the
   hints read as one frame; with `background_opacity` below 1, only the cards
-  stay see-through. The tabs sit the same 8 pixels from the window's top and
-  left edges, so the first tab lines up with the first column. Terminals lose
-  the few pixels the gaps take.
+  stay see-through. The tabs keep the 8-pixel left gap, so the first tab lines
+  up with the first column, and share the Eon Bar widgets' centred height.
+  Terminals lose the few pixels the gaps take.
 - `eon workspace` lists each pane's column and whether it is that column's
   open pane (`column=` and `expanded=`, or `"column"` and `"expanded"` with
   `--json`).

@@ -11,6 +11,13 @@ order, selection, and popups; Venus draws the visible scene.
 - Tabs show their one-based position and the directory leaf or `/` from Eon's tab
   launch directory. Long labels use middle ellipsis; hover shows the full path.
   Selection brightens the tab, and keyboard focus adds an outline.
+- Tab pills and quota, CPU, RAM and clock widgets share one height and centre
+  line, spanning from half the card-title height below the window top to the
+  allocated card areas. The space above equals the gap to the cards' shared
+  top line. Tabs keep their fills; widgets have no fill and use rounded outlines
+  in the pane cards' neutral colour and `border_width`. The plain version label
+  and header controls share their centre. Hover and accessibility bounds stay
+  unchanged.
 - New tab sits beside the last tab and pins to the tab-region edge when tabs
   overflow. Shortcut help and Close stay at the right. A small empty area lets
   users drag an undecorated window without taking clicks from tabs or controls.

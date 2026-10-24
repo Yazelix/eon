@@ -96,7 +96,7 @@ creation. F6 keyboard-focus pills stay mint. With pane frames off, no pane
 outline is drawn. Eon passes its `[terminal] focus_color` when configured.
 
 Pass `--border-width N` and `--focus-border-width N` to size neutral card
-outlines/title rules and the selected pane's outline, respectively. Values are
+outlines/title rules plus Eon Bar widget outlines, and the selected pane's outline, respectively. Values are
 integers from 1 through 3 logical pixels; defaults are 1 and 1. Each width
 becomes `max(1, round(width * scale))` physical pixels (defaults at scale 1.3:
 1 and 1; at scale 2: 2 and 2). Neutral cards include panes, the agent sidebar

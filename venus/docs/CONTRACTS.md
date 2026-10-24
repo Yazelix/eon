@@ -596,11 +596,10 @@ re-proved when that platform or feature is next touched.
     Pane titles use the same shared
     chrome title metric as the agent sidebar title (VEN-C30). Scene owns one card gap (8
     logical pixels at default typography), which is also the corner radius:
-    allocated column card areas keep it from the window's sides, from each other
-    and from the tab pills above, and below them the footer's band is the
-    margin, or one gap when hints are hidden. In both modes the tab pills
-    keep the gap from the window's top and left edges, so the first pill
-    lines up with the first card. Pill size, the gap between pills and
+    allocated column card areas keep it from the window's sides, from each other,
+    and below them the footer's band is the margin, or one gap when hints are hidden. In both modes the tab pills
+    keep the gap from the window's left edge, so the first pill lines up with
+    the first card. Pill height follows VEN-C21; the gap between pills and
     header button width stay as before; on a short window the extra inset
     yields before the pills do. On a window too small for the gaps they
     yield before a terminal cell does. Each pane's top edge passes through the
@@ -1234,7 +1233,14 @@ re-proved when that platform or feature is next touched.
   uses New tab, Keyboard shortcuts, or active-tab Close; scrolls the tab region;
   or left-presses its empty drag region.
 - **Result:** The existing workspace tab strip remains one row at its existing
-  height. Scrollable tabs keep the leading space and retain their labels,
+  height. Tabs keep their filled pills. Tab pills and the quota, CPU, RAM and clock widgets
+  share one height and centre line: each spans from half the card title height below the window's
+  top edge to the top of the allocated card areas, so the space above it equals the space between
+  it and the cards' shared top line. The widgets draw no fill: each is a rounded outline at the
+  pane cards' neutral border width and outline color, with its text and icons on the opaque bar
+  background. The version label stays plain text, and New tab, Keyboard shortcuts and Close centre
+  on the same line. Hover and accessibility rectangles, order, width fitting and the blank drag
+  region stay unchanged. Scrollable tabs keep the leading space and retain their labels,
   overflow, reveal, selection, hover path, stable identity, and accessibility.
   New tab follows the rightmost tab when tabs fit and stays at the tab-region
   edge during overflow. Keyboard shortcuts (when VEN-C24 requires the fallback)
@@ -1648,7 +1654,7 @@ re-proved when that platform or feature is next touched.
 - **Trigger:** A workspace surface is presented, or the local wall-clock minute
   changes.
 - **Result:** One read-only `HH:MM` label in terminal monospace shows local
-  24-hour time in the existing top row on the quota chips' rounded fill, by
+  24-hour time in the existing top row in the quota chips' rounded outline, by
   default (VEN-C29) after the quota chips and the CPU and RAM labels and before
   the version label, Shortcuts and Close. It changes within a second of
   each minute boundary. Hover and a static AccessKit label name the time, date
@@ -1683,7 +1689,7 @@ re-proved when that platform or feature is next touched.
 - **Trigger:** A workspace surface is presented, and every 2 seconds after.
 - **Result:** Two read-only labels in terminal monospace, `CPU 12%` then
   `RAM 43%`, sit in the existing top row, by default (VEN-C29) after the
-  quota chips and before the clock, each on the quota chips' rounded fill.
+  quota chips and before the clock, each in the quota chips' rounded outline.
   Each chip keeps the width of `CPU 100%` whatever the value, with its text
   centered, so neighbouring items never shift. The CPU label shows
   whole-machine CPU use over the last 2 seconds as a whole percentage from `/proc/stat`; it

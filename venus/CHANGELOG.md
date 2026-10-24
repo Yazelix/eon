@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C8, VEN-C21, VEN-C27 and VEN-C28: tab pills and Eon Bar widgets share
+  one centred height. Tabs keep their fills; quota, CPU, RAM and clock widgets
+  use unfilled rounded outlines in the pane cards' neutral colour and configured
+  border width. Version and header controls share their centre. On short windows,
+  the top gap yields before the pills shrink (`eon-u2id`).
+
 - VEN-C8: the selected pane's outline defaults to 1 logical pixel (`eon-q1of`).
 
 - VEN-C8: each pane has its own rounded frame without added stack spacing;
@@ -189,8 +195,8 @@
 - VEN-C28, VEN-C27, VEN-C25: a read-only `RAM 43%` label, from
   `/proc/meminfo` on the CPU label's 2-second wake, joins the Eon Bar after
   the CPU label and yields right after the clock. The CPU and RAM labels and
-  the clock take the quota chips' rounded fill, and the version label moves
-  to the edge before Shortcuts and Close (`eon-igae.3`).
+  the clock use the quota chips' unfilled rounded outlines, and the version label
+  moves to the edge before Shortcuts and Close (`eon-igae.3`).
 - VEN-C28: a read-only `CPU 12%` label joins the Eon Bar before the clock,
   sampled from `/proc/stat` every 2 seconds on Linux. It uses only spare space
   and yields right after the clock (`eon-cpu-widget-eon-bar-acxs`).
@@ -218,12 +224,13 @@
   locally when a column would get fewer than 40 terminal columns (`eon-splits-opwv` slices 2–4).
 - VEN-C8, VEN-C18, VEN-C24: pane frames draw each column as its own rounded
   card, with one even gap (8 logical pixels at default typography, also the
-  corner radius) from the window's sides, between cards and below the tab
-  pills; popups draw as one card, and the footer's hints sit bare in the
+  corner radius) from the window's sides and between cards;
+  popups draw as one card, and the footer's hints sit bare in the
   margin below the cards. Everything outside the cards takes the header's
   opaque color, and each card fills with its terminal's background
-  (`eon-tubj`). Tab pills keep the card gap from the window's top and left
-  edges, so the header grows by 8 pixels (`eon-gv1r`). Column width and the 40-column admission check use
+  (`eon-tubj`). Tab pills keep the card gap from the window's left edge
+  (`eon-gv1r`) and share the Eon Bar widgets' centred height (VEN-C21).
+  Column width and the 40-column admission check use
   the card geometry, and initial grids include the gaps
   (`eon-gapped-rounded-cards-txco`; it replaces the unreleased flush workspace
   sheet of `eon-flush-workspace-sheet-5779` and its follow-ups).

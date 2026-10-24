@@ -1142,8 +1142,7 @@ pub fn workspace_column_width(width: f32, count: usize, metrics: CellMetrics) ->
 }
 
 fn header_heights(metrics: CellMetrics) -> (f32, f32) {
-    // The header grows around the pill row until the pills keep one card gap above and below,
-    // as cards do from the window's sides.
+    // Preserve header and card allocation independently of the painted bar band.
     let row = pill_row(metrics);
     (
         row + (card_gap(metrics) - tab_gap(metrics, row)).max(0.0) * 2.0,
@@ -1181,10 +1180,24 @@ fn tab_gap(metrics: CellMetrics, tab_height: f32) -> f32 {
     (metrics.padding / 3.0).min(tab_row(metrics, tab_height) / 4.0)
 }
 
-/// The tab pills' distance from the window's top and left edges: one card gap at full header
-/// height, so the first pill lines up with the first card.
+/// The tab hit targets' inset: one card gap at full header height. The first tab still lines
+/// up with the first card horizontally; its painted vertical band is independent.
 fn tab_inset(metrics: CellMetrics, tab_height: f32) -> f32 {
     tab_gap(metrics, tab_height) + (tab_height - tab_row(metrics, tab_height)) / 2.0
+}
+
+/// The painted bar band, independent of its hover and accessibility rectangles.
+fn bar_pill_band(metrics: CellMetrics, tab_height: f32, card_top: f32) -> Range<f32> {
+    let nominal_top = (chrome_title_metrics(metrics).text_height / 2.0).floor();
+    let height = (header_heights(metrics).0 - nominal_top).min(card_top);
+    if height >= metrics.height {
+        card_top - height..card_top
+    } else {
+        // Keep the old tiny-window band, clipped to the space left above the cards.
+        let inset = tab_inset(metrics, tab_height);
+        let end = (tab_height - inset).min(card_top);
+        inset.min(end)..end
+    }
 }
 
 /// The even gap around and between pane cards, which is also their corner radius: 8 logical
@@ -1511,7 +1524,7 @@ fn sidebar_contents(
 }
 
 /// The area `count` cards share: inset from the content area's sides by the card gap, starting
-/// one gap below the tab pills and ending one gap above the window's bottom, or at the footer,
+/// below the bar and ending one gap above the window's bottom, or at the footer,
 /// whose band is the bottom margin when hints show. Gaps yield before a card loses the
 /// `minimum_height` its last padded terminal row needs. The content area starts at `left` and is
 /// `width` wide.
@@ -1790,6 +1803,25 @@ pub(crate) fn pane_chrome_rect(rect: SceneRect, metrics: CellMetrics) -> SceneRe
 }
 
 impl WorkspaceScene {
+    /// Apply the bar's painted band without changing a slot's horizontal fitting.
+    pub(crate) fn bar_pill_rect(&self, rect: SceneRect, metrics: CellMetrics) -> SceneRect {
+        let band = bar_pill_band(metrics, self.header.height, self.pane_viewport.top);
+        SceneRect {
+            top: band.start,
+            height: band.end - band.start,
+            ..rect
+        }
+    }
+
+    /// Centre existing content and control shapes on the band without resizing them.
+    pub(crate) fn bar_item_rect(&self, rect: SceneRect, metrics: CellMetrics) -> SceneRect {
+        let band = self.bar_pill_rect(rect, metrics);
+        SceneRect {
+            top: band.top + (band.height - rect.height) / 2.0,
+            ..rect
+        }
+    }
+
     /// Maximum shaped label width inside this surface's tab viewport.
     #[must_use]
     pub(crate) fn tab_text_width(size: PhysicalSize<u32>, metrics: CellMetrics) -> f32 {
@@ -1806,7 +1838,7 @@ impl WorkspaceScene {
     #[must_use]
     pub fn initial_overhead(snapshot: &Snapshot, metrics: CellMetrics) -> (f32, f32) {
         let (tab_height, pane_height) = header_heights(metrics);
-        // Cards sit inside the side gaps and one gap below the tab pills; the footer is their
+        // Cards sit inside the side gaps below the bar; the footer is their
         // bottom margin.
         let gap = card_gap(metrics);
         let sides = gap * 2.0;
@@ -2051,6 +2083,11 @@ impl WorkspaceScene {
         };
         let sidebar = sidebar_rect(snapshot.sidebar, width, cards(0.0), metrics);
         let pane_viewport = cards(sidebar.map_or(0.0, SceneRect::right));
+        let pill_band = bar_pill_band(metrics, tab_height, pane_viewport.top);
+        for quota in &mut quotas {
+            quota.logo.top =
+                pill_band.start + (pill_band.end - pill_band.start - quota.logo.height) / 2.0;
+        }
         let (sidebar_headings, sidebar_rows, sidebar_list) = sidebar.map_or_else(
             || (Vec::new(), Vec::new(), SceneRect::default()),
             |card| sidebar_contents(snapshot, card, metrics, sidebar_view),
@@ -2089,7 +2126,15 @@ impl WorkspaceScene {
                         Some(TabBadge {
                             state,
                             dimmed,
-                            rect: TabBadge::corner(rect, metrics, gap)?,
+                            rect: TabBadge::corner(
+                                SceneRect {
+                                    top: pill_band.start,
+                                    height: pill_band.end - pill_band.start,
+                                    ..rect
+                                },
+                                metrics,
+                                gap,
+                            )?,
                         })
                     },
                 );
@@ -3418,6 +3463,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn eon_bar_pill_band_centres_between_window_and_shared_title_line() {
+        for (scale, line_height, expected) in [
+            (1.0, 1.125, (10.0, 30.0)),
+            (1.3, 1.125, (13.0, 38.333332)),
+            (1.0, 2.0, (16.0, 48.0)),
+            (1.3, 2.0, (21.0, 64.333336)),
+        ] {
+            let mut metrics = CellMetrics::for_scale(scale);
+            metrics.height = (metrics.font_size * line_height).round();
+            let header = header_heights(metrics).0;
+            let cards = card_area(0.0, 1600.0, 1, header, 900.0, false, 0.0, metrics);
+            let band = bar_pill_band(metrics, header, cards.top);
+            assert!(
+                (band.start - expected.0).abs() < 0.001,
+                "{scale}/{line_height}"
+            );
+            assert!((band.end - band.start - expected.1).abs() < 0.001);
+            assert!((band.start - (card_rect(cards, metrics).top - band.end)).abs() < 1.0);
+            assert_eq!(band.end, cards.top);
+            assert!(band.end - band.start >= metrics.height);
+        }
+    }
+
+    #[test]
     fn compact_pane_headers_share_title_height_and_full_row_targets() {
         use eon_workspace_protocol::v19::{Column, PopupGeometry};
 
@@ -3463,6 +3532,95 @@ mod tests {
                 0.0,
                 |_, text| (text.into(), text.len() as f32 * metrics.width),
             );
+            if scale == 1.0 {
+                assert_eq!(scene.header.height, 40.0);
+                assert_eq!(scene.tabs[0].rect.top, 8.0);
+                assert_eq!(scene.tabs[0].rect.height, 24.0);
+                assert_eq!(
+                    scene.pane_viewport,
+                    SceneRect {
+                        left: 296.0,
+                        top: 40.0,
+                        width: 1296.0,
+                        height: 852.0
+                    }
+                );
+                assert_eq!(
+                    scene.terminal,
+                    SceneRect {
+                        left: 296.0,
+                        top: 80.0,
+                        width: 1296.0,
+                        height: 772.0
+                    }
+                );
+            }
+            if scale <= 1.3 {
+                use eon_workspace_protocol::v19::{CodexQuota, CodexQuotaState};
+                let mut snapshot = snapshot.clone();
+                snapshot.codex_quota = Some(CodexQuota {
+                    state: CodexQuotaState::Unknown,
+                    observed_at: 0,
+                    windows: Vec::new(),
+                });
+                let cpu = CpuUse {
+                    label: "CPU 12%".into(),
+                    description: "CPU".into(),
+                };
+                let ram = RamUse {
+                    label: "RAM 43%".into(),
+                    description: "RAM".into(),
+                };
+                let clock = LocalClock {
+                    label: "15:43".into(),
+                    description: "Clock".into(),
+                };
+                let widgets = WorkspaceScene::from_snapshot_with_metadata(
+                    &snapshot,
+                    EonBar {
+                        version: Some("0.1.1"),
+                        cpu: Some(&cpu),
+                        ram: Some(&ram),
+                        clock: Some(&clock),
+                        ..EonBar::default()
+                    },
+                    PhysicalSize::new(1600, 900),
+                    metrics,
+                    0.0,
+                    0.0,
+                    |_| None,
+                    |_, text| (text.into(), text.len() as f32 * metrics.width),
+                    None,
+                );
+                assert_eq!(widgets.header, scene.header);
+                assert_eq!(widgets.pane_viewport, scene.pane_viewport);
+                assert_eq!(widgets.terminal, scene.terminal);
+                assert_eq!(widgets.tabs[0].rect, scene.tabs[0].rect);
+                let pill = widgets.bar_pill_rect(widgets.tabs[0].rect, metrics);
+                let centre = pill.top + pill.height / 2.0;
+                for rect in widgets.quotas.iter().map(|quota| quota.rect).chain([
+                    widgets.cpu.as_ref().unwrap().rect,
+                    widgets.ram.as_ref().unwrap().rect,
+                    widgets.clock.as_ref().unwrap().rect,
+                ]) {
+                    let painted = widgets.bar_pill_rect(rect, metrics);
+                    assert_eq!((painted.top, painted.height), (pill.top, pill.height));
+                    assert_eq!(rect.top, 0.0);
+                    assert_eq!(rect.height, widgets.header.height);
+                }
+                for rect in widgets
+                    .controls
+                    .iter()
+                    .map(|control| control.rect)
+                    .chain([widgets.version.as_ref().unwrap().rect])
+                {
+                    let content = widgets.bar_item_rect(rect, metrics);
+                    assert!((content.top + content.height / 2.0 - centre).abs() < 0.001);
+                    assert_eq!(content.height, rect.height);
+                }
+                let logo = widgets.quotas[0].logo;
+                assert!((logo.top + logo.height / 2.0 - centre).abs() < 0.001);
+            }
             for pane in &scene.panes {
                 assert_eq!(pane.rect.height, chrome_title_metrics(metrics).text_height);
                 assert!(pane.rect.height >= metrics.height);
@@ -4823,6 +4981,79 @@ mod tests {
             scrolled.tabs.last().unwrap().rect.right() + tab_gap(metrics, scrolled.header.height),
             scrolled.controls[0].rect.left
         );
+
+        let mut snapshot = snapshot;
+        snapshot.sidebar = Sidebar::Closed;
+        let project = |height, metrics: CellMetrics, hints: bool| {
+            let size = PhysicalSize::new(1280, height);
+            WorkspaceScene::from_snapshot_with_metadata(
+                &snapshot,
+                EonBar::default(),
+                size,
+                metrics,
+                0.0,
+                0.0,
+                |_| None,
+                |_, text| (text.into(), text.len() as f32 * metrics.width),
+                hints.then(|| {
+                    ShortcutHintsScene::new(
+                        Vec::new(),
+                        size,
+                        metrics,
+                        WorkspaceFocus::Terminal,
+                        |_| 0.0,
+                    )
+                }),
+            )
+        };
+        // One pane, no hints: the top gap yields before the nominal 30 px pills shrink.
+        for (height, expected) in [
+            (102, 10.0..40.0),
+            (94, 2.0..32.0),
+            (60, 2.0..32.0),
+            (40, 2.0..32.0),
+            (30, 0.0..30.0),
+            (18, 0.0..18.0),
+            (17, 4.0..13.0),
+            (12, 3.0..9.0),
+        ] {
+            let scene = project(height, metrics, false);
+            let pill = scene.bar_pill_rect(scene.tabs[0].rect, metrics);
+            assert_eq!(pill.top..pill.bottom(), expected, "window height {height}");
+        }
+        for scale in [1.0, 1.3] {
+            for line_height in [1.125, 2.0] {
+                let mut metrics = CellMetrics::for_scale(scale);
+                metrics.height = (metrics.font_size * line_height).round();
+                let ordinary = project(900, metrics, false);
+                let nominal = ordinary
+                    .bar_pill_rect(ordinary.tabs[0].rect, metrics)
+                    .height;
+                for hints in [false, true] {
+                    for height in 0..=220 {
+                        let scene = project(height, metrics, hints);
+                        let card_top = scene.pane_viewport.top;
+                        let pill = scene.bar_pill_rect(scene.tabs[0].rect, metrics);
+                        assert!(pill.top >= 0.0 && pill.height >= 0.0);
+                        assert!(
+                            pill.bottom() <= card_top + 0.001,
+                            "{scale}/{line_height}, height {height}, hints {hints}"
+                        );
+                        if card_top >= nominal {
+                            assert!((pill.height - nominal).abs() < 0.001);
+                        } else if card_top >= metrics.height {
+                            assert_eq!(pill.top, 0.0);
+                            assert_eq!(pill.height, card_top);
+                        } else {
+                            let old = scene.tabs[0].rect;
+                            let end = old.bottom().min(card_top);
+                            assert!((pill.top - old.top.min(end)).abs() < 0.001);
+                            assert!((pill.bottom() - end).abs() < 0.001);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

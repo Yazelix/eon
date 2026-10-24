@@ -345,6 +345,20 @@ fn header_item_visual(rect: SceneRect, padding: f32) -> SceneRect {
     }
 }
 
+fn push_bar_widget(
+    rectangles: &mut RectangleBatch,
+    visual: SceneRect,
+    border_width: u8,
+    scale: f32,
+) {
+    rectangles.push_rounded_outline_width(
+        visual,
+        visual.height / 2.0,
+        physical_outline_width(border_width, scale),
+        CARD_OUTLINE,
+    );
+}
+
 pub(super) fn fit_header_text(
     fonts: &mut FontSystem,
     metrics: CellMetrics,
@@ -1028,7 +1042,8 @@ impl Renderer {
             if tab.rect.intersection(workspace.tab_viewport).is_none() {
                 continue;
             }
-            let radius = tab.rect.height / 2.0;
+            let visual = workspace.bar_pill_rect(tab.rect, self.metrics);
+            let radius = visual.height / 2.0;
             let fill = if tab.selected {
                 selected
             } else if self.header.hovers(WorkspaceFocus::Tabs, &tab.id) {
@@ -1040,15 +1055,15 @@ impl Renderer {
             } else {
                 idle
             };
-            rectangles.push_rounded(tab.rect, radius, fill);
+            rectangles.push_rounded(visual, radius, fill);
             if tab.selected && focus == WorkspaceFocus::Tabs {
-                rectangles.push_rounded_outline(tab.rect, radius, accent);
+                rectangles.push_rounded_outline(visual, radius, accent);
             }
             let label_width = (tab.rect.width - self.metrics.padding * 2.0).max(1.0);
             self.push_text_clipped(
                 tab.label(),
                 tab.rect.left + self.metrics.padding,
-                tab.rect.top + (tab.rect.height - self.metrics.height) / 2.0,
+                visual.top + (visual.height - self.metrics.height) / 2.0,
                 label_width,
                 label_width,
                 self.metrics.height,
@@ -1078,27 +1093,26 @@ impl Renderer {
                 .push_badge(*badge, Some(DEFAULT_BACKGROUND), rectangles);
         }
         rectangles.clip = None;
-        // Quota chips and readings share one pill; the version label stays plain.
-        let chip = SceneColor {
-            r: 23,
-            g: 34,
-            b: 46,
-        };
+        // Quota chips and readings share the tabs' band; the version label stays plain.
         let reading = SceneColor {
             r: 162,
             g: 174,
             b: 190,
         };
         for quota in &workspace.quotas {
-            let visual = header_item_visual(quota.rect, self.metrics.padding);
-            rectangles.push_rounded(visual, visual.height / 2.0, chip);
+            let visual = workspace.bar_pill_rect(
+                header_item_visual(quota.rect, self.metrics.padding),
+                self.metrics,
+            );
+            push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
+            let content = workspace.bar_item_rect(quota.rect, self.metrics);
             self.push_quota_icon(quota.provider, quota.logo, None);
             let label_left = quota.logo.right() + self.metrics.padding / 2.0;
             let label_width = (quota.rect.right() - self.metrics.padding - label_left).max(0.0);
             self.push_text_clipped(
                 &quota.label,
                 label_left,
-                quota.rect.top + (quota.rect.height - self.metrics.height).max(0.0) / 2.0,
+                content.top + (content.height - self.metrics.height).max(0.0) / 2.0,
                 label_width,
                 label_width,
                 self.metrics.height.min(quota.rect.height),
@@ -1124,9 +1138,13 @@ impl Renderer {
             let Some(label) = label else {
                 continue;
             };
+            let content = workspace.bar_item_rect(label.rect, self.metrics);
             if pill {
-                let visual = header_item_visual(label.rect, self.metrics.padding);
-                rectangles.push_rounded(visual, visual.height / 2.0, chip);
+                let visual = workspace.bar_pill_rect(
+                    header_item_visual(label.rect, self.metrics.padding),
+                    self.metrics,
+                );
+                push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
             }
             let width = (label.rect.width - self.metrics.padding * 2.0).max(0.0);
             // A label narrower than its chip sits in the middle; every label is ASCII in cells.
@@ -1134,7 +1152,7 @@ impl Renderer {
             self.push_text_clipped(
                 &label.label,
                 label.rect.left + self.metrics.padding + slack / 2.0,
-                label.rect.top + (label.rect.height - self.metrics.height).max(0.0) / 2.0,
+                content.top + (content.height - self.metrics.height).max(0.0) / 2.0,
                 width,
                 width,
                 self.metrics.height.min(label.rect.height),
@@ -1147,7 +1165,8 @@ impl Renderer {
             if control.rect.width <= 0.0 {
                 continue;
             }
-            let visual = header_item_visual(control.rect, self.metrics.padding);
+            let content = workspace.bar_item_rect(control.rect, self.metrics);
+            let visual = header_item_visual(content, self.metrics.padding);
             let hovered = self.header.hovers(WorkspaceFocus::Header(control.kind), "");
             let pressed = self.header.pressed_header == Some(control.kind);
             let focused = focus == WorkspaceFocus::Header(control.kind);
@@ -1170,7 +1189,7 @@ impl Renderer {
             self.push_text_clipped(
                 control.kind.glyph(),
                 control.rect.left + (control.rect.width - glyph_width).max(0.0) / 2.0,
-                control.rect.top + (control.rect.height - self.metrics.height).max(0.0) / 2.0,
+                content.top + (content.height - self.metrics.height).max(0.0) / 2.0,
                 glyph_width,
                 glyph_width,
                 self.metrics.height.min(control.rect.height),
@@ -1416,6 +1435,73 @@ mod tests {
     use super::*;
     use crate::EonBar;
     use glyphon::cosmic_text::SubpixelBin;
+
+    #[test]
+    fn eon_bar_widgets_paint_only_scaled_neutral_outlines() {
+        let coverage = |batch: &RectangleBatch, x: f32, y: f32| {
+            batch
+                .bytes
+                .chunks_exact(VERTEX_SIZE as usize * 6)
+                .map(|quad| {
+                    let value = |vertex: usize, component: usize| {
+                        let offset = vertex * VERTEX_SIZE as usize + component * 4;
+                        f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
+                    };
+                    let rect = SceneRect {
+                        left: (value(0, 0) + 1.0) * 64.0,
+                        top: (1.0 - value(0, 1)) * 64.0,
+                        width: (value(2, 0) - value(0, 0)) * 64.0,
+                        height: (value(0, 1) - value(2, 1)) * 64.0,
+                    };
+                    if rect.contains(x, y) {
+                        value(0, 5)
+                    } else {
+                        0.0
+                    }
+                })
+                .sum::<f32>()
+        };
+        for scale in [1.0, 1.3] {
+            let visual = SceneRect {
+                left: 16.0,
+                top: 13.0,
+                width: 96.0,
+                height: 38.0,
+            };
+            for border in 1..=3 {
+                let mut batch = RectangleBatch::new(128, 128);
+                push_bar_widget(&mut batch, visual, border, scale);
+                let width = physical_outline_width(border, scale);
+                for row in 0..visual.height as u32 {
+                    let expected = if (row as f32) < width || row as f32 >= visual.height - width {
+                        1.0
+                    } else {
+                        0.0
+                    };
+                    assert_eq!(
+                        coverage(&batch, 64.5, visual.top + row as f32 + 0.5),
+                        expected,
+                        "widget interior/stroke at border {border}, scale {scale}, row {row}"
+                    );
+                }
+                assert_eq!(coverage(&batch, visual.left + 0.5, visual.top + 0.5), 0.0);
+                for vertex in batch.bytes.chunks_exact(VERTEX_SIZE as usize) {
+                    for (component, channel) in [CARD_OUTLINE.r, CARD_OUTLINE.g, CARD_OUTLINE.b]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let offset = (component + 2) * 4;
+                        let actual =
+                            f32::from_ne_bytes(vertex[offset..offset + 4].try_into().unwrap());
+                        assert!((actual - f32::from(channel) / 255.0).abs() < 0.001);
+                    }
+                }
+            }
+            let mut tab = RectangleBatch::new(128, 128);
+            tab.push_rounded(visual, visual.height / 2.0, DEFAULT_BACKGROUND);
+            assert_eq!(coverage(&tab, 64.5, visual.top + visual.height / 2.0), 1.0);
+        }
+    }
 
     #[test]
     fn only_badges_wholly_inside_the_tab_viewport_are_drawn() {
