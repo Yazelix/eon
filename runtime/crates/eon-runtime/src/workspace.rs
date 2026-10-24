@@ -121,56 +121,119 @@ impl Tab {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Workspace {
+pub(crate) struct IdAllocator {
     runtime: PathBuf,
-    catalog: PopupCatalog,
-    home: Option<PathBuf>,
-    tabs: Vec<Tab>,
-    active: usize,
+    next_workspace: usize,
     next_tab: usize,
     next_pane: usize,
     next_session: usize,
     next_popup: usize,
+}
+
+impl IdAllocator {
+    fn new(runtime: PathBuf) -> Self {
+        Self {
+            runtime,
+            next_workspace: 1,
+            next_tab: 1,
+            next_pane: 1,
+            next_session: 1,
+            next_popup: 1,
+        }
+    }
+
+    fn pane_session(&self) -> Session {
+        Session {
+            id: format!("session-{}", self.next_session),
+            endpoint: self.runtime.join(if self.next_session == 1 {
+                "orbit.sock".into()
+            } else {
+                format!("session-{}.sock", self.next_session)
+            }),
+        }
+    }
+
+    fn popup_session(&self, project: bool) -> Session {
+        let number = if project {
+            self.next_popup
+        } else {
+            self.next_session
+        };
+        let id = if project {
+            format!("directory-picker-{number}")
+        } else {
+            format!("session-{number}")
+        };
+        let endpoint = self.runtime.join(if project {
+            format!("k{number}.sock")
+        } else {
+            format!("{id}.sock")
+        });
+        Session { id, endpoint }
+    }
+}
+
+/// Supervisor-wide admission, identities and replay protection; topology stays local.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WorkspaceSet {
+    workspaces: Vec<Workspace>,
+    shown: usize,
+    ids: IdAllocator,
     recent_requests: VecDeque<String>,
 }
 
-impl Workspace {
+impl WorkspaceSet {
     pub(crate) fn pending(
         runtime: PathBuf,
         directory: PathBuf,
         home: Option<PathBuf>,
         catalog: PopupCatalog,
-        mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
-        mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
+        prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<Self, String> {
-        let mut workspace = Self {
-            runtime,
-            catalog,
-            home,
-            tabs: vec![Tab {
-                id: "t1".into(),
-                directory,
-                pending: true,
-                columns: Vec::new(),
-                selected_column: None,
-                popups: Vec::new(),
-                selected_popup: None,
-            }],
-            active: 0,
-            next_tab: 2,
-            next_pane: 1,
-            next_session: 1,
-            next_popup: 1,
+        let mut set = Self {
+            workspaces: Vec::new(),
+            shown: 0,
+            ids: IdAllocator::new(runtime),
             recent_requests: VecDeque::new(),
         };
-        if workspace
-            .open_popup(0, "project", &mut prepare, &mut operate, true)
-            .is_err()
-        {
-            workspace.tabs[0].pending = false;
-            workspace.start_pane(0, &mut operate)?;
+        set.insert_pending(directory, home, catalog, prepare, operate)?;
+        Ok(set)
+    }
+
+    fn insert_pending(
+        &mut self,
+        directory: PathBuf,
+        home: Option<PathBuf>,
+        catalog: PopupCatalog,
+        prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        operate: impl FnMut(SessionOperation) -> Result<(), String>,
+    ) -> Result<(), String> {
+        if self.workspaces.len() == 32 || self.ids.next_workspace == usize::MAX {
+            return Err("a window holds at most 32 workspaces".into());
         }
-        Ok(workspace)
+        if self.ids.next_tab == usize::MAX {
+            return Err("workspace exhausted tab identities".into());
+        }
+        let allowance = MAX_SESSIONS
+            - self
+                .workspaces
+                .iter()
+                .map(Workspace::session_count)
+                .sum::<usize>();
+        let workspace = Workspace::pending(
+            &mut self.ids,
+            allowance,
+            directory,
+            home,
+            catalog,
+            prepare,
+            operate,
+        )?;
+        self.ids.next_workspace += 1;
+        self.ids.next_tab += 1;
+        self.workspaces.push(workspace);
+        Ok(())
     }
 
     pub(crate) fn with_recovered_sessions(
@@ -186,6 +249,212 @@ impl Workspace {
             .0
             .checked_add(1)
             .ok_or("recovered terminal identity leaves no next terminal identity")?;
+        let mut ids = IdAllocator::new(runtime);
+        let workspace =
+            Workspace::with_recovered_sessions(&ids, directory, home, sessions, catalog);
+        ids.next_workspace = 2;
+        ids.next_tab = 2;
+        ids.next_pane = next_session;
+        ids.next_session = next_session;
+        Ok(Self {
+            workspaces: vec![workspace],
+            shown: 0,
+            ids,
+            recent_requests: VecDeque::new(),
+        })
+    }
+
+    pub(crate) fn snapshot(&self) -> Snapshot {
+        self.workspaces[self.shown].snapshot()
+    }
+
+    fn caller_workspace(&self, caller: Option<&str>) -> Result<usize, Failure> {
+        match caller {
+            None => Ok(self.shown),
+            Some(id) => self
+                .workspaces
+                .iter()
+                .position(|workspace| workspace.sessions().any(|session| session.id == id))
+                .ok_or_else(|| {
+                    action_error(
+                        "unknown-caller",
+                        "the calling terminal is not part of this workspace",
+                    )
+                }),
+        }
+    }
+
+    pub(crate) fn owns_session(&self, session: &Session) -> bool {
+        self.workspaces
+            .iter()
+            .any(|workspace| workspace.sessions().any(|item| item == session))
+    }
+
+    fn allowance(&self, index: usize) -> usize {
+        MAX_SESSIONS
+            - self
+                .workspaces
+                .iter()
+                .enumerate()
+                .filter(|(other, _)| *other != index)
+                .map(|(_, workspace)| workspace.session_count())
+                .sum::<usize>()
+    }
+
+    pub(crate) fn dispatch(
+        &mut self,
+        request_id: &str,
+        caller: Option<&str>,
+        action: Action,
+        prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        operate: impl FnMut(SessionOperation) -> Result<(), String>,
+    ) -> Result<(), Failure> {
+        self.reject_duplicate(request_id)?;
+        let index = self.caller_workspace(caller)?;
+        let allowance = self.allowance(index);
+        self.workspaces[index].dispatch(
+            &mut self.ids,
+            allowance,
+            caller,
+            action,
+            prepare,
+            operate,
+        )?;
+        self.remember(request_id);
+        Ok(())
+    }
+
+    pub(crate) fn prepare_close_tab(
+        &mut self,
+        request_id: &str,
+        caller: Option<&str>,
+        tab: &str,
+    ) -> Result<Vec<String>, Failure> {
+        self.reject_duplicate(request_id)?;
+        let index = self.caller_workspace(caller)?;
+        let sessions = self.workspaces[index].prepare_close_tab(tab)?;
+        self.remember(request_id);
+        Ok(sessions)
+    }
+
+    pub(crate) fn prepare_close_pane(
+        &mut self,
+        request_id: &str,
+        caller: Option<&str>,
+        pane: &str,
+    ) -> Result<Vec<String>, Failure> {
+        self.reject_duplicate(request_id)?;
+        let index = self.caller_workspace(caller)?;
+        let sessions = self.workspaces[index].prepare_close_pane(caller, pane)?;
+        self.remember(request_id);
+        Ok(sessions)
+    }
+
+    pub(crate) fn session_ended(
+        &mut self,
+        id: &str,
+        end: SessionEnd,
+        operate: impl FnMut(SessionOperation) -> Result<(), String>,
+    ) -> Result<(), Failure> {
+        let index = self
+            .workspaces
+            .iter()
+            .position(|workspace| workspace.sessions().any(|session| session.id == id))
+            .ok_or_else(|| {
+                action_error(
+                    "unknown-session",
+                    format!("terminal {id} is not in the workspace"),
+                )
+            })?;
+        let allowance = self.allowance(index);
+        self.workspaces[index].session_ended(&mut self.ids, allowance, id, end, operate)
+    }
+
+    pub(crate) fn transient_sessions(&self) -> Vec<String> {
+        self.workspaces
+            .iter()
+            .flat_map(Workspace::transient_sessions)
+            .collect()
+    }
+
+    fn reject_duplicate(&self, request_id: &str) -> Result<(), Failure> {
+        if self.recent_requests.iter().any(|seen| seen == request_id) {
+            Err(action_error(
+                "duplicate-request",
+                format!("request {request_id} was already accepted"),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn remember(&mut self, request_id: &str) {
+        if self.recent_requests.len() == MAX_RECENT_REQUESTS {
+            self.recent_requests.pop_front();
+        }
+        self.recent_requests.push_back(request_id.into());
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Workspace {
+    id: String,
+    catalog: PopupCatalog,
+    home: Option<PathBuf>,
+    tabs: Vec<Tab>,
+    active: usize,
+}
+
+impl Workspace {
+    fn pending(
+        ids: &mut IdAllocator,
+        allowance: usize,
+        directory: PathBuf,
+        home: Option<PathBuf>,
+        catalog: PopupCatalog,
+        mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
+        mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        let mut workspace = Self {
+            id: format!("w{}", ids.next_workspace),
+            catalog,
+            home,
+            tabs: vec![Tab {
+                id: format!("t{}", ids.next_tab),
+                directory,
+                pending: true,
+                columns: Vec::new(),
+                selected_column: None,
+                popups: Vec::new(),
+                selected_popup: None,
+            }],
+            active: 0,
+        };
+        if workspace
+            .open_popup(
+                ids,
+                allowance,
+                0,
+                "project",
+                &mut prepare,
+                &mut operate,
+                true,
+            )
+            .is_err()
+        {
+            workspace.tabs[0].pending = false;
+            workspace.start_pane(ids, allowance, 0, &mut operate)?;
+        }
+        Ok(workspace)
+    }
+
+    fn with_recovered_sessions(
+        ids: &IdAllocator,
+        directory: PathBuf,
+        home: Option<PathBuf>,
+        sessions: Vec<(usize, Session)>,
+        catalog: PopupCatalog,
+    ) -> Self {
         let panes = sessions
             .into_iter()
             .map(|(number, session)| Pane {
@@ -193,12 +462,12 @@ impl Workspace {
                 session,
             })
             .collect::<Vec<_>>();
-        Ok(Self {
-            runtime,
+        Self {
+            id: format!("w{}", ids.next_workspace),
             catalog,
             home,
             tabs: vec![Tab {
-                id: "t1".into(),
+                id: format!("t{}", ids.next_tab),
                 directory,
                 pending: false,
                 columns: vec![Column { panes, expanded: 0 }],
@@ -207,12 +476,7 @@ impl Workspace {
                 selected_popup: None,
             }],
             active: 0,
-            next_tab: 2,
-            next_pane: next_session,
-            next_session,
-            next_popup: 1,
-            recent_requests: VecDeque::new(),
-        })
+        }
     }
 
     pub(crate) fn snapshot(&self) -> Snapshot {
@@ -282,15 +546,16 @@ impl Workspace {
     /// Applies one action. `caller` names the issuing terminal's session, whose
     /// tab and pane replace the active tab and its selection as the implicit
     /// target of pane create, edit and move actions and tab moves.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn dispatch(
         &mut self,
-        request_id: &str,
+        ids: &mut IdAllocator,
+        allowance: usize,
         caller: Option<&str>,
         action: Action,
         mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
-        self.reject_duplicate(request_id)?;
         check_popup_action(&self.snapshot(), &action)
             .map_err(|error| action_error("stale-popup", error.to_string()))?;
         let (target, previous) = match &action {
@@ -311,20 +576,29 @@ impl Workspace {
             Action::Workspace(WorkspaceAction::CreatePane { focus: false })
                 | Action::CreateCommandPane { focus: false, .. }
         );
-        let result = self.apply(action, target, caller.is_some(), &mut prepare, &mut operate);
+        let result = self.apply(
+            ids,
+            allowance,
+            action,
+            target,
+            caller.is_some(),
+            &mut prepare,
+            &mut operate,
+        );
         // An unfocused pane leaves the tab's selection as it was.
         if (result.is_err() || !focus)
             && let Some(previous) = previous
         {
             self.restore(previous);
         }
-        result?;
-        self.remember(request_id);
-        Ok(())
+        result
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         action: Action,
         target: usize,
         called: bool,
@@ -332,9 +606,15 @@ impl Workspace {
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         match action {
-            Action::Workspace(action) => {
-                self.dispatch_workspace(action, target, called, &mut prepare, &mut operate)?
-            }
+            Action::Workspace(action) => self.dispatch_workspace(
+                ids,
+                allowance,
+                action,
+                target,
+                called,
+                &mut prepare,
+                &mut operate,
+            )?,
             Action::ClosePane { .. } => {
                 return Err(action_error(
                     "unavailable",
@@ -353,14 +633,26 @@ impl Workspace {
             }
             Action::InvokePopup {
                 tab, entry, intent, ..
-            } => self.invoke_popup(&tab, &entry, intent, &mut prepare, &mut operate)?,
-            Action::DismissPopup(target) => self.dismiss_popup(&target, &mut operate)?,
+            } => self.invoke_popup(
+                ids,
+                allowance,
+                &tab,
+                &entry,
+                intent,
+                &mut prepare,
+                &mut operate,
+            )?,
+            Action::DismissPopup(target) => {
+                self.dismiss_popup(ids, allowance, &target, &mut operate)?
+            }
             Action::CommitDirectory { target, directory } => {
-                self.commit_directory(&target, directory, &mut operate)?
+                self.commit_directory(ids, allowance, &target, directory, &mut operate)?
             }
             // A tab without columns gains its first one exactly as a new pane would.
             Action::CreateColumn if self.tabs[self.active].columns.is_empty() => self
                 .dispatch_workspace(
+                    ids,
+                    allowance,
                     WorkspaceAction::CreatePane { focus: true },
                     self.active,
                     false,
@@ -375,8 +667,9 @@ impl Workspace {
                         format!("a tab holds at most {MAX_COLUMNS} columns"),
                     ));
                 }
-                let active = self.dismiss_for_pane_action(self.active, &mut operate)?;
-                self.start_column(active, &mut operate)
+                let active =
+                    self.dismiss_for_pane_action(ids, allowance, self.active, &mut operate)?;
+                self.start_column(ids, allowance, active, &mut operate)
                     .map_err(|detail| action_error("session-start", detail))?;
             }
             Action::MovePaneSideways(side) => self.move_pane_sideways(target, side)?,
@@ -388,6 +681,8 @@ impl Workspace {
                 )
                 .map_err(|detail| action_error("edit-command", detail))?;
                 self.create_pane(
+                    ids,
+                    allowance,
                     target,
                     called,
                     true,
@@ -409,6 +704,8 @@ impl Workspace {
                 )
                 .map_err(|detail| action_error("pane-command", detail))?;
                 self.create_pane(
+                    ids,
+                    allowance,
                     target,
                     called,
                     focus,
@@ -420,8 +717,11 @@ impl Workspace {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn dispatch_workspace(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         action: WorkspaceAction,
         target: usize,
         called: bool,
@@ -440,15 +740,23 @@ impl Workspace {
                     "supervisor lifecycle actions do not mutate workspace topology",
                 ));
             }
-            WorkspaceAction::CreateTab => self.create_tab(prepare, operate)?,
-            WorkspaceAction::CreatePane { focus } => {
-                self.create_pane(target, called, focus, LaunchCommand::Pane, operate)?
+            WorkspaceAction::CreateTab => self.create_tab(ids, allowance, prepare, operate)?,
+            WorkspaceAction::CreatePane { focus } => self.create_pane(
+                ids,
+                allowance,
+                target,
+                called,
+                focus,
+                LaunchCommand::Pane,
+                operate,
+            )?,
+            WorkspaceAction::FocusId(id) => self.focus_id(ids, allowance, &id, operate)?,
+            WorkspaceAction::Focus(direction) => {
+                self.focus_direction(ids, allowance, direction, operate)?
             }
-            WorkspaceAction::FocusId(id) => self.focus_id(&id, operate)?,
-            WorkspaceAction::Focus(direction) => self.focus_direction(direction, operate)?,
             WorkspaceAction::Move(direction) => self.move_direction(target, direction)?,
             WorkspaceAction::SetTabDirectory { tab, directory } => {
-                self.set_tab_directory(&tab, directory)?;
+                self.set_tab_directory(ids, &tab, directory)?;
             }
         }
         Ok(())
@@ -457,8 +765,11 @@ impl Workspace {
     /// Adds a pane to the target tab's selected column. A focused pane is
     /// selected and dismisses the tab's popup; an unfocused one joins its
     /// column collapsed, unless it is the first pane of a tab without panes.
+    #[allow(clippy::too_many_arguments)]
     fn create_pane(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         target: usize,
         called: bool,
         focus: bool,
@@ -470,7 +781,7 @@ impl Workspace {
             if called {
                 self.require_surviving_dismissal(target)?;
             }
-            self.dismiss_for_pane_action(target, operate)?
+            self.dismiss_for_pane_action(ids, allowance, target, operate)?
         } else {
             target
         };
@@ -480,7 +791,7 @@ impl Workspace {
             .selected_column
             .filter(|_| !focus)
             .map(|column| (column, tab.columns[column].expanded));
-        self.start_pane_in(target, &directory, false, command, operate)
+        self.start_pane_in(ids, allowance, target, &directory, false, command, operate)
             .map_err(|detail| action_error("session-start", detail))?;
         if let Some((column, expanded)) = kept {
             self.tabs[target].columns[column].expanded = expanded;
@@ -490,16 +801,18 @@ impl Workspace {
 
     fn create_tab(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
-        if self.tabs.len() >= MAX_TABS || self.next_tab == usize::MAX {
+        if self.tabs.len() >= MAX_TABS || ids.next_tab == usize::MAX {
             return Err(action_error(
                 "capacity",
                 format!("workspace is limited to {MAX_TABS} tabs"),
             ));
         }
-        let id = format!("t{}", self.next_tab);
+        let id = format!("t{}", ids.next_tab);
         let home = self.home.as_ref().ok_or_else(|| {
             action_error(
                 "invalid-directory",
@@ -517,17 +830,22 @@ impl Workspace {
             selected_popup: None,
         });
         let index = self.tabs.len() - 1;
-        if let Err(error) = self.open_popup(index, "project", prepare, operate, true) {
+        if let Err(error) =
+            self.open_popup(ids, allowance, index, "project", prepare, operate, true)
+        {
             self.tabs.pop();
             return Err(error);
         }
-        self.next_tab += 1;
+        ids.next_tab += 1;
         self.active = index;
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn invoke_popup(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         tab: &str,
         entry: &str,
         intent: InvokeIntent,
@@ -560,7 +878,8 @@ impl Workspace {
             let popup = self.tabs[tab_index].popups[index].clone();
             // Files keeps its Yazi, and its location, across tab-directory changes.
             if popup.entry != "files" && popup.launch_directory != self.tabs[tab_index].directory {
-                let candidate = self.popup_candidate(tab_index, &definition, true)?;
+                let candidate =
+                    self.popup_candidate(ids, allowance, tab_index, &definition, true)?;
                 let launch = self.prepare_launch(tab_index, &candidate, &definition, prepare)?;
                 if let Some(index) = self.displaced_transient(tab_index, Some(&popup.id))? {
                     self.stop_popup(tab_index, index, operate)?;
@@ -575,12 +894,14 @@ impl Workspace {
                     self.remove_empty_tab(tab_index);
                     return Err(action_error("popup-start", detail));
                 }
-                self.commit_popup(tab_index, candidate);
+                self.commit_popup(ids, tab_index, candidate);
                 return Ok(());
             }
             let selected = self.tabs[tab_index].selected_popup.as_deref() == Some(&popup.id);
             if intent == InvokeIntent::Toggle && selected {
                 return self.dismiss_popup(
+                    ids,
+                    allowance,
                     &PopupTarget {
                         tab: tab.into(),
                         instance: popup.id.clone(),
@@ -594,11 +915,14 @@ impl Workspace {
             self.tabs[tab_index].selected_popup = Some(popup.id.clone());
             return Ok(());
         }
-        self.open_popup(tab_index, entry, prepare, operate, false)
+        self.open_popup(ids, allowance, tab_index, entry, prepare, operate, false)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn open_popup(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         tab_index: usize,
         entry: &str,
         prepare: &mut impl FnMut(&PopupCommand, &Path) -> Result<Vec<OsString>, String>,
@@ -608,7 +932,8 @@ impl Workspace {
         let definition = self.definition(entry)?.clone();
         let displaced = self.displaced_transient(tab_index, None)?;
         let stops_selected = displaced.is_some();
-        let candidate = self.popup_candidate(tab_index, &definition, stops_selected)?;
+        let candidate =
+            self.popup_candidate(ids, allowance, tab_index, &definition, stops_selected)?;
         let launch = self.prepare_launch(tab_index, &candidate, &definition, prepare)?;
         if let Some(index) = displaced {
             self.stop_popup(tab_index, index, operate)?;
@@ -619,7 +944,7 @@ impl Workspace {
             }
             return Err(action_error("popup-start", detail));
         }
-        self.commit_popup(tab_index, candidate);
+        self.commit_popup(ids, tab_index, candidate);
         self.tabs[tab_index].pending = pending;
         Ok(())
     }
@@ -648,44 +973,29 @@ impl Workspace {
 
     fn popup_candidate(
         &self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         tab_index: usize,
         definition: &PopupDefinition,
         replacing: bool,
     ) -> Result<Popup, Failure> {
-        if !replacing && self.session_count() >= MAX_SESSIONS {
+        if !replacing && self.session_count() >= allowance {
             return Err(action_error(
                 "capacity",
                 format!("workspace is limited to {MAX_SESSIONS} terminals"),
             ));
         }
-        if self.next_popup == usize::MAX || self.next_session == usize::MAX {
+        if ids.next_popup == usize::MAX || ids.next_session == usize::MAX {
             return Err(action_error(
                 "capacity",
                 "workspace exhausted terminal identities",
             ));
         }
         let project = matches!(definition.command, PopupCommand::Project);
-        let number = if project {
-            self.next_popup
-        } else {
-            self.next_session
-        };
-        let session_id = if project {
-            format!("directory-picker-{number}")
-        } else {
-            format!("session-{number}")
-        };
         Ok(Popup {
-            id: format!("u{}", self.next_popup),
+            id: format!("u{}", ids.next_popup),
             entry: definition.id.clone(),
-            session: Session {
-                id: session_id.clone(),
-                endpoint: self.runtime.join(if project {
-                    format!("k{number}.sock")
-                } else {
-                    format!("{session_id}.sock")
-                }),
-            },
+            session: ids.popup_session(project),
             launch_directory: self.tabs[tab_index].directory.clone(),
         })
     }
@@ -715,18 +1025,20 @@ impl Workspace {
         })
     }
 
-    fn commit_popup(&mut self, tab_index: usize, popup: Popup) {
+    fn commit_popup(&mut self, ids: &mut IdAllocator, tab_index: usize, popup: Popup) {
         let project = is_directory_picker_session(&popup.session.id);
         self.tabs[tab_index].selected_popup = Some(popup.id.clone());
         self.tabs[tab_index].popups.push(popup);
-        self.next_popup += 1;
+        ids.next_popup += 1;
         if !project {
-            self.next_session += 1;
+            ids.next_session += 1;
         }
     }
 
     fn dismiss_popup(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         target: &PopupTarget,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
@@ -750,7 +1062,7 @@ impl Workspace {
         let project = popup.entry == "project";
         self.stop_popup(tab_index, popup_index, operate)?;
         if project && self.tabs[tab_index].pending {
-            self.finish_pending_tab(tab_index, operate)?;
+            self.finish_pending_tab(ids, allowance, tab_index, operate)?;
         } else {
             self.remove_empty_tab(tab_index);
         }
@@ -759,6 +1071,8 @@ impl Workspace {
 
     fn commit_directory(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         target: &PopupTarget,
         directory: Vec<u8>,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
@@ -770,18 +1084,20 @@ impl Workspace {
             .ok_or_else(|| action_error("stale-popup", "chooser tab is no longer live"))?;
         let directory = validated_directory(directory)?;
         if self.tabs[tab_index].pending {
-            self.start_pane_at(tab_index, &directory, operate)
+            self.start_pane_at(ids, allowance, tab_index, &directory, operate)
                 .map_err(|detail| action_error("session-start", detail))?;
             self.tabs[tab_index].directory = directory;
             self.tabs[tab_index].pending = false;
         } else {
-            self.retarget(tab_index, directory)?;
+            self.retarget(ids, tab_index, directory)?;
         }
         Ok(())
     }
 
     pub(crate) fn session_ended(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         session_id: &str,
         end: SessionEnd,
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
@@ -797,7 +1113,7 @@ impl Workspace {
             let project = self.tabs[tab_index].popups[popup_index].entry == "project";
             self.remove_popup(tab_index, popup_index);
             if project && self.tabs[tab_index].pending && end == SessionEnd::Exited {
-                self.finish_pending_tab(tab_index, &mut operate)?;
+                self.finish_pending_tab(ids, allowance, tab_index, &mut operate)?;
             } else {
                 self.remove_empty_tab(tab_index);
             }
@@ -848,12 +1164,7 @@ impl Workspace {
             .collect()
     }
 
-    pub(crate) fn prepare_close_tab(
-        &mut self,
-        request_id: &str,
-        id: &str,
-    ) -> Result<Vec<String>, Failure> {
-        self.reject_duplicate(request_id)?;
+    pub(crate) fn prepare_close_tab(&mut self, id: &str) -> Result<Vec<String>, Failure> {
         let index = self
             .tabs
             .iter()
@@ -866,7 +1177,6 @@ impl Workspace {
             ));
         }
         let sessions = self.tab_sessions(index);
-        self.remember(request_id);
         Ok(sessions)
     }
 
@@ -889,11 +1199,9 @@ impl Workspace {
     /// window.
     pub(crate) fn prepare_close_pane(
         &mut self,
-        request_id: &str,
         caller: Option<&str>,
         id: &str,
     ) -> Result<Vec<String>, Failure> {
-        self.reject_duplicate(request_id)?;
         let tab_index = self.target_tab(caller)?.0;
         let tab = &self.tabs[tab_index];
         let Some((column, pane)) = tab.find_pane(|pane| pane.id == id) else {
@@ -936,60 +1244,77 @@ impl Workspace {
         } else {
             vec![tab.columns[column].panes[pane].session.id.clone()]
         };
-        self.remember(request_id);
         Ok(sessions)
     }
 
     fn start_pane(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         tab_index: usize,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
         let directory = self.tabs[tab_index].directory.clone();
-        self.start_pane_at(tab_index, &directory, operate)
+        self.start_pane_at(ids, allowance, tab_index, &directory, operate)
     }
 
     fn start_column(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         tab_index: usize,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
         let directory = self.tabs[tab_index].directory.clone();
-        self.start_pane_in(tab_index, &directory, true, LaunchCommand::Pane, operate)
+        self.start_pane_in(
+            ids,
+            allowance,
+            tab_index,
+            &directory,
+            true,
+            LaunchCommand::Pane,
+            operate,
+        )
     }
 
     fn start_pane_at(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         tab_index: usize,
         directory: &Path,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
-        self.start_pane_in(tab_index, directory, false, LaunchCommand::Pane, operate)
+        self.start_pane_in(
+            ids,
+            allowance,
+            tab_index,
+            directory,
+            false,
+            LaunchCommand::Pane,
+            operate,
+        )
     }
 
     /// Starts a pane in the selected column, or in a new column right of it.
+    #[allow(clippy::too_many_arguments)]
     fn start_pane_in(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         tab_index: usize,
         directory: &Path,
         new_column: bool,
         command: LaunchCommand,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), String> {
-        self.check_session_capacity()?;
-        if self.next_pane == usize::MAX || self.next_session == usize::MAX {
+        self.check_session_capacity(allowance)?;
+        if ids.next_pane == usize::MAX || ids.next_session == usize::MAX {
             return Err("workspace exhausted pane or terminal identities".into());
         }
         let pane = Pane {
-            id: format!("p{}", self.next_pane),
-            session: Session {
-                id: format!("session-{}", self.next_session),
-                endpoint: self.runtime.join(if self.next_session == 1 {
-                    "orbit.sock".into()
-                } else {
-                    format!("session-{}.sock", self.next_session)
-                }),
-            },
+            id: format!("p{}", ids.next_pane),
+            session: ids.pane_session(),
         };
         operate(SessionOperation::Start {
             session: pane.session.clone(),
@@ -997,8 +1322,8 @@ impl Workspace {
             command,
             tab: None,
         })?;
-        self.next_pane += 1;
-        self.next_session += 1;
+        ids.next_pane += 1;
+        ids.next_session += 1;
         let tab = &mut self.tabs[tab_index];
         match tab.selected_column {
             Some(selected) if !new_column => {
@@ -1023,11 +1348,13 @@ impl Workspace {
 
     fn finish_pending_tab(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         tab_index: usize,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
         self.tabs[tab_index].pending = false;
-        if let Err(detail) = self.start_pane(tab_index, operate) {
+        if let Err(detail) = self.start_pane(ids, allowance, tab_index, operate) {
             self.remove_empty_tab(tab_index);
             return Err(action_error("session-start", detail));
         }
@@ -1062,6 +1389,8 @@ impl Workspace {
     /// removes it, and the action falls to the tab that became active.
     fn dismiss_for_pane_action(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         tab_index: usize,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<usize, Failure> {
@@ -1070,6 +1399,8 @@ impl Workspace {
         };
         let tab = self.tabs[tab_index].id.clone();
         self.dismiss_popup(
+            ids,
+            allowance,
             &PopupTarget {
                 tab: tab.clone(),
                 instance,
@@ -1085,6 +1416,8 @@ impl Workspace {
 
     fn focus_id(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         id: &str,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
@@ -1096,7 +1429,7 @@ impl Workspace {
             if let Some((column_index, pane_index)) =
                 self.tabs[tab_index].find_pane(|pane| pane.id == id)
             {
-                self.dismiss_for_pane_action(tab_index, operate)?;
+                self.dismiss_for_pane_action(ids, allowance, tab_index, operate)?;
                 self.active = tab_index;
                 let tab = &mut self.tabs[tab_index];
                 tab.selected_column = Some(column_index);
@@ -1148,6 +1481,8 @@ impl Workspace {
 
     fn focus_direction(
         &mut self,
+        ids: &mut IdAllocator,
+        allowance: usize,
         direction: Direction,
         operate: &mut impl FnMut(SessionOperation) -> Result<(), String>,
     ) -> Result<(), Failure> {
@@ -1187,7 +1522,7 @@ impl Workspace {
             }
             Direction::Up | Direction::Down => {
                 self.require_established(self.active)?;
-                let active = self.dismiss_for_pane_action(self.active, operate)?;
+                let active = self.dismiss_for_pane_action(ids, allowance, self.active, operate)?;
                 let tab = &mut self.tabs[active];
                 let selected = tab
                     .selected_column
@@ -1317,7 +1652,12 @@ impl Workspace {
         Ok(())
     }
 
-    fn set_tab_directory(&mut self, id: &str, directory: Vec<u8>) -> Result<(), Failure> {
+    fn set_tab_directory(
+        &mut self,
+        ids: &mut IdAllocator,
+        id: &str,
+        directory: Vec<u8>,
+    ) -> Result<(), Failure> {
         if tab_number(id).is_none() {
             return Err(action_error(
                 "invalid-tab",
@@ -1335,20 +1675,25 @@ impl Workspace {
                 "the pending tab requires its exact Project chooser result",
             ));
         }
-        self.retarget(tab_index, validated_directory(directory)?)
+        self.retarget(ids, tab_index, validated_directory(directory)?)
     }
 
     /// Changes an established tab's directory and parks a live Agent launched
     /// elsewhere as an ordinary pane, keeping its terminal: at the end of the
     /// selected column, expanded and selected when its popup was shown, or as
     /// the first column of a tab without panes.
-    fn retarget(&mut self, tab_index: usize, directory: PathBuf) -> Result<(), Failure> {
+    fn retarget(
+        &mut self,
+        ids: &mut IdAllocator,
+        tab_index: usize,
+        directory: PathBuf,
+    ) -> Result<(), Failure> {
         let tab = &self.tabs[tab_index];
         let parked = tab
             .popups
             .iter()
             .position(|popup| popup.entry == "agent" && popup.launch_directory != directory);
-        if parked.is_some() && self.next_pane == usize::MAX {
+        if parked.is_some() && ids.next_pane == usize::MAX {
             return Err(action_error(
                 "capacity",
                 "workspace exhausted pane identities",
@@ -1365,10 +1710,10 @@ impl Workspace {
             tab.selected_popup = None;
         }
         let pane = Pane {
-            id: format!("p{}", self.next_pane),
+            id: format!("p{}", ids.next_pane),
             session: popup.session,
         };
-        self.next_pane += 1;
+        ids.next_pane += 1;
         match tab.selected_column {
             Some(selected) => {
                 let column = &mut tab.columns[selected];
@@ -1491,12 +1836,20 @@ impl Workspace {
         }
     }
 
-    fn check_session_capacity(&self) -> Result<(), String> {
-        if self.session_count() >= MAX_SESSIONS {
+    fn check_session_capacity(&self, allowance: usize) -> Result<(), String> {
+        if self.session_count() >= allowance {
             Err(format!("workspace is limited to {MAX_SESSIONS} terminals"))
         } else {
             Ok(())
         }
+    }
+
+    fn sessions(&self) -> impl Iterator<Item = &Session> {
+        self.tabs.iter().flat_map(|tab| {
+            tab.panes()
+                .map(|pane| &pane.session)
+                .chain(tab.popups.iter().map(|popup| &popup.session))
+        })
     }
 
     fn session_count(&self) -> usize {
@@ -1504,24 +1857,6 @@ impl Workspace {
             .iter()
             .map(|tab| tab.panes().count() + tab.popups.len())
             .sum()
-    }
-
-    fn reject_duplicate(&self, request_id: &str) -> Result<(), Failure> {
-        if self.recent_requests.iter().any(|seen| seen == request_id) {
-            Err(action_error(
-                "duplicate-request",
-                format!("request {request_id} was already accepted"),
-            ))
-        } else {
-            Ok(())
-        }
-    }
-
-    fn remember(&mut self, request_id: &str) {
-        if self.recent_requests.len() == MAX_RECENT_REQUESTS {
-            self.recent_requests.pop_front();
-        }
-        self.recent_requests.push_back(request_id.into());
     }
 }
 
@@ -1864,6 +2199,376 @@ mod tests {
     use super::*;
     use eon_workspace_protocol::v19::{ALT, PopupGeometry, Shortcut};
 
+    fn two_workspace_set(
+        mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
+    ) -> WorkspaceSet {
+        let mut set = WorkspaceSet::pending(
+            "/runtime".into(),
+            "/".into(),
+            Some("/".into()),
+            catalog(),
+            prepared,
+            &mut operate,
+        )
+        .unwrap();
+        set.insert_pending(
+            "/".into(),
+            Some("/".into()),
+            catalog(),
+            prepared,
+            &mut operate,
+        )
+        .unwrap();
+        for index in 0..2 {
+            let picker = set.workspaces[index].transient_sessions()[0].clone();
+            set.shown = index;
+            set.session_ended(&picker, SessionEnd::Exited, &mut operate)
+                .unwrap();
+        }
+        set.shown = 0;
+        set
+    }
+
+    fn invoke(tab: &str, entry: &str) -> Action {
+        Action::InvokePopup {
+            tab: tab.into(),
+            entry: entry.into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        }
+    }
+
+    #[test]
+    fn workspace_set_ids_and_socket_paths_are_unique() {
+        let mut operations = Vec::new();
+        let mut record = |op| {
+            operations.push(op);
+            Ok(())
+        };
+        let mut set = two_workspace_set(&mut record);
+        assert_eq!(set.workspaces[0].id, "w1");
+        assert_eq!(set.workspaces[1].id, "w2");
+        let initial = set.snapshot();
+        assert_eq!(initial.active_tab, "t1");
+        assert_eq!(initial.tabs[0].columns[0].panes[0].id, "p1");
+        assert_eq!(initial.tabs[0].columns[0].panes[0].session, "session-1");
+        for index in 0..2 {
+            set.shown = index;
+            let tab = set.snapshot().active_tab;
+            set.dispatch(
+                &format!("pane-{index}"),
+                None,
+                Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
+                prepared,
+                &mut record,
+            )
+            .unwrap();
+            set.dispatch(
+                &format!("agent-{index}"),
+                None,
+                invoke(&tab, "agent"),
+                prepared,
+                &mut record,
+            )
+            .unwrap();
+            // Retarget parks Agent as a pane without starting another terminal.
+            set.dispatch(
+                &format!("park-{index}"),
+                None,
+                Action::Workspace(WorkspaceAction::SetTabDirectory {
+                    tab: tab.clone(),
+                    directory: b"/tmp".to_vec(),
+                }),
+                prepared,
+                &mut record,
+            )
+            .unwrap();
+            set.dispatch(
+                &format!("git-{index}"),
+                None,
+                invoke(&tab, "git"),
+                prepared,
+                &mut record,
+            )
+            .unwrap();
+            set.dispatch(
+                &format!("tab-{index}"),
+                None,
+                Action::Workspace(WorkspaceAction::CreateTab),
+                prepared,
+                &mut record,
+            )
+            .unwrap();
+        }
+        let mut ids = std::collections::HashSet::new();
+        for workspace in &set.workspaces {
+            for tab in workspace.snapshot().tabs {
+                assert!(ids.insert(tab.id.clone()));
+                for pane in tab.panes() {
+                    assert!(ids.insert(pane.id.clone()));
+                }
+                for popup in tab.popups {
+                    assert!(ids.insert(popup.id));
+                }
+            }
+        }
+        let mut sessions = std::collections::HashSet::new();
+        let mut sockets = std::collections::HashSet::new();
+        for op in operations {
+            if let SessionOperation::Start { session, .. } = op {
+                assert!(sessions.insert(session.id.clone()), "reused {}", session.id);
+                assert!(
+                    sockets.insert(session.endpoint.clone()),
+                    "reused {:?}",
+                    session.endpoint
+                );
+            }
+        }
+        for _ in 2..32 {
+            set.insert_pending(
+                "/".into(),
+                Some("/".into()),
+                catalog(),
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        }
+        let before = set.clone();
+        assert!(
+            set.insert_pending(
+                "/".into(),
+                Some("/".into()),
+                catalog(),
+                prepared,
+                |_| panic!("capacity starts nothing")
+            )
+            .is_err()
+        );
+        assert_eq!(set, before);
+    }
+
+    #[test]
+    fn workspace_set_refuses_foreign_targets() {
+        let mut set = two_workspace_set(|_| Ok(()));
+        set.shown = 1;
+        let foreign = set.snapshot().tabs[0].clone();
+        set.dispatch(
+            "foreign-popup",
+            None,
+            invoke(&foreign.id, "agent"),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let popup = set.snapshot().tabs[0].popups[0].id.clone();
+        let caller = set.workspaces[0].tabs[0].columns[0].panes[0]
+            .session
+            .clone();
+        assert!(set.owns_session(&caller));
+        assert!(!set.owns_session(&Session {
+            id: caller.id.clone(),
+            endpoint: "/wrong.sock".into()
+        }));
+        for shown in [0, 1] {
+            set.shown = shown;
+            let before = set.clone();
+            for action in [
+                Action::Workspace(WorkspaceAction::FocusId(foreign.id.clone())),
+                Action::DismissPopup(PopupTarget {
+                    tab: foreign.id.clone(),
+                    instance: popup.clone(),
+                }),
+            ] {
+                assert!(
+                    set.dispatch("refused", Some(&caller.id), action, prepared, |_| panic!(
+                        "foreign target performs no operations"
+                    ))
+                    .is_err()
+                );
+                assert_eq!(set, before);
+            }
+            assert!(
+                set.prepare_close_tab("refused", Some(&caller.id), &foreign.id)
+                    .is_err()
+            );
+            assert!(
+                set.prepare_close_pane(
+                    "refused",
+                    Some(&caller.id),
+                    &foreign.columns[0].panes[0].id
+                )
+                .is_err()
+            );
+            assert_eq!(set, before);
+        }
+        set.dispatch(
+            "local",
+            Some(&caller.id),
+            Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(set.workspaces[0].session_count(), 2);
+        assert_eq!(set.snapshot().active_tab, foreign.id);
+    }
+
+    #[test]
+    fn workspace_set_terminal_capacity_spans_workspaces() {
+        let mut set = two_workspace_set(|_| Ok(()));
+        set.shown = 0;
+        let tab = set.snapshot().active_tab;
+        set.dispatch("agent", None, invoke(&tab, "agent"), prepared, |_| Ok(()))
+            .unwrap();
+        for index in 0..2 {
+            set.shown = index;
+            let count = if index == 0 { 126 } else { 127 };
+            for number in 0..count {
+                set.dispatch(
+                    &format!("fill-{index}-{number}"),
+                    None,
+                    Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+                    prepared,
+                    |_| Ok(()),
+                )
+                .unwrap();
+            }
+        }
+        assert_eq!(
+            set.workspaces
+                .iter()
+                .map(Workspace::session_count)
+                .sum::<usize>(),
+            MAX_SESSIONS
+        );
+        for index in 0..2 {
+            set.shown = index;
+            let tab = set.snapshot().active_tab;
+            for action in [
+                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+                invoke(&tab, "git"),
+            ] {
+                assert!(
+                    set.dispatch("full", None, action, prepared, |_| panic!(
+                        "full window starts nothing"
+                    ))
+                    .is_err()
+                );
+            }
+        }
+        set.shown = 0;
+        let old = set.workspaces[1].tabs[0].columns[0].panes[0]
+            .session
+            .id
+            .clone();
+        set.session_ended(&old, SessionEnd::Exited, |_| Ok(()))
+            .unwrap();
+        set.dispatch("git", None, invoke(&tab, "git"), prepared, |_| Ok(()))
+            .unwrap();
+        set.dispatch(
+            "directory",
+            None,
+            Action::Workspace(WorkspaceAction::SetTabDirectory {
+                tab: tab.clone(),
+                directory: b"/tmp".to_vec(),
+            }),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let popup = set.snapshot().tabs[0]
+            .popups
+            .iter()
+            .find(|popup| popup.entry == "git")
+            .unwrap()
+            .id
+            .clone();
+        let mut operations = Vec::new();
+        set.dispatch(
+            "replace",
+            None,
+            Action::InvokePopup {
+                tab: tab.clone(),
+                entry: "git".into(),
+                expected_instance: Some(popup),
+                intent: InvokeIntent::Toggle,
+            },
+            prepared,
+            |op| {
+                operations.push(op);
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            operations.as_slice(),
+            [SessionOperation::Stop(_), SessionOperation::Start { .. }]
+        ));
+        assert_eq!(
+            set.workspaces
+                .iter()
+                .map(Workspace::session_count)
+                .sum::<usize>(),
+            MAX_SESSIONS
+        );
+    }
+
+    #[test]
+    fn workspace_set_replays_span_workspaces() {
+        let mut set = two_workspace_set(|_| Ok(()));
+        set.dispatch(
+            "accepted",
+            None,
+            Action::Workspace(WorkspaceAction::Inspect),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        set.shown = 1;
+        let before = set.clone();
+        assert_eq!(
+            set.dispatch(
+                "accepted",
+                None,
+                Action::Workspace(WorkspaceAction::CreatePane { focus: false }),
+                prepared,
+                |_| panic!("replay performs no operations")
+            )
+            .unwrap_err()
+            .code,
+            "duplicate-request"
+        );
+        assert_eq!(set, before);
+        assert!(set.prepare_close_tab("retry", None, "unknown").is_err());
+        set.shown = 0;
+        let tab = set.snapshot().active_tab;
+        let pane = set.snapshot().tabs[0].columns[0].panes[0].id.clone();
+        let sessions = set.prepare_close_tab("retry", None, &tab).unwrap();
+        assert!(!sessions.is_empty()); // Accepted before any potentially partial stop.
+        set.shown = 1;
+        let tab = set.snapshot().active_tab;
+        assert_eq!(
+            set.prepare_close_tab("retry", None, &tab).unwrap_err().code,
+            "duplicate-request"
+        );
+        set.shown = 0;
+        set.prepare_close_pane("pane-close", None, &pane).unwrap();
+        set.shown = 1;
+        assert_eq!(
+            set.dispatch(
+                "pane-close",
+                None,
+                Action::Workspace(WorkspaceAction::Inspect),
+                prepared,
+                |_| panic!("replay performs no operations")
+            )
+            .unwrap_err()
+            .code,
+            "duplicate-request"
+        );
+    }
+
     #[test]
     fn json_paths_are_strings_unless_their_bytes_are_not_utf8() {
         assert_eq!(json_path(b"/home/a \"b\""), "\"/home/a \\\"b\\\"\"");
@@ -1872,7 +2577,7 @@ mod tests {
 
     #[test]
     fn cli_output_carries_attention_state_and_app_but_never_report_text() {
-        let workspace = Workspace::with_recovered_sessions(
+        let workspace = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
             None,
@@ -1994,7 +2699,7 @@ mod tests {
     fn create_column_in_a_popup_only_tab_never_overfills_a_neighbor() {
         let root = std::env::temp_dir().join(format!("eon-column-limit-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             root.clone(),
             root.clone(),
             Some(root.clone()),
@@ -2062,7 +2767,7 @@ mod tests {
     fn a_transient_popup_caller_never_removes_its_paneless_tab() {
         let root = std::env::temp_dir().join(format!("eon-popup-caller-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             root.clone(),
             root.clone(),
             Some(root.clone()),
@@ -2161,7 +2866,7 @@ mod tests {
 
     #[test]
     fn unfocused_panes_keep_the_selection_and_the_shown_popup() {
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
             Some("/".into()),
@@ -2244,7 +2949,7 @@ mod tests {
             command: PopupCommand::Argv(vec!["anima".into()]),
             keep_alive: false,
         });
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
             Some("/".into()),
@@ -2326,7 +3031,7 @@ mod tests {
     fn columns_hold_accordions_traverse_into_tabs_and_collapse_on_exit() {
         let root = std::env::temp_dir().join(format!("eon-columns-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             root.clone(),
             root.clone(),
             Some(root.clone()),
@@ -2341,10 +3046,10 @@ mod tests {
         )
         .unwrap();
         let ok = |_| Ok(());
-        let request = |workspace: &mut Workspace, id: &str, action| {
+        let request = |workspace: &mut WorkspaceSet, id: &str, action| {
             workspace.dispatch(id, None, action, prepared, ok)
         };
-        let shape = |workspace: &Workspace| {
+        let shape = |workspace: &WorkspaceSet| {
             let tab = &workspace.snapshot().tabs[0];
             let columns = tab
                 .columns
@@ -2484,7 +3189,7 @@ mod tests {
 
     #[test]
     fn pane_close_targets_the_active_tab_and_prunes_like_an_exit() {
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
             Some("/".into()),
@@ -2499,10 +3204,10 @@ mod tests {
         )
         .unwrap();
         let ok = |_| Ok(());
-        let request = |workspace: &mut Workspace, id: &str, action| {
+        let request = |workspace: &mut WorkspaceSet, id: &str, action| {
             workspace.dispatch(id, None, action, prepared, ok).unwrap()
         };
-        let close = |workspace: &mut Workspace, id: &str, pane: &str| {
+        let close = |workspace: &mut WorkspaceSet, id: &str, pane: &str| {
             let sessions = workspace.prepare_close_pane(id, None, pane)?;
             let [session] = sessions.as_slice() else {
                 panic!("a non-final pane close stops only its pane");
@@ -2510,7 +3215,7 @@ mod tests {
             workspace.session_ended(session, SessionEnd::Closed, ok)?;
             Ok::<_, Failure>(session.clone())
         };
-        let refused = |workspace: &mut Workspace, id: &str, pane: &str| {
+        let refused = |workspace: &mut WorkspaceSet, id: &str, pane: &str| {
             let before = workspace.snapshot();
             let failure = close(workspace, id, pane).unwrap_err();
             assert_eq!(workspace.snapshot(), before);
@@ -2640,7 +3345,7 @@ mod tests {
 
     #[test]
     fn callers_act_in_their_own_tab_without_changing_the_active_tab() {
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
             Some("/".into()),
@@ -2654,7 +3359,7 @@ mod tests {
             catalog(),
         )
         .unwrap();
-        let request = |workspace: &mut Workspace, id: &str, caller: Option<&str>, action| {
+        let request = |workspace: &mut WorkspaceSet, id: &str, caller: Option<&str>, action| {
             workspace.dispatch(id, caller, action, prepared, |_| Ok(()))
         };
         request(
@@ -2681,7 +3386,7 @@ mod tests {
         workspace
             .session_ended(&picker.session, SessionEnd::Exited, |_| Ok(()))
             .unwrap();
-        let panes = |workspace: &Workspace, tab: &str| {
+        let panes = |workspace: &WorkspaceSet, tab: &str| {
             let snapshot = workspace.snapshot();
             let tab = snapshot.tabs.iter().find(|item| item.id == tab).unwrap();
             let panes = tab.panes().map(|pane| pane.id.clone()).collect::<Vec<_>>();
@@ -2814,7 +3519,7 @@ mod tests {
 
     #[test]
     fn sideways_pane_moves_join_neighbor_stacks_split_at_edges_and_drop_emptied_columns() {
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
             Some("/".into()),
@@ -2829,17 +3534,17 @@ mod tests {
         )
         .unwrap();
         let ok = |_| Ok(());
-        let request = |workspace: &mut Workspace, id: &str, action| {
+        let request = |workspace: &mut WorkspaceSet, id: &str, action| {
             workspace.dispatch(id, None, action, prepared, ok)
         };
-        let workspace_action = |workspace: &mut Workspace, id: &str, action| {
+        let workspace_action = |workspace: &mut WorkspaceSet, id: &str, action| {
             request(workspace, id, Action::Workspace(action))
         };
-        let sideways = |workspace: &mut Workspace, id: &str, side| {
+        let sideways = |workspace: &mut WorkspaceSet, id: &str, side| {
             request(workspace, id, Action::MovePaneSideways(side))
         };
         // Each column's panes with the expanded one marked, then the selected pane.
-        let layout = |workspace: &Workspace| {
+        let layout = |workspace: &WorkspaceSet| {
             let tab = &workspace.snapshot().tabs[0];
             let columns = tab
                 .columns
@@ -2963,7 +3668,7 @@ mod tests {
 
     #[test]
     fn pane_moves_refuse_covering_popups_without_changing_tabs() {
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
             Some("/".into()),
@@ -3036,7 +3741,7 @@ mod tests {
     fn column_moves_stay_in_their_column_popups_skip_columns_and_the_cli_reports_positions() {
         let root = std::env::temp_dir().join(format!("eon-column-moves-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             root.clone(),
             root.clone(),
             Some(root.clone()),
@@ -3051,13 +3756,13 @@ mod tests {
         )
         .unwrap();
         let ok = |_| Ok(());
-        let request = |workspace: &mut Workspace, id: &str, action| {
+        let request = |workspace: &mut WorkspaceSet, id: &str, action| {
             workspace.dispatch(id, None, action, prepared, ok)
         };
-        let workspace_action = |workspace: &mut Workspace, id: &str, action| {
+        let workspace_action = |workspace: &mut WorkspaceSet, id: &str, action| {
             request(workspace, id, Action::Workspace(action))
         };
-        let panes = |workspace: &Workspace| {
+        let panes = |workspace: &WorkspaceSet| {
             workspace.snapshot().tabs[0]
                 .columns
                 .iter()
@@ -3142,7 +3847,7 @@ mod tests {
         fs::create_dir_all(&new).unwrap();
         fs::create_dir_all(&newest).unwrap();
         let mut operations = Vec::new();
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             root.clone(),
             old,
             Some(root.clone()),
@@ -3327,7 +4032,7 @@ mod tests {
 
     #[test]
     fn popup_switching_stops_transients_without_leaving_empty_tabs() {
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
             Some("/".into()),
@@ -3402,7 +4107,7 @@ mod tests {
             Some(SessionOperation::Stop(id)) if id == "directory-picker-2"
         ));
 
-        workspace.tabs.push(Tab {
+        workspace.workspaces[0].tabs.push(Tab {
             id: "t2".into(),
             directory: "/".into(),
             pending: false,
@@ -3458,7 +4163,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("eon-chooser-{}", std::process::id()));
         let selected = root.join("selected");
         fs::create_dir_all(&selected).unwrap();
-        let mut workspace = Workspace::pending(
+        let mut workspace = WorkspaceSet::pending(
             root.clone(),
             root.clone(),
             Some(root.clone()),
@@ -3514,7 +4219,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("eon-files-{}", std::process::id()));
         let next = root.join("next");
         fs::create_dir_all(&next).unwrap();
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             root.clone(),
             root.clone(),
             Some(root.clone()),
@@ -3577,7 +4282,7 @@ mod tests {
     fn files_edits_a_file_in_a_new_helix_pane_of_its_tab() {
         let root = std::env::temp_dir().join(format!("eon-edit-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             root.clone(),
             root.clone(),
             Some(root.clone()),
@@ -3666,7 +4371,7 @@ mod tests {
     fn a_command_pane_runs_its_exact_argv_only_for_a_calling_terminal() {
         let root = std::env::temp_dir().join(format!("eon-command-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             root.clone(),
             root.clone(),
             Some(root.clone()),
@@ -3739,7 +4444,7 @@ mod tests {
         let root = std::env::temp_dir().join(format!("eon-park-{}", std::process::id()));
         let next = root.join("next");
         fs::create_dir_all(&next).unwrap();
-        let mut workspace = Workspace::with_recovered_sessions(
+        let mut workspace = WorkspaceSet::with_recovered_sessions(
             root.clone(),
             root.clone(),
             Some(root.clone()),
@@ -3818,7 +4523,7 @@ mod tests {
     fn new_tabs_start_at_home_and_reject_unavailable_home_without_mutation() {
         let root = std::env::temp_dir().join(format!("eon-home-{}", std::process::id()));
         fs::create_dir_all(&root).unwrap();
-        let mut workspace = Workspace::pending(
+        let mut workspace = WorkspaceSet::pending(
             "/runtime".into(),
             "/".into(),
             Some(root.clone()),
@@ -3862,7 +4567,7 @@ mod tests {
         .unwrap();
 
         for home in [None, Some("relative".into()), Some(root.join("missing"))] {
-            workspace.home = home;
+            workspace.workspaces[0].home = home;
             let before = workspace.snapshot();
             let error = workspace
                 .dispatch(
@@ -3881,7 +4586,7 @@ mod tests {
 
     #[test]
     fn pending_tabs_keep_independent_pickers_and_close_only_the_selected_tab() {
-        let mut workspace = Workspace::pending(
+        let mut workspace = WorkspaceSet::pending(
             "/runtime".into(),
             "/".into(),
             Some("/".into()),
@@ -3921,7 +4626,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            workspace.prepare_close_tab("close-t1", "t1").unwrap(),
+            workspace.prepare_close_tab("close-t1", None, "t1").unwrap(),
             std::slice::from_ref(&first.session)
         );
         workspace
@@ -3974,7 +4679,7 @@ mod tests {
             .unwrap();
         let third = workspace.snapshot().tabs[1].popups[0].clone();
         assert_eq!(
-            workspace.prepare_close_tab("close-t3", "t3").unwrap(),
+            workspace.prepare_close_tab("close-t3", None, "t3").unwrap(),
             std::slice::from_ref(&third.session)
         );
         workspace
@@ -4003,7 +4708,7 @@ mod tests {
 
     #[test]
     fn background_pending_picker_exit_keeps_the_selected_tab() {
-        let mut workspace = Workspace::pending(
+        let mut workspace = WorkspaceSet::pending(
             "/runtime".into(),
             "/".into(),
             Some("/".into()),

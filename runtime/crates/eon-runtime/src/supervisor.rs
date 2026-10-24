@@ -14,7 +14,7 @@ use super::{
         RunningSession, TAB_VARIABLE, TERMINAL_VARIABLE, acquire_generation_sessions,
         recover_sessions, session_finished, start_orbit, stop_managed_sessions,
     },
-    workspace::{self, LaunchCommand, SessionEnd, SessionOperation, Workspace},
+    workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
 use eon_workspace_protocol::v19::{
     Action, Availability, Ended, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
@@ -784,7 +784,7 @@ fn supervise(
         let snapshot = if mode == LaunchMode::Workspace {
             Some(
                 if sessions.is_empty() && !recovered_picker {
-                    Workspace::pending(
+                    WorkspaceSet::pending(
                         runtime.to_path_buf(),
                         launch_directory.clone(),
                         env::home_dir(),
@@ -804,7 +804,7 @@ fn supervise(
                     } else {
                         recovered_workspace_sessions(&sessions)?
                     };
-                    Workspace::with_recovered_sessions(
+                    WorkspaceSet::with_recovered_sessions(
                         runtime.to_path_buf(),
                         launch_directory.clone(),
                         env::home_dir(),
@@ -865,9 +865,9 @@ fn supervise(
         )?);
         initial_child.clear();
     }
-    let workspace = if mode == LaunchMode::Workspace {
+    let workspaces = if mode == LaunchMode::Workspace {
         Some(if sessions.is_empty() {
-            Workspace::pending(
+            WorkspaceSet::pending(
                 runtime.to_path_buf(),
                 launch_directory.clone(),
                 env::home_dir(),
@@ -894,7 +894,7 @@ fn supervise(
                 },
             )?
         } else {
-            Workspace::with_recovered_sessions(
+            WorkspaceSet::with_recovered_sessions(
                 runtime.to_path_buf(),
                 launch_directory,
                 env::home_dir(),
@@ -909,7 +909,7 @@ fn supervise(
         component_generation: generation.to_owned(),
         application_id: application_id.into(),
         decorations,
-        workspace,
+        workspaces,
         sessions,
         venus: None,
         initial_child,
@@ -1013,7 +1013,7 @@ struct SupervisorState {
     component_generation: String,
     application_id: String,
     decorations: bool,
-    workspace: Option<Workspace>,
+    workspaces: Option<WorkspaceSet>,
     sessions: Vec<RunningSession>,
     venus: Option<PresentationProcess>,
     initial_child: Vec<OsString>,
@@ -1028,7 +1028,7 @@ struct SupervisorState {
 impl SupervisorState {
     /// The workspace with its quotas and attention.
     fn workspace_snapshot(&mut self) -> Option<Snapshot> {
-        self.workspace.as_ref().map(|workspace| {
+        self.workspaces.as_ref().map(|workspace| {
             let mut snapshot = workspace.snapshot();
             if let Some(quotas) = &self.quotas {
                 quotas.apply(&mut snapshot);
@@ -1043,7 +1043,7 @@ impl SupervisorState {
     /// Follows focus, then polls program status, between control requests
     /// and never inside one (EON-C31).
     fn follow_attention(&mut self) {
-        let (Some(attention), Some(workspace)) = (&mut self.attention, &self.workspace) else {
+        let (Some(attention), Some(workspace)) = (&mut self.attention, &self.workspaces) else {
             return;
         };
         let (targets, focus) = attention::targets(&workspace.snapshot());
@@ -1123,7 +1123,7 @@ fn reap_finished_sessions(
         if let Some(code) = finished {
             let session = state.sessions.remove(index);
             state.log.record(&session_end_line(&session, code));
-            if let Some(workspace) = &mut state.workspace {
+            if let Some(workspace) = &mut state.workspaces {
                 let component_generation = &state.component_generation;
                 let sessions = &mut state.sessions;
                 let initial_child = &mut state.initial_child;
@@ -1184,7 +1184,7 @@ fn stop_workspace_session(
 }
 
 fn close_workspace_tab(
-    request_id: &str,
+    request: &Request,
     tab: &str,
     state: &mut SupervisorState,
     inputs: &Inputs,
@@ -1196,11 +1196,12 @@ fn close_workspace_tab(
     let result: Result<(), Failure> = (|| {
         reap_finished_sessions(state, inputs, config)
             .map_err(|detail| failure("tab-close-failed", detail))?;
+        let caller = caller_session(state, inputs, config, request)?;
         let sessions = state
-            .workspace
+            .workspaces
             .as_mut()
             .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?
-            .prepare_close_tab(request_id, tab)?;
+            .prepare_close_tab(&request.id, caller.as_deref(), tab)?;
 
         state.log.record(&format!(
             "closing tab {tab}: stopping {}",
@@ -1233,7 +1234,7 @@ fn close_workspace_pane(
         .map_err(|detail| failure("pane-close-failed", detail))?;
     let caller = caller_session(state, inputs, config, request)?;
     let workspace = state
-        .workspace
+        .workspaces
         .as_mut()
         .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
     let sessions = workspace.prepare_close_pane(&request.id, caller.as_deref(), pane)?;
@@ -1252,7 +1253,7 @@ fn stop_closed_sessions(
         let natural_status = stop_owned_session(&mut state.sessions, &id, &state.log)
             .map_err(|detail| failure(code, format!("{id}: {detail}")))?;
         state
-            .workspace
+            .workspaces
             .as_mut()
             .expect("workspace close retains its owner")
             .session_ended(&id, SessionEnd::Closed, |_| {
@@ -1357,7 +1358,15 @@ fn caller_session(
     state
         .sessions
         .iter()
-        .find(|session| session.is_terminal(caller))
+        .find(|session| {
+            session.is_terminal(caller)
+                && state.workspaces.as_ref().is_none_or(|workspaces| {
+                    workspaces.owns_session(&workspace::Session {
+                        id: session.id.clone(),
+                        endpoint: session.endpoint.clone(),
+                    })
+                })
+        })
         .map(|session| Some(session.id.clone()))
         .ok_or_else(|| {
             failure(
@@ -1473,9 +1482,9 @@ fn cancel_transient_popups(
     config: &Path,
 ) -> Result<(), String> {
     let ids = state
-        .workspace
+        .workspaces
         .as_ref()
-        .map(Workspace::transient_sessions)
+        .map(WorkspaceSet::transient_sessions)
         .unwrap_or_default();
     for id in ids {
         if let Some(index) = state.sessions.iter().position(|session| session.id == id) {
@@ -1491,13 +1500,13 @@ fn cancel_transient_popups(
         }
         let SupervisorState {
             component_generation,
-            workspace,
+            workspaces,
             sessions,
             initial_child,
             log,
             ..
         } = state;
-        let result = workspace
+        let result = workspaces
             .as_mut()
             .ok_or("transient popup has no workspace owner")?
             .session_ended(&id, SessionEnd::Exited, |operation| {
@@ -1519,9 +1528,9 @@ fn cancel_transient_popups(
 
 fn stop_transient_popups(state: &mut SupervisorState) -> Result<(), String> {
     let ids = state
-        .workspace
+        .workspaces
         .as_ref()
-        .map(Workspace::transient_sessions)
+        .map(WorkspaceSet::transient_sessions)
         .unwrap_or_default();
     for id in ids {
         if state.sessions.iter().any(|session| session.id == id) {
@@ -1546,7 +1555,7 @@ fn reap_presentation(
     state.venus = None;
     if !state.stopping {
         // Full Eon's clean exit is a detach; a crash is not (EON-C8).
-        if state.workspace.is_some() && status.success() {
+        if state.workspaces.is_some() && status.success() {
             notification::notify_first_detach(&state.application_id);
         }
         cancel_transient_popups(state, inputs, config)?;
@@ -1642,7 +1651,7 @@ fn dispatch_control_request(
     runtime: &Path,
     generation: &str,
 ) -> (ControlResponse, bool) {
-    let mode = if state.workspace.is_some() {
+    let mode = if state.workspaces.is_some() {
         LaunchMode::Workspace
     } else {
         LaunchMode::Terminal
@@ -1815,11 +1824,10 @@ fn dispatch_control_request(
             (ControlResponse::Lifecycle(response), shutdown)
         }
         Request {
-            id,
-            action: Action::Workspace(WorkspaceAction::CloseTab { tab }),
+            action: Action::Workspace(WorkspaceAction::CloseTab { ref tab }),
             ..
         } => closed(close_workspace_tab(
-            &id, &tab, state, inputs, config, runtime, generation,
+            &request, tab, state, inputs, config, runtime, generation,
         )),
         Request {
             action: Action::ClosePane { ref pane },
@@ -1828,7 +1836,7 @@ fn dispatch_control_request(
             &request, pane, state, inputs, config, runtime, generation,
         )),
         request => {
-            if state.workspace.is_none() {
+            if state.workspaces.is_none() {
                 return (
                     ControlResponse::Workspace(Response::Failure(failure(
                         "workspace-unavailable",
@@ -1841,7 +1849,7 @@ fn dispatch_control_request(
                 Ok(caller) => caller,
                 Err(error) => return (ControlResponse::Workspace(Response::Failure(error)), false),
             };
-            let Some(workspace) = &mut state.workspace else {
+            let Some(workspace) = &mut state.workspaces else {
                 unreachable!("reconciliation keeps the workspace owner");
             };
             // A queue jump is the FocusAttention of its target; an empty queue
@@ -1981,7 +1989,7 @@ pub(super) fn status_code(status: ExitStatus) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        Action, DiagnosticLog, LaunchMode, SupervisorState, Workspace, WorkspaceAction,
+        Action, DiagnosticLog, LaunchMode, SupervisorState, WorkspaceAction, WorkspaceSet,
         cancel_transient_popups, effective_uid, prepare_configuration, prepare_runtime,
         reap_finished_sessions, stop_generation_sessions, stop_owned_session, temporary_directory,
         venus_command, window_bar_widgets, xdg_path,
@@ -2071,7 +2079,7 @@ mod tests {
             component_generation: "component-1".into(),
             application_id: String::new(),
             decorations: false,
-            workspace: None,
+            workspaces: None,
             sessions,
             venus: None,
             initial_child: Vec::new(),
@@ -2150,7 +2158,7 @@ mod tests {
             component_generation: "component-1".into(),
             application_id: String::new(),
             decorations: false,
-            workspace: None,
+            workspaces: None,
             sessions,
             venus: None,
             initial_child: Vec::new(),
@@ -2267,7 +2275,7 @@ mod tests {
             component_generation: "component-1".into(),
             application_id: String::new(),
             decorations: false,
-            workspace: None,
+            workspaces: None,
             sessions,
             venus: None,
             initial_child: Vec::new(),
@@ -2316,7 +2324,7 @@ mod tests {
             component_generation: "component-1".into(),
             application_id: String::new(),
             decorations: false,
-            workspace: None,
+            workspaces: None,
             sessions: vec![session],
             venus: None,
             initial_child: Vec::new(),
@@ -2366,7 +2374,7 @@ mod tests {
         ];
         let runtime = temporary_directory();
         let inputs = crate::fixtures::inputs();
-        let mut workspace = Workspace::pending(
+        let mut workspace = WorkspaceSet::pending(
             runtime.clone(),
             runtime.clone(),
             Some(runtime.clone()),
@@ -2402,7 +2410,7 @@ mod tests {
             component_generation: "component-1".into(),
             application_id: String::new(),
             decorations: false,
-            workspace: Some(workspace),
+            workspaces: Some(workspace),
             sessions,
             venus: None,
             initial_child: Vec::new(),
@@ -2428,7 +2436,7 @@ mod tests {
         // The other picker was cleaned and its tab, whose fixture first pane
         // cannot start, removed; the failed picker keeps its pending tab.
         assert_eq!(ids(&state), ["directory-picker-1", "session-3"]);
-        let snapshot = state.workspace.as_ref().unwrap().snapshot();
+        let snapshot = state.workspaces.as_ref().unwrap().snapshot();
         assert_eq!(snapshot.tabs.len(), 1);
         assert!(snapshot.tabs[0].pending);
         assert_eq!(snapshot.tabs[0].popups.len(), 1);
