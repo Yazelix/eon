@@ -1032,7 +1032,7 @@ fn header_heights(metrics: CellMetrics) -> (f32, f32) {
     let row = pill_row(metrics);
     (
         row + (card_gap(metrics) - tab_gap(metrics, row)).max(0.0) * 2.0,
-        (metrics.height * 1.5).round().max(1.0),
+        chrome_title_metrics(metrics).text_height,
     )
 }
 
@@ -1098,10 +1098,55 @@ pub(crate) const SIDEBAR_TITLE: &str = "Agents";
 pub(crate) const SIDEBAR_EMPTY: &str =
     "No agent needs attention. Agents that report their status show here while they work.";
 
-/// The clip box of one line of sidebar text: a quarter em taller than the font size, as the
-/// sans-serif face's ascent plus descent needs, so descenders such as g's are never cut.
-pub(crate) fn sidebar_text_height(metrics: CellMetrics) -> f32 {
-    metrics.height.max(metrics.font_size * 1.25)
+/// Shared typography for chrome titles and their descender-safe clip box.
+pub(crate) struct ChromeTitleMetrics {
+    pub font_size: f32,
+    pub line_height: f32,
+    pub text_height: f32,
+}
+
+pub(crate) fn chrome_title_metrics(metrics: CellMetrics) -> ChromeTitleMetrics {
+    ChromeTitleMetrics {
+        font_size: metrics.font_size,
+        line_height: metrics.height,
+        text_height: metrics.height.max(metrics.font_size * 1.25),
+    }
+}
+
+/// Snap the complete title midpoint once, in physical pixels.
+pub(crate) fn title_rule_y(top: f32, height: f32) -> f32 {
+    (top + height / 2.0).floor()
+}
+
+/// Every painted card starts on the shared title line, independent of header scrolling.
+/// The allocated area still owns column layout, hit targets and popup margins.
+pub(crate) fn card_rect(allocated: SceneRect, metrics: CellMetrics) -> SceneRect {
+    let top = title_rule_y(
+        allocated.top,
+        chrome_title_metrics(metrics)
+            .text_height
+            .min(allocated.height),
+    );
+    SceneRect {
+        top,
+        height: (allocated.bottom() - top).max(0.0),
+        ..allocated
+    }
+}
+
+pub(crate) fn popup_card_rect(allocated: SceneRect, metrics: CellMetrics) -> SceneRect {
+    let card = card_rect(allocated, metrics);
+    // Keep one padded cell when the window cannot also fit the shared top edge.
+    let top = card.top.min(
+        (allocated.bottom() - minimum_terminal(metrics, metrics.height))
+            .max(allocated.top)
+            .floor(),
+    );
+    SceneRect {
+        top,
+        height: (allocated.bottom() - top).max(0.0),
+        ..card
+    }
 }
 
 /// The agent sidebar's card, one card gap from the window's left edge and as tall as `cards`,
@@ -1118,7 +1163,7 @@ fn sidebar_rect(
         ..cards
     };
     (sidebar == Sidebar::Open && width - rect.right() >= SIDEBAR_MIN_CONTENT_CELLS * metrics.width)
-        .then_some(rect)
+        .then_some(card_rect(rect, metrics))
 }
 
 /// The agent sidebar's tab headings and rows inside its `card`, in tab and terminal order, and
@@ -1626,17 +1671,6 @@ pub(crate) fn pane_chrome_rect(rect: SceneRect, metrics: CellMetrics) -> SceneRe
     }
 }
 
-/// Insets a rectangle's sides by the frameless header gap, which keeps neighbouring columns'
-/// header fills apart when no seam divides them.
-pub(crate) fn inset_sides(rect: SceneRect, metrics: CellMetrics) -> SceneRect {
-    let inset = pane_inset(metrics).min(rect.width / 4.0);
-    SceneRect {
-        left: rect.left + inset,
-        width: (rect.width - inset * 2.0).max(0.0),
-        ..rect
-    }
-}
-
 impl WorkspaceScene {
     /// Maximum shaped label width inside this surface's tab viewport.
     #[must_use]
@@ -1666,6 +1700,7 @@ impl WorkspaceScene {
                 snapshot.geometry.side_margin * metrics.scale * 2.0 + sides,
                 above
                     + snapshot.geometry.vertical_margin * metrics.scale * 2.0
+                    + (title_rule_y(tab_height, pane_height) - tab_height)
                     + popup_title_gutter(metrics),
             )
         } else {
@@ -2068,12 +2103,20 @@ impl WorkspaceScene {
             let horizontal_inset = (snapshot.geometry.side_margin * metrics.scale).min(
                 (pane_viewport.width - minimum_terminal(metrics, metrics.width)).max(0.0) / 2.0,
             );
+            let edge = if popup.is_some() {
+                (popup_card_rect(pane_viewport, metrics).top - pane_viewport.top).max(0.0)
+            } else {
+                0.0
+            };
             let vertical_inset = (snapshot.geometry.vertical_margin * metrics.scale).min(
-                (pane_viewport.height - minimum_terminal(metrics, metrics.height)).max(0.0) / 2.0,
+                (pane_viewport.height - edge - minimum_terminal(metrics, metrics.height)).max(0.0)
+                    / 2.0,
             );
             let title_gutter = if popup.is_some() {
-                popup_title_gutter(metrics).min(
+                // Reserve the painted edge before the optional label gutter and margins.
+                edge + popup_title_gutter(metrics).min(
                     (pane_viewport.height
+                        - edge
                         - vertical_inset * 2.0
                         - metrics.padding * 2.0
                         - metrics.height)
@@ -3235,6 +3278,118 @@ mod tests {
     use super::*;
 
     #[test]
+    fn compact_pane_headers_share_title_height_and_full_row_targets() {
+        use eon_workspace_protocol::v19::{Column, PopupGeometry};
+
+        let snapshot = Snapshot {
+            active_tab: "t1".into(),
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/tmp/eon".to_vec(),
+                pending: false,
+                selected_pane: Some("p2".into()),
+                selected_popup: None,
+                columns: vec![Column {
+                    panes: (1..=4)
+                        .map(|n| Pane {
+                            id: format!("p{n}"),
+                            session: format!("s{n}"),
+                            endpoint: format!("/tmp/p{n}.sock").into_bytes(),
+                            live: true,
+                            attention: None,
+                        })
+                        .collect(),
+                    expanded: "p2".into(),
+                }],
+                popups: Vec::new(),
+                attention_rollup: None,
+            }],
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: Sidebar::Open,
+        };
+        for scale in [1.0, 1.25, 1.3, 1.5, 2.0] {
+            let metrics = CellMetrics::for_scale(scale);
+            let scene = WorkspaceScene::from_snapshot(
+                &snapshot,
+                PhysicalSize::new(1600, 900),
+                metrics,
+                0.0,
+                0.0,
+                |_, text| (text.into(), text.len() as f32 * metrics.width),
+            );
+            for pane in &scene.panes {
+                assert_eq!(pane.rect.height, chrome_title_metrics(metrics).text_height);
+                assert!(pane.rect.height >= metrics.height);
+                for x in [pane.rect.left + 0.5, pane.rect.right() - 0.5] {
+                    for y in [pane.rect.top + 0.5, pane.rect.bottom() - 0.5] {
+                        assert_eq!(scene.hit_test(x, y), Some(WorkspaceHit::Pane(&pane.id)));
+                    }
+                }
+            }
+            assert_eq!(scene.panes[1].rect.bottom(), scene.terminal.top);
+            assert_eq!(scene.terminal.bottom(), scene.panes[2].rect.top);
+            assert_eq!(
+                card_rect(scene.chrome, metrics).top,
+                (scene.pane_viewport.top + chrome_title_metrics(metrics).text_height / 2.0).floor(),
+                "painted pane top at scale {scale}"
+            );
+        }
+        let metrics = CellMetrics::for_scale(1.0);
+        let size = PhysicalSize::new(1280, 720);
+        for (count, before, after) in [(1, 33, 33), (3, 30, 31), (4, 28, 30)] {
+            let mut snapshot = snapshot.clone();
+            snapshot.tabs[0].columns[0].panes.truncate(count);
+            snapshot.tabs[0].selected_pane = Some("p1".into());
+            snapshot.tabs[0].columns[0].expanded = "p1".into();
+            let hints = ShortcutHintsScene::new(
+                Vec::new(),
+                size,
+                metrics,
+                WorkspaceFocus::Terminal,
+                |_| 0.0,
+            );
+            let scene = WorkspaceScene::from_snapshot_with_metadata(
+                &snapshot,
+                EonBar::default(),
+                size,
+                metrics,
+                0.0,
+                0.0,
+                |_| None,
+                |_, text| (text.into(), text.len() as f32 * metrics.width),
+                Some(hints),
+            );
+            let rows = |header: f32| {
+                ((scene.chrome.height - count as f32 * header - metrics.padding * 2.0)
+                    / metrics.height)
+                    .floor() as u16
+            };
+            assert_eq!(rows((metrics.height * 1.5).round()), before);
+            let actual_rows =
+                ((scene.terminal.height - metrics.padding * 2.0) / metrics.height).floor() as u16;
+            assert_eq!(actual_rows, after);
+            assert_eq!(rows(scene.panes[0].rect.height), after);
+            println!(
+                "1280x720, {count} panes: {before} -> {after} rows, allocated height {}",
+                scene.chrome.height
+            );
+            let painted = card_rect(scene.chrome, metrics);
+            assert_eq!(
+                painted.top,
+                (scene.panes[0].rect.top + scene.panes[0].rect.height / 2.0).floor()
+            );
+            assert_eq!(painted.bottom(), scene.chrome.bottom());
+            assert_eq!(painted.top - scene.chrome.top, 10.0);
+        }
+    }
+
+    #[test]
     fn quota_without_reset_retains_percent_and_accessible_freshness() {
         for state in [CodexQuotaState::Fresh, CodexQuotaState::Stale] {
             let window = QuotaWindow {
@@ -3332,7 +3487,10 @@ mod tests {
         assert_eq!((sidebar.left, sidebar.width), (gap, 280.0));
         assert_eq!(
             (sidebar.top, sidebar.bottom()),
-            (open.pane_viewport.top, open.pane_viewport.bottom())
+            (
+                card_rect(open.chrome, metrics).top,
+                open.pane_viewport.bottom()
+            )
         );
         assert_eq!(open.content_width(1400.0), 1400.0 - sidebar.right());
         assert_eq!(
@@ -3622,9 +3780,10 @@ mod tests {
         assert_eq!(scene.sidebar_headings[0].rect.top, scene.sidebar_list.top);
         // Text clips to a box taller than the line pitch, which cut the descender of the
         // title's g, and the title's box ends above the list.
-        assert!(sidebar_text_height(metrics) > metrics.height);
+        assert!(chrome_title_metrics(metrics).text_height > metrics.height);
         assert!(
-            card.top + metrics.padding + sidebar_text_height(metrics) <= scene.sidebar_list.top
+            card.top + metrics.padding + chrome_title_metrics(metrics).text_height
+                <= scene.sidebar_list.top
         );
         for pair in rows.windows(2) {
             assert!(pair[0].rect.bottom() <= pair[1].rect.top);
@@ -3849,6 +4008,198 @@ mod tests {
         let popup = project(&snapshot);
 
         assert_eq!(popup.chrome, stack.chrome);
+        let painted = card_rect(stack.chrome, CellMetrics::for_scale(1.0));
+        assert_eq!(
+            painted.top,
+            stack.panes[0].rect.top + stack.panes[0].rect.height / 2.0
+        );
+        assert_eq!(painted.bottom(), popup.chrome.bottom());
+        assert_eq!(
+            card_rect(popup.chrome, CellMetrics::for_scale(1.0)),
+            painted
+        );
+        for scale in [1.0, 1.3] {
+            let metrics = CellMetrics::for_scale(scale);
+            for count in 1..=4 {
+                let mut snapshot = snapshot.clone();
+                snapshot.tabs[0].columns = (1..=count)
+                    .map(|index| {
+                        let mut column = snapshot.tabs[0].columns[0].clone();
+                        column.panes[0].id = format!("p{index}");
+                        column.expanded = format!("p{index}");
+                        column
+                    })
+                    .collect();
+                let project = |snapshot: &Snapshot| {
+                    WorkspaceScene::from_snapshot(
+                        snapshot,
+                        PhysicalSize::new(2200, 900),
+                        metrics,
+                        0.0,
+                        0.0,
+                        |_, text| (text.into(), text.len() as f32 * metrics.width),
+                    )
+                };
+                snapshot.tabs[0].selected_popup = None;
+                let panes = project(&snapshot);
+                snapshot.tabs[0].selected_popup = Some("u1".into());
+                let popup = project(&snapshot);
+                let painted = card_rect(panes.chrome, metrics);
+                assert_eq!(popup.pane_viewport, panes.pane_viewport);
+                assert_eq!(card_rect(popup.chrome, metrics).top, painted.top);
+                assert_eq!(popup.sidebar().unwrap().top, painted.top);
+                for column in &panes.other_columns {
+                    assert_eq!(card_rect(column.chrome, metrics).top, painted.top);
+                }
+                assert!(
+                    (popup.terminal.top
+                        - painted.top
+                        - snapshot.geometry.vertical_margin * metrics.scale
+                        - popup_title_gutter(metrics))
+                    .abs()
+                        < 0.001,
+                    "popup retains its label gutter at scale {scale}, {count} columns"
+                );
+            }
+        }
+        // Short windows must not let the popup's top border cross its terminal cells.
+        for scale in [1.0, 1.3] {
+            let base = CellMetrics::for_scale(scale);
+            let metrics = CellMetrics {
+                font_size: 32.0 * base.scale,
+                height: 36.0 * base.scale,
+                ..base
+            };
+            for count in [1, 2, 3, 4, 0] {
+                let mut snapshot = snapshot.clone();
+                let column = snapshot.tabs[0].columns[0].clone();
+                snapshot.tabs[0].columns = (0..count)
+                    .map(|index| {
+                        let id = format!("p{}", index + 1);
+                        let mut column = column.clone();
+                        column.panes[0].id.clone_from(&id);
+                        column.panes[0].attention = Some(eon_workspace_protocol::v19::Attention {
+                            state: AttentionState::Unavailable,
+                            record: None,
+                        });
+                        column.expanded = id;
+                        column
+                    })
+                    .collect();
+                snapshot.tabs[0].selected_pane = (count > 0).then(|| "p1".into());
+                snapshot.tabs[0].attention_rollup = Some(AttentionState::Unavailable);
+                for height in [130, 1, 50, 74, 105, 140, 150, 160, 220, 900] {
+                    let project = |snapshot: &Snapshot| {
+                        WorkspaceScene::from_snapshot_with_zoom(
+                            snapshot,
+                            EonBar::default(),
+                            PhysicalSize::new(5000, height),
+                            metrics,
+                            0.0,
+                            0.0,
+                            |_| None,
+                            |_, text| (text.into(), text.len() as f32 * metrics.width),
+                            None,
+                            false,
+                            SidebarView {
+                                focused: Some("p1"),
+                                ..SidebarView::default()
+                            },
+                        )
+                    };
+                    snapshot.tabs[0].selected_popup = None;
+                    let panes = project(&snapshot);
+                    let pane_card = card_rect(panes.chrome, metrics);
+                    for (headers, _) in panes.column_panes() {
+                        let first = &headers[0];
+                        assert_eq!(
+                            title_rule_y(first.rect.top, first.rect.height),
+                            pane_card.top
+                        );
+                    }
+                    if count > 0 {
+                        assert!(panes.terminal.top >= pane_card.top);
+                    }
+                    let sidebar = panes.sidebar().unwrap();
+                    assert_eq!(sidebar.top, pane_card.top);
+                    for row in panes.sidebar_rows() {
+                        assert!(row.rect.top >= sidebar.top);
+                        if let Some(visible) = row.rect.intersection(panes.sidebar_list) {
+                            assert!(visible.top >= sidebar.top);
+                            assert!(visible.bottom() <= sidebar.bottom());
+                        }
+                    }
+                    snapshot.tabs[0].selected_popup = Some("u1".into());
+                    let popup = project(&snapshot);
+                    let popup_card = popup_card_rect(popup.chrome, metrics);
+                    assert!(
+                        popup.terminal.top >= popup_card.top,
+                        "popup terminal {:?} crosses card {:?}: scale {scale}, {count} columns, height {height}",
+                        popup.terminal,
+                        popup_card
+                    );
+                    assert!(
+                        popup.terminal.height + 0.001
+                            >= minimum_terminal(metrics, metrics.height).min(popup.chrome.height)
+                    );
+                    assert!(popup.terminal.bottom() <= popup.chrome.bottom() + 0.001);
+                    if popup.chrome.height
+                        >= minimum_terminal(metrics, metrics.height) + pane_card.top
+                            - popup.chrome.top
+                    {
+                        assert_eq!(popup_card.top, pane_card.top);
+                    }
+                }
+            }
+        }
+        let metrics = CellMetrics::for_scale(1.0);
+        let size = PhysicalSize::new(1280, 720);
+        for count in [1, 3, 4] {
+            let mut snapshot = snapshot.clone();
+            let pane = snapshot.tabs[0].columns[0].panes[0].clone();
+            snapshot.tabs[0].columns[0].panes = (1..=count)
+                .map(|index| Pane {
+                    id: format!("p{index}"),
+                    ..pane.clone()
+                })
+                .collect();
+            let hints = ShortcutHintsScene::new(
+                Vec::new(),
+                size,
+                metrics,
+                WorkspaceFocus::Terminal,
+                |_| 0.0,
+            );
+            let popup = WorkspaceScene::from_snapshot_with_metadata(
+                &snapshot,
+                EonBar::default(),
+                size,
+                metrics,
+                0.0,
+                0.0,
+                |_| None,
+                |_, text| (text.into(), text.len() as f32 * metrics.width),
+                Some(hints),
+            );
+            let old_height = popup.chrome.height
+                - 2.0 * snapshot.geometry.vertical_margin * metrics.scale
+                - popup_title_gutter(metrics);
+            let moved_edge = card_rect(popup.chrome, metrics).top - popup.chrome.top;
+            assert_eq!(popup.terminal.height, old_height - moved_edge);
+            assert_eq!(
+                popup.terminal.bottom(),
+                popup.chrome.bottom() - snapshot.geometry.vertical_margin * metrics.scale
+            );
+            let rows =
+                |height: f32| ((height - 2.0 * metrics.padding) / metrics.height).floor() as u16;
+            assert_eq!((rows(old_height), rows(popup.terminal.height)), (33, 33));
+            println!(
+                "1280x720, popup over {count} panes: {} -> {} rows, terminal height {old_height} -> {}",
+                rows(old_height),
+                rows(popup.terminal.height),
+                popup.terminal.height
+            );
+        }
         let size = PhysicalSize::new(960, 600);
         let metrics = CellMetrics::for_scale(1.0);
         let gap = card_gap(metrics);

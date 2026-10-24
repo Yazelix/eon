@@ -586,29 +586,34 @@ re-proved when that platform or feature is next touched.
     without effect; the popup hides the zoomed layout and its marker, and both
     return when the popup hides. A current Eon
     popup on the key takes it (VEN-C20).
-  - Pane frames draw each column's pane stack as its own card: a 1-pixel
-    rounded border around the column's headers and expanded terminal. Scene
-    owns one card gap (8 logical pixels at default typography), which is also
-    the corner radius: cards keep it from the window's sides, from each other
+  - Pane frames draw each column's pane stack as its own card with a
+    1-pixel rounded border. Pane titles use the same shared chrome title
+    metric as the agent sidebar title (VEN-C30). Scene owns one card gap (8
+    logical pixels at default typography), which is also the corner radius:
+    allocated card areas keep it from the window's sides, from each other
     and from the tab pills above, and below them the footer's band is the
-    margin, or one gap when hints are hidden. In both modes the tab pills keep
-    the gap from the window's top and left edges, so the first pill lines up
-    with the first card. Pill size, the gap between pills and header button
-    width stay as before; on a short window the extra inset yields before the
-    pills do. On a window too small for the
-    gaps they yield before a terminal cell does. Horizontal separators span
-    each card and stop at its corner curves. Each card fills with its
-    terminal's background color/opacity under the surface-wide blur request.
+    margin, or one gap when hints are hidden. In both modes the tab pills
+    keep the gap from the window's top and left edges, so the first pill
+    lines up with the first card. Pill size, the gap between pills and
+    header button width stay as before; on a short window the extra inset
+    yields before the pills do. On a window too small for the gaps they
+    yield before a terminal cell does. Horizontal title rules pass through
+    the middle of each pane-header row, break around its label and stop at
+    the card's corner curves. At the unscrolled top, the first pane's rule
+    forms the card's top edge. Each card fills with its terminal's
+    background color/opacity under the surface-wide blur request.
     Everything below the tab bar outside the cards, including the gaps, the
     space beyond the corner curves and the footer band, takes the header's
-    opaque color, so header, gaps and footer form one frame. Selected and hovered
-    header fills follow their card's corners, as does the framed keyboard-focus
-    outline. Separators stay straight during scrolling; card borders stay fixed
-    while overflowing headers scroll within each card.
-    `--pane-frames true|false` defaults to `true`; `false` removes the card
-    borders and separators while retaining headers, a lighter selected fill,
-    hover feedback and a distinct rounded keyboard-focus outline. Both modes
-    preserve the same terminal grid, header hit targets and AccessKit bounds.
+    opaque color, so header, gaps and footer form one frame. The selected
+    pane in the selected column has a brighter label and, with pane frames
+    enabled, an accent title rule. Hover adds a pill behind the label;
+    keyboard focus adds a distinct accent pill outline. Title rules stay
+    straight during scrolling; card borders stay fixed while overflowing
+    headers scroll within each card. `--pane-frames true|false` defaults to
+    `true`; `false` removes card borders and title rules, leaving label-only
+     pane headers with the selection, hover and keyboard-focus feedback
+    described above. Both modes preserve the same terminal grid, header hit
+    targets and AccessKit bounds.
     Initial requested grids include the card gaps in their window overhead;
     the gaps accept no pane or terminal input. Column width and the 40-column
     admission check both come from the card geometry.
@@ -1090,7 +1095,9 @@ re-proved when that platform or feature is next touched.
   picker is added.
 - **Geometry:** A selected popup draws as one rounded card over the area the
   column cards share, so toggling preserves the outer card edges at any column
-  count. Shared Eon-supplied logical
+  count. On a window too short to fit one padded terminal cell below the
+  column cards' painted top, the popup's top edge rises just enough to keep
+  that cell. Shared Eon-supplied logical
   margins inset the popup terminal content within that stable shell. A compact
   border label keeps a small top gutter before terminal padding. Scene owns
   both rectangles: chrome drives the outline, while terminal drives resize,

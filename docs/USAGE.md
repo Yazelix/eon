@@ -171,8 +171,10 @@ follow the current bindings, enabled popup catalog and native focus; narrow
 windows omit whole hints. Compact groups spread across the bar with
 equal gaps and the outer groups near its edges; a lone group stays centered. Hint spacing stays compact.
 Only modifier headers have padded rounded backgrounds. Each column is its own
-rounded card with an even gap around it, and the hints sit bare in the margin
-below the cards. Hiding the footer returns its row to terminal content.
+rounded card with an even gap around its allocated area. Compact pane titles
+sit in thin rules, with a brighter selected label and accent rule, a hover pill
+and a keyboard-focus pill outline. Turning pane frames off leaves labels and
+their interaction feedback. The hints sit bare in the margin below the cards. Hiding the footer returns its row to terminal content.
 Coral red modifier badges use plain aliases, such as A-S, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects the tenth tab.
 Copy/Paste and Open link stay in full help, without footer hints.

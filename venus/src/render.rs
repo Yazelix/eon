@@ -1,7 +1,7 @@
 use crate::{
     Color as SceneColor, DialogScene, DrawRow, DrawStyle, Scene, ScenePreview, SceneRect,
     WorkspaceFocus, WorkspaceScene,
-    scene::{inset_sides, pane_chrome_rect},
+    scene::{card_rect, chrome_title_metrics, popup_card_rect, title_rule_y},
 };
 use glyphon::{
     Attrs, Buffer, Cache, Color, ColorMode, CustomGlyph, Family, Metrics, Resolution, Shaping,
@@ -932,7 +932,11 @@ impl Renderer {
                 // the gaps and the hints read as one frame; each card takes its own terminal's
                 // background.
                 let mut cards = std::iter::once((
-                    workspace.chrome,
+                    if workspace.popup_label().is_some() {
+                        popup_card_rect(workspace.chrome, self.metrics)
+                    } else {
+                        card_rect(workspace.chrome, self.metrics)
+                    },
                     !workspace.panes.is_empty() || workspace.popup_label().is_some(),
                     scene,
                 ))
@@ -941,7 +945,13 @@ impl Renderer {
                         .other_columns
                         .iter()
                         .zip(columns)
-                        .map(|(column, scene)| (column.chrome, !column.panes.is_empty(), *scene)),
+                        .map(|(column, scene)| {
+                            (
+                                card_rect(column.chrome, self.metrics),
+                                !column.panes.is_empty(),
+                                *scene,
+                            )
+                        }),
                 )
                 .filter_map(|(card, shown, scene)| {
                     shown.then_some((
@@ -1058,42 +1068,12 @@ impl Renderer {
                 self.build_hyperlink(scene, &mut rectangles, origin);
                 rectangles.clip = None;
             }
-            // Each column is its own rounded card; separators divide its visible pane stack.
             let radius = workspace.card_radius();
-            let columns = std::iter::once((workspace.chrome, workspace.panes.as_slice()))
-                .chain(
-                    workspace
-                        .other_columns
-                        .iter()
-                        .map(|column| (column.chrome, column.panes.as_slice())),
-                )
-                .filter(|(_, panes)| self.pane_frames && !panes.is_empty());
-            // The agent sidebar's card takes the column cards' outline.
-            let sidebar = workspace.sidebar().filter(|_| self.pane_frames);
-            for (card, panes) in columns.chain(sidebar.map(|card| (card, &[][..]))) {
-                for pane in panes.iter().skip(1) {
-                    let Some(row) = (SceneRect {
-                        top: pane.rect.top,
-                        height: 1.0,
-                        ..card
-                    })
-                    .intersection(workspace.pane_viewport) else {
-                        continue;
-                    };
-                    rectangles.clip = Some(row);
-                    rectangles.push_rounded(
-                        card,
-                        radius,
-                        SceneColor {
-                            r: 43,
-                            g: 53,
-                            b: 67,
-                        },
-                    );
-                }
-                rectangles.clip = None;
+            if self.pane_frames
+                && let Some(sidebar) = workspace.sidebar()
+            {
                 rectangles.push_rounded_outline(
-                    card,
+                    sidebar,
                     radius,
                     SceneColor {
                         r: 58,
@@ -1102,52 +1082,12 @@ impl Renderer {
                     },
                 );
             }
-            if workspace_focus == WorkspaceFocus::Panes
-                && let Some(pane) = workspace.panes.iter().find(|pane| pane.selected)
-            {
-                let accent = SceneColor {
-                    r: 126,
-                    g: 231,
-                    b: 185,
-                };
-                if !self.pane_frames {
-                    rectangles.clip = Some(workspace.pane_viewport);
-                    rectangles.push_rounded_outline(
-                        inset_sides(pane_chrome_rect(pane.rect, self.metrics), self.metrics),
-                        self.metrics.padding,
-                        accent,
-                    );
-                } else if let Some(clip) = pane.rect.intersection(workspace.pane_viewport) {
-                    // The header's outline follows its card: the card's sides and corner curves
-                    // within the header, plus the card's shape cut to the header's top and bottom
-                    // rows where those lie inside the card.
-                    let card = workspace.chrome;
-                    rectangles.clip = Some(clip);
-                    rectangles.push_rounded_outline(card, radius, accent);
-                    for (needed, top) in [
-                        (pane.rect.top > card.top, pane.rect.top),
-                        (pane.rect.bottom() < card.bottom(), pane.rect.bottom() - 1.0),
-                    ] {
-                        if needed
-                            && let Some(row) = (SceneRect {
-                                top,
-                                height: 1.0,
-                                ..pane.rect
-                            })
-                            .intersection(clip)
-                        {
-                            rectangles.clip = Some(row);
-                            rectangles.push_rounded(card, radius, accent);
-                        }
-                    }
-                }
-            }
-            rectangles.clip = None;
             if let Some(label) = workspace.popup_label()
                 && let Some(terminal) = workspace.visible_terminal()
             {
+                let card = popup_card_rect(workspace.chrome, self.metrics);
                 rectangles.push_rounded_outline(
-                    workspace.chrome,
+                    card,
                     radius,
                     SceneColor {
                         r: 82,
@@ -1156,7 +1096,7 @@ impl Renderer {
                     },
                 );
                 let label_height = 12.0 * self.metrics.scale;
-                let label_top = workspace.chrome.top;
+                let label_top = card.top;
                 let label_width = terminal.width - self.metrics.padding * 2.0;
                 if terminal.top + self.metrics.padding
                     >= label_top + label_height + self.metrics.scale * 2.0
@@ -1176,7 +1116,7 @@ impl Renderer {
                             b: 190,
                         },
                         DrawStyleKind::PopupLabel,
-                        workspace.chrome,
+                        card,
                     );
                 }
             }
@@ -1721,9 +1661,9 @@ impl Renderer {
                 255,
             ),
             DrawStyleKind::Status(wrap) => (
-                self.metrics.font_size,
+                chrome_title_metrics(self.metrics).font_size,
                 if wrap == Wrap::None {
-                    self.metrics.height
+                    chrome_title_metrics(self.metrics).line_height
                 } else {
                     self.metrics.height * 1.25
                 },
@@ -2006,6 +1946,68 @@ struct RectangleBatch {
 }
 
 impl RectangleBatch {
+    fn push_pane_card_outline(
+        &mut self,
+        card: SceneRect,
+        radius: f32,
+        gaps: &[SceneRect],
+        top_rule: Option<(SceneRect, SceneColor)>,
+        neutral: SceneColor,
+    ) {
+        self.clip = Some(SceneRect {
+            top: card.top + 1.0,
+            height: (card.height - 1.0).max(0.0),
+            ..card
+        });
+        self.push_rounded_outline(card, radius, neutral);
+        self.clip = None;
+        let color = top_rule
+            .filter(|(row, _)| title_rule_y(row.top, row.height) == card.top)
+            .map_or(neutral, |(_, color)| color);
+        self.push_title_rule(
+            card,
+            radius,
+            SceneRect {
+                height: 0.0,
+                ..card
+            },
+            gaps,
+            color,
+        );
+    }
+
+    /// Interrupt a one-pixel rule around the measured label, clipping its ends to the card.
+    fn push_title_rule(
+        &mut self,
+        card: SceneRect,
+        radius: f32,
+        row: SceneRect,
+        gaps: &[SceneRect],
+        color: SceneColor,
+    ) {
+        let clip = self.clip;
+        let top = title_rule_y(row.top, row.height);
+        let mut left = row.left;
+        for gap in gaps.iter().copied().chain(std::iter::once(SceneRect {
+            left: row.right(),
+            ..SceneRect::default()
+        })) {
+            let right = gap.left;
+            let segment = SceneRect {
+                left: left.max(row.left),
+                top,
+                width: (right.min(row.right()) - left.max(row.left)).max(0.0),
+                height: 1.0,
+            };
+            self.clip = clip.map_or(Some(segment), |clip| segment.intersection(clip));
+            if self.clip.is_some() {
+                self.push_rounded(card, radius, color);
+            }
+            left = left.max(gap.right());
+        }
+        self.clip = clip;
+    }
+
     /// A one-physical-pixel stroke, leaving the translucent interior untouched.
     fn push_rounded_outline(&mut self, rect: SceneRect, radius: f32, color: SceneColor) {
         if self
@@ -2823,6 +2825,173 @@ mod tests {
                         "clipping must not create a new top border"
                     );
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn title_rules_leave_label_and_scrollback_gaps_inside_the_fixed_card() {
+        use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+
+        let metrics = CellMetrics::for_scale(1.3);
+        let snapshot = Snapshot {
+            active_tab: "t1".into(),
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/tmp".to_vec(),
+                pending: false,
+                selected_pane: Some("p1".into()),
+                selected_popup: None,
+                columns: vec![Column {
+                    panes: vec![Pane {
+                        id: "p1".into(),
+                        session: "s1".into(),
+                        endpoint: b"/tmp/p1.sock".to_vec(),
+                        live: true,
+                        attention: None,
+                    }],
+                    expanded: "p1".into(),
+                }],
+                popups: Vec::new(),
+                attention_rollup: None,
+            }],
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: Sidebar::Open,
+        };
+        let workspace = WorkspaceScene::from_snapshot(
+            &snapshot,
+            PhysicalSize::new(1600, 900),
+            metrics,
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * metrics.width),
+        );
+        let card = card_rect(workspace.chrome, metrics);
+        let row = workspace.panes[0].rect;
+        let accent = SceneColor {
+            r: 126,
+            g: 231,
+            b: 185,
+        };
+        let mut batch = RectangleBatch::new(1600, 900);
+        batch.push_pane_card_outline(
+            card,
+            workspace.card_radius(),
+            &[],
+            Some((row, accent)),
+            SceneColor::default(),
+        );
+        let y = (row.top + row.height / 2.0).floor();
+        let colors = batch
+            .bytes
+            .chunks_exact(VERTEX_SIZE as usize * 6)
+            .filter_map(|quad| {
+                let value = |vertex: usize, component: usize| {
+                    let offset = vertex * VERTEX_SIZE as usize + component * 4;
+                    f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
+                };
+                let rect = SceneRect {
+                    left: (value(0, 0) + 1.0) * 800.0,
+                    top: (1.0 - value(0, 1)) * 450.0,
+                    width: (value(2, 0) - value(0, 0)) * 800.0,
+                    height: (value(0, 1) - value(2, 1)) * 450.0,
+                };
+                rect.contains(card.right() - 20.0, y + 0.5)
+                    .then(|| [2, 3, 4].map(|component| (value(0, component) * 255.0).round() as u8))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            colors,
+            vec![[126, 231, 185]],
+            "first selected rule survives the card outline at 1.3"
+        );
+        assert_eq!(
+            card.top, y,
+            "first title rule is the painted card top at 1.3"
+        );
+
+        let card = SceneRect {
+            left: 10.0,
+            top: 30.0,
+            width: 180.0,
+            height: 160.0,
+        };
+        let label = SceneRect {
+            left: 16.0,
+            top: 21.0,
+            width: 68.0,
+            height: 18.0,
+        };
+        let scrollback = SceneRect {
+            left: 150.0,
+            width: 24.0,
+            ..label
+        };
+        for top in [20.0, 70.0, 21.25, -10.0] {
+            let mut batch = RectangleBatch::new(200, 200);
+            let viewport = SceneRect {
+                top: 20.0,
+                height: 180.0,
+                ..card
+            };
+            batch.clip = Some(viewport);
+            batch.push_title_rule(
+                card,
+                8.0,
+                SceneRect {
+                    top,
+                    height: 20.0,
+                    ..card
+                },
+                &[label, scrollback],
+                SceneColor::default(),
+            );
+            assert_eq!(batch.clip, Some(viewport));
+            let quads = batch
+                .bytes
+                .chunks_exact(VERTEX_SIZE as usize * 6)
+                .map(|quad| {
+                    let value = |vertex: usize, component: usize| {
+                        let offset = vertex * VERTEX_SIZE as usize + component * 4;
+                        f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
+                    };
+                    SceneRect {
+                        left: (value(0, 0) + 1.0) * 100.0,
+                        top: (1.0 - value(0, 1)) * 100.0,
+                        width: (value(2, 0) - value(0, 0)) * 100.0,
+                        height: (value(0, 1) - value(2, 1)) * 100.0,
+                    }
+                })
+                .collect::<Vec<_>>();
+            let y = (top + 10.0).floor();
+            assert!(quads.iter().all(|rect| {
+                rect.top >= card.top - 0.001
+                    && rect.bottom() <= card.bottom() + 0.001
+                    && rect.height <= 1.001
+                    && rect.right() <= card.right() + 0.001
+                    && (rect.right() <= scrollback.left + 0.001
+                        || rect.left >= scrollback.right() - 0.001)
+                    && (rect.right() <= label.left + 0.001 || rect.left >= label.right() - 0.001)
+            }));
+            if y >= card.top {
+                assert!(quads.iter().any(|rect| rect.contains(100.0, y + 0.5)));
+                assert!(!quads.iter().any(|rect| rect.contains(160.0, y + 0.5)));
+                assert!(quads.iter().any(|rect| rect.contains(180.0, y + 0.5)));
+                assert!(!quads.iter().any(|rect| rect.contains(50.0, y + 0.5)));
+                if y == card.top {
+                    assert!(
+                        !quads.iter().any(|rect| rect.contains(10.5, y + 0.5)),
+                        "rounded top corner must stay clear"
+                    );
+                }
+            } else {
+                assert!(quads.is_empty());
             }
         }
     }

@@ -2594,6 +2594,16 @@ mod tests {
                     .intersection(workspace.pane_viewport)
                     .map(rect)
             );
+            for pane in &workspace.panes {
+                let button = node(&update, snapshot.pane_ids[&pane.id]);
+                assert_eq!(
+                    button.bounds(),
+                    pane.rect.intersection(workspace.pane_viewport).map(rect)
+                );
+                assert_eq!(button.role(), Role::Button);
+                assert!(button.supports_action(Action::Click));
+                assert!(button.supports_action(Action::Focus));
+            }
             assert_eq!(
                 node(&update, CONTENT).bounds(),
                 workspace.visible_terminal().map(rect)

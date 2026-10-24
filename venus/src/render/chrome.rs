@@ -8,8 +8,8 @@ use super::{
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
-        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, inset_sides, pane_chrome_rect,
-        sidebar_text_height,
+        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, card_rect, chrome_title_metrics,
+        title_rule_y,
     },
 };
 use eon_workspace_protocol::v19::AttentionState;
@@ -351,8 +351,9 @@ pub(super) fn fit_header_text(
     text: &str,
     width: f32,
 ) -> (String, f32) {
-    let mut buffer = Buffer::new(fonts, Metrics::new(metrics.font_size, metrics.height));
-    buffer.set_size(None, Some(metrics.height));
+    let title = chrome_title_metrics(metrics);
+    let mut buffer = Buffer::new(fonts, Metrics::new(title.font_size, title.line_height));
+    buffer.set_size(None, Some(title.text_height));
     buffer.set_wrap(Wrap::None);
     let measure = |buffer: &mut Buffer, fonts: &mut FontSystem, text: &str| {
         buffer.set_text(
@@ -462,7 +463,7 @@ impl Renderer {
         clip: SceneRect,
         rectangles: &mut RectangleBatch,
     ) {
-        let height = sidebar_text_height(self.metrics);
+        let height = chrome_title_metrics(self.metrics).text_height;
         let style = DrawStyleKind::Status(Wrap::None);
         let Some(marker) = marker else {
             self.push_text_clipped(text, left, top, width, width, height, color, style, clip);
@@ -838,7 +839,7 @@ impl Renderer {
             // The card's translucent background and outline are drawn with the pane cards'.
             let padding = self.metrics.padding;
             let line = self.metrics.height;
-            let text_height = sidebar_text_height(self.metrics);
+            let text_height = chrome_title_metrics(self.metrics).text_height;
             let width = (sidebar.width - padding * 2.0).max(0.0);
             let bright = SceneColor {
                 r: 239,
@@ -1181,59 +1182,32 @@ impl Renderer {
             );
         }
         for (panes, selected_column) in workspace.column_panes() {
+            let Some(first) = panes.first() else { continue };
+            let card = card_rect(
+                SceneRect {
+                    left: first.rect.left,
+                    width: first.rect.width,
+                    ..workspace.pane_viewport
+                },
+                self.metrics,
+            );
+            let neutral = SceneColor {
+                r: 58,
+                g: 75,
+                b: 91,
+            };
+            let empty_gap = SceneRect {
+                left: card.right(),
+                ..SceneRect::default()
+            };
+            let mut top_gaps = [empty_gap; 2];
+            let mut top_rule = None;
             for pane in panes {
                 // Only the selected column's expanded header shows selection and scrollback.
                 let current = pane.selected && selected_column;
                 let Some(rect) = pane.rect.intersection(workspace.pane_viewport) else {
                     continue;
                 };
-                // Framed fills, the header's base included, follow their card's corners.
-                let card = SceneRect {
-                    left: pane.rect.left,
-                    width: pane.rect.width,
-                    ..workspace.pane_viewport
-                };
-                rectangles.clip = Some(rect);
-                if self.pane_frames {
-                    rectangles.push_rounded(card, workspace.card_radius(), DEFAULT_BACKGROUND);
-                } else {
-                    rectangles.push(
-                        rect.left,
-                        rect.top,
-                        rect.width,
-                        rect.height,
-                        DEFAULT_BACKGROUND,
-                        1.0,
-                    );
-                }
-                if pane.selected || self.header.hovers(WorkspaceFocus::Panes, &pane.id) {
-                    // Frameless fills keep their own rounded, inset shape.
-                    let shape = if self.pane_frames {
-                        card
-                    } else {
-                        inset_sides(
-                            pane_chrome_rect(
-                                SceneRect {
-                                    left: pane.rect.left,
-                                    width: pane.rect.width,
-                                    ..workspace.pane_viewport
-                                },
-                                self.metrics,
-                            ),
-                            self.metrics,
-                        )
-                    };
-                    rectangles.push_rounded(
-                        shape,
-                        if self.pane_frames {
-                            workspace.card_radius()
-                        } else {
-                            self.metrics.padding
-                        },
-                        if current { selected } else { idle },
-                    );
-                }
-                rectangles.clip = None;
                 let scrollback_width = if current {
                     self.build_scrollback(
                         SceneRect {
@@ -1249,23 +1223,61 @@ impl Renderer {
                 } else {
                     0.0
                 };
-                let width = pane.rect.width - self.metrics.padding * 2.0 - scrollback_width;
-                let label = (scrollback_width > 0.0).then(|| {
-                    fit_header_text(
-                        &mut self.fonts.font_system,
-                        self.metrics,
-                        pane.label(),
-                        width,
-                    )
-                    .0
-                });
+                let width = (pane.rect.width - self.metrics.padding * 2.0 - scrollback_width)
+                    .max(0.0)
+                    .floor();
+                let (label, measured) = fit_header_text(
+                    &mut self.fonts.font_system,
+                    self.metrics,
+                    pane.label(),
+                    width,
+                );
+                let pill = SceneRect {
+                    left: pane.rect.left + self.metrics.padding / 2.0,
+                    top: pane.rect.top + 1.0,
+                    width: measured + self.metrics.padding,
+                    height: (pane.rect.height - 2.0).max(0.0),
+                };
+                let gaps = [
+                    pill,
+                    if scrollback_width > 0.0 {
+                        self.terminal.scrollback_rect.unwrap()
+                    } else {
+                        empty_gap
+                    },
+                ];
+                let rule_y = title_rule_y(pane.rect.top, pane.rect.height);
+                if pane.rect.top <= card.top && pane.rect.bottom() > card.top {
+                    top_gaps = gaps;
+                    top_rule = Some((pane.rect, if current { accent } else { neutral }));
+                }
+                rectangles.clip = Some(rect);
+                if self.pane_frames && rule_y != card.top {
+                    rectangles.push_title_rule(
+                        card,
+                        workspace.card_radius(),
+                        pane.rect,
+                        &gaps,
+                        if current { accent } else { neutral },
+                    );
+                }
+                if !label.is_empty() {
+                    if self.header.hovers(WorkspaceFocus::Panes, &pane.id) {
+                        rectangles.push_rounded(pill, self.metrics.padding / 2.0, selected);
+                    }
+                    if current && focus == WorkspaceFocus::Panes {
+                        rectangles.push_rounded_outline(pill, self.metrics.padding / 2.0, accent);
+                    }
+                }
+                rectangles.clip = None;
+                let title = chrome_title_metrics(self.metrics);
                 self.push_text_clipped(
-                    label.as_deref().unwrap_or(pane.label()),
+                    &label,
                     pane.rect.left + self.metrics.padding,
-                    pane.rect.top + (pane.rect.height - self.metrics.height) / 2.0,
+                    pane.rect.top + (pane.rect.height - title.text_height) / 2.0,
                     width,
                     width,
-                    self.metrics.height,
+                    title.text_height,
                     if current {
                         SceneColor {
                             r: 239,
@@ -1286,7 +1298,16 @@ impl Renderer {
                         }
                     },
                     DrawStyleKind::Status(Wrap::None),
-                    workspace.pane_viewport,
+                    rect,
+                );
+            }
+            if self.pane_frames {
+                rectangles.push_pane_card_outline(
+                    card,
+                    workspace.card_radius(),
+                    &top_gaps,
+                    top_rule,
+                    neutral,
                 );
             }
         }
@@ -1819,7 +1840,7 @@ mod tests {
                 assert!(renderer.text[1].buffer.layout_runs().count() > 1);
                 snapshot.tabs[1].columns[0].panes[0].live = true;
                 let metadata = crate::scene::PaneMetadata::Available {
-                    working_directory: format!("/{}mountain/leaf", "W".repeat(46)),
+                    working_directory: format!("/{}mountain/gyp_leaf", "W".repeat(42)),
                 };
                 let workspace = WorkspaceScene::from_snapshot_with_metadata(
                     &snapshot,
@@ -1832,6 +1853,93 @@ mod tests {
                     |_, label| renderer.fit_tab_text(label),
                     None,
                 );
+                // Exercise the real shaped title and rectangle path in this existing native probe.
+                for frames in [true, false] {
+                    renderer.pane_frames = frames;
+                    renderer.text.clear();
+                    renderer.set_hovered_header(Some((WorkspaceFocus::Panes, "p3".into())));
+                    let mut batch = RectangleBatch::new(900, 600);
+                    renderer.build_workspace(&workspace, WorkspaceFocus::Panes, &mut batch);
+                    let pane = &workspace.panes[0];
+                    let label = renderer
+                        .text
+                        .iter()
+                        .find(|text| text.buffer.lines[0].text().starts_with("p2  "))
+                        .unwrap();
+                    let line = label.buffer.layout_runs().next().unwrap();
+                    for glyph in line.glyphs {
+                        let physical = glyph.physical((label.left, label.top), 1.0);
+                        let Some(ink) = renderer
+                            .swash_cache
+                            .get_image(&mut renderer.fonts.font_system, physical.cache_key)
+                            .as_ref()
+                        else {
+                            continue;
+                        };
+                        let top = line.line_y.round() as i32 + physical.y - ink.placement.top;
+                        assert!(
+                            top >= label.bound_top
+                                && top + ink.placement.height as i32 <= label.bottom,
+                            "pane title descender is clipped: {}",
+                            &line.text[glyph.start..glyph.end]
+                        );
+                    }
+                    let colors_at = |x: f32, y: f32| {
+                        batch
+                            .bytes
+                            .chunks_exact(144)
+                            .filter_map(|quad| {
+                                let value = |vertex: usize, component: usize| {
+                                    let offset = vertex * 24 + component * 4;
+                                    f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
+                                };
+                                let rect = SceneRect {
+                                    left: (value(0, 0) + 1.0) * 450.0,
+                                    top: (1.0 - value(0, 1)) * 300.0,
+                                    width: (value(2, 0) - value(0, 0)) * 450.0,
+                                    height: (value(0, 1) - value(2, 1)) * 300.0,
+                                };
+                                rect.contains(x, y)
+                                    .then(|| [2, 3, 4].map(|c| (value(0, c) * 255.0).round() as u8))
+                            })
+                            .collect::<Vec<_>>()
+                    };
+                    let rule_y = (pane.rect.top + pane.rect.height / 2.0).floor() + 0.5;
+                    let rule = colors_at(pane.rect.right() - 20.0, rule_y);
+                    assert_eq!(
+                        rule,
+                        if frames {
+                            vec![[126, 231, 185]]
+                        } else {
+                            vec![]
+                        },
+                        "single first top rule; frameless has none"
+                    );
+                    assert!(
+                        colors_at(label.left + line.line_w / 2.0, rule_y).is_empty(),
+                        "rule enters the label gap"
+                    );
+                    assert!(
+                        colors_at(pane.rect.right() - 20.0, pane.rect.top + 0.5).is_empty(),
+                        "extra top stroke"
+                    );
+                    assert_eq!(
+                        colors_at(label.left + line.line_w / 2.0, pane.rect.top + 1.5),
+                        vec![[126, 231, 185]],
+                        "focus stays local to the label"
+                    );
+                    let hovered = &workspace.panes[1];
+                    assert_eq!(
+                        colors_at(
+                            hovered.rect.left + renderer.metrics.padding + 8.0,
+                            hovered.rect.top + hovered.rect.height / 2.0
+                        ),
+                        vec![[28, 43, 58]],
+                        "hover pill remains visible in both modes"
+                    );
+                }
+                renderer.pane_frames = false;
+                renderer.set_hovered_header(None);
                 renderer.set_scrollback_label(Some("↓ 240 rows".into()));
                 renderer.rebuild_if_needed(
                     None,
@@ -1873,7 +1981,7 @@ mod tests {
                     .unwrap();
                 assert!(pane_text.right <= indicator.bound_left);
                 let line = pane_text.buffer.layout_runs().next().unwrap();
-                assert!(line.text.ends_with("/leaf"));
+                assert!(line.text.ends_with("/gyp_leaf"));
                 assert!(
                     line.line_w <= (pane_text.right - pane_text.bound_left) as f32,
                     "the scrollback count clips the directory leaf"

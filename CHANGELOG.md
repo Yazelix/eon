@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Pane titles sit in thin rules instead of filled header bars, sharing the agent
+  sidebar title size. Compact rows leave more space for terminal content; hover
+  and keyboard focus highlight the label. Turning pane frames off keeps labels
+  and their interaction feedback. Column, popup and agent-sidebar cards share
+  the same top edge, except that on a very short window a popup's top edge
+  rises to keep one terminal row.
+
 - Orbit host stderr now goes to a private per-terminal log, and Eon's terminal
   failure diagnostics name that file.
 

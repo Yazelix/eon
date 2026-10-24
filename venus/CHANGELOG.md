@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- VEN-C8: compact pane headers share the VEN-C30 title metric. Mid-row rules
+  break around each label; the first forms the card top. Selection brightens
+  the label and accents its rule, hover adds a label pill, and keyboard focus
+  outlines that pill. Frameless headers retain the same full-row hit targets
+  and AccessKit bounds without rules or card borders. VEN-C18 popup cards and
+  the VEN-C30 sidebar share the column cards' painted top; popup labels keep
+  their terminal gutter, and on a window too short for one padded terminal
+  cell below that top a popup's top edge rises to keep it (`eon-mur2`).
+
 - VEN-C30: the agent sidebar row of the terminal that has keyboard focus in
   the active tab, a pane or the shown popup, takes a one-pixel outline in the
   pane cards' outline color, over any hover or focus highlight and under a

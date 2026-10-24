@@ -287,6 +287,12 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
         ["pane-1", "pane-2"]
     );
     assert_eq!(scene.panes.iter().filter(|pane| pane.selected).count(), 1);
+    assert!(
+        scene
+            .panes
+            .iter()
+            .all(|pane| pane.rect.height == metrics.height.max(metrics.font_size * 1.25))
+    );
     assert_eq!(scene.pane_scroll_limit(), 0.0);
     // The card keeps one 8-pixel gap above the window's bottom edge.
     assert_eq!(size.height as f32 - scene.pane_viewport.bottom(), 8.0);
@@ -348,6 +354,10 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
     }));
     assert_eq!(fitting.terminal.top, fitting.panes[1].rect.bottom());
     assert_eq!(fitting.panes[2].rect.top, fitting.terminal.bottom());
+    assert_eq!(
+        scene.terminal.height - fitting.terminal.height,
+        scene.panes[0].rect.height
+    );
 
     let mut overflow_snapshot = fitting_snapshot;
     for number in 5..=32 {
@@ -366,6 +376,12 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
             (text.to_owned(), text.chars().count() as f32 * 10.0)
         });
     assert!(unscrolled.pane_scroll_limit() > 0.0);
+    assert!(
+        unscrolled
+            .panes
+            .iter()
+            .all(|pane| pane.rect.height == scene.panes[0].rect.height)
+    );
     let revealed = WorkspaceScene::from_snapshot(
         &overflow_snapshot,
         size,
@@ -1181,6 +1197,7 @@ fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
         for pane in &column.panes {
             assert_eq!(pane.rect.left, column.terminal.left);
             assert_eq!(pane.rect.width, column.terminal.width);
+            assert_eq!(pane.rect.height, scene.panes[0].rect.height);
         }
     }
     for pane in &scene.panes {

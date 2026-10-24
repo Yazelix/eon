@@ -231,7 +231,7 @@ mod tests {
             if popup {
                 show_test_popup(&mut snapshot);
             }
-            for scale in [1.0, 1.25, 1.5, 2.0] {
+            for scale in [1.0, 1.25, 1.3, 1.5, 2.0] {
                 let metrics = CellMetrics::for_scale(scale);
                 for snapshot in [None, Some(&snapshot)] {
                     let size =
