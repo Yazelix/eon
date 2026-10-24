@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- VEN-C8: each pane has its own rounded frame without added stack spacing;
+  collapsed panes show title hooks and the expanded pane owns its bottom corners.
+  Configured neutral/focus widths paint each frame once. VEN-C18 and VEN-C30
+  popup/sidebar titles share the pane-title treatment. Allocated areas, including
+  title rows and curve exteriors, keep terminal opacity; grids, full-row targets
+  and AccessKit bounds stay unchanged (`eon-2x6h`).
+
 - VEN-C8: `--border-width` and `--focus-border-width` accept 1–3 logical pixels
   (defaults 1 and 2) for neutral card outlines/title rules and the selected pane
   outline. Display scaling rounds each to whole physical pixels (defaults at

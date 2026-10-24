@@ -1,7 +1,6 @@
 use crate::{
     Color as SceneColor, DialogScene, DrawRow, DrawStyle, Scene, ScenePreview, SceneRect,
-    WorkspaceFocus, WorkspaceScene,
-    scene::{card_rect, chrome_title_metrics, popup_card_rect, title_rule_y},
+    WorkspaceFocus, WorkspaceScene, scene::chrome_title_metrics,
 };
 use glyphon::{
     Attrs, Buffer, Cache, Color, ColorMode, CustomGlyph, Family, Metrics, Resolution, Shaping,
@@ -56,6 +55,11 @@ const DEFAULT_METRICS: CellMetrics = CellMetrics {
     padding: 12.0,
 };
 
+const CARD_OUTLINE: SceneColor = SceneColor {
+    r: 58,
+    g: 75,
+    b: 91,
+};
 const DEFAULT_BACKGROUND: SceneColor = SceneColor {
     r: 10,
     g: 13,
@@ -236,7 +240,6 @@ fn push_card_backdrop(
     rectangles: &mut RectangleBatch,
     frame: SceneRect,
     cards: &[(SceneRect, SceneColor)],
-    radius: f32,
     opacity: f32,
 ) {
     let rects = cards.iter().map(|(card, _)| *card).collect::<Vec<_>>();
@@ -251,7 +254,14 @@ fn push_card_backdrop(
         );
     }
     for (card, background) in cards {
-        rectangles.push_framed_rounded(*card, radius, *background, opacity, DEFAULT_BACKGROUND);
+        rectangles.push(
+            card.left,
+            card.top,
+            card.width,
+            card.height,
+            *background,
+            opacity,
+        );
     }
 }
 
@@ -943,11 +953,7 @@ impl Renderer {
                 // the gaps and the hints read as one frame; each card takes its own terminal's
                 // background.
                 let mut cards = std::iter::once((
-                    if workspace.popup_label().is_some() {
-                        popup_card_rect(workspace.chrome, self.metrics)
-                    } else {
-                        card_rect(workspace.chrome, self.metrics)
-                    },
+                    workspace.chrome,
                     !workspace.panes.is_empty() || workspace.popup_label().is_some(),
                     scene,
                 ))
@@ -956,13 +962,7 @@ impl Renderer {
                         .other_columns
                         .iter()
                         .zip(columns)
-                        .map(|(column, scene)| {
-                            (
-                                card_rect(column.chrome, self.metrics),
-                                !column.panes.is_empty(),
-                                *scene,
-                            )
-                        }),
+                        .map(|(column, scene)| (column.chrome, !column.panes.is_empty(), *scene)),
                 )
                 .filter_map(|(card, shown, scene)| {
                     shown.then_some((
@@ -973,7 +973,7 @@ impl Renderer {
                 .collect::<Vec<_>>();
                 // The agent sidebar's card takes the background of the card beside it (VEN-C11),
                 // so it reads like the panes and blur shows through it as through them.
-                if let Some(sidebar) = workspace.sidebar() {
+                if let Some(sidebar) = workspace.sidebar_area() {
                     let beside = cards
                         .iter()
                         .min_by(|left, right| left.0.left.total_cmp(&right.0.left))
@@ -986,13 +986,7 @@ impl Renderer {
                     width: self.config.width as f32,
                     height: self.config.height as f32 - workspace.tab_viewport.bottom(),
                 };
-                push_card_backdrop(
-                    &mut rectangles,
-                    frame,
-                    &cards,
-                    workspace.card_radius(),
-                    self.background_opacity,
-                );
+                push_card_backdrop(&mut rectangles, frame, &cards, self.background_opacity);
             } else {
                 // Each column's strip takes its own terminal's background; strips meet in the
                 // middle of the gaps between columns and reach the window's sides, so the first
@@ -1078,60 +1072,6 @@ impl Renderer {
                 self.build_preedit(scene, preedit, &mut rectangles, origin, clip);
                 self.build_hyperlink(scene, &mut rectangles, origin);
                 rectangles.clip = None;
-            }
-            let radius = workspace.card_radius();
-            if self.pane_frames
-                && let Some(sidebar) = workspace.sidebar()
-            {
-                rectangles.push_rounded_outline_width(
-                    sidebar,
-                    radius,
-                    physical_outline_width(self.border_width, self.metrics.scale),
-                    SceneColor {
-                        r: 58,
-                        g: 75,
-                        b: 91,
-                    },
-                );
-            }
-            if let Some(label) = workspace.popup_label()
-                && let Some(terminal) = workspace.visible_terminal()
-            {
-                let card = popup_card_rect(workspace.chrome, self.metrics);
-                rectangles.push_rounded_outline_width(
-                    card,
-                    radius,
-                    physical_outline_width(self.border_width, self.metrics.scale),
-                    SceneColor {
-                        r: 82,
-                        g: 104,
-                        b: 124,
-                    },
-                );
-                let label_height = 12.0 * self.metrics.scale;
-                let label_top = card.top;
-                let label_width = terminal.width - self.metrics.padding * 2.0;
-                if terminal.top + self.metrics.padding
-                    >= label_top + label_height + self.metrics.scale * 2.0
-                    && terminal.height >= self.metrics.padding * 2.0 + self.metrics.height
-                    && terminal.width >= self.metrics.padding * 2.0 + self.metrics.width * 4.0
-                {
-                    self.push_text_clipped(
-                        label,
-                        terminal.left + self.metrics.padding,
-                        label_top,
-                        label_width,
-                        label_width,
-                        label_height,
-                        SceneColor {
-                            r: 162,
-                            g: 174,
-                            b: 190,
-                        },
-                        DrawStyleKind::PopupLabel,
-                        card,
-                    );
-                }
             }
             if !status.is_empty() {
                 self.build_notice(status, &mut rectangles, Some(workspace));
@@ -1963,168 +1903,83 @@ struct RectangleBatch {
 }
 
 impl RectangleBatch {
-    #[allow(clippy::too_many_arguments)]
     fn push_pane_outlines(
         &mut self,
-        card: SceneRect,
         radius: f32,
         viewport: SceneRect,
-        rules: &[(SceneRect, [SceneRect; 2], bool)],
+        frames: &[(SceneRect, [SceneRect; 2], bool)],
         focus_color: Option<SceneColor>,
         border_width: f32,
-        width: f32,
+        focus_width: f32,
     ) {
         let Some(focus_color) = focus_color else {
             return;
         };
         let clip = self.clip;
-        let neutral = SceneColor {
-            r: 58,
-            g: 75,
-            b: 91,
-        };
-        let empty_gap = SceneRect {
-            left: card.right(),
-            ..SceneRect::default()
-        };
-        let mut top_gaps = [empty_gap; 2];
-        let selected = rules.iter().position(|(_, _, selected)| *selected);
-        for (index, (row, gaps, _)) in rules.iter().enumerate() {
-            if row.intersection(viewport).is_none() {
-                continue;
-            }
-            if row.top <= card.top && row.bottom() > card.top {
-                top_gaps = *gaps;
-            }
-            self.clip = row.intersection(viewport);
-            if title_rule_y(row.top, row.height) != card.top
-                && !selected.is_some_and(|selected| index == selected || index == selected + 1)
-            {
-                self.push_title_rule(card, radius, *row, gaps, border_width, neutral);
-            }
-        }
-        let focus_rules = selected
-            .into_iter()
-            .flat_map(|selected| rules.iter().skip(selected).take(2))
-            .filter_map(|(row, _, _)| {
-                SceneRect {
-                    top: title_rule_y(row.top, row.height),
-                    height: width,
-                    ..card
-                }
-                .intersection(viewport)
-            })
-            .collect::<Vec<_>>();
-        let focus_sides = selected.and_then(|selected| {
-            let (row, _, _) = &rules[selected];
-            let rule_top = title_rule_y(row.top, row.height);
-            let top = if rule_top + width > card.top {
-                rule_top
+        for (frame, gaps, expanded) in frames {
+            let visible = if *expanded {
+                *frame
             } else {
-                card.top + width
-            };
-            let bottom = rules
-                .get(selected + 1)
-                .map_or(card.bottom(), |(row, _, _)| {
-                    title_rule_y(row.top, row.height) + width
-                })
-                .min(card.bottom());
-            SceneRect {
-                top,
-                height: (bottom - top).max(0.0),
-                ..card
-            }
-            .intersection(viewport)
-        });
-        let top_width = focus_rules
-            .iter()
-            .filter(|rule| rule.bottom() > card.top)
-            .map(|rule| (rule.top - card.top).max(0.0))
-            .fold(border_width, f32::min);
-        let top_outline_gaps = top_gaps.map(|gap| SceneRect {
-            top: card.top,
-            height: width,
-            ..gap
-        });
-        let border = SceneRect {
-            top: card.top + top_width,
-            height: (card.height - top_width).max(0.0),
-            ..card
-        };
-        // Title rules own their bands; every remaining side or corner is painted once.
-        for segment in uncovered(border, &focus_rules) {
-            let focused = focus_sides.and_then(|focus| segment.intersection(focus));
-            for neutral_segment in uncovered(segment, focused.as_slice()) {
-                self.clip = Some(neutral_segment);
-                self.push_rounded_outline_width(card, radius, border_width, neutral);
-            }
-            if let Some(focused) = focused {
-                for segment in uncovered(focused, &top_outline_gaps) {
-                    self.clip = Some(segment);
-                    self.push_rounded_outline_width(card, radius, width, focus_color);
-                }
-            }
-        }
-        for top in uncovered(
-            SceneRect {
-                height: top_width,
-                ..card
-            },
-            &focus_rules,
-        ) {
-            self.clip = Some(top);
-            self.push_title_rule(
-                card,
-                radius,
                 SceneRect {
-                    height: 0.0,
-                    ..card
-                },
-                &top_gaps,
-                border_width,
-                neutral,
-            );
-        }
-        if let Some(selected) = selected {
-            let (row, gaps, _) = &rules[selected];
-            self.clip = Some(viewport);
-            self.push_title_rule(card, radius, *row, gaps, width, focus_color);
-            if let Some((row, gaps, _)) = rules.get(selected + 1) {
-                self.push_title_rule(card, radius, *row, gaps, width, focus_color);
+                    height: rounded_radius(*frame, radius),
+                    ..*frame
+                }
+            };
+            let Some(visible) = visible.intersection(viewport) else {
+                continue;
+            };
+            self.clip = match clip {
+                Some(clip) => visible.intersection(clip),
+                None => Some(visible),
+            };
+            if self.clip.is_some() {
+                self.push_card_outline(
+                    *frame,
+                    radius,
+                    gaps,
+                    if *expanded { focus_width } else { border_width },
+                    if *expanded { focus_color } else { CARD_OUTLINE },
+                );
             }
         }
         self.clip = clip;
     }
 
-    /// Interrupt a physical-pixel rule around the measured label, clipping its ends to the card.
-    fn push_title_rule(
+    /// Paint one frame, interrupting only its top stroke around shaped title/scrollback gaps.
+    fn push_card_outline(
         &mut self,
         card: SceneRect,
         radius: f32,
-        row: SceneRect,
         gaps: &[SceneRect],
         width: f32,
         color: SceneColor,
     ) {
         let clip = self.clip;
-        let top = title_rule_y(row.top, row.height);
-        let mut left = row.left;
-        for gap in gaps.iter().copied().chain(std::iter::once(SceneRect {
-            left: row.right(),
-            ..SceneRect::default()
-        })) {
-            let right = gap.left;
-            let segment = SceneRect {
-                left: left.max(row.left),
-                top,
-                width: (right.min(row.right()) - left.max(row.left)).max(0.0),
-                height: width,
+        let gaps = gaps
+            .iter()
+            .enumerate()
+            .map(|(index, gap)| {
+                let left = if index == 0 {
+                    gap.left.max(card.left + rounded_radius(card, radius))
+                } else {
+                    gap.left
+                };
+                SceneRect {
+                    left,
+                    top: card.top,
+                    width: (gap.right() - left).max(0.0),
+                    height: width,
+                }
+            })
+            .collect::<Vec<_>>();
+        for segment in uncovered(card, &gaps) {
+            self.clip = match clip {
+                Some(clip) => segment.intersection(clip),
+                None => Some(segment),
             };
-            self.clip = clip.map_or(Some(segment), |clip| segment.intersection(clip));
             if self.clip.is_some() {
-                self.push_rounded(card, radius, color);
+                self.push_rounded_outline_width(card, radius, width, color);
             }
-            left = left.max(gap.right());
         }
         self.clip = clip;
     }
@@ -2216,40 +2071,6 @@ impl RectangleBatch {
         // coverage softens the curve without widening every terminal vertex.
         for (top, inset) in corner_rows(rect, radius) {
             self.push_span(rect.left + inset, rect.right() - inset, top, color);
-        }
-    }
-
-    /// Fills a pixel-aligned rounded `rect` with `fill` at `alpha` and its corners outside the
-    /// curve with opaque `frame`. Each curve pixel is opaque frame under `fill` at its coverage, so
-    /// the GPU mixes them in the target's color space and the edge never turns translucent.
-    fn push_framed_rounded(
-        &mut self,
-        rect: SceneRect,
-        radius: f32,
-        fill: SceneColor,
-        alpha: f32,
-        frame: SceneColor,
-    ) {
-        let radius = rounded_radius(rect, radius);
-        self.push(
-            rect.left,
-            rect.top + radius,
-            rect.width,
-            rect.height - radius * 2.0,
-            fill,
-            alpha,
-        );
-        for (top, inset) in corner_rows(rect, radius) {
-            let left = rect.left + inset;
-            let right = rect.right() - inset;
-            let (first, last) = (left.floor(), right.floor());
-            self.push(rect.left, top, first - rect.left, 1.0, frame, 1.0);
-            self.push(first + 1.0, top, last - first - 1.0, 1.0, fill, alpha);
-            self.push(last + 1.0, top, rect.right() - last - 1.0, 1.0, frame, 1.0);
-            for (pixel, coverage) in [(first, first + 1.0 - left), (last, right - last)] {
-                self.push(pixel, top, 1.0, 1.0, frame, 1.0);
-                self.push(pixel, top, 1.0, 1.0, fill, coverage * alpha);
-            }
         }
     }
 
@@ -2975,17 +2796,32 @@ mod tests {
         };
         for ((border, focus_border), scale, [border_width, focus_width]) in [
             ((1, 1), 1.0, [1.0_f32, 1.0]),
-            ((1, 1), 1.3, [1.0, 1.0]),
-            ((1, 1), 2.0, [2.0, 2.0]),
-            ((1, 2), 1.0, [1.0, 2.0]),
-            ((1, 2), 1.3, [1.0, 3.0]),
-            ((1, 2), 2.0, [2.0, 4.0]),
-            ((2, 2), 1.0, [2.0, 2.0]),
-            ((2, 2), 1.3, [3.0, 3.0]),
-            ((2, 2), 2.0, [4.0, 4.0]),
-            ((3, 1), 1.0, [3.0, 1.0]),
-            ((3, 1), 1.3, [4.0, 1.0]),
-            ((3, 1), 2.0, [6.0, 2.0]),
+            ((1, 1), 1.3, [1.0_f32, 1.0]),
+            ((1, 1), 2.0, [2.0_f32, 2.0]),
+            ((1, 2), 1.0, [1.0_f32, 2.0]),
+            ((1, 2), 1.3, [1.0_f32, 3.0]),
+            ((1, 2), 2.0, [2.0_f32, 4.0]),
+            ((1, 3), 1.0, [1.0_f32, 3.0]),
+            ((1, 3), 1.3, [1.0_f32, 4.0]),
+            ((1, 3), 2.0, [2.0_f32, 6.0]),
+            ((2, 1), 1.0, [2.0_f32, 1.0]),
+            ((2, 1), 1.3, [3.0_f32, 1.0]),
+            ((2, 1), 2.0, [4.0_f32, 2.0]),
+            ((2, 2), 1.0, [2.0_f32, 2.0]),
+            ((2, 2), 1.3, [3.0_f32, 3.0]),
+            ((2, 2), 2.0, [4.0_f32, 4.0]),
+            ((2, 3), 1.0, [2.0_f32, 3.0]),
+            ((2, 3), 1.3, [3.0_f32, 4.0]),
+            ((2, 3), 2.0, [4.0_f32, 6.0]),
+            ((3, 1), 1.0, [3.0_f32, 1.0]),
+            ((3, 1), 1.3, [4.0_f32, 1.0]),
+            ((3, 1), 2.0, [6.0_f32, 2.0]),
+            ((3, 2), 1.0, [3.0_f32, 2.0]),
+            ((3, 2), 1.3, [4.0_f32, 3.0]),
+            ((3, 2), 2.0, [6.0_f32, 4.0]),
+            ((3, 3), 1.0, [3.0_f32, 3.0]),
+            ((3, 3), 1.3, [4.0_f32, 4.0]),
+            ((3, 3), 2.0, [6.0_f32, 6.0]),
         ] {
             let metrics = CellMetrics::for_scale(scale);
             for column_count in [1, 2] {
@@ -3039,14 +2875,21 @@ mod tests {
                             );
                             for frames in [true, false] {
                                 for (panes, current_column) in workspace.column_panes() {
-                                    let card = card_rect(
-                                        SceneRect {
-                                            left: panes[0].rect.left,
-                                            width: panes[0].rect.width,
-                                            ..workspace.pane_viewport
-                                        },
-                                        metrics,
-                                    );
+                                    let terminal = if current_column {
+                                        workspace.terminal
+                                    } else {
+                                        workspace
+                                            .other_columns
+                                            .iter()
+                                            .find(|column| column.panes[0].id == panes[0].id)
+                                            .unwrap()
+                                            .terminal
+                                    };
+                                    let card = SceneRect {
+                                        left: panes[0].rect.left,
+                                        width: panes[0].rect.width,
+                                        ..workspace.pane_viewport
+                                    };
                                     let rules = panes
                                         .iter()
                                         .map(|pane| {
@@ -3061,21 +2904,28 @@ mod tests {
                                                 ..pane.rect
                                             };
                                             (
-                                                pane.rect,
+                                                pane.frame(terminal),
                                                 [label, scrollback],
-                                                pane.selected && current_column,
+                                                pane.selected,
                                             )
                                         })
                                         .collect::<Vec<_>>();
                                     let mut batch = RectangleBatch::new(1600, 900);
                                     batch.push_pane_outlines(
-                                        card,
                                         workspace.card_radius(),
                                         workspace.pane_viewport,
                                         &rules,
-                                        frames.then_some(focus),
+                                        frames.then_some(if current_column {
+                                            focus
+                                        } else {
+                                            neutral
+                                        }),
                                         physical_outline_width(border, metrics.scale),
-                                        physical_outline_width(focus_border, metrics.scale),
+                                        if current_column {
+                                            physical_outline_width(focus_border, metrics.scale)
+                                        } else {
+                                            physical_outline_width(border, metrics.scale)
+                                        },
                                     );
                                     let decode = |batch: &RectangleBatch| {
                                         let quads = batch
@@ -3156,235 +3006,136 @@ mod tests {
                                             })
                                         };
                                     let quads = decode(&batch);
-                                    let top = title_rule_y(
-                                        panes[selected].rect.top,
-                                        panes[selected].rect.height,
-                                    );
-                                    let bottom = panes
-                                        .get(selected + 1)
-                                        .map(|pane| title_rule_y(pane.rect.top, pane.rect.height));
-                                    let side_y = (top.max(card.top + workspace.card_radius())
-                                        + bottom
-                                            .unwrap_or(card.bottom() - workspace.card_radius()))
-                                        / 2.0;
-                                    for offset in (0..=border_width.max(focus_width) as u32)
-                                        .map(|n| n as f32 + 0.5)
-                                    {
-                                        let expected = if !frames {
-                                            None
-                                        } else if current_column && offset < focus_width {
-                                            Some(focus)
-                                        } else if !current_column && offset < border_width {
-                                            Some(neutral)
+                                    for (index, pane) in panes.iter().enumerate() {
+                                        let frame = pane.frame(terminal);
+                                        let width = if pane.selected && current_column {
+                                            focus_width
                                         } else {
-                                            None
+                                            border_width
                                         };
-                                        for (x, y, part) in [
-                                            (card.left + offset, side_y, "left"),
-                                            (card.right() - offset, side_y, "right"),
-                                            (card.left + card.width / 2.0, top + offset, "top"),
-                                            (
-                                                card.left + card.width / 2.0,
-                                                bottom
-                                                    .map_or(card.bottom() - offset, |y| y + offset),
-                                                "bottom",
-                                            ),
-                                        ] {
+                                        let color = if pane.selected && current_column {
+                                            focus
+                                        } else {
+                                            neutral
+                                        };
+                                        for offset in (0..=border_width.max(focus_width) as u32)
+                                            .map(|n| n as f32 + 0.5)
+                                        {
+                                            let expected =
+                                                (frames && offset < width).then_some(color);
                                             assert_eq!(
-                                                color_at(&quads, x, y),
+                                                color_at(
+                                                    &quads,
+                                                    frame.left + frame.width / 2.0,
+                                                    frame.top + offset
+                                                ),
                                                 expected,
-                                                "{part}: scale={scale}, columns={column_count}, panes={pane_count}, selected={selected}, column={current_column}, frames={frames}, offset={offset}"
+                                                "top: scale={scale}, panes={pane_count}, index={index}, selected={selected}, column={current_column}, offset={offset}"
+                                            );
+                                            if pane.selected {
+                                                for (x, y) in [
+                                                    (
+                                                        frame.left + offset,
+                                                        frame.top + frame.height / 2.0,
+                                                    ),
+                                                    (
+                                                        frame.right() - offset,
+                                                        frame.top + frame.height / 2.0,
+                                                    ),
+                                                    (
+                                                        frame.left + frame.width / 2.0,
+                                                        frame.bottom() - offset,
+                                                    ),
+                                                ] {
+                                                    assert_eq!(
+                                                        color_at(&quads, x, y),
+                                                        expected,
+                                                        "expanded side/bottom: scale={scale}, selected={selected}, column={current_column}, offset={offset}"
+                                                    );
+                                                }
+                                                assert_eq!(
+                                                    color_at(
+                                                        &quads,
+                                                        frame.right() - 0.5,
+                                                        frame.bottom() - 0.5
+                                                    ),
+                                                    None,
+                                                    "expanded bottom corner must be rounded at every stack position"
+                                                );
+                                            } else {
+                                                assert_eq!(
+                                                    color_at(
+                                                        &quads,
+                                                        frame.left + offset,
+                                                        frame.top + workspace.card_radius() + 0.5
+                                                    ),
+                                                    None,
+                                                    "collapsed pane must paint only its top hooks"
+                                                );
+                                            }
+                                        }
+                                        assert_eq!(
+                                            color_at(&quads, frame.left + 0.5, frame.top + 0.5),
+                                            None,
+                                            "every pane owns rounded top corners"
+                                        );
+                                        for gap in rules[index].1 {
+                                            assert_eq!(
+                                                color_at(
+                                                    &quads,
+                                                    gap.left + gap.width / 2.0,
+                                                    frame.top + 0.5
+                                                ),
+                                                None,
+                                                "frame crosses title/scrollback gap"
                                             );
                                         }
                                     }
                                     if frames && current_column {
-                                        for boundary in [Some(top), bottom].into_iter().flatten() {
-                                            for y in [
-                                                boundary - 0.5,
-                                                boundary + 0.5,
-                                                boundary + focus_width + 0.5,
-                                            ] {
-                                                if y < card.top + workspace.card_radius()
-                                                    || y >= card.bottom() - workspace.card_radius()
-                                                {
-                                                    continue;
-                                                }
-                                                let focused = y >= top
-                                                    && y < bottom
-                                                        .map_or(card.bottom(), |y| y + focus_width);
-                                                for offset in (0..=border_width.max(focus_width)
-                                                    as u32)
-                                                    .map(|n| n as f32 + 0.5)
-                                                {
-                                                    let expected = if focused
-                                                        && (offset < focus_width
-                                                            || (y >= boundary
-                                                                && y < boundary + focus_width))
-                                                    {
-                                                        Some(focus)
-                                                    } else if !focused && offset < border_width {
-                                                        Some(neutral)
-                                                    } else {
-                                                        None
-                                                    };
-                                                    for x in
-                                                        [card.left + offset, card.right() - offset]
-                                                    {
-                                                        assert_eq!(
-                                                            color_at(&quads, x, y),
-                                                            expected,
-                                                            "gap or wrong width at side/rule join: border={border}, focus={focus_border}, scale={scale}, x={x}, y={y}"
-                                                        );
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    for index in [selected, (selected + 1).min(pane_count - 1)] {
-                                        let (row, gaps, _) = rules[index];
-                                        for gap in gaps {
-                                            for offset in
-                                                (0..focus_width as u32).map(|n| n as f32 + 0.5)
-                                            {
-                                                assert_eq!(
-                                                    color_at(
-                                                        &quads,
-                                                        gap.left + gap.width / 2.0,
-                                                        title_rule_y(row.top, row.height) + offset
-                                                    ),
-                                                    None,
-                                                    "outline crosses a label or scrollback gap"
-                                                );
-                                            }
-                                        }
-                                    }
-                                    assert_eq!(
-                                        color_at(&quads, card.left + 0.5, card.top + 0.5),
-                                        None,
-                                        "top corner must stay rounded"
-                                    );
-                                    assert_eq!(
-                                        color_at(&quads, card.right() - 0.5, card.bottom() - 0.5),
-                                        None,
-                                        "bottom corner must stay rounded"
-                                    );
-                                    for (index, pane) in
-                                        panes.iter().enumerate().filter(|(index, _)| {
-                                            *index != selected && *index != selected + 1
-                                        })
-                                    {
-                                        let y = title_rule_y(pane.rect.top, pane.rect.height);
-                                        assert_eq!(
-                                            color_at(&quads, card.left + card.width / 2.0, y + 0.5),
-                                            frames.then_some(neutral),
-                                            "collapsed pane {index}'s rule changed"
-                                        );
-                                    }
-                                    if frames && current_column {
-                                        let mut scrolled = rules.clone();
-                                        let scroll = top - card.top + panes[selected].rect.height;
-                                        for (row, _, _) in &mut scrolled {
-                                            row.top -= scroll;
-                                        }
-                                        let mut batch = RectangleBatch::new(1600, 900);
-                                        batch.push_pane_outlines(
-                                            card,
-                                            workspace.card_radius(),
-                                            workspace.pane_viewport,
-                                            &scrolled,
-                                            Some(focus),
-                                            physical_outline_width(border, metrics.scale),
-                                            physical_outline_width(focus_border, metrics.scale),
-                                        );
-                                        let quads = decode(&batch);
-                                        assert_eq!(
-                                            color_at(
-                                                &quads,
-                                                card.left + card.width / 2.0,
-                                                card.top + 0.5
-                                            ),
-                                            Some(neutral),
-                                            "scrolling must not pin the selected title rule to the card top"
-                                        );
-                                        assert_eq!(
-                                            color_at(
-                                                &quads,
-                                                card.left + focus_width - 0.5,
-                                                card.top + workspace.card_radius() + 0.5
-                                            ),
-                                            Some(focus),
-                                            "selected sides remain visible when its header is clipped"
-                                        );
-                                        assert!(
-                                            quads
-                                                .iter()
-                                                .all(|(rect, _, _)| rect.top >= card.top - 0.001
-                                                    && rect.bottom() <= card.bottom() + 0.001),
-                                            "outline escaped the fixed card"
-                                        );
-                                        for delta in [1.0, -1.0] {
-                                            if delta < 0.0 && focus_width <= 1.0 {
-                                                continue;
-                                            }
+                                        for delta in [-workspace.card_radius(), -1.0, 1.0] {
                                             let mut scrolled = rules.clone();
-                                            for (row, _, _) in &mut scrolled {
-                                                row.top -= top - card.top - delta;
+                                            let scroll = rules[selected].0.top - card.top - delta;
+                                            for (frame, _, _) in &mut scrolled {
+                                                frame.top -= scroll;
                                             }
                                             let mut batch = RectangleBatch::new(1600, 900);
                                             batch.push_pane_outlines(
-                                                card,
                                                 workspace.card_radius(),
                                                 workspace.pane_viewport,
                                                 &scrolled,
                                                 Some(focus),
-                                                physical_outline_width(border, metrics.scale),
-                                                physical_outline_width(focus_border, metrics.scale),
-                                            );
-                                            let actual = decode(&batch);
-                                            for gap in scrolled[selected].1 {
-                                                for offset in
-                                                    (0..focus_width as u32).map(|n| n as f32 + 0.5)
-                                                {
-                                                    assert_eq!(
-                                                        color_at(
-                                                            &actual,
-                                                            gap.left + gap.width / 2.0,
-                                                            card.top + offset
-                                                        ),
-                                                        None,
-                                                        "scrolled corner crosses a label or scrollback gap"
-                                                    );
-                                                }
-                                            }
-                                            let mut expected = RectangleBatch::new(1600, 900);
-                                            let top = card.top + delta + focus_width;
-                                            expected.clip = Some(SceneRect {
-                                                top,
-                                                height: (card.bottom() - top).max(0.0),
-                                                ..card
-                                            });
-                                            expected.push_rounded_outline_width(
-                                                card,
-                                                workspace.card_radius(),
+                                                border_width,
                                                 focus_width,
-                                                focus,
                                             );
-                                            for (rect, _, alpha) in decode(&expected) {
-                                                if alpha > 0.0
-                                                    && rect.bottom()
-                                                        <= card.top + workspace.card_radius()
-                                                {
-                                                    assert_eq!(
-                                                        color_at(
-                                                            &actual,
-                                                            rect.left + rect.width / 2.0,
-                                                            rect.top + rect.height / 2.0
-                                                        ),
-                                                        Some(focus),
-                                                        "focus corner lost at scrolled rule join: border={border}, focus={focus_border}, scale={scale}"
-                                                    );
-                                                }
-                                            }
+                                            let quads = decode(&batch);
+                                            assert!(
+                                                quads.iter().all(|(rect, _, _)| rect.top
+                                                    >= card.top - 0.001
+                                                    && rect.bottom() <= card.bottom() + 0.001),
+                                                "scrolled frames escaped the allocation"
+                                            );
+                                            let frame = scrolled[selected].0;
+                                            assert_eq!(
+                                                color_at(
+                                                    &quads,
+                                                    frame.left + frame.width / 2.0,
+                                                    card.top + delta.max(0.0) + 0.5
+                                                ),
+                                                (delta >= 0.0 || delta + focus_width > 0.5)
+                                                    .then_some(focus),
+                                                "scrolling must clip the original top, not round/pin it at the viewport"
+                                            );
+                                            assert_eq!(
+                                                color_at(
+                                                    &quads,
+                                                    frame.left + 0.5,
+                                                    frame.top.max(card.top)
+                                                        + workspace.card_radius()
+                                                        + 0.5
+                                                ),
+                                                Some(focus),
+                                                "clipped selected sides remain visible"
+                                            );
                                         }
                                     }
                                 }
@@ -3423,17 +3174,19 @@ mod tests {
                 ..card
             };
             batch.clip = Some(viewport);
-            batch.push_title_rule(
-                card,
+            let top = crate::scene::title_rule_y(top, 20.0);
+            let frame = SceneRect {
+                top,
+                height: card.bottom() - top,
+                ..card
+            };
+            batch.push_pane_outlines(
                 8.0,
-                SceneRect {
-                    top,
-                    height: 20.0,
-                    ..card
-                },
-                &[label, scrollback],
+                viewport,
+                &[(frame, [label, scrollback], true)],
+                Some(SceneColor::default()),
                 1.0,
-                SceneColor::default(),
+                1.0,
             );
             assert_eq!(batch.clip, Some(viewport));
             let quads = batch
@@ -3452,17 +3205,14 @@ mod tests {
                     }
                 })
                 .collect::<Vec<_>>();
-            let y = (top + 10.0).floor();
-            assert!(quads.iter().all(|rect| {
-                rect.top >= card.top - 0.001
-                    && rect.bottom() <= card.bottom() + 0.001
-                    && rect.height <= 1.001
-                    && rect.right() <= card.right() + 0.001
-                    && (rect.right() <= scrollback.left + 0.001
-                        || rect.left >= scrollback.right() - 0.001)
-                    && (rect.right() <= label.left + 0.001 || rect.left >= label.right() - 0.001)
-            }));
-            if y >= card.top {
+            let y = top;
+            assert!(quads.iter().all(|rect| rect.top >= viewport.top - 0.001
+                && rect.bottom() <= viewport.bottom() + 0.001));
+            if y >= viewport.top {
+                assert!(
+                    !quads.iter().any(|rect| rect.contains(10.5, y + 0.5)),
+                    "every pane's top must have its own rounded corner"
+                );
                 assert!(quads.iter().any(|rect| rect.contains(100.0, y + 0.5)));
                 assert!(!quads.iter().any(|rect| rect.contains(160.0, y + 0.5)));
                 assert!(quads.iter().any(|rect| rect.contains(180.0, y + 0.5)));
@@ -3474,7 +3224,17 @@ mod tests {
                     );
                 }
             } else {
-                assert!(quads.is_empty());
+                assert!(
+                    !quads
+                        .iter()
+                        .any(|rect| rect.contains(100.0, viewport.top + 0.5)),
+                    "clipping must not invent a top edge"
+                );
+                assert!(
+                    quads
+                        .iter()
+                        .any(|rect| rect.contains(card.left + 0.5, viewport.top + 20.0))
+                );
             }
         }
     }
@@ -3539,53 +3299,6 @@ mod tests {
     }
 
     #[test]
-    fn framed_card_corners_stay_opaque() {
-        let (width, height) = (40_u32, 40_u32);
-        let mut rectangles = RectangleBatch::new(width, height);
-        let card = SceneRect {
-            left: 4.0,
-            top: 4.0,
-            width: 32.0,
-            height: 32.0,
-        };
-        let color = SceneColor { r: 0, g: 0, b: 0 };
-        rectangles.push_framed_rounded(card, 8.0, color, 1.0, DEFAULT_BACKGROUND);
-        // Composite every quad's straight alpha over a transparent surface, pixel by pixel.
-        let mut alpha = vec![0.0_f32; (width * height) as usize];
-        let values = rectangles
-            .bytes
-            .chunks_exact(4)
-            .map(|bytes| f32::from_ne_bytes(bytes.try_into().unwrap()))
-            .collect::<Vec<_>>();
-        for quad in values.chunks_exact(36) {
-            let xs = quad
-                .chunks_exact(6)
-                .map(|vertex| (vertex[0] + 1.0) / 2.0 * width as f32);
-            let ys = quad
-                .chunks_exact(6)
-                .map(|vertex| (1.0 - vertex[1]) / 2.0 * height as f32);
-            let (left, right) = xs.fold((f32::MAX, f32::MIN), |(lo, hi), x| (lo.min(x), hi.max(x)));
-            let (top, bottom) = ys.fold((f32::MAX, f32::MIN), |(lo, hi), y| (lo.min(y), hi.max(y)));
-            let source = quad[5];
-            for y in top.round() as u32..bottom.round() as u32 {
-                for x in left.round() as u32..right.round() as u32 {
-                    let pixel = &mut alpha[(y * width + x) as usize];
-                    *pixel = source + *pixel * (1.0 - source);
-                }
-            }
-        }
-        for y in 4..36 {
-            for x in 4..36 {
-                let pixel = alpha[(y * width + x) as usize];
-                assert!(
-                    (pixel - 1.0).abs() < 1e-4,
-                    "pixel {x},{y} has alpha {pixel}"
-                );
-            }
-        }
-    }
-
-    #[test]
     fn background_opacity_selects_only_proved_surface_modes() {
         assert_eq!(
             surface_alpha_mode(1.0, &[CompositeAlphaMode::Inherit]).unwrap(),
@@ -3608,8 +3321,7 @@ mod tests {
 
     #[test]
     fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
-        // One sidebar-sized card in a frame: the frame stays opaque around it, and the card's
-        // interior takes the configured opacity, with no opaque fill under it.
+        // Adjacent allocated areas include title rows and curve exteriors, each filled once.
         let frame = SceneRect {
             left: 0.0,
             top: 40.0,
@@ -3623,11 +3335,15 @@ mod tests {
             height: 244.0,
         };
         let mut rectangles = RectangleBatch::new(400, 300);
+        let adjacent = SceneRect {
+            left: card.right(),
+            width: 80.0,
+            ..card
+        };
         push_card_backdrop(
             &mut rectangles,
             frame,
-            &[(card, DEFAULT_BACKGROUND)],
-            8.0,
+            &[(card, DEFAULT_BACKGROUND), (adjacent, CARD_OUTLINE)],
             0.6,
         );
         // Each quad is two triangles of six vertices: x, y (clip space), r, g, b, alpha.
@@ -3652,7 +3368,18 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(covering(148.0, 170.0), [0.6]);
-        assert_eq!(covering(350.0, 170.0), [1.0]);
+        for (x, y) in [(8.5, 48.5), (287.5, 48.5), (8.5, 291.5), (148.0, 49.5)] {
+            assert_eq!(
+                covering(x, y),
+                [0.6],
+                "allocated title rows and hooks share one fill"
+            );
+        }
+        assert_eq!(covering(287.5, 170.0), [0.6]);
+        assert_eq!(covering(288.5, 170.0), [0.6]);
+        assert_eq!(covering(350.0, 170.0), [0.6]);
+        assert_eq!(covering(380.0, 170.0), [1.0]);
+        assert_eq!(covering(148.0, 295.0), [1.0]);
     }
 
     #[test]

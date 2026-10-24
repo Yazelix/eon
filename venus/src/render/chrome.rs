@@ -2,13 +2,14 @@
 //! header tooltip and the native dialog, plus the pointer state that highlights them.
 
 use super::{
-    CellMetrics, CursorPoint, DEFAULT_BACKGROUND, DrawStyleKind, PlacedText, RectangleBatch,
-    Renderer, SceneColor, physical_outline_width, shaping,
+    CARD_OUTLINE, CellMetrics, CursorPoint, DEFAULT_BACKGROUND, DrawStyleKind, PlacedText,
+    RectangleBatch, Renderer, SceneColor, physical_outline_width, shaping,
 };
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
-        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, card_rect, chrome_title_metrics,
+        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics,
+        popup_card_rect,
     },
 };
 use eon_workspace_protocol::v19::AttentionState;
@@ -855,18 +856,28 @@ impl Renderer {
                 g: 114,
                 b: 128,
             };
-            // The title takes one line; the empty state wraps below it.
-            self.push_text_clipped(
+            let area = workspace.sidebar_area().unwrap();
+            let gap = self.build_border_title(
                 SIDEBAR_TITLE,
-                sidebar.left + padding,
-                sidebar.top + padding,
+                SceneRect {
+                    height: text_height,
+                    ..area
+                },
+                area,
                 width,
-                width,
-                text_height,
                 bright,
-                DrawStyleKind::Status(Wrap::None),
-                sidebar,
             );
+            if self.pane_frames {
+                rectangles.clip = Some(area);
+                rectangles.push_card_outline(
+                    sidebar,
+                    workspace.card_radius(),
+                    &[gap],
+                    physical_outline_width(self.border_width, self.metrics.scale),
+                    CARD_OUTLINE,
+                );
+                rectangles.clip = None;
+            }
             let list = workspace.sidebar_list;
             if workspace.sidebar_empty() {
                 self.push_text_clipped(
@@ -1180,23 +1191,65 @@ impl Renderer {
                 control.rect,
             );
         }
-        for (panes, selected_column) in workspace.column_panes() {
-            let Some(first) = panes.first() else { continue };
-            let card = card_rect(
-                SceneRect {
-                    left: first.rect.left,
-                    width: first.rect.width,
-                    ..workspace.pane_viewport
-                },
-                self.metrics,
+        if let Some(label) = workspace.popup_label()
+            && let Some(terminal) = workspace.visible_terminal()
+        {
+            let card = popup_card_rect(workspace.chrome, self.metrics);
+            let title = chrome_title_metrics(self.metrics);
+            let row = SceneRect {
+                height: title.text_height,
+                ..workspace.chrome
+            };
+            let gaps = if terminal.top + self.metrics.padding >= row.bottom()
+                && terminal.height >= self.metrics.padding * 2.0 + self.metrics.height
+                && terminal.width >= self.metrics.padding * 2.0 + self.metrics.width * 4.0
+                && card.top == crate::scene::title_rule_y(row.top, row.height)
+            {
+                vec![self.build_border_title(
+                    label,
+                    row,
+                    workspace.chrome,
+                    (row.width - self.metrics.padding * 2.0).max(0.0),
+                    SceneColor {
+                        r: 239,
+                        g: 244,
+                        b: 248,
+                    },
+                )]
+            } else {
+                Vec::new()
+            };
+            rectangles.clip = Some(workspace.chrome);
+            rectangles.push_card_outline(
+                card,
+                workspace.card_radius(),
+                &gaps,
+                physical_outline_width(self.border_width, self.metrics.scale),
+                CARD_OUTLINE,
             );
+            rectangles.clip = None;
+        }
+        for (panes, terminal, selected_column) in
+            std::iter::once((workspace.panes.as_slice(), workspace.terminal, true)).chain(
+                workspace
+                    .other_columns
+                    .iter()
+                    .map(|column| (column.panes.as_slice(), column.terminal, false)),
+            )
+        {
+            let Some(first) = panes.first() else { continue };
+            let card = SceneRect {
+                left: first.rect.left,
+                width: first.rect.width,
+                ..workspace.pane_viewport
+            };
             let empty_gap = SceneRect {
                 left: card.right(),
                 ..SceneRect::default()
             };
             let mut rules = panes
                 .iter()
-                .map(|pane| (pane.rect, [empty_gap; 2], pane.selected && selected_column))
+                .map(|pane| (pane.frame(terminal), [empty_gap; 2], pane.selected))
                 .collect::<Vec<_>>();
             for (pane, (_, rule_gaps, _)) in panes.iter().zip(&mut rules) {
                 // Only the selected column's expanded header shows selection and scrollback.
@@ -1222,18 +1275,26 @@ impl Renderer {
                 let width = (pane.rect.width - self.metrics.padding * 2.0 - scrollback_width)
                     .max(0.0)
                     .floor();
-                let (label, measured) = fit_header_text(
-                    &mut self.fonts.font_system,
-                    self.metrics,
-                    pane.label(),
-                    width,
-                );
-                let pill = SceneRect {
-                    left: pane.rect.left + self.metrics.padding / 2.0,
-                    top: pane.rect.top + 1.0,
-                    width: measured + self.metrics.padding,
-                    height: (pane.rect.height - 2.0).max(0.0),
+                let color = if current {
+                    SceneColor {
+                        r: 239,
+                        g: 244,
+                        b: 248,
+                    }
+                } else if !pane.live {
+                    SceneColor {
+                        r: 221,
+                        g: 126,
+                        b: 126,
+                    }
+                } else {
+                    SceneColor {
+                        r: 162,
+                        g: 174,
+                        b: 190,
+                    }
                 };
+                let pill = self.build_border_title(pane.label(), pane.rect, rect, width, color);
                 let gaps = [
                     pill,
                     if scrollback_width > 0.0 {
@@ -1244,7 +1305,7 @@ impl Renderer {
                 ];
                 *rule_gaps = gaps;
                 rectangles.clip = Some(rect);
-                if !label.is_empty() {
+                if pill.width > self.metrics.padding {
                     if self.header.hovers(WorkspaceFocus::Panes, &pane.id) {
                         rectangles.push_rounded(pill, self.metrics.padding / 2.0, selected);
                     }
@@ -1253,46 +1314,57 @@ impl Renderer {
                     }
                 }
                 rectangles.clip = None;
-                let title = chrome_title_metrics(self.metrics);
-                self.push_text_clipped(
-                    &label,
-                    pane.rect.left + self.metrics.padding,
-                    pane.rect.top + (pane.rect.height - title.text_height) / 2.0,
-                    width,
-                    width,
-                    title.text_height,
-                    if current {
-                        SceneColor {
-                            r: 239,
-                            g: 244,
-                            b: 248,
-                        }
-                    } else if !pane.live {
-                        SceneColor {
-                            r: 221,
-                            g: 126,
-                            b: 126,
-                        }
-                    } else {
-                        SceneColor {
-                            r: 162,
-                            g: 174,
-                            b: 190,
-                        }
-                    },
-                    DrawStyleKind::Status(Wrap::None),
-                    rect,
-                );
             }
             rectangles.push_pane_outlines(
-                card,
                 workspace.card_radius(),
                 workspace.pane_viewport,
                 &rules,
-                self.pane_frames.then_some(self.focus_color),
+                self.pane_frames.then_some(if selected_column {
+                    self.focus_color
+                } else {
+                    CARD_OUTLINE
+                }),
                 physical_outline_width(self.border_width, self.metrics.scale),
-                physical_outline_width(self.focus_border_width, self.metrics.scale),
+                physical_outline_width(
+                    if selected_column {
+                        self.focus_border_width
+                    } else {
+                        self.border_width
+                    },
+                    self.metrics.scale,
+                ),
             );
+        }
+    }
+
+    /// Pane, popup and sidebar titles share shaping, placement and their measured border gap.
+    pub(super) fn build_border_title(
+        &mut self,
+        label: &str,
+        row: SceneRect,
+        clip: SceneRect,
+        width: f32,
+        color: SceneColor,
+    ) -> SceneRect {
+        let (label, measured) =
+            fit_header_text(&mut self.fonts.font_system, self.metrics, label, width);
+        let title = chrome_title_metrics(self.metrics);
+        self.push_text_clipped(
+            &label,
+            row.left + self.metrics.padding,
+            row.top + (row.height - title.text_height) / 2.0,
+            width,
+            width,
+            title.text_height,
+            color,
+            DrawStyleKind::Status(Wrap::None),
+            clip,
+        );
+        SceneRect {
+            left: row.left + self.metrics.padding / 2.0,
+            top: row.top + 1.0,
+            width: measured + self.metrics.padding,
+            height: (row.height - 2.0).max(0.0),
         }
     }
 
@@ -1898,11 +1970,7 @@ mod tests {
                     let rule = colors_at(pane.rect.right() - 20.0, rule_y);
                     assert_eq!(
                         rule,
-                        if frames {
-                            vec![[58, 75, 91], [178, 7, 251]]
-                        } else {
-                            vec![]
-                        },
+                        if frames { vec![[178, 7, 251]] } else { vec![] },
                         "first top rule takes the focus colour; frameless has none"
                     );
                     assert!(
@@ -2048,6 +2116,99 @@ mod tests {
                     count,
                     "never clip digits into a different number"
                 );
+                // Shared popup/sidebar titles use the pane metric and interrupt their top edge.
+                snapshot
+                    .entries
+                    .push(eon_workspace_protocol::v19::PopupEntry {
+                        id: "files".into(),
+                        label: "Files".into(),
+                        shortcut: eon_workspace_protocol::v19::Shortcut {
+                            modifiers: eon_workspace_protocol::v19::ALT,
+                            key: "KeyF".into(),
+                        },
+                    });
+                snapshot.tabs[1]
+                    .popups
+                    .push(eon_workspace_protocol::v19::Popup {
+                        id: "u1".into(),
+                        entry: "files".into(),
+                        session: "files-session".into(),
+                        endpoint: b"/tmp/files.sock".to_vec(),
+                        attention: None,
+                    });
+                snapshot.tabs[1].selected_popup = Some("u1".into());
+                renderer.set_scrollback_label(None);
+                renderer.set_hovered_header(None);
+                renderer.pane_frames = true;
+                for scale in [1.0, 1.3] {
+                    renderer.resize(PhysicalSize::new(1600, 900), scale);
+                    let workspace = WorkspaceScene::from_snapshot(
+                        &snapshot,
+                        PhysicalSize::new(1600, 900),
+                        renderer.metrics(),
+                        0.0,
+                        0.0,
+                        |_, label| renderer.fit_tab_text(label),
+                    );
+                    renderer.text.clear();
+                    let mut batch = RectangleBatch::new(1600, 900);
+                    renderer.build_workspace(&workspace, WorkspaceFocus::Terminal, &mut batch);
+                    let title = chrome_title_metrics(renderer.metrics);
+                    for (name, card) in [
+                        ("Agents", workspace.sidebar().unwrap()),
+                        (
+                            "Files",
+                            crate::scene::popup_card_rect(workspace.chrome, renderer.metrics),
+                        ),
+                    ] {
+                        let text = renderer
+                            .text
+                            .iter()
+                            .find(|text| text.buffer.lines[0].text() == name)
+                            .unwrap();
+                        assert_eq!(text.left, card.left + renderer.metrics.padding);
+                        assert!(
+                            (text.top + title.text_height / 2.0 - card.top).abs() < 1.0,
+                            "title is not in its border"
+                        );
+                        assert_eq!(text.buffer.metrics().font_size, title.font_size);
+                        assert_eq!(text.buffer.metrics().line_height, title.line_height);
+                        let line = text.buffer.layout_runs().next().unwrap();
+                        for glyph in line.glyphs {
+                            let physical = glyph.physical((text.left, text.top), 1.0);
+                            let Some(ink) = renderer
+                                .swash_cache
+                                .get_image(&mut renderer.fonts.font_system, physical.cache_key)
+                                .as_ref()
+                            else {
+                                continue;
+                            };
+                            let top = line.line_y.round() as i32 + physical.y - ink.placement.top;
+                            assert!(
+                                top >= text.bound_top
+                                    && top + ink.placement.height as i32 <= text.bottom,
+                                "{name} descender clipped"
+                            );
+                        }
+                        let x = text.left + line.line_w / 2.0;
+                        assert!(
+                            !batch.bytes.chunks_exact(144).any(|quad| {
+                                let value = |vertex: usize, component: usize| {
+                                    let offset = vertex * 24 + component * 4;
+                                    f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
+                                };
+                                SceneRect {
+                                    left: (value(0, 0) + 1.0) * 800.0,
+                                    top: (1.0 - value(0, 1)) * 450.0,
+                                    width: (value(2, 0) - value(0, 0)) * 800.0,
+                                    height: (value(0, 1) - value(2, 1)) * 450.0,
+                                }
+                                .contains(x, card.top + 0.5)
+                            }),
+                            "{name} border crosses its label"
+                        );
+                    }
+                }
                 self.0 = true;
                 event_loop.exit();
             }

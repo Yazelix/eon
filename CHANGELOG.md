@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Each pane has its own rounded frame, with collapsed panes showing rounded
+  title hooks and the expanded pane fully outlined. Popup and Agents titles sit
+  in matching top borders. Entire allocated areas share the terminal background
+  and opacity, including title rows and the spaces around the curves; terminal
+  grids and pane hit targets stay unchanged.
+
 - `[terminal] border_width` and `focus_border_width` size neutral card outlines
   and title rules, and the selected pane's outline, respectively. Both accept
   1–3 logical pixels, defaulting to 1 and 2. Widths round to whole physical

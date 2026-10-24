@@ -175,26 +175,27 @@ AccessKit label, and yields before every other Eon Bar item.
 `layout.swap.kdl`, and the `yzx-config` catalog/model show full pane frames,
 stacked panes and separate frame visibility/rounded-corner settings. Apache-2.0
 inspection only; no source, Zellij configuration or live-update mechanism is
-reused. Eon's selected outcome was rounded frames enabled by default, with one
-startup boolean; radius remains presentation detail. After a flush workspace
-sheet whose rounded corners collided with the window corners, tab pills and
-footer, `eon-gapped-rounded-cards-txco` draws each column as its own card with
-an even gap, after Superlogical Rex's per-pane cards (macOS screenshot in
+reused. Eon uses rounded frames enabled by default, with one startup boolean;
+radius remains presentation detail. `eon-gapped-rounded-cards-txco` takes its
+visual reference from Superlogical Rex's per-pane cards (macOS screenshot in
 Bitdoze's article, https://www.bitdoze.com/superlogical-rex/, checked
 2026-10-18; look only, no source).
 
-The existing Scene viewport/header/body bounds, 1.5-cell header height and padding
-retain grid sizing, hit targets and AccessKit ownership. A shared rounded outline
-and full-width separators connect the stack without filling the terminal interior;
-one-pixel clips of the existing rounded fill keep separators inside its corners.
-Scene owns the card gap and includes it in initial grid overhead.
-Selected and hovered header bands clip their card's rounded shape, avoiding
-pill ends inside the stack. The gap used the existing terminal background and
-opacity until `eon-tubj` gave everything outside the cards the header's opaque
-color and filled each card with its terminal background. Pinned winit `7c209ec5bebbd2963f75a39f79b320af6b03f72c`, Wayland
+Each pane is its own rounded card, stacked without gaps in its column's
+allocated card area. A collapsed pane shows its rounded top edge; the expanded
+pane has a full rounded frame. Each title sits in its pane's top edge.
+`border_width` sizes neutral outlines and `focus_border_width` sizes the
+selected pane's whole outline. The existing Scene viewport/header/body
+allocation and padding retain grid sizing, hit targets and AccessKit ownership.
+Scene owns the outer gap around and between allocated column areas and includes
+it in initial grid overhead. The whole allocated column area, including title
+rows and the space around pane curves, takes the terminal background and
+opacity. The outer gaps and footer take the header's opaque color. Hover adds
+a label pill; keyboard focus adds a mint pill outline.
+Pinned winit `7c209ec5bebbd2963f75a39f79b320af6b03f72c`, Wayland
 `window/state.rs::set_blur`, already requests blur over the entire surface; its
-`types/bgr_effects.rs` routes compositor support. An alpha-zero gap on a black
-proof background hid the missing paint, so the regression uses a colored underlay.
+`types/bgr_effects.rs` routes compositor support. The regression uses a colored
+underlay to expose missing paint.
 This proves pixel coverage and alpha, not blur on a blur-capable compositor.
 The existing selected palette, header hover and focus paths suffice. Another shader, dependency, layout model, geometry setting
 or persistent Venus configuration is rejected. Strict launch admission,

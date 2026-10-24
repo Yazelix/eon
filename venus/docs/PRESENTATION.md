@@ -31,9 +31,13 @@ order, selection, and popups; Venus draws the visible scene.
 
 A tab shows one to four equal-width columns side by side. In each column one
 pane expands in a vertical stack while every fitting pane header stays
-visible. Each column is its own rounded card, with an even gap around and
-between the cards. The visible shortcut footer sits bare in the margin below
-them.
+visible. Each pane is its own rounded card, stacked without gaps in its
+column's allocated card area. Even outer gaps surround and separate the
+allocated column areas. Collapsed panes show their rounded top edge; the
+expanded pane has a full rounded frame, with each title in its pane's top edge.
+`border_width` sizes neutral outlines; `focus_border_width` sizes the selected
+pane's outline. The visible shortcut footer sits bare in the margin below
+the allocated column areas.
 Selection, hover, and keyboard focus have distinct fills or outlines.
 Visible headers pair Eon's opaque pane
 identity with Orbit's working directory. Home displays `~`, and its descendants

@@ -383,19 +383,22 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     directory label; home uses `~`, descendants use `~/`, and
     external paths remain absolute.
   - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
-    `config.toml` defaults to `true` and draws each column's pane stack as
-    its own card: a rounded border `[terminal] border_width` logical pixels
-    wide (1 to 3, default 1) with pane-title rules as VEN-C8 describes, using its shared chrome title metric. At the
-    unscrolled top, the first pane's rule forms the card's top edge.
-    Allocated card areas keep one even gap (8 logical pixels at default
+    `config.toml` defaults to `true` and draws each pane as its own card,
+    stacked without gaps in its column's allocated card area: a rounded border
+    `[terminal] border_width` logical pixels
+    wide (1 to 3, default 1) with pane-title rules as VEN-C8 describes, using
+    its shared chrome title metric. Pane-card titles and the shared top line
+    follow VEN-C8, including VEN-C18's tiny-window popup exception.
+    Allocated column card areas keep one even gap (8 logical pixels at default
     typography, also their corner radius) from the window's sides, from
     each other and from the tab pills above; below them the footer's band
     is the margin, or one gap when hints are hidden. The tab pills keep the
-    same gap from the window's top and left edges, in both modes. Cards use
-    terminal background color/opacity under the existing surface-wide blur
-    request. Everything below the tab bar outside the cards, the gaps and
-    footer band included, is the top bar's opaque color, so the bar, gaps
-    and hints read as one frame. On a window too small for them the gaps
+    same gap from the window's top and left edges, in both modes. The whole
+    allocated card areas use terminal background color/opacity as VEN-C8,
+    VEN-C18 and VEN-C30 describe, under the existing surface-wide blur request.
+    Everything below the tab bar outside those allocated areas, the gaps and
+    footer band included, is the top bar's opaque color, so the bar, gaps and
+    hints read as one frame. On a window too small for them the gaps
     yield before a terminal cell does. The selected pane's outline is
     `[terminal] focus_border_width` logical pixels wide (1 to 3, default 2).
     The selected pane's outline uses `[terminal] focus_color`, `preset:<name>` or `custom:#RRGGBB`, default

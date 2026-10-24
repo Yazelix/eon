@@ -170,9 +170,11 @@ window, returning or reserving its space without restarting terminals. Hints
 follow the current bindings, enabled popup catalog and native focus; narrow
 windows omit whole hints. Compact groups spread across the bar with
 equal gaps and the outer groups near its edges; a lone group stays centered. Hint spacing stays compact.
-Only modifier headers have padded rounded backgrounds. Each column is its own
-rounded card with an even gap around its allocated area. Compact pane titles
-sit in thin rules. The selected pane has a brighter label and a whole outline in
+Only modifier headers have padded rounded backgrounds. Each pane is its own
+rounded card, stacked without gaps in its column's allocated card area. Even
+outer gaps surround and separate the allocated column areas. Pane titles sit
+in their cards' rounded top edges, with neutral outlines sized by `border_width`.
+The selected pane has a brighter label and a whole outline in
 its focus colour, at the configured focus border width; hover adds a label pill and
 F6 keyboard focus keeps a mint pill outline. Turning pane frames off leaves labels and
 their interaction feedback. The hints sit bare in the margin below the cards. Hiding the footer returns its row to terminal content.

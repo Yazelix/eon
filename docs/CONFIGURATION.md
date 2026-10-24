@@ -71,12 +71,12 @@ invalid. The default is `custom:#b207fb`. F6 keyboard focus in the chrome keeps
 its mint pill outline. This setting applies to full-Eon workspace surfaces;
 eonbase has no pane outline.
 
-`border_width` sizes neutral column-card and agent-sidebar-card outlines, popup
-outlines and pane-title rules. `focus_border_width` sizes the selected pane's
+`border_width` sizes neutral pane-card, agent-sidebar-card and popup outlines,
+including their title edges. `focus_border_width` sizes the selected pane's
 whole outline. Both accept integers from 1 through 3 logical pixels; defaults
 are 1 and 2 respectively. Physical widths are `max(1, round(width * scale))`:
 at scale 1.3 the defaults draw at 1 and 3 physical pixels, and at scale 2 at 2
-and 4. Pane frames off still hides column and sidebar outlines and title rules;
+and 4. Pane frames off hides pane and sidebar outlines and title rules;
 popups keep their outline. These settings apply to full-Eon workspace surfaces;
 eonbase receives neither override. The current agent row and F6 focus pills
 keep their one-physical-pixel outlines.

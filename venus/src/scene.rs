@@ -236,6 +236,21 @@ pub struct WorkspaceColumn {
 }
 
 impl WorkspacePane {
+    /// Painted bounds before viewport clipping; input continues to use `rect`.
+    pub(crate) fn frame(&self, terminal: SceneRect) -> SceneRect {
+        let top = title_rule_y(self.rect.top, self.rect.height);
+        SceneRect {
+            top,
+            height: if self.selected {
+                (terminal.bottom() - top).max(0.0)
+            } else {
+                // Keep the full curve before clipping a collapsed pane to its top hooks.
+                self.rect.height
+            },
+            ..self.rect
+        }
+    }
+
     pub(crate) fn label(&self) -> &str {
         &self.label
     }
@@ -2340,6 +2355,15 @@ impl WorkspaceScene {
         self.sidebar
     }
 
+    /// The sidebar's fill includes the title row above its painted top edge.
+    pub(crate) fn sidebar_area(&self) -> Option<SceneRect> {
+        self.sidebar.map(|sidebar| SceneRect {
+            left: sidebar.left,
+            width: sidebar.width,
+            ..self.pane_viewport
+        })
+    }
+
     /// Whether a visible sidebar shows its empty state: no tab has attention.
     pub(crate) fn sidebar_empty(&self) -> bool {
         self.sidebar.is_some() && self.sidebar_rows.is_empty()
@@ -3330,6 +3354,15 @@ mod tests {
                     for y in [pane.rect.top + 0.5, pane.rect.bottom() - 0.5] {
                         assert_eq!(scene.hit_test(x, y), Some(WorkspaceHit::Pane(&pane.id)));
                     }
+                }
+            }
+            for pane in &scene.panes {
+                let frame = pane.frame(scene.terminal);
+                assert_eq!(frame.top, title_rule_y(pane.rect.top, pane.rect.height));
+                if pane.selected {
+                    assert_eq!(frame.bottom(), scene.terminal.bottom());
+                } else {
+                    assert_eq!(frame.height, pane.rect.height);
                 }
             }
             assert_eq!(scene.panes[1].rect.bottom(), scene.terminal.top);

@@ -573,8 +573,9 @@ re-proved when that platform or feature is next touched.
     them.
   - Alt+Shift+Z toggles window-local zoom of the active tab's selected column
     once per press and sends no workspace action. While zoomed, Scene lays out
-    only that column, its card spanning the area all of the tab's cards cover
-    at unchanged heights; the other columns' attachments stay open at their last
+    only that column, its pane cards spanning the area all of the tab's columns
+    cover at unchanged heights; the other columns' attachments stay open at
+    their last
     column size and are not resized, drawn, hit-tested or listed to
     accessibility. An accepted snapshot that changes the active tab, its
     column count or its selected column ends the zoom, and unzooming sizes
@@ -586,40 +587,43 @@ re-proved when that platform or feature is next touched.
     without effect; the popup hides the zoomed layout and its marker, and both
     return when the popup hides. A current Eon
     popup on the key takes it (VEN-C20).
-  - Pane frames draw each column's pane stack as its own card with a
-    rounded border at the border width. Pane titles use the same shared
+  - Pane frames draw each pane as its own rounded card at the border width,
+    stacked without gaps in its column's allocated card area. A collapsed pane
+    is one title row showing its card's rounded top edge with its label in it;
+    the expanded pane is a full rounded frame with its label in the top edge.
+    Pane titles use the same shared
     chrome title metric as the agent sidebar title (VEN-C30). Scene owns one card gap (8
     logical pixels at default typography), which is also the corner radius:
-    allocated card areas keep it from the window's sides, from each other
+    allocated column card areas keep it from the window's sides, from each other
     and from the tab pills above, and below them the footer's band is the
     margin, or one gap when hints are hidden. In both modes the tab pills
     keep the gap from the window's top and left edges, so the first pill
     lines up with the first card. Pill size, the gap between pills and
     header button width stay as before; on a short window the extra inset
     yields before the pills do. On a window too small for the gaps they
-    yield before a terminal cell does. Horizontal title rules pass through
-    the middle of each pane-header row, break around its label and stop at
-    the card's corner curves. At the unscrolled top, the first pane's rule
-    forms the card's top edge. Each card fills with its terminal's
-    background color/opacity under the surface-wide blur request.
-    Everything below the tab bar outside the cards, including the gaps, the
-    space beyond the corner curves and the footer band, takes the header's
-    opaque color, so header, gaps and footer form one frame. The selected
-    pane in the selected column has a brighter label and, with pane frames
-    enabled, an outline in the focus color around the whole pane,
-    at the focus border width: its title rule, the card's sides beside it,
-    and the next pane's title rule or the card's bottom. Eon supplies both
+    yield before a terminal cell does. Each pane's top edge passes through the
+    middle of its title row, breaks around its label and follows its own rounded
+    corners. At the unscrolled top, each column's first pane, the popup card and
+    the agent sidebar card share one snapped top line, subject to VEN-C18's
+    tiny-window popup exception. The whole allocated column card area fills with
+    its expanded terminal's background color/opacity under the surface-wide blur
+    request, including the title rows and the space around the pane curves.
+    Everything below the tab bar outside the allocated card areas, including the
+    gaps and footer band, takes the header's opaque color, so header, gaps and
+    footer form one frame. The selected pane in the selected column has a
+    brighter label and, with pane frames enabled, its whole frame in the focus
+    color at the focus border width. Eon supplies both
     widths in logical pixels. Hover adds a pill behind the label;
     keyboard focus adds a distinct accent pill outline. Title rules stay
-    straight during scrolling; card borders stay fixed while overflowing
-    headers scroll within each card. `--pane-frames true|false` defaults to
+    straight during scrolling; overflowing headers scroll within fixed allocated
+    column card areas. `--pane-frames true|false` defaults to
     `true`; `false` removes card borders and title rules, leaving label-only
      pane headers with the selection, hover and keyboard-focus feedback
     described above. Both modes preserve the same terminal grid, header hit
     targets and AccessKit bounds.
     Initial requested grids include the card gaps in their window overhead;
     the gaps accept no pane or terminal input. Column width and the 40-column
-    admission check both come from the card geometry.
+    admission check both come from the allocated column card areas.
     Changed pane lists resize the terminal even when the endpoint stays selected.
     The option has no visual effect in standalone presentation. A popup
     draws its outlined card in both modes; only its surroundings differ, the
@@ -1096,18 +1100,21 @@ re-proved when that platform or feature is next touched.
   New tab and Alt+Shift+W retain the existing semantic CreateTab and
   exact-active-tab CloseTab actions. No local cancellation state or native
   picker is added.
-- **Geometry:** A selected popup draws as one rounded card over the area the
-  column cards share, so toggling preserves the outer card edges at any column
-  count. On a window too short to fit one padded terminal cell below the
-  column cards' painted top, the popup's top edge rises just enough to keep
-  that cell. Shared Eon-supplied logical
-  margins inset the popup terminal content within that stable shell. A compact
-  border label keeps a small top gutter before terminal padding. Scene owns
+- **Geometry:** A selected popup draws as one rounded card over the area
+  allocated to the columns, so toggling preserves the outer side and bottom
+  bounds and the shared top line at any column count. On a window too short to
+  fit one padded terminal cell below that line, the popup's top edge rises just
+  enough to keep that cell. Shared Eon-supplied logical
+  margins inset the popup terminal content within that stable shell. The popup
+  uses the border width and carries its catalog label, such as "Files", in its
+  rounded top edge in the pane-title style, using the shared chrome title
+  metric. It keeps a small top gutter before terminal padding. Scene owns
   both rectangles: chrome drives the outline, while terminal drives resize,
   clipping, pointer input, IME and accessibility. Margins and the title gutter
-  shrink to preserve a usable cell grid; tiny surfaces omit the label. Exposed
-  margins share the terminal default background and opacity, with the existing
-  best-effort surface-wide compositor blur request. Pane-frame configuration
+  shrink to preserve a usable cell grid; tiny surfaces omit the label. The whole
+  allocated popup card area, including its title row and exposed margins, shares
+  the terminal default background and opacity, with the existing best-effort
+  surface-wide compositor blur request. Pane-frame configuration
   has no effect on the popup outline. While the agent sidebar is visible, the
   card area is the content area to its right (VEN-C30), so popups never cover
   the sidebar.
@@ -1776,14 +1783,15 @@ re-proved when that platform or feature is next touched.
   - **Layout.**
     - A left sidebar 28 cells wide sits below the Eon Bar. The bar keeps its
       full width, its controls and its drag region.
-    - Its card is drawn like a column card: the same outline and corner
-      radius, and, where no row is highlighted, the background of the terminal
-      in the leftmost visible column at the terminal-background opacity
-      (VEN-C11), so it reads like the panes and compositor blur (VEN-C15)
-      shows through it as through them. Focused and hovered rows take an
-      opaque highlight. Without pane frames, where column cards have no
-      outline either, that column's background reaches across the sidebar's
-      area.
+    - Its card uses the border width and the pane cards' corner radius, with
+      "Agents" in its rounded top edge in the pane-title style, using the shared
+      chrome title metric. Where no row is highlighted, its whole allocated card
+      area takes the background of the terminal in the leftmost visible column
+      at the terminal-background opacity (VEN-C11), so it reads like the panes
+      and compositor blur (VEN-C15) shows through it as through them. Focused
+      and hovered rows take an
+      opaque highlight. Without pane frames, where pane cards have no outline
+      either, that column's background reaches across the sidebar's area.
     - It pushes the tab columns, so opening or closing it resizes the visible
       terminals once.
     - Venus hides it when the total remaining column area would drop below 80
