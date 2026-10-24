@@ -587,8 +587,8 @@ re-proved when that platform or feature is next touched.
     return when the popup hides. A current Eon
     popup on the key takes it (VEN-C20).
   - Pane frames draw each column's pane stack as its own card with a
-    1-pixel rounded border. Pane titles use the same shared chrome title
-    metric as the agent sidebar title (VEN-C30). Scene owns one card gap (8
+    rounded border at the border width. Pane titles use the same shared
+    chrome title metric as the agent sidebar title (VEN-C30). Scene owns one card gap (8
     logical pixels at default typography), which is also the corner radius:
     allocated card areas keep it from the window's sides, from each other
     and from the tab pills above, and below them the footer's band is the
@@ -606,10 +606,10 @@ re-proved when that platform or feature is next touched.
     space beyond the corner curves and the footer band, takes the header's
     opaque color, so header, gaps and footer form one frame. The selected
     pane in the selected column has a brighter label and, with pane frames
-    enabled, an outline in the focus color around the whole pane, twice
-    the card border's width: its title rule, the card's sides beside it,
-    and the next pane's title rule or the card's bottom. Hover adds a pill
-    behind the label;
+    enabled, an outline in the focus color around the whole pane,
+    at the focus border width: its title rule, the card's sides beside it,
+    and the next pane's title rule or the card's bottom. Eon supplies both
+    widths in logical pixels. Hover adds a pill behind the label;
     keyboard focus adds a distinct accent pill outline. Title rules stay
     straight during scrolling; card borders stay fixed while overflowing
     headers scroll within each card. `--pane-frames true|false` defaults to

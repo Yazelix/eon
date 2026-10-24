@@ -89,11 +89,22 @@ Standalone and popup presentation have no pane frames; popups retain their own
 rounded card outline. This is a startup option; Eon owns persistent product configuration.
 
 Pass `--focus-color preset:NAME|custom:#RRGGBB` to colour the selected pane's
-whole outline in the selected column, at twice the neutral border's width.
+whole outline in the selected column.
 The default is `custom:#b207fb`; presets are the cursor colours listed below,
 and `random` is invalid. Missing, duplicate or invalid values fail before window
 creation. F6 keyboard-focus pills stay mint. With pane frames off, no pane
 outline is drawn. Eon passes its `[terminal] focus_color` when configured.
+
+Pass `--border-width N` and `--focus-border-width N` to size neutral card
+outlines/title rules and the selected pane's outline, respectively. Values are
+integers from 1 through 3 logical pixels; defaults are 1 and 2. Each width
+becomes `max(1, round(width * scale))` physical pixels (defaults at scale 1.3:
+1 and 3; at scale 2: 2 and 4). Neutral cards include columns, the agent sidebar
+and popups. Pane frames off still hides column/sidebar outlines and title rules;
+popups keep their outline. The current agent-row and F6 pill outlines remain one
+physical pixel. Missing, duplicate, non-integer or out-of-range values fail
+before window creation. Eon supplies its corresponding `[terminal]` settings
+only for workspace launches when configured.
 
 Pass `--warning-close-last-tab false` to send a final-tab close at once instead
 of first showing the close prompt (VEN-C8). The default is `true`. Missing,

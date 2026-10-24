@@ -2,8 +2,15 @@
 
 ## Unreleased
 
+- VEN-C8: `--border-width` and `--focus-border-width` accept 1–3 logical pixels
+  (defaults 1 and 2) for neutral card outlines/title rules and the selected pane
+  outline. Display scaling rounds each to whole physical pixels (defaults at
+  scale 1.3: 1 and 3; at scale 2: 2 and 4). The agent sidebar and popup cards
+  share the neutral width; the current agent-row outline stays one physical
+  pixel (`eon-f5pg`).
+
 - VEN-C8: the selected pane's title rule, sides and bottom form an outline in
-  the focus colour at twice the neutral card border's width. `--focus-color`
+  the focus colour. `--focus-color`
   accepts cursor presets or custom hex colours and defaults to `custom:#b207fb`;
   F6 focus pills stay mint, and frameless mode draws no outline (`eon-e8hh`).
 

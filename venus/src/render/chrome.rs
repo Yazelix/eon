@@ -3,7 +3,7 @@
 
 use super::{
     CellMetrics, CursorPoint, DEFAULT_BACKGROUND, DrawStyleKind, PlacedText, RectangleBatch,
-    Renderer, SceneColor, shaping,
+    Renderer, SceneColor, physical_outline_width, shaping,
 };
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
@@ -1290,6 +1290,8 @@ impl Renderer {
                 workspace.pane_viewport,
                 &rules,
                 self.pane_frames.then_some(self.focus_color),
+                physical_outline_width(self.border_width, self.metrics.scale),
+                physical_outline_width(self.focus_border_width, self.metrics.scale),
             );
         }
     }
@@ -1669,6 +1671,8 @@ mod tests {
                         g: 7,
                         b: 251,
                     },
+                    1,
+                    2,
                     FontSetup::new(&FontSettings::default()).unwrap(),
                 ))
                 .unwrap();

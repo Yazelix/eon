@@ -384,8 +384,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     external paths remain absolute.
   - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
     `config.toml` defaults to `true` and draws each column's pane stack as
-    its own card: a thin 1-pixel rounded border with pane-title rules as
-    VEN-C8 describes, using its shared chrome title metric. At the
+    its own card: a rounded border `[terminal] border_width` logical pixels
+    wide (1 to 3, default 1) with pane-title rules as VEN-C8 describes, using its shared chrome title metric. At the
     unscrolled top, the first pane's rule forms the card's top edge.
     Allocated card areas keep one even gap (8 logical pixels at default
     typography, also their corner radius) from the window's sides, from
@@ -396,8 +396,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     request. Everything below the tab bar outside the cards, the gaps and
     footer band included, is the top bar's opaque color, so the bar, gaps
     and hints read as one frame. On a window too small for them the gaps
-    yield before a terminal cell does. The selected pane's outline uses
-    `[terminal] focus_color`, `preset:<name>` or `custom:#RRGGBB`, default
+    yield before a terminal cell does. The selected pane's outline is
+    `[terminal] focus_border_width` logical pixels wide (1 to 3, default 2).
+    The selected pane's outline uses `[terminal] focus_color`, `preset:<name>` or `custom:#RRGGBB`, default
     `custom:#b207fb`. Pane hover and keyboard focus use VEN-C8's pill
     feedback. A selected popup or
     picker draws as one card over the same allocated area. `false` removes

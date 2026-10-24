@@ -445,6 +445,14 @@ fn venus_command(
         if let Some(color) = &terminal.focus_color {
             command.arg("--focus-color").arg(color);
         }
+        for (flag, width) in [
+            ("--border-width", terminal.border_width),
+            ("--focus-border-width", terminal.focus_border_width),
+        ] {
+            if let Some(width) = width {
+                command.arg(flag).arg(width.to_string());
+            }
+        }
         if bar_widgets.contains(&"version") {
             command.arg("--eon-version").arg(inputs.version);
         }
@@ -2871,6 +2879,60 @@ rows = 30
             .get_args()
             .all(|argument| argument != "--cursor-trail-color")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_outline_widths_reach_only_workspace_launches() {
+        let inputs = crate::fixtures::inputs();
+        let root = temporary_directory();
+        for setting in ["border_width", "focus_border_width"] {
+            let flag = format!("--{}", setting.replace('_', "-"));
+            for value in [None, Some(1), Some(2), Some(3)] {
+                fs::write(
+                    root.join("config.toml"),
+                    value.map_or_else(String::new, |value| {
+                        format!("[terminal]\n{setting} = {value}\n")
+                    }),
+                )
+                .unwrap();
+                let terminal =
+                    crate::managed_environment::terminal_presentation(&root, &inputs.defaults)
+                        .unwrap();
+                for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
+                    let command = venus_command(
+                        &inputs,
+                        &root,
+                        Path::new("/runtime.sock"),
+                        mode,
+                        &terminal,
+                        inputs.defaults.bar_widgets,
+                        "eon",
+                        true,
+                        true,
+                    );
+                    let args = command.get_args().collect::<Vec<_>>();
+                    assert_eq!(
+                        args.windows(2)
+                            .find(|pair| pair[0] == flag.as_str())
+                            .map(|pair| pair[1].to_str().unwrap().parse::<u8>().unwrap()),
+                        value.filter(|_| mode == LaunchMode::Workspace)
+                    );
+                }
+            }
+            for value in ["0", "4", "1.5", "\"2\""] {
+                fs::write(
+                    root.join("config.toml"),
+                    format!("[terminal]\n{setting} = {value}\n"),
+                )
+                .unwrap();
+                assert!(
+                    crate::managed_environment::terminal_presentation(&root, &inputs.defaults)
+                        .is_err(),
+                    "accepted {setting} = {value}"
+                );
+            }
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

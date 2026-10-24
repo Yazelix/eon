@@ -55,7 +55,6 @@ const DEFAULT_METRICS: CellMetrics = CellMetrics {
     font_size: 16.0,
     padding: 12.0,
 };
-const OUTLINE_WIDTH: f32 = 1.0;
 
 const DEFAULT_BACKGROUND: SceneColor = SceneColor {
     r: 10,
@@ -391,6 +390,8 @@ pub struct Renderer {
     background_opacity: f32,
     pane_frames: bool,
     focus_color: SceneColor,
+    border_width: u8,
+    focus_border_width: u8,
     metrics: CellMetrics,
     cell_font: CellFont,
     window: Arc<Window>,
@@ -437,6 +438,7 @@ impl Renderer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         window: Arc<Window>,
         event_loop: &ActiveEventLoop,
@@ -444,6 +446,8 @@ impl Renderer {
         cursor_tail: Option<(SceneColor, f32)>,
         pane_frames: bool,
         focus_color: SceneColor,
+        border_width: u8,
+        focus_border_width: u8,
         mut fonts: FontSetup,
     ) -> Result<Self, RenderError> {
         let size = nonzero(window.inner_size());
@@ -624,6 +628,8 @@ impl Renderer {
             background_opacity,
             pane_frames,
             focus_color,
+            border_width,
+            focus_border_width,
             metrics,
             cell_font,
             window,
@@ -1077,9 +1083,10 @@ impl Renderer {
             if self.pane_frames
                 && let Some(sidebar) = workspace.sidebar()
             {
-                rectangles.push_rounded_outline(
+                rectangles.push_rounded_outline_width(
                     sidebar,
                     radius,
+                    physical_outline_width(self.border_width, self.metrics.scale),
                     SceneColor {
                         r: 58,
                         g: 75,
@@ -1091,9 +1098,10 @@ impl Renderer {
                 && let Some(terminal) = workspace.visible_terminal()
             {
                 let card = popup_card_rect(workspace.chrome, self.metrics);
-                rectangles.push_rounded_outline(
+                rectangles.push_rounded_outline_width(
                     card,
                     radius,
+                    physical_outline_width(self.border_width, self.metrics.scale),
                     SceneColor {
                         r: 82,
                         g: 104,
@@ -1921,6 +1929,10 @@ fn text_areas(
     })
 }
 
+fn physical_outline_width(logical_width: u8, scale: f32) -> f32 {
+    (f32::from(logical_width) * scale).round().max(1.0)
+}
+
 /// A rounded rectangle's corner radius in whole pixels, at most half its shorter side.
 fn rounded_radius(rect: SceneRect, radius: f32) -> f32 {
     radius
@@ -1951,6 +1963,7 @@ struct RectangleBatch {
 }
 
 impl RectangleBatch {
+    #[allow(clippy::too_many_arguments)]
     fn push_pane_outlines(
         &mut self,
         card: SceneRect,
@@ -1958,6 +1971,8 @@ impl RectangleBatch {
         viewport: SceneRect,
         rules: &[(SceneRect, [SceneRect; 2], bool)],
         focus_color: Option<SceneColor>,
+        border_width: f32,
+        width: f32,
     ) {
         let Some(focus_color) = focus_color else {
             return;
@@ -1985,10 +2000,9 @@ impl RectangleBatch {
             if title_rule_y(row.top, row.height) != card.top
                 && !selected.is_some_and(|selected| index == selected || index == selected + 1)
             {
-                self.push_title_rule(card, radius, *row, gaps, OUTLINE_WIDTH, neutral);
+                self.push_title_rule(card, radius, *row, gaps, border_width, neutral);
             }
         }
-        let width = OUTLINE_WIDTH * 2.0;
         let focus_rules = selected
             .into_iter()
             .flat_map(|selected| rules.iter().skip(selected).take(2))
@@ -2003,7 +2017,12 @@ impl RectangleBatch {
             .collect::<Vec<_>>();
         let focus_sides = selected.and_then(|selected| {
             let (row, _, _) = &rules[selected];
-            let top = title_rule_y(row.top, row.height).max(card.top + width);
+            let rule_top = title_rule_y(row.top, row.height);
+            let top = if rule_top + width > card.top {
+                rule_top
+            } else {
+                card.top + width
+            };
             let bottom = rules
                 .get(selected + 1)
                 .map_or(card.bottom(), |(row, _, _)| {
@@ -2017,9 +2036,19 @@ impl RectangleBatch {
             }
             .intersection(viewport)
         });
+        let top_width = focus_rules
+            .iter()
+            .filter(|rule| rule.bottom() > card.top)
+            .map(|rule| (rule.top - card.top).max(0.0))
+            .fold(border_width, f32::min);
+        let top_outline_gaps = top_gaps.map(|gap| SceneRect {
+            top: card.top,
+            height: width,
+            ..gap
+        });
         let border = SceneRect {
-            top: card.top + OUTLINE_WIDTH,
-            height: (card.height - OUTLINE_WIDTH).max(0.0),
+            top: card.top + top_width,
+            height: (card.height - top_width).max(0.0),
             ..card
         };
         // Title rules own their bands; every remaining side or corner is painted once.
@@ -2027,16 +2056,18 @@ impl RectangleBatch {
             let focused = focus_sides.and_then(|focus| segment.intersection(focus));
             for neutral_segment in uncovered(segment, focused.as_slice()) {
                 self.clip = Some(neutral_segment);
-                self.push_rounded_outline(card, radius, neutral);
+                self.push_rounded_outline_width(card, radius, border_width, neutral);
             }
             if let Some(focused) = focused {
-                self.clip = Some(focused);
-                self.push_rounded_outline_width(card, radius, width, focus_color);
+                for segment in uncovered(focused, &top_outline_gaps) {
+                    self.clip = Some(segment);
+                    self.push_rounded_outline_width(card, radius, width, focus_color);
+                }
             }
         }
         for top in uncovered(
             SceneRect {
-                height: OUTLINE_WIDTH,
+                height: top_width,
                 ..card
             },
             &focus_rules,
@@ -2050,7 +2081,7 @@ impl RectangleBatch {
                     ..card
                 },
                 &top_gaps,
-                OUTLINE_WIDTH,
+                border_width,
                 neutral,
             );
         }
@@ -2100,7 +2131,7 @@ impl RectangleBatch {
 
     /// A one-physical-pixel stroke, leaving the translucent interior untouched.
     fn push_rounded_outline(&mut self, rect: SceneRect, radius: f32, color: SceneColor) {
-        self.push_rounded_outline_width(rect, radius, OUTLINE_WIDTH, color);
+        self.push_rounded_outline_width(rect, radius, 1.0, color);
     }
 
     fn push_rounded_outline_width(
@@ -2930,7 +2961,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_pane_outline_colors_the_whole_boundary_at_physical_double_width() {
+    fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
         use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
         let focus = SceneColor {
             r: 178,
@@ -2942,7 +2973,20 @@ mod tests {
             g: 75,
             b: 91,
         };
-        for scale in [1.0, 1.3] {
+        for ((border, focus_border), scale, [border_width, focus_width]) in [
+            ((1, 1), 1.0, [1.0_f32, 1.0]),
+            ((1, 1), 1.3, [1.0, 1.0]),
+            ((1, 1), 2.0, [2.0, 2.0]),
+            ((1, 2), 1.0, [1.0, 2.0]),
+            ((1, 2), 1.3, [1.0, 3.0]),
+            ((1, 2), 2.0, [2.0, 4.0]),
+            ((2, 2), 1.0, [2.0, 2.0]),
+            ((2, 2), 1.3, [3.0, 3.0]),
+            ((2, 2), 2.0, [4.0, 4.0]),
+            ((3, 1), 1.0, [3.0, 1.0]),
+            ((3, 1), 1.3, [4.0, 1.0]),
+            ((3, 1), 2.0, [6.0, 2.0]),
+        ] {
             let metrics = CellMetrics::for_scale(scale);
             for column_count in [1, 2] {
                 for pane_count in [1, 3] {
@@ -3030,6 +3074,8 @@ mod tests {
                                         workspace.pane_viewport,
                                         &rules,
                                         frames.then_some(focus),
+                                        physical_outline_width(border, metrics.scale),
+                                        physical_outline_width(focus_border, metrics.scale),
                                     );
                                     let decode = |batch: &RectangleBatch| {
                                         let quads = batch
@@ -3121,12 +3167,14 @@ mod tests {
                                         + bottom
                                             .unwrap_or(card.bottom() - workspace.card_radius()))
                                         / 2.0;
-                                    for offset in [0.5, 1.5, 2.5] {
+                                    for offset in (0..=border_width.max(focus_width) as u32)
+                                        .map(|n| n as f32 + 0.5)
+                                    {
                                         let expected = if !frames {
                                             None
-                                        } else if current_column && offset < 2.0 {
+                                        } else if current_column && offset < focus_width {
                                             Some(focus)
-                                        } else if offset < 1.0 {
+                                        } else if !current_column && offset < border_width {
                                             Some(neutral)
                                         } else {
                                             None
@@ -3149,10 +3197,55 @@ mod tests {
                                             );
                                         }
                                     }
+                                    if frames && current_column {
+                                        for boundary in [Some(top), bottom].into_iter().flatten() {
+                                            for y in [
+                                                boundary - 0.5,
+                                                boundary + 0.5,
+                                                boundary + focus_width + 0.5,
+                                            ] {
+                                                if y < card.top + workspace.card_radius()
+                                                    || y >= card.bottom() - workspace.card_radius()
+                                                {
+                                                    continue;
+                                                }
+                                                let focused = y >= top
+                                                    && y < bottom
+                                                        .map_or(card.bottom(), |y| y + focus_width);
+                                                for offset in (0..=border_width.max(focus_width)
+                                                    as u32)
+                                                    .map(|n| n as f32 + 0.5)
+                                                {
+                                                    let expected = if focused
+                                                        && (offset < focus_width
+                                                            || (y >= boundary
+                                                                && y < boundary + focus_width))
+                                                    {
+                                                        Some(focus)
+                                                    } else if !focused && offset < border_width {
+                                                        Some(neutral)
+                                                    } else {
+                                                        None
+                                                    };
+                                                    for x in
+                                                        [card.left + offset, card.right() - offset]
+                                                    {
+                                                        assert_eq!(
+                                                            color_at(&quads, x, y),
+                                                            expected,
+                                                            "gap or wrong width at side/rule join: border={border}, focus={focus_border}, scale={scale}, x={x}, y={y}"
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                     for index in [selected, (selected + 1).min(pane_count - 1)] {
                                         let (row, gaps, _) = rules[index];
                                         for gap in gaps {
-                                            for offset in [0.5, 1.5] {
+                                            for offset in
+                                                (0..focus_width as u32).map(|n| n as f32 + 0.5)
+                                            {
                                                 assert_eq!(
                                                     color_at(
                                                         &quads,
@@ -3200,6 +3293,8 @@ mod tests {
                                             workspace.pane_viewport,
                                             &scrolled,
                                             Some(focus),
+                                            physical_outline_width(border, metrics.scale),
+                                            physical_outline_width(focus_border, metrics.scale),
                                         );
                                         let quads = decode(&batch);
                                         assert_eq!(
@@ -3214,7 +3309,7 @@ mod tests {
                                         assert_eq!(
                                             color_at(
                                                 &quads,
-                                                card.left + 1.5,
+                                                card.left + focus_width - 0.5,
                                                 card.top + workspace.card_radius() + 0.5
                                             ),
                                             Some(focus),
@@ -3227,6 +3322,70 @@ mod tests {
                                                     && rect.bottom() <= card.bottom() + 0.001),
                                             "outline escaped the fixed card"
                                         );
+                                        for delta in [1.0, -1.0] {
+                                            if delta < 0.0 && focus_width <= 1.0 {
+                                                continue;
+                                            }
+                                            let mut scrolled = rules.clone();
+                                            for (row, _, _) in &mut scrolled {
+                                                row.top -= top - card.top - delta;
+                                            }
+                                            let mut batch = RectangleBatch::new(1600, 900);
+                                            batch.push_pane_outlines(
+                                                card,
+                                                workspace.card_radius(),
+                                                workspace.pane_viewport,
+                                                &scrolled,
+                                                Some(focus),
+                                                physical_outline_width(border, metrics.scale),
+                                                physical_outline_width(focus_border, metrics.scale),
+                                            );
+                                            let actual = decode(&batch);
+                                            for gap in scrolled[selected].1 {
+                                                for offset in
+                                                    (0..focus_width as u32).map(|n| n as f32 + 0.5)
+                                                {
+                                                    assert_eq!(
+                                                        color_at(
+                                                            &actual,
+                                                            gap.left + gap.width / 2.0,
+                                                            card.top + offset
+                                                        ),
+                                                        None,
+                                                        "scrolled corner crosses a label or scrollback gap"
+                                                    );
+                                                }
+                                            }
+                                            let mut expected = RectangleBatch::new(1600, 900);
+                                            let top = card.top + delta + focus_width;
+                                            expected.clip = Some(SceneRect {
+                                                top,
+                                                height: (card.bottom() - top).max(0.0),
+                                                ..card
+                                            });
+                                            expected.push_rounded_outline_width(
+                                                card,
+                                                workspace.card_radius(),
+                                                focus_width,
+                                                focus,
+                                            );
+                                            for (rect, _, alpha) in decode(&expected) {
+                                                if alpha > 0.0
+                                                    && rect.bottom()
+                                                        <= card.top + workspace.card_radius()
+                                                {
+                                                    assert_eq!(
+                                                        color_at(
+                                                            &actual,
+                                                            rect.left + rect.width / 2.0,
+                                                            rect.top + rect.height / 2.0
+                                                        ),
+                                                        Some(focus),
+                                                        "focus corner lost at scrolled rule join: border={border}, focus={focus_border}, scale={scale}"
+                                                    );
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -3273,7 +3432,7 @@ mod tests {
                     ..card
                 },
                 &[label, scrollback],
-                OUTLINE_WIDTH,
+                1.0,
                 SceneColor::default(),
             );
             assert_eq!(batch.clip, Some(viewport));

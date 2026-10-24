@@ -5,8 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `[terminal] border_width` and `focus_border_width` size neutral card outlines
+  and title rules, and the selected pane's outline, respectively. Both accept
+  1–3 logical pixels, defaulting to 1 and 2. Widths round to whole physical
+  pixels with display scale (defaults at scale 1.3: 1 and 3; at scale 2: 2 and 4).
+
 - The selected pane's whole outline uses `[terminal] focus_color`, defaulting to
-  violet `custom:#b207fb`, at twice the neutral card border's width. Preset and
+  violet `custom:#b207fb`. Preset and
   custom colours are supported; F6 keyboard-focus pills stay mint. Frameless
   mode keeps labels without outlines.
 

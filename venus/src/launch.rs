@@ -22,7 +22,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--warning-close-last-tab true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--background-opacity VALUE] [--background-blur] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--background-opacity VALUE] [--background-blur] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -34,6 +34,8 @@ pub(super) struct LaunchArguments {
     pub(super) decorations: bool,
     pub(super) pane_frames: bool,
     pub(super) focus_color: Color,
+    pub(super) border_width: u8,
+    pub(super) focus_border_width: u8,
     pub(super) warning_close_last_tab: bool,
     pub(super) eon_version: Option<String>,
     pub(super) bar_items: Vec<BarItem>,
@@ -56,6 +58,8 @@ pub(super) fn launch_arguments(
     let mut decorations = true;
     let mut pane_frames = None;
     let mut focus_color = None;
+    let mut border_width = None;
+    let mut focus_border_width = None;
     let mut warning_close_last_tab = None;
     let mut eon_version = None;
     let mut bar_items = None;
@@ -114,6 +118,16 @@ pub(super) fn launch_arguments(
             }
         } else if argument == "--pane-frames" {
             option_value(&mut pane_frames, arguments.next())?;
+        } else if argument == "--border-width" || argument == "--focus-border-width" {
+            let width = if argument == "--border-width" {
+                &mut border_width
+            } else {
+                &mut focus_border_width
+            };
+            option_value(width, arguments.next())?;
+            if !width.is_some_and(|width| (1..=3).contains(&width)) {
+                return Err(USAGE.into());
+            }
         } else if argument == "--focus-color" {
             if focus_color.is_some() {
                 return Err(USAGE.into());
@@ -278,6 +292,8 @@ pub(super) fn launch_arguments(
         decorations,
         pane_frames: pane_frames.unwrap_or(true),
         focus_color: focus_color.unwrap_or_else(|| rgb(0xb207fb)),
+        border_width: border_width.unwrap_or(1),
+        focus_border_width: focus_border_width.unwrap_or(2),
         warning_close_last_tab: warning_close_last_tab.unwrap_or(true),
         eon_version,
         bar_items: bar_items.unwrap_or_else(|| BarItem::DEFAULT.into()),
@@ -532,6 +548,33 @@ mod tests {
             ] {
                 assert!(parse(&args).is_err(), "accepted {args:?}");
             }
+            assert!(launch_arguments([flag.into(), OsString::from_vec(vec![0xff])], None).is_err());
+        }
+    }
+
+    #[test]
+    fn outline_widths_accept_only_whole_logical_pixels_from_one_through_three() {
+        use std::os::unix::ffi::OsStringExt;
+        let parse = |args: &[&str]| launch_arguments(args.iter().map(OsString::from), None);
+        let defaults = parse(&[]).unwrap();
+        assert_eq!((defaults.border_width, defaults.focus_border_width), (1, 2));
+        for flag in ["--border-width", "--focus-border-width"] {
+            for value in ["1", "2", "3"] {
+                let arguments = parse(&[flag, value]).unwrap();
+                assert_eq!(
+                    if flag == "--border-width" {
+                        arguments.border_width
+                    } else {
+                        arguments.focus_border_width
+                    },
+                    value.parse::<u8>().unwrap()
+                );
+            }
+            for value in ["", "0", "4", "-1", "1.5", "2.0", "two"] {
+                assert!(parse(&[flag, value]).is_err(), "accepted {flag} {value}");
+            }
+            assert!(parse(&[flag]).is_err());
+            assert!(parse(&[flag, "1", flag, "2"]).is_err());
             assert!(launch_arguments([flag.into(), OsString::from_vec(vec![0xff])], None).is_err());
         }
     }

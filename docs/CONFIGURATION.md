@@ -12,6 +12,8 @@ background_opacity = 0.80
 background_blur = true
 pane_frames = true
 focus_color = "custom:#b207fb"
+border_width = 1
+focus_border_width = 2
 cursor_trail_color = "preset:ice"
 cursor_trail_duration = 1.5
 font_family = "Iosevka"
@@ -63,11 +65,21 @@ uses the chosen color with a shape-aware contrasting edge unless Orbit supplies
 an explicit cursor color.
 
 `focus_color` colours the selected pane's whole outline in the selected column
-when pane frames are on, at twice the neutral card border's width. It accepts
+when pane frames are on. It accepts
 `preset:<name>` from the cursor presets above or `custom:#RRGGBB`; `random` is
 invalid. The default is `custom:#b207fb`. F6 keyboard focus in the chrome keeps
 its mint pill outline. This setting applies to full-Eon workspace surfaces;
 eonbase has no pane outline.
+
+`border_width` sizes neutral column-card and agent-sidebar-card outlines, popup
+outlines and pane-title rules. `focus_border_width` sizes the selected pane's
+whole outline. Both accept integers from 1 through 3 logical pixels; defaults
+are 1 and 2 respectively. Physical widths are `max(1, round(width * scale))`:
+at scale 1.3 the defaults draw at 1 and 3 physical pixels, and at scale 2 at 2
+and 4. Pane frames off still hides column and sidebar outlines and title rules;
+popups keep their outline. These settings apply to full-Eon workspace surfaces;
+eonbase receives neither override. The current agent row and F6 focus pills
+keep their one-physical-pixel outlines.
 
 `cursor_trail_duration` is a finite multiplier from `0.25` through `4.0`,
 defaulting to `1.5`. Larger values keep the tail visible longer. Eon owns this

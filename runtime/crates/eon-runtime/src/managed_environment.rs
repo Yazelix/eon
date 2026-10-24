@@ -183,6 +183,8 @@ pub struct TerminalConfig {
     pub background_blur: bool,
     pub pane_frames: bool,
     pub focus_color: Option<String>,
+    pub border_width: Option<u8>,
+    pub focus_border_width: Option<u8>,
     pub cursor_trail_color: Option<String>,
     pub cursor_trail_duration: Option<f32>,
     pub font_family: Option<String>,
@@ -200,6 +202,8 @@ struct TerminalSettings {
     background_blur: Option<bool>,
     pane_frames: Option<bool>,
     focus_color: Option<String>,
+    border_width: Option<u8>,
+    focus_border_width: Option<u8>,
     cursor_trail_color: Option<String>,
     cursor_trail_duration: Option<f32>,
     font_family: Option<String>,
@@ -319,6 +323,8 @@ pub(crate) fn terminal_presentation(
         background_blur: settings.background_blur.unwrap_or(base.background_blur),
         pane_frames: settings.pane_frames.unwrap_or(base.pane_frames),
         focus_color: settings.focus_color.or_else(|| base.focus_color.clone()),
+        border_width: settings.border_width.or(base.border_width),
+        focus_border_width: settings.focus_border_width.or(base.focus_border_width),
         cursor_trail_color: settings
             .cursor_trail_color
             .or_else(|| base.cursor_trail_color.clone()),
@@ -354,6 +360,16 @@ pub(crate) fn terminal_presentation(
         if value.is_some_and(|value| !value.is_finite() || !(minimum..=maximum).contains(&value)) {
             return Err(format!(
                 "terminal.{field} must be a finite number from {minimum} through {maximum}"
+            ));
+        }
+    }
+    for (field, value) in [
+        ("border_width", terminal.border_width),
+        ("focus_border_width", terminal.focus_border_width),
+    ] {
+        if value.is_some_and(|value| !(1..=3).contains(&value)) {
+            return Err(format!(
+                "terminal.{field} must be an integer from 1 through 3"
             ));
         }
     }
