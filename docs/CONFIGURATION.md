@@ -13,7 +13,7 @@ background_blur = true
 pane_frames = true
 focus_color = "custom:#b207fb"
 border_width = 1
-focus_border_width = 2
+focus_border_width = 1
 cursor_trail_color = "preset:ice"
 cursor_trail_duration = 1.5
 font_family = "Iosevka"
@@ -74,9 +74,9 @@ eonbase has no pane outline.
 `border_width` sizes neutral pane-card, agent-sidebar-card and popup outlines,
 including their title edges. `focus_border_width` sizes the selected pane's
 whole outline. Both accept integers from 1 through 3 logical pixels; defaults
-are 1 and 2 respectively. Physical widths are `max(1, round(width * scale))`:
-at scale 1.3 the defaults draw at 1 and 3 physical pixels, and at scale 2 at 2
-and 4. Pane frames off hides pane and sidebar outlines and title rules;
+are 1 and 1 respectively. Physical widths are `max(1, round(width * scale))`:
+at scale 1.3 the defaults draw at 1 and 1 physical pixels, and at scale 2 at 2
+and 2. Pane frames off hides pane and sidebar outlines and title rules;
 popups keep their outline. These settings apply to full-Eon workspace surfaces;
 eonbase receives neither override. The current agent row and F6 focus pills
 keep their one-physical-pixel outlines.

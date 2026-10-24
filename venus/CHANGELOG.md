@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- VEN-C8: the selected pane's outline defaults to 1 logical pixel (`eon-q1of`).
+
 - VEN-C8: each pane has its own rounded frame without added stack spacing;
   collapsed title edges turn toward the expanded pane and their sides join the
   next card, continuing around the column's bottom. The expanded frame stays
@@ -15,9 +17,9 @@
   bounds stay unchanged (`eon-2x6h`).
 
 - VEN-C8: `--border-width` and `--focus-border-width` accept 1–3 logical pixels
-  (defaults 1 and 2) for neutral card outlines/title rules and the selected pane
+  (defaults 1 and 1) for neutral card outlines/title rules and the selected pane
   outline. Display scaling rounds each to whole physical pixels (defaults at
-  scale 1.3: 1 and 3; at scale 2: 2 and 4). The agent sidebar and popup cards
+  scale 1.3: 1 and 1; at scale 2: 2 and 2). The agent sidebar and popup cards
   share the neutral width; the current agent-row outline stays one physical
   pixel (`eon-f5pg`).
 

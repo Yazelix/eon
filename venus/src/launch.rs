@@ -293,7 +293,7 @@ pub(super) fn launch_arguments(
         pane_frames: pane_frames.unwrap_or(true),
         focus_color: focus_color.unwrap_or_else(|| rgb(0xb207fb)),
         border_width: border_width.unwrap_or(1),
-        focus_border_width: focus_border_width.unwrap_or(2),
+        focus_border_width: focus_border_width.unwrap_or(1),
         warning_close_last_tab: warning_close_last_tab.unwrap_or(true),
         eon_version,
         bar_items: bar_items.unwrap_or_else(|| BarItem::DEFAULT.into()),
@@ -557,7 +557,7 @@ mod tests {
         use std::os::unix::ffi::OsStringExt;
         let parse = |args: &[&str]| launch_arguments(args.iter().map(OsString::from), None);
         let defaults = parse(&[]).unwrap();
-        assert_eq!((defaults.border_width, defaults.focus_border_width), (1, 2));
+        assert_eq!((defaults.border_width, defaults.focus_border_width), (1, 1));
         for flag in ["--border-width", "--focus-border-width"] {
             for value in ["1", "2", "3"] {
                 let arguments = parse(&[flag, value]).unwrap();

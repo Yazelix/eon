@@ -400,7 +400,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     included, is the top bar's opaque color, so the bar, gaps and hints read as one
     frame. On a window too small for them the gaps
     yield before a terminal cell does. The selected pane's outline is
-    `[terminal] focus_border_width` logical pixels wide (1 to 3, default 2).
+    `[terminal] focus_border_width` logical pixels wide (1 to 3, default 1).
     The selected pane's outline uses `[terminal] focus_color`, `preset:<name>` or `custom:#RRGGBB`, default
     `custom:#b207fb`. Pane hover and keyboard focus use VEN-C8's pill
     feedback. A selected popup or
