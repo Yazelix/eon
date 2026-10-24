@@ -1733,8 +1733,9 @@ re-proved when that platform or feature is next touched.
 
 - **Status:** Partially proved: on x86_64 Linux Wayland every clause is proved
   except compositor blur through the card, which waits on VEN-C15's native
-  backdrop re-proof, and the current row's outline, which waits on its installed
-  observation (`eon-sidebar-you-are-here-3743`). Approved by Lucca on 2026-10-21 (draft 15 on
+  backdrop re-proof, and the current row's outline over a hovered row's
+  highlight, which no isolated capture could produce
+  (`eon-sidebar-you-are-here-3743`). Approved by Lucca on 2026-10-21 (draft 15 on
   `eon-agent-sidebar-yx8.1`, there named VEN-C29). `eon-agent-sidebar-yx8.3`
   implements visibility, layout and hiding for width, Alt+Shift+H, the
   sidebar's AccessKit region and the empty state;
@@ -2047,9 +2048,23 @@ re-proved when that platform or feature is next touched.
       working attention), the heading read `2  w` with no marker, and the
       Agent row stayed first and kept its marker, above the `p2` row. After
       Alt+1, with tab 1 active, the sidebar showed the same.
+  - **Installed (`eon-sidebar-you-are-here-3743`):** isolated installed
+    dogfood (edge `f6ff36e`, the `eon` profile at
+    `/nix/store/9lpcb6pxy4z4hq046b0j5cbxfgxa7xb9-eon-0.1.1`, x86_64 Linux,
+    private headless Sway 1.12 at 1280x720, the pixman renderer, the pointer
+    moved off the sidebar), with the same fixtures in tab 2's Agent popup and
+    pane `p2`.
+    - With the popup shown (`eon workspace`: `selected=p2 popup=u3`), the
+      Agent row's edge sampled (58,75,91), the pane cards' outline color,
+      and the `p2` row's edges the card's (4,5,7).
+    - After the popup was hidden (`popup=none`), the `p2` row's edge sampled
+      (58,75,91) and the Agent row's the card's (4,5,7), and the heading read
+      `2  w` with no marker.
 - **Open proof:**
   - Compositor blur through the card: headless Sway has no blur, so only its
     translucency was measured. It waits on VEN-C15's native backdrop
     re-proof.
-  - The current row's outline on the installed product
-    (`eon-sidebar-you-are-here-3743`), pending its installed observation.
+  - The current row's outline drawn over a hovered row's highlight
+    (`eon-sidebar-you-are-here-3743`): in the isolated captures neither a
+    `swaymsg` pointer warp nor a relative move gave a Venus row hover, so
+    only review of `venus/src/render/chrome.rs` checks that order.
