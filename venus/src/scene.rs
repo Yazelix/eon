@@ -54,96 +54,129 @@ pub(crate) fn rounded_radius(rect: SceneRect, radius: f32) -> f32 {
         .floor()
 }
 
-pub(crate) fn pane_outlines(
-    panes: &[WorkspacePane],
-    terminal: SceneRect,
-    fill: CardFill,
-    border_width: f32,
-    viewport: SceneRect,
+fn grid_safe_bottom(bottom: f32, grid_bottom: Option<f32>, stroke_width: f32) -> f32 {
+    grid_bottom.map_or(bottom, |grid| bottom.max(grid.ceil() + stroke_width))
+}
+
+fn painted_bottom(
+    bottom: f32,
     metrics: CellMetrics,
     stroke_width: f32,
-) -> Vec<PaneOutline> {
-    let Some(expanded) = panes.iter().position(|pane| pane.selected) else {
-        return Vec::new();
-    };
-    let mut outlines = Vec::with_capacity(panes.len());
-    for (index, pane) in panes.iter().enumerate() {
-        let mut frame = pane.frame(terminal);
-        if pane.selected {
-            let bottom = frame.bottom().min(fill.bounds.bottom());
-            // Scrolling may leave no room for a bottom stroke inside the fixed card.
-            let bottom = metrics
-                .surface_size(terminal.screen_size())
-                .map_or(bottom, |size| {
-                    bottom.max(
-                        metrics
-                            .grid_rect(terminal, size.cols, size.rows)
-                            .bottom()
-                            .ceil()
-                            + stroke_width,
-                    )
-                });
-            frame.height = (bottom - frame.top).max(0.0);
-        } else if index + 1 == panes.len() {
-            // Move paint with the scrolled row, keeping its allocated title band unchanged.
-            frame.top += fill.bounds.bottom()
-                - title_rule_y(viewport.bottom() - pane.rect.height, pane.rect.height);
-        }
-        let radius = rounded_radius(frame, fill.radius);
-        let (bounds, clip) = if pane.selected {
-            (frame, frame)
-        } else if index < expanded {
-            let next = panes[index + 1].frame(terminal);
-            let join = next.top + rounded_radius(next, fill.radius);
-            (
-                SceneRect {
-                    height: join + radius - frame.top,
-                    ..frame
-                },
-                SceneRect {
-                    height: join - frame.top,
-                    ..frame
-                },
-            )
-        } else {
-            let previous = &panes[index - 1];
-            let previous_frame = previous.frame(terminal);
-            let join = if previous.selected {
-                previous_frame.bottom()
-            } else {
-                previous_frame.top + border_width
-            } - rounded_radius(previous_frame, fill.radius);
-            let bottom = if index + 1 == panes.len() {
-                frame.top
-            } else {
-                frame.top + border_width
-            };
-            (
-                SceneRect {
-                    top: join - radius,
-                    height: bottom - join + radius,
-                    ..frame
-                },
-                SceneRect {
-                    top: join,
-                    height: bottom - join,
-                    ..frame
-                },
-            )
+    grid_bottom: Option<f32>,
+) -> f32 {
+    let inset =
+        (chrome_title_metrics(metrics).text_height / 2.0).min(metrics.padding - stroke_width);
+    grid_safe_bottom((bottom - inset).floor(), grid_bottom, stroke_width)
+}
+
+impl WorkspaceScene {
+    pub(crate) fn pane_outlines(
+        &self,
+        panes: &[WorkspacePane],
+        terminal: SceneRect,
+        fill: CardFill,
+        border_width: f32,
+        metrics: CellMetrics,
+        stroke_width: f32,
+    ) -> Vec<PaneOutline> {
+        let viewport = self.pane_viewport;
+        let Some(expanded) = panes.iter().position(|pane| pane.selected) else {
+            return Vec::new();
         };
-        outlines.push(PaneOutline {
-            bounds,
-            clip,
-            radius,
-            title_y: Some(if index + 1 == panes.len() && !pane.selected {
-                frame.top - border_width
-            } else {
-                frame.top
-            }),
-            expanded: pane.selected,
+        let grid_bottom = self.grid_bottom(terminal, metrics);
+        let mut expanded_frame = panes[expanded].frame(terminal);
+        // Scrolling may leave no room for a bottom stroke inside the fixed card.
+        let original_bottom = grid_safe_bottom(
+            expanded_frame.bottom().min(fill.bounds.bottom()),
+            grid_bottom,
+            stroke_width,
+        );
+        let bottom = panes.get(expanded + 1).map_or(original_bottom, |next| {
+            let target = title_rule_y(next.rect.top, next.rect.height) - next.rect.height;
+            target
+                .max(painted_bottom(
+                    terminal.bottom(),
+                    metrics,
+                    stroke_width,
+                    grid_bottom,
+                ))
+                .min(original_bottom)
         });
+        expanded_frame.height = (bottom - expanded_frame.top).max(0.0);
+        let mut outlines = Vec::with_capacity(panes.len());
+        for (index, pane) in panes.iter().enumerate() {
+            let mut frame = pane.frame(terminal);
+            if pane.selected {
+                frame = expanded_frame;
+            } else if index + 1 == panes.len() {
+                // Move paint with the scrolled row, keeping its allocated title band unchanged.
+                frame.top += fill.bounds.bottom()
+                    - title_rule_y(viewport.bottom() - pane.rect.height, pane.rect.height);
+            }
+            let radius = rounded_radius(frame, fill.radius);
+            let (bounds, clip) = if pane.selected {
+                (frame, frame)
+            } else if index < expanded {
+                let next = if index + 1 == expanded {
+                    expanded_frame
+                } else {
+                    panes[index + 1].frame(terminal)
+                };
+                let join = next.top + rounded_radius(next, fill.radius);
+                (
+                    SceneRect {
+                        height: join + radius - frame.top,
+                        ..frame
+                    },
+                    SceneRect {
+                        height: join - frame.top,
+                        ..frame
+                    },
+                )
+            } else {
+                let previous = &panes[index - 1];
+                let previous_frame = if previous.selected {
+                    expanded_frame
+                } else {
+                    previous.frame(terminal)
+                };
+                let join = if previous.selected {
+                    previous_frame.bottom()
+                } else {
+                    previous_frame.top + border_width
+                } - rounded_radius(previous_frame, fill.radius);
+                let bottom = if index + 1 == panes.len() {
+                    frame.top
+                } else {
+                    frame.top + border_width
+                };
+                (
+                    SceneRect {
+                        top: join - radius,
+                        height: bottom - join + radius,
+                        ..frame
+                    },
+                    SceneRect {
+                        top: join,
+                        height: bottom - join,
+                        ..frame
+                    },
+                )
+            };
+            outlines.push(PaneOutline {
+                bounds,
+                clip,
+                radius,
+                title_y: Some(if index + 1 == panes.len() && !pane.selected {
+                    frame.top - border_width
+                } else {
+                    frame.top
+                }),
+                expanded: pane.selected,
+            });
+        }
+        outlines
     }
-    outlines
 }
 
 impl SceneRect {
@@ -1139,6 +1172,8 @@ pub struct WorkspaceScene {
     pub other_columns: Vec<WorkspaceColumn>,
     pub tab_viewport: SceneRect,
     pub pane_viewport: SceneRect,
+    /// Current paint only: retained rows beyond the newly requested grid.
+    displayed_grid_bottoms: Vec<(SceneRect, f32)>,
     /// The selected column's card, or the popup's; `other_columns` hold their own.
     pub(crate) chrome: SceneRect,
     /// The agent sidebar's card, while it is visible.
@@ -2342,6 +2377,7 @@ impl WorkspaceScene {
                 tab_viewport,
                 pane_viewport,
                 chrome: pane_viewport,
+                displayed_grid_bottoms: Vec::new(),
                 sidebar,
                 sidebar_headings,
                 sidebar_rows,
@@ -2501,6 +2537,7 @@ impl WorkspaceScene {
             tab_viewport,
             pane_viewport,
             chrome,
+            displayed_grid_bottoms: Vec::new(),
             sidebar,
             sidebar_headings,
             sidebar_rows,
@@ -2689,6 +2726,48 @@ impl WorkspaceScene {
             .any(|control| control.kind == kind && control.rect.width > 0.0)
     }
 
+    pub(crate) fn with_displayed_grids(
+        &self,
+        metrics: CellMetrics,
+        grids: impl Iterator<Item = (SceneRect, SceneRect)>,
+    ) -> Cow<'_, Self> {
+        if self.popup_label.is_some() {
+            return Cow::Borrowed(self);
+        }
+        let displayed_grid_bottoms = grids
+            .filter_map(|(terminal, grid)| {
+                // Layout clipping bounds visible retained cells; card clipping must not hide a collision.
+                let grid = grid
+                    .intersection(terminal)?
+                    .intersection(self.pane_viewport)?;
+                self.grid_bottom(terminal, metrics)
+                    .is_none_or(|requested| grid.bottom() > requested)
+                    .then_some((terminal, grid.bottom()))
+            })
+            .collect::<Vec<_>>();
+        if displayed_grid_bottoms.is_empty() {
+            Cow::Borrowed(self)
+        } else {
+            let mut paint = self.clone();
+            paint.displayed_grid_bottoms = displayed_grid_bottoms;
+            Cow::Owned(paint)
+        }
+    }
+
+    fn grid_bottom(&self, terminal: SceneRect, metrics: CellMetrics) -> Option<f32> {
+        metrics
+            .surface_size(terminal.screen_size())
+            .map(|size| metrics.grid_rect(terminal, size.cols, size.rows).bottom())
+            .into_iter()
+            .chain(
+                self.displayed_grid_bottoms
+                    .iter()
+                    .filter(|(area, _)| *area == terminal)
+                    .map(|(_, bottom)| *bottom),
+            )
+            .reduce(f32::max)
+    }
+
     /// Column and sidebar paint share one bottom, clear of every visible column's grid.
     pub(crate) fn card_rect(
         &self,
@@ -2702,19 +2781,12 @@ impl WorkspaceScene {
         let top = title_rule_y(allocated.top, title_height)
             .max(allocated.top)
             .min(allocated.bottom());
-        let inset =
-            (chrome_title_metrics(metrics).text_height / 2.0).min(metrics.padding - stroke_width);
         let grid_bottom = std::iter::once(self.terminal)
             .chain(self.other_columns.iter().map(|column| column.terminal))
             .filter(|terminal| terminal.intersection(self.pane_viewport).is_some())
-            .filter_map(|terminal| {
-                let size = metrics.surface_size(terminal.screen_size())?;
-                Some(metrics.grid_rect(terminal, size.cols, size.rows).bottom())
-            })
+            .filter_map(|terminal| self.grid_bottom(terminal, metrics))
             .reduce(f32::max);
-        let bottom = (allocated.bottom() - inset).floor();
-        let bottom = grid_bottom
-            .map_or(bottom, |grid| bottom.max(grid.ceil() + stroke_width))
+        let bottom = painted_bottom(allocated.bottom(), metrics, stroke_width, grid_bottom)
             .min(allocated.bottom());
         SceneRect {
             top,
@@ -3724,7 +3796,7 @@ mod tests {
                 WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
                     (text.into(), text.len() as f32 * metrics.width)
                 });
-            let outlines = pane_outlines(
+            let outlines = scene.pane_outlines(
                 &scene.panes,
                 scene.terminal,
                 scene.card_fill(
@@ -3733,7 +3805,6 @@ mod tests {
                     crate::render::physical_outline_width(2, metrics.scale),
                 ),
                 3.0,
-                scene.pane_viewport,
                 metrics,
                 3.0,
             );

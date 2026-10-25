@@ -57,6 +57,12 @@ bottom padding minus the widest stroke, so frames stay clear of grid cells.
 After resize rounding, the shared line moves outward as needed to leave a
 full stroke beyond every visible terminal grid, within the allocated bottom.
 A last expanded frame ends there inside its bottom padding when space permits.
+When collapsed rows follow it, the expanded frame's painted bottom instead
+sits one title row above the next label line. The same padding and rounded grid
+bounds limit how far it rises; its rounded joints and the rows' sides meet
+the raised edge. The column keeps its continuous background fill.
+While a resize is pending, both edges also clear the retained frame's displayed
+rows; the full rise returns when the resized frame arrives.
 If a short, scrolled viewport cannot fit its bottom stroke below the grid, the
 stroke stays below the grid and the card clips it. Terminal layout,
 grids, header bands, hit targets and AccessKit bounds stay unchanged, as do

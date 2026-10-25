@@ -12,6 +12,7 @@ use orbit_protocol::{
     session::{SurfaceSize, VerticalDirection},
 };
 use std::{
+    borrow::Cow,
     error::Error,
     fmt,
     sync::{
@@ -277,6 +278,32 @@ fn shifted(mut rect: SceneRect, vertical: f32) -> SceneRect {
 
 fn scene_grid(scene: &Scene, viewport: SceneRect, metrics: CellMetrics) -> SceneRect {
     metrics.grid_rect(viewport, scene.columns, scene.rows)
+}
+
+fn workspace_paint<'a>(
+    workspace: &'a WorkspaceScene,
+    scene: Option<&Scene>,
+    columns: &[Option<&Scene>],
+    metrics: CellMetrics,
+) -> Cow<'a, WorkspaceScene> {
+    // This grid also clips shifted cells and scroll previews in rebuild_if_needed.
+    let selected = scene.map(|scene| {
+        (
+            workspace.terminal,
+            scene_grid(scene, workspace.terminal, metrics),
+        )
+    });
+    let peers = workspace
+        .other_columns
+        .iter()
+        .zip(columns)
+        .filter_map(|(column, scene)| {
+            Some((
+                column.terminal,
+                scene_grid((*scene)?, column.terminal, metrics),
+            ))
+        });
+    workspace.with_displayed_grids(metrics, selected.into_iter().chain(peers))
 }
 
 fn card_backdrops(
@@ -889,6 +916,10 @@ impl Renderer {
         generation: u64,
     ) -> Result<PresentOutcome, RenderError> {
         ensure_device_available(&self.device_lost)?;
+        let paint = workspace
+            .filter(|_| self.pane_frames)
+            .map(|workspace| workspace_paint(workspace, scene, columns, self.metrics));
+        let workspace = paint.as_deref().or(workspace);
         let content_changed = self.rebuild_if_needed(
             scene,
             scroll_preview,
@@ -2648,6 +2679,24 @@ mod tests {
     use crate::{DrawCell, DrawCursor, DrawRow};
     use orbit_protocol::{CellWidth, CursorShape, Screen};
 
+    fn painted_rects(batch: &RectangleBatch) -> impl Iterator<Item = SceneRect> + '_ {
+        batch
+            .bytes
+            .chunks_exact(VERTEX_SIZE as usize * 6)
+            .map(|quad| {
+                let value = |vertex: usize, component: usize| {
+                    let offset = vertex * VERTEX_SIZE as usize + component * 4;
+                    f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
+                };
+                SceneRect {
+                    left: (value(0, 0) + 1.0) * batch.width as f32 / 2.0,
+                    top: (1.0 - value(0, 1)) * batch.height as f32 / 2.0,
+                    width: (value(2, 0) - value(0, 0)) * batch.width as f32 / 2.0,
+                    height: (value(0, 1) - value(2, 1)) * batch.height as f32 / 2.0,
+                }
+            })
+    }
+
     #[test]
     fn device_loss_blocks_surface_recovery_but_destroy_does_not() {
         let lost = AtomicBool::new(false);
@@ -3308,37 +3357,69 @@ mod tests {
                                             )
                                         );
                                     }
-                                    let rules = crate::scene::pane_outlines(
-                                        panes,
-                                        terminal,
-                                        fill,
-                                        border_width,
-                                        workspace.pane_viewport,
-                                        metrics,
-                                        focus_width.max(border_width),
-                                    )
-                                    .into_iter()
-                                    .enumerate()
-                                    .map(|(index, outline)| {
-                                        let pane = &panes[index.min(panes.len() - 1)];
-                                        let label = SceneRect {
-                                            left: pane.rect.left + metrics.padding / 2.0,
-                                            width: 80.0 * metrics.scale,
-                                            ..pane.rect
-                                        };
-                                        let scrollback = SceneRect {
-                                            left: card.right() - 60.0 * metrics.scale,
-                                            width: 40.0 * metrics.scale,
-                                            ..pane.rect
-                                        };
-                                        let gaps = if outline.title_y.is_some() {
-                                            [label, scrollback]
-                                        } else {
-                                            [SceneRect::default(); 2]
-                                        };
-                                        (outline, gaps)
-                                    })
-                                    .collect::<Vec<_>>();
+                                    let rules = workspace
+                                        .pane_outlines(
+                                            panes,
+                                            terminal,
+                                            fill,
+                                            border_width,
+                                            metrics,
+                                            focus_width.max(border_width),
+                                        )
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(index, outline)| {
+                                            let pane = &panes[index.min(panes.len() - 1)];
+                                            let label = SceneRect {
+                                                left: pane.rect.left + metrics.padding / 2.0,
+                                                width: 80.0 * metrics.scale,
+                                                ..pane.rect
+                                            };
+                                            let scrollback = SceneRect {
+                                                left: card.right() - 60.0 * metrics.scale,
+                                                width: 40.0 * metrics.scale,
+                                                ..pane.rect
+                                            };
+                                            let gaps = if outline.title_y.is_some() {
+                                                [label, scrollback]
+                                            } else {
+                                                [SceneRect::default(); 2]
+                                            };
+                                            (outline, gaps)
+                                        })
+                                        .collect::<Vec<_>>();
+                                    if frames && selected + 1 < panes.len() {
+                                        let next = &panes[selected + 1];
+                                        let next_line = crate::scene::title_rule_y(
+                                            next.rect.top,
+                                            next.rect.height,
+                                        );
+                                        let pitch = next_line - rules[selected].0.bounds.bottom();
+                                        if border <= 2 && focus_border <= 2 {
+                                            assert!(
+                                                (pitch - next.rect.height).abs() <= 1.0,
+                                                "expanded bottom pitch: scale={scale}, widths={border}/{focus_border}, selected={selected}, pitch={pitch}, row={}",
+                                                next.rect.height
+                                            );
+                                        }
+                                        for rows in panes[selected + 1..].windows(2) {
+                                            let pitch = crate::scene::title_rule_y(
+                                                rows[1].rect.top,
+                                                rows[1].rect.height,
+                                            ) - crate::scene::title_rule_y(
+                                                rows[0].rect.top,
+                                                rows[0].rect.height,
+                                            );
+                                            assert!((pitch - next.rect.height).abs() <= 1.0);
+                                        }
+                                        if column_count == 1 && border == 1 && focus_border == 1 {
+                                            println!(
+                                                "scale={scale}, expanded={selected}: bottom={}, next={next_line}, pitch={pitch}, row={}",
+                                                rules[selected].0.bounds.bottom(),
+                                                next.rect.height
+                                            );
+                                        }
+                                    }
                                     let mut batch = RectangleBatch::new(1600, 900);
                                     batch.push_pane_outlines(
                                         fill,
@@ -3633,18 +3714,18 @@ mod tests {
                                                 top: terminal.top - scroll,
                                                 ..terminal
                                             };
-                                            let scrolled = crate::scene::pane_outlines(
-                                                &scrolled_panes,
-                                                scrolled_terminal,
-                                                fill,
-                                                border_width,
-                                                workspace.pane_viewport,
-                                                metrics,
-                                                focus_width.max(border_width),
-                                            )
-                                            .into_iter()
-                                            .zip(rules.iter().map(|(_, gaps)| *gaps))
-                                            .collect::<Vec<_>>();
+                                            let scrolled = workspace
+                                                .pane_outlines(
+                                                    &scrolled_panes,
+                                                    scrolled_terminal,
+                                                    fill,
+                                                    border_width,
+                                                    metrics,
+                                                    focus_width.max(border_width),
+                                                )
+                                                .into_iter()
+                                                .zip(rules.iter().map(|(_, gaps)| *gaps))
+                                                .collect::<Vec<_>>();
                                             let mut batch = RectangleBatch::new(1600, 900);
                                             batch.push_pane_outlines(
                                                 fill,
@@ -3690,6 +3771,148 @@ mod tests {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    #[test]
+    fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
+        use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+        let metrics = CellMetrics::for_scale(1.0);
+        for (pane_count, expanded) in [(4, 1), (4, 4), (1, 1)] {
+            let snapshot = Snapshot {
+                active_tab: "t1".into(),
+                tabs: vec![Tab {
+                    id: "t1".into(),
+                    directory: b"/tmp".to_vec(),
+                    pending: false,
+                    selected_pane: Some(format!("p{expanded}")),
+                    selected_popup: None,
+                    columns: vec![Column {
+                        panes: (1..=pane_count)
+                            .map(|n| Pane {
+                                id: format!("p{n}"),
+                                session: format!("s{n}"),
+                                endpoint: format!("/tmp/p{n}.sock").into_bytes(),
+                                live: true,
+                                attention: None,
+                            })
+                            .collect(),
+                        expanded: format!("p{expanded}"),
+                    }],
+                    popups: vec![],
+                    attention_rollup: None,
+                }],
+                geometry: PopupGeometry {
+                    side_margin: 8.0,
+                    vertical_margin: 4.0,
+                },
+                entries: vec![],
+                codex_quota: None,
+                claude_quota: None,
+                sidebar: Sidebar::Open,
+            };
+            let workspace = |height| {
+                WorkspaceScene::from_snapshot(
+                    &snapshot,
+                    PhysicalSize::new(1280, height),
+                    metrics,
+                    0.0,
+                    0.0,
+                    |_, text| (text.into(), text.len() as f32 * metrics.width),
+                )
+            };
+            let old = workspace(740);
+            let current = workspace(720);
+            let size = metrics.surface_size(old.terminal.screen_size()).unwrap();
+            let retained = Scene {
+                revision: 1,
+                columns: size.cols,
+                rows: size.rows,
+                screen: Screen::Primary,
+                title: String::new(),
+                working_directory: String::new(),
+                background: DEFAULT_BACKGROUND,
+                foreground: CARD_OUTLINE,
+                cursor: None,
+                content: vec![],
+            };
+            let displayed = scene_grid(&retained, current.terminal, metrics)
+                .intersection(current.terminal)
+                .unwrap()
+                .intersection(current.pane_viewport)
+                .unwrap();
+            if pane_count == 4 && expanded == 1 {
+                assert_eq!(retained.rows, 32);
+                assert_eq!(displayed.bottom() - metrics.height, 630.0);
+                assert_eq!(displayed.bottom(), 648.0);
+            }
+            let paint = workspace_paint(&current, Some(&retained), &[], metrics);
+            let cards = card_backdrops(&paint, Some(&retained), &[], metrics, 1.0);
+            let fill = paint.card_fill(paint.chrome, metrics, 1.0);
+            assert!(
+                cards
+                    .iter()
+                    .all(|(card, _)| card.bounds.bottom() == fill.bounds.bottom())
+            );
+            let rules = paint
+                .pane_outlines(&paint.panes, paint.terminal, fill, 1.0, metrics, 1.0)
+                .into_iter()
+                .map(|rule| (rule, [SceneRect::default(); 2]))
+                .collect::<Vec<_>>();
+            let (clip, _) =
+                terminal_paint_clip(&paint, paint.chrome, paint.terminal, metrics, true, 1.0)
+                    .unwrap();
+            assert_eq!(displayed.intersection(clip), Some(displayed));
+            assert_eq!(paint.terminal, current.terminal);
+            assert_eq!(paint.panes, current.panes);
+            let mut resized = retained.clone();
+            resized.rows = metrics
+                .surface_size(current.terminal.screen_size())
+                .unwrap()
+                .rows;
+            let settled = workspace_paint(&current, Some(&resized), &[], metrics);
+            assert!(matches!(settled, Cow::Borrowed(_)));
+            if pane_count == 4 && expanded == 1 {
+                assert_eq!(rules[0].0.bounds.bottom(), 649.0);
+                let settled_fill = settled.card_fill(settled.chrome, metrics, 1.0);
+                assert_eq!(
+                    settled.pane_outlines(
+                        &settled.panes,
+                        settled.terminal,
+                        settled_fill,
+                        1.0,
+                        metrics,
+                        1.0
+                    )[0]
+                    .bounds
+                    .bottom(),
+                    642.0
+                );
+            }
+            println!(
+                "retained resize: panes={pane_count}, expanded={expanded}, rows={}, grid bottom={}, shared line={}, frame bottom={}",
+                retained.rows,
+                displayed.bottom(),
+                fill.bounds.bottom(),
+                rules[expanded - 1].0.bounds.bottom()
+            );
+            let mut batch = RectangleBatch::new(1280, 720);
+            batch.push_pane_outlines(
+                fill,
+                paint.pane_viewport,
+                &rules,
+                Some(CARD_OUTLINE),
+                1.0,
+                1.0,
+            );
+            for rect in painted_rects(&batch) {
+                assert!(
+                    displayed
+                        .intersection(rect)
+                        .is_none_or(|overlap| overlap.width < 0.001 || overlap.height < 0.001),
+                    "retained rows under stroke: panes={pane_count}, expanded={expanded}, displayed={displayed:?}, stroke={rect:?}"
+                );
             }
         }
     }
@@ -3766,26 +3989,29 @@ mod tests {
                                 claude_quota: None,
                                 sidebar: Sidebar::Open,
                             };
-                            let size = PhysicalSize::new(width, height);
-                            let workspace = WorkspaceScene::from_snapshot_with_metadata(
-                                &snapshot,
-                                crate::EonBar::default(),
-                                size,
-                                metrics,
-                                0.0,
-                                pane_scroll,
-                                |_| None,
-                                |_, text| (text.into(), text.len() as f32 * metrics.width),
-                                hints_visible.then(|| {
-                                    crate::ShortcutHintsScene::new(
-                                        Vec::new(),
-                                        size,
-                                        metrics,
-                                        WorkspaceFocus::Terminal,
-                                        |_| 0.0,
-                                    )
-                                }),
-                            );
+                            let workspace_at = |height| {
+                                let size = PhysicalSize::new(width, height);
+                                WorkspaceScene::from_snapshot_with_metadata(
+                                    &snapshot,
+                                    crate::EonBar::default(),
+                                    size,
+                                    metrics,
+                                    0.0,
+                                    pane_scroll,
+                                    |_| None,
+                                    |_, text| (text.into(), text.len() as f32 * metrics.width),
+                                    hints_visible.then(|| {
+                                        crate::ShortcutHintsScene::new(
+                                            Vec::new(),
+                                            size,
+                                            metrics,
+                                            WorkspaceFocus::Terminal,
+                                            |_| 0.0,
+                                        )
+                                    }),
+                                )
+                            };
+                            let workspace = workspace_at(height);
                             let fill = workspace.card_fill(workspace.chrome, metrics, stroke);
                             let terminals = std::iter::once(workspace.terminal).chain(
                                 workspace.other_columns.iter().map(|column| column.terminal),
@@ -3904,18 +4130,34 @@ mod tests {
                                     1.0
                                 );
                             }
-                            let rules = crate::scene::pane_outlines(
-                                &workspace.panes,
-                                workspace.terminal,
-                                fill,
-                                neutral,
-                                workspace.pane_viewport,
-                                metrics,
-                                stroke,
-                            )
-                            .into_iter()
-                            .map(|rule| (rule, [SceneRect::default(); 2]))
-                            .collect::<Vec<_>>();
+                            let rules = workspace
+                                .pane_outlines(
+                                    &workspace.panes,
+                                    workspace.terminal,
+                                    fill,
+                                    neutral,
+                                    metrics,
+                                    stroke,
+                                )
+                                .into_iter()
+                                .map(|rule| (rule, [SceneRect::default(); 2]))
+                                .collect::<Vec<_>>();
+                            if expanded < pane_count
+                                && column_count == 1
+                                && pane_scroll == 0.0
+                                && height == 900
+                            {
+                                let next = &workspace.panes[expanded];
+                                let next_line =
+                                    crate::scene::title_rule_y(next.rect.top, next.rect.height);
+                                let edge = rules[expanded - 1].0.bounds.bottom();
+                                println!(
+                                    "raised edge: scale={scale}, font={font_size}, line_height={line_height}, stroke={stroke}, expanded={expanded}, terminal bottom={}, edge={edge}, next={next_line}, pitch={}, row={}",
+                                    workspace.terminal.bottom(),
+                                    next_line - edge,
+                                    next.rect.height
+                                );
+                            }
                             if height == 112
                                 && scale == 1.0
                                 && font_size == 16.0
@@ -4023,18 +4265,18 @@ mod tests {
                             );
                             for column in &workspace.other_columns {
                                 let peer_fill = workspace.card_fill(column.chrome, metrics, stroke);
-                                let rules = crate::scene::pane_outlines(
-                                    &column.panes,
-                                    column.terminal,
-                                    peer_fill,
-                                    neutral,
-                                    workspace.pane_viewport,
-                                    metrics,
-                                    stroke,
-                                )
-                                .into_iter()
-                                .map(|rule| (rule, [SceneRect::default(); 2]))
-                                .collect::<Vec<_>>();
+                                let rules = workspace
+                                    .pane_outlines(
+                                        &column.panes,
+                                        column.terminal,
+                                        peer_fill,
+                                        neutral,
+                                        metrics,
+                                        stroke,
+                                    )
+                                    .into_iter()
+                                    .map(|rule| (rule, [SceneRect::default(); 2]))
+                                    .collect::<Vec<_>>();
                                 batch.push_pane_outlines(
                                     peer_fill,
                                     workspace.pane_viewport,
@@ -4052,17 +4294,7 @@ mod tests {
                             }
                             let radius = rounded_radius(fill.bounds, fill.radius);
                             let bottom_curve = fill.bounds.bottom() - radius;
-                            for quad in batch.bytes.chunks_exact(VERTEX_SIZE as usize * 6) {
-                                let value = |vertex: usize, component: usize| {
-                                    let offset = vertex * VERTEX_SIZE as usize + component * 4;
-                                    f32::from_ne_bytes(quad[offset..offset + 4].try_into().unwrap())
-                                };
-                                let rect = SceneRect {
-                                    left: (value(0, 0) + 1.0) * width as f32 / 2.0,
-                                    top: (1.0 - value(0, 1)) * height as f32 / 2.0,
-                                    width: (value(2, 0) - value(0, 0)) * width as f32 / 2.0,
-                                    height: (value(0, 1) - value(2, 1)) * height as f32 / 2.0,
-                                };
+                            for rect in painted_rects(&batch) {
                                 assert!(
                                     rect.bottom() <= expected + 0.001,
                                     "stroke escaped card: height={height}, expanded={expanded}, rect={rect:?}, line={expected}"
@@ -4089,6 +4321,117 @@ mod tests {
                                             );
                                         }
                                     }
+                                }
+                            }
+                            let old = workspace_at(
+                                height.saturating_add(2 * metrics.height.ceil() as u32),
+                            );
+                            let scenes = std::iter::once(old.terminal)
+                                .chain(old.other_columns.iter().map(|column| column.terminal))
+                                .map(|terminal| {
+                                    metrics
+                                        .surface_size(terminal.screen_size())
+                                        .map(|size| Scene {
+                                            revision: 1,
+                                            columns: size.cols,
+                                            rows: size.rows,
+                                            screen: Screen::Primary,
+                                            title: String::new(),
+                                            working_directory: String::new(),
+                                            background: DEFAULT_BACKGROUND,
+                                            foreground: CARD_OUTLINE,
+                                            cursor: None,
+                                            content: vec![],
+                                        })
+                                })
+                                .collect::<Vec<_>>();
+                            let peers = scenes[1..].iter().map(Option::as_ref).collect::<Vec<_>>();
+                            let paint =
+                                workspace_paint(&workspace, scenes[0].as_ref(), &peers, metrics);
+                            assert_eq!(paint.terminal, workspace.terminal);
+                            assert_eq!(paint.panes, workspace.panes);
+                            let cards =
+                                card_backdrops(&paint, scenes[0].as_ref(), &peers, metrics, stroke);
+                            let bottom = cards[0].0.bounds.bottom();
+                            assert!(cards.iter().all(|(card, _)| card.bounds.bottom() == bottom));
+                            let mut displayed = Vec::new();
+                            let mut batch = RectangleBatch::new(width, height);
+                            for ((panes, terminal, allocated, current), scene) in std::iter::once((
+                                paint.panes.as_slice(),
+                                paint.terminal,
+                                paint.chrome,
+                                true,
+                            ))
+                            .chain(paint.other_columns.iter().map(|column| {
+                                (
+                                    column.panes.as_slice(),
+                                    column.terminal,
+                                    column.chrome,
+                                    false,
+                                )
+                            }))
+                            .zip(&scenes)
+                            {
+                                if let Some(grid) = scene
+                                    .as_ref()
+                                    .and_then(|scene| {
+                                        scene_grid(scene, terminal, metrics).intersection(terminal)
+                                    })
+                                    .and_then(|grid| grid.intersection(paint.pane_viewport))
+                                {
+                                    displayed.push(grid);
+                                    let card = paint.card_fill(allocated, metrics, stroke);
+                                    if grid.bottom() > card.bounds.top {
+                                        let (clip, _) = terminal_paint_clip(
+                                            &paint, allocated, terminal, metrics, true, stroke,
+                                        )
+                                        .expect("visible retained rows must not be removed");
+                                        assert!(
+                                            clip.bottom() + 0.001 >= grid.bottom(),
+                                            "card clip trims retained rows: grid={grid:?}, clip={clip:?}"
+                                        );
+                                    }
+                                }
+                                let fill = paint.card_fill(allocated, metrics, stroke);
+                                assert!(
+                                    fill.bounds.top >= allocated.top
+                                        && fill.bounds.bottom() <= allocated.bottom()
+                                );
+                                let rules = paint
+                                    .pane_outlines(panes, terminal, fill, neutral, metrics, stroke)
+                                    .into_iter()
+                                    .map(|rule| (rule, [SceneRect::default(); 2]))
+                                    .collect::<Vec<_>>();
+                                if let Some(pane) = panes.last().filter(|pane| !pane.selected) {
+                                    let text_height = chrome_title_metrics(metrics).text_height;
+                                    let row = chrome::bottom_title_row(
+                                        pane.rect,
+                                        rules.last().unwrap().0.bounds.bottom(),
+                                        text_height,
+                                    );
+                                    assert!(
+                                        row.top + (row.height + text_height) / 2.0
+                                            <= pane.rect.bottom() + 0.001
+                                    );
+                                }
+                                batch.push_pane_outlines(
+                                    fill,
+                                    paint.pane_viewport,
+                                    &rules,
+                                    Some(CARD_OUTLINE),
+                                    neutral,
+                                    if current { stroke } else { neutral },
+                                );
+                            }
+                            for rect in painted_rects(&batch) {
+                                assert!(rect.bottom() <= bottom + 0.001);
+                                for grid in displayed.iter().chain(&raw_grids) {
+                                    assert!(
+                                        grid.intersection(rect)
+                                            .is_none_or(|overlap| overlap.width < 0.001
+                                                || overlap.height < 0.001),
+                                        "retained sweep: scale={scale}, height={height}, expanded={expanded}, scroll={pane_scroll}, grid={grid:?}, stroke={rect:?}"
+                                    );
                                 }
                             }
                         }

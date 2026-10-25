@@ -8,7 +8,7 @@ use super::{
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
-        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics, pane_outlines,
+        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics,
         popup_card_rect,
     },
 };
@@ -1276,18 +1276,18 @@ impl Renderer {
                 ..SceneRect::default()
             };
             let fill = workspace.card_fill(card, self.metrics, self.card_stroke_width());
-            let mut rules = pane_outlines(
-                panes,
-                terminal,
-                fill,
-                physical_outline_width(self.border_width, self.metrics.scale),
-                workspace.pane_viewport,
-                self.metrics,
-                self.card_stroke_width(),
-            )
-            .into_iter()
-            .map(|outline| (outline, [empty_gap; 2]))
-            .collect::<Vec<_>>();
+            let mut rules = workspace
+                .pane_outlines(
+                    panes,
+                    terminal,
+                    fill,
+                    physical_outline_width(self.border_width, self.metrics.scale),
+                    self.metrics,
+                    self.card_stroke_width(),
+                )
+                .into_iter()
+                .map(|outline| (outline, [empty_gap; 2]))
+                .collect::<Vec<_>>();
             for (index, (pane, (outline, rule_gaps))) in panes.iter().zip(&mut rules).enumerate() {
                 // Only the selected column's expanded header shows selection and scrollback.
                 let current = pane.selected && selected_column;

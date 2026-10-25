@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- VEN-C8: the expanded bottom edge keeps the collapsed-row pitch below it, bounded by padding and the requested/displayed grids, including retained frames during resize (`eon-6ros`).
+
 - VEN-C8: a collapsed last pane's label closes the stack in its rounded bottom
   edge, with no second line below it. Column and Agents cards share that snapped
   painted bottom line, bounded by terminal padding to keep strokes clear of grid

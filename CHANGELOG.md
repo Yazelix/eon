@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The expanded pane's bottom edge keeps the stack's row spacing to collapsed rows below, within the padding and grid bounds; resizing keeps visible rows clear of strokes.
+
 - A collapsed last pane's label sits in the stack's rounded bottom edge, closing
   it with one line. Columns and the Agents card share that bottom line; a last
   expanded frame ends there inside terminal padding. Fractional-scale resize
