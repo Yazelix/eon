@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Decode canonical EONW v20 workspace snapshots; keep the shown workspace
+  presentation and preserve view state on summary-only updates. No workspace
+  controls or keys are added.
+
 - VEN-C11: terminal padding extends edge cell backgrounds inside rounded cards, with primary-screen default-background and powerline exceptions; `--padding-color` selects `extend` (default), `extend-always`, or `background` (`eon-pane-padding-extend-d9t8`).
 
 - VEN-C8: the zoomed tab marker is a baseline-aligned Nerd Font U+F00E magnifier;
@@ -138,7 +142,7 @@
   the previous agent needing attention", and the hints as "next agent" and
   "previous agent" (VEN-C20, VEN-C24, `eon-agent-sidebar-yx8.8`).
 
-- Venus consumes EONW v19, whose attention carries `name`, the terminal
+- Venus consumes EONW v20, whose attention carries `name`, the terminal
   title. A sidebar row's first line shows one label: for `app=claude-code`
   the name, which is the session's name, else the record title, else the
   app's name (`Claude`, `Codex`, or the `app` verbatim). Other apps'
@@ -147,7 +151,7 @@
   heading shows. The row's accessible name includes Claude Code's session
   name (VEN-C30, `eon-agent-sidebar-yx8.11`).
 
-- EONW v18 (now v19, above) adds EON-C31 agent attention to panes,
+- EONW v18 (now v20, above) adds EON-C31 agent attention to panes,
   popups and tabs, the window's sidebar visibility, and the `ToggleSidebar`,
   `FocusAttention`, `NextAttention` and `PreviousAttention` actions; the
   VEN-C21 and VEN-C30 entries above render and send them. VEN-C8 and VEN-C22: a

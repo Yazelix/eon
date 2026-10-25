@@ -1,5 +1,5 @@
 use super::{NATIVE_PLATFORM, NativePlatform};
-use eon_workspace_protocol::v19::{
+use eon_workspace_protocol::v20::{
     Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, PopupEntry, Side,
     Sidebar, Snapshot, Tab, WorkspaceAction as CommonAction,
 };
@@ -592,7 +592,7 @@ pub(super) fn shortcut_hints_for(
             NativeShortcutTrigger::Key(code, modifiers) => {
                 (wire_modifiers(modifiers), format!("{code:?}"))
             }
-            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v19::ALT, "1..9".into()),
+            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v20::ALT, "1..9".into()),
             _ => continue,
         };
         let modifiers = physical_modifiers_label_for(platform, modifiers, true);
@@ -663,7 +663,7 @@ fn physical_shortcut_label_for(platform: NativePlatform, modifiers: u8, key: &st
 }
 
 fn physical_modifiers_label_for(platform: NativePlatform, modifiers: u8, compact: bool) -> String {
-    use eon_workspace_protocol::v19 as wire;
+    use eon_workspace_protocol::v20 as wire;
 
     let mut parts = Vec::with_capacity(5);
     let labels = match (platform, compact) {
@@ -707,7 +707,7 @@ fn physical_key_label(key: &str) -> &str {
 }
 
 fn wire_modifiers(modifiers: session::Modifiers) -> u8 {
-    use eon_workspace_protocol::v19 as wire;
+    use eon_workspace_protocol::v20 as wire;
 
     [
         (session::Modifiers::SHIFT, wire::SHIFT),
@@ -1011,7 +1011,7 @@ mod tests {
 
     #[test]
     fn sideways_moves_open_a_column_only_for_a_stacked_outer_pane() {
-        use eon_workspace_protocol::v19::{Column, Pane};
+        use eon_workspace_protocol::v20::{Column, Pane};
 
         let pane = |id: &str| Pane {
             id: id.into(),
@@ -1051,16 +1051,16 @@ mod tests {
         let entry = PopupEntry {
             id: "agent".into(),
             label: "My agent".into(),
-            shortcut: eon_workspace_protocol::v19::Shortcut {
-                modifiers: eon_workspace_protocol::v19::SUPER,
+            shortcut: eon_workspace_protocol::v20::Shortcut {
+                modifiers: eon_workspace_protocol::v20::SUPER,
                 key: "KeyF".into(),
             },
         };
         let project = PopupEntry {
             id: "project".into(),
             label: "Folder chooser".into(),
-            shortcut: eon_workspace_protocol::v19::Shortcut {
-                modifiers: eon_workspace_protocol::v19::ALT,
+            shortcut: eon_workspace_protocol::v20::Shortcut {
+                modifiers: eon_workspace_protocol::v20::ALT,
                 key: "KeyZ".into(),
             },
         };
@@ -1257,7 +1257,7 @@ mod tests {
 
     #[test]
     fn configured_popups_take_fixed_bindings_except_reserved_keys() {
-        use eon_workspace_protocol::v19::{ALT, SHIFT, Shortcut};
+        use eon_workspace_protocol::v20::{ALT, SHIFT, Shortcut};
 
         let popup = |id: &str, modifiers, key: &str| PopupEntry {
             id: id.into(),
@@ -1357,8 +1357,15 @@ mod tests {
         // Dispatch tries the popup first, and the fixed Alt+W no longer resolves.
         let entries = vec![popup("closer", ALT, "KeyW")];
         let snapshot = Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 1,
+            }],
             active_tab: "t1".into(),
-            geometry: eon_workspace_protocol::v19::PopupGeometry {
+            geometry: eon_workspace_protocol::v20::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1375,7 +1382,7 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v20::Sidebar::Open,
         };
         assert!(matches!(
             popup_shortcut(KeyCode::KeyW, session::Modifiers::ALT, &snapshot, true),

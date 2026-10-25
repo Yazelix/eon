@@ -3181,10 +3181,17 @@ mod tests {
 
     #[test]
     fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
-        use eon_workspace_protocol::v19::{
+        use eon_workspace_protocol::v20::{
             ALT, Column, Pane, Popup, PopupEntry, PopupGeometry, Shortcut, Sidebar, Snapshot, Tab,
         };
         let mut snapshot = Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 1,
+            }],
             active_tab: "t1".into(),
             tabs: vec![Tab {
                 id: "t1".into(),
@@ -3994,7 +4001,7 @@ mod tests {
 
     #[test]
     fn selected_pane_outline_uses_scaled_widths_without_overlap_or_gaps() {
-        use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+        use eon_workspace_protocol::v20::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
         let focus = SceneColor {
             r: 178,
             g: 7,
@@ -4049,6 +4056,13 @@ mod tests {
                                 }
                             };
                             let snapshot = Snapshot {
+                                workspace: "w1".into(),
+                                active_workspace: "w1".into(),
+                                workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+                                    id: "w1".into(),
+                                    name: None,
+                                    tab_count: 1,
+                                }],
                                 active_tab: "t1".into(),
                                 tabs: vec![Tab {
                                     id: "t1".into(),
@@ -4571,10 +4585,17 @@ mod tests {
 
     #[test]
     fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
-        use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+        use eon_workspace_protocol::v20::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
         let metrics = CellMetrics::for_scale(1.0);
         for (pane_count, expanded) in [(4, 1), (4, 4), (3, 2), (1, 1)] {
             let snapshot = Snapshot {
+                workspace: "w1".into(),
+                active_workspace: "w1".into(),
+                workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+                    id: "w1".into(),
+                    name: None,
+                    tab_count: 1,
+                }],
                 active_tab: "t1".into(),
                 tabs: vec![Tab {
                     id: "t1".into(),
@@ -4726,7 +4747,7 @@ mod tests {
 
     #[test]
     fn shared_bottom_preserves_grid_and_bounds_short_scene_paint() {
-        use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+        use eon_workspace_protocol::v20::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
         let mut fonts = glyphon::FontSystem::new();
         let mut swash = SwashCache::new();
         for (scale, font_size, line_height, focus_border, hints_visible) in [
@@ -4752,6 +4773,13 @@ mod tests {
                     for column_count in [1, 2] {
                         for (pane_count, expanded) in [(1, 1), (4, 1), (4, 2), (4, 4)] {
                             let snapshot = Snapshot {
+                                workspace: "w1".into(),
+                                active_workspace: "w1".into(),
+                                workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+                                    id: "w1".into(),
+                                    name: None,
+                                    tab_count: 1,
+                                }],
                                 active_tab: "t1".into(),
                                 tabs: vec![Tab {
                                     id: "t1".into(),
@@ -5438,10 +5466,17 @@ mod tests {
     }
 
     fn retained_frame_text_clip(size: PhysicalSize<u32>) -> (WorkspaceScene, SceneRect) {
-        use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+        use eon_workspace_protocol::v20::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
         let metrics = CellMetrics::for_scale(1.0);
         let snapshot = Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 1,
+            }],
             active_tab: "t1".into(),
             tabs: vec![Tab {
                 id: "t1".into(),
@@ -5629,9 +5664,16 @@ mod tests {
 
     fn fractional_card_workspace(scale: f64, scroll: f32) -> WorkspaceScene {
         use crate::scene::{EonBar, ShortcutHintsScene};
-        use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+        use eon_workspace_protocol::v20::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
         let snapshot = Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 1,
+            }],
             active_tab: "t1".into(),
             tabs: vec![Tab {
                 id: "t1".into(),
@@ -5979,7 +6021,7 @@ mod tests {
 
     #[test]
     fn terminal_paint_stays_inside_rounded_fill_during_cursor_handoff() {
-        use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
+        use eon_workspace_protocol::v20::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
         let pane = |column, index| Pane {
             id: format!("p{column}-{index}"),
@@ -5989,6 +6031,13 @@ mod tests {
             attention: None,
         };
         let mut snapshot = Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 1,
+            }],
             active_tab: "t1".into(),
             tabs: vec![Tab {
                 id: "t1".into(),
@@ -6216,7 +6265,7 @@ mod tests {
 
     #[test]
     fn card_backdrop_keeps_cards_like_the_agent_sidebar_at_terminal_opacity() {
-        use eon_workspace_protocol::v19::{
+        use eon_workspace_protocol::v20::{
             ALT, Column, Pane, Popup, PopupEntry, PopupGeometry, Shortcut, Sidebar, Snapshot, Tab,
         };
         let terminal_scene = Scene {
@@ -6264,6 +6313,13 @@ mod tests {
                     for selected in [0, pane_count / 2, pane_count - 1] {
                         let pane_id = |column, pane| format!("p{column}-{pane}");
                         let mut snapshot = Snapshot {
+                            workspace: "w1".into(),
+                            active_workspace: "w1".into(),
+                            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+                                id: "w1".into(),
+                                name: None,
+                                tab_count: 1,
+                            }],
                             active_tab: "t1".into(),
                             tabs: vec![Tab {
                                 id: "t1".into(),

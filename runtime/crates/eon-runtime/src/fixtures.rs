@@ -4,7 +4,7 @@ use crate::{
     Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand, PopupDefinition,
     ShellConfig, StartupAnimation, TerminalConfig,
 };
-use eon_workspace_protocol::v19::{ALT, PopupGeometry, SHIFT, Shortcut};
+use eon_workspace_protocol::v20::{ALT, PopupGeometry, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     Inputs {

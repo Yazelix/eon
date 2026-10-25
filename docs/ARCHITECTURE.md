@@ -100,7 +100,7 @@ shims require an explicit user decision, a removal condition, and a bead.
 EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
 snapshots, supervisor lifecycle results, structured failures, and bounded
-framing. EONW v19 carries Eon-owned raw tab launch directories, each tab's
+framing. EONW v20 carries Eon-owned raw tab launch directories, each tab's
 zero to four pane columns, the popup catalog,
 tab-scoped popup terminals, explicit retarget and chooser-completion actions, and
 an optional pending tab's absent pane selection without interpreting Orbit
@@ -121,8 +121,16 @@ while Venus receives only Orbit's endpoint. EONW carries opaque Orbit endpoint
 bytes but no terminal content, except a program's own bounded status report
 text and its terminal's title (EON-C31).
 
-EONW v19 is the current Eon source boundary. It adds the attention `name`, the
-terminal title that tells agents apart in the sidebar (EON-C31). v18 adds
+In v20, `workspace` names the workspace described by `tabs` and `active_tab`,
+and `active_workspace` names the one shown in the window. A request carrying a
+validated caller projects that terminal's workspace; a request without a caller
+projects the shown workspace. The four workspace requests operate on Runtime's
+workspace set. Their CLI and Commands frontends remain planned under EON-C33.
+
+EONW v20 is the current Eon source boundary. It adds the window's ordered
+workspace summaries, shown identity and caller projection, and requests to
+create, switch, rename and close a workspace (EON-C33). v19 adds the attention
+`name`, the terminal title that tells agents apart in the sidebar (EON-C31). v18 adds
 EON-C31 agent attention: each pane and popup's normalized attention with its
 most urgent record, each tab's rollup, the window's sidebar visibility, and the
 `ToggleSidebar`, `FocusAttention`, `NextAttention` and `PreviousAttention`
@@ -152,7 +160,7 @@ out of EONW and Venus. v7 also permits distinct pending Project pickers in
 separate tabs. Eon provides no version negotiation layer. Existing live
 supervisors retain their generation until explicitly stopped; the updated
 executable starts a separate generation.
-Composed activation requires an exact v19 Venus consumer.
+Composed activation requires an exact v20 Venus consumer.
 
 The optional Claude observation adds only bounded presentation facts. Under
 EON-C27, pinned CodexBar collects it; Runtime owns bounded subprocesses,
@@ -312,7 +320,7 @@ them. Invalid graph or package inputs fail at their required boundary.
 |---|---|
 | Eon | Product contracts/version/default values, actual executable and exit/error mapping, canonical component graph and `eon-manifest`, assets, component selection, Nix translation and distribution |
 | `eon-runtime` | The `attention`, `cli`, `quota`, `control`, `generation`, `managed_environment`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
-| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v19 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
+| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v20 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
 | Orbit and Venus | Their terminal and native-client authority |
 
 Eon calls one concrete library entry point. Runtime handles invocation selection,
@@ -410,7 +418,7 @@ the user activates an implementation bead and its prerequisite proofs exist. The
 active Eon slice launches one accepted Venus and Orbit pair, supplies the
 accepted managed environment, preserves Eon component and native shell
 configuration boundaries, reports component identity through one Nix-managed
-path, and exposes its live workspace through EONW v19. Venus consumes a new EONW
+path, and exposes its live workspace through EONW v20. Venus consumes a new EONW
 version only after Eon Runtime's producer proof; the graph's interface versions
 change only after Venus's consumer proof exists. Later slices earn their scope
 through dogfooding. Direct distribution has its own activation gate.

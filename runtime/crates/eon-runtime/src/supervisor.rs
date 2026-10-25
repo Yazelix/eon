@@ -16,7 +16,7 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v19::{
+use eon_workspace_protocol::v20::{
     Action, Availability, Ended, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
     Stopped, VERSION, WorkspaceAction,
 };
@@ -539,7 +539,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v19::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v20::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -1042,18 +1042,32 @@ struct SupervisorState {
 }
 
 impl SupervisorState {
-    /// The workspace with its quotas and attention.
+    /// The shown workspace with its quotas and attention.
     fn workspace_snapshot(&mut self) -> Option<Snapshot> {
-        self.workspaces.as_ref().map(|workspace| {
-            let mut snapshot = workspace.snapshot();
-            if let Some(quotas) = &self.quotas {
-                quotas.apply(&mut snapshot);
+        self.workspaces.as_ref()?;
+        self.workspace_snapshot_in(None).ok()
+    }
+
+    fn workspace_snapshot_in(&mut self, workspace: Option<&str>) -> Result<Snapshot, Failure> {
+        let workspaces = self
+            .workspaces
+            .as_ref()
+            .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
+        // An accepted action may remove its caller's workspace.
+        let mut snapshot = workspaces.snapshot_in(workspace).or_else(|error| {
+            if error.code == "unknown-workspace" {
+                workspaces.snapshot_in(None)
+            } else {
+                Err(error)
             }
-            if let Some(attention) = &mut self.attention {
-                attention.present(&mut snapshot, self.venus.is_some(), Instant::now());
-            }
-            snapshot
-        })
+        })?;
+        if let Some(quotas) = &self.quotas {
+            quotas.apply(&mut snapshot);
+        }
+        if let Some(attention) = &mut self.attention {
+            attention.present(&mut snapshot, self.venus.is_some(), Instant::now());
+        }
+        Ok(snapshot)
     }
 
     /// Follows focus, then polls program status, between control requests
@@ -1209,32 +1223,40 @@ fn close_workspace_tab(
     generation: &str,
 ) -> Result<Response, Failure> {
     let started = Instant::now();
-    let result: Result<(), Failure> = (|| {
+    let result: Result<Option<String>, Failure> = (|| {
         reap_finished_sessions(state, inputs, config)
             .map_err(|detail| failure("tab-close-failed", detail))?;
         let caller = caller_session(state, inputs, config, request)?;
-        let sessions = state
+        let workspace = state
             .workspaces
             .as_mut()
-            .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?
-            .prepare_close_tab(&request.id, caller.as_deref(), tab)?;
+            .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
+        let reply_workspace = workspace.caller_workspace_id(caller.as_deref())?;
+        let sessions = workspace.prepare_close_tab(&request.id, caller.as_deref(), tab)?;
 
         state.log.record(&format!(
             "closing tab {tab}: stopping {}",
             sessions.join(", ")
         ));
-        stop_closed_sessions(state, sessions, "tab-close-failed")
+        stop_closed_sessions(state, sessions, "tab-close-failed")?;
+        Ok(reply_workspace)
     })();
     let elapsed = started.elapsed().as_millis();
     state.log.record(&match &result {
-        Ok(()) => format!("closed tab {tab} in {elapsed} ms"),
+        Ok(_) => format!("closed tab {tab} in {elapsed} ms"),
         Err(error) => format!(
             "tab {tab} close failed after {elapsed} ms: {}",
             error.detail
         ),
     });
-    result?;
-    closed_response(state, runtime, generation, "tab-close-failed")
+    let reply_workspace = result?;
+    closed_response(
+        state,
+        runtime,
+        generation,
+        "tab-close-failed",
+        reply_workspace.as_deref(),
+    )
 }
 
 fn close_workspace_pane(
@@ -1253,9 +1275,44 @@ fn close_workspace_pane(
         .workspaces
         .as_mut()
         .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
+    let reply_workspace = workspace.caller_workspace_id(caller.as_deref())?;
     let sessions = workspace.prepare_close_pane(&request.id, caller.as_deref(), pane)?;
     stop_closed_sessions(state, sessions, "pane-close-failed")?;
-    closed_response(state, runtime, generation, "pane-close-failed")
+    closed_response(
+        state,
+        runtime,
+        generation,
+        "pane-close-failed",
+        reply_workspace.as_deref(),
+    )
+}
+
+fn close_workspace(
+    request: &Request,
+    target: &str,
+    state: &mut SupervisorState,
+    inputs: &Inputs,
+    config: &Path,
+    runtime: &Path,
+    generation: &str,
+) -> Result<Response, Failure> {
+    reap_finished_sessions(state, inputs, config)
+        .map_err(|detail| failure("workspace-close-failed", detail))?;
+    let caller = caller_session(state, inputs, config, request)?;
+    let workspace = state
+        .workspaces
+        .as_mut()
+        .ok_or_else(|| failure("workspace-unavailable", "eonbase has no Eon workspace"))?;
+    let reply_workspace = workspace.caller_workspace_id(caller.as_deref())?;
+    let sessions = workspace.prepare_close_workspace(&request.id, caller.as_deref(), target)?;
+    stop_closed_sessions(state, sessions, "workspace-close-failed")?;
+    closed_response(
+        state,
+        runtime,
+        generation,
+        "workspace-close-failed",
+        reply_workspace.as_deref(),
+    )
 }
 
 /// Stops a close's terminals one at a time and prunes each confirmed end, so
@@ -1291,13 +1348,16 @@ fn closed_response(
     runtime: &Path,
     generation: &str,
     code: &str,
+    reply_workspace: Option<&str>,
 ) -> Result<Response, Failure> {
-    if !state.sessions.is_empty() {
-        return Ok(Response::Snapshot(
-            state
-                .workspace_snapshot()
-                .expect("a close keeps the workspace owner"),
-        ));
+    if !state.sessions.is_empty()
+        && state
+            .workspaces
+            .as_ref()
+            .is_some_and(WorkspaceSet::has_sessions)
+    {
+        let snapshot = state.workspace_snapshot_in(reply_workspace)?;
+        return Ok(Response::Snapshot(snapshot));
     }
     stop_generation_sessions(state, runtime, LaunchMode::Workspace)
         .map_err(|detail| failure(code, detail))?;
@@ -1847,6 +1907,12 @@ fn dispatch_control_request(
             (ControlResponse::Lifecycle(response), shutdown)
         }
         Request {
+            action: Action::Workspace(WorkspaceAction::CloseWorkspace { ref workspace }),
+            ..
+        } => closed(close_workspace(
+            &request, workspace, state, inputs, config, runtime, generation,
+        )),
+        Request {
             action: Action::Workspace(WorkspaceAction::CloseTab { ref tab }),
             ..
         } => closed(close_workspace_tab(
@@ -1874,6 +1940,10 @@ fn dispatch_control_request(
             };
             let Some(workspace) = &mut state.workspaces else {
                 unreachable!("reconciliation keeps the workspace owner");
+            };
+            let reply_workspace = match workspace.caller_workspace_id(caller.as_deref()) {
+                Ok(workspace) => workspace,
+                Err(error) => return (ControlResponse::Workspace(Response::Failure(error)), false),
             };
             // A queue jump is the FocusAttention of its target; an empty queue
             // is rejected and changes nothing (EON-C31).
@@ -1932,15 +2002,23 @@ fn dispatch_control_request(
             if result.is_ok()
                 && let (Some(action), Some(attention)) = (&accepted, &mut state.attention)
             {
-                attention.handled(action, jump, &workspace.snapshot(), state.venus.is_some());
+                let shown = workspace.snapshot();
+                if matches!(action, Action::ToggleSidebar)
+                    || reply_workspace
+                        .as_ref()
+                        .is_none_or(|id| *id == shown.workspace)
+                {
+                    attention.handled(action, jump, &shown, state.venus.is_some());
+                }
             }
             match result {
                 Ok(()) => (
-                    ControlResponse::Workspace(Response::Snapshot(
-                        state
-                            .workspace_snapshot()
-                            .expect("workspace dispatch retains its owner"),
-                    )),
+                    ControlResponse::Workspace(
+                        match state.workspace_snapshot_in(reply_workspace.as_deref()) {
+                            Ok(snapshot) => Response::Snapshot(snapshot),
+                            Err(error) => Response::Failure(error),
+                        },
+                    ),
                     false,
                 ),
                 Err(error) => (
@@ -2504,7 +2582,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v19::{
+        use eon_workspace_protocol::v20::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::{
@@ -2514,6 +2592,13 @@ mod tests {
 
         let root = temporary_directory();
         let snapshot = Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 64,
+            }],
             active_tab: "t1".into(),
             geometry: PopupGeometry {
                 side_margin: 8.0,
@@ -2543,7 +2628,7 @@ mod tests {
                 .collect(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v20::Sidebar::Open,
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
         let received = root.join("snapshot");

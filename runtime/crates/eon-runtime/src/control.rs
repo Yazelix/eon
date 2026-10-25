@@ -5,7 +5,7 @@ use super::{
     },
     workspace,
 };
-use eon_workspace_protocol::v19::{
+use eon_workspace_protocol::v20::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     decode_lifecycle_response, decode_request, decode_response, encode_lifecycle_response,
@@ -489,7 +489,8 @@ fn failure_status(code: &str) -> u8 {
     match code {
         "invalid-tab" | "malformed-action" => USAGE,
         "unknown-tab" | "unknown-pane" | "unknown-id" | "unknown-session" | "unknown-popup"
-        | "stale-popup" | "stale-target" | "unknown-generation" | "unknown-caller" => MISSING,
+        | "stale-popup" | "stale-target" | "unknown-generation" | "unknown-caller"
+        | "unknown-workspace" => MISSING,
         "missing-supervisor" | "supervisor-unavailable" => UNREACHABLE,
         _ => FAILED,
     }
@@ -590,6 +591,21 @@ mod tests {
         fs,
         os::unix::net::{UnixListener, UnixStream},
     };
+
+    #[test]
+    fn workspace_refusals_use_the_existing_exit_status_classes() {
+        for (code, expected) in [
+            ("unknown-workspace", 3),
+            ("ambiguous-workspace", 1),
+            ("workspace-limit", 1),
+            ("malformed-action", 2),
+        ] {
+            assert_eq!(
+                super::report_failure(&super::failure(code, "refused"), true).unwrap(),
+                expected
+            );
+        }
+    }
 
     #[test]
     fn listener_preserves_a_replacement_socket() {

@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- EONW moves to v20 for workspace summaries and workspace requests. Windows
+  started with older protocol versions need a restart before a newer CLI can
+  control them; workspace UI and CLI subcommands follow in later slices.
+  Eon's version moves to 0.1.3 with it, as every EONW change bumps it.
+
 - `eon config defaults` prints the build's configuration defaults as commented
   TOML, or as a nested object with `--json`, even when user configuration is broken.
 

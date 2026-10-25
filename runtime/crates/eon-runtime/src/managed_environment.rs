@@ -11,7 +11,7 @@ use std::{
     process::Command,
 };
 
-use eon_workspace_protocol::v19::{
+use eon_workspace_protocol::v20::{
     ALT, CTRL, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry, SHIFT, SUPER,
     Shortcut,
 };

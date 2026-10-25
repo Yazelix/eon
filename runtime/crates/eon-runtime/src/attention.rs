@@ -7,7 +7,7 @@ use super::{
     sessions::{self, ProgramStatusRead, RunningSession},
     workspace::is_directory_picker_session,
 };
-use eon_workspace_protocol::v19::{
+use eon_workspace_protocol::v20::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
@@ -490,7 +490,9 @@ impl Attention {
     /// already shows the newly focused terminal's raises as seen.
     pub(super) fn present(&mut self, snapshot: &mut Snapshot, attached: bool, now: Instant) {
         let (targets, focus) = targets(snapshot);
-        self.observe(focus, attached);
+        if snapshot.workspace == snapshot.active_workspace {
+            self.observe(focus, attached);
+        }
         let attention = |id: &str| {
             let target = targets.iter().find(|target| target.id == id)?;
             let shown = self.shown(target, now)?;
@@ -548,7 +550,7 @@ impl Attention {
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v19::{Column, Pane, Popup, PopupGeometry, Tab};
+    use eon_workspace_protocol::v20::{Column, Pane, Popup, PopupGeometry, Tab};
     use std::{fs, thread};
 
     /// A record created at its change `changed`.
@@ -623,6 +625,13 @@ mod tests {
 
     fn snapshot(active: &str, tabs: Vec<Tab>) -> Snapshot {
         Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: tabs.len(),
+            }],
             active_tab: active.into(),
             geometry: PopupGeometry {
                 side_margin: 0.0,
@@ -1071,6 +1080,42 @@ mod tests {
             vec![record("a", Error, Some(Blocked), 4)],
         );
         assert_eq!(check(&attention, "s1"), Some(State::Error));
+    }
+
+    #[test]
+    fn a_hidden_caller_reply_does_not_observe_its_terminal() {
+        let mut hidden = snapshot("t", vec![tab("t", &["hidden"], &[], None)]);
+        hidden.active_workspace = "w2".into();
+        let (targets, _) = targets(&hidden);
+        let mut attention = Attention::new(true);
+        let now = Instant::now();
+        attention.observe(Some("shown".into()), true);
+        attention.apply(
+            &targets,
+            "hidden",
+            "run",
+            status(1, vec![record("a", Done, None, 1)]),
+            now,
+        );
+        attention.present(&mut hidden, true, now);
+        assert_eq!(
+            hidden.tabs[0].columns[0].panes[0]
+                .attention
+                .as_ref()
+                .unwrap()
+                .state,
+            State::Finished
+        );
+        hidden.active_workspace = hidden.workspace.clone();
+        attention.present(&mut hidden, true, now);
+        assert_eq!(
+            hidden.tabs[0].columns[0].panes[0]
+                .attention
+                .as_ref()
+                .unwrap()
+                .state,
+            State::Idle
+        );
     }
 
     #[test]

@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v19::{
+use eon_workspace_protocol::v20::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
@@ -1045,9 +1045,18 @@ fn workspace_action(socket: &Path, id: &str, action: Action) -> Response {
 }
 
 fn protocol_action(socket: &Path, id: &str, action: ProtocolAction) -> Response {
+    protocol_action_from(socket, id, None, action)
+}
+
+fn protocol_action_from(
+    socket: &Path,
+    id: &str,
+    caller: Option<&str>,
+    action: ProtocolAction,
+) -> Response {
     let request = encode_request(&Request {
         id: id.into(),
-        caller: None,
+        caller: caller.map(str::to_owned),
         action,
     })
     .unwrap();
@@ -1240,6 +1249,13 @@ printf '/selected-\377\n' > "$4"
         }
     );
     let response = encode_response(&Response::Snapshot(Snapshot {
+        workspace: "w1".into(),
+        active_workspace: "w1".into(),
+        workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+            id: "w1".into(),
+            name: None,
+            tab_count: 1,
+        }],
         active_tab: "t1".into(),
         geometry: PopupGeometry {
             side_margin: 0.0,
@@ -1267,7 +1283,7 @@ printf '/selected-\377\n' > "$4"
         }],
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v19::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v20::Sidebar::Open,
     }))
     .unwrap();
     stream.write_all(&response).unwrap();
@@ -2846,6 +2862,192 @@ fn eonbase_replaces_exact_residue_after_its_supervisor_and_session_die() {
     assert!(stopped.status.success(), "{}", stdout(&stopped));
     wait_for_successful_exit(&mut second);
     assert!(!generation.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let fail = root.join("fail-stop-once");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = eon_command(&binary)
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .env("EON_TEST_FAIL_STOP_ONCE", &fail)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess { child, stop };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for(&control);
+    let caller = |endpoint: &Path| {
+        let environment = fs::read(format!(
+            "/proc/{}/environ",
+            live_identity(endpoint).process_id
+        ))
+        .unwrap();
+        environment
+            .split(|byte| *byte == 0)
+            .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+            .map(|token| String::from_utf8(token.to_vec()).unwrap())
+            .unwrap()
+    };
+    let first = caller(&generation.join("orbit.sock"));
+    let snapshot = |response| match response {
+        Response::Snapshot(snapshot) => snapshot,
+        other => panic!("expected a workspace: {other:?}"),
+    };
+    let original = snapshot(workspace_action(
+        &control,
+        "second-pane",
+        Action::CreatePane { focus: true },
+    ));
+    let second = caller(&generation.join("session-2.sock"));
+    let created = snapshot(protocol_action_from(
+        &control,
+        "new",
+        Some(&first),
+        ProtocolAction::Workspace(Action::NewWorkspace {
+            name: Some("other".into()),
+            focus: true,
+        }),
+    ));
+    assert_eq!(
+        (
+            created.workspace.as_str(),
+            created.active_workspace.as_str()
+        ),
+        ("w1", "w2")
+    );
+    assert_eq!(created.tabs, original.tabs);
+    assert_eq!(created.workspaces.len(), 2);
+    let shown = snapshot(workspace_action(&control, "shown", Action::Inspect));
+    assert_eq!(shown.workspace, "w2");
+    let foreign_tab = protocol_action_from(
+        &control,
+        "foreign-tab",
+        Some(&first),
+        ProtocolAction::Workspace(Action::SetTabDirectory {
+            tab: shown.active_tab.clone(),
+            directory: root.as_os_str().as_bytes().to_vec(),
+        }),
+    );
+    assert!(matches!(foreign_tab, Response::Failure(error) if error.code == "unknown-tab"));
+    let renamed = snapshot(protocol_action_from(
+        &control,
+        "rename-caller",
+        Some(&first),
+        ProtocolAction::Workspace(Action::RenameWorkspace {
+            workspace: None,
+            name: "original".into(),
+        }),
+    ));
+    assert_eq!(renamed.workspaces[0].name.as_deref(), Some("original"));
+    let switched = snapshot(workspace_action(
+        &control,
+        "switch",
+        Action::SwitchWorkspace {
+            workspace: "original".into(),
+        },
+    ));
+    assert_eq!(switched.workspace, "w1");
+    assert_eq!(
+        snapshot(workspace_action(
+            &control,
+            "same",
+            Action::SwitchWorkspace {
+                workspace: "w1".into()
+            }
+        ))
+        .tabs,
+        switched.tabs
+    );
+    snapshot(workspace_action(
+        &control,
+        "back",
+        Action::SwitchWorkspace {
+            workspace: "w2".into(),
+        },
+    ));
+    let inspected = snapshot(protocol_action_from(
+        &control,
+        "inspect-caller",
+        Some(&first),
+        ProtocolAction::Workspace(Action::Inspect),
+    ));
+    assert_eq!(inspected.workspace, "w1");
+    assert_eq!(inspected.tabs, original.tabs);
+
+    // The first confirmed stop is pruned; the failing terminal and workspace remain.
+    fs::write(&fail, "session-2").unwrap();
+    assert!(
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: "w1".into() }), Response::Failure(error) if error.code == "workspace-close-failed" && error.detail.contains("injected stop failure"))
+    );
+    let remaining = snapshot(protocol_action_from(
+        &control,
+        "remaining",
+        Some(&second),
+        ProtocolAction::Workspace(Action::Inspect),
+    ));
+    assert_eq!(remaining.workspace, "w1");
+    assert_eq!(
+        remaining.tabs[0]
+            .panes()
+            .map(|pane| pane.id.as_str())
+            .collect::<Vec<_>>(),
+        ["p2"]
+    );
+    assert_eq!(remaining.active_workspace, "w2");
+    assert!(
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: "w1".into() }), Response::Failure(error) if error.code == "duplicate-request")
+    );
+    let closed = snapshot(protocol_action_from(
+        &control,
+        "retry-close",
+        Some(&second),
+        ProtocolAction::Workspace(Action::CloseWorkspace {
+            workspace: "w1".into(),
+        }),
+    ));
+    assert_eq!(
+        closed.workspace, "w2",
+        "a removed caller workspace falls back to the shown survivor"
+    );
+    assert_eq!(
+        closed.tabs, shown.tabs,
+        "closing a hidden workspace leaves shown terminals alone"
+    );
+    assert_eq!(closed.workspaces.len(), 1);
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    assert!(
+        matches!(protocol_action_from(&control, "stale", Some(&second), ProtocolAction::Workspace(Action::Inspect)), Response::Failure(error) if error.code == "unknown-caller")
+    );
+    assert!(matches!(
+        workspace_action(
+            &control,
+            "last",
+            Action::CloseWorkspace {
+                workspace: "w2".into()
+            }
+        ),
+        Response::Ended(_)
+    ));
+    wait_for_successful_exit(&mut supervisor.child);
+    assert!(!control.exists());
     fs::remove_dir_all(root).unwrap();
 }
 

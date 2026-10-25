@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v19::{
+use eon_workspace_protocol::v20::{
     self as workspace, Action as WorkspaceAction, Request as WorkspaceRequest,
     Response as WorkspaceResponse,
 };
@@ -54,6 +54,8 @@ pub struct Transport {
 }
 
 /// One complete result from the Eon-owned workspace request boundary.
+// The queue holds at most 128 events; snapshot payloads are already heap-owned.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkspaceEvent {
     Response(WorkspaceResponse),
@@ -66,7 +68,7 @@ pub enum WorkspaceEvent {
     },
 }
 
-/// Bounded semantic-action handle for EONW v19.
+/// Bounded semantic-action handle for EONW v20.
 pub struct WorkspaceTransport {
     actions: mpsc::SyncSender<(WorkspaceAction, u64)>,
     events: Arc<WorkspaceEventQueue>,
@@ -760,7 +762,7 @@ fn protocol_loss(error: session::Error) -> TransportEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v19::{
+    use eon_workspace_protocol::v20::{
         InvokeIntent, Pane, Popup, PopupEntry, Shortcut, Snapshot, Tab,
     };
     use orbit_protocol::{
@@ -1231,6 +1233,7 @@ mod tests {
         let snapshot = WorkspaceResponse::Snapshot(workspace_snapshot());
         let mut popup = workspace_snapshot();
         popup.tabs.push(second_workspace_tab());
+        popup.workspaces[0].tab_count = popup.tabs.len();
         popup.tabs[0].selected_popup = Some("u1".into());
         let mut inactive_popup = popup.clone();
         inactive_popup.active_tab = "t2".into();
@@ -1332,6 +1335,7 @@ mod tests {
         let mut second = first.clone();
         second.active_tab = "t2".into();
         second.tabs.push(second_workspace_tab());
+        second.workspaces[0].tab_count = second.tabs.len();
         let snapshots = [first, second];
         let expected = snapshots.clone();
         let server = thread::spawn(move || {
@@ -1463,6 +1467,13 @@ mod tests {
 
     fn workspace_snapshot() -> Snapshot {
         Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 1,
+            }],
             active_tab: "t1".into(),
             tabs: vec![Tab {
                 pending: false,
@@ -1477,7 +1488,7 @@ mod tests {
                 id: "t1".into(),
                 directory: b"/tmp/eon".to_vec(),
                 selected_pane: Some("pane-1".into()),
-                columns: vec![eon_workspace_protocol::v19::Column {
+                columns: vec![eon_workspace_protocol::v20::Column {
                     panes: vec![Pane {
                         id: "pane-1".into(),
                         session: "session-1".into(),
@@ -1489,7 +1500,7 @@ mod tests {
                 }],
                 attention_rollup: None,
             }],
-            geometry: eon_workspace_protocol::v19::PopupGeometry {
+            geometry: eon_workspace_protocol::v20::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1503,7 +1514,7 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v20::Sidebar::Open,
         }
     }
 
@@ -1515,7 +1526,7 @@ mod tests {
             id: "t2".into(),
             directory: b"/tmp/nova".to_vec(),
             selected_pane: Some("pane-2".into()),
-            columns: vec![eon_workspace_protocol::v19::Column {
+            columns: vec![eon_workspace_protocol::v20::Column {
                 panes: vec![Pane {
                     id: "pane-2".into(),
                     session: "session-2".into(),

@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v19 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v20 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -6,7 +6,7 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 19;
+pub const VERSION: u16 = 20;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -16,6 +16,9 @@ const MAX_VERSION_BYTES: usize = 128;
 const MAX_COMPONENT_REPORT_BYTES: usize = 32 * 1024;
 pub const MAX_DETAIL_BYTES: usize = 1024;
 pub const MAX_TABS: usize = 64;
+pub const MAX_WORKSPACES: usize = 32;
+pub const MAX_WORKSPACE_NAME_CHARS: usize = 64;
+const MAX_WORKSPACE_NAME_BYTES: usize = MAX_WORKSPACE_NAME_CHARS * 4;
 pub const MAX_SESSIONS: usize = 256;
 pub const MAX_DIRECTORY_BYTES: usize = 4096;
 pub const MAX_COLUMNS: usize = 4;
@@ -79,6 +82,20 @@ pub enum WorkspaceAction {
         workspace: bool,
     },
     CreateTab,
+    NewWorkspace {
+        name: Option<String>,
+        focus: bool,
+    },
+    SwitchWorkspace {
+        workspace: String,
+    },
+    RenameWorkspace {
+        workspace: Option<String>,
+        name: String,
+    },
+    CloseWorkspace {
+        workspace: String,
+    },
     /// `focus: false` adds the pane without selecting it or dismissing the
     /// tab's popup.
     CreatePane {
@@ -395,8 +412,19 @@ pub struct ClaudeQuota {
     pub windows: Vec<QuotaWindow>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceInfo {
+    pub id: String,
+    pub name: Option<String>,
+    pub tab_count: usize,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
+    /// The workspace described by tabs/active_tab; caller replies may project a hidden one.
+    pub workspace: String,
+    pub active_workspace: String,
+    pub workspaces: Vec<WorkspaceInfo>,
     pub active_tab: String,
     pub geometry: PopupGeometry,
     pub entries: Vec<PopupEntry>,
@@ -633,7 +661,26 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
 }
 
 fn encode_workspace_action(payload: &mut Encoder, action: &WorkspaceAction) -> Result<()> {
+    validate_workspace_request(action)?;
     match action {
+        WorkspaceAction::NewWorkspace { name, focus } => {
+            payload.byte(32);
+            encode_optional(payload, name);
+            payload.byte(u8::from(*focus));
+        }
+        WorkspaceAction::SwitchWorkspace { workspace } => {
+            payload.byte(33);
+            payload.string(workspace);
+        }
+        WorkspaceAction::RenameWorkspace { workspace, name } => {
+            payload.byte(34);
+            encode_optional(payload, workspace);
+            payload.string(name);
+        }
+        WorkspaceAction::CloseWorkspace { workspace } => {
+            payload.byte(35);
+            payload.string(workspace);
+        }
         WorkspaceAction::Inspect => payload.byte(0),
         WorkspaceAction::CreateTab => payload.byte(1),
         WorkspaceAction::CreatePane { focus } => {
@@ -787,7 +834,21 @@ fn decode_workspace_action(decoder: &mut Decoder<'_>, tag: u8) -> Result<Workspa
         2 => Direction::Up,
         _ => Direction::Down,
     };
-    Ok(match tag {
+    let action = match tag {
+        32 => WorkspaceAction::NewWorkspace {
+            name: decode_workspace_optional(decoder)?,
+            focus: decode_bool(decoder, "workspace focus")?,
+        },
+        33 => WorkspaceAction::SwitchWorkspace {
+            workspace: decoder.string("workspace", MAX_WORKSPACE_NAME_BYTES)?,
+        },
+        34 => WorkspaceAction::RenameWorkspace {
+            workspace: decode_workspace_optional(decoder)?,
+            name: decoder.string("workspace name", MAX_WORKSPACE_NAME_BYTES)?,
+        },
+        35 => WorkspaceAction::CloseWorkspace {
+            workspace: decoder.string("workspace", MAX_WORKSPACE_NAME_BYTES)?,
+        },
         0 => WorkspaceAction::Inspect,
         1 => WorkspaceAction::CreateTab,
         2 => WorkspaceAction::CreatePane {
@@ -828,6 +889,47 @@ fn decode_workspace_action(decoder: &mut Decoder<'_>, tag: u8) -> Result<Workspa
                 value,
             });
         }
+    };
+    validate_workspace_request(&action)?;
+    Ok(action)
+}
+
+/// Validate a workspace display name or selector, in Unicode characters rather than bytes.
+pub fn validate_workspace_name(name: &str) -> Result<()> {
+    nonempty("workspace name", name, MAX_WORKSPACE_NAME_BYTES)?;
+    if name.chars().count() > MAX_WORKSPACE_NAME_CHARS || name.chars().any(char::is_control) {
+        return Err(Error::InvalidValue {
+            field: "workspace name",
+        });
+    }
+    Ok(())
+}
+
+fn validate_workspace_request(action: &WorkspaceAction) -> Result<()> {
+    match action {
+        WorkspaceAction::NewWorkspace {
+            name: Some(name), ..
+        } => validate_workspace_name(name)?,
+        WorkspaceAction::SwitchWorkspace { workspace }
+        | WorkspaceAction::CloseWorkspace { workspace } => validate_workspace_name(workspace)?,
+        WorkspaceAction::RenameWorkspace { workspace, name } => {
+            if let Some(workspace) = workspace {
+                validate_workspace_name(workspace)?;
+            }
+            if !name.is_empty() {
+                validate_workspace_name(name)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn decode_workspace_optional(decoder: &mut Decoder<'_>) -> Result<Option<String>> {
+    Ok(if decode_bool(decoder, "workspace name")? {
+        Some(decoder.string("workspace name", MAX_WORKSPACE_NAME_BYTES)?)
+    } else {
+        None
     })
 }
 
@@ -895,7 +997,7 @@ impl From<&Tab> for WireTab {
 }
 
 /// A snapshot payload is the column layout, the workspace with flattened
-/// panes, then the Codex and Claude quotas.
+/// panes, then the Codex and Claude quotas, sidebar and workspace summaries.
 pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
     let mut payload = Encoder::default();
     let kind = match response {
@@ -923,6 +1025,7 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             encode_quota(&mut payload, snapshot.codex_quota.as_ref());
             encode_quota(&mut payload, claude.as_ref());
             encode_sidebar(&mut payload, snapshot.sidebar);
+            encode_workspace_set(&mut payload, snapshot);
             SNAPSHOT
         }
         Response::Failure(failure) => {
@@ -982,6 +1085,16 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
             });
         }
     };
+    snapshot.workspace = decoder.string("workspace", MAX_ID_BYTES)?;
+    snapshot.active_workspace = decoder.string("active workspace", MAX_ID_BYTES)?;
+    let count = decoder.count("workspaces", MAX_WORKSPACES)?;
+    for _ in 0..count {
+        snapshot.workspaces.push(WorkspaceInfo {
+            id: decoder.string("workspace id", MAX_ID_BYTES)?,
+            name: decode_workspace_optional(&mut decoder)?,
+            tab_count: decoder.count("workspace tabs", MAX_TABS)?,
+        });
+    }
     validate_workspace(&snapshot, &wire_tabs)?;
     validate_quota(snapshot.codex_quota.as_ref())?;
     validate_claude(claude.as_ref())?;
@@ -1031,6 +1144,17 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         snapshot.tabs.push(tab);
     }
     Ok(Response::Snapshot(snapshot))
+}
+
+fn encode_workspace_set(encoder: &mut Encoder, snapshot: &Snapshot) {
+    encoder.string(&snapshot.workspace);
+    encoder.string(&snapshot.active_workspace);
+    encoder.count(snapshot.workspaces.len());
+    for workspace in &snapshot.workspaces {
+        encoder.string(&workspace.id);
+        encode_optional(encoder, &workspace.name);
+        encoder.count(workspace.tab_count);
+    }
 }
 
 fn encode_workspace(encoder: &mut Encoder, snapshot: &Snapshot, tabs: &[WireTab]) {
@@ -1140,6 +1264,9 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
         });
     }
     let snapshot = Snapshot {
+        workspace: String::new(),
+        active_workspace: String::new(),
+        workspaces: Vec::new(),
         active_tab,
         geometry,
         entries,
@@ -1281,6 +1408,51 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
     if !tabs.iter().any(|tab| tab.id == snapshot.active_tab) {
         return Err(Error::InvalidSnapshot {
             field: "active tab",
+        });
+    }
+    if snapshot.workspaces.is_empty() || snapshot.workspaces.len() > MAX_WORKSPACES {
+        return Err(Error::InvalidSnapshot {
+            field: "workspaces",
+        });
+    }
+    let mut workspace_ids = HashSet::new();
+    for workspace in &snapshot.workspaces {
+        let number = workspace.id.strip_prefix('w').unwrap_or("");
+        if number.starts_with('0')
+            || !number.bytes().all(|byte| byte.is_ascii_digit())
+            || number
+                .parse::<u64>()
+                .ok()
+                .filter(|number| *number > 0)
+                .is_none()
+            || !workspace_ids.insert(workspace.id.as_str())
+        {
+            return Err(Error::InvalidSnapshot {
+                field: "workspace id",
+            });
+        }
+        if let Some(name) = &workspace.name {
+            validate_workspace_name(name)?;
+        }
+        if workspace.tab_count == 0 || workspace.tab_count > MAX_TABS {
+            return Err(Error::InvalidSnapshot {
+                field: "workspace tabs",
+            });
+        }
+    }
+    if !workspace_ids.contains(snapshot.active_workspace.as_str()) {
+        return Err(Error::InvalidSnapshot {
+            field: "active workspace",
+        });
+    }
+    if snapshot
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == snapshot.workspace)
+        .is_none_or(|workspace| workspace.tab_count != tabs.len())
+    {
+        return Err(Error::InvalidSnapshot {
+            field: "workspace projection",
         });
     }
     Ok(())
@@ -2035,6 +2207,116 @@ mod tests {
 
     /// Hidden and inactive popups, a popup-only tab, two pending tabs, columns,
     /// attention of every shape and both quotas.
+    #[test]
+    fn workspace_set_requests_are_supported() {
+        let mut payload = Encoder::default();
+        payload.string("new-workspace");
+        encode_optional(&mut payload, &None);
+        payload.byte(32);
+        encode_optional(&mut payload, &None);
+        payload.byte(0);
+        let bytes = frame(REQUEST, payload.bytes).unwrap();
+        assert!(
+            decode_request(&bytes).is_ok(),
+            "the new-workspace action must decode"
+        );
+    }
+
+    #[test]
+    fn workspace_set_fields_and_requests_round_trip_with_bounds() {
+        let name = "🦀".repeat(MAX_WORKSPACE_NAME_CHARS);
+        for action in [
+            WorkspaceAction::NewWorkspace {
+                name: None,
+                focus: false,
+            },
+            WorkspaceAction::NewWorkspace {
+                name: Some(name.clone()),
+                focus: true,
+            },
+            WorkspaceAction::SwitchWorkspace {
+                workspace: name.clone(),
+            },
+            WorkspaceAction::RenameWorkspace {
+                workspace: None,
+                name: name.clone(),
+            },
+            WorkspaceAction::RenameWorkspace {
+                workspace: Some("w1".into()),
+                name: String::new(),
+            },
+            WorkspaceAction::CloseWorkspace {
+                workspace: "w1".into(),
+            },
+        ] {
+            let request = Request {
+                id: "workspaces".into(),
+                caller: Some("session-1".into()),
+                action: Action::Workspace(action),
+            };
+            let bytes = encode_request(&request).unwrap();
+            assert_eq!(decode_request(&bytes).unwrap(), request);
+            let mut old = bytes;
+            old[4..6].copy_from_slice(&(VERSION - 1).to_le_bytes());
+            assert!(decode_request(&old).is_err());
+        }
+        for name in [String::new(), "a".repeat(65), "🦀".repeat(65), "a\n".into()] {
+            let request = Request {
+                id: "bad".into(),
+                caller: None,
+                action: Action::Workspace(WorkspaceAction::NewWorkspace {
+                    name: Some(name.clone()),
+                    focus: false,
+                }),
+            };
+            assert!(encode_request(&request).is_err());
+            let mut payload = Encoder::default();
+            payload.string("bad");
+            encode_optional(&mut payload, &None);
+            payload.byte(32);
+            encode_optional(&mut payload, &Some(name));
+            payload.byte(0);
+            assert!(decode_request(&frame(REQUEST, payload.bytes).unwrap()).is_err());
+        }
+        let mut state = snapshot();
+        state.workspaces = (1..=MAX_WORKSPACES)
+            .map(|index| WorkspaceInfo {
+                id: format!("w{index}"),
+                name: Some(name.clone()),
+                tab_count: 4,
+            })
+            .collect();
+        state.workspace = "w2".into();
+        state.active_workspace = "w1".into();
+        let response = Response::Snapshot(state.clone());
+        let bytes = encode_response(&response).unwrap();
+        assert_eq!(decode_response(&bytes).unwrap(), response);
+        for mutate in [
+            (|s: &mut Snapshot| s.workspaces.clear()) as fn(&mut Snapshot),
+            |s| {
+                s.workspaces.push(s.workspaces[0].clone());
+            },
+            |s| s.workspaces[0].id = "w0".into(),
+            |s| s.workspaces[0].id = "w01".into(),
+            |s| s.workspaces[0].name = Some("a".repeat(65)),
+            |s| s.workspaces[0].name = Some("a\n".into()),
+            |s| s.workspaces[0].name = Some(String::new()),
+            |s| s.workspaces[0].tab_count = 0,
+            |s| s.workspaces[0].tab_count = MAX_TABS + 1,
+            |s| s.workspaces[1].tab_count = 3,
+            |s| s.active_workspace = "w100".into(),
+            |s| s.workspace = "w100".into(),
+        ] {
+            let mut bad = state.clone();
+            mutate(&mut bad);
+            assert!(encode_response(&Response::Snapshot(bad.clone())).is_err());
+            assert!(decode_response(&forge(&bad)).is_err());
+        }
+        let mut old = bytes;
+        old[4..6].copy_from_slice(&(VERSION - 1).to_le_bytes());
+        assert!(decode_response(&old).is_err());
+    }
+
     fn snapshot() -> Snapshot {
         let entry = |id: &str, key: &str| PopupEntry {
             id: id.into(),
@@ -2098,6 +2380,13 @@ mod tests {
             record: None,
         });
         Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 4,
+            }],
             active_tab: "t1".into(),
             geometry: PopupGeometry {
                 side_margin: 8.5,
@@ -2149,6 +2438,7 @@ mod tests {
         let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
         encode_quota(&mut payload, claude.as_ref());
         encode_sidebar(&mut payload, snapshot.sidebar);
+        encode_workspace_set(&mut payload, snapshot);
         frame(SNAPSHOT, payload.bytes).unwrap()
     }
 
@@ -2231,14 +2521,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57130001000a00000002007231001202007431",
+                "454f4e57140001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57130001001000000002007231000c0200743104002f746d70",
+                "454f4e57140001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -2247,55 +2537,55 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571300010015000000020072310013020074310300676974010200753101",
+                "454f4e571400010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e571300010014000000020072310015020074310200753104002f746d70",
+                "454f4e571400010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e571300010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571400010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57130001000a00000002007231001702007032",
+                "454f4e57140001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571300010006000000020072310019",
+                "454f4e571400010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57130001000e00000002007231001a06002f746d702f61",
+                "454f4e57140001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57130001001000000002007231001b00020002006878010061",
+                "454f4e57140001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57130001000600000002007231001c",
+                "454f4e57140001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57130001000e00000002007231001d0200743102007032",
+                "454f4e57140001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57130001000600000002007231001e",
+                "454f4e57140001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57130001000600000002007231001f",
+                "454f4e57140001000600000002007231001f",
             ),
         ] {
             let request = Request {
@@ -2315,7 +2605,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57130001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e57140001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -2327,6 +2617,13 @@ mod tests {
         }
 
         let snapshot = Response::Snapshot(Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 1,
+            }],
             active_tab: "t1".into(),
             geometry: PopupGeometry {
                 side_margin: 8.0,
@@ -2403,7 +2700,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5713008100da0000000100020002000100010000000200743100000041",
+                    "454f4e5714008100eb0000000100020002000100010000000200743100000041",
                     "000080400100030067697403004769740404004b65794701000200743104002f",
                     "746d700001020070330102007531030002007031030073703103002f70310100",
                     "02007032030073703203002f7032010002007033030073703303002f70330101",
@@ -2411,14 +2708,15 @@ mod tests {
                     "01007401006d0100000000000000000200010002007531",
                     "0300676974030073753103002f753100010100640000000000000001002c0100",
                     "002a01f40100000000000001015a00000000000000010060270000070001",
+                    "0200773102007731010002007731000100",
                 ),
             ),
-            (failure, "454f4e57130082000a00000004006275737902006e6f"),
+            (failure, "454f4e57140082000a00000004006275737902006e6f"),
             (
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57130085000400000002006731",
+                "454f4e57140085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -2444,7 +2742,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e571300830026000000020067310500302e392e30130002006f6b010002",
+                    "454f4e571400830026000000020067310500302e392e30140002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -2453,7 +2751,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571300840006000000020067310000",
+                "454f4e571400840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -2762,10 +3060,10 @@ mod tests {
                 },
             ),
             (
-                &[32],
+                &[36],
                 Error::InvalidTag {
                     field: "action",
-                    value: 32,
+                    value: 36,
                 },
             ),
             (
@@ -3186,7 +3484,10 @@ mod tests {
             + MAX_TABS * (id + 2 + MAX_DIRECTORY_BYTES + 1 + 2 * (1 + id) + 2 + 2 + 1)
             + MAX_SESSIONS * (id + entry_id + id + 2 + MAX_ENDPOINT_BYTES + attention)
             + 2 * quota
-            + 1;
+            + 1
+            + 2 * id
+            + 2
+            + MAX_WORKSPACES * (id + 1 + 2 + MAX_WORKSPACE_NAME_BYTES + 2);
         assert!(upper_bound <= MAX_MESSAGE_BYTES, "{upper_bound}");
 
         let name = |prefix: &str, n: usize, length: usize| {
@@ -3270,6 +3571,13 @@ mod tests {
             })
             .collect();
         state.active_tab = state.tabs[0].id.clone();
+        state.workspaces = (1..=MAX_WORKSPACES)
+            .map(|index| WorkspaceInfo {
+                id: format!("w{index}"),
+                name: Some("🦀".repeat(MAX_WORKSPACE_NAME_CHARS)),
+                tab_count: MAX_TABS,
+            })
+            .collect();
         let response = Response::Snapshot(state.clone());
         let bytes = encode_response(&response).unwrap();
         assert!(bytes.len() <= upper_bound);
