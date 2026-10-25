@@ -2176,8 +2176,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   or environment variable, changes a documented exit status or a default
   shortcut's action, drops a 1.x lifecycle codec, or stops live terminals on
   install breaks this contract; such a change waits for 2.0. Unknown
-  configuration keys still fail, so typos stay visible. A configuration written
-  for a newer 1.x may fail in an older one.
+  configuration keys are ignored with a warning naming the key and file, so
+  typos stay visible. A configuration written for a newer 1.x may still fail
+  in an older one when it gives a known key a value the older release does
+  not accept.
 - **Owner:** Eon owns the promise, the release review against it and the
   managed command names its Nix composition installs. Eon Runtime owns the
   commands, JSON, exit statuses, lifecycle codecs and configuration parsing
