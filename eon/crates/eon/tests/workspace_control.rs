@@ -73,7 +73,7 @@ fn temporary_directory() -> PathBuf {
     path
 }
 
-fn executable(path: &Path, source: &str) {
+fn executable(path: &Path, source: impl AsRef<[u8]>) {
     // A concurrent test's forked child keeps this process's descriptors until it execs, and
     // exec fails with ETXTBSY while any writer is open, so a child process writes the script.
     let mut writer = Command::new("sh")
@@ -86,7 +86,7 @@ fn executable(path: &Path, source: &str) {
         .stdin
         .take()
         .unwrap()
-        .write_all(source.as_bytes())
+        .write_all(source.as_ref())
         .unwrap();
     assert!(writer.wait().unwrap().success());
 }
@@ -615,7 +615,7 @@ fn managed_orbit_executable(path: &Path) {
     let helper = std::env::current_exe().unwrap();
     executable(
         path,
-        &format!(
+        format!(
             "#!/bin/sh\nEON_TEST_MANAGED_ORBIT=1 exec '{}' --exact managed_orbit_helper --nocapture -- \"$@\"\n",
             helper.display()
         ),
@@ -1326,7 +1326,7 @@ printf '/selected-\377\n' > "$4"
         let _ = fs::remove_file(&browser_started);
         executable(
             &root.join("fzf"),
-            &format!(
+            format!(
                 "#!/bin/sh\nwhile [ ! -s \"$EON_TEST_HISTORY_PID\" ]; do sleep 0.01; done\n{finish}\n"
             ),
         );
@@ -2210,12 +2210,10 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
             }
         }
     }
-    // Inside an Eon terminal whose window has no supervisor of this build, a
-    // caller's command names an unknown caller and other commands miss their
-    // supervisor; both point to the terminal's own `eon`, not to starting one.
+    // No live owner for an opaque caller: all workspace commands refuse without fallback.
     for (arguments, status, code) in [
         (&["pane", "create", "--json"][..], 3, "unknown-caller"),
-        (&["workspace", "--json"], 4, "missing-supervisor"),
+        (&["workspace", "--json"], 3, "unknown-caller"),
     ] {
         let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
             .args(arguments)
@@ -2227,8 +2225,6 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
         assert_eq!(output.status.code(), Some(status), "{arguments:?}");
         let output = stdout(&output);
         assert!(output.contains(&format!("\"code\":\"{code}\"")), "{output}");
-        assert!(output.contains("(generation g1-"), "{output}");
-        assert!(output.contains("the terminal's own `eon`"), "{output}");
         assert!(!output.contains("run `eon` first"), "{output}");
     }
     // A control call creates no runtime or generation directory for a build
@@ -2244,8 +2240,8 @@ fn failure_kinds_exit_with_distinct_statuses_with_and_without_json() {
     // An existing directory that is not private still refuses the call.
     fs::set_permissions(&generations, fs::Permissions::from_mode(0o755)).unwrap();
     let unsafe_directory = run(&["workspace", "--json"]);
-    assert_eq!(unsafe_directory.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&unsafe_directory.stderr).contains("owned private directory"));
+    assert_eq!(unsafe_directory.status.code(), Some(4));
+    assert!(stdout(&unsafe_directory).contains("owned private directory"));
     fs::set_permissions(&generations, fs::Permissions::from_mode(0o700)).unwrap();
     // An unknown window is missing whether or not the windows directory exists.
     let windows = root.join("runtime").join("w");
@@ -2339,7 +2335,7 @@ fn rejected_native_startup_creates_no_session_in_either_product() {
     for response in ["exit 1", "printf wrong-v1", "exec cat >/dev/null"] {
         executable(
             &venus,
-            &format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$EON_TEST_VENUS_LOG\"\n{response}\n"),
+            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$EON_TEST_VENUS_LOG\"\n{response}\n"),
         );
         // A silent Venus uses the whole admission deadline, so one product covers it.
         let silent = response.starts_with("exec");
@@ -3008,7 +3004,7 @@ fn pane_rename_cli_sets_clears_and_reports_the_runtime_label() {
     ] {
         executable(
             &tools.join("fzf"),
-            &format!(
+            format!(
                 r#"#!/bin/sh
 case "$*" in
   *--bind=enter:print-query*) printf 'From Commands\0';;
@@ -3236,6 +3232,332 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     ));
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!control.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn workspace_target_failures_are_explicit_and_bounded() {
+    let root = temporary_directory();
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let config = root.join("config");
+    let runtime = root.join("runtime");
+    let id = "g1-00000000000000000000000000000001";
+    for (arguments, status) in [
+        (vec!["workspace", "--generation", id, "--json"], 3),
+        (vec!["workspace", "--window", "0000abcd", "--json"], 3),
+        (vec!["workspace", "--generation", "bad"], 2),
+        (vec!["workspace", "--window", "ABCDEFGH"], 2),
+        (vec!["workspace", "--window"], 2),
+        (vec!["versions", "--generation", id], 2),
+    ] {
+        assert_eq!(
+            invoke(binary, &runtime, &config, &arguments).status.code(),
+            Some(status),
+            "{arguments:?}"
+        );
+    }
+    assert!(!runtime.exists());
+    assert!(!config.exists());
+
+    // An older EONW cannot validate the opaque caller; never guess another owner.
+    let listener = generation_listener(&runtime, id);
+    let server = thread::spawn(move || {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().unwrap();
+            read_request(&mut stream);
+            let mut header = encode_response(&Response::Failure(ProtocolFailure {
+                code: "unsupported-version".into(),
+                detail: "old supervisor".into(),
+            }))
+            .unwrap();
+            header[4..6].copy_from_slice(&(VERSION - 1).to_le_bytes());
+            let _ = stream.write_all(&header);
+        }
+    });
+    for caller in [None, Some("session-1.unknown")] {
+        let mut command = eon_command(binary);
+        if let Some(caller) = caller {
+            command.env("EON_TERMINAL", caller);
+        }
+        let output = command
+            .args(["workspace", "--generation", id, "--json"])
+            .env("EON_RUNTIME_DIR", &runtime)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(4), "{}", stdout(&output));
+        assert!(stdout(&output).contains(id));
+        assert!(stdout(&output).contains("EONW"));
+        assert!(stdout(&output).contains("the terminal's own `eon`"));
+    }
+    server.join().unwrap();
+    fs::remove_dir_all(&runtime).unwrap();
+
+    fs::create_dir_all(runtime.join("generations")).unwrap();
+    for path in [&runtime, &runtime.join("generations")] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    overfill_generation_directory(&runtime);
+    fs::create_dir(runtime.join("generations").join(format!("g1-{:032x}", 256))).unwrap();
+    let output = eon_command(binary)
+        .args(["workspace", "--json"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_TERMINAL", "session-1.unknown")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(4), "{}", stdout(&output));
+    assert!(stdout(&output).contains("256-entry inspection limit"));
+    assert_eq!(
+        fs::read_dir(runtime.join("generations")).unwrap().count(),
+        257
+    );
+    assert!(!config.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn workspace_control_follows_the_exact_caller_across_generations() {
+    let root = temporary_directory();
+    // The package harness uses /dev/shm; leave room for a window's management sockets.
+    let runtime = root.join("r");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    // A second immutable assembly exercises the real supervisor without a second build.
+    let previous_binary = root.join("previous-eon");
+    let mut bytes = fs::read(binary).unwrap();
+    let digest = env!("EON_WORKSPACE_DIGEST").as_bytes();
+    let offsets = bytes
+        .windows(digest.len())
+        .enumerate()
+        .filter_map(|(offset, value)| (value == digest).then_some(offset))
+        .collect::<Vec<_>>();
+    assert!(!offsets.is_empty());
+    for offset in offsets {
+        bytes[offset] = if bytes[offset] == b'0' { b'1' } else { b'0' };
+    }
+    executable(&previous_binary, bytes);
+    let launch = |binary: &Path, name: &str, namespace: &Path| {
+        let stop = root.join(name);
+        let child = eon_command(binary)
+            .arg("run")
+            .env("EON_RUNTIME_DIR", namespace)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        TestProcess { child, stop }
+    };
+    let mut previous = launch(&previous_binary, "previous-stop", &runtime);
+    let previous_runtime = generation_runtime(&runtime);
+    let previous_control = previous_runtime.join("eon.sock");
+    wait_for(&previous_control);
+    let endpoint = previous_runtime.join("orbit.sock");
+    wait_for(&endpoint);
+    let environment = fs::read(format!(
+        "/proc/{}/environ",
+        live_identity(&endpoint).process_id
+    ))
+    .unwrap();
+    let caller = environment
+        .split(|byte| *byte == 0)
+        .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+        .unwrap();
+    let mut current = launch(binary, "current-stop", &runtime);
+    let current_id = stdout(&invoke(binary, &runtime, &config, &["versions"]))
+        .split_whitespace()
+        .nth(2)
+        .unwrap()
+        .to_owned();
+    let current_control = runtime
+        .join("generations")
+        .join(&current_id)
+        .join("eon.sock");
+    wait_for(&current_control);
+    assert_ne!(current_control, previous_control);
+    let from = |arguments: &[&str]| {
+        eon_command(binary)
+            .args(arguments)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_TERMINAL", OsStr::from_bytes(caller))
+            .output()
+            .unwrap()
+    };
+    assert!(
+        matches!(workspace_action(&previous_control, "hide-caller", Action::NewWorkspace { name: Some("shown".into()), focus: true }), Response::Snapshot(snapshot) if snapshot.workspace == "w2")
+    );
+    let inspected = from(&["workspace", "--json"]);
+    assert!(inspected.status.success(), "{}", stdout(&inspected));
+    let described: serde_json::Value = serde_json::from_slice(&inspected.stdout).unwrap();
+    let created = from(&["pane", "create", "--no-focus", "--json"]);
+    assert!(
+        created.status.success(),
+        "inspection={described}; mutation={}",
+        stdout(&created)
+    );
+    assert_eq!(
+        described["tabs"][0]["panes"][0]["endpoint"],
+        endpoint.to_str().unwrap()
+    );
+    let previous_id = previous_runtime.file_name().unwrap().to_str().unwrap();
+    assert_eq!(described["generation"], previous_id);
+    assert_eq!(described["window"], serde_json::Value::Null);
+    assert_eq!(described["workspace"], "w1");
+    let older = generation_listener(&runtime, "g1-00000000000000000000000000000002");
+    let older = thread::spawn(move || {
+        let (mut stream, _) = older.accept().unwrap();
+        read_request(&mut stream);
+        let mut response = encode_response(&Response::Failure(ProtocolFailure {
+            code: "unsupported-version".into(),
+            detail: "older unrelated build".into(),
+        }))
+        .unwrap();
+        response[4..6].copy_from_slice(&(VERSION - 1).to_le_bytes());
+        let _ = stream.write_all(&response);
+    });
+    let still_owned = from(&["workspace", "--json"]);
+    assert!(still_owned.status.success(), "{}", stdout(&still_owned));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&still_owned.stdout).unwrap()["generation"],
+        previous_id
+    );
+    older.join().unwrap();
+    for arguments in [
+        vec!["workspace", "--generation", previous_id, "--json"],
+        vec!["--generation", previous_id, "workspace", "--json"],
+    ] {
+        let outside = invoke(binary, &runtime, &config, &arguments);
+        assert!(outside.status.success(), "{}", stdout(&outside));
+        let result: serde_json::Value = serde_json::from_slice(&outside.stdout).unwrap();
+        assert_eq!(result["generation"], previous_id);
+        assert_eq!(result["workspace"], "w2");
+        let inside = from(&arguments);
+        assert!(inside.status.success(), "{}", stdout(&inside));
+        let result: serde_json::Value = serde_json::from_slice(&inside.stdout).unwrap();
+        assert_eq!(result["workspace"], "w1");
+    }
+    let wrong = from(&[
+        "pane",
+        "create",
+        "--generation",
+        &current_id,
+        "--no-focus",
+        "--json",
+    ]);
+    assert_eq!(wrong.status.code(), Some(3), "{}", stdout(&wrong));
+    let human = from(&["workspace"]);
+    assert!(human.status.success());
+    assert!(stdout(&human).starts_with(&format!(
+        "generation {previous_id}\nwindow default\nworkspace w1\n"
+    )));
+    for token in [
+        String::from_utf8(caller.to_vec()).unwrap() + "0",
+        "session-1".into(),
+        "not a terminal".into(),
+        "".into(),
+    ] {
+        for arguments in [
+            vec!["workspace", "--json"],
+            vec!["pane", "create", "--generation", &current_id, "--json"],
+        ] {
+            let stale = eon_command(binary)
+                .args(arguments)
+                .env("EON_RUNTIME_DIR", &runtime)
+                .env("EON_TERMINAL", &token)
+                .output()
+                .unwrap();
+            assert_eq!(stale.status.code(), Some(3), "{}", stdout(&stale));
+        }
+    }
+    for (socket, count) in [(&previous_control, 2), (&current_control, 1)] {
+        let Response::Snapshot(snapshot) = protocol_action_from(
+            socket,
+            "verify-routing",
+            (socket == &previous_control).then(|| std::str::from_utf8(caller).unwrap()),
+            ProtocolAction::Workspace(Action::Inspect),
+        ) else {
+            panic!("cannot inspect supervisor");
+        };
+        assert_eq!(snapshot.tabs[0].panes().count(), count);
+        assert_eq!(snapshot.tabs[0].selected_pane.as_deref(), Some("p1"));
+    }
+    let Response::Snapshot(shown) =
+        workspace_action(&previous_control, "shown-still", Action::Inspect)
+    else {
+        panic!("cannot inspect shown workspace");
+    };
+    assert_eq!(shown.workspace, "w2");
+    assert_eq!(shown.tabs[0].panes().count(), 1);
+    // Caller discovery also works when this build's supervisor has ended.
+    fs::write(&current.stop, "").unwrap();
+    wait_for_successful_exit(&mut current.child);
+    assert!(from(&["workspace", "--json"]).status.success());
+    let window_id = "0000abcd";
+    let window_root = runtime.join("w").join(window_id);
+    fs::create_dir(runtime.join("w")).unwrap();
+    fs::set_permissions(runtime.join("w"), fs::Permissions::from_mode(0o700)).unwrap();
+    let mut window = launch(&previous_binary, "window-stop", &window_root);
+    let window_runtime = generation_runtime(&window_root);
+    wait_for(&window_runtime.join("eon.sock"));
+    let outside = invoke(
+        binary,
+        &runtime,
+        &config,
+        &["workspace", "--window", window_id, "--json"],
+    );
+    assert!(outside.status.success(), "{}", stdout(&outside));
+    let result: serde_json::Value = serde_json::from_slice(&outside.stdout).unwrap();
+    assert_eq!(
+        result["generation"], previous_id,
+        "window-only selects its sole previous generation"
+    );
+    assert_eq!(result["window"], window_id);
+    let constrained = from(&["workspace", "--window", window_id, "--json"]);
+    assert_eq!(constrained.status.code(), Some(3));
+    let other_id = "g1-00000000000000000000000000000001";
+    let other = previous_supervisor(&window_root, other_id);
+    let ambiguous = invoke(
+        binary,
+        &runtime,
+        &config,
+        &["workspace", "--window", window_id, "--json"],
+    );
+    assert_eq!(ambiguous.status.code(), Some(1), "{}", stdout(&ambiguous));
+    assert!(stdout(&ambiguous).contains("--generation"));
+    let exact = invoke(
+        binary,
+        &runtime,
+        &config,
+        &[
+            "workspace",
+            "--window",
+            window_id,
+            "--generation",
+            previous_id,
+            "--json",
+        ],
+    );
+    assert!(exact.status.success(), "{}", stdout(&exact));
+    assert!(
+        invoke(binary, &window_root, &config, &["stop", other_id, "--json"])
+            .status
+            .success()
+    );
+    other.join().unwrap();
+    fs::write(&window.stop, "").unwrap();
+    wait_for_successful_exit(&mut window.child);
+    for process in [&mut previous, &mut current] {
+        fs::write(&process.stop, "").unwrap();
+        wait_for_successful_exit(&mut process.child);
+    }
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3986,7 +4308,9 @@ fn closing_the_final_tab_ends_the_window_and_its_terminals() {
     let generation_id = generation.file_name().unwrap().to_str().unwrap();
     assert_eq!(
         stdout(&closed),
-        format!("{{\"ended\":{{\"generation\":\"{generation_id}\"}}}}\n")
+        format!(
+            "{{\"ended\":{{\"generation\":\"{generation_id}\"}},\"generation\":\"{generation_id}\",\"window\":null}}\n"
+        )
     );
     wait_for_successful_exit(&mut supervisor.child);
     assert!(!control.exists());
@@ -4974,6 +5298,53 @@ fn new_windows_keep_independent_supervisors_and_stop_by_window_id() {
     assert_ne!(first_control, second_control);
     wait_for_connection(&first_control);
     wait_for_connection(&second_control);
+    let endpoint = second_control.parent().unwrap().join("orbit.sock");
+    let environment = fs::read(format!(
+        "/proc/{}/environ",
+        live_identity(&endpoint).process_id
+    ))
+    .unwrap();
+    let caller = environment
+        .split(|byte| *byte == 0)
+        .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+        .unwrap();
+    for inherited in [false, true] {
+        let mut selected = command();
+        selected.env("EON_TERMINAL", OsStr::from_bytes(caller));
+        if inherited {
+            selected.env("EON_WINDOW_RUNTIME_DIR", runtime.join("w").join(&second));
+        }
+        let args = if inherited {
+            vec!["workspace", "--json"]
+        } else {
+            vec!["workspace", "--window", &second, "--json"]
+        };
+        let output = selected.args(args).output().unwrap();
+        assert!(output.status.success(), "{}", stdout(&output));
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["window"], second);
+        assert_eq!(
+            result["tabs"][0]["panes"][0]["endpoint"],
+            endpoint.to_str().unwrap()
+        );
+    }
+    let constrained = command()
+        .env("EON_TERMINAL", OsStr::from_bytes(caller))
+        .args(["pane", "create", "--window", &first, "--no-focus", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(constrained.status.code(), Some(3));
+    let outside = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["workspace", "--window", &second, "--json"],
+    );
+    assert!(outside.status.success(), "{}", stdout(&outside));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&outside.stdout).unwrap()["window"],
+        second
+    );
     // Each generation records its own build's `eon` for later builds to run.
     let first_generation = first_control.parent().unwrap().to_owned();
     assert_eq!(
@@ -5107,24 +5478,26 @@ fn previous_supervisor(runtime: &Path, id: &str) -> thread::JoinHandle<()> {
             let (mut stream, _) = listener.accept().unwrap();
             let request = decode_request(&read_request(&mut stream)).unwrap();
             let (response, stopped) = match request.action {
-                ProtocolAction::Workspace(Action::InspectPresentation) => (
-                    LifecycleResponse::Runtime(Runtime {
-                        generation: server_id.clone(),
-                        eon_version: "0.1.0".into(),
-                        workspace_protocol: VERSION,
-                        component_report: "previous components".into(),
-                        sessions: vec!["session-1".into()],
-                        attach: Availability {
-                            available: true,
-                            reason: "previous presentation".into(),
-                        },
-                        stop: Availability {
-                            available: true,
-                            reason: "supervisor owns these Sessions".into(),
-                        },
-                    }),
-                    false,
-                ),
+                ProtocolAction::Workspace(Action::InspectPresentation | Action::InspectRuntime) => {
+                    (
+                        LifecycleResponse::Runtime(Runtime {
+                            generation: server_id.clone(),
+                            eon_version: "0.1.0".into(),
+                            workspace_protocol: VERSION,
+                            component_report: "previous components".into(),
+                            sessions: vec!["session-1".into()],
+                            attach: Availability {
+                                available: true,
+                                reason: "previous presentation".into(),
+                            },
+                            stop: Availability {
+                                available: true,
+                                reason: "supervisor owns these Sessions".into(),
+                            },
+                        }),
+                        false,
+                    )
+                }
                 ProtocolAction::Workspace(Action::Stop { generation })
                     if generation == server_id =>
                 {
@@ -5302,7 +5675,7 @@ fn window_attach_runs_the_build_that_started_its_generation() {
     let older_eon = root.join("older-eon");
     executable(
         &older_eon,
-        &format!(
+        format!(
             "#!/bin/sh\nprintf '%s %s|%s' \"$1\" \"$2\" \"$EON_WINDOW_RUNTIME_DIR\" > '{}'\nexit 7\n",
             attached.display()
         ),

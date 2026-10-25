@@ -812,19 +812,29 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     program pass on its status.
   - Every Eon terminal's environment carries `EON_TERMINAL`, an opaque value
     naming that terminal's exact Orbit run; the supervisor's other children
-    never inherit one. When set, it makes `pane create`, `edit`, `pane close
-    PANE`, `pane move` and `tab move` act on that terminal's tab instead of the
-    active tab: `pane create` adds to the caller's column, the moves move the
-    caller's own pane or tab, and `pane close` resolves PANE in the caller's
-    tab. A popup terminal acts for its tab and that tab's selected column and
+    never inherit one. For workspace control, `EON_TERMINAL` selects the live supervisor and workspace that own that
+    exact terminal, independently of the invoked CLI build's current generation. Within that workspace,
+    `pane create`, `edit`, `pane close PANE`, `pane move` and `tab move` retain their calling-tab,
+    column and pane rules: creation uses the caller's column, moves act on its pane or tab, and pane
+    close resolves its target in the caller's tab. A popup terminal acts for its tab and that tab's selected column and
     pane. Within that tab each action behaves as it does for the active tab,
     so `pane create` selects the new pane and dismisses the tab's popup;
     `pane close PANE` also works while a popup covers the caller's tab and
     leaves that popup shown (EON-C8); the active tab and desktop focus never
-    change. Other commands, and commands run outside Eon terminals, ignore
-    it. Every popup terminal's environment
+    change. Other workspace-scoped commands use the caller's workspace and retain their existing per-tab
+    rules. Without a calling terminal or explicit target, workspace control uses the invoked build's
+    current generation in the selected runtime namespace and its shown workspace. Launch, lifecycle and
+    local information commands retain their existing targeting. Every popup terminal's environment
     also carries `EON_TAB`, the `tN` identity of the tab that owned it when it
     started.
+  - Workspace commands accept `--generation GENERATION` and `--window ID` before any `--` operand
+    separator. `--window` selects an independent window's runtime namespace; otherwise the existing
+    runtime namespace applies. `--generation` selects an exact generation there. With only `--window`,
+    selection follows `window attach`'s current-or-sole-live-generation rule. If `EON_TERMINAL` is set,
+    the selected supervisor must validate that caller; explicit targeting does not waive caller
+    validation. Workspace CLI results name the described `generation` and `window`, with `window` null
+    for the default namespace, and identify the projected workspace through shn4.3's workspace
+    discriminator.
   - Every Eon terminal's PATH names that terminal's own Eon build as `eon`,
     ahead of any installed one, so `eon` run by name there acts on that
     terminal's own window and generation after the installed profile changes.
@@ -907,12 +917,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Important failures:** A caller that names no live terminal of the
   addressed supervisor (ended, closed, from another generation or window,
   empty, or malformed) changes nothing and exits 3 (`unknown-caller`), with no fallback
-  to the active tab. This includes a caller whose CLI build has no supervisor in that
-  terminal's window, as when an `eon` from another build runs inside an Eon
-  terminal: its detail names that build's generation and points to the
-  terminal's own `eon`, never to running `eon` first. Other commands run inside
-  an Eon terminal that find no supervisor of their build still exit 4, with the
-  same detail. In a tab without panes, a popup caller's `pane move`
+  to the active tab. Absence of this CLI build's supervisor does not prevent control of the caller's compatible
+  supervisor. Caller resolution uses the complete opaque terminal identity and never falls back to
+  another workspace. A malformed or stale caller exits 3; failed or ambiguous resolution changes
+  nothing. An unavailable or incompatible selected supervisor fails explicitly without starting,
+  presenting or restarting it. In a tab without panes, a popup caller's `pane move`
   refuses, and so does its `pane create` without `--no-focus` when dismissing
   that popup would end the tab's last terminal; both change nothing and
   exit 1. While a popup covers the caller's tab, `pane close` naming that
@@ -1145,8 +1154,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   present a compatible existing surface, stop one generation, or stop a selected
   set of generations.
 - **Result:**
-  - Eon and eonbase use separate runtime namespaces and default to their exact
-    current generation.
+  - Eon and eonbase use separate runtime namespaces. Launch and lifecycle defaults use their exact
+    current generation; Eon workspace control follows EON-C10's caller and explicit-target rules.
   - Generation identity is Runtime's `g1-` hash of Eon's source-tree digest,
     which covers runtime/EONW source and build inputs and Eon
     assembly/default/validator/graph/Cargo/Nix-generated inputs; each

@@ -1,19 +1,16 @@
 use super::{
     control::{
-        ControlResponse, EndpointFailure, EndpointFailureKind, Error, failure, missing_endpoint,
-        report_failure, send_action, send_action_from, write_stdout,
+        ControlResponse, EndpointFailure, EndpointFailureKind, Error, failure, report_failure,
+        send_action, send_action_from, validate_action, write_stdout,
     },
     generation::{
-        attach_generation, current_generation, generation_directory, generations_command,
-        private_directory_exists, read_stop_confirmation, stop_generation, stop_generations,
+        WorkspaceTarget, attach_generation, current_generation, generations_command,
+        read_stop_confirmation, resolve_workspace, stop_generation, stop_generations,
         valid_generation,
     },
     managed_environment,
     sessions::{TAB_VARIABLE, TERMINAL_VARIABLE},
-    supervisor::{
-        LaunchMode, configuration_directory, launch_current, prepare_configuration,
-        runtime_directory,
-    },
+    supervisor::{LaunchMode, configuration_directory, launch_current, prepare_configuration},
     windows,
     workspace::{human as human_output, json as json_output, json_escape},
 };
@@ -211,14 +208,11 @@ fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> 
         .map(OsString::from)
         .collect();
     if arguments.iter().any(|argument| argument == "PANE") {
-        let caller = calling_terminal(&Action::RenamePane {
-            pane: "p1".into(),
-            name: None,
-        })
-        .map_err(|error| error.detail)?;
-        let socket = generation_directory(&runtime_directory("eon"), &generation).join("eon.sock");
+        let caller = calling_terminal().map_err(|error| error.detail)?;
+        let resolved = resolve_workspace(inputs, WorkspaceTarget::default(), caller.as_deref())
+            .map_err(|error| error.detail)?;
         let response = send_action_from(
-            Ok(&socket),
+            Ok(&resolved.socket),
             caller,
             Action::Workspace(WorkspaceAction::Inspect),
         )
@@ -602,10 +596,13 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
                 || command == "tab"
                 || command == "pane"
                 || command == "edit"
-                || command == "focus" =>
+                || command == "focus"
+                || command == "--generation"
+                || command == "--window" =>
         {
+            let (arguments, target) = parse_workspace_target_arguments(&arguments)?;
             let (action, json) = parse_control_arguments(&arguments)?;
-            control(inputs, action, json)
+            control(inputs, action, json, target)
         }
         [command] if command == "versions" => {
             write_stdout(format!(
@@ -703,7 +700,11 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
   {command}eon anima --help{reset}                            Browse animation styles/options
 
 Closing a window detaches. Stop ends its terminals.
-Inside Eon, tab move and pane commands act on the calling terminal's tab.
+Inside Eon, workspace commands use the calling terminal's supervisor/workspace.
+Tab move and pane commands retain their calling-tab rules.
+Workspace flags: --generation GENERATION / --window ID, before any --.
+Explicit targets still validate EON_TERMINAL; window-only uses attach's rule.
+Results name generation, window (null for default), and workspace.
 With --no-focus, either pane create keeps the selected pane and any popup.
 Where shown, {command}--json{reset} prints JSON and skips confirmation.
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
@@ -827,28 +828,27 @@ fn generation_argument(argument: &OsStr) -> Result<&str, Error> {
     Ok(generation)
 }
 
-fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
-    let generation = current_generation(inputs)?;
-    let root = runtime_directory("eon");
-    let runtime = generation_directory(&root, &generation);
-    let socket = runtime.join("eon.sock");
-    // Create no directory for a build whose supervisor is not running. Past the
-    // first missing one the path is never used: another user could create it.
-    let present = private_directory_exists(&root, "runtime directory")?
-        && private_directory_exists(&root.join("generations"), "generation directory")?
-        && private_directory_exists(&runtime, "generation runtime directory")?;
-    let endpoint = || {
-        present
-            .then_some(socket.as_path())
-            .ok_or_else(|| missing_endpoint(&socket))
-    };
-    let caller = match calling_terminal(&action) {
+fn control(
+    inputs: &Inputs,
+    action: Action,
+    json: bool,
+    target: WorkspaceTarget,
+) -> Result<i32, String> {
+    let caller = match calling_terminal() {
         Ok(caller) => caller,
         Err(error) => return report_failure(&error, json),
     };
-    let calling = caller.is_some();
+    if let Err(error) = validate_action(caller.clone(), action.clone()) {
+        return report_failure(&failure("malformed-action", error.detail), json);
+    }
+    let resolved = match resolve_workspace(inputs, target, caller.as_deref()) {
+        Ok(resolved) => resolved,
+        Err(error) => return report_failure(&error, json),
+    };
+    let generation = &resolved.generation;
+    let socket = &resolved.socket;
     let final_close = if !json && std::io::stdin().is_terminal() {
-        match final_close_terminals(endpoint(), &action, &generation, calling) {
+        match final_close_terminals(Ok(socket), &action, generation, caller.as_deref()) {
             Ok(terminals) => terminals,
             Err(error) => return report_failure(&error, json),
         }
@@ -874,21 +874,35 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
             return Ok(0);
         }
     }
-    let response = match send_action_from(endpoint(), caller, action) {
+    let response = match send_action_from(Ok(socket), caller, action) {
         Ok(response) => response,
         Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
             return report_failure(&failure("malformed-action", error.detail), json);
         }
         Err(error) => {
-            return report_failure(&unreachable_supervisor(error, &generation, calling), json);
+            return report_failure(&unreachable_supervisor(error, generation), json);
         }
     };
     match response {
         ControlResponse::Workspace(Response::Snapshot(snapshot)) => {
+            let window = resolved
+                .window
+                .as_deref()
+                .map_or_else(|| "null".into(), |id| format!("\"{}\"", json_escape(id)));
             write_stdout(if json {
-                json_output(&snapshot)
+                format!(
+                    "{{\"generation\":\"{}\",\"window\":{window},\"workspace\":\"{}\",{}",
+                    json_escape(generation),
+                    json_escape(&snapshot.workspace),
+                    &json_output(&snapshot)[1..]
+                )
             } else {
-                human_output(&snapshot)
+                format!(
+                    "generation {generation}\nwindow {}\nworkspace {}\n{}",
+                    resolved.window.as_deref().unwrap_or("default"),
+                    snapshot.workspace,
+                    human_output(&snapshot)
+                )
             })?;
             Ok(0)
         }
@@ -896,11 +910,20 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
         ControlResponse::Workspace(Response::Ended(ended)) => {
             write_stdout(if json {
                 format!(
-                    "{{\"ended\":{{\"generation\":\"{}\"}}}}\n",
-                    json_escape(&ended.generation)
+                    "{{\"ended\":{{\"generation\":\"{}\"}},\"generation\":\"{}\",\"window\":{}}}\n",
+                    json_escape(&ended.generation),
+                    json_escape(generation),
+                    resolved
+                        .window
+                        .as_deref()
+                        .map_or_else(|| "null".into(), |id| format!("\"{}\"", json_escape(id)))
                 )
             } else {
-                format!("ended generation {}; its window closed\n", ended.generation)
+                format!(
+                    "ended generation {}; window {} closed\n",
+                    ended.generation,
+                    resolved.window.as_deref().unwrap_or("default")
+                )
             })?;
             Ok(0)
         }
@@ -910,13 +933,9 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
     }
 }
 
-/// Inside an Eon terminal, a missing supervisor of this build means the
-/// terminal's window runs another build or has ended, so starting this build
-/// would not help: the terminal's own `eon` would. A calling terminal is then
-/// one this build's supervisor does not know.
-fn unreachable_supervisor(error: EndpointFailure, generation: &str, caller: bool) -> Failure {
+fn unreachable_supervisor(error: EndpointFailure, generation: &str) -> Failure {
     let dead = error.kind == EndpointFailureKind::Dead;
-    if !dead || env::var_os(TERMINAL_VARIABLE).is_none() {
+    if env::var_os(TERMINAL_VARIABLE).is_none() {
         let code = if dead {
             "missing-supervisor"
         } else {
@@ -925,15 +944,10 @@ fn unreachable_supervisor(error: EndpointFailure, generation: &str, caller: bool
         return failure(code, format!("{}; run `eon` first", error.detail));
     }
     failure(
-        if caller {
-            "unknown-caller"
-        } else {
-            "missing-supervisor"
-        },
+        "supervisor-unavailable",
         format!(
-            "this eon build (generation {generation}) has no supervisor in this terminal's \
-             window; use the terminal's own `eon` from its PATH, or restart the window if \
-             that `eon` is this build"
+            "generation {generation}: {}; use the terminal's own `eon` from its PATH",
+            error.detail
         ),
     )
 }
@@ -946,7 +960,7 @@ fn final_close_terminals(
     socket: Result<&Path, EndpointFailure>,
     action: &Action,
     generation: &str,
-    caller: bool,
+    caller: Option<&str>,
 ) -> Result<Option<Vec<String>>, Failure> {
     if !matches!(
         action,
@@ -954,8 +968,11 @@ fn final_close_terminals(
     ) {
         return Ok(None);
     }
-    let snapshot = match send_action_from(socket, None, Action::Workspace(WorkspaceAction::Inspect))
-    {
+    let snapshot = match send_action_from(
+        socket,
+        caller.map(str::to_owned),
+        Action::Workspace(WorkspaceAction::Inspect),
+    ) {
         Ok(ControlResponse::Workspace(Response::Snapshot(snapshot))) => snapshot,
         Ok(ControlResponse::Workspace(Response::Failure(failure))) => return Err(failure),
         Ok(_) => {
@@ -964,11 +981,14 @@ fn final_close_terminals(
                 "Eon returned the wrong result for workspace inspection",
             ));
         }
-        Err(error) => return Err(unreachable_supervisor(error, generation, caller)),
+        Err(error) => return Err(unreachable_supervisor(error, generation)),
     };
     let [tab] = snapshot.tabs.as_slice() else {
         return Ok(None);
     };
+    if snapshot.workspaces.len() != 1 {
+        return Ok(None);
+    }
     let last = match action {
         Action::Workspace(WorkspaceAction::CloseTab { tab: id }) => *id == tab.id,
         // Runtime refuses closing the last pane under a popup, so it is not asked about.
@@ -988,20 +1008,8 @@ fn final_close_terminals(
     }))
 }
 
-/// The terminal an action that targets the active tab acts for instead: the
-/// one named by `EON_TERMINAL` when the command runs inside Eon.
-fn calling_terminal(action: &Action) -> Result<Option<String>, Failure> {
-    if !matches!(
-        action,
-        Action::Workspace(WorkspaceAction::CreatePane { .. } | WorkspaceAction::Move(_))
-            | Action::MovePaneSideways(_)
-            | Action::ClosePane { .. }
-            | Action::RenamePane { .. }
-            | Action::Edit { .. }
-            | Action::CreateCommandPane { .. }
-    ) {
-        return Ok(None);
-    }
+/// Workspace control always validates the exact terminal named by EON_TERMINAL.
+fn calling_terminal() -> Result<Option<String>, Failure> {
     let Some(caller) = env::var_os(TERMINAL_VARIABLE) else {
         return Ok(None);
     };
@@ -1015,6 +1023,45 @@ fn calling_terminal(action: &Action) -> Result<Option<String>, Failure> {
                 format!("{TERMINAL_VARIABLE} does not name an Eon terminal"),
             )
         })
+}
+
+fn parse_workspace_target_arguments(
+    arguments: &[OsString],
+) -> Result<(Vec<OsString>, WorkspaceTarget), Error> {
+    let mut target = WorkspaceTarget::default();
+    let mut values = Vec::new();
+    let mut arguments = arguments.iter();
+    while let Some(argument) = arguments.next() {
+        if argument == "--" {
+            values.push(argument.clone());
+            values.extend(arguments.cloned());
+            break;
+        }
+        let slot = if argument == "--generation" {
+            &mut target.generation
+        } else if argument == "--window" {
+            &mut target.window
+        } else {
+            values.push(argument.clone());
+            continue;
+        };
+        if slot.is_some() {
+            return Err(Error::usage(EON_USAGE));
+        }
+        let value = arguments
+            .next()
+            .and_then(|argument| argument.to_str())
+            .ok_or_else(|| Error::usage(EON_USAGE))?;
+        if (argument == "--generation" && !valid_generation(value))
+            || (argument == "--window" && !windows::valid_window_id(value))
+        {
+            return Err(Error::usage(format!(
+                "invalid {argument:?} identity {value:?}"
+            )));
+        }
+        *slot = Some(value.to_owned());
+    }
+    Ok((values, target))
 }
 
 fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Error> {
@@ -1212,6 +1259,51 @@ fn parse_command_pane_arguments(arguments: &[OsString]) -> Result<Option<(Action
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_target_flags_stop_at_the_operand_separator() {
+        let generation = "g1-0123456789abcdef0123456789abcdef";
+        let parse = |args: &[&str]| {
+            parse_workspace_target_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+        };
+        let (args, target) = parse(&[
+            "pane",
+            "--window",
+            "0000abcd",
+            "create",
+            "--generation",
+            generation,
+            "--",
+            "echo",
+            "--window",
+            "literal",
+        ])
+        .unwrap();
+        assert_eq!(target.window.as_deref(), Some("0000abcd"));
+        assert_eq!(target.generation.as_deref(), Some(generation));
+        assert_eq!(
+            args,
+            ["pane", "create", "--", "echo", "--window", "literal"].map(OsString::from)
+        );
+        assert!(
+            matches!(parse_control_arguments(&args).unwrap().0, Action::CreateCommandPane { argv, .. } if argv == [b"echo".to_vec(), b"--window".to_vec(), b"literal".to_vec()])
+        );
+        for args in [
+            vec!["workspace", "--generation"],
+            vec!["workspace", "--window", "bad/id"],
+            vec!["workspace", "--generation", "g1-ABC"],
+            vec![
+                "workspace",
+                "--generation",
+                generation,
+                "--generation",
+                generation,
+            ],
+            vec!["workspace", "--window", "0000abcd", "--window", "0000abcd"],
+        ] {
+            assert_eq!(parse(&args).err().unwrap().status, 2, "{args:?}");
+        }
+    }
 
     #[test]
     fn pane_rename_preserves_literal_names_and_validates_before_connecting() {

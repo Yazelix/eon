@@ -30,7 +30,7 @@ use std::{
 
 const WINDOW_RUNTIME: &str = "EON_WINDOW_RUNTIME_DIR";
 
-fn valid_window_id(id: &str) -> bool {
+pub(super) fn valid_window_id(id: &str) -> bool {
     id.len() == 8
         && id
             .bytes()
@@ -70,7 +70,7 @@ fn existing_windows() -> Result<Vec<(String, PathBuf)>, String> {
     Ok(windows)
 }
 
-fn selected_window(id: &OsStr) -> Result<PathBuf, Error> {
+pub(super) fn selected_window(id: &OsStr) -> Result<PathBuf, Error> {
     let id = id
         .to_str()
         .ok_or_else(|| Error::usage("Eon window ID must be UTF-8"))?;
@@ -86,6 +86,12 @@ fn selected_window(id: &OsStr) -> Result<PathBuf, Error> {
         return Err(Error::missing(format!("Eon window {id} was not found")));
     }
     Ok(root)
+}
+
+pub(super) fn runtime_window(root: &Path) -> Option<String> {
+    let relative = root.strip_prefix(windows_root()).ok()?;
+    let id = relative.to_str()?;
+    valid_window_id(id).then(|| id.to_owned())
 }
 
 fn window_command(root: &Path) -> Result<Command, String> {

@@ -350,9 +350,22 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon config-path` | Create and print the configuration root |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
 
-Workspace commands target the current-generation supervisor. Human and `--json`
-output describe the same result. A missing supervisor is not started implicitly;
-run `eon` first.
+Workspace commands inside Eon target the supervisor and workspace that own the
+exact `EON_TERMINAL` caller, even when the invoked CLI is from another compatible
+build. Outside Eon, they default to the invoked build's current generation in
+the inherited runtime namespace. Human and `--json` output identify `generation`,
+`window` (null in JSON for the default namespace), and the projected `workspace`.
+A missing supervisor is not started implicitly.
+
+Workspace commands accept `--generation G` and `--window ID` before any `--`
+operand separator, for example `eon workspace --generation G --json` or
+`eon pane create --window ID --generation G --no-focus`. A generation ID is
+`g1-` followed by 32 lowercase hex digits; a window ID is eight lowercase hex
+digits. With only `--window`, Eon selects its current generation if live,
+otherwise its sole live generation, as `window attach` does. Several live
+generations without a live current one require `--generation`. These flags
+constrain a calling terminal: they never waive its validation. Remove
+`EON_TERMINAL` explicitly to act without caller context.
 Eon calls Orbit-backed instances terminals in human output.
 JSON retains the technical `session` / `sessions` fields and `session-N` IDs;
 these refer to terminals.
@@ -374,21 +387,23 @@ that terminal's own tab rather than the active one: a pane adds the new pane to
 its own column and moves itself, and a popup acts for its tab's selected pane.
 `pane close PANE` works from these terminals even while a popup covers the
 tab, and the popup stays shown; it refuses the tab's last pane there.
-The active tab and desktop focus stay where they are. When the terminal has
-ended, or belongs to another generation or window, the command changes nothing
-and exits 3. Other commands ignore `EON_TERMINAL`; run
-`env -u EON_TERMINAL eon ...` to act on the active tab from inside Eon.
+The active tab and desktop focus stay where they are. Other workspace commands
+use the caller's workspace and retain their existing per-tab rules. A malformed,
+ended or stale caller changes nothing and exits 3, with no fallback. Run
+`env -u EON_TERMINAL eon ...` to act on the shown workspace without caller
+context. Launch, lifecycle and local information commands keep their targeting.
 
 An Eon terminal's PATH puts that terminal's own Eon build first as `eon`, so
 `eon` keeps acting on its own window after you install a newer profile. That
 includes `eon` and `eon window new` typed there, which open that same build;
 open the newer build from the launcher or from a shell outside Eon. A workspace
-command from another build, run by path inside that terminal, acts on that
-build's own supervisor when one runs in the terminal's runtime directory.
-When none does, it changes nothing and says to use the terminal's own `eon`,
-or to restart the window when that `eon` is the same build. It exits 3 for
-`pane create`, `edit`, `pane close`, `pane move` and `tab move`, and 4 for the
-rest.
+command from another compatible build still finds the caller's supervisor in
+the inherited namespace. Discovery validates private directories and endpoints,
+has a bounded candidate count and timeout, and refuses ambiguous or incomplete
+resolution. An unavailable or incompatible supervisor exits 4 and names the
+generation, pointing to the terminal's own `eon`; it never launches, presents or
+restarts a supervisor. Unknown explicit targets exit 3, malformed flags or IDs
+exit 2, and ambiguous window selection exits 1.
 
 ### Exit status
 

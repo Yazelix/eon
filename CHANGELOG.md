@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Workspace CLI commands follow the calling terminal's own supervisor and
+  workspace across compatible builds. `--generation` and `--window` select
+  explicit targets, and workspace results identify their generation, window
+  and projected workspace.
+
 - Pane labels prefer a pinned name, then the sanitized terminal title, then
   the working directory, with differing-directory context. `eon pane rename`
   and Commands set or clear pins; workspace JSON includes `label` and

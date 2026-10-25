@@ -19,12 +19,12 @@ use std::{
         net::{UnixListener, UnixStream},
     },
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 // A reply can wait behind one in-flight operation, the longest being startup: presentation
 // admission, then the first terminal's start.
-const CONTROL_TIMEOUT: Duration = PRESENTATION_ADMISSION_TIMEOUT
+pub(super) const CONTROL_TIMEOUT: Duration = PRESENTATION_ADMISSION_TIMEOUT
     .saturating_add(SESSION_START_TIMEOUT)
     .saturating_add(Duration::from_secs(1));
 
@@ -72,7 +72,26 @@ pub(super) fn send_action_from(
     action: Action,
 ) -> Result<ControlResponse, EndpointFailure> {
     let action = prepare_action(caller, action)?;
-    send_prepared_action(connect_control(socket?)?, action)
+    send_prepared_action(connect_control(socket?)?, action, None)
+}
+
+pub(super) fn validate_action(
+    caller: Option<String>,
+    action: Action,
+) -> Result<(), EndpointFailure> {
+    prepare_action(caller, action).map(|_| ())
+}
+
+/// Read-only discovery shares one deadline across connection, framing and decoding.
+pub(super) fn send_action_from_until(
+    socket: &Path,
+    caller: Option<String>,
+    action: Action,
+    deadline: Instant,
+) -> Result<ControlResponse, EndpointFailure> {
+    let action = prepare_action(caller, action)?;
+    let stream = connect_control_with_timeout(socket, time_left(deadline)?)?;
+    send_prepared_action(stream, action, Some(deadline))
 }
 
 pub(super) fn missing_endpoint(socket: &Path) -> EndpointFailure {
@@ -83,6 +102,13 @@ pub(super) fn missing_endpoint(socket: &Path) -> EndpointFailure {
 }
 
 pub(super) fn connect_control(socket: &Path) -> Result<UnixStream, EndpointFailure> {
+    connect_control_with_timeout(socket, CONTROL_TIMEOUT)
+}
+
+fn connect_control_with_timeout(
+    socket: &Path,
+    timeout: Duration,
+) -> Result<UnixStream, EndpointFailure> {
     let metadata = match fs::symlink_metadata(socket) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -108,7 +134,7 @@ pub(super) fn connect_control(socket: &Path) -> Result<UnixStream, EndpointFailu
         ));
     }
 
-    let stream = UnixStream::connect(socket).map_err(|error| {
+    let stream = super::sessions::unix_connect_with_timeout(socket, timeout).map_err(|error| {
         let kind = match error.kind() {
             std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
                 EndpointFailureKind::Dead
@@ -142,7 +168,7 @@ pub(super) fn send_action_on(
     stream: UnixStream,
     action: Action,
 ) -> Result<ControlResponse, EndpointFailure> {
-    send_prepared_action(stream, prepare_action(None, action)?)
+    send_prepared_action(stream, prepare_action(None, action)?, None)
 }
 
 fn prepare_action(
@@ -181,23 +207,54 @@ fn prepare_action(
 fn send_prepared_action(
     mut stream: UnixStream,
     (lifecycle, request, timeout): (bool, Vec<u8>, Duration),
+    deadline: Option<Instant>,
 ) -> Result<ControlResponse, EndpointFailure> {
-    stream
-        .set_read_timeout(Some(timeout))
-        .map_err(|error| io_endpoint_failure(error, "cannot bound Eon action result"))?;
-    stream
-        .write_all(&request)
-        .map_err(|error| io_endpoint_failure(error, "cannot send Eon action"))?;
+    let deadline = deadline.unwrap_or_else(|| Instant::now() + timeout);
+    let mut bytes = request.as_slice();
+    while !bytes.is_empty() {
+        stream
+            .set_write_timeout(Some(time_left(deadline)?))
+            .map_err(|error| io_endpoint_failure(error, "cannot bound Eon action"))?;
+        match stream.write(bytes) {
+            Ok(0) => {
+                return Err(io_endpoint_failure(
+                    std::io::ErrorKind::WriteZero.into(),
+                    "cannot send Eon action",
+                ));
+            }
+            Ok(written) => bytes = &bytes[written..],
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(io_endpoint_failure(error, "cannot send Eon action")),
+        }
+    }
+
+    let mut read_exact = |mut bytes: &mut [u8]| -> Result<(), EndpointFailure> {
+        while !bytes.is_empty() {
+            stream
+                .set_read_timeout(Some(time_left(deadline)?))
+                .map_err(|error| io_endpoint_failure(error, "cannot bound Eon action result"))?;
+            match stream.read(bytes) {
+                Ok(0) => {
+                    return Err(io_endpoint_failure(
+                        std::io::ErrorKind::UnexpectedEof.into(),
+                        "cannot read Eon action result",
+                    ));
+                }
+                Ok(read) => bytes = &mut bytes[read..],
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) => {
+                    return Err(io_endpoint_failure(error, "cannot read Eon action result"));
+                }
+            }
+        }
+        Ok(())
+    };
 
     let mut response = vec![0; HEADER_BYTES];
-    stream
-        .read_exact(&mut response)
-        .map_err(|error| io_endpoint_failure(error, "cannot read Eon action result"))?;
+    read_exact(&mut response)?;
     let length = declared_message_len(&response).map_err(protocol_endpoint_failure)?;
     response.resize(length, 0);
-    stream
-        .read_exact(&mut response[HEADER_BYTES..])
-        .map_err(|error| io_endpoint_failure(error, "cannot read complete Eon result"))?;
+    read_exact(&mut response[HEADER_BYTES..])?;
     if lifecycle {
         decode_lifecycle_response(&response)
             .map(ControlResponse::Lifecycle)
@@ -207,6 +264,18 @@ fn send_prepared_action(
             .map(ControlResponse::Workspace)
             .map_err(protocol_endpoint_failure)
     }
+}
+
+fn time_left(deadline: Instant) -> Result<Duration, EndpointFailure> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|left| !left.is_zero())
+        .ok_or_else(|| {
+            EndpointFailure::new(
+                EndpointFailureKind::Unreachable,
+                "supervisor inspection deadline exceeded",
+            )
+        })
 }
 
 fn io_endpoint_failure(error: std::io::Error, context: &str) -> EndpointFailure {
@@ -271,7 +340,22 @@ fn runtime_response(response: ControlResponse) -> Result<Runtime, EndpointFailur
 }
 
 pub(super) fn probe_generation_runtime(socket: &Path) -> Result<Runtime, EndpointFailure> {
-    let runtime = probe_presentable_runtime(socket)?;
+    validated_runtime(probe_presentable_runtime(socket)?)
+}
+
+pub(super) fn probe_generation_runtime_until(
+    socket: &Path,
+    deadline: Instant,
+) -> Result<Runtime, EndpointFailure> {
+    validated_runtime(runtime_response(send_action_from_until(
+        socket,
+        None,
+        Action::Workspace(WorkspaceAction::InspectRuntime),
+        deadline,
+    )?)?)
+}
+
+fn validated_runtime(runtime: Runtime) -> Result<Runtime, EndpointFailure> {
     if runtime.workspace_protocol != VERSION {
         return Err(EndpointFailure::new(
             EndpointFailureKind::Incompatible,
@@ -490,7 +574,7 @@ fn failure_status(code: &str) -> u8 {
         "invalid-tab" | "malformed-action" => USAGE,
         "unknown-tab" | "unknown-pane" | "unknown-id" | "unknown-session" | "unknown-popup"
         | "stale-popup" | "stale-target" | "unknown-generation" | "unknown-caller"
-        | "unknown-workspace" => MISSING,
+        | "unknown-workspace" | "unknown-window" => MISSING,
         "missing-supervisor" | "supervisor-unavailable" => UNREACHABLE,
         _ => FAILED,
     }
@@ -589,8 +673,48 @@ mod tests {
     use crate::supervisor::temporary_directory;
     use std::{
         fs,
+        io::Write,
+        os::unix::fs::PermissionsExt,
         os::unix::net::{UnixListener, UnixStream},
+        thread,
+        time::{Duration, Instant},
     };
+
+    #[test]
+    fn discovery_deadline_covers_a_dribbling_response() {
+        let root = temporary_directory();
+        let socket = root.join("eon.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            super::read_request(&mut stream).unwrap();
+            let response = super::encode_response(&super::Response::Failure(super::failure(
+                "unknown-caller",
+                "not owned",
+            )))
+            .unwrap();
+            for byte in response {
+                if stream.write_all(&[byte]).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+        });
+        let start = Instant::now();
+        let error = super::send_action_from_until(
+            &socket,
+            Some("session-1.run".into()),
+            super::Action::Workspace(super::WorkspaceAction::Inspect),
+            start + Duration::from_millis(100),
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.kind, super::EndpointFailureKind::Unreachable);
+        assert!(start.elapsed() < Duration::from_secs(2));
+        server.join().unwrap();
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn workspace_refusals_use_the_existing_exit_status_classes() {

@@ -1,8 +1,9 @@
 use super::cli::Inputs;
 use super::control::{
-    ControlResponse, EndpointFailure, EndpointFailureKind, Error, connect_control, failure,
-    probe_generation_runtime, remove_socket_if_identity, report_failure, send_action_on,
-    socket_identity, socket_identity_from, write_stdout,
+    CONTROL_TIMEOUT, ControlResponse, EndpointFailure, EndpointFailureKind, Error, connect_control,
+    failure, probe_generation_runtime, probe_generation_runtime_until, remove_socket_if_identity,
+    report_failure, send_action_from_until, send_action_on, socket_identity, socket_identity_from,
+    write_stdout,
 };
 use super::supervisor::{
     effective_uid, present_at, probe_supervisor, runtime_directory, supervisor_lock_path,
@@ -10,10 +11,12 @@ use super::supervisor::{
 };
 use super::workspace::json_escape;
 use eon_workspace_protocol::v20::{
-    Action, Availability, LifecycleResponse, Stopped, WorkspaceAction,
+    Action, Availability, Failure, LifecycleResponse, Response, Stopped, WorkspaceAction,
 };
 use std::{
-    env, fs,
+    env,
+    ffi::OsString,
+    fs,
     os::unix::{
         ffi::OsStrExt,
         fs::{FileTypeExt, MetadataExt, symlink},
@@ -22,6 +25,7 @@ use std::{
     },
     path::{Path, PathBuf},
     process::Command,
+    time::Instant,
 };
 
 pub(super) fn current_generation(inputs: &Inputs) -> Result<String, String> {
@@ -90,6 +94,267 @@ fn recorded_launcher(runtime: &Path) -> Option<PathBuf> {
 }
 
 const MAX_GENERATIONS: usize = 256;
+
+#[derive(Default)]
+pub(super) struct WorkspaceTarget {
+    pub(super) generation: Option<String>,
+    pub(super) window: Option<String>,
+}
+
+pub(super) struct ResolvedWorkspace {
+    pub(super) generation: String,
+    pub(super) window: Option<String>,
+    pub(super) socket: PathBuf,
+}
+
+pub(super) fn resolve_workspace(
+    inputs: &Inputs,
+    target: WorkspaceTarget,
+    caller: Option<&str>,
+) -> Result<ResolvedWorkspace, Failure> {
+    let root = match &target.window {
+        Some(id) => super::windows::selected_window(id.as_ref()).map_err(|error| {
+            failure(
+                if error.status == 3 {
+                    "unknown-window"
+                } else {
+                    "supervisor-unavailable"
+                },
+                error.message,
+            )
+        })?,
+        None => runtime_directory("eon"),
+    };
+    let window = super::windows::runtime_window(&root);
+    let current =
+        current_generation(inputs).map_err(|detail| failure("supervisor-unavailable", detail))?;
+    let selected = |generation: String| ResolvedWorkspace {
+        socket: generation_directory(&root, &generation).join("eon.sock"),
+        generation,
+        window: window.clone(),
+    };
+    let unavailable = |generation: &str, detail: String| {
+        failure(
+            "supervisor-unavailable",
+            format!(
+                "generation {generation}: {detail}; use the terminal's own `eon` from its PATH"
+            ),
+        )
+    };
+    let deadline = Instant::now() + CONTROL_TIMEOUT;
+    let probe = |id: &str| {
+        let path = generation_directory(&root, id);
+        validate_private_directory(&path)
+            .map_err(|detail| (EndpointFailureKind::Corrupt, unavailable(id, detail)))?;
+        let socket = path.join("eon.sock");
+        let runtime = probe_generation_runtime_until(&socket, deadline)
+            .map_err(|error| (error.kind, unavailable(id, error.detail)));
+        match runtime {
+            Ok(runtime) if runtime.generation == id => Ok(()),
+            Ok(runtime) => Err((
+                EndpointFailureKind::Corrupt,
+                unavailable(
+                    id,
+                    format!("supervisor reports generation {}", runtime.generation),
+                ),
+            )),
+            Err(error) => Err(error),
+        }
+    };
+    // A plain outside-Eon command keeps its current-generation default and existing failures.
+    if caller.is_none() && target.generation.is_none() && target.window.is_none() {
+        if !workspace_runtime_exists(&root, &current)
+            .map_err(|detail| unavailable(&current, detail))?
+        {
+            return Err(failure(
+                "missing-supervisor",
+                format!("generation {current} has no supervisor; run `eon` first"),
+            ));
+        }
+        probe(&current).map_err(|(_, error)| error)?;
+        return Ok(selected(current));
+    }
+
+    let generation = if let Some(id) = target.generation {
+        let present =
+            workspace_runtime_exists(&root, &id).map_err(|detail| unavailable(&id, detail))?;
+        if !present {
+            return Err(failure(
+                "unknown-generation",
+                format!("generation {id} was not found"),
+            ));
+        }
+        probe(&id).map_err(|(_, error)| error)?;
+        id
+    } else {
+        let candidates = generation_candidates(&root)
+            .map_err(|detail| failure("supervisor-unavailable", detail))?;
+        let mut live = Vec::new();
+        let mut failures = Vec::new();
+        let mut owner = None;
+        for (id, path) in candidates {
+            let id = id
+                .to_str()
+                .filter(|id| valid_generation(id))
+                .ok_or_else(|| {
+                    failure(
+                        "supervisor-unavailable",
+                        format!("invalid generation directory {}", path.display()),
+                    )
+                })?;
+            let verified = match probe(id) {
+                Ok(_) => true,
+                Err((EndpointFailureKind::Dead, _)) => continue,
+                Err((_, error)) => {
+                    failures.push((id.to_owned(), error));
+                    false
+                }
+            };
+            live.push(id.to_owned());
+            if verified
+                && target.window.is_none()
+                && let Some(caller) = caller
+            {
+                match validates_caller(&path.join("eon.sock"), caller, deadline) {
+                    Ok(true) if owner.is_some() => {
+                        return Err(unavailable(
+                            id,
+                            "more than one supervisor validates the caller".into(),
+                        ));
+                    }
+                    Ok(true) => owner = Some(id.to_owned()),
+                    Ok(false) => {}
+                    Err(error) => failures.push((id.to_owned(), unavailable(id, error.detail))),
+                }
+            }
+        }
+        if target.window.is_some() {
+            match preferred_window_generation(&current, &live) {
+                Some(id) => {
+                    if let Some(index) = failures.iter().position(|(failed, _)| failed == id) {
+                        return Err(failures.swap_remove(index).1);
+                    }
+                    id.to_owned()
+                }
+                None if live.is_empty() => {
+                    return Err(failure(
+                        "supervisor-unavailable",
+                        "the selected Eon window has ended; no supervisor runs in it",
+                    ));
+                }
+                None => {
+                    return Err(failure(
+                        "ambiguous-window",
+                        format!(
+                            "Eon window {} runs generations {}; select --generation",
+                            window.as_deref().unwrap_or("?"),
+                            live.join(", ")
+                        ),
+                    ));
+                }
+            }
+        } else {
+            if Instant::now() >= deadline {
+                return Err(failure(
+                    "supervisor-unavailable",
+                    "caller discovery exceeded the supervisor inspection deadline; no action sent",
+                ));
+            }
+            // A validated complete identity is authoritative; another generation's failure is not its owner.
+            return owner.map(selected).ok_or_else(|| {
+                failures
+                    .into_iter()
+                    .next()
+                    .map_or_else(unknown_caller, |(_, error)| error)
+            });
+        }
+    };
+    let resolved = selected(generation);
+    if let Some(caller) = caller
+        && !validates_caller(&resolved.socket, caller, deadline)
+            .map_err(|error| unavailable(&resolved.generation, error.detail))?
+    {
+        return Err(unknown_caller());
+    }
+    Ok(resolved)
+}
+
+fn unknown_caller() -> Failure {
+    failure(
+        "unknown-caller",
+        "the calling terminal is not live in this Eon runtime namespace",
+    )
+}
+
+fn workspace_runtime_exists(root: &Path, id: &str) -> Result<bool, String> {
+    Ok(private_directory_exists(root, "runtime directory")?
+        && private_directory_exists(&root.join("generations"), "generation directory")?
+        && private_directory_exists(
+            &generation_directory(root, id),
+            "generation runtime directory",
+        )?)
+}
+
+fn validates_caller(
+    socket: &Path,
+    caller: &str,
+    deadline: Instant,
+) -> Result<bool, EndpointFailure> {
+    match send_action_from_until(
+        socket,
+        Some(caller.into()),
+        Action::Workspace(WorkspaceAction::Inspect),
+        deadline,
+    )? {
+        ControlResponse::Workspace(Response::Snapshot(_)) => Ok(true),
+        ControlResponse::Workspace(Response::Failure(error)) if error.code == "unknown-caller" => {
+            Ok(false)
+        }
+        ControlResponse::Workspace(Response::Failure(error)) => Err(EndpointFailure::new(
+            EndpointFailureKind::Unreachable,
+            format!(
+                "supervisor rejected caller inspection: {}: {}",
+                error.code, error.detail
+            ),
+        )),
+        _ => Err(EndpointFailure::new(
+            EndpointFailureKind::Corrupt,
+            "supervisor returned the wrong result for caller inspection",
+        )),
+    }
+}
+
+fn generation_candidates(root: &Path) -> Result<Vec<(OsString, PathBuf)>, String> {
+    if !private_directory_exists(root, "runtime directory")? {
+        return Ok(Vec::new());
+    }
+    let parent = root.join("generations");
+    let mut candidates = Vec::new();
+    if private_directory_exists(&parent, "generation directory")? {
+        for entry in fs::read_dir(&parent).map_err(|error| {
+            format!(
+                "cannot list generation directory {}: {error}",
+                parent.display()
+            )
+        })? {
+            let entry = entry.map_err(|error| {
+                format!(
+                    "cannot read generation entry in {}: {error}",
+                    parent.display()
+                )
+            })?;
+            candidates.push((entry.file_name(), entry.path()));
+            if candidates.len() > MAX_GENERATIONS {
+                return Err(format!(
+                    "generation directory {} exceeds the {MAX_GENERATIONS}-entry inspection limit",
+                    parent.display()
+                ));
+            }
+        }
+    }
+    candidates.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+    Ok(candidates)
+}
 #[derive(Debug)]
 struct GenerationRecord {
     id: String,
@@ -118,31 +383,7 @@ fn discover_generations(
         return Ok(vec![unstarted_current_generation(root, current)]);
     }
 
-    let parent = root.join("generations");
-    let mut candidates = Vec::new();
-    if private_directory_exists(&parent, "generation directory")? {
-        for entry in fs::read_dir(&parent).map_err(|error| {
-            format!(
-                "cannot list generation directory {}: {error}",
-                parent.display()
-            )
-        })? {
-            let entry = entry.map_err(|error| {
-                format!(
-                    "cannot read generation entry in {}: {error}",
-                    parent.display()
-                )
-            })?;
-            candidates.push((entry.file_name(), entry.path()));
-            if candidates.len() > MAX_GENERATIONS {
-                return Err(format!(
-                    "generation directory {} exceeds the {MAX_GENERATIONS}-entry inspection limit",
-                    parent.display()
-                ));
-            }
-        }
-    }
-    candidates.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+    let candidates = generation_candidates(root)?;
 
     let current_path = generation_directory(root, current);
     let mut records = vec![inspect_generation(
@@ -546,12 +787,19 @@ fn running_generations(inputs: &Inputs, root: &Path) -> Result<Vec<GenerationRec
 /// else the window's one other running generation.
 pub(super) fn window_generation(inputs: &Inputs, id: &str, root: &Path) -> Result<String, Error> {
     let records = running_generations(inputs, root)?;
+    if let Some(selected) = preferred_window_generation(
+        &current_generation(inputs)?,
+        &records
+            .iter()
+            .map(|record| record.id.clone())
+            .collect::<Vec<_>>(),
+    ) {
+        return Ok(selected.to_owned());
+    }
     match records.as_slice() {
         [] => Err(Error::unreachable(format!(
             "Eon window {id} has ended; no supervisor runs in it"
         ))),
-        [record, ..] if record.kind == "current" => Ok(record.id.clone()),
-        [record] => Ok(record.id.clone()),
         records => Err(format!(
             "Eon window {id} runs generations {}; run `eon window attach {id}` with the `eon` of the one to present",
             records
@@ -565,6 +813,13 @@ pub(super) fn window_generation(inputs: &Inputs, id: &str, root: &Path) -> Resul
         )
         .into()),
     }
+}
+
+fn preferred_window_generation<'a>(current: &str, live: &'a [String]) -> Option<&'a str> {
+    live.iter()
+        .find(|id| *id == current)
+        .or_else(|| (live.len() == 1).then(|| &live[0]))
+        .map(String::as_str)
 }
 
 /// The `eon windows` inventory of the window at `root`: its running
