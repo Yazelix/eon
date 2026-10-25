@@ -192,6 +192,10 @@ Scene owns the outer gap around and between allocated column areas and includes
 it in initial grid overhead. Scene owns each column's fill from its first
 rounded top edge to its rounded bottom. The allocated area stays fixed during
 header scrolling.
+Window-local zoom lays out only the selected pane over that whole area, as one
+card with its label in the top edge. Hidden panes retain their attachments and
+sizes; the selected pane reuses the shared painted bottom and requested/displayed
+grid clearance. Selection or structural changes end zoom; popups cover it.
 The last collapsed pane's label sits in that bottom edge, closing the stack with
 one line. At the unscrolled bottom, columns and the Agents card share one snapped
 painted bottom line. Its inset is half the title height, bounded by terminal

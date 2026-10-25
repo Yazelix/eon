@@ -959,7 +959,7 @@ impl Application {
         })
     }
 
-    /// Whether the zoom still names the active tab, its column count and its selected column.
+    /// Whether the selected pane and the active tab's layout still match the zoom target.
     fn zoomed(&self) -> bool {
         self.zoom.is_some() && self.workspace_model.snapshot().and_then(zoom_target) == self.zoom
     }
@@ -1473,8 +1473,8 @@ impl Application {
         self.refresh_client_view();
     }
 
-    /// Zoom the active tab's selected column across the tab, or restore its columns. Other
-    /// columns keep their attachments at their column size while hidden.
+    /// Show the selected pane alone across the tab, or restore its columns. Hidden
+    /// attachments keep their last size.
     fn toggle_zoom(&mut self) {
         let Some(snapshot) = self.workspace_model.snapshot() else {
             return;
@@ -1490,7 +1490,7 @@ impl Application {
         let Some(target) = zoom_target(snapshot) else {
             if self
                 .workspace_model
-                .reject_action("Nothing to zoom: this tab has one column.")
+                .reject_action("Nothing to zoom: this tab has one pane.")
             {
                 self.refresh_client_view();
             }
@@ -1499,7 +1499,11 @@ impl Application {
         self.zoom = (!self.zoomed()).then_some(target);
         self.cancel_terminal_scroll();
         self.cancel_pointer_sequence();
-        self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
+        if let Some(scene) = self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll)
+            && self.zoom.is_none()
+        {
+            self.pane_scroll = scene.selected_pane_scroll();
+        }
         self.presentation.invalidate();
         self.send_resize();
         self.refresh_client_view();
@@ -1857,7 +1861,7 @@ impl Application {
             }
             WorkspaceEvent::Answered { .. } => unreachable!("answers return above"),
         };
-        // Any change of the active tab, its column count or its selected column ends zoom.
+        // Accepted selection or layout changes end zoom; covering popups leave its target intact.
         if self.zoom.is_some() && !self.zoomed() {
             self.zoom = None;
         }
@@ -4371,9 +4375,14 @@ fn retry_is_allowed(
     !workspace || selected.is_some_and(|(endpoint, live)| live && active == Some(endpoint))
 }
 
-/// The active tab, its column count and its selected column: what a zoom names. A tab with
-/// fewer than two columns has nothing to zoom.
-type ZoomTarget = (String, usize, usize);
+/// The selected pane and ordered layout; status and metadata changes do not end zoom.
+#[derive(Debug, PartialEq, Eq)]
+struct ZoomTarget {
+    tab: String,
+    pane: String,
+    /// Each column's expanded pane and ordered pane IDs.
+    columns: Vec<(String, Vec<String>)>,
+}
 
 fn zoom_target(snapshot: &eon_workspace_protocol::v19::Snapshot) -> Option<ZoomTarget> {
     let tab = snapshot
@@ -4381,11 +4390,28 @@ fn zoom_target(snapshot: &eon_workspace_protocol::v19::Snapshot) -> Option<ZoomT
         .iter()
         .find(|tab| tab.id == snapshot.active_tab)?;
     let selected = tab.selected_pane.as_ref()?;
-    let column = tab
-        .columns
-        .iter()
-        .position(|column| column.expanded == *selected)?;
-    (tab.columns.len() > 1).then(|| (tab.id.clone(), tab.columns.len(), column))
+    if tab.panes().nth(1).is_none()
+        || !tab
+            .columns
+            .iter()
+            .any(|column| column.expanded == *selected)
+    {
+        return None;
+    }
+    Some(ZoomTarget {
+        tab: tab.id.clone(),
+        pane: selected.clone(),
+        columns: tab
+            .columns
+            .iter()
+            .map(|column| {
+                (
+                    column.expanded.clone(),
+                    column.panes.iter().map(|pane| pane.id.clone()).collect(),
+                )
+            })
+            .collect(),
+    })
 }
 
 /// Live panes of the active tab, except endpoints whose presentation attachment is not
@@ -5145,7 +5171,7 @@ mod tests {
     }
 
     #[test]
-    fn zoom_names_the_tab_column_count_and_selected_column() {
+    fn zoom_names_the_tab_panes_columns_and_selected_pane() {
         let pane = |id: &str| Pane {
             id: id.into(),
             session: format!("session-{id}"),
@@ -5189,15 +5215,15 @@ mod tests {
             )
         };
         let zoom = zoom_target(&two("p2"));
-        assert_eq!(zoom, Some(("t1".into(), 2, 1)));
-        // A new pane in the zoomed column, or a popup over it, keeps the zoom.
+        assert!(zoom.is_some());
+        // Structural changes end zoom; a covering popup keeps its target.
         let mut grown = two("p2");
         grown.tabs[0].columns[1].panes.push(pane("p3"));
-        assert_eq!(zoom_target(&grown), zoom);
+        assert_ne!(zoom_target(&grown), zoom);
         let mut covered = two("p2");
         covered.tabs[0].selected_popup = Some("u1".into());
         assert_eq!(zoom_target(&covered), zoom);
-        // Another selected column, column count or active tab ends it.
+        // Another selected pane, column count or active tab ends it.
         assert_ne!(zoom_target(&two("p1")), zoom);
         let mut wider = two("p2");
         wider.tabs[0].columns.push(column(&["p4"]));
@@ -5205,7 +5231,40 @@ mod tests {
         let mut other_tab = two("p2");
         other_tab.active_tab = "t2".into();
         assert_ne!(zoom_target(&other_tab), zoom);
-        // One column has nothing to zoom.
+        let mut stack = column(&["p1", "p2", "p3"]);
+        stack.expanded = "p2".into();
+        let mut single = snapshot("t1", vec![tab("t1", "p2", vec![stack])]);
+        let middle = zoom_target(&single);
+        assert!(middle.is_some(), "a one-column stack can zoom");
+        let mut reordered = single.clone();
+        reordered.tabs[0].columns[0].panes.swap(0, 2);
+        assert_ne!(zoom_target(&reordered), middle);
+        let mut closed = single.clone();
+        closed.tabs[0].columns[0].panes.pop();
+        assert_ne!(zoom_target(&closed), middle);
+        let mut status = single.clone();
+        status.tabs[0].columns[0].panes[0].live = false;
+        assert_eq!(zoom_target(&status), middle);
+        for (key, direction, selected) in [
+            (KeyCode::KeyJ, WorkspaceDirection::Down, "p3"),
+            (KeyCode::KeyK, WorkspaceDirection::Up, "p1"),
+        ] {
+            assert_eq!(
+                workspace_shortcut(
+                    key,
+                    session::Modifiers::ALT,
+                    &[],
+                    "t1",
+                    Some("p2"),
+                    eon_workspace_protocol::v19::Sidebar::Open
+                ),
+                Some(WorkspaceAction::Workspace(CommonAction::Focus(direction)))
+            );
+            single.tabs[0].selected_pane = Some(selected.into());
+            single.tabs[0].columns[0].expanded = selected.into();
+            assert_ne!(zoom_target(&single), middle);
+        }
+        // One pane has nothing to zoom.
         assert_eq!(
             zoom_target(&snapshot(
                 "t1",

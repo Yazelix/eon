@@ -80,9 +80,17 @@ the bar, including the sidebar and footer.
 Visible headers pair Eon's opaque pane
 identity with Orbit's working directory. Home displays `~`, and its descendants
 use `~/`; without `HOME`, paths stay absolute. Every column's expanded pane
-presents live, unless Alt+Shift+Z zooms the selected column across the tab;
+presents live, unless Alt+Shift+Z shows the selected pane alone across the tab;
 only the selected pane receives input. Ctrl+Alt+M adds
 another column unless one would get fewer than 40 terminal columns.
+
+Zoom shows one rounded card with the selected pane's label in its top edge,
+including in a one-column tab with several panes. The other panes keep running
+at their last sizes. Changing the active tab, selected pane or pane/column layout
+ends zoom; toggling it again restores the columns at the current window size.
+A one-pane tab refuses the toggle with a notice. The tab's ` · zoom` marker
+and `, zoomed` accessible name show while zoom is visible, and the pane panel
+is named `Zoomed pane <label>`. Popups cover zoom and hide its marker until they close.
 
 A fresh workspace or tab can begin with a Project popup and no pane. Tool popups
 and the chooser draw as one card over every column, with Eon's

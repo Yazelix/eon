@@ -510,8 +510,8 @@ impl Snapshot {
 
             let mut panel = Node::new(Role::TabPanel);
             let zoomed = workspace
-                .zoomed_columns()
-                .map(|count| format!("Zoomed column {} of {count}", workspace.selected_column + 1));
+                .zoomed_pane()
+                .map(|pane| format!("Zoomed pane {}", pane.label()));
             panel.set_label(workspace.popup_label().or(zoomed.as_deref()).unwrap_or(
                 if workspace.panes.is_empty() {
                     "Empty tab"
@@ -3091,47 +3091,57 @@ mod tests {
     }
 
     #[test]
-    fn zoomed_tab_names_the_zoom_and_lists_only_its_column() {
-        let mut tab = workspace_tab("t1", &["p1"], "p1");
-        tab.selected_pane = Some("p2".into());
-        let mut column = tab.columns[0].clone();
-        column.panes[0].id = "p2".into();
-        column.expanded = "p2".into();
-        tab.columns.push(column);
-        let workspace = WorkspaceScene::from_snapshot_with_zoom(
-            &WorkspaceSnapshot {
-                active_tab: "t1".into(),
-                tabs: vec![tab],
-                geometry: eon_workspace_protocol::v19::PopupGeometry {
-                    side_margin: 8.0,
-                    vertical_margin: 4.0,
-                },
-                entries: Vec::new(),
-                codex_quota: None,
-                claude_quota: None,
-                sidebar: eon_workspace_protocol::v19::Sidebar::Open,
+    fn zoomed_tab_names_the_zoom_and_lists_only_its_pane() {
+        let tab = workspace_tab("t1", &["p1", "p2", "p3"], "p2");
+        let state = WorkspaceSnapshot {
+            active_tab: "t1".into(),
+            tabs: vec![tab],
+            geometry: eon_workspace_protocol::v19::PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
             },
-            EonBar::default(),
-            PhysicalSize::new(800, 600),
-            CellMetrics::for_scale(1.0),
-            0.0,
-            0.0,
-            |_| None,
-            |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
-            None,
-            true,
-            crate::SidebarView::default(),
-        );
+            entries: Vec::new(),
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: eon_workspace_protocol::v19::Sidebar::Open,
+        };
+        let project = |zoom| {
+            WorkspaceScene::from_snapshot_with_zoom(
+                &state,
+                EonBar::default(),
+                PhysicalSize::new(800, 600),
+                CellMetrics::for_scale(1.0),
+                0.0,
+                0.0,
+                |_| None,
+                |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+                None,
+                zoom,
+                crate::SidebarView::default(),
+            )
+        };
+        let normal = project(false);
+        let workspace = project(true);
         let mut snapshot = Snapshot::new(PhysicalSize::new(800, 600));
+        snapshot.set_workspace(Some(&normal));
+        assert_eq!(snapshot.pane_ids.len(), 3);
         snapshot.set_workspace(Some(&workspace));
         let update = snapshot.tree();
         let panel = node(&update, PANE_PANEL);
-        assert_eq!(panel.label(), Some("Zoomed column 2 of 2"));
+        assert_eq!(panel.label(), Some("Zoomed pane p2 unavailable"));
+        assert!(workspace.tabs[0].label().ends_with(" · zoom"));
         assert_eq!(panel.children(), &[snapshot.pane_ids["p2"], CONTENT]);
         assert!(!snapshot.pane_ids.contains_key("p1"));
+        assert!(!snapshot.pane_ids.contains_key("p3"));
         assert_eq!(
             node(&update, snapshot.tab_ids["t1"]).label(),
             Some("Tab 1 of 1  /tmp/t1, zoomed")
+        );
+        snapshot.set_workspace(Some(&normal));
+        assert_eq!(snapshot.pane_ids.len(), 3);
+        assert_eq!(
+            node(&snapshot.tree(), PANE_PANEL).label(),
+            Some("Active tab panes")
         );
     }
 

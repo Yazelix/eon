@@ -1191,8 +1191,8 @@ pub struct WorkspaceScene {
     active_tab_scroll: f32,
     selected_pane_scroll: f32,
     popup_label: Option<String>,
-    /// The active tab's column count while its selected column is zoomed across every card.
-    zoomed: Option<usize>,
+    /// Only the selected pane is laid out while zoom is visible.
+    zoomed: bool,
 }
 
 /// Width of each of `count` equal column cards in a window `width` wide, after the card gap
@@ -1971,8 +1971,8 @@ impl WorkspaceScene {
         )
     }
 
-    /// The scene with `zoom` laying out only the selected column, across every card, when the
-    /// active tab has more than one column and no popup covers it.
+    /// The scene with `zoom` laying out only the selected pane, across every card, when the
+    /// active tab has more than one pane and no popup covers it.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub fn from_snapshot_with_zoom<'a>(
@@ -2120,7 +2120,7 @@ impl WorkspaceScene {
             .iter()
             .position(|tab| tab.id == snapshot.active_tab)
             .expect("EONW validates the active tab");
-        let zoomed = zoom && active_popup(snapshot).is_none() && active.columns.len() > 1;
+        let zoomed = zoom && active_popup(snapshot).is_none() && active.panes().nth(1).is_some();
         // Every card shares this area; a popup or an empty tab uses all of it as one card. The
         // area follows the tab's columns whether or not a popup covers them, so toggling a popup
         // keeps the outer card edges: each column needs one padded cell below its first header.
@@ -2398,7 +2398,7 @@ impl WorkspaceScene {
                         .label
                         .clone()
                 }),
-                zoomed: None,
+                zoomed: false,
             };
         }
 
@@ -2422,7 +2422,7 @@ impl WorkspaceScene {
             minimum_terminal(metrics, metrics.height).min(maximum_terminal_height);
         let mut selected_layout = None;
         let mut other_columns = Vec::with_capacity(count - 1);
-        // Zoom lays out the selected column alone, taking every card's width.
+        // Zoom gives the selected pane every card's width and only one title band.
         let slots = if zoomed { 1 } else { count };
         for (slot, (index, column)) in active
             .columns
@@ -2438,12 +2438,17 @@ impl WorkspaceScene {
             } else {
                 column_width
             };
-            let expanded = column
-                .panes
-                .iter()
-                .position(|pane| pane.id == column.expanded)
-                .expect("EONW validates the expanded pane");
-            let pane_headers_height = column.panes.len() as f32 * pane_height;
+            let expanded = if zoomed {
+                0
+            } else {
+                column
+                    .panes
+                    .iter()
+                    .position(|pane| pane.id == column.expanded)
+                    .expect("EONW validates the expanded pane")
+            };
+            let pane_headers_height =
+                if zoomed { 1 } else { column.panes.len() } as f32 * pane_height;
             let terminal_height = (pane_viewport.height - pane_headers_height)
                 .clamp(minimum_terminal_height, maximum_terminal_height);
             let pane_scroll_limit =
@@ -2461,6 +2466,7 @@ impl WorkspaceScene {
             let panes = column
                 .panes
                 .iter()
+                .filter(|pane| !zoomed || pane.id == *selected)
                 .enumerate()
                 .map(|(position, pane)| {
                     let label = header_label(pane, &metadata);
@@ -2550,7 +2556,7 @@ impl WorkspaceScene {
             active_tab_scroll,
             selected_pane_scroll,
             popup_label: None,
-            zoomed: zoomed.then_some(count),
+            zoomed,
         }
     }
 
@@ -2608,10 +2614,10 @@ impl WorkspaceScene {
         self.card_radius
     }
 
-    /// While zoomed, the active tab's column count; `selected_column` is the zoomed one.
+    /// The sole pane while window-local zoom is visible.
     #[must_use]
-    pub fn zoomed_columns(&self) -> Option<usize> {
-        self.zoomed
+    pub fn zoomed_pane(&self) -> Option<&WorkspacePane> {
+        self.panes.first().filter(|_| self.zoomed)
     }
 
     /// Every laid-out column's headers left to right, each flagged when it is the selected

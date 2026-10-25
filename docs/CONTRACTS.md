@@ -438,16 +438,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Ctrl+Alt+M to it and, in a tab with one to three columns, refuses it with
     a notice when a column would get fewer than 40 terminal columns. Alt+M adds
     a pane to the selected column.
-  - Zooming shows the selected pane's column alone across the area all of the
-    tab's cards cover, its headers and terminal at full width; the other columns'
-    terminals keep running, hidden. Venus maps Alt+Shift+Z to it as transient
+  - Zooming shows the selected pane alone across the area all of the tab's cards
+    cover, as one card with its label in the top edge; the tab's other panes keep
+    running, hidden. Venus maps Alt+Shift+Z to it as transient
     window state that no workspace action, EONW field or attachment carries.
-    Zoom ends with any change of the active tab, its column count or its
-    selected column, so Alt+H/L unzooms and then moves, while pane traversal,
-    Alt+M and moves within the zoomed column keep it. Toggling again restores
-    the same columns, widths and selection at the current window size. A
-    one-column tab refuses
-    it with a notice; while a popup or picker covers the tab it does nothing,
+    Zoom ends with any change of the active tab, its panes or columns, or its
+    selected pane, so Alt+H/J/K/L unzooms and then moves, and adding, closing or
+    moving a pane ends it. Toggling again restores
+    the same columns, widths and selection at the current window size. A tab
+    with one pane refuses it with a notice; while a popup or picker covers the tab it does nothing,
     and a popup over a zoomed tab keeps its usual geometry. The active tab's
     pill and accessible name mark the zoom while it shows, not while a popup
     covers it. Like other fixed bindings, a popup configured on the key takes

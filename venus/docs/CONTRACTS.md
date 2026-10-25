@@ -571,18 +571,17 @@ re-proved when that platform or feature is next touched.
     than 40 terminal columns wide; with four, Eon's capacity refusal applies.
     Shrinking the window later narrows existing columns without removing
     them.
-  - Alt+Shift+Z toggles window-local zoom of the active tab's selected column
+  - Alt+Shift+Z toggles window-local zoom of the active tab's selected pane
     once per press and sends no workspace action. While zoomed, Scene lays out
-    only that column, its pane cards spanning the area all of the tab's columns
-    cover at unchanged heights; the other columns' attachments stay open at
-    their last
-    column size and are not resized, drawn, hit-tested or listed to
-    accessibility. An accepted snapshot that changes the active tab, its
-    column count or its selected column ends the zoom, and unzooming sizes
+    only that pane, as one rounded card with its label in the top edge spanning
+    the area all of the tab's columns cover; the other panes' attachments stay
+    open at their last size and are not resized, drawn, hit-tested or listed to
+    accessibility. An accepted snapshot that changes the active tab, its panes
+    or columns, or its selected pane ends the zoom, and unzooming sizes
     every column for the current window again, resizing only where that size
     changed. The active tab's label gains ` · zoom` and its accessible name
-    `, zoomed`; the pane panel is named `Zoomed column N of M` and lists only
-    the zoomed column's panes. In a one-column tab the key is consumed with a
+    `, zoomed`; the pane panel is named `Zoomed pane <label>` and lists only
+    that pane. In a tab with one pane the key is consumed with a
     rejected-action notice. While a popup covers the tab it is consumed
     without effect; the popup hides the zoomed layout and its marker, and both
     return when the popup hides. A current Eon

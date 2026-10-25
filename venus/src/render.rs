@@ -3779,7 +3779,7 @@ mod tests {
     fn retained_resize_keeps_strokes_clear_of_displayed_rows() {
         use eon_workspace_protocol::v19::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
         let metrics = CellMetrics::for_scale(1.0);
-        for (pane_count, expanded) in [(4, 1), (4, 4), (1, 1)] {
+        for (pane_count, expanded) in [(4, 1), (4, 4), (3, 2), (1, 1)] {
             let snapshot = Snapshot {
                 active_tab: "t1".into(),
                 tabs: vec![Tab {
@@ -3812,107 +3812,115 @@ mod tests {
                 claude_quota: None,
                 sidebar: Sidebar::Open,
             };
-            let workspace = |height| {
-                WorkspaceScene::from_snapshot(
+            let workspace = |height, zoom| {
+                WorkspaceScene::from_snapshot_with_zoom(
                     &snapshot,
+                    crate::EonBar::default(),
                     PhysicalSize::new(1280, height),
                     metrics,
                     0.0,
                     0.0,
+                    |_| None,
                     |_, text| (text.into(), text.len() as f32 * metrics.width),
+                    None,
+                    zoom,
+                    crate::SidebarView::default(),
                 )
             };
-            let old = workspace(740);
-            let current = workspace(720);
-            let size = metrics.surface_size(old.terminal.screen_size()).unwrap();
-            let retained = Scene {
-                revision: 1,
-                columns: size.cols,
-                rows: size.rows,
-                screen: Screen::Primary,
-                title: String::new(),
-                working_directory: String::new(),
-                background: DEFAULT_BACKGROUND,
-                foreground: CARD_OUTLINE,
-                cursor: None,
-                content: vec![],
-            };
-            let displayed = scene_grid(&retained, current.terminal, metrics)
-                .intersection(current.terminal)
-                .unwrap()
-                .intersection(current.pane_viewport)
-                .unwrap();
-            if pane_count == 4 && expanded == 1 {
-                assert_eq!(retained.rows, 32);
-                assert_eq!(displayed.bottom() - metrics.height, 630.0);
-                assert_eq!(displayed.bottom(), 648.0);
-            }
-            let paint = workspace_paint(&current, Some(&retained), &[], metrics);
-            let cards = card_backdrops(&paint, Some(&retained), &[], metrics, 1.0);
-            let fill = paint.card_fill(paint.chrome, metrics, 1.0);
-            assert!(
-                cards
-                    .iter()
-                    .all(|(card, _)| card.bounds.bottom() == fill.bounds.bottom())
-            );
-            let rules = paint
-                .pane_outlines(&paint.panes, paint.terminal, fill, 1.0, metrics, 1.0)
-                .into_iter()
-                .map(|rule| (rule, [SceneRect::default(); 2]))
-                .collect::<Vec<_>>();
-            let (clip, _) =
-                terminal_paint_clip(&paint, paint.chrome, paint.terminal, metrics, true, 1.0)
+            for (before_zoom, after_zoom) in [(false, false), (false, true), (true, false)] {
+                let old = workspace(740, before_zoom);
+                let current = workspace(720, after_zoom);
+                let size = metrics.surface_size(old.terminal.screen_size()).unwrap();
+                let retained = Scene {
+                    revision: 1,
+                    columns: size.cols,
+                    rows: size.rows,
+                    screen: Screen::Primary,
+                    title: String::new(),
+                    working_directory: String::new(),
+                    background: DEFAULT_BACKGROUND,
+                    foreground: CARD_OUTLINE,
+                    cursor: None,
+                    content: vec![],
+                };
+                let displayed = scene_grid(&retained, current.terminal, metrics)
+                    .intersection(current.terminal)
+                    .unwrap()
+                    .intersection(current.pane_viewport)
                     .unwrap();
-            assert_eq!(displayed.intersection(clip), Some(displayed));
-            assert_eq!(paint.terminal, current.terminal);
-            assert_eq!(paint.panes, current.panes);
-            let mut resized = retained.clone();
-            resized.rows = metrics
-                .surface_size(current.terminal.screen_size())
-                .unwrap()
-                .rows;
-            let settled = workspace_paint(&current, Some(&resized), &[], metrics);
-            assert!(matches!(settled, Cow::Borrowed(_)));
-            if pane_count == 4 && expanded == 1 {
-                assert_eq!(rules[0].0.bounds.bottom(), 649.0);
-                let settled_fill = settled.card_fill(settled.chrome, metrics, 1.0);
-                assert_eq!(
-                    settled.pane_outlines(
-                        &settled.panes,
-                        settled.terminal,
-                        settled_fill,
-                        1.0,
-                        metrics,
-                        1.0
-                    )[0]
-                    .bounds
-                    .bottom(),
-                    642.0
-                );
-            }
-            println!(
-                "retained resize: panes={pane_count}, expanded={expanded}, rows={}, grid bottom={}, shared line={}, frame bottom={}",
-                retained.rows,
-                displayed.bottom(),
-                fill.bounds.bottom(),
-                rules[expanded - 1].0.bounds.bottom()
-            );
-            let mut batch = RectangleBatch::new(1280, 720);
-            batch.push_pane_outlines(
-                fill,
-                paint.pane_viewport,
-                &rules,
-                Some(CARD_OUTLINE),
-                1.0,
-                1.0,
-            );
-            for rect in painted_rects(&batch) {
+                if pane_count == 4 && expanded == 1 && !before_zoom && !after_zoom {
+                    assert_eq!(retained.rows, 32);
+                    assert_eq!(displayed.bottom() - metrics.height, 630.0);
+                    assert_eq!(displayed.bottom(), 648.0);
+                }
+                let paint = workspace_paint(&current, Some(&retained), &[], metrics);
+                let cards = card_backdrops(&paint, Some(&retained), &[], metrics, 1.0);
+                let fill = paint.card_fill(paint.chrome, metrics, 1.0);
                 assert!(
-                    displayed
-                        .intersection(rect)
-                        .is_none_or(|overlap| overlap.width < 0.001 || overlap.height < 0.001),
-                    "retained rows under stroke: panes={pane_count}, expanded={expanded}, displayed={displayed:?}, stroke={rect:?}"
+                    cards
+                        .iter()
+                        .all(|(card, _)| card.bounds.bottom() == fill.bounds.bottom())
                 );
+                let rules = paint
+                    .pane_outlines(&paint.panes, paint.terminal, fill, 1.0, metrics, 1.0)
+                    .into_iter()
+                    .map(|rule| (rule, [SceneRect::default(); 2]))
+                    .collect::<Vec<_>>();
+                let (clip, _) =
+                    terminal_paint_clip(&paint, paint.chrome, paint.terminal, metrics, true, 1.0)
+                        .unwrap();
+                assert_eq!(displayed.intersection(clip), Some(displayed));
+                assert_eq!(paint.terminal, current.terminal);
+                assert_eq!(paint.panes, current.panes);
+                let mut resized = retained.clone();
+                resized.rows = metrics
+                    .surface_size(current.terminal.screen_size())
+                    .unwrap()
+                    .rows;
+                let settled = workspace_paint(&current, Some(&resized), &[], metrics);
+                assert!(matches!(settled, Cow::Borrowed(_)));
+                if pane_count == 4 && expanded == 1 && !before_zoom && !after_zoom {
+                    assert_eq!(rules[0].0.bounds.bottom(), 649.0);
+                    let settled_fill = settled.card_fill(settled.chrome, metrics, 1.0);
+                    assert_eq!(
+                        settled.pane_outlines(
+                            &settled.panes,
+                            settled.terminal,
+                            settled_fill,
+                            1.0,
+                            metrics,
+                            1.0
+                        )[0]
+                        .bounds
+                        .bottom(),
+                        642.0
+                    );
+                }
+                let selected = paint.panes.iter().position(|pane| pane.selected).unwrap();
+                println!(
+                    "retained resize: zoom={before_zoom}->{after_zoom}, panes={pane_count}, expanded={expanded}, rows={}, grid bottom={}, shared line={}, frame bottom={}",
+                    retained.rows,
+                    displayed.bottom(),
+                    fill.bounds.bottom(),
+                    rules[selected].0.bounds.bottom()
+                );
+                let mut batch = RectangleBatch::new(1280, 720);
+                batch.push_pane_outlines(
+                    fill,
+                    paint.pane_viewport,
+                    &rules,
+                    Some(CARD_OUTLINE),
+                    1.0,
+                    1.0,
+                );
+                for rect in painted_rects(&batch) {
+                    assert!(
+                        displayed
+                            .intersection(rect)
+                            .is_none_or(|overlap| overlap.width < 0.001 || overlap.height < 0.001),
+                        "retained rows under stroke: panes={pane_count}, expanded={expanded}, displayed={displayed:?}, stroke={rect:?}"
+                    );
+                }
             }
         }
     }

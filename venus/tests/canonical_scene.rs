@@ -1097,7 +1097,7 @@ fn cell(text: &str, width: CellWidth, foreground: StyleColor, hyperlink: &str) -
 }
 
 #[test]
-fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
+fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
     let pane = |id: &str| Pane {
         id: id.into(),
         session: format!("session-{id}"),
@@ -1238,8 +1238,9 @@ fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
             .all(|terminal| terminal.width >= 34.0)
     );
 
-    // Zoom lays out only the selected column, across every card's width at the same height;
-    // the hidden columns take no space, hits or headers.
+    // Zoom hides the selected pane's neighbours as well as the other columns.
+    let mut stacked = snapshot.clone();
+    stacked.tabs[0].columns[1].panes = vec![pane("p5"), pane("p3"), pane("p6")];
     let zoomed = |snapshot: &Snapshot| {
         WorkspaceScene::from_snapshot_with_zoom(
             snapshot,
@@ -1255,8 +1256,15 @@ fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
             yazelix_venus::SidebarView::default(),
         )
     };
-    let zoom = zoomed(&snapshot);
-    assert_eq!(zoom.zoomed_columns(), Some(3));
+    let zoom = zoomed(&stacked);
+    assert_eq!(
+        zoom.panes
+            .iter()
+            .map(|pane| pane.id.as_str())
+            .collect::<Vec<_>>(),
+        ["p3"]
+    );
+    assert_eq!(zoom.zoomed_pane().map(|pane| pane.id.as_str()), Some("p3"));
     assert_eq!(zoom.selected_column, 1);
     assert!(zoom.other_columns.is_empty());
     assert_eq!(zoom.pane_viewport, scene.pane_viewport);
@@ -1278,12 +1286,97 @@ fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
         Some(WorkspaceHit::Terminal)
     ));
     assert!(zoom.tabs[0].rect.width > scene.tabs[0].rect.width);
+    let unzoomed = WorkspaceScene::from_snapshot(
+        &stacked,
+        size,
+        CellMetrics::for_scale(1.0),
+        0.0,
+        0.0,
+        |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+    );
+    assert!(zoom.terminal.height > unzoomed.terminal.height);
+    let metrics = CellMetrics::for_scale(1.0);
+    assert_ne!(
+        metrics.surface_size(zoom.terminal.screen_size()),
+        metrics.surface_size(unzoomed.terminal.screen_size())
+    );
+    let restored = WorkspaceScene::from_snapshot(
+        &stacked,
+        size,
+        CellMetrics::for_scale(1.0),
+        0.0,
+        0.0,
+        |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+    );
+    assert_eq!(restored, unzoomed);
+    for pane in unzoomed.panes.iter().filter(|pane| !pane.selected) {
+        assert!(
+            !matches!(zoom.hit_test(pane.rect.left + 5.0, pane.rect.top + 5.0), Some(WorkspaceHit::Pane(id)) if id == pane.id)
+        );
+    }
 
-    // One column or a popup leaves nothing to zoom.
-    let mut single = snapshot.clone();
+    let small = |scroll| {
+        WorkspaceScene::from_snapshot(
+            &stacked,
+            PhysicalSize::new(1600, 112),
+            CellMetrics::for_scale(1.0),
+            0.0,
+            scroll,
+            |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
+        )
+    };
+    let clipped = small(0.0);
+    assert!(clipped.visible_terminal().unwrap().height < clipped.terminal.height);
+    let restored = small(clipped.selected_pane_scroll());
+    assert_eq!(restored.visible_terminal(), Some(restored.terminal));
+    println!(
+        "unzoom reveals the selected pane at scroll {}",
+        clipped.selected_pane_scroll()
+    );
+
+    for (scale, font_size, height) in [
+        (1.0, 16.0, 1),
+        (1.0, 96.0, 112),
+        (1.3, 16.0, 105),
+        (2.0, 96.0, 150),
+        (2.0, 16.0, 720),
+    ] {
+        let mut metrics = CellMetrics::for_scale(scale);
+        metrics.font_size = font_size * scale as f32;
+        metrics.width *= font_size / 16.0;
+        metrics.height = (metrics.font_size * 1.125).round();
+        let tiny = WorkspaceScene::from_snapshot_with_zoom(
+            &stacked,
+            EonBar::default(),
+            PhysicalSize::new(1600, height),
+            metrics,
+            0.0,
+            f32::MAX,
+            |_| None,
+            |_, text| (text.to_owned(), text.chars().count() as f32 * metrics.width),
+            None,
+            true,
+            yazelix_venus::SidebarView::default(),
+        );
+        assert_eq!(tiny.panes.len(), 1);
+        assert!(tiny.other_columns.is_empty());
+        assert!(tiny.terminal.top >= tiny.pane_viewport.top);
+        assert!(tiny.terminal.bottom() <= tiny.pane_viewport.bottom() + 0.001);
+        println!(
+            "zoom fallback: scale={scale}, font={font_size}, height={height}, terminal={:?}",
+            tiny.terminal
+        );
+    }
+
+    // A single column's stack still zooms; only a tab with one pane refuses.
+    let mut single = stacked.clone();
     single.tabs[0].columns.drain(..1);
     single.tabs[0].columns.pop();
-    assert_eq!(zoomed(&single).zoomed_columns(), None);
+    assert_eq!(zoomed(&single).panes.len(), 1);
+    single.tabs[0].columns[0]
+        .panes
+        .retain(|pane| pane.id == "p3");
+    assert!(zoomed(&single).zoomed_pane().is_none());
     let mut popup = snapshot.clone();
     popup.entries.push(eon_workspace_protocol::v19::PopupEntry {
         id: "git".into(),
@@ -1303,5 +1396,5 @@ fn columns_sit_side_by_side_and_keep_the_selected_column_primary() {
             attention: None,
         });
     popup.tabs[0].selected_popup = Some("u1".into());
-    assert_eq!(zoomed(&popup).zoomed_columns(), None);
+    assert!(zoomed(&popup).zoomed_pane().is_none());
 }

@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Alt+Shift+Z shows the selected pane alone across the tab, including in a one-column stack. Changing the selected pane, tab or layout ends zoom; a one-pane tab refuses it.
+
 - Unknown `config.toml` keys are ignored with a warning naming the key and file,
   so a newer setting keeps older running builds working. Known settings still
   reject wrong types and values.
