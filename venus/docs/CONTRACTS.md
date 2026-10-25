@@ -864,6 +864,13 @@ re-proved when that platform or feature is next touched.
   background of the terminal in the leftmost visible column. Explicit cells,
   selection, inverse video, workspace chrome, notices, focus, foreground
   effects, input, hit testing, and accessibility remain unchanged.
+  Terminal padding follows `[terminal] padding_color`. `extend` (default) gives
+  the padding beside each edge row and column the background of its nearest
+  cell. On the primary screen it does not extend vertically when the nearest
+  row has a default-background cell or a full-height powerline glyph.
+  `extend-always` extends without those exceptions. `background` paints the
+  terminal default background as before. Background opacity applies to the
+  padding as today, and the padding stays inside the pane rounded card.
 - **Important failures:** Invalid values fail before window creation; values
   below `1.0` require a proved premultiplied surface and otherwise fail before
   presentation.

@@ -408,7 +408,9 @@ fn venus_command(
         .arg("--application-id")
         .arg(application_id)
         .arg("--background-opacity")
-        .arg(terminal.background_opacity.to_string());
+        .arg(terminal.background_opacity.to_string())
+        .arg("--padding-color")
+        .arg(terminal.padding_color.as_str());
     if terminal.background_blur {
         command.arg("--background-blur");
     }
@@ -2897,6 +2899,68 @@ rows = 30
     }
 
     #[test]
+    fn padding_color_configuration_reaches_each_launch() {
+        let inputs = crate::fixtures::inputs();
+        let root = temporary_directory();
+        for value in [
+            None,
+            Some("extend"),
+            Some("extend-always"),
+            Some("background"),
+        ] {
+            fs::write(
+                root.join("config.toml"),
+                value.map_or_else(String::new, |v| {
+                    format!("[terminal]\npadding_color = \"{v}\"\n")
+                }),
+            )
+            .unwrap();
+            let terminal =
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                    .unwrap();
+            for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
+                let command = venus_command(
+                    &inputs,
+                    &root,
+                    Path::new("/runtime.sock"),
+                    mode,
+                    &terminal,
+                    inputs.defaults.bar_widgets,
+                    "eon",
+                    true,
+                    true,
+                );
+                assert!(
+                    command
+                        .get_args()
+                        .collect::<Vec<_>>()
+                        .windows(2)
+                        .any(|pair| pair == ["--padding-color", value.unwrap_or("extend")])
+                );
+            }
+        }
+        for value in [
+            "\"bad\"",
+            "true",
+            "3",
+            "\"Extend\"",
+            "\"extend\"\npadding_color = \"background\"",
+        ] {
+            fs::write(
+                root.join("config.toml"),
+                format!("[terminal]\npadding_color = {value}\n"),
+            )
+            .unwrap();
+            assert!(
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                    .unwrap_err()
+                    .contains("padding_color")
+            );
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn configured_outline_widths_reach_only_workspace_launches() {
         let inputs = crate::fixtures::inputs();
         let root = temporary_directory();
@@ -3112,6 +3176,8 @@ rows = 30
                 "eon",
                 "--background-opacity",
                 "0.88",
+                "--padding-color",
+                "extend",
                 "--background-blur",
                 "--bar-items",
                 "cpu",
@@ -3150,6 +3216,8 @@ rows = 30
                 "eonbase",
                 "--background-opacity",
                 "1",
+                "--padding-color",
+                "extend",
                 "/runtime/orbit.sock",
             ]
             .map(OsString::from)
@@ -3177,6 +3245,8 @@ rows = 30
                 "eonova",
                 "--background-opacity",
                 "0",
+                "--padding-color",
+                "extend",
                 "--background-blur",
                 "/runtime/orbit.sock",
             ]

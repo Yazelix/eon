@@ -1661,6 +1661,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     chrome; later compositor/user resizing remains authoritative. Reopen reads
     current settings without replacing Orbit or its PTY; live Venus keeps its
     snapshot.
+  - `[terminal] padding_color` accepts `extend` (default), `extend-always`, or
+    `background`; Eon Runtime resolves it and supplies Venus's `--padding-color`
+    launch input for terminal padding as VEN-C11 describes.
   - The authoritative startup workspace Snapshot transfer and native readiness
     share one absolute thirty-second deadline, including large snapshots, so a
     busy machine does not close a slow but healthy window. A missed deadline

@@ -1949,6 +1949,7 @@ mod tests {
                     window,
                     event_loop,
                     1.0,
+                    crate::PaddingColor::Extend,
                     None,
                     true,
                     SceneColor {

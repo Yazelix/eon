@@ -281,6 +281,143 @@ fn shifted(mut rect: SceneRect, vertical: f32) -> SceneRect {
     rect
 }
 
+/// How terminal edge backgrounds fill the space around the displayed grid.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PaddingColor {
+    #[default]
+    Extend,
+    ExtendAlways,
+    Background,
+}
+
+impl std::str::FromStr for PaddingColor {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "extend" => Ok(Self::Extend),
+            "extend-always" => Ok(Self::ExtendAlways),
+            "background" => Ok(Self::Background),
+            _ => Err("padding color must be extend, extend-always, or background"),
+        }
+    }
+}
+
+fn build_padding_rectangles(
+    rectangles: &mut RectangleBatch,
+    scene: &Scene,
+    metrics: CellMetrics,
+    viewport: SceneRect,
+    bounds: SceneRect,
+    padding_color: PaddingColor,
+    (preview, offset): (Option<&ScenePreview>, f32),
+) {
+    if padding_color == PaddingColor::Background || scene.columns == 0 || scene.rows == 0 {
+        return;
+    }
+    let grid = scene_grid(scene, viewport, metrics);
+    let columns = usize::from(scene.columns);
+    let push = |rectangles: &mut RectangleBatch, rect: SceneRect, style: DrawStyle| {
+        // Default cells already have the backdrop's configured opacity.
+        if !style.background_is_default {
+            rectangles.push(
+                rect.left,
+                rect.top,
+                rect.width,
+                rect.height,
+                style.background,
+                1.0,
+            );
+        }
+    };
+    let origin = shifted(viewport, offset);
+    let rows = scene
+        .content
+        .iter()
+        .take(usize::from(scene.rows))
+        .enumerate()
+        .map(|(index, row)| (grid.top + offset + index as f32 * metrics.height, row))
+        .chain(
+            preview_rows(preview)
+                .into_iter()
+                .flat_map(move |(direction, rows)| {
+                    rows.iter().enumerate().map(move |(index, row)| {
+                        (
+                            preview_row_top(scene, direction, index, metrics, origin),
+                            row,
+                        )
+                    })
+                }),
+        )
+        .filter(|(top, _)| row_intersects_clip(*top, metrics.height, grid));
+    for (top, row) in rows.clone() {
+        for (cell, left, right) in [
+            (row.cells.first(), bounds.left, grid.left),
+            (row.cells.get(columns - 1), grid.right(), bounds.right()),
+        ] {
+            if let Some(cell) = cell {
+                push(
+                    rectangles,
+                    SceneRect {
+                        left,
+                        top: top.max(grid.top),
+                        width: right - left,
+                        height: (top + metrics.height).min(grid.bottom()) - top.max(grid.top),
+                    },
+                    cell.style,
+                );
+            }
+        }
+    }
+    for (edge, top, bottom) in [
+        (grid.top, bounds.top, grid.top),
+        (grid.bottom(), grid.bottom(), bounds.bottom()),
+    ] {
+        let Some((_, row)) = rows.clone().min_by(|(a, _), (b, _)| {
+            (a + metrics.height / 2.0 - edge)
+                .abs()
+                .total_cmp(&(b + metrics.height / 2.0 - edge).abs())
+        }) else {
+            continue;
+        };
+        if padding_color == PaddingColor::Extend
+            && scene.screen == orbit_protocol::Screen::Primary
+            && row.cells.iter().any(|cell| {
+                cell.style.background_is_default
+                    || cell.style.background == scene.background
+                    || cell.text.chars().any(|ch| {
+                        matches!(ch,
+                        '\u{e0b0}'..='\u{e0c8}' | '\u{e0ca}' | '\u{e0cc}'..='\u{e0d2}' | '\u{e0d4}')
+                    })
+            })
+        {
+            continue;
+        }
+        for (column, cell) in row.cells.iter().take(columns).enumerate() {
+            let left = if column == 0 {
+                bounds.left
+            } else {
+                grid.left + column as f32 * metrics.width
+            };
+            let right = if column + 1 == columns {
+                bounds.right()
+            } else {
+                grid.left + (column + 1) as f32 * metrics.width
+            };
+            push(
+                rectangles,
+                SceneRect {
+                    left,
+                    top,
+                    width: right - left,
+                    height: bottom - top,
+                },
+                cell.style,
+            );
+        }
+    }
+}
+
 fn scene_grid(scene: &Scene, viewport: SceneRect, metrics: CellMetrics) -> SceneRect {
     metrics.grid_rect(viewport, scene.columns, scene.rows)
 }
@@ -428,6 +565,125 @@ fn terminal_paint_clip(
             .intersection(viewport)?,
         card,
     ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_workspace_padding(
+    rectangles: &mut RectangleBatch,
+    workspace: &WorkspaceScene,
+    scene: Option<&Scene>,
+    columns: &[Option<&Scene>],
+    metrics: CellMetrics,
+    padding_color: PaddingColor,
+    pane_frames: bool,
+    stroke_width: f32,
+    scroll: (Option<&ScenePreview>, f32),
+) {
+    if padding_color == PaddingColor::Background {
+        return;
+    }
+    let mut surfaces = std::iter::once((
+        workspace.chrome,
+        workspace.terminal,
+        scene,
+        workspace.panes.as_slice(),
+    ))
+    .chain(
+        workspace
+            .other_columns
+            .iter()
+            .zip(columns)
+            .map(|(column, scene)| {
+                (
+                    column.chrome,
+                    column.terminal,
+                    *scene,
+                    column.panes.as_slice(),
+                )
+            }),
+    )
+    .collect::<Vec<_>>();
+    surfaces.sort_by(|a, b| a.1.left.total_cmp(&b.1.left));
+    let spans = background_spans(
+        &surfaces
+            .iter()
+            .map(|(_, terminal, _, _)| *terminal)
+            .collect::<Vec<_>>(),
+        rectangles.width as f32,
+    );
+    let popup = workspace.popup_label().is_some();
+    let viewport = if pane_frames || popup {
+        workspace.pane_viewport
+    } else {
+        let left = workspace.sidebar().map_or(0.0, SceneRect::right);
+        SceneRect {
+            left,
+            width: rectangles.width as f32 - left,
+            ..workspace.pane_viewport
+        }
+    };
+    for ((allocated, terminal, scene, panes), (left, right)) in surfaces.into_iter().zip(spans) {
+        let Some(scene) = scene else { continue };
+        let outer =
+            (pane_frames || popup).then(|| workspace.card_fill(allocated, metrics, stroke_width));
+        let pane = outer.map(|outer| {
+            workspace
+                .pane_outlines(panes, terminal, outer, stroke_width, metrics, stroke_width)
+                .into_iter()
+                .find(|outline| outline.expanded)
+                .map_or(outer, |outline| CardFill {
+                    bounds: outline.bounds,
+                    radius: outline.radius,
+                })
+        });
+        let bounds = if popup {
+            let card = outer.unwrap();
+            // Popup margins are padding too; the title band retains its own background.
+            SceneRect {
+                left: card.bounds.left,
+                width: card.bounds.width,
+                height: (card.bounds.bottom() - terminal.top).max(0.0),
+                ..terminal
+            }
+        } else if pane_frames {
+            terminal
+        } else {
+            let left = left.max(viewport.left);
+            SceneRect {
+                left,
+                width: right - left,
+                ..terminal
+            }
+        };
+        // Intersect the expanded pane's rounded shape with its column's outer shape.
+        let bands = outer
+            .into_iter()
+            .flat_map(CardFill::bands)
+            .chain(outer.is_none().then_some(bounds));
+        rectangles.card_clip = pane;
+        for band in bands {
+            rectangles.clip = bounds
+                .intersection(viewport)
+                .and_then(|clip| clip.intersection(band));
+            if rectangles.clip.is_some() {
+                build_padding_rectangles(
+                    rectangles,
+                    scene,
+                    metrics,
+                    terminal,
+                    bounds,
+                    padding_color,
+                    if terminal == workspace.terminal {
+                        scroll
+                    } else {
+                        (None, 0.0)
+                    },
+                );
+            }
+        }
+    }
+    rectangles.clip = None;
+    rectangles.card_clip = None;
 }
 
 fn terminal_text_clip(
@@ -591,6 +847,7 @@ pub struct Renderer {
     cursor_tail: Option<(SceneColor, SceneColor, f32)>,
     clear: wgpu::Color,
     background_opacity: f32,
+    padding_color: PaddingColor,
     pane_frames: bool,
     focus_color: SceneColor,
     border_width: u8,
@@ -653,6 +910,7 @@ impl Renderer {
         window: Arc<Window>,
         event_loop: &ActiveEventLoop,
         background_opacity: f32,
+        padding_color: PaddingColor,
         cursor_tail: Option<(SceneColor, f32)>,
         pane_frames: bool,
         focus_color: SceneColor,
@@ -836,6 +1094,7 @@ impl Renderer {
                 .map(|(color, duration)| (color, cursor_outline(color), duration)),
             clear: clear_color(DEFAULT_BACKGROUND, background_opacity, srgb_target),
             background_opacity,
+            padding_color,
             pane_frames,
             focus_color,
             border_width,
@@ -1202,6 +1461,17 @@ impl Renderer {
                     );
                 }
             }
+            build_workspace_padding(
+                &mut rectangles,
+                workspace,
+                scene,
+                columns,
+                self.metrics,
+                self.padding_color,
+                self.pane_frames,
+                self.card_stroke_width(),
+                (scroll_preview, scroll_offset),
+            );
             self.build_workspace(workspace, workspace_focus, &mut rectangles);
             for (column, scene) in workspace.other_columns.iter().zip(columns) {
                 let Some(scene) = scene else {
@@ -1304,6 +1574,15 @@ impl Renderer {
                 scene.background,
                 self.background_opacity,
                 self.config.format.is_srgb(),
+            );
+            build_padding_rectangles(
+                &mut rectangles,
+                scene,
+                self.metrics,
+                viewport,
+                viewport,
+                self.padding_color,
+                (scroll_preview, scroll_offset),
             );
             let clip = scene_grid(scene, viewport, self.metrics);
             rectangles.clip = Some(clip);
@@ -2700,6 +2979,515 @@ mod tests {
                     height: (value(0, 1) - value(2, 1)) * batch.height as f32 / 2.0,
                 }
             })
+    }
+
+    fn padding_scene() -> Scene {
+        Scene {
+            revision: 1,
+            columns: 3,
+            rows: 2,
+            screen: Screen::Primary,
+            title: String::new(),
+            working_directory: String::new(),
+            background: DEFAULT_BACKGROUND,
+            foreground: CARD_OUTLINE,
+            cursor: None,
+            content: (0..2)
+                .map(|row| DrawRow {
+                    wrapped: false,
+                    wrap_continuation: false,
+                    kitty_virtual_placeholder: false,
+                    cells: (0..3)
+                        .map(|col| DrawCell {
+                            width: CellWidth::Narrow,
+                            text: String::new(),
+                            hyperlink: String::new(),
+                            style: crate::DrawStyle {
+                                background: SceneColor {
+                                    r: 20 + row * 60 + col * 10,
+                                    g: 30,
+                                    b: 40,
+                                },
+                                background_is_default: false,
+                                ..plain_style()
+                            },
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+
+    fn padding_pixel(batch: &RectangleBatch, x: f32, y: f32) -> Option<SceneColor> {
+        batch
+            .bytes
+            .chunks_exact(3 * VERTEX_SIZE as usize)
+            .find_map(|triangle| {
+                let value = |vertex: usize, component: usize| {
+                    let offset = vertex * VERTEX_SIZE as usize + component * 4;
+                    f32::from_ne_bytes(triangle[offset..offset + 4].try_into().unwrap())
+                };
+                let points = [0, 1, 2].map(|v| {
+                    (
+                        (value(v, 0) + 1.0) * batch.width as f32 / 2.0,
+                        (1.0 - value(v, 1)) * batch.height as f32 / 2.0,
+                    )
+                });
+                let cross = |a: (f32, f32), b: (f32, f32), p: (f32, f32)| {
+                    (b.0 - a.0) * (p.1 - a.1) - (b.1 - a.1) * (p.0 - a.0)
+                };
+                let signs = [
+                    cross(points[0], points[1], (x, y)),
+                    cross(points[1], points[2], (x, y)),
+                    cross(points[2], points[0], (x, y)),
+                ];
+                (cross(points[0], points[1], points[2]).abs() > 0.0001
+                    && (signs.iter().all(|v| *v >= 0.0) || signs.iter().all(|v| *v <= 0.0)))
+                .then(|| {
+                    assert_eq!(value(0, 5), 1.0, "explicit backgrounds stay opaque");
+                    SceneColor {
+                        r: (value(0, 2) * 255.0).round() as u8,
+                        g: (value(0, 3) * 255.0).round() as u8,
+                        b: (value(0, 4) * 255.0).round() as u8,
+                    }
+                })
+            })
+    }
+
+    #[test]
+    fn padding_color_follows_scrolled_rows_and_orbit_preview_edges() {
+        let metrics = CellMetrics::for_scale(1.0);
+        let viewport = SceneRect {
+            left: 10.0,
+            top: 10.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        let scene = padding_scene();
+        let grid = scene_grid(&scene, viewport, metrics);
+        for (direction, offset) in [
+            (VerticalDirection::Up, metrics.height / 2.0),
+            (VerticalDirection::Down, -metrics.height / 2.0),
+        ] {
+            let mut row = scene.content[0].clone();
+            for cell in &mut row.cells {
+                cell.style.background = SceneColor {
+                    r: 200,
+                    g: 100,
+                    b: 50,
+                };
+            }
+            let preview = ScenePreview::Viewport {
+                frame_revision: 1,
+                direction,
+                edge_reached: false,
+                rows: vec![row.clone()],
+            };
+            let mut batch = RectangleBatch::new(200, 200);
+            build_padding_rectangles(
+                &mut batch,
+                &scene,
+                metrics,
+                viewport,
+                viewport,
+                PaddingColor::Extend,
+                (Some(&preview), offset),
+            );
+            let (side_y, padding_y) = match direction {
+                VerticalDirection::Up => (grid.top + 1.0, viewport.top + 1.0),
+                VerticalDirection::Down => (grid.bottom() - 1.0, viewport.bottom() - 1.0),
+            };
+            assert_eq!(
+                padding_pixel(&batch, viewport.left + 1.0, side_y),
+                Some(row.cells[0].style.background)
+            );
+            assert_eq!(
+                padding_pixel(&batch, grid.left + metrics.width + 1.0, padding_y),
+                Some(row.cells[1].style.background)
+            );
+            let mut settled = RectangleBatch::new(200, 200);
+            build_padding_rectangles(
+                &mut settled,
+                &scene,
+                metrics,
+                viewport,
+                viewport,
+                PaddingColor::Extend,
+                (Some(&preview), 0.0),
+            );
+            let canonical = match direction {
+                VerticalDirection::Up => 0,
+                VerticalDirection::Down => 1,
+            };
+            assert_eq!(
+                padding_pixel(&settled, grid.left + metrics.width + 1.0, padding_y),
+                Some(scene.content[canonical].cells[1].style.background),
+                "a settled preview stays outside the grid"
+            );
+        }
+    }
+
+    #[test]
+    fn padding_color_whole_scroll_uses_visible_row_color_and_exceptions() {
+        let metrics = CellMetrics::for_scale(1.0);
+        let viewport = SceneRect {
+            left: 10.0,
+            top: 10.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        for (departed, visible) in [
+            ("", ""),
+            ("default", ""),
+            ("\u{e0b0}", ""),
+            ("", "default"),
+            ("", "\u{e0b0}"),
+        ] {
+            let mut scene = padding_scene();
+            for (index, reason) in [(0, departed), (1, visible)] {
+                let cell = &mut scene.content[index].cells[0];
+                if reason == "default" {
+                    cell.style = plain_style();
+                } else {
+                    cell.text = reason.into();
+                }
+            }
+            let preview = ScenePreview::Viewport {
+                frame_revision: 1,
+                direction: VerticalDirection::Down,
+                edge_reached: false,
+                rows: vec![scene.content[1].clone()],
+            };
+            let grid = scene_grid(&scene, viewport, metrics);
+            let mut batch = RectangleBatch::new(200, 200);
+            build_padding_rectangles(
+                &mut batch,
+                &scene,
+                metrics,
+                viewport,
+                viewport,
+                PaddingColor::Extend,
+                (Some(&preview), -metrics.height),
+            );
+            assert_eq!(
+                padding_pixel(&batch, grid.left + metrics.width + 1.0, viewport.top + 1.0),
+                visible
+                    .is_empty()
+                    .then_some(scene.content[1].cells[1].style.background),
+                "departed={departed:?}, visible={visible:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn padding_color_stays_in_pane_and_popup_shapes_in_both_frame_modes() {
+        use eon_workspace_protocol::v19::{
+            ALT, Column, Pane, Popup, PopupEntry, PopupGeometry, Shortcut, Sidebar, Snapshot, Tab,
+        };
+        let mut snapshot = Snapshot {
+            active_tab: "t1".into(),
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/tmp".to_vec(),
+                pending: false,
+                selected_pane: Some("p0-0".into()),
+                selected_popup: None,
+                columns: (0..2)
+                    .map(|col| Column {
+                        panes: (0..2)
+                            .map(|row| Pane {
+                                id: format!("p{col}-{row}"),
+                                session: format!("s{col}-{row}"),
+                                endpoint: format!("/tmp/{col}-{row}.sock").into_bytes(),
+                                live: true,
+                                attention: None,
+                            })
+                            .collect(),
+                        expanded: format!("p{col}-0"),
+                    })
+                    .collect(),
+                popups: vec![Popup {
+                    id: "u1".into(),
+                    entry: "files".into(),
+                    session: "files".into(),
+                    endpoint: b"/tmp/files.sock".to_vec(),
+                    attention: None,
+                }],
+                attention_rollup: None,
+            }],
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: vec![PopupEntry {
+                id: "files".into(),
+                label: "Files".into(),
+                shortcut: Shortcut {
+                    modifiers: ALT,
+                    key: "KeyF".into(),
+                },
+            }],
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: Sidebar::Closed,
+        };
+        for scale in [1.0, 1.3] {
+            let metrics = CellMetrics::for_scale(scale);
+            let stroke = physical_outline_width(3, metrics.scale);
+            for popup in [false, true] {
+                snapshot.tabs[0].selected_popup = popup.then(|| "u1".into());
+                for frames in [false, true] {
+                    let scene = padding_scene();
+                    let peer = Scene {
+                        background: SceneColor {
+                            r: 70,
+                            g: 80,
+                            b: 90,
+                        },
+                        ..padding_scene()
+                    };
+                    let workspace = WorkspaceScene::from_snapshot(
+                        &snapshot,
+                        PhysicalSize::new(400, 300),
+                        metrics,
+                        0.0,
+                        0.0,
+                        |_, text| (text.into(), text.len() as f32 * metrics.width),
+                    );
+                    let columns = if popup { vec![] } else { vec![Some(&peer)] };
+                    let workspace = workspace_paint(&workspace, Some(&scene), &columns, metrics);
+                    let mut batch = RectangleBatch::new(400, 300);
+                    build_workspace_padding(
+                        &mut batch,
+                        &workspace,
+                        Some(&scene),
+                        &columns,
+                        metrics,
+                        PaddingColor::Extend,
+                        frames,
+                        stroke,
+                        (None, 0.0),
+                    );
+                    let grid = scene_grid(&scene, workspace.terminal, metrics);
+                    assert_eq!(
+                        padding_pixel(&batch, grid.left - 1.0, grid.top + 1.0),
+                        Some(scene.content[0].cells[0].style.background)
+                    );
+                    assert_eq!(
+                        padding_pixel(&batch, grid.left + metrics.width + 1.0, grid.bottom() + 1.0),
+                        Some(scene.content[1].cells[1].style.background),
+                        "displayed grid determines the bottom edge"
+                    );
+                    if frames || popup {
+                        let outer = workspace.card_fill(workspace.chrome, metrics, stroke);
+                        let pane = workspace
+                            .pane_outlines(
+                                &workspace.panes,
+                                workspace.terminal,
+                                outer,
+                                stroke,
+                                metrics,
+                                stroke,
+                            )
+                            .into_iter()
+                            .find(|outline| outline.expanded)
+                            .map_or(outer, |outline| CardFill {
+                                bounds: outline.bounds,
+                                radius: outline.radius,
+                            });
+                        for vertex in batch.bytes.chunks_exact(VERTEX_SIZE as usize) {
+                            let x =
+                                (f32::from_ne_bytes(vertex[..4].try_into().unwrap()) + 1.0) * 200.0;
+                            let y = (1.0 - f32::from_ne_bytes(vertex[4..8].try_into().unwrap()))
+                                * 150.0;
+                            // Peer columns have their own card; inspect selected-card vertices here.
+                            if !popup && x > workspace.chrome.right() + 0.001 {
+                                continue;
+                            }
+                            for shape in [outer, pane] {
+                                assert!(
+                                    shape.bands().any(|band| x >= band.left - 0.001
+                                        && x <= band.right() + 0.001
+                                        && y >= band.top - 0.001
+                                        && y <= band.bottom() + 0.001),
+                                    "paint outside rounded shape: {x},{y}, popup={popup}, frames={frames}"
+                                );
+                            }
+                        }
+                        assert_eq!(
+                            padding_pixel(
+                                &batch,
+                                outer.bounds.left + 0.1,
+                                outer.bounds.bottom() - 0.1
+                            ),
+                            None
+                        );
+                    } else {
+                        assert!(
+                            padding_pixel(&batch, 0.5, grid.top + 1.0).is_some(),
+                            "frameless padding reaches the window edge"
+                        );
+                        assert!(
+                            padding_pixel(&batch, 399.5, grid.top + 1.0).is_some(),
+                            "peer padding reaches the other window edge"
+                        );
+                    }
+                    let mut disabled = RectangleBatch::new(400, 300);
+                    build_workspace_padding(
+                        &mut disabled,
+                        &workspace,
+                        Some(&scene),
+                        &columns,
+                        metrics,
+                        PaddingColor::Background,
+                        frames,
+                        stroke,
+                        (None, 0.0),
+                    );
+                    assert!(disabled.bytes.is_empty());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn padding_color_extends_each_edge_and_corner() {
+        let metrics = CellMetrics::for_scale(1.0);
+        let scene = padding_scene();
+        let viewport = SceneRect {
+            left: 10.0,
+            top: 10.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        let grid = scene_grid(&scene, viewport, metrics);
+        let mut batch = RectangleBatch::new(200, 200);
+        build_padding_rectangles(
+            &mut batch,
+            &scene,
+            metrics,
+            viewport,
+            viewport,
+            PaddingColor::Extend,
+            (None, 0.0),
+        );
+        for (row, y) in [
+            (0, viewport.top + 1.0),
+            (0, grid.top + 1.0),
+            (1, grid.bottom() - 1.0),
+            (1, viewport.bottom() - 1.0),
+        ] {
+            for (col, x) in [
+                (0, viewport.left + 1.0),
+                (0, grid.left + 1.0),
+                (1, grid.left + metrics.width + 1.0),
+                (2, grid.right() - 1.0),
+                (2, viewport.right() - 1.0),
+            ] {
+                if grid.contains(x, y) {
+                    continue;
+                }
+                assert_eq!(
+                    padding_pixel(&batch, x, y),
+                    Some(scene.content[row].cells[col].style.background),
+                    "padding at {x},{y}"
+                );
+            }
+        }
+        assert_eq!(padding_pixel(&batch, grid.left + 1.0, grid.top + 1.0), None);
+        assert_eq!(padding_pixel(&batch, viewport.left - 1.0, grid.top), None);
+        assert_eq!(
+            padding_pixel(&batch, viewport.right() + 1.0, grid.top),
+            None
+        );
+    }
+
+    #[test]
+    fn padding_color_declines_only_primary_vertical_edges() {
+        let metrics = CellMetrics::for_scale(1.0);
+        let viewport = SceneRect {
+            left: 10.0,
+            top: 10.0,
+            width: 100.0,
+            height: 100.0,
+        };
+        for reason in [
+            "default", "matching", "\u{e0b0}", "\u{e0c8}", "\u{e0ca}", "\u{e0cc}", "\u{e0d2}",
+            "\u{e0d4}", "\u{e0c9}", "\u{e0cb}", "\u{e0d3}", "█",
+        ] {
+            for screen in [Screen::Primary, Screen::Alternate] {
+                for mode in [
+                    PaddingColor::Extend,
+                    PaddingColor::ExtendAlways,
+                    PaddingColor::Background,
+                ] {
+                    let mut scene = padding_scene();
+                    scene.screen = screen;
+                    let cell = &mut scene.content[0].cells[1];
+                    match reason {
+                        "default" => {
+                            cell.style.background = scene.background;
+                            cell.style.background_is_default = true;
+                        }
+                        "matching" => cell.style.background = scene.background,
+                        text => cell.text = text.into(),
+                    }
+                    let mut batch = RectangleBatch::new(200, 200);
+                    build_padding_rectangles(
+                        &mut batch,
+                        &scene,
+                        metrics,
+                        viewport,
+                        viewport,
+                        mode,
+                        (None, 0.0),
+                    );
+                    let declined = mode == PaddingColor::Extend
+                        && screen == Screen::Primary
+                        && !matches!(reason, "\u{e0c9}" | "\u{e0cb}" | "\u{e0d3}" | "█");
+                    let painted = mode != PaddingColor::Background;
+                    assert_eq!(
+                        padding_pixel(&batch, 11.0, 11.0).is_some(),
+                        painted && !declined,
+                        "{reason}, {screen:?}, {mode:?}"
+                    );
+                    assert_eq!(
+                        padding_pixel(&batch, 11.0, 109.0).is_some(),
+                        painted,
+                        "bottom is independent"
+                    );
+                    assert_eq!(
+                        padding_pixel(&batch, 11.0, 30.0).is_some(),
+                        painted,
+                        "sides always extend"
+                    );
+                }
+            }
+        }
+        let mut scene = padding_scene();
+        for cell in scene.content.iter_mut().flat_map(|row| &mut row.cells) {
+            cell.style = plain_style();
+        }
+        for mode in [
+            PaddingColor::Extend,
+            PaddingColor::ExtendAlways,
+            PaddingColor::Background,
+        ] {
+            let mut batch = RectangleBatch::new(200, 200);
+            build_padding_rectangles(
+                &mut batch,
+                &scene,
+                metrics,
+                viewport,
+                viewport,
+                mode,
+                (None, 0.0),
+            );
+            assert!(
+                batch.bytes.is_empty(),
+                "default background retains the backdrop's opacity"
+            );
+        }
     }
 
     #[test]

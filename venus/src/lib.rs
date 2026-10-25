@@ -19,7 +19,9 @@ pub use model::{
     ClipboardEffect, ConnectionState, LocalNoticeSource, ModelError, SessionModel, WorkspaceModel,
     active_popup, attention_only_change, focused_terminal,
 };
-pub use render::{CellMetrics, FontSettings, FontSetup, PresentOutcome, RenderError, Renderer};
+pub use render::{
+    CellMetrics, FontSettings, FontSetup, PaddingColor, PresentOutcome, RenderError, Renderer,
+};
 pub use scene::{
     BarItem, Color, DialogKind, DialogScene, DrawCell, DrawCursor, DrawRow, DrawStyle, EonBar,
     GlyphRun, Hyperlink, LocalClock, PaneMetadata, Scene, ScenePreview, SceneRect, ShortcutGroup,

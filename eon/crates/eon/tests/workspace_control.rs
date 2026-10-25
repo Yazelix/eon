@@ -2396,7 +2396,7 @@ fn bare_eon_attaches_only_to_the_live_current_generation() {
     assert_eq!(
         fs::read_to_string(log).unwrap(),
         format!(
-            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--background-blur\n--cursor-trail-duration-v1\n1.5\n--eon-version\n{}\n--bar-items\ncodex_quota,claude_quota,cpu,ram,clock,version\n--pane-frames\ntrue\n--warning-close-last-tab\ntrue\n--workspace\n{}\n",
+            "--no-decorations\n--application-id\neon\n--background-opacity\n0.8\n--padding-color\nextend\n--background-blur\n--cursor-trail-duration-v1\n1.5\n--eon-version\n{}\n--bar-items\ncodex_quota,claude_quota,cpu,ram,clock,version\n--pane-frames\ntrue\n--warning-close-last-tab\ntrue\n--workspace\n{}\n",
             env!("CARGO_PKG_VERSION"),
             control.display(),
         )
@@ -2659,7 +2659,7 @@ cat >/dev/null
     assert!(venus_log.contains("--background-opacity 0.88"));
     assert!(venus_log.contains("--cursor-trail-duration-v1 2.5"));
     assert!(venus_log.contains("--cursor-trail-duration-v1 3"));
-    assert!(venus_log.contains("--background-opacity 0 --background-blur"));
+    assert!(venus_log.contains("--background-opacity 0 --padding-color extend --background-blur"));
     assert_eq!(venus_log.matches("--background-blur").count(), 1);
     assert!(venus_log.contains("--font-size 20 --columns 100 --rows 30"));
     assert!(venus_log.contains("--font-size 24 --line-height 1.5 --rows 24"));

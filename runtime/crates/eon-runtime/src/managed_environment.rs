@@ -222,10 +222,29 @@ struct ShellSettings {
     unknown: BTreeMap<String, toml::Value>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PaddingColor {
+    Extend,
+    ExtendAlways,
+    Background,
+}
+
+impl PaddingColor {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Extend => "extend",
+            Self::ExtendAlways => "extend-always",
+            Self::Background => "background",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct TerminalConfig {
     pub background_opacity: f32,
     pub background_blur: bool,
+    pub padding_color: PaddingColor,
     pub pane_frames: bool,
     pub focus_color: Option<String>,
     pub border_width: Option<u8>,
@@ -245,6 +264,7 @@ pub struct TerminalConfig {
 struct TerminalSettings {
     background_opacity: Option<f32>,
     background_blur: Option<bool>,
+    padding_color: Option<PaddingColor>,
     pane_frames: Option<bool>,
     focus_color: Option<String>,
     border_width: Option<u8>,
@@ -382,6 +402,7 @@ pub(crate) fn terminal_presentation(
             .background_opacity
             .unwrap_or(base.background_opacity),
         background_blur: settings.background_blur.unwrap_or(base.background_blur),
+        padding_color: settings.padding_color.unwrap_or(base.padding_color),
         pane_frames: settings.pane_frames.unwrap_or(base.pane_frames),
         focus_color: settings.focus_color.or_else(|| base.focus_color.clone()),
         border_width: settings.border_width.or(base.border_width),

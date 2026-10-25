@@ -1,6 +1,6 @@
 use eon_runtime::{
-    Defaults, Inputs, ManagedPrograms, PopupCatalog, PopupCommand, PopupDefinition, ShellConfig,
-    StartupAnimation, TerminalConfig,
+    Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand, PopupDefinition,
+    ShellConfig, StartupAnimation, TerminalConfig,
 };
 use eon_workspace_protocol::v19::{ALT, PopupGeometry, SHIFT, Shortcut};
 
@@ -30,6 +30,7 @@ pub(crate) fn inputs() -> Inputs {
             terminal: TerminalConfig {
                 background_opacity: 0.8,
                 background_blur: true,
+                padding_color: PaddingColor::Extend,
                 pane_frames: true,
                 focus_color: None,
                 border_width: None,

@@ -10,6 +10,7 @@ widgets = ["codex_quota", "claude_quota", "cpu", "ram", "clock", "version"]
 [terminal]
 background_opacity = 0.80
 background_blur = true
+padding_color = "extend"
 pane_frames = true
 focus_color = "custom:#b207fb"
 border_width = 1
@@ -99,6 +100,17 @@ boundary. Popup and Agents fills follow their rounded outer edges in the same
 way, with their titles on the boundary. Header scrolling keeps the fill's top
 fixed. Frameless mode keeps terminal-background strips across the window below
 the bar, including the sidebar and footer.
+
+`padding_color` controls terminal padding in panes, popups and eonbase.
+`extend` (default) uses the nearest edge cell's background on each side and
+at the corners. On the primary screen, top or bottom padding keeps the default
+background if that edge row contains any default-background cell (including an
+explicit color matching the default) or a full-height powerline glyph.
+Alternate-screen TUIs always extend. `extend-always` skips those exceptions;
+`background` keeps the terminal default background throughout the padding.
+Default backgrounds retain the configured opacity; explicit backgrounds paint
+as they do in cells. Padding stays inside the rounded card and below outlines.
+The setting applies when a window opens or reopens.
 
 Opacity accepts `0.0` through `1.0`. Blur and pane frames are booleans. Font size
 accepts 6–96 logical pixels, line height accepts 1–3, and a supplied columns and

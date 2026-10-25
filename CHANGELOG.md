@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Terminal padding extends the nearest edge cell backgrounds by default, so full-screen TUIs fill their panes. `[terminal] padding_color` selects `extend`, `extend-always`, or the previous `background` behavior.
+
 - Zoomed tabs show a zoom-in magnifier after their name; the accessible name
   keeps `, zoomed`, and a missing symbol font falls back to ` · zoom`.
 

@@ -10,7 +10,7 @@ use std::{
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
 };
-use yazelix_venus::{BarItem, Color, FontSettings};
+use yazelix_venus::{BarItem, Color, FontSettings, PaddingColor};
 
 const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("magma", rgb(0xff3b30)),
@@ -22,7 +22,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--background-opacity VALUE] [--background-blur] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -40,6 +40,7 @@ pub(super) struct LaunchArguments {
     pub(super) eon_version: Option<String>,
     pub(super) bar_items: Vec<BarItem>,
     pub(super) background_opacity: f32,
+    pub(super) padding_color: PaddingColor,
     pub(super) background_blur: bool,
     pub(super) cursor_tail: Option<(Color, f32)>,
     pub(super) fonts: FontSettings,
@@ -64,6 +65,7 @@ pub(super) fn launch_arguments(
     let mut eon_version = None;
     let mut bar_items = None;
     let mut background_opacity = None;
+    let mut padding_color = None;
     let mut background_blur = false;
     let mut cursor_effect = None;
     let mut cursor_color_choice = None;
@@ -154,6 +156,8 @@ pub(super) fn launch_arguments(
             }
         } else if argument == "--no-decorations" {
             decorations = false;
+        } else if argument == "--padding-color" {
+            option_value(&mut padding_color, arguments.next())?;
         } else if argument == "--background-opacity" {
             if background_opacity.is_some() {
                 return Err(USAGE.into());
@@ -298,6 +302,7 @@ pub(super) fn launch_arguments(
         eon_version,
         bar_items: bar_items.unwrap_or_else(|| BarItem::DEFAULT.into()),
         background_opacity: background_opacity.unwrap_or(1.0),
+        padding_color: padding_color.unwrap_or_default(),
         background_blur,
         cursor_tail,
         fonts,
@@ -429,6 +434,36 @@ fn default_socket_path() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn padding_color_launch_values_are_strict() {
+        assert_eq!(
+            launch_arguments([], None).unwrap().padding_color,
+            PaddingColor::Extend
+        );
+        for (value, expected) in [
+            ("extend", PaddingColor::Extend),
+            ("extend-always", PaddingColor::ExtendAlways),
+            ("background", PaddingColor::Background),
+        ] {
+            assert_eq!(
+                launch_arguments(
+                    ["--padding-color", value, "orbit.sock"].map(OsString::from),
+                    None
+                )
+                .unwrap()
+                .padding_color,
+                expected
+            );
+        }
+        for args in [
+            vec!["--padding-color"],
+            vec!["--padding-color", "bad"],
+            vec!["--padding-color", "extend", "--padding-color", "background"],
+        ] {
+            assert!(launch_arguments(args.into_iter().map(OsString::from), None).is_err());
+        }
+    }
 
     #[test]
     fn bar_items_are_an_ordered_workspace_choice() {

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- VEN-C11: terminal padding extends edge cell backgrounds inside rounded cards, with primary-screen default-background and powerline exceptions; `--padding-color` selects `extend` (default), `extend-always`, or `background` (`eon-pane-padding-extend-d9t8`).
+
 - VEN-C8: the zoomed tab marker is a baseline-aligned Nerd Font U+F00E magnifier;
   width fitting includes it, `, zoomed` stays accessible, and a missing face uses
   ` · zoom` (`eon-x7l8`).
