@@ -37,10 +37,10 @@ Run `eon attach` and every tab, pane and terminal is where you left it.
 ## Get started
 
 You need **x86_64 Linux on native Wayland**, Git, and Nix with flakes enabled.
-Install the latest release, 0.1.1:
+Install the latest release, 0.1.2:
 
 ```sh
-nix profile add --refresh github:Yazelix/eon/v0.1.1
+nix profile add --refresh github:Yazelix/eon/v0.1.2
 ```
 
 Run `eon`. After a short animation (most keys skip it), pick a directory: press

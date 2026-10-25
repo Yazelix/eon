@@ -3,7 +3,12 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
-## Unreleased
+## v0.1.2
+
+The first release since v0.1.1. EONW moves from version 9 to 19, so a
+window started from 0.1.1 needs one restart before the 0.1.2 `eon` command
+can control it; `eon --help`, `eon versions` and the window label report
+0.1.2.
 
 - Terminal padding extends the nearest edge cell backgrounds by default, so full-screen TUIs fill their panes. `[terminal] padding_color` selects `extend`, `extend-always`, or the previous `background` behavior.
 

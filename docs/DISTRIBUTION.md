@@ -46,6 +46,9 @@ A release bumps the product version and tags that commit `vX.Y.Z`
 `linux-alpha-2026-10-14` tag is version 0.1.0, and the first numbered
 release is `v0.1.1`. Installing without Nix is a delivery milestone within
 0.x, not a stage.
+Eon's product version is bumped at least whenever EONW's protocol version
+changes, so one version never names builds that cannot control each other
+(`eon-7sjm`, decided 2026-10-24).
 
 ### Nix channel
 
