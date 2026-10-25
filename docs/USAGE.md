@@ -147,6 +147,8 @@ The top row is the native Eon Bar. Its `+`, `?`, and `×` controls create
 a tab, open Shortcuts, and close the active tab. The empty space
 between the scrollable tabs and those controls moves the undecorated window;
 tabs, controls, pane headers, and terminal content remain ordinary targets.
+A zoomed tab shows a zoom-in magnifier after its name, or ` · zoom` if the
+bundled Symbols Nerd Font face is unavailable. Its accessible name says `, zoomed`.
 Pinned CodexBar CLI supplies read-only Codex and Claude quota from their local
 authentication. Codex also needs a compatible `codex` executable on `PATH`.
 Codex chips show its white mark and Claude chips its orange splat.

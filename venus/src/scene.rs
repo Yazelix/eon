@@ -1989,6 +1989,18 @@ impl WorkspaceScene {
         )
     }
 
+    /// Whether zoom is visible rather than refused or covered by a popup.
+    #[must_use]
+    pub fn zoom_visible(snapshot: &Snapshot, requested: bool) -> bool {
+        requested
+            && active_popup(snapshot).is_none()
+            && snapshot
+                .tabs
+                .iter()
+                .find(|tab| tab.id == snapshot.active_tab)
+                .is_some_and(|tab| tab.panes().nth(1).is_some())
+    }
+
     /// The scene with `zoom` laying out only the selected pane, across every card, when the
     /// active tab has more than one pane and no popup covers it.
     #[must_use]
@@ -2138,7 +2150,7 @@ impl WorkspaceScene {
             .iter()
             .position(|tab| tab.id == snapshot.active_tab)
             .expect("EONW validates the active tab");
-        let zoomed = zoom && active_popup(snapshot).is_none() && active.panes().nth(1).is_some();
+        let zoomed = Self::zoom_visible(snapshot, zoom);
         // Every card shares this area; a popup or an empty tab uses all of it as one card. The
         // area follows the tab's columns whether or not a popup covers them, so toggling a popup
         // keeps the outer card edges: each column needs one padded cell below its first header.
@@ -2175,7 +2187,7 @@ impl WorkspaceScene {
                 let (mut label, mut accessible_label) =
                     tab_labels(index, snapshot.tabs.len(), &tab.directory);
                 if zoomed && index == active_tab {
-                    label.push_str(" · zoom");
+                    label.push_str(" \u{f00e}");
                     accessible_label.push_str(", zoomed");
                 }
                 let (label, text_width) = header_text(Some(&tab.id), &label);

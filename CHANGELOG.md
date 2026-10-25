@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Zoomed tabs show a zoom-in magnifier after their name; the accessible name
+  keeps `, zoomed`, and a missing symbol font falls back to ` · zoom`.
+
 - Card titles have more space below the Eon Bar: the gap to their capital
   letters matches the space above the pills. Pills and controls stay in place;
   the added space yields first on short windows.

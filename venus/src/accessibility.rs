@@ -3129,7 +3129,8 @@ mod tests {
         let update = snapshot.tree();
         let panel = node(&update, PANE_PANEL);
         assert_eq!(panel.label(), Some("Zoomed pane p2 unavailable"));
-        assert!(workspace.tabs[0].label().ends_with(" · zoom"));
+        assert!(workspace.tabs[0].label().ends_with(" \u{f00e}"));
+        assert!(!workspace.tabs[0].label().contains(" · zoom"));
         assert_eq!(panel.children(), &[snapshot.pane_ids["p2"], CONTENT]);
         assert!(!snapshot.pane_ids.contains_key("p1"));
         assert!(!snapshot.pane_ids.contains_key("p3"));

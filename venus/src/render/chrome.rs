@@ -3,7 +3,7 @@
 
 use super::{
     CARD_OUTLINE, CellMetrics, CursorPoint, DEFAULT_BACKGROUND, DrawStyleKind, PlacedText,
-    RectangleBatch, Renderer, SceneColor, physical_outline_width, shaping,
+    RectangleBatch, Renderer, SceneColor, cells::NERD_FONT_FAMILY, physical_outline_width, shaping,
 };
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
@@ -15,7 +15,7 @@ use crate::{
 use eon_workspace_protocol::v19::AttentionState;
 use glyphon::{
     Attrs, Buffer, Color, ContentType, CustomGlyph, Family, FontSystem, Metrics,
-    RasterizeCustomGlyphRequest, RasterizedCustomGlyph, TextBounds, Wrap,
+    RasterizeCustomGlyphRequest, RasterizedCustomGlyph, TextBounds, Weight, Wrap, fontdb,
 };
 
 const OPENAI_BLOSSOM_ID: u16 = 1;
@@ -359,6 +359,30 @@ fn push_bar_widget(
     );
 }
 
+fn fit_tab_text(
+    fonts: &mut FontSystem,
+    metrics: CellMetrics,
+    text: &str,
+    zoomed: bool,
+    width: f32,
+) -> (String, f32) {
+    let fallback = text
+        .strip_suffix(" \u{f00e}")
+        .filter(|_| {
+            zoomed
+                && fonts
+                    .db()
+                    .query(&fontdb::Query {
+                        families: &[Family::Name(NERD_FONT_FAMILY)],
+                        ..Default::default()
+                    })
+                    .and_then(|id| fonts.get_font(id, Weight::NORMAL))
+                    .is_none()
+        })
+        .map(|label| format!("{label} · zoom"));
+    fit_header_text(fonts, metrics, fallback.as_deref().unwrap_or(text), width)
+}
+
 pub(super) fn fit_header_text(
     fonts: &mut FontSystem,
     metrics: CellMetrics,
@@ -466,9 +490,15 @@ impl Renderer {
     }
 
     /// Fit the scene's canonical label using the same typography as its header.
-    pub fn fit_tab_text(&mut self, label: &str) -> (String, f32) {
+    pub fn fit_tab_text(&mut self, label: &str, zoomed: bool) -> (String, f32) {
         let width = WorkspaceScene::tab_text_width(self.size(), self.metrics);
-        fit_header_text(&mut self.fonts.font_system, self.metrics, label, width)
+        fit_tab_text(
+            &mut self.fonts.font_system,
+            self.metrics,
+            label,
+            zoomed,
+            width,
+        )
     }
 
     /// One line of agent sidebar text. With `marker`, the popup marker follows the text before
@@ -1790,6 +1820,76 @@ mod tests {
     }
 
     #[test]
+    fn zoom_marker_uses_bundled_face_or_text_fallback_and_fits() {
+        let original = FontSystem::new();
+        for available in [true, false] {
+            let mut db = fontdb::Database::new();
+            for name in ["DejaVu Sans", NERD_FONT_FAMILY] {
+                if !available && name == NERD_FONT_FAMILY {
+                    continue;
+                }
+                let id = original
+                    .db()
+                    .query(&fontdb::Query {
+                        families: &[Family::Name(name)],
+                        ..Default::default()
+                    })
+                    .expect("the accepted font environment supplies the tested face");
+                db.push_face_info(original.db().face(id).unwrap().clone());
+            }
+            db.set_sans_serif_family("DejaVu Sans");
+            let mut fonts = FontSystem::new_with_locale_and_db("en-US".into(), db);
+            for scale in [1.0, 1.3, 2.0] {
+                let metrics = CellMetrics::for_scale(scale);
+                let plain = "1  eon";
+                let label = "1  eon \u{f00e}";
+                let unzoomed = fit_tab_text(&mut fonts, metrics, label, false, f32::INFINITY);
+                assert_eq!(unzoomed.0, label, "directory text must not imply zoom");
+                let (fitted, width) = fit_tab_text(&mut fonts, metrics, label, true, f32::INFINITY);
+                assert_eq!(fitted, if available { label } else { "1  eon · zoom" });
+                let plain_width = fit_header_text(&mut fonts, metrics, plain, f32::INFINITY).1;
+                assert!(width > plain_width, "the marker must consume tab width");
+                let narrow = fit_tab_text(&mut fonts, metrics, label, true, plain_width);
+                assert!(narrow.1 <= plain_width);
+                assert_ne!(narrow.0, fitted);
+
+                let title = chrome_title_metrics(metrics);
+                let mut buffer =
+                    Buffer::new(&mut fonts, Metrics::new(title.font_size, title.line_height));
+                buffer.set_wrap(Wrap::None);
+                buffer.set_text(
+                    &fitted,
+                    &Attrs::new().family(Family::SansSerif),
+                    shaping(&fitted),
+                    None,
+                );
+                buffer.shape_until_scroll(&mut fonts, false);
+                let runs: Vec<_> = buffer.layout_runs().collect();
+                assert_eq!(runs.len(), 1, "label and marker share one baseline");
+                assert!((runs[0].line_w - width).abs() < 0.01);
+                assert!(runs[0].glyphs.iter().all(|glyph| glyph.glyph_id != 0));
+                if available {
+                    let glyph = runs[0]
+                        .glyphs
+                        .iter()
+                        .find(|glyph| fitted[glyph.start..glyph.end].contains('\u{f00e}'))
+                        .unwrap();
+                    assert!(
+                        fonts
+                            .db()
+                            .face(glyph.font_id)
+                            .unwrap()
+                            .families
+                            .iter()
+                            .any(|(name, _)| name == NERD_FONT_FAMILY),
+                        "the marker resolves through the bundled symbol face"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn tab_text_fits_shaped_width_without_splitting_combining_clusters() {
         let mut fonts = FontSystem::new();
         for scale in [1.0, 1.25, 2.0] {
@@ -1902,7 +2002,7 @@ mod tests {
                     renderer.metrics(),
                     0.0,
                     0.0,
-                    |_, label| renderer.fit_tab_text(label),
+                    |_, label| renderer.fit_tab_text(label, false),
                 );
                 renderer.build_workspace(
                     &workspace,
@@ -1969,7 +2069,7 @@ mod tests {
                     renderer.metrics(),
                     0.0,
                     0.0,
-                    |_, label| renderer.fit_tab_text(label),
+                    |_, label| renderer.fit_tab_text(label, false),
                 );
                 renderer.pane_frames = false;
                 renderer.set_hovered_header(None);
@@ -2025,7 +2125,7 @@ mod tests {
                     0.0,
                     0.0,
                     |_| Some(&metadata),
-                    |_, label| renderer.fit_tab_text(label),
+                    |_, label| renderer.fit_tab_text(label, false),
                     None,
                 );
                 // Exercise the real shaped title and rectangle path in this existing native probe.
@@ -2261,7 +2361,7 @@ mod tests {
                         renderer.metrics(),
                         0.0,
                         0.0,
-                        |_, label| renderer.fit_tab_text(label),
+                        |_, label| renderer.fit_tab_text(label, false),
                     );
                     renderer.text.clear();
                     let mut batch = RectangleBatch::new(1600, 900);

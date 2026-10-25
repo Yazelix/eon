@@ -90,7 +90,10 @@ Zoom shows one rounded card with the selected pane's label in its top edge,
 including in a one-column tab with several panes. The other panes keep running
 at their last sizes. Changing the active tab, selected pane or pane/column layout
 ends zoom; toggling it again restores the columns at the current window size.
-A one-pane tab refuses the toggle with a notice. The tab's ` · zoom` marker
+A one-pane tab refuses the toggle with a notice. A zoom-in magnifier (Nerd Font
+U+F00E) follows the tab's name in its label colour and on the same baseline;
+it participates in tab width fitting. If the bundled Symbols Nerd Font face
+is unavailable, the marker falls back to ` · zoom`. The marker
 and `, zoomed` accessible name show while zoom is visible, and the pane panel
 is named `Zoomed pane <label>`. Popups cover zoom and hide its marker until they close.
 

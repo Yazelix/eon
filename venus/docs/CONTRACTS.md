@@ -579,7 +579,8 @@ re-proved when that platform or feature is next touched.
     accessibility. An accepted snapshot that changes the active tab, its panes
     or columns, or its selected pane ends the zoom, and unzooming sizes
     every column for the current window again, resizing only where that size
-    changed. The active tab's label gains ` · zoom` and its accessible name
+    changed. The active tab's label gains a zoom-in magnifier glyph (Nerd Font U+F00E)
+    after its name and its accessible name
     `, zoomed`; the pane panel is named `Zoomed pane <label>` and lists only
     that pane. In a tab with one pane the key is consumed with a
     rejected-action notice. While a popup covers the tab it is consumed

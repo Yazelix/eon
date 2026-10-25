@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C8: the zoomed tab marker is a baseline-aligned Nerd Font U+F00E magnifier;
+  width fitting includes it, `, zoomed` stays accessible, and a missing face uses
+  ` · zoom` (`eon-x7l8`).
+
 - VEN-C21: card areas start lower while bar pills, widgets and controls stay
   in place. The gap to the tops of the card titles' capital letters matches
   the space above the pills; the added space yields first on short windows

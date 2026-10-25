@@ -1288,6 +1288,7 @@ impl Application {
         let zoom = self.zoomed();
         let state = self.window.as_mut()?;
         let snapshot = self.workspace_model.snapshot()?;
+        let zoom = WorkspaceScene::zoom_visible(snapshot, zoom);
         self.hints = self.hints_visible.then(|| {
             ShortcutHintsScene::new(
                 shortcut_hints_for(
@@ -1320,7 +1321,9 @@ impl Application {
             |_| None,
             |id, label| {
                 let fitted = if id.is_some() {
-                    state.renderer.fit_tab_text(label)
+                    state
+                        .renderer
+                        .fit_tab_text(label, zoom && id == Some(snapshot.active_tab.as_str()))
                 } else {
                     state.renderer.measure_header_text(label)
                 };

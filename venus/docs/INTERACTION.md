@@ -71,6 +71,9 @@ the empty region between tabs and controls drags an undecorated window.
 | Alt+Shift+H | Show or hide the agent sidebar, unless Eon turned it off |
 | Alt+G / Alt+Shift+G | Send `NextAttention` or `PreviousAttention`, even with the sidebar off |
 
+A zoomed tab's name is followed by a zoom-in magnifier (Nerd Font U+F00E),
+with ` · zoom` as the missing-font fallback. Its accessible name keeps `, zoomed`.
+
 Eon decides which actions are available and owns popup lifetime and directory
 changes. A repeated press does not duplicate a structural action. Switching
 tabs retains each tab's popup selection. F6 cycles terminal, agent sidebar,
