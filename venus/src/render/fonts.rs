@@ -1,4 +1,4 @@
-use super::{CellMetrics, DEFAULT_METRICS, RenderError};
+use super::{CellMetrics, DEFAULT_METRICS, FALLBACK_CAP_HEIGHT_EM, RenderError};
 use glyphon::{
     Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Weight,
     cosmic_text::{Fallback, PlatformFallback},
@@ -221,6 +221,33 @@ impl FontSetup {
         } else {
             DEFAULT_METRICS.width * settings.size / DEFAULT_METRICS.font_size
         };
+        let title_cap_top_em = {
+            let mut buffer =
+                Buffer::new(&mut font_system, Metrics::new(settings.size, settings.size));
+            buffer.set_text(
+                "H",
+                &Attrs::new().family(Family::SansSerif),
+                Shaping::Basic,
+                None,
+            );
+            buffer.shape_until_scroll(&mut font_system, false);
+            let face = buffer
+                .layout_runs()
+                .flat_map(|run| run.glyphs)
+                .next()
+                .and_then(|glyph| font_system.get_font(glyph.font_id, Weight::NORMAL));
+            face.map(|face| {
+                let metrics = face.metrics();
+                let units = f32::from(metrics.units_per_em).max(1.0);
+                let cap = metrics
+                    .cap_height
+                    .map(|cap| cap / units)
+                    .filter(|cap| cap.is_finite() && *cap > 0.0)
+                    // shortcut: faces without cap metadata use 0.7 em; use their metric when supplied.
+                    .unwrap_or(FALLBACK_CAP_HEIGHT_EM);
+                (metrics.ascent + metrics.descent) / (2.0 * units) - cap
+            })
+        };
         Ok(Self {
             font_system,
             logical: CellMetrics {
@@ -228,6 +255,7 @@ impl FontSetup {
                 width,
                 height: settings.size * settings.line_height,
                 font_size: settings.size,
+                title_cap_top_em,
                 padding: DEFAULT_METRICS.padding,
             },
             family,
@@ -245,6 +273,49 @@ impl FontSetup {
 mod tests {
     use super::super::{cells::NERD_FONT_FAMILY, shaping};
     use super::*;
+
+    #[test]
+    fn eon_bar_title_metrics_match_shaped_capitals() {
+        for line_height in [1.125, 2.0] {
+            let mut fonts = FontSetup::new(&FontSettings {
+                line_height,
+                ..FontSettings::default()
+            })
+            .unwrap();
+            for scale in [1.0, 1.3] {
+                let metrics = fonts.metrics(scale);
+                let title = crate::scene::chrome_title_metrics(metrics);
+                let mut buffer = Buffer::new(
+                    &mut fonts.font_system,
+                    Metrics::new(title.font_size, title.line_height),
+                );
+                buffer.set_text(
+                    "H",
+                    &Attrs::new().family(Family::SansSerif),
+                    Shaping::Basic,
+                    None,
+                );
+                buffer.shape_until_scroll(&mut fonts.font_system, false);
+                let run = buffer.layout_runs().next().unwrap();
+                let id = run.glyphs[0].font_id;
+                let face = fonts.font_system.get_font(id, Weight::NORMAL).unwrap();
+                let face_metrics = face.metrics();
+                let cap = face_metrics
+                    .cap_height
+                    .map_or(FALLBACK_CAP_HEIGHT_EM, |cap| {
+                        cap / f32::from(face_metrics.units_per_em)
+                    });
+                let cap_top = run.line_y - cap * title.font_size;
+                assert!((cap_top - title.cap_top).abs() < 0.001);
+                println!(
+                    "title face={:?}, cap_height={:?}, units={}, scale={scale}, line_height={line_height}, capital top={cap_top}",
+                    fonts.font_system.db().face(id).unwrap().families,
+                    face_metrics.cap_height,
+                    face_metrics.units_per_em
+                );
+            }
+        }
+    }
 
     #[test]
     fn ordered_terminal_fallbacks_preserve_readable_generic_ui_text() {

@@ -1234,11 +1234,11 @@ re-proved when that platform or feature is next touched.
   uses New tab, Keyboard shortcuts, or active-tab Close; scrolls the tab region;
   or left-presses its empty drag region.
 - **Result:** The existing workspace tab strip remains one row at its existing
-  height. Tabs keep their filled pills. Tab pills and the quota, CPU, RAM and clock widgets
-  share one height and centre line: each spans from half the card title height below the window's
-  top edge to the top of the allocated card areas, so the space above it equals the space between
-  it and the cards' shared top line. The widgets draw no fill: each is a rounded outline at the
-  pane cards' neutral border width and outline color, with its text and icons on the opaque bar
+  height. Tabs keep their filled pills. Tab pills and the quota, CPU, RAM and clock widgets share
+  one height and centre line, starting half the card title height below the window's top edge; the
+  allocated card areas start below them so that the space between the pills and the tops of the card
+  titles' capital letters equals the space above the pills. The widgets draw no fill: each is a
+  rounded outline at the pane cards' neutral border width and outline color, with its text and icons on the opaque bar
   background. The version label stays plain text, and New tab, Keyboard shortcuts and Close centre
   on the same line. Hover and accessibility rectangles, order, width fitting and the blank drag
   region stay unchanged. Scrollable tabs keep the leading space and retain their labels,

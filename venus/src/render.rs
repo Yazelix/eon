@@ -52,11 +52,13 @@ const VERTEX_SIZE: u64 = 24;
 #[cfg(test)]
 const VERTICES_PER_QUAD: u32 = 6;
 const DEVICE_LOST: &str = "the Venus GPU device was lost";
+pub(crate) const FALLBACK_CAP_HEIGHT_EM: f32 = 0.7;
 const DEFAULT_METRICS: CellMetrics = CellMetrics {
     scale: 1.0,
     width: 10.0,
     height: 18.0,
     font_size: 16.0,
+    title_cap_top_em: None,
     padding: 12.0,
 };
 
@@ -114,6 +116,8 @@ pub struct CellMetrics {
     pub width: f32,
     pub height: f32,
     pub font_size: f32,
+    /// Capital top relative to the title line's centre, in em; absent before fonts resolve.
+    pub title_cap_top_em: Option<f32>,
     pub padding: f32,
 }
 
@@ -176,6 +180,7 @@ impl CellMetrics {
             width: (self.width * scale).round().max(1.0),
             height: (self.height * scale).round().max(1.0),
             font_size: (self.font_size * scale).max(1.0),
+            title_cap_top_em: self.title_cap_top_em,
             padding: (self.padding * scale).round(),
         }
     }
@@ -2795,6 +2800,7 @@ mod tests {
             width: 10.0,
             height: 20.0,
             font_size: 16.0,
+            title_cap_top_em: None,
             padding: 5.0,
         };
         let scene = Scene {
@@ -3830,6 +3836,11 @@ mod tests {
             for (before_zoom, after_zoom) in [(false, false), (false, true), (true, false)] {
                 let old = workspace(740, before_zoom);
                 let current = workspace(720, after_zoom);
+                assert_eq!(current.pane_viewport.top, 46.0);
+                assert_eq!(current.panes[0].rect.top, current.pane_viewport.top);
+                let shared_top = current.card_rect(current.chrome, metrics, 1.0).top;
+                assert_eq!(shared_top, 56.0);
+                assert_eq!(current.sidebar().unwrap().top, shared_top);
                 let size = metrics.surface_size(old.terminal.screen_size()).unwrap();
                 let retained = Scene {
                     revision: 1,
@@ -3850,8 +3861,8 @@ mod tests {
                     .unwrap();
                 if pane_count == 4 && expanded == 1 && !before_zoom && !after_zoom {
                     assert_eq!(retained.rows, 32);
-                    assert_eq!(displayed.bottom() - metrics.height, 630.0);
-                    assert_eq!(displayed.bottom(), 648.0);
+                    assert_eq!(displayed.bottom() - metrics.height, 634.0);
+                    assert_eq!(displayed.bottom(), 652.0);
                 }
                 let paint = workspace_paint(&current, Some(&retained), &[], metrics);
                 let cards = card_backdrops(&paint, Some(&retained), &[], metrics, 1.0);
@@ -3880,7 +3891,7 @@ mod tests {
                 let settled = workspace_paint(&current, Some(&resized), &[], metrics);
                 assert!(matches!(settled, Cow::Borrowed(_)));
                 if pane_count == 4 && expanded == 1 && !before_zoom && !after_zoom {
-                    assert_eq!(rules[0].0.bounds.bottom(), 649.0);
+                    assert_eq!(rules[0].0.bounds.bottom(), 653.0);
                     let settled_fill = settled.card_fill(settled.chrome, metrics, 1.0);
                     assert_eq!(
                         settled.pane_outlines(
@@ -4129,10 +4140,7 @@ mod tests {
                                 && font_size == 16.0
                                 && line_height == 1.125
                             {
-                                assert_eq!(
-                                    workspace.terminal.height,
-                                    if pane_count == 1 { 44.0 } else { 42.0 }
-                                );
+                                assert_eq!(workspace.terminal.height, 42.0);
                                 assert_eq!(
                                     ((workspace.terminal.height - 24.0) / 18.0).floor(),
                                     1.0
@@ -4175,11 +4183,11 @@ mod tests {
                                 && pane_scroll == 0.0
                             {
                                 assert_eq!(workspace.pane_viewport.bottom(), 104.0);
-                                assert_eq!(raw_grids[0].top, 92.0);
-                                assert_eq!(raw_grids[0].bottom(), 110.0);
-                                assert!(rules[1].0.bounds.bottom() >= 110.0 + stroke);
+                                assert_eq!(raw_grids[0].top, 94.0);
+                                assert_eq!(raw_grids[0].bottom(), 112.0);
+                                assert!(rules[1].0.bounds.bottom() >= 112.0 + stroke);
                                 println!(
-                                    "short scrolled viewport: stroke={stroke}, raw grid=92..110, shared line={expected}, frame bottom={}",
+                                    "short scrolled viewport: stroke={stroke}, raw grid=94..112, shared line={expected}, frame bottom={}",
                                     rules[1].0.bounds.bottom()
                                 );
                             }
@@ -4728,9 +4736,9 @@ mod tests {
             fill.bounds,
             SceneRect {
                 left: 8.0,
-                top: 50.0,
+                top: 56.0,
                 width: 998.0,
-                height: 832.0,
+                height: 826.0,
             }
         );
         let mut fonts = clipping_test_fonts();
@@ -4766,7 +4774,7 @@ mod tests {
             );
             buffer.shape_until_scroll(&mut fonts.font_system, false);
             if column == 98 {
-                assert_eq!((cell.left, cell.top), (1000.0, 864.0));
+                assert_eq!((cell.left, cell.top), (1000.0, 870.0));
                 let run = buffer.layout_runs().next().unwrap();
                 let physical = run.glyphs[0].physical((cell.left, cell.top), 1.0);
                 let image = SwashCache::new()
@@ -5054,7 +5062,8 @@ mod tests {
             TextRenderer::new(&mut atlas, &device, MultisampleState::default(), None);
         let mut fonts = clipping_test_fonts();
         let mut swash = SwashCache::new();
-        for (scale, scroll) in [(1.25, 268.0), (1.25, 259.5), (1.3, 313.0)] {
+        // Shift scroll with the new title margin to keep the original y=844 glyph-edge repro.
+        for (scale, scroll) in [(1.25, 275.0), (1.25, 266.5), (1.3, 320.0)] {
             let metrics = CellMetrics::for_scale(scale);
             let workspace = fractional_card_workspace(scale, scroll);
             let (clip, card) = terminal_paint_clip(
@@ -5071,13 +5080,13 @@ mod tests {
             if scale == 1.25 {
                 assert_eq!(
                     card.bounds.bottom(),
-                    if scroll == 268.0 { 848.0 } else { 857.0 }
+                    if scroll == 275.0 { 848.0 } else { 857.0 }
                 );
             }
             let cell_font = fitted_cell_font(&mut fonts.font_system, metrics, fonts.family, false);
             let left = workspace.terminal.left + metrics.padding;
             let top = workspace.terminal.top + metrics.padding;
-            if scale == 1.25 && scroll == 268.0 {
+            if scale == 1.25 && scroll == 275.0 {
                 assert_eq!(top, 822.0);
                 assert_eq!(top - cell_font.top_offset, 820.0);
                 assert_eq!(metrics.height, 23.0);
@@ -5092,7 +5101,7 @@ mod tests {
             buffer.set_text("g\u{323}", &cell_font.attrs(), Shaping::Advanced, None);
             buffer.shape_until_scroll(&mut fonts.font_system, false);
             assert!(buffer.layout_runs().any(|run| !run.glyphs.is_empty()));
-            if scale == 1.25 && scroll == 268.0 {
+            if scale == 1.25 && scroll == 275.0 {
                 let run = buffer.layout_runs().next().unwrap();
                 assert!(
                     run.glyphs.iter().any(|glyph| {
@@ -5167,7 +5176,7 @@ mod tests {
             };
             let expected = prepare(vec![reference]);
             assert!(expected > 0);
-            if scale == 1.25 && scroll == 268.0 {
+            if scale == 1.25 && scroll == 275.0 {
                 assert_eq!(expected, 2, "both g and its combining dot must be prepared");
             }
             let areas: Vec<_> = text_areas(&text, None).collect();

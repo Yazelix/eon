@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Card titles have more space below the Eon Bar: the gap to their capital
+  letters matches the space above the pills. Pills and controls stay in place;
+  the added space yields first on short windows.
+
 - Alt+Shift+Z shows the selected pane alone across the tab, including in a one-column stack. Changing the selected pane, tab or layout ends zoom; a one-pane tab refuses it.
 
 - Unknown `config.toml` keys are ignored with a warning naming the key and file,
@@ -21,7 +25,7 @@ installation, and proven contract changes.
   stay unchanged, as do frameless and popup paint.
 
 - Tab pills and quota, CPU, RAM and clock widgets share one centred height,
-  with equal space above and below to the cards' shared top line. Tabs keep
+  with equal space above and below to the card titles' capital letters. Tabs keep
   their fills; widgets use neutral rounded outlines sized by `[terminal] border_width`.
   The version label and header controls share their centre line. On short windows,
   the top gap yields before the pills shrink.

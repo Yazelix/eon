@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C21: card areas start lower while bar pills, widgets and controls stay
+  in place. The gap to the tops of the card titles' capital letters matches
+  the space above the pills; the added space yields first on short windows
+  (`eon-hg2v`).
+
 - VEN-C8: zoom shows only the selected pane as one card, with a `Zoomed pane <label>` panel; selection or structural changes end it, and a one-column stack can zoom (`eon-tfsg`).
 
 - VEN-C8: the expanded bottom edge keeps the collapsed-row pitch below it, bounded by padding and the requested/displayed grids, including retained frames during resize (`eon-6ros`).

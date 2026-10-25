@@ -12,9 +12,11 @@ order, selection, and popups; Venus draws the visible scene.
   launch directory. Long labels use middle ellipsis; hover shows the full path.
   Selection brightens the tab, and keyboard focus adds an outline.
 - Tab pills and quota, CPU, RAM and clock widgets share one height and centre
-  line, spanning from half the card-title height below the window top to the
-  allocated card areas. The space above equals the gap to the cards' shared
-  top line. Tabs keep their fills; widgets have no fill and use rounded outlines
+  line, starting half the card-title height below the window top. The allocated
+  card areas start lower so the gap to the tops of the titles' capital letters
+  equals the space above the pills. This extra space yields first on short
+  windows, before the bar's top gap and pill height. Tabs keep their fills;
+  widgets have no fill and use rounded outlines
   in the pane cards' neutral colour and `border_width`. The plain version label
   and header controls share their centre. Hover and accessibility bounds stay
   unchanged.

@@ -706,7 +706,15 @@ pub(super) mod tests {
         );
         let defaults = FontSetup::new(&FontSettings::default()).unwrap();
         for scale in [1.0, 1.25, 1.5, 2.0] {
-            assert_eq!(defaults.metrics(scale), CellMetrics::for_scale(scale));
+            let metrics = defaults.metrics(scale);
+            assert!(metrics.title_cap_top_em.is_some());
+            assert_eq!(
+                CellMetrics {
+                    title_cap_top_em: None,
+                    ..metrics
+                },
+                CellMetrics::for_scale(scale)
+            );
         }
     }
 

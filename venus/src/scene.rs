@@ -1,7 +1,7 @@
 use crate::{
     CpuUse, MAX_LINK_BYTES, RamUse,
     model::{active_popup, focused_terminal, presented_panes},
-    render::CellMetrics,
+    render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
 use eon_workspace_protocol::v19::{
     ALT, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState, Pane, PopupEntry,
@@ -1202,7 +1202,7 @@ pub fn workspace_column_width(width: f32, count: usize, metrics: CellMetrics) ->
 }
 
 fn header_heights(metrics: CellMetrics) -> (f32, f32) {
-    // Preserve header and card allocation independently of the painted bar band.
+    // Preserve header allocation independently of the painted bar band.
     let row = pill_row(metrics);
     (
         row + (card_gap(metrics) - tab_gap(metrics, row)).max(0.0) * 2.0,
@@ -1249,15 +1249,25 @@ fn tab_inset(metrics: CellMetrics, tab_height: f32) -> f32 {
 /// The painted bar band, independent of its hover and accessibility rectangles.
 fn bar_pill_band(metrics: CellMetrics, tab_height: f32, card_top: f32) -> Range<f32> {
     let nominal_top = (chrome_title_metrics(metrics).text_height / 2.0).floor();
-    let height = (header_heights(metrics).0 - nominal_top).min(card_top);
+    let end = card_top.min(header_heights(metrics).0);
+    let height = (header_heights(metrics).0 - nominal_top).min(end);
     if height >= metrics.height {
-        card_top - height..card_top
+        end - height..end
     } else {
         // Keep the old tiny-window band, clipped to the space left above the cards.
         let inset = tab_inset(metrics, tab_height);
         let end = (tab_height - inset).min(card_top);
         inset.min(end)..end
     }
+}
+
+/// Leave the bar's top gap before the title capitals, using the renderer's title placement.
+fn bar_title_margin(metrics: CellMetrics) -> f32 {
+    let title = chrome_title_metrics(metrics);
+    let header = header_heights(metrics).0;
+    (bar_pill_band(metrics, header, header).start - title.cap_top)
+        .round()
+        .max(0.0)
 }
 
 /// The even gap around and between pane cards, which is also their corner radius: 8 logical
@@ -1294,13 +1304,19 @@ pub(crate) struct ChromeTitleMetrics {
     pub font_size: f32,
     pub line_height: f32,
     pub text_height: f32,
+    pub cap_top: f32,
 }
 
 pub(crate) fn chrome_title_metrics(metrics: CellMetrics) -> ChromeTitleMetrics {
+    let text_height = metrics.height.max(metrics.font_size * 1.25);
     ChromeTitleMetrics {
         font_size: metrics.font_size,
         line_height: metrics.height,
-        text_height: metrics.height.max(metrics.font_size * 1.25),
+        text_height,
+        cap_top: metrics.title_cap_top_em.map_or_else(
+            || (text_height - metrics.font_size * FALLBACK_CAP_HEIGHT_EM) / 2.0,
+            |cap| metrics.height / 2.0 + metrics.font_size * cap,
+        ),
     }
 }
 
@@ -1600,8 +1616,9 @@ fn card_area(
     let mut spare = (content_height - tab_height - minimum_height).max(0.0);
     let below = if hints { 0.0 } else { gap.min(spare) };
     spare -= below;
-    let top = (tab_height + (gap - tab_inset(metrics, tab_height)).max(0.0).min(spare))
-        .min(content_height);
+    let inset = (gap - tab_inset(metrics, tab_height)).max(0.0).min(spare);
+    spare -= inset;
+    let top = (tab_height + inset + bar_title_margin(metrics).min(spare)).min(content_height);
     SceneRect {
         left: left + side,
         top,
@@ -1900,7 +1917,8 @@ impl WorkspaceScene {
         let sides = gap * 2.0;
         let above = ShortcutHintsScene::reserved_height(metrics)
             + tab_height
-            + (gap - tab_inset(metrics, tab_height)).max(0.0);
+            + (gap - tab_inset(metrics, tab_height)).max(0.0)
+            + bar_title_margin(metrics);
         if active_popup(snapshot).is_some() {
             (
                 snapshot.geometry.side_margin * metrics.scale * 2.0 + sides,
@@ -3601,7 +3619,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn eon_bar_pill_band_centres_between_window_and_shared_title_line() {
+    fn eon_bar_pill_band_leaves_equal_title_cap_gap() {
         for (scale, line_height, expected) in [
             (1.0, 1.125, (10.0, 30.0)),
             (1.3, 1.125, (13.0, 38.333332)),
@@ -3613,6 +3631,8 @@ mod tests {
             let header = header_heights(metrics).0;
             let cards = card_area(0.0, 1600.0, 1, header, 900.0, false, 0.0, metrics);
             let band = bar_pill_band(metrics, header, cards.top);
+            let offset = if scale == 1.0 { 6.0 } else { 7.0 };
+            assert!((cards.top - header - offset).abs() < 0.001);
             assert!(
                 (band.start - expected.0).abs() < 0.001,
                 "{scale}/{line_height}"
@@ -3622,9 +3642,49 @@ mod tests {
                 cards.top,
                 chrome_title_metrics(metrics).text_height.min(cards.height),
             );
-            assert!((band.start - (shared_top - band.end)).abs() < 1.0);
-            assert_eq!(band.end, cards.top);
+            let cap_top = shared_top - metrics.font_size * FALLBACK_CAP_HEIGHT_EM / 2.0;
+            assert!((band.start - (cap_top - band.end)).abs() < 1.0);
+            assert!((band.end - header).abs() < 0.001);
+            println!(
+                "scale={scale}, line_height={line_height}: top={}, pill_height={}, card_top={}, shared_line={shared_top}, cap_top={cap_top}, cap_gap={}, offset={offset}",
+                band.start,
+                band.end - band.start,
+                cards.top,
+                cap_top - band.end
+            );
             assert!(band.end - band.start >= metrics.height);
+        }
+    }
+
+    #[test]
+    fn eon_bar_title_gap_uses_the_loaded_font_baseline_and_cap_height() {
+        use crate::render::{FontSettings, FontSetup};
+
+        for line_height in [1.125, 2.0] {
+            let fonts = FontSetup::new(&FontSettings {
+                line_height,
+                ..FontSettings::default()
+            })
+            .unwrap();
+            for scale in [1.0, 1.3] {
+                let metrics = fonts.metrics(scale);
+                assert!(metrics.title_cap_top_em.is_some());
+                let header = header_heights(metrics).0;
+                let cards = card_area(0.0, 1600.0, 1, header, 900.0, false, 0.0, metrics);
+                let band = bar_pill_band(metrics, header, cards.top);
+                let cap_top = cards.top + chrome_title_metrics(metrics).cap_top;
+                assert!((cap_top - band.end - band.start).abs() <= 0.501);
+                assert!((band.end - header).abs() < 0.001);
+                println!(
+                    "loaded title: scale={scale}, line_height={line_height}, cap_offset_em={:?}, top_gap={}, pill_height={}, card_top={}, cap_top={cap_top}, cap_gap={}, offset={}",
+                    metrics.title_cap_top_em,
+                    band.start,
+                    band.end - band.start,
+                    cards.top,
+                    cap_top - band.end,
+                    cards.top - header
+                );
+            }
         }
     }
 
@@ -3664,8 +3724,17 @@ mod tests {
             claude_quota: None,
             sidebar: Sidebar::Open,
         };
-        for scale in [1.0, 1.25, 1.3, 1.5, 2.0] {
-            let metrics = CellMetrics::for_scale(scale);
+        for (scale, line_height) in [
+            (1.0, 1.125),
+            (1.25, 1.125),
+            (1.3, 1.125),
+            (1.5, 1.125),
+            (2.0, 1.125),
+            (1.0, 2.0),
+            (1.3, 2.0),
+        ] {
+            let mut metrics = CellMetrics::for_scale(scale);
+            metrics.height = (metrics.font_size * line_height).round();
             let scene = WorkspaceScene::from_snapshot(
                 &snapshot,
                 PhysicalSize::new(1600, 900),
@@ -3674,7 +3743,7 @@ mod tests {
                 0.0,
                 |_, text| (text.into(), text.len() as f32 * metrics.width),
             );
-            if scale == 1.0 {
+            if scale == 1.0 && line_height == 1.125 {
                 assert_eq!(scene.header.height, 40.0);
                 assert_eq!(scene.tabs[0].rect.top, 8.0);
                 assert_eq!(scene.tabs[0].rect.height, 24.0);
@@ -3682,18 +3751,18 @@ mod tests {
                     scene.pane_viewport,
                     SceneRect {
                         left: 296.0,
-                        top: 40.0,
+                        top: 46.0,
                         width: 1296.0,
-                        height: 852.0
+                        height: 846.0
                     }
                 );
                 assert_eq!(
                     scene.terminal,
                     SceneRect {
                         left: 296.0,
-                        top: 80.0,
+                        top: 86.0,
                         width: 1296.0,
-                        height: 772.0
+                        height: 766.0
                     }
                 );
             }
@@ -3823,7 +3892,7 @@ mod tests {
         }
         let metrics = CellMetrics::for_scale(1.0);
         let size = PhysicalSize::new(1280, 720);
-        for (count, before, after) in [(1, 33, 33), (3, 30, 31), (4, 28, 30)] {
+        for (count, before, after) in [(1, 32, 33), (3, 29, 30), (4, 28, 29)] {
             let mut snapshot = snapshot.clone();
             snapshot.tabs[0].columns[0].panes.truncate(count);
             snapshot.tabs[0].selected_pane = Some("p1".into());
@@ -4793,7 +4862,7 @@ mod tests {
             );
             let rows =
                 |height: f32| ((height - 2.0 * metrics.padding) / metrics.height).floor() as u16;
-            assert_eq!((rows(old_height), rows(popup.terminal.height)), (33, 33));
+            assert_eq!((rows(old_height), rows(popup.terminal.height)), (33, 32));
             println!(
                 "1280x720, popup over {count} panes: {} -> {} rows, terminal height {old_height} -> {}",
                 rows(old_height),
@@ -4810,15 +4879,14 @@ mod tests {
             (gap, 960.0 - gap)
         );
         assert_ne!(popup.terminal, popup.chrome);
-        // At default and small typography the first tab pill keeps the card gap from the
-        // window's top and left edges and above the cards, so it lines up with the first card.
+        // Tab hit rectangles keep their original inset; the card area adds the title margin.
         let small = CellMetrics {
             width: 5.0,
             height: 9.0,
             font_size: 8.0,
             ..metrics
         };
-        for metrics in [metrics, small] {
+        for (metrics, title_margin) in [(metrics, 6.0), (small, 3.0)] {
             let scene =
                 WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
                     (text.into(), text.len() as f32 * 10.0)
@@ -4826,7 +4894,11 @@ mod tests {
             let gap = card_gap(metrics);
             let pill = scene.tabs[0].rect;
             assert_eq!((pill.left, pill.top), (gap, gap), "{metrics:?}");
-            assert_eq!(scene.chrome.top - pill.bottom(), gap, "{metrics:?}");
+            assert_eq!(
+                scene.chrome.top - pill.bottom(),
+                gap + title_margin,
+                "{metrics:?}"
+            );
         }
         // Toggling the popup keeps the shared card area, even where gaps yield on narrow or
         // short windows with several columns.
@@ -5226,6 +5298,22 @@ mod tests {
             let scene = project(height, metrics, false);
             let pill = scene.bar_pill_rect(scene.tabs[0].rect, metrics);
             assert_eq!(pill.top..pill.bottom(), expected, "window height {height}");
+        }
+        // The new title margin yields before the previous layout loses any space.
+        for (height, offset) in [
+            (102, 0.0),
+            (108, 0.0),
+            (110, 0.0),
+            (112, 2.0),
+            (114, 4.0),
+            (116, 6.0),
+        ] {
+            let scene = project(height, metrics, false);
+            assert_eq!(
+                scene.pane_viewport.top - scene.header.height,
+                offset,
+                "height {height}"
+            );
         }
         for scale in [1.0, 1.3] {
             for line_height in [1.125, 2.0] {
