@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Unknown `config.toml` keys are ignored with a warning naming the key and file,
+  so a newer setting keeps older running builds working. Known settings still
+  reject wrong types and values.
+
 - The expanded pane's bottom edge keeps the stack's row spacing to collapsed rows below, within the padding and grid bounds; resizing keeps visible rows clear of strokes.
 
 - A collapsed last pane's label sits in the stack's rounded bottom edge, closing

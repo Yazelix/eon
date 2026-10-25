@@ -1029,6 +1029,7 @@ pub(super) fn start_orbit(
         directory,
         child,
         tab,
+        Some(log),
     )?;
     let (orbit_stderr, orbit_log) = log
         .orbit_directory()
@@ -1249,6 +1250,7 @@ fn orbit_command(
     directory: &Path,
     child: &[OsString],
     tab: Option<&str>,
+    log: Option<&DiagnosticLog>,
 ) -> Result<Command, String> {
     let mut orbit_command = Command::new(&inputs.orbit);
     orbit_command
@@ -1277,6 +1279,7 @@ fn orbit_command(
         orbit_command.args(managed_environment::shell_command(
             config,
             &inputs.defaults,
+            log,
         )?);
     } else {
         orbit_command.args(child);
@@ -2561,6 +2564,7 @@ pub(crate) mod tests {
             root.as_path(),
             &[],
             None,
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -2614,6 +2618,7 @@ pub(crate) mod tests {
             root.as_path(),
             &["codex".into(), "--model".into(), "test".into()],
             Some("t3"),
+            None,
         )
         .unwrap();
         assert_eq!(

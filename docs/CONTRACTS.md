@@ -701,6 +701,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Zoxide, Atuin, Carapace, and mise booleans. Defaults are
     `command = ["eon-nu"]` and `true`; each new terminal rereads them without
     rewriting running shells.
+  - An Eon build ignores a configuration key it does not know, with one warning
+    naming the key and file, so a newer setting never breaks an older running
+    window. A known key with a wrong type or value still fails.
   - When mise is enabled and the inherited PATH has a `mise` executable, an
     interactive managed shell evaluates that host mise's own `mise activate`
     output after Eon's other integrations, so mise-managed tools and
@@ -943,8 +946,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Configuration:** `[popup]` owns finite side and vertical margins, defaulting
   to 8 and 4 logical pixels. `[popups.<id>]` owns direct argv, physical shortcut,
   label, enabled state and keep-alive lifetime. Only Agent accepts `"auto"`.
-  Eon rejects unknown fields, malformed or colliding shortcuts, unbounded
-  values and unavailable executables before mutating workspace state. It does
+  Eon ignores unknown fields with the warning described in EON-C9. It rejects
+  malformed or colliding shortcuts, unbounded values and unavailable executables
+  before mutating workspace state. It does
   not install providers, cache selection, interpret shell strings, or expose
   commands over EONW beyond a calling terminal's `pane create -- COMMAND`. Bare executables resolve through the terminal PATH;
   relative executable paths resolve against the owning tab's launch directory.

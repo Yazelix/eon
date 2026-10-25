@@ -184,6 +184,49 @@ fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
 }
 
 #[test]
+fn unknown_configuration_keys_warn_once_on_the_managed_cli() {
+    let root = temporary_directory();
+    for (directory, source, key) in [
+        (
+            "plain",
+            "[terminal]\nfuture_border_width = 2\n",
+            "terminal.future_border_width",
+        ),
+        (
+            "line\nbreak",
+            "[terminal]\n\"line\\nbreak\" = true\n",
+            "terminal.line\\nbreak",
+        ),
+    ] {
+        let home = root.join(directory);
+        let config = home.join("eon");
+        fs::create_dir_all(&config).unwrap();
+        let path = config.join("config.toml");
+        fs::write(&path, source).unwrap();
+        let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .arg0("eon-bash")
+            .env("XDG_CONFIG_HOME", &home)
+            .args(["--noprofile", "--norc", "-c", "printf 'config-loaded\\n'"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(stdout(&output), "config-loaded\n");
+        assert_eq!(
+            String::from_utf8(output.stderr).unwrap(),
+            format!(
+                "eon: ignoring unknown setting {key} in {}\n",
+                path.to_string_lossy().replace('\n', "\\n")
+            )
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn anima_command_preserves_child_arguments_status_and_avoids_workspace() {
     let root = temporary_directory();
     let anima = root.join("anima");
@@ -2539,7 +2582,7 @@ cat >/dev/null
 
     fs::write(
         config.join("config.toml"),
-        "[terminal]\nbackground_opacity = 0.0\ncursor_trail_duration = 3.0\nfont_size = 24\nline_height = 1.5\nrows = 24\n",
+        "[terminal]\nbackground_opacity = 0.0\ncursor_trail_duration = 3.0\nfont_size = 24\nline_height = 1.5\nrows = 24\nfuture_border_width = 2\n",
     )
     .unwrap();
     let reopened = eonbase(&config)
@@ -2547,6 +2590,31 @@ cat >/dev/null
         .output()
         .unwrap();
     assert!(reopened.status.success());
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    let diagnostic = fs::read_dir(std::env::temp_dir().join("eon-test-state/eon/logs"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.to_string_lossy()
+                .ends_with(&format!("-{}.log", supervisor.child.id()))
+        })
+        .unwrap();
+    let warning = format!(
+        "eon: ignoring unknown setting terminal.future_border_width in {}",
+        config.join("config.toml").display(),
+    );
+    let stderr = fs::read_to_string(&supervisor_log).unwrap();
+    let warnings = stderr.lines().filter(|line| *line == warning).count();
+    assert!(warnings > 0);
+    let diagnostic = fs::read_to_string(diagnostic).unwrap();
+    assert_eq!(
+        diagnostic
+            .lines()
+            .filter(|line| line.ends_with(&warning))
+            .count(),
+        warnings,
+        "every supervisor warning must reach its diagnostic log",
+    );
     let deadline = Instant::now() + Duration::from_secs(5);
     while fs::read_to_string(&venus_log).unwrap().lines().count() != 2 {
         assert!(Instant::now() < deadline, "eonbase did not reopen");

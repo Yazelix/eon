@@ -1,9 +1,11 @@
+use super::diagnostics::DiagnosticLog;
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, HashMap},
     env,
     ffi::{OsStr, OsString},
     fs,
+    io::{self, Write},
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
     process::Command,
@@ -21,7 +23,7 @@ pub(super) fn nonempty_environment_path(name: &str) -> Option<PathBuf> {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct EonConfig {
     shell: ShellSettings,
     terminal: TerminalSettings,
@@ -31,6 +33,31 @@ struct EonConfig {
     sidebar: SidebarSettings,
     popup: PopupSettings,
     popups: BTreeMap<String, PopupEntrySettings>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
+}
+
+impl EonConfig {
+    fn unknown_keys(&self) -> Vec<String> {
+        let mut keys = Vec::new();
+        for (prefix, unknown) in [
+            ("", &self.unknown),
+            ("shell.", &self.shell.unknown),
+            ("terminal.", &self.terminal.unknown),
+            ("bar.", &self.bar.unknown),
+            ("anima.", &self.anima.unknown),
+            ("workspace.", &self.workspace.unknown),
+            ("sidebar.", &self.sidebar.unknown),
+            ("popup.", &self.popup.unknown),
+        ] {
+            keys.extend(unknown.keys().map(|key| format!("{prefix}{key}")));
+        }
+        for (id, popup) in &self.popups {
+            keys.extend(popup.unknown.keys().map(|key| format!("popups.{id}.{key}")));
+        }
+        keys.sort();
+        keys
+    }
 }
 
 pub struct Defaults {
@@ -57,11 +84,13 @@ pub struct StartupAnimation {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct BarSettings {
     widgets: Option<Vec<String>>,
     #[serde(deserialize_with = "removed_show_version")]
     show_version: (),
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 fn removed_show_version<'de, D: serde::Deserializer<'de>>(_: D) -> Result<(), D::Error> {
@@ -70,8 +99,12 @@ fn removed_show_version<'de, D: serde::Deserializer<'de>>(_: D) -> Result<(), D:
     ))
 }
 
-pub(crate) fn bar_widgets(root: &Path, defaults: &Defaults) -> Result<Vec<&'static str>, String> {
-    let Some(names) = read_config(root)?.bar.widgets else {
+pub(crate) fn bar_widgets(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<Vec<&'static str>, String> {
+    let Some(names) = read_config(root, log)?.bar.widgets else {
         return Ok(defaults.bar_widgets.to_vec());
     };
     let mut widgets = Vec::with_capacity(names.len());
@@ -91,40 +124,50 @@ pub(crate) fn bar_widgets(root: &Path, defaults: &Defaults) -> Result<Vec<&'stat
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct AnimationSettings {
     enabled: Option<bool>,
     style: Option<String>,
     duration_seconds: Option<u64>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct WorkspaceSettings {
     warning_close_last_tab: Option<bool>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct SidebarSettings {
     enabled: Option<bool>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct PopupSettings {
     side_margin: Option<f32>,
     vertical_margin: Option<f32>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct PopupEntrySettings {
     command: Option<PopupCommandSetting>,
     keybinding: Option<String>,
     label: Option<String>,
     enabled: Option<bool>,
     keep_alive: Option<bool>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -167,7 +210,7 @@ pub struct ShellConfig {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct ShellSettings {
     command: Option<Vec<String>>,
     starship: Option<bool>,
@@ -175,6 +218,8 @@ struct ShellSettings {
     atuin: Option<bool>,
     carapace: Option<bool>,
     mise: Option<bool>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 #[derive(Clone, Debug)]
@@ -196,7 +241,7 @@ pub struct TerminalConfig {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 struct TerminalSettings {
     background_opacity: Option<f32>,
     background_blur: Option<bool>,
@@ -212,6 +257,8 @@ struct TerminalSettings {
     line_height: Option<f32>,
     columns: Option<u16>,
     rows: Option<u16>,
+    #[serde(flatten)]
+    unknown: BTreeMap<String, toml::Value>,
 }
 
 impl TerminalConfig {
@@ -265,15 +312,20 @@ pub(crate) fn tool(invocation: &OsStr) -> Option<Tool> {
     }
 }
 
-pub(crate) fn shell_command(root: &Path, defaults: &Defaults) -> Result<Vec<String>, String> {
-    Ok(read_shell_config(root, defaults)?.command)
+pub(crate) fn shell_command(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<Vec<String>, String> {
+    Ok(read_shell_config(root, defaults, log)?.command)
 }
 
 pub(crate) fn startup_animation(
     root: &Path,
     defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
 ) -> Result<Option<StartupAnimation>, String> {
-    let settings = read_config(root)?.anima;
+    let settings = read_config(root, log)?.anima;
     let anima = StartupAnimation {
         enabled: settings.enabled.unwrap_or(defaults.anima.enabled),
         style: settings
@@ -296,15 +348,23 @@ pub(crate) fn startup_animation(
     Ok(anima.enabled.then_some(anima))
 }
 
-pub(crate) fn warning_close_last_tab(root: &Path, defaults: &Defaults) -> Result<bool, String> {
-    Ok(read_config(root)?
+pub(crate) fn warning_close_last_tab(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<bool, String> {
+    Ok(read_config(root, log)?
         .workspace
         .warning_close_last_tab
         .unwrap_or(defaults.warning_close_last_tab))
 }
 
-pub(crate) fn sidebar_enabled(root: &Path, defaults: &Defaults) -> Result<bool, String> {
-    Ok(read_config(root)?
+pub(crate) fn sidebar_enabled(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<bool, String> {
+    Ok(read_config(root, log)?
         .sidebar
         .enabled
         .unwrap_or(defaults.sidebar_enabled))
@@ -313,8 +373,9 @@ pub(crate) fn sidebar_enabled(root: &Path, defaults: &Defaults) -> Result<bool, 
 pub(crate) fn terminal_presentation(
     root: &Path,
     defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
 ) -> Result<TerminalConfig, String> {
-    let settings = read_config(root)?.terminal;
+    let settings = read_config(root, log)?.terminal;
     let base = &defaults.terminal;
     let terminal = TerminalConfig {
         background_opacity: settings
@@ -407,8 +468,12 @@ pub(crate) fn terminal_presentation(
     Ok(terminal)
 }
 
-pub(crate) fn popup_catalog(root: &Path, defaults: &Defaults) -> Result<PopupCatalog, String> {
-    let mut config = read_config(root)?;
+pub(crate) fn popup_catalog(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<PopupCatalog, String> {
+    let mut config = read_config(root, log)?;
     let geometry = PopupGeometry {
         side_margin: config
             .popup
@@ -724,7 +789,7 @@ pub(crate) fn command(
     defaults: &Defaults,
 ) -> Result<Command, String> {
     let shell = match tool {
-        Tool::Nu | Tool::Bash => Some(read_shell_config(config, defaults)?),
+        Tool::Nu | Tool::Bash => Some(read_shell_config(config, defaults, None)?),
         _ => None,
     };
     let program = match tool {
@@ -819,8 +884,12 @@ fn integration_mask(shell: &ShellConfig, atuin_nobind: bool) -> u8 {
         | (u8::from(shell.atuin && atuin_nobind) << 4)
 }
 
-fn read_shell_config(root: &Path, defaults: &Defaults) -> Result<ShellConfig, String> {
-    let settings = read_config(root)?.shell;
+fn read_shell_config(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<ShellConfig, String> {
+    let settings = read_config(root, log)?.shell;
     let base = &defaults.shell;
     let shell = ShellConfig {
         command: settings.command.unwrap_or_else(|| base.command.clone()),
@@ -839,7 +908,7 @@ fn read_shell_config(root: &Path, defaults: &Defaults) -> Result<ShellConfig, St
     Ok(shell)
 }
 
-fn read_config(root: &Path) -> Result<EonConfig, String> {
+fn read_config(root: &Path, log: Option<&DiagnosticLog>) -> Result<EonConfig, String> {
     let path = root.join("config.toml");
     let source = match fs::read_to_string(&path) {
         Ok(source) => source,
@@ -850,8 +919,21 @@ fn read_config(root: &Path) -> Result<EonConfig, String> {
             return Err(format!("cannot read {}: {error}", path.display()));
         }
     };
-    toml::from_str(&source)
-        .map_err(|error| format!("invalid Eon configuration {}: {error}", path.display()))
+    let config: EonConfig = toml::from_str(&source)
+        .map_err(|error| format!("invalid Eon configuration {}: {error}", path.display()))?;
+    for key in config.unknown_keys() {
+        let warning = format!(
+            "eon: ignoring unknown setting {} in {}",
+            key.escape_debug(),
+            path.to_string_lossy().escape_debug(),
+        );
+        if let Some(log) = log {
+            log.note(&warning);
+        } else {
+            let _ = writeln!(io::stderr(), "{warning}");
+        }
+    }
+    Ok(config)
 }
 
 fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsString, String> {
@@ -888,6 +970,112 @@ mod tests {
     }
 
     #[test]
+    fn unknown_configuration_keys_preserve_known_settings() {
+        let root = crate::supervisor::temporary_directory();
+        fs::write(
+            root.join("config.toml"),
+            r#"
+new_top_level = [1, { nested = true }, 2026-10-24T12:34:56Z]
+[shell]
+starship = false
+new_field = true
+[terminal]
+background_opacity = 0.37
+future_border_width = 2
+[bar]
+widgets = ["cpu"]
+new_field = true
+[anima]
+enabled = false
+new_field = true
+[workspace]
+warning_close_last_tab = false
+new_field = true
+[sidebar]
+enabled = false
+new_field = true
+[popup]
+side_margin = 13.0
+new_field = true
+[popups.agent]
+label = "Configured Agent"
+new_field = true
+[new_table]
+nested = { value = true }
+"#,
+        )
+        .unwrap();
+        let log = super::DiagnosticLog::open_in(
+            Ok(root.join("logs")),
+            "g1-0123456789abcdef0123456789abcdef",
+            "workspace",
+        );
+        let config = super::read_config(&root, Some(&log)).unwrap();
+        assert_eq!(config.shell.starship, Some(false));
+        assert_eq!(config.terminal.background_opacity, Some(0.37));
+        assert_eq!(
+            config.bar.widgets.as_deref(),
+            Some(["cpu".to_owned()].as_slice())
+        );
+        assert_eq!(config.anima.enabled, Some(false));
+        assert_eq!(config.workspace.warning_close_last_tab, Some(false));
+        assert_eq!(config.sidebar.enabled, Some(false));
+        assert_eq!(config.popup.side_margin, Some(13.0));
+        assert_eq!(
+            config.popups["agent"].label.as_deref(),
+            Some("Configured Agent")
+        );
+        let expected = [
+            "anima.new_field",
+            "bar.new_field",
+            "new_table",
+            "new_top_level",
+            "popup.new_field",
+            "popups.agent.new_field",
+            "shell.new_field",
+            "sidebar.new_field",
+            "terminal.future_border_width",
+            "workspace.new_field",
+        ];
+        assert_eq!(config.unknown_keys(), expected);
+        let log_path = fs::read_dir(root.join("logs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.is_file())
+            .unwrap();
+        let logged = fs::read_to_string(log_path).unwrap();
+        assert_eq!(
+            logged.matches("eon: ignoring unknown setting ").count(),
+            expected.len()
+        );
+        for key in expected {
+            let warning = format!(
+                "eon: ignoring unknown setting {key} in {}",
+                root.join("config.toml").display()
+            );
+            assert_eq!(
+                logged
+                    .lines()
+                    .filter(|line| line.ends_with(&warning))
+                    .count(),
+                1
+            );
+        }
+
+        fs::write(
+            root.join("config.toml"),
+            "[terminal]\nfuture_border_width = 2\nbackground_opacity = 'opaque'\n",
+        )
+        .unwrap();
+        assert!(
+            super::read_config(&root, None)
+                .unwrap_err()
+                .contains("background_opacity")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn supplied_defaults_survive_partial_overrides_and_repeated_reads() {
         let root = crate::supervisor::temporary_directory();
         let mut defaults = crate::fixtures::inputs().defaults;
@@ -904,42 +1092,48 @@ mod tests {
         defaults.popups.entries[1].command = PopupCommand::Argv(vec!["supplied-git".into()]);
 
         assert_eq!(
-            super::shell_command(&root, &defaults).unwrap(),
+            super::shell_command(&root, &defaults, None).unwrap(),
             defaults.shell.command
         );
-        assert!(!super::read_shell_config(&root, &defaults).unwrap().starship);
+        assert!(
+            !super::read_shell_config(&root, &defaults, None)
+                .unwrap()
+                .starship
+        );
         assert_eq!(
-            super::terminal_presentation(&root, &defaults)
+            super::terminal_presentation(&root, &defaults, None)
                 .unwrap()
                 .font_fallbacks,
             ["Supplied Font"]
         );
         assert_eq!(
-            super::startup_animation(&root, &defaults)
+            super::startup_animation(&root, &defaults, None)
                 .unwrap()
                 .unwrap()
                 .duration_seconds,
             7
         );
         assert_eq!(
-            super::popup_catalog(&root, &defaults).unwrap(),
+            super::popup_catalog(&root, &defaults, None).unwrap(),
             defaults.popups
         );
 
         fs::write(root.join("config.toml"), "[shell]\nzoxide = false\n[terminal]\npane_frames = false\nfont_fallbacks = []\n[anima]\nduration_seconds = 2\n[popup]\nvertical_margin = 0\n[popups.git]\nkeep_alive = false\n[popups.extra]\ncommand = ['supplied-extra']\nkeybinding = 'Alt+Shift+F'\n").unwrap();
-        let shell = super::read_shell_config(&root, &defaults).unwrap();
+        let shell = super::read_shell_config(&root, &defaults, None).unwrap();
         assert_eq!(shell.command, defaults.shell.command);
         assert!(!shell.starship && !shell.zoxide && shell.atuin && shell.carapace);
-        let terminal = super::terminal_presentation(&root, &defaults).unwrap();
+        let terminal = super::terminal_presentation(&root, &defaults, None).unwrap();
         assert_eq!(terminal.background_opacity, 0.37);
         assert!(!terminal.background_blur && !terminal.pane_frames);
         assert!(terminal.font_fallbacks.is_empty());
-        let anima = super::startup_animation(&root, &defaults).unwrap().unwrap();
+        let anima = super::startup_animation(&root, &defaults, None)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             (anima.style.as_str(), anima.duration_seconds),
             ("aquarium", 2)
         );
-        let popups = super::popup_catalog(&root, &defaults).unwrap();
+        let popups = super::popup_catalog(&root, &defaults, None).unwrap();
         assert_eq!(
             (popups.geometry.side_margin, popups.geometry.vertical_margin),
             (23.0, 0.0)
@@ -954,25 +1148,26 @@ mod tests {
 
         fs::write(root.join("config.toml"), "[shell]\ncommand = ['later-shell']\n[terminal]\nbackground_opacity = 0.0\n[anima]\nenabled = false\n").unwrap();
         assert_eq!(
-            super::shell_command(&root, &defaults).unwrap(),
+            super::shell_command(&root, &defaults, None).unwrap(),
             ["later-shell"]
         );
         assert_eq!(
-            super::terminal_presentation(&root, &defaults)
+            super::terminal_presentation(&root, &defaults, None)
                 .unwrap()
                 .background_opacity,
             0.0
         );
         assert!(
-            super::startup_animation(&root, &defaults)
+            super::startup_animation(&root, &defaults, None)
                 .unwrap()
                 .is_none()
         );
         fs::write(root.join("config.toml"), "[terminal]\nunknown = true\n").unwrap();
-        assert!(
-            super::terminal_presentation(&root, &defaults)
-                .unwrap_err()
-                .contains("unknown field")
+        assert_eq!(
+            super::terminal_presentation(&root, &defaults, None)
+                .unwrap()
+                .background_opacity,
+            defaults.terminal.background_opacity
         );
         fs::remove_dir_all(root).unwrap();
     }
@@ -985,7 +1180,7 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
-        let default = read_shell_config(&root, &inputs.defaults).unwrap();
+        let default = read_shell_config(&root, &inputs.defaults, None).unwrap();
         assert_eq!(default.command, ["fixture-shell"]);
         assert!(
             default.starship && default.zoxide && default.atuin && default.carapace && default.mise
@@ -996,7 +1191,7 @@ mod tests {
             "[shell]\ncommand = [\"eon-bash\", \"--norc\"]\nstarship = false\nzoxide = false\natuin = false\ncarapace = false\nmise = false\n",
         )
         .unwrap();
-        let configured = read_shell_config(&root, &inputs.defaults).unwrap();
+        let configured = read_shell_config(&root, &inputs.defaults, None).unwrap();
         assert_eq!(configured.command, ["eon-bash", "--norc"]);
         assert!(
             !configured.starship
@@ -1011,15 +1206,12 @@ mod tests {
 
         for (source, expected) in [
             ("[shell]\ncommand = []\n", "shell.command must not be empty"),
-            (
-                "[shell]\ncommand = [\"eon-nu\"]\nunknown = true\n",
-                "unknown field `unknown`",
-            ),
+            ("[shell]\nstarship = 'false'\n", "starship"),
             ("[shell\n", "invalid Eon configuration"),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert!(
-                read_shell_config(&root, &inputs.defaults)
+                read_shell_config(&root, &inputs.defaults, None)
                     .unwrap_err()
                     .contains(expected)
             );
@@ -1035,20 +1227,20 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
-        assert!(warning_close_last_tab(&root, &inputs.defaults).unwrap());
+        assert!(warning_close_last_tab(&root, &inputs.defaults, None).unwrap());
         fs::write(
             root.join("config.toml"),
             "[workspace]\nwarning_close_last_tab = false\n",
         )
         .unwrap();
-        assert!(!warning_close_last_tab(&root, &inputs.defaults).unwrap());
+        assert!(!warning_close_last_tab(&root, &inputs.defaults, None).unwrap());
         fs::write(
             root.join("config.toml"),
             "[workspace]\nwarning_close_last_tab = 'no'\n",
         )
         .unwrap();
         assert!(
-            warning_close_last_tab(&root, &inputs.defaults)
+            warning_close_last_tab(&root, &inputs.defaults, None)
                 .unwrap_err()
                 .contains("warning_close_last_tab")
         );
@@ -1063,12 +1255,12 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
-        assert!(sidebar_enabled(&root, &inputs.defaults).unwrap());
+        assert!(sidebar_enabled(&root, &inputs.defaults, None).unwrap());
         fs::write(root.join("config.toml"), "[sidebar]\nenabled = false\n").unwrap();
-        assert!(!sidebar_enabled(&root, &inputs.defaults).unwrap());
+        assert!(!sidebar_enabled(&root, &inputs.defaults, None).unwrap());
         fs::write(root.join("config.toml"), "[sidebar]\nenabled = 'no'\n").unwrap();
         assert!(
-            sidebar_enabled(&root, &inputs.defaults)
+            sidebar_enabled(&root, &inputs.defaults, None)
                 .unwrap_err()
                 .contains("enabled")
         );
@@ -1085,7 +1277,7 @@ mod tests {
         fs::create_dir(&root).unwrap();
         fs::write(root.join("config.toml"), "[anima]\nenabled = false\n").unwrap();
         assert!(
-            startup_animation(&root, &inputs.defaults)
+            startup_animation(&root, &inputs.defaults, None)
                 .unwrap()
                 .is_none()
         );
@@ -1094,7 +1286,9 @@ mod tests {
             "[anima]\nstyle = 'aquarium'\nduration_seconds = 5\n",
         )
         .unwrap();
-        let configured = startup_animation(&root, &inputs.defaults).unwrap().unwrap();
+        let configured = startup_animation(&root, &inputs.defaults, None)
+            .unwrap()
+            .unwrap();
         assert_eq!(
             (configured.style.as_str(), configured.duration_seconds),
             ("aquarium", 5)
@@ -1109,7 +1303,7 @@ mod tests {
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert!(
-                startup_animation(&root, &inputs.defaults)
+                startup_animation(&root, &inputs.defaults, None)
                     .unwrap_err()
                     .contains(field)
             );
@@ -1125,7 +1319,7 @@ mod tests {
             std::process::id()
         ));
         fs::create_dir(&root).unwrap();
-        let presentation = terminal_presentation(&root, &inputs.defaults).unwrap();
+        let presentation = terminal_presentation(&root, &inputs.defaults, None).unwrap();
         assert_eq!(presentation.background_opacity, 0.6);
         assert!(presentation.background_blur);
 
@@ -1145,7 +1339,7 @@ mod tests {
             ),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
-            let presentation = terminal_presentation(&root, &inputs.defaults).unwrap();
+            let presentation = terminal_presentation(&root, &inputs.defaults, None).unwrap();
             assert_eq!(presentation.background_opacity, expected_opacity);
             assert_eq!(presentation.background_blur, expected_blur);
         }
@@ -1183,11 +1377,10 @@ mod tests {
                 "[terminal]\nbackground_blur = true\nbackground_blur = false\n",
                 "background_blur",
             ),
-            ("[terminal]\nunknown = true\n", "unknown"),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert!(
-                terminal_presentation(&root, &inputs.defaults)
+                terminal_presentation(&root, &inputs.defaults, None)
                     .unwrap_err()
                     .contains(field),
                 "invalid {field} configuration did not name its field"
@@ -1205,7 +1398,7 @@ mod tests {
         ));
         fs::create_dir(&root).unwrap();
 
-        let defaults = popup_catalog(&root, &inputs.defaults).unwrap();
+        let defaults = popup_catalog(&root, &inputs.defaults, None).unwrap();
         assert_eq!(
             defaults
                 .entries
@@ -1243,7 +1436,7 @@ keep_alive = false
 "#,
         )
         .unwrap();
-        let configured = popup_catalog(&root, &inputs.defaults).unwrap();
+        let configured = popup_catalog(&root, &inputs.defaults, None).unwrap();
         assert_eq!(
             (
                 configured.geometry.side_margin,
@@ -1266,7 +1459,7 @@ keep_alive = false
         )
         .unwrap();
         assert_eq!(
-            popup_catalog(&root, &inputs.defaults)
+            popup_catalog(&root, &inputs.defaults, None)
                 .unwrap()
                 .entries
                 .len(),
@@ -1285,7 +1478,7 @@ keep_alive = false
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert!(
-                popup_catalog(&root, &inputs.defaults)
+                popup_catalog(&root, &inputs.defaults, None)
                     .unwrap_err()
                     .contains(expected)
             );
@@ -1310,7 +1503,7 @@ keep_alive = false
             )
             .unwrap();
             assert!(
-                popup_catalog(&root, &inputs.defaults)
+                popup_catalog(&root, &inputs.defaults, None)
                     .unwrap_err()
                     .contains("is reserved for an Eon shortcut"),
                 "{keybinding} was not reserved"
@@ -1334,7 +1527,7 @@ keep_alive = false
             )
             .unwrap();
             assert!(
-                popup_catalog(&root, &inputs.defaults)
+                popup_catalog(&root, &inputs.defaults, None)
                     .unwrap()
                     .entries
                     .iter()
@@ -1355,7 +1548,7 @@ keep_alive = false
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert!(
-                popup_catalog(&root, &inputs.defaults)
+                popup_catalog(&root, &inputs.defaults, None)
                     .unwrap_err()
                     .contains(expected)
             );

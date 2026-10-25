@@ -234,13 +234,14 @@ pub(super) fn launch_current(
     let log = DiagnosticLog::open(&generation, mode.name());
     let result = (|| {
         let config = configuration_directory()?;
-        let terminal = managed_environment::terminal_presentation(&config, &inputs.defaults)?;
-        let bar_widgets = window_bar_widgets(mode, &config, inputs)?;
+        let terminal =
+            managed_environment::terminal_presentation(&config, &inputs.defaults, Some(&log))?;
+        let bar_widgets = window_bar_widgets(mode, &config, inputs, Some(&log))?;
         let popups = (mode == LaunchMode::Workspace)
-            .then(|| managed_environment::popup_catalog(&config, &inputs.defaults))
+            .then(|| managed_environment::popup_catalog(&config, &inputs.defaults, Some(&log)))
             .transpose()?;
         let startup_animation = (mode == LaunchMode::Workspace)
-            .then(|| managed_environment::startup_animation(&config, &inputs.defaults))
+            .then(|| managed_environment::startup_animation(&config, &inputs.defaults, Some(&log)))
             .transpose()?
             .flatten();
         prepare_generation_runtime(&root, &generation)?;
@@ -376,9 +377,10 @@ fn window_bar_widgets(
     mode: LaunchMode,
     config: &Path,
     inputs: &Inputs,
+    log: Option<&DiagnosticLog>,
 ) -> Result<Vec<&'static str>, String> {
     match mode {
-        LaunchMode::Workspace => managed_environment::bar_widgets(config, &inputs.defaults),
+        LaunchMode::Workspace => managed_environment::bar_widgets(config, &inputs.defaults, log),
         LaunchMode::Terminal => Ok(Vec::new()),
     }
 }
@@ -758,12 +760,13 @@ fn supervise(
         workspace::validate_initial_directory(&launch_directory)?;
     }
     let warning_close_last_tab =
-        managed_environment::warning_close_last_tab(config, &inputs.defaults)?;
+        managed_environment::warning_close_last_tab(config, &inputs.defaults, Some(log))?;
     // Full Eon only; eonbase has no poller and no sidebar (EON-C31).
     let mut attention = if mode == LaunchMode::Workspace {
         Some(Attention::new(managed_environment::sidebar_enabled(
             config,
             &inputs.defaults,
+            Some(log),
         )?))
     } else {
         None
@@ -1767,9 +1770,12 @@ fn dispatch_control_request(
                         .endpoint
                         .clone()
                 };
-                let terminal =
-                    managed_environment::terminal_presentation(config, &inputs.defaults)?;
-                let bar_widgets = window_bar_widgets(mode, config, inputs)?;
+                let terminal = managed_environment::terminal_presentation(
+                    config,
+                    &inputs.defaults,
+                    Some(&state.log),
+                )?;
+                let bar_widgets = window_bar_widgets(mode, config, inputs, Some(&state.log))?;
                 let command = venus_command(
                     inputs,
                     config,
@@ -1779,7 +1785,11 @@ fn dispatch_control_request(
                     &bar_widgets,
                     &state.application_id,
                     state.decorations,
-                    managed_environment::warning_close_last_tab(config, &inputs.defaults)?,
+                    managed_environment::warning_close_last_tab(
+                        config,
+                        &inputs.defaults,
+                        Some(&state.log),
+                    )?,
                 );
                 if let Some(quotas) = &mut state.quotas {
                     quotas.show(&bar_widgets);
@@ -2651,7 +2661,7 @@ mod tests {
                 Path::new("/runtime.sock"),
                 mode,
                 &inputs.defaults.terminal,
-                &window_bar_widgets(mode, &root, inputs).unwrap(),
+                &window_bar_widgets(mode, &root, inputs, None).unwrap(),
                 "eon",
                 true,
                 true,
@@ -2692,7 +2702,7 @@ mod tests {
             }
         }
         inputs.defaults.bar_widgets = &["ram", "clock"];
-        fs::write(root.join("config.toml"), "[bar]\n").unwrap();
+        fs::write(root.join("config.toml"), "[bar]\nunknown = true\n").unwrap();
         assert_eq!(
             launch_input(&inputs, LaunchMode::Workspace, "--bar-items"),
             ["ram,clock"]
@@ -2721,17 +2731,18 @@ mod tests {
                 "replaced by bar.widgets",
                 true,
             ),
-            ("[bar]\nunknown = true\n", "unknown field", true),
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             assert_eq!(
-                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).is_err(),
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                    .is_err(),
                 every_read,
                 "{source:?}"
             );
-            let failure = window_bar_widgets(LaunchMode::Workspace, &root, &inputs).unwrap_err();
+            let failure =
+                window_bar_widgets(LaunchMode::Workspace, &root, &inputs, None).unwrap_err();
             assert!(failure.contains(error), "{source:?}: {failure}");
-            assert!(window_bar_widgets(LaunchMode::Terminal, &root, &inputs).is_ok());
+            assert!(window_bar_widgets(LaunchMode::Terminal, &root, &inputs, None).is_ok());
         }
         fs::remove_dir_all(root).unwrap();
     }
@@ -2755,7 +2766,8 @@ rows = 30
         .unwrap();
         for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
             let terminal =
-                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).unwrap();
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                    .unwrap();
             let command = venus_command(
                 &inputs,
                 &root,
@@ -2805,7 +2817,8 @@ rows = 30
             )
             .unwrap();
             let terminal =
-                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).unwrap();
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                    .unwrap();
             assert!(terminal.requires_startup_admission());
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
@@ -2837,7 +2850,7 @@ rows = 30
             let mut defaults = crate::fixtures::inputs().defaults;
             defaults.terminal.cursor_trail_duration = Some(2.0);
             let terminal =
-                crate::managed_environment::terminal_presentation(&root, &defaults).unwrap();
+                crate::managed_environment::terminal_presentation(&root, &defaults, None).unwrap();
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
                     &inputs,
@@ -2862,7 +2875,8 @@ rows = 30
 
         fs::write(root.join("config.toml"), "").unwrap();
         let terminal =
-            crate::managed_environment::terminal_presentation(&root, &inputs.defaults).unwrap();
+            crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                .unwrap();
         assert!(!terminal.requires_startup_admission());
         assert!(
             venus_command(
@@ -2896,9 +2910,12 @@ rows = 30
                     }),
                 )
                 .unwrap();
-                let terminal =
-                    crate::managed_environment::terminal_presentation(&root, &inputs.defaults)
-                        .unwrap();
+                let terminal = crate::managed_environment::terminal_presentation(
+                    &root,
+                    &inputs.defaults,
+                    None,
+                )
+                .unwrap();
                 for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                     let command = venus_command(
                         &inputs,
@@ -2927,8 +2944,12 @@ rows = 30
                 )
                 .unwrap();
                 assert!(
-                    crate::managed_environment::terminal_presentation(&root, &inputs.defaults)
-                        .is_err(),
+                    crate::managed_environment::terminal_presentation(
+                        &root,
+                        &inputs.defaults,
+                        None
+                    )
+                    .is_err(),
                     "accepted {setting} = {value}"
                 );
             }
@@ -2949,7 +2970,8 @@ rows = 30
             )
             .unwrap();
             let terminal =
-                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).unwrap();
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                    .unwrap();
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
                     &inputs,
@@ -2981,7 +3003,8 @@ rows = 30
             )
             .unwrap();
             let terminal =
-                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).unwrap();
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                    .unwrap();
             assert!(
                 terminal.requires_startup_admission(),
                 "{value} bypasses Venus validation"
@@ -3019,7 +3042,8 @@ rows = 30
         ] {
             fs::write(root.join("config.toml"), source).unwrap();
             let terminal =
-                crate::managed_environment::terminal_presentation(&root, &inputs.defaults).unwrap();
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
+                    .unwrap();
             for mode in [LaunchMode::Workspace, LaunchMode::Terminal] {
                 let command = venus_command(
                     &inputs,
@@ -3052,7 +3076,7 @@ rows = 30
             )
             .unwrap();
             assert!(
-                crate::managed_environment::terminal_presentation(&root, &inputs.defaults)
+                crate::managed_environment::terminal_presentation(&root, &inputs.defaults, None)
                     .unwrap_err()
                     .contains("pane_frames")
             );

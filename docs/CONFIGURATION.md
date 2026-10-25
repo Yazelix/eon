@@ -42,6 +42,11 @@ warning_close_last_tab = true
 enabled = true
 ```
 
+Each build ignores keys it does not know, with one warning per key and read
+naming its dotted path and the configuration file. This lets an older running
+window keep using the settings it knows after a newer build adds a key. Known
+keys with wrong types or values still fail, including unsupported widget names.
+
 `[bar] widgets` chooses which Eon Bar widgets show and their order, left to
 right between the tabs and the Shortcuts and Close buttons: the Codex and
 Claude quota chips, CPU and RAM use, the local clock and `EON <version>`. Each

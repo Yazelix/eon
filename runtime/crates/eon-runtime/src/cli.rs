@@ -776,6 +776,7 @@ fn control(inputs: &Inputs, action: Action, json: bool) -> Result<i32, String> {
         && managed_environment::warning_close_last_tab(
             &configuration_directory()?,
             &inputs.defaults,
+            None,
         )?
     {
         eprint!(
