@@ -340,6 +340,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon config-path` | Create and print the configuration root |
+| `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
 
 Workspace commands target the current-generation supervisor. Human and `--json`
 output describe the same result. A missing supervisor is not started implicitly;

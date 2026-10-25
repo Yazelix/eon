@@ -689,9 +689,20 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 ## EON-C9 — Managed shell environment
 
 - **Status:** Proven
-- **Consumer:** Eon terminals launched under Nushell or Bash.
-- **Trigger:** Eon constructs a child launch environment.
+- **Consumer:** People and agents inspecting Eon configuration defaults, and Eon
+  terminals launched under Nushell or Bash.
+- **Trigger:** Eon prints configuration defaults or constructs a child launch environment.
 - **Result:**
+  - `eon config defaults` prints a TOML configuration representing this build's
+    defaults, with comments explaining defaults that require omission or remain
+    Eon-owned. `--json` prints the same configurable values as a nested JSON
+    object using the configuration's table and key names. Optional fields whose
+    default is omission remain omitted in both formats. Loading the printed
+    TOML produces the same configuration policy as an empty configuration. The
+    command does not read the user's configuration, prepare directories, contact
+    a supervisor or start children. Successful output exits 0 with no stderr
+    output; invalid syntax exits 2 and output failure exits 1. `eon config-path`
+    retains its existing behaviour.
   - Eon selects exact Nushell, Bash, Starship, Zoxide, fzf, Atuin, Carapace,
     Helix, Yazi, and LazyGit artifacts.
   - Stable `eon-*` commands expose managed shells and tools outside Eon; one
@@ -729,6 +740,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon supplies defaults, component selection and Nix shell adapters;
   Eon Runtime owns strict configuration and private launch-environment
   enforcement. Shells/tools retain native configuration and behavior.
+  Eon supplies product defaults; Runtime prints them through the configuration
+  model used by its resolver. Documentation examples are generated from, or
+  checked against, that output.
 - **Boundary:** No global aliases, user-file mutation, prompt/completion schema,
   shell framework, automatic Direnv, mise installation or trust management,
   history/sync policy, plugin surface,

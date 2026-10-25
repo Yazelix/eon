@@ -1,7 +1,8 @@
 # Configuration
 
 `eon config-path` prints the configuration root, normally
-`~/.config/eon`. Settings live in `config.toml`:
+`~/.config/eon`. Settings live in `config.toml`. This example chooses a font,
+cursor preset and 100x30 grid; it is not the empty-configuration default:
 
 ```toml
 [bar]
@@ -43,6 +44,105 @@ warning_close_last_tab = true
 enabled = true
 ```
 
+## Built-in defaults
+
+`eon config defaults` prints this build's defaults as commented TOML;
+`eon config defaults --json` prints the same configurable values as a nested
+object. Neither reads your configuration or creates directories, so both work
+even when `config.toml` is broken. Unset settings remain comments in TOML and
+are omitted in JSON. Eon-owned popup settings are omitted as editable keys.
+The following block is checked against the command by the test suite.
+
+<!-- defaults:start -->
+```toml
+# Built-in defaults. Unset and Eon-owned settings remain omitted.
+
+[bar]
+widgets = ["codex_quota", "claude_quota", "cpu", "ram", "clock", "version"] # Eon Bar widgets, in display order.
+
+[terminal]
+background_blur = true # Request compositor background blur.
+background_opacity = 0.8 # Opacity of the terminal's default background.
+# border_width: unset. Use Venus's neutral outline width when omitted.
+# columns: unset. Let the window choose initial columns when omitted.
+# cursor_trail_color: unset. Omission retains the workspace's random cursor colour.
+cursor_trail_duration = 1.5 # Cursor tail duration multiplier.
+# focus_border_width: unset. Use Venus's focus outline width when omitted.
+# focus_color: unset. Use Venus's focus colour when omitted.
+font_fallbacks = ["Symbols Nerd Font Mono", "Accelerando Terminal"] # Ordered fallback font families.
+# font_family: unset. Let Venus choose the font family when omitted.
+# font_size: unset. Let Venus choose the font size when omitted.
+# line_height: unset. Let Venus choose the line height when omitted.
+padding_color = "extend" # How terminal padding takes its background colour.
+pane_frames = true # Draw rounded pane frames.
+# rows: unset. Let the window choose initial rows when omitted.
+
+[shell]
+atuin = true # Enable the managed Atuin history integration.
+carapace = true # Enable the managed Carapace completion integration.
+command = ["eon-nu"] # Direct argv for terminals without an explicit command.
+mise = true # Activate host mise when available and not already active.
+starship = true # Enable the managed Starship prompt integration.
+zoxide = true # Enable the managed Zoxide directory integration.
+
+[anima]
+duration_seconds = 3 # Startup animation duration in seconds.
+enabled = true # Enable this feature or popup.
+style = "random" # Startup animation style.
+
+[workspace]
+warning_close_last_tab = true # Ask before stopping the final tab's terminals.
+
+[sidebar]
+enabled = true # Enable this feature or popup.
+
+[popup]
+side_margin = 8.0 # Popup side margin in logical pixels.
+vertical_margin = 4.0 # Popup vertical margin in logical pixels.
+
+[popups.agent]
+command = "auto" # Direct argv, or auto for Agent's command selection.
+enabled = true # Enable this feature or popup.
+keep_alive = true # Keep this popup running when hidden.
+keybinding = "Alt+Shift+L" # Popup shortcut using physical keys.
+label = "Agent" # Popup display name.
+
+[popups.anima]
+# command and keep_alive are Eon-owned.
+enabled = true # Enable this feature or popup.
+keybinding = "Alt+Shift+A" # Popup shortcut using physical keys.
+label = "Anima" # Popup display name.
+
+[popups.commands]
+command = ["eon-commands"] # Direct argv, or auto for Agent's command selection.
+enabled = true # Enable this feature or popup.
+keep_alive = false # Keep this popup running when hidden.
+keybinding = "Alt+Shift+M" # Popup shortcut using physical keys.
+label = "Commands" # Popup display name.
+
+[popups.files]
+command = ["eon-files"] # Direct argv, or auto for Agent's command selection.
+enabled = true # Enable this feature or popup.
+keep_alive = true # Keep this popup running when hidden.
+keybinding = "Alt+Shift+Y" # Popup shortcut using physical keys.
+label = "Files" # Popup display name.
+
+[popups.git]
+command = ["eon-lazygit"] # Direct argv, or auto for Agent's command selection.
+enabled = true # Enable this feature or popup.
+keep_alive = true # Keep this popup running when hidden.
+keybinding = "Alt+Shift+J" # Popup shortcut using physical keys.
+label = "Git" # Popup display name.
+
+[popups.project]
+# Project is the required chooser.
+keybinding = "Alt+Z" # Popup shortcut using physical keys.
+label = "Project" # Popup display name.
+```
+<!-- defaults:end -->
+
+## Configuration behavior
+
 Each build ignores keys it does not know, with one warning per key and read
 naming its dotted path and the configuration file. This lets an older running
 window keep using the settings it knows after a newer build adds a key. Known
@@ -52,8 +152,8 @@ keys with wrong types or values still fail, including unsupported widget names.
 right between the tabs and the Shortcuts and Close buttons: the Codex and
 Claude quota chips, CPU and RAM use, the local clock and `EON <version>`. Each
 name appears at most once. A widget left out doesn't show, `widgets = []`
-leaves only the tabs and buttons, and omitting the key shows all six in the
-order above. The list applies when a window next opens or reopens, and an
+leaves only the tabs and buttons, and omitting the key uses the built-in list
+above. The list applies when a window next opens or reopens, and an
 unknown or repeated name is a configuration error. Narrow windows hide the
 clock first, then RAM, CPU and the version, then shorten the quota chips,
 whatever the order; then quota chips disappear one by one, the one closest to
@@ -73,22 +173,24 @@ an explicit cursor color.
 `focus_color` colours the selected pane's whole outline in the selected column
 when pane frames are on. It accepts
 `preset:<name>` from the cursor presets above or `custom:#RRGGBB`; `random` is
-invalid. The default is `custom:#b207fb`. F6 keyboard focus in the chrome keeps
+invalid. The setting is omitted by default, leaving Venus's built-in focus
+colour in use. The example selects `custom:#b207fb`. F6 keyboard focus in the chrome keeps
 its mint pill outline. This setting applies to full-Eon workspace surfaces;
 eonbase has no pane outline.
 
 `border_width` sizes neutral pane-card, agent-sidebar-card and popup outlines,
 including their title edges, and the Eon Bar widget outlines. `focus_border_width` sizes the selected pane's
 whole outline. Both accept integers from 1 through 3 logical pixels; defaults
-are 1 and 1 respectively. Physical widths are `max(1, round(width * scale))`:
-at scale 1.3 the defaults draw at 1 and 1 physical pixels, and at scale 2 at 2
+are omitted, leaving Venus's built-in widths in use. With the example's widths,
+physical widths are `max(1, round(width * scale))`:
+at scale 1.3 they draw at 1 and 1 physical pixels, and at scale 2 at 2
 and 2. Pane frames off hides pane and sidebar outlines and title rules;
 popups keep their outline. These settings apply to full-Eon workspace surfaces;
 eonbase receives neither override. The current agent row and F6 focus pills
 keep their one-physical-pixel outlines.
 
-`cursor_trail_duration` is a finite multiplier from `0.25` through `4.0`,
-defaulting to `1.5`. Larger values keep the tail visible longer. Eon owns this
+`cursor_trail_duration` is a finite multiplier from `0.25` through `4.0`;
+its built-in value is listed above. Larger values keep the tail visible longer. Eon owns this
 setting for both products; no Venus or Orbit configuration is needed.
 
 With pane frames on, each column has one continuous terminal-background fill,
@@ -102,7 +204,7 @@ fixed. Frameless mode keeps terminal-background strips across the window below
 the bar, including the sidebar and footer.
 
 `padding_color` controls terminal padding in panes, popups and eonbase.
-`extend` (default) uses the nearest edge cell's background on each side and
+`extend` uses the nearest edge cell's background on each side and
 at the corners. On the primary screen, top or bottom padding keeps the default
 background if that edge row contains any default-background cell (including an
 explicit color matching the default) or a full-height powerline glyph.
@@ -115,8 +217,8 @@ The setting applies when a window opens or reopens.
 Opacity accepts `0.0` through `1.0`. Blur and pane frames are booleans. Font size
 accepts 6–96 logical pixels, line height accepts 1–3, and a supplied columns and
 rows pair must fit 100,000 cells. `font_fallbacks` accepts an ordered array of at
-most eight installed family names. The default order is `Symbols Nerd Font Mono`,
-then `Accelerando Terminal`, so alien glyphs avoid searching all installed fonts.
+most eight installed family names. The built-in order is listed above, so alien
+glyphs avoid searching all installed fonts.
 An explicit list replaces that order. The terminal package includes fonts for
 ordinary text, Nerd Font icons and Accelerando; it does not install them
 system-wide. Compositors may ignore blur or initial window sizing.
@@ -134,14 +236,14 @@ animation continues to the picker. Attachment, recovery, later tabs, and
 eonbase do not play the startup animation.
 
 Closing the last tab quits its window and stops its terminals.
-`warning_close_last_tab = true`, the default, makes `eon tab close` and
+`warning_close_last_tab = true` makes `eon tab close` and
 `eon pane close` ask first when run from a terminal, listing the terminals that
 will stop; `--json` never asks. In the window, Alt+Shift+W, the bar's `×` and
 Alt+W on the last pane show a prompt listing the same terminals: Enter quits,
 Escape cancels, and Alt+Shift+D keeps them running instead. With `false`, both
 close at once. The window reads the setting when it starts.
 
-`[sidebar] enabled = true`, the default, offers the agent sidebar, which lists
+`[sidebar] enabled = true` offers the agent sidebar, which lists
 the coding agents in the window's tabs that report their status. `false` turns
 it off; Alt+G and Alt+Shift+G still jump between agents. The window reads the
 setting when it starts. Alt+Shift+H shows or hides the sidebar; it also steps
@@ -200,19 +302,20 @@ label = "Monitor"
 keep_alive = true
 ```
 
-Git defaults to `eon-lazygit` on Alt+Shift+J. Agent defaults to the first
-available command among Codex, Grok, OpenCode, Pi, and Claude on Alt+Shift+L.
+Built-in popup commands, labels and shortcuts are listed in the defaults above.
+Agent's `auto` command selects the first available command among Codex, Grok,
+OpenCode, Pi, and Claude.
 Files opens Yazi with Eon's own popup keys on Alt+Shift+Y and reads no Yazi
 configuration of yours. Setting `[popups.files].command` replaces it, for
 example with `["eon-yazi"]`, which reads the `yazi` directory under Eon's
 configuration root.
-Anima defaults to Alt+Shift+A, opens a random animation, and stops when dismissed
+Anima opens a random animation and stops when dismissed
 or replaced. Set `[popups.anima].enabled = false` to hide that shortcut; its
 command and transient lifetime are fixed.
-Commands defaults to Alt+Shift+M and searches and runs Eon commands; a custom
+Commands searches and runs Eon commands; a custom
 popup on the same key collides with it until one of them moves.
 Set `enabled = false` on Git, Agent, Files, Commands, or a custom popup to disable
-it. Project is required on Alt+Z. A popup shortcut on the key of a built-in
+it. Project is the required chooser. A popup shortcut on the key of a built-in
 Eon shortcut takes that key, and Alt+/ lists the built-in one as overridden.
 Alt+/ and Alt+0 through Alt+9 are reserved and cannot be bound.
 
@@ -223,7 +326,8 @@ private per-user fallbacks.
 
 ## Managed tools
 
-A terminal without an explicit command starts pinned Nushell. Select managed
+A terminal without an explicit command uses `[shell].command`, listed in the
+defaults above. `eon-nu` selects pinned Nushell. Select managed
 Bash with `eon-bash` in `[shell].command`. Any other shell, such as a host
 `zsh` or `fish`, runs as an unmanaged command without Eon's integrations.
 Native user shell configuration loads before Eon's guarded Starship, Zoxide,
@@ -235,7 +339,7 @@ fails, or your configuration already activates it, and `mise = false` turns
 it off. Eon never installs mise or trusts its configuration for you.
 
 Managed Nushell supports `clip copy` and `clip paste` through the native
-clipboard. Interactive `eon-nu` and default Eon terminals also provide `clc`
+clipboard. Interactive `eon-nu` terminals also provide `clc`
 and `clp` aliases. User autoload files run afterward and can override them.
 If no desktop clipboard is available, Nushell reports the error.
 

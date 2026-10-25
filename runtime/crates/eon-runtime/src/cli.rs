@@ -560,9 +560,26 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             write_stdout(format!("{}\n", path.display()))?;
             Ok(0)
         }
+        [command, action] if command == "config" && action == "defaults" => {
+            print_config_defaults(inputs, false)
+        }
+        [command, action, flag]
+            if command == "config" && action == "defaults" && flag == "--json" =>
+        {
+            print_config_defaults(inputs, true)
+        }
         _ => return Err(Error::usage(EON_USAGE)),
     };
     Ok(result?)
+}
+
+fn print_config_defaults(inputs: &Inputs, json: bool) -> Result<i32, String> {
+    let output = managed_environment::print_defaults(&inputs.defaults, json)?;
+    std::io::stdout()
+        .lock()
+        .write_all(output.as_bytes())
+        .map_err(|error| format!("cannot write stdout: {error}"))?;
+    Ok(0)
 }
 
 fn print_help(inputs: &Inputs) -> Result<i32, String> {
@@ -612,6 +629,7 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
   {command}anima [STYLE] [CHILD OPTIONS...]{reset}            Play an animation here
   {command}versions{reset}                                    Show exact component versions
   {command}config-path{reset}                                 Create and print the config root
+  {command}config defaults [--json]{reset}                    Print built-in configuration
   {command}-h, --help{reset}                                  Show this help
 
 {heading}Examples{reset}

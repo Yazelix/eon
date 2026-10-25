@@ -114,6 +114,93 @@ printf '\0%s\0' "$selection"
 }
 
 #[test]
+fn config_defaults_ignore_user_configuration_and_have_documented_values() {
+    let root = temporary_directory();
+    let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let mut printed = Vec::new();
+    for variable in ["EON_CONFIG_HOME", "XDG_CONFIG_HOME"] {
+        let config = root.join(variable);
+        fs::create_dir(&config).unwrap();
+        let file = if variable == "XDG_CONFIG_HOME" {
+            fs::create_dir(config.join("eon")).unwrap();
+            config.join("eon/config.toml")
+        } else {
+            config.join("config.toml")
+        };
+        fs::write(&file, "broken = [").unwrap();
+        for json in [false, true] {
+            let mut command = eon_command(binary);
+            command.args(["config", "defaults"]);
+            if json {
+                command.arg("--json");
+            }
+            let output = command
+                .env_remove("EON_CONFIG_HOME")
+                .env(variable, &config)
+                .env("EON_RUNTIME_DIR", root.join("absent-runtime"))
+                .env("EON_ORBIT", root.join("absent-orbit"))
+                .env("EON_VENUS", root.join("absent-venus"))
+                .output()
+                .unwrap();
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(output.stderr.is_empty());
+            printed.push(stdout(&output).to_owned());
+        }
+        assert_eq!(fs::read_to_string(&file).unwrap(), "broken = [");
+        assert_eq!(fs::read_dir(file.parent().unwrap()).unwrap().count(), 1);
+    }
+    assert_eq!(printed[0], printed[2]);
+    assert_eq!(printed[1], printed[3]);
+    assert!(!root.join("absent-runtime").exists());
+    let absent_config = root.join("absent-config");
+    let output = eon_command(binary)
+        .args(["config", "defaults"])
+        .env("EON_CONFIG_HOME", &absent_config)
+        .env("EON_RUNTIME_DIR", root.join("absent-runtime"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(0));
+    assert!(output.stderr.is_empty());
+    assert_eq!(stdout(&output), printed[0]);
+    assert!(!absent_config.exists());
+    assert!(!root.join("absent-runtime").exists());
+    let document = include_str!("../../../../docs/CONFIGURATION.md");
+    let documented = document
+        .split("<!-- defaults:start -->\n```toml\n")
+        .nth(1)
+        .unwrap()
+        .split("```\n<!-- defaults:end -->")
+        .next()
+        .unwrap();
+    assert_eq!(documented, printed[0]);
+    for arguments in [
+        vec!["config"],
+        vec!["config", "path"],
+        vec!["config", "--json", "defaults"],
+        vec!["config", "defaults", "extra"],
+        vec!["config", "defaults", "--json", "--json"],
+    ] {
+        let output = eon_command(binary).args(arguments).output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+    }
+    let (reader, writer) = std::io::pipe().unwrap();
+    drop(reader);
+    let output = eon_command(binary)
+        .args(["config", "defaults"])
+        .stdout(writer)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn help_is_readable_and_does_not_start_or_prepare_a_workspace() {
     let root = temporary_directory();
     let config = root.join("config");

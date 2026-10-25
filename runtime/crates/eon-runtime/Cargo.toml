@@ -13,7 +13,7 @@ orbit-protocol = { path = "../../../orbit/crates/protocol" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 socket2 = "=0.6.5"
-toml = { version = "=1.1.4", default-features = false, features = ["parse", "serde", "std"] }
+toml = { version = "=1.1.4", default-features = false, features = ["parse", "serde", "std", "display"] }
 time = { version = "=0.3.55", default-features = false, features = ["parsing"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]

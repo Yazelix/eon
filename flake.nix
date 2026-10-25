@@ -129,6 +129,7 @@
           ./flake.nix
           ./flake.lock
           ./components
+          ./docs/CONFIGURATION.md
           ./nix/shell-environment.nix
         ];
       };

@@ -1,5 +1,5 @@
 use super::diagnostics::DiagnosticLog;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
     env,
@@ -76,7 +76,7 @@ pub struct Defaults {
     pub agent_commands: &'static [&'static [&'static str]],
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct StartupAnimation {
     pub enabled: bool,
     pub style: String,
@@ -199,7 +199,7 @@ pub struct PopupCatalog {
     pub entries: Vec<PopupDefinition>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ShellConfig {
     pub command: Vec<String>,
     pub starship: bool,
@@ -222,7 +222,7 @@ struct ShellSettings {
     unknown: BTreeMap<String, toml::Value>,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum PaddingColor {
     Extend,
@@ -240,7 +240,7 @@ impl PaddingColor {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TerminalConfig {
     pub background_opacity: f32,
     pub background_blur: bool,
@@ -279,6 +279,158 @@ struct TerminalSettings {
     rows: Option<u16>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
+}
+
+pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, String> {
+    use serde_json::json;
+
+    // Preserve the resolved f32 values' short decimal representation in both formats.
+    let terminal = serde_json::to_string(&defaults.terminal).map_err(|error| error.to_string())?;
+    let terminal: serde_json::Value =
+        serde_json::from_str(&terminal).map_err(|error| error.to_string())?;
+    let mut popups = serde_json::Map::new();
+    for entry in &defaults.popups.entries {
+        let mut keys = Vec::new();
+        for (bit, name) in [
+            (CTRL, "Ctrl"),
+            (ALT, "Alt"),
+            (SHIFT, "Shift"),
+            (SUPER, "Super"),
+        ] {
+            if entry.shortcut.modifiers & bit != 0 {
+                keys.push(name);
+            }
+        }
+        keys.push(
+            entry
+                .shortcut
+                .key
+                .strip_prefix("Key")
+                .or_else(|| entry.shortcut.key.strip_prefix("Digit"))
+                .unwrap_or(&entry.shortcut.key),
+        );
+        let mut settings = json!({ "label": entry.label, "keybinding": keys.join("+") });
+        if entry.id != "project" {
+            settings["enabled"] = true.into();
+        }
+        if !matches!(entry.id.as_str(), "project" | "anima") {
+            settings["keep_alive"] = entry.keep_alive.into();
+            settings["command"] = match &entry.command {
+                PopupCommand::AgentAuto => "auto".into(),
+                PopupCommand::Argv(argv) => {
+                    let argv = argv
+                        .iter()
+                        .map(|argument| {
+                            argument
+                                .to_str()
+                                .ok_or_else(|| "default popup command is not UTF-8".to_owned())
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    json!(argv)
+                }
+                PopupCommand::Project => return Err("Project's command is Eon-owned".into()),
+            };
+        }
+        popups.insert(entry.id.clone(), settings);
+    }
+    let mut config = json!({
+        "bar": { "widgets": defaults.bar_widgets },
+        "terminal": terminal,
+        "shell": defaults.shell,
+        "anima": defaults.anima,
+        "workspace": { "warning_close_last_tab": defaults.warning_close_last_tab },
+        "sidebar": { "enabled": defaults.sidebar_enabled },
+        "popup": {
+            "side_margin": defaults.popups.geometry.side_margin,
+            "vertical_margin": defaults.popups.geometry.vertical_margin,
+        },
+        "popups": popups,
+    });
+    if json {
+        config["terminal"]
+            .as_object_mut()
+            .unwrap()
+            .retain(|_, value| !value.is_null());
+        return serde_json::to_string_pretty(&config)
+            .map(|text| text + "\n")
+            .map_err(|error| error.to_string());
+    }
+    let mut output =
+        String::from("# Built-in defaults. Unset and Eon-owned settings remain omitted.\n");
+    for section in [
+        "bar",
+        "terminal",
+        "shell",
+        "anima",
+        "workspace",
+        "sidebar",
+        "popup",
+    ] {
+        defaults_table(&mut output, section, &config[section])?;
+    }
+    for (id, settings) in config["popups"].as_object().unwrap() {
+        defaults_table(&mut output, &format!("popups.{id}"), settings)?;
+    }
+    Ok(output)
+}
+
+fn defaults_table(
+    output: &mut String,
+    section: &str,
+    settings: &serde_json::Value,
+) -> Result<(), String> {
+    output.push_str(&format!("\n[{section}]\n"));
+    if section == "popups.project" {
+        output.push_str("# Project is the required chooser.\n");
+    } else if section == "popups.anima" {
+        output.push_str("# command and keep_alive are Eon-owned.\n");
+    }
+    for (key, value) in settings.as_object().unwrap() {
+        let comment = match key.as_str() {
+            "widgets" => "Eon Bar widgets, in display order.",
+            "background_opacity" => "Opacity of the terminal's default background.",
+            "background_blur" => "Request compositor background blur.",
+            "padding_color" => "How terminal padding takes its background colour.",
+            "pane_frames" => "Draw rounded pane frames.",
+            "focus_color" => "Use Venus's focus colour when omitted.",
+            "border_width" => "Use Venus's neutral outline width when omitted.",
+            "focus_border_width" => "Use Venus's focus outline width when omitted.",
+            "cursor_trail_color" => "Omission retains the workspace's random cursor colour.",
+            "cursor_trail_duration" => "Cursor tail duration multiplier.",
+            "font_family" => "Let Venus choose the font family when omitted.",
+            "font_fallbacks" => "Ordered fallback font families.",
+            "font_size" => "Let Venus choose the font size when omitted.",
+            "line_height" => "Let Venus choose the line height when omitted.",
+            "columns" => "Let the window choose initial columns when omitted.",
+            "rows" => "Let the window choose initial rows when omitted.",
+            "command" if section == "shell" => {
+                "Direct argv for terminals without an explicit command."
+            }
+            "command" => "Direct argv, or auto for Agent's command selection.",
+            "starship" => "Enable the managed Starship prompt integration.",
+            "zoxide" => "Enable the managed Zoxide directory integration.",
+            "atuin" => "Enable the managed Atuin history integration.",
+            "carapace" => "Enable the managed Carapace completion integration.",
+            "mise" => "Activate host mise when available and not already active.",
+            "enabled" => "Enable this feature or popup.",
+            "style" => "Startup animation style.",
+            "duration_seconds" => "Startup animation duration in seconds.",
+            "warning_close_last_tab" => "Ask before stopping the final tab's terminals.",
+            "side_margin" => "Popup side margin in logical pixels.",
+            "vertical_margin" => "Popup vertical margin in logical pixels.",
+            "label" => "Popup display name.",
+            "keybinding" => "Popup shortcut using physical keys.",
+            "keep_alive" => "Keep this popup running when hidden.",
+            _ => "Built-in setting.",
+        };
+        if value.is_null() {
+            output.push_str(&format!("# {key}: unset. {comment}\n"));
+        } else {
+            let value = toml::Value::try_from(value).map_err(|error| error.to_string())?;
+            output.push_str(&format!("{key} = {value} # {comment}\n"));
+        }
+    }
+    Ok(())
 }
 
 impl TerminalConfig {
@@ -982,6 +1134,63 @@ mod tests {
         path::{Path, PathBuf},
         process::Command,
     };
+
+    #[test]
+    fn config_defaults_roundtrip_through_the_resolver_and_json() {
+        let empty = crate::supervisor::temporary_directory();
+        let printed = crate::supervisor::temporary_directory();
+        let mut defaults = crate::fixtures::inputs().defaults;
+        for explicit in [false, true] {
+            if explicit {
+                defaults.terminal.focus_color = Some("preset:ice".into());
+                defaults.terminal.border_width = Some(2);
+                defaults.terminal.focus_border_width = Some(3);
+                defaults.terminal.cursor_trail_color = Some("preset:ice".into());
+                defaults.terminal.cursor_trail_duration = Some(1.5);
+                defaults.terminal.font_family = Some("Supplied Font".into());
+                defaults.terminal.font_size = Some(17.5);
+                defaults.terminal.line_height = Some(1.3);
+                defaults.terminal.columns = Some(100);
+                defaults.terminal.rows = Some(30);
+                defaults.anima.enabled = false;
+                defaults.popups.entries[1].command = PopupCommand::Argv(vec![
+                    "fixture-git".into(),
+                    "quote\"and\\slash".into(),
+                    "line\nbreak".into(),
+                ]);
+            }
+            let toml = super::print_defaults(&defaults, false).unwrap();
+            let json: serde_json::Value =
+                serde_json::from_str(&super::print_defaults(&defaults, true).unwrap()).unwrap();
+            let parsed: toml::Value = toml::from_str(&toml).unwrap();
+            assert_eq!(serde_json::to_value(parsed).unwrap(), json);
+            assert!(json["popups"]["project"].get("command").is_none());
+            assert!(json["popups"]["anima"].get("command").is_none());
+            assert!(json["popups"]["anima"].get("keep_alive").is_none());
+            assert_eq!(json["terminal"].get("font_family").is_some(), explicit);
+            fs::write(printed.join("config.toml"), toml).unwrap();
+            assert!(
+                super::read_config(&printed, None)
+                    .unwrap()
+                    .unknown_keys()
+                    .is_empty()
+            );
+            let policy = |root: &Path| {
+                (
+                    read_shell_config(root, &defaults, None).unwrap(),
+                    terminal_presentation(root, &defaults, None).unwrap(),
+                    startup_animation(root, &defaults, None).unwrap(),
+                    popup_catalog(root, &defaults, None).unwrap(),
+                    super::bar_widgets(root, &defaults, None).unwrap(),
+                    warning_close_last_tab(root, &defaults, None).unwrap(),
+                    sidebar_enabled(root, &defaults, None).unwrap(),
+                )
+            };
+            assert_eq!(policy(&empty), policy(&printed));
+        }
+        fs::remove_dir_all(empty).unwrap();
+        fs::remove_dir_all(printed).unwrap();
+    }
 
     fn command_environment<'a>(command: &'a Command, name: &str) -> Option<Option<&'a OsStr>> {
         command

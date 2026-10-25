@@ -3,6 +3,11 @@
 This file records user-visible runtime, command, configuration, packaging,
 installation, and proven contract changes.
 
+## Unreleased
+
+- `eon config defaults` prints the build's configuration defaults as commented
+  TOML, or as a nested object with `--json`, even when user configuration is broken.
+
 ## v0.1.2
 
 The first release since v0.1.1. EONW moves from version 9 to 19, so a
