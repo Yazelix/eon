@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Pane labels prefer a pinned name, then the sanitized terminal title, then
+  the working directory, with differing-directory context. `eon pane rename`
+  and Commands set or clear pins; workspace JSON includes `label` and
+  `pinned_name`. Runtime supplies labels over unreleased EONW v20. Pane IDs
+  dim when contrast permits; label updates preserve zoom and view state.
+
 - EONW moves to v20 for workspace summaries and workspace requests. Windows
   started with older protocol versions need a restart before a newer CLI can
   control them; workspace UI and CLI subcommands follow in later slices.

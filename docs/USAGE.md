@@ -178,6 +178,14 @@ outer gaps surround and separate the allocated column areas. Pane titles sit
 in rounded edges, with neutral outlines sized by `border_width`. Collapsed rows'
 corners turn toward the expanded pane, and their sides join the next card in
 that direction.
+Pane labels come from Runtime: the pane ID, then a pinned name, otherwise its
+sanitized terminal title, otherwise its compact working directory. A differing
+terminal directory adds ` · DIRECTORY`, using a relative or shorter compact path.
+Labels keep explicit connecting, unavailable and offline states. The ID is dimmer
+when the resolved background and opacity permit readable contrast; narrow labels
+keep the ID when it fits, while accessibility and close listings retain the full
+bounded label. Metadata and names are display text, never command input.
+
 The selected pane has a brighter label and a whole outline in
 its focus colour, at the configured focus border width; hover adds a label pill and
 F6 keyboard focus keeps a mint pill outline. Turning pane frames off leaves labels and
@@ -467,3 +475,18 @@ Include `eon versions`, the relevant generation from `eon generations`, your
 distribution, compositor, GPU, and the exact command and error. Remove paths,
 environment values, terminal content, and credentials that should remain
 private.
+
+### Naming a pane
+
+`eon pane rename p1 'Review pane labels'` pins a name to that pane. Use
+`eon pane rename p1 --clear` or an empty name to restore automatic naming.
+Names are trimmed, limited to 80 Unicode characters, and reject control and
+invisible format characters. `eon pane rename p1 -- '--clear'` pins an
+option-looking name; put `--json` before `--` to request JSON with a literal name.
+Rename targets the explicit pane in the addressed workspace, including background
+tabs, and preserves selections and focus. Commands offers **Rename pane** and
+**Clear pane name** for the popup tab's selected pane; Enter on an empty name
+clears it, and Escape cancels. Pins follow pane moves and survive presentation
+detach/reattach, but end with the pane or supervisor and are not recovered.
+`eon workspace --json` and action replies expose each pane's full `label` and
+nullable `pinned_name`, including panes without agent-attention records.

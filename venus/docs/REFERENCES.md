@@ -462,9 +462,9 @@ frame queue. An unsupported header version retains explicit incompatibility UX
 without decoding another revision. No input, renderer, gesture, retry, schema,
 adapter, or compatibility path is added.
 
-## Required for read-only pane metadata
+## Read-only pane metadata: historical Venus observer and Runtime ownership
 
-`ven-render-live-pane-title-cwd-8c7` consumes canonical ORBS v5 from exact
+The historical `ven-render-live-pane-title-cwd-8c7` consumed canonical ORBS v5 from exact
 Orbit source `69c402737799f03e615473956954a043647a4713` (pre-consolidation
 history). Orbit owns bounded title and
 working-directory values plus the read-only `ObserveMetadata` role; Venus sends
@@ -482,6 +482,20 @@ directly from each accepted snapshot, and defers the selected endpoint's
 observer until its presentation attachment has completed.
 That deferral preserves Orbit's single pending-negotiation slot without adding
 retry policy or another lifecycle owner.
+
+For `eon-a7xd`, the approved common-data route transfers the observer role to
+Runtime on current ORBS v13. Runtime observes every workspace pane with bounded
+background negotiation/retry and latest-only state, composes the safe label and
+pin over EONW v20, and retires removed endpoints. Venus opens no label observer.
+Its existing supervised Busy-retry path preserves presentation admission during
+Orbit's single pending negotiation. Program-title text is cleaned with ORB-C15's
+control/format exclusions; no process-name lookup or Orbit protocol change is
+part of this route. Name precedence and optional pins were compared with Zellij
+v0.45.1 `efd8fd5a89a20c07a111d248ad7fce53848d2c18`,
+`terminal_pane.rs:1150-1164,1191`, which keeps the explicit name separately from
+the terminal title. The fixed Eon policy, bounds and contrast target are the
+Approval on `eon-a7xd`; the older 8rdi research's management/settings/process
+alternatives were not adopted.
 
 [Zellij](https://github.com/zellij-org/zellij/tree/b9637022eaddb22855dc9914a0cc06762a124b8c)
 at `b9637022eaddb22855dc9914a0cc06762a124b8c` is MIT-licensed comparison-only

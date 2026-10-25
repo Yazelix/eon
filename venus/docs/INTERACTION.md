@@ -111,6 +111,14 @@ outer gaps surround and separate the allocated column areas. Pane titles sit
 in rounded edges, with neutral outlines sized by `border_width`. Collapsed rows'
 corners turn toward the expanded pane, and their sides join the next card in
 that direction.
+Pane labels come from Runtime: the pane ID, then a pinned name, otherwise its
+sanitized terminal title, otherwise its compact working directory. A differing
+terminal directory adds ` · DIRECTORY`, using a relative or shorter compact path.
+Labels keep explicit connecting, unavailable and offline states. The ID is dimmer
+when the resolved background and opacity permit readable contrast; narrow labels
+keep the ID when it fits, while accessibility and close listings retain the full
+bounded label. Metadata and names are display text, never command input.
+
 The selected pane has a brighter label and a whole outline in
 its focus colour, at the configured focus border width; hover adds a label pill and
 F6 keyboard focus keeps a mint pill outline. Turning pane frames off leaves labels and

@@ -17,20 +17,20 @@ pub use accessibility::{Accessibility, AccessibilityTarget, Activation};
 pub use input::InputState;
 pub use model::{
     ClipboardEffect, ConnectionState, LocalNoticeSource, ModelError, SessionModel, WorkspaceModel,
-    active_popup, attention_only_change, focused_terminal,
+    active_popup, attention_only_change, focused_terminal, labels_only_change,
 };
 pub use render::{
     CellMetrics, FontSettings, FontSetup, PaddingColor, PresentOutcome, RenderError, Renderer,
 };
 pub use scene::{
     BarItem, Color, DialogKind, DialogScene, DrawCell, DrawCursor, DrawRow, DrawStyle, EonBar,
-    GlyphRun, Hyperlink, LocalClock, PaneMetadata, Scene, ScenePreview, SceneRect, ShortcutGroup,
-    ShortcutHint, ShortcutHintsScene, ShortcutRow, SidebarRow, SidebarView, WorkspaceColumn,
-    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspacePane, WorkspaceScene,
-    WorkspaceTab, validate_copy_uri, validate_open_uri, workspace_column_width,
+    GlyphRun, Hyperlink, LocalClock, Scene, ScenePreview, SceneRect, ShortcutGroup, ShortcutHint,
+    ShortcutHintsScene, ShortcutRow, SidebarRow, SidebarView, WorkspaceColumn, WorkspaceFocus,
+    WorkspaceHeaderControl, WorkspaceHit, WorkspacePane, WorkspaceScene, WorkspaceTab,
+    validate_copy_uri, validate_open_uri, workspace_column_width,
 };
 pub use system::{CpuTimes, CpuUse, RamUse};
 pub use transport::{
-    MetadataEvent, MetadataTransport, SendError, Transport, TransportEvent, WorkspaceEvent,
-    WorkspaceTransport, read_workspace_response,
+    SendError, Transport, TransportEvent, WorkspaceEvent, WorkspaceTransport,
+    read_workspace_response,
 };

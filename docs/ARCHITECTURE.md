@@ -101,7 +101,7 @@ EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
 snapshots, supervisor lifecycle results, structured failures, and bounded
 framing. EONW v20 carries Eon-owned raw tab launch directories, each tab's
-zero to four pane columns, the popup catalog,
+zero to four pane columns, each pane's semantic label and optional pin, the popup catalog,
 tab-scoped popup terminals, explicit retarget and chooser-completion actions, and
 an optional pending tab's absent pane selection without interpreting Orbit
 terminal metadata. Workspace and
@@ -125,7 +125,14 @@ In v20, `workspace` names the workspace described by `tabs` and `active_tab`,
 and `active_workspace` names the one shown in the window. A request carrying a
 validated caller projects that terminal's workspace; a request without a caller
 projects the shown workspace. The four workspace requests operate on Runtime's
-workspace set. Their CLI and Commands frontends remain planned under EON-C33.
+workspace set; their CLI and Commands frontends remain planned under EON-C33.
+`RenamePane` targets an explicit pane in that addressed workspace.
+Runtime's independent read-only ORBS observers cover every pane, including
+background tabs and hidden workspaces. They supply title/directory display data;
+Runtime combines it with its pane pin and launch-directory context into `label`.
+The pin is separate from terminal title and attention, follows the pane object,
+and is absent after supervisor recovery. Venus consumes the label without a
+second metadata observer or naming policy.
 
 EONW v20 is the current Eon source boundary. It adds the window's ordered
 workspace summaries, shown identity and caller projection, and requests to

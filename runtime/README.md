@@ -70,7 +70,9 @@ Eon's [EON-C27](../docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
 owns product policy and installed acceptance.
 
 EONW v20 adds the ordered workspace summaries, shown and projected workspace
-identities, and create, switch, rename and close requests. v19 adds the
+identities, create/switch/rename/close workspace requests, and pane labels,
+nullable pins and `RenamePane`. Runtime observes existing ORBS metadata for all
+workspace panes and owns label composition; clients render that bounded text. v19 adds the
 attention `name`, the terminal title Orbit reports beside
 the status records; v18 adds EON-C31 agent attention on panes, popups and
 tabs, the window's sidebar visibility, and the sidebar and attention-focus

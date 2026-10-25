@@ -9,7 +9,7 @@ use orbit_protocol::session::{
     ServerMessage, SurfaceSize, WheelOutcome,
 };
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     ffi::OsString,
     io::{self, Read, Write},
     os::unix::ffi::OsStringExt,
@@ -32,12 +32,12 @@ use winit::{
 use yazelix_venus::{
     Accessibility, AccessibilityTarget, BarItem, CellMetrics, ClipboardEffect, Color,
     ConnectionState, CpuTimes, CpuUse, DialogKind, DialogScene, EonBar, FontSettings, FontSetup,
-    Hyperlink, InputState, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, MetadataEvent,
-    MetadataTransport, ModelError, PaddingColor, PaneMetadata, PresentOutcome, RamUse, Renderer,
-    Scene, SceneRect, SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent,
-    WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
-    WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change, focused_terminal,
-    validate_copy_uri, validate_open_uri,
+    Hyperlink, InputState, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelError, PaddingColor,
+    PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene,
+    SidebarView, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl,
+    WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport, active_popup,
+    attention_only_change, focused_terminal, labels_only_change, validate_copy_uri,
+    validate_open_uri,
 };
 
 mod geometry;
@@ -417,7 +417,6 @@ enum UserEvent {
     AccessKit(AccessKitEvent),
     Exit,
     Present,
-    Metadata,
     Transport,
     Workspace,
     NewWindowFailed(String),
@@ -441,11 +440,6 @@ struct WindowState {
 enum HeaderPress {
     Control(WorkspaceHeaderControl),
     Drag,
-}
-
-struct MetadataObserver {
-    transport: MetadataTransport,
-    metadata: PaneMetadata,
 }
 
 #[derive(Debug, Default)]
@@ -575,7 +569,6 @@ struct Application {
     presentation: PresentationState,
     links: LinkInteraction,
     workspace_transport: Option<WorkspaceTransport>,
-    metadata_observers: HashMap<Vec<u8>, MetadataObserver>,
     workspace_model: WorkspaceModel,
     input: InputState,
     input_epoch: Instant,
@@ -674,7 +667,6 @@ impl Application {
             initial_scale_pending,
             window: None,
             workspace_transport: None,
-            metadata_observers: HashMap::new(),
             workspace_model: WorkspaceModel::default(),
             input: InputState::default(),
             input_epoch: Instant::now(),
@@ -945,11 +937,6 @@ impl Application {
                 state.renderer.metrics(),
                 self.tab_scroll,
                 self.pane_scroll,
-                |endpoint| {
-                    self.metadata_observers
-                        .get(endpoint)
-                        .map(|observer| &observer.metadata)
-                },
                 |id, label| {
                     id.map_or_else(
                         || (label.to_owned(), self.quota_widths[label]),
@@ -990,11 +977,6 @@ impl Application {
         Some(DialogScene::close_last_tab(
             tab,
             &snapshot.entries,
-            |endpoint| {
-                self.metadata_observers
-                    .get(endpoint)
-                    .map(|observer| &observer.metadata)
-            },
             detach_chord(&snapshot.entries),
             state.renderer.size(),
             state.renderer.metrics(),
@@ -1322,7 +1304,6 @@ impl Application {
             state.renderer.metrics(),
             tab_scroll,
             pane_scroll,
-            |_| None,
             |id, label| {
                 let fitted = if id.is_some() {
                     state
@@ -1755,7 +1736,6 @@ impl Application {
         // terminal's presentation identity, which pairs its input, stays unchanged.
         if attached {
             self.send_resize();
-            self.reconcile_metadata_observers();
         }
         if let Some(state) = &self.window {
             state.window.request_redraw();
@@ -1844,18 +1824,22 @@ impl Application {
             }
             return;
         }
-        let (received_snapshot, snapshot_changed, attention_only, sidebar_toggled) = match &event {
-            WorkspaceEvent::Response(eon_workspace_protocol::v20::Response::Snapshot(snapshot)) => {
-                let current = self.workspace_model.snapshot();
-                (
-                    true,
-                    current != Some(snapshot),
-                    current.is_some_and(|current| attention_only_change(current, snapshot)),
-                    current.is_some_and(|current| current.sidebar != snapshot.sidebar),
-                )
-            }
-            _ => (false, false, false, false),
-        };
+        let (received_snapshot, snapshot_changed, attention_only, labels_only, sidebar_toggled) =
+            match &event {
+                WorkspaceEvent::Response(eon_workspace_protocol::v20::Response::Snapshot(
+                    snapshot,
+                )) => {
+                    let current = self.workspace_model.snapshot();
+                    (
+                        true,
+                        current != Some(snapshot),
+                        current.is_some_and(|current| attention_only_change(current, snapshot)),
+                        current.is_some_and(|current| labels_only_change(current, snapshot)),
+                        current.is_some_and(|current| current.sidebar != snapshot.sidebar),
+                    )
+                }
+                _ => (false, false, false, false, false),
+            };
         let unavailable = matches!(&event, WorkspaceEvent::Unavailable(_));
         let quota_expired = unavailable
             && self.workspace_model.snapshot().is_some_and(|snapshot| {
@@ -1888,12 +1872,8 @@ impl Application {
             }
             return;
         }
-        if unavailable {
-            let metadata_changed = !self.metadata_observers.is_empty();
-            self.metadata_observers.clear();
-            if quota_expired || metadata_changed {
-                self.presentation.invalidate();
-            }
+        if unavailable && quota_expired {
+            self.presentation.invalidate();
         }
         // Showing or hiding the sidebar moves every column, as the hints and zoom toggles do.
         if sidebar_toggled {
@@ -1938,7 +1918,7 @@ impl Application {
             // Attention moves no presented geometry outside a visible sidebar, so a held link
             // press or a shortcut waiting on the presented scene survives it; the sidebar's rows
             // are hit targets, so a refresh that moves them retires presses on them.
-            if attention_only && scene.sidebar().is_none() {
+            if labels_only || attention_only && scene.sidebar().is_none() {
                 self.presentation.content_changed();
             } else {
                 self.presentation.invalidate();
@@ -1959,66 +1939,7 @@ impl Application {
         {
             self.set_workspace_focus(WorkspaceFocus::Tabs);
         }
-        if received_snapshot {
-            self.reconcile_metadata_observers();
-        }
         if view_changed {
-            self.refresh_client_view();
-        }
-    }
-
-    fn reconcile_metadata_observers(&mut self) {
-        let endpoints = self
-            .workspace_model
-            .snapshot()
-            .map_or_else(HashSet::new, |snapshot| {
-                let unattached = std::iter::once(&self.terminal)
-                    .chain(&self.column_views)
-                    .filter(|view| !view.model.is_attached())
-                    .filter_map(|view| view.active_endpoint.as_deref())
-                    .collect::<Vec<_>>();
-                visible_metadata_endpoints(snapshot, &unattached)
-            });
-        let before = self.metadata_observers.len();
-        self.metadata_observers
-            .retain(|endpoint, _| endpoints.contains(endpoint));
-        let retained = self.metadata_observers.len();
-        for endpoint in endpoints {
-            let socket = PathBuf::from(OsString::from_vec(endpoint.clone()));
-            let proxy = self.proxy.clone();
-            self.metadata_observers
-                .entry(endpoint)
-                .or_insert_with(|| MetadataObserver {
-                    transport: MetadataTransport::start(socket, move || {
-                        let _ = proxy.send_event(UserEvent::Metadata);
-                    }),
-                    metadata: PaneMetadata::Connecting,
-                });
-        }
-        if before != retained || retained != self.metadata_observers.len() {
-            self.presentation.invalidate();
-        }
-    }
-
-    fn handle_metadata(&mut self) {
-        let mut changed = false;
-        for observer in self.metadata_observers.values_mut() {
-            let Some(event) = observer.transport.drain_event() else {
-                continue;
-            };
-            let metadata = match event {
-                MetadataEvent::Metadata(metadata) => PaneMetadata::Available {
-                    working_directory: metadata.working_directory,
-                },
-                MetadataEvent::Unavailable => PaneMetadata::Unavailable,
-            };
-            if observer.metadata != metadata {
-                observer.metadata = metadata;
-                changed = true;
-            }
-        }
-        if changed {
-            self.presentation.invalidate();
             self.refresh_client_view();
         }
     }
@@ -2548,7 +2469,6 @@ impl Application {
                     if let Some(message) = self.input.latest_focus() {
                         self.send(message);
                     }
-                    self.reconcile_metadata_observers();
                 }
             }
             TransportEvent::Incompatible { version } => {
@@ -4043,7 +3963,6 @@ impl ApplicationHandler<UserEvent> for Application {
                         .request_user_attention(Some(UserAttentionType::Informational));
                 }
             }
-            UserEvent::Metadata => self.handle_metadata(),
             UserEvent::Transport => {
                 let events = self
                     .terminal
@@ -4423,24 +4342,6 @@ fn zoom_target(snapshot: &eon_workspace_protocol::v20::Snapshot) -> Option<ZoomT
 
 /// Live panes of the active tab, except endpoints whose presentation attachment is not
 /// established; none while a popup covers the tab.
-fn visible_metadata_endpoints(
-    snapshot: &eon_workspace_protocol::v20::Snapshot,
-    unattached: &[&[u8]],
-) -> HashSet<Vec<u8>> {
-    if active_popup(snapshot).is_some() {
-        return HashSet::new();
-    }
-    snapshot
-        .tabs
-        .iter()
-        .find(|tab| tab.id == snapshot.active_tab)
-        .into_iter()
-        .flat_map(|tab| tab.panes())
-        .filter(|pane| pane.live && !unattached.contains(&pane.endpoint.as_slice()))
-        .map(|pane| pane.endpoint.clone())
-        .collect()
-}
-
 fn server_failure_suppresses_retry(message: &ServerMessage) -> bool {
     matches!(
         message,
@@ -5073,6 +4974,8 @@ mod tests {
         use orbit_protocol::session::Modifiers;
 
         let pane = |id: &str| Pane {
+            label: id.into(),
+            pinned_name: None,
             id: id.into(),
             session: format!("session-{id}"),
             endpoint: id.as_bytes().to_vec(),
@@ -5187,6 +5090,8 @@ mod tests {
     #[test]
     fn zoom_names_the_tab_panes_columns_and_selected_pane() {
         let pane = |id: &str| Pane {
+            label: id.into(),
+            pinned_name: None,
             id: id.into(),
             session: format!("session-{id}"),
             endpoint: id.as_bytes().to_vec(),
@@ -5263,6 +5168,10 @@ mod tests {
         let mut closed = single.clone();
         closed.tabs[0].columns[0].panes.pop();
         assert_ne!(zoom_target(&closed), middle);
+        let mut labels = single.clone();
+        labels.tabs[0].columns[0].panes[0].label = "p1  Review · ../repo".into();
+        labels.tabs[0].columns[0].panes[0].pinned_name = Some("Review".into());
+        assert_eq!(zoom_target(&labels), middle);
         let mut status = single.clone();
         status.tabs[0].columns[0].panes[0].live = false;
         assert_eq!(zoom_target(&status), middle);
@@ -5330,6 +5239,8 @@ mod tests {
                             selected_pane: Some("p1".into()),
                             columns: vec![eon_workspace_protocol::v20::Column {
                                 panes: vec![Pane {
+                                    label: "p1".into(),
+                                    pinned_name: None,
                                     id: "p1".into(),
                                     session: "s1".into(),
                                     endpoint: b"/unused-orbit.sock".to_vec(),
@@ -5783,6 +5694,8 @@ mod tests {
                     Some(snapshot.tabs[0].columns[0].panes[0].endpoint.clone());
                 app.terminal.active_endpoint_live = true;
                 snapshot.tabs[0].columns[0].panes.push(Pane {
+                    label: "p3".into(),
+                    pinned_name: None,
                     id: "p3".into(),
                     session: "s3".into(),
                     endpoint: b"/unused/p3.sock".to_vec(),
@@ -6537,6 +6450,8 @@ mod tests {
                     selected_pane: Some(format!("p{index}")),
                     columns: vec![eon_workspace_protocol::v20::Column {
                         panes: vec![Pane {
+                            label: format!("p{index}"),
+                            pinned_name: None,
                             id: format!("p{index}"),
                             session: format!("s{index}"),
                             endpoint: root
@@ -6625,122 +6540,6 @@ mod tests {
         drop(probe);
         server.join().unwrap();
         std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn metadata_endpoints_are_only_live_panes_in_the_active_tab() {
-        let snapshot = Snapshot {
-            workspace: "w1".into(),
-            active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
-                id: "w1".into(),
-                name: None,
-                tab_count: 2,
-            }],
-            active_tab: "t1".into(),
-            tabs: vec![
-                Tab {
-                    pending: false,
-                    selected_popup: None,
-                    popups: Vec::new(),
-                    id: "t1".into(),
-                    directory: b"/tmp/eon".to_vec(),
-                    selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v20::Column {
-                        panes: vec![
-                            Pane {
-                                id: "pane-1".into(),
-                                session: "session-1".into(),
-                                endpoint: b"one".to_vec(),
-                                live: true,
-                                attention: None,
-                            },
-                            Pane {
-                                id: "pane-2".into(),
-                                session: "session-2".into(),
-                                endpoint: b"offline".to_vec(),
-                                live: false,
-                                attention: None,
-                            },
-                        ],
-                        expanded: "pane-1".into(),
-                    }],
-                    attention_rollup: None,
-                },
-                Tab {
-                    pending: false,
-                    selected_popup: None,
-                    popups: Vec::new(),
-                    id: "t2".into(),
-                    directory: b"/tmp/nova".to_vec(),
-                    selected_pane: Some("pane-3".into()),
-                    columns: vec![eon_workspace_protocol::v20::Column {
-                        panes: vec![Pane {
-                            id: "pane-3".into(),
-                            session: "session-3".into(),
-                            endpoint: b"hidden".to_vec(),
-                            live: true,
-                            attention: None,
-                        }],
-                        expanded: "pane-3".into(),
-                    }],
-                    attention_rollup: None,
-                },
-            ],
-            geometry: eon_workspace_protocol::v20::PopupGeometry {
-                side_margin: 8.0,
-                vertical_margin: 4.0,
-            },
-            entries: Vec::new(),
-            codex_quota: None,
-            claude_quota: None,
-            sidebar: eon_workspace_protocol::v20::Sidebar::Open,
-        };
-
-        assert_eq!(
-            visible_metadata_endpoints(&snapshot, &[b"one"]),
-            HashSet::new()
-        );
-        assert_eq!(
-            visible_metadata_endpoints(&snapshot, &[]),
-            [b"one".to_vec()].into()
-        );
-        // Every column of the active tab is visible, so each has an observer.
-        let mut columns = snapshot.clone();
-        columns.tabs[0]
-            .columns
-            .push(eon_workspace_protocol::v20::Column {
-                panes: vec![Pane {
-                    id: "pane-4".into(),
-                    session: "session-4".into(),
-                    endpoint: b"beside".to_vec(),
-                    live: true,
-                    attention: None,
-                }],
-                expanded: "pane-4".into(),
-            });
-        assert_eq!(
-            visible_metadata_endpoints(&columns, &[]),
-            [b"one".to_vec(), b"beside".to_vec()].into()
-        );
-        // A column still attaching waits for its observer like the selected pane.
-        assert_eq!(
-            visible_metadata_endpoints(&columns, &[b"beside"]),
-            [b"one".to_vec()].into()
-        );
-
-        let mut popup = snapshot;
-        show_test_popup(&mut popup);
-        assert_eq!(visible_metadata_endpoints(&popup, &[]), HashSet::new());
-
-        let inactive_popup = Snapshot {
-            active_tab: "t2".into(),
-            ..popup
-        };
-        assert_eq!(
-            visible_metadata_endpoints(&inactive_popup, &[]),
-            [b"hidden".to_vec()].into()
-        );
     }
 
     #[test]
@@ -7380,6 +7179,8 @@ mod tests {
         );
 
         let pane = |id: &str, attention: bool| Pane {
+            label: id.into(),
+            pinned_name: None,
             id: id.into(),
             session: format!("session-{id}"),
             endpoint: format!("/run/{id}.sock").into_bytes(),

@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc, Condvar, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering},
         mpsc,
     },
     thread,
@@ -74,151 +74,6 @@ pub struct WorkspaceTransport {
     events: Arc<WorkspaceEventQueue>,
     /// The next action's ticket.
     tickets: AtomicU64,
-}
-
-/// Latest event from one read-only ORBS metadata observation.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MetadataEvent {
-    Metadata(session::Metadata),
-    Unavailable,
-}
-
-/// One bounded read-only Orbit metadata observer.
-pub struct MetadataTransport {
-    events: Arc<MetadataEventQueue>,
-    control: Arc<MetadataControl>,
-}
-
-#[derive(Default)]
-struct MetadataEventQueue(Mutex<Option<MetadataEvent>>);
-
-impl MetadataEventQueue {
-    fn push(&self, event: MetadataEvent) -> bool {
-        let mut pending = self.0.lock().expect("metadata event queue lock poisoned");
-        let wake = pending.is_none();
-        *pending = Some(event);
-        wake
-    }
-
-    fn take(&self) -> Option<MetadataEvent> {
-        self.0
-            .lock()
-            .expect("metadata event queue lock poisoned")
-            .take()
-    }
-}
-
-#[derive(Default)]
-struct MetadataControl {
-    cancelled: AtomicBool,
-    stream: Mutex<Option<UnixStream>>,
-}
-
-impl MetadataTransport {
-    #[must_use]
-    pub fn start(socket: PathBuf, wake: impl Fn() + Send + Sync + 'static) -> Self {
-        let events = Arc::new(MetadataEventQueue::default());
-        let control = Arc::new(MetadataControl::default());
-        let notify = metadata_notifier(Arc::clone(&events), wake);
-        if thread::Builder::new()
-            .name("venus-orbit-metadata".into())
-            .spawn({
-                let control = Arc::clone(&control);
-                let notify = Arc::clone(&notify);
-                move || run_metadata(socket, control, notify)
-            })
-            .is_err()
-        {
-            notify(MetadataEvent::Unavailable);
-        }
-        Self { events, control }
-    }
-
-    pub fn drain_event(&self) -> Option<MetadataEvent> {
-        self.events.take()
-    }
-}
-
-impl Drop for MetadataTransport {
-    fn drop(&mut self) {
-        self.control.cancelled.store(true, Ordering::Release);
-        if let Some(stream) = self
-            .control
-            .stream
-            .lock()
-            .expect("metadata control lock poisoned")
-            .take()
-        {
-            let _ = stream.shutdown(Shutdown::Both);
-        }
-    }
-}
-
-fn metadata_notifier(
-    events: Arc<MetadataEventQueue>,
-    wake: impl Fn() + Send + Sync + 'static,
-) -> Arc<dyn Fn(MetadataEvent) + Send + Sync> {
-    Arc::new(move |event| {
-        if events.push(event) {
-            wake();
-        }
-    })
-}
-
-fn run_metadata(
-    socket: PathBuf,
-    control: Arc<MetadataControl>,
-    notify: Arc<dyn Fn(MetadataEvent) + Send + Sync>,
-) {
-    let Ok(mut stream) = UnixStream::connect(socket) else {
-        if !control.cancelled.load(Ordering::Acquire) {
-            notify(MetadataEvent::Unavailable);
-        }
-        return;
-    };
-    let Ok(control_stream) = stream.try_clone() else {
-        notify(MetadataEvent::Unavailable);
-        return;
-    };
-    {
-        let mut active = control
-            .stream
-            .lock()
-            .expect("metadata control lock poisoned");
-        if control.cancelled.load(Ordering::Acquire) {
-            let _ = stream.shutdown(Shutdown::Both);
-            return;
-        }
-        *active = Some(control_stream);
-    }
-    observe_metadata(&mut stream, notify.as_ref());
-    control
-        .stream
-        .lock()
-        .expect("metadata control lock poisoned")
-        .take();
-    if !control.cancelled.load(Ordering::Acquire) {
-        notify(MetadataEvent::Unavailable);
-    }
-}
-
-fn observe_metadata(stream: &mut UnixStream, notify: &dyn Fn(MetadataEvent)) {
-    if write_message(stream, &ClientMessage::ObserveMetadata).is_err()
-        || !matches!(
-            read_message(stream),
-            Ok(Some((ServerMessage::ObservingMetadata, _)))
-        )
-    {
-        return;
-    }
-    let mut revision = None;
-    while let Ok(Some((ServerMessage::Metadata(metadata), _))) = read_message(stream) {
-        if revision.is_some_and(|previous| metadata.revision <= previous) {
-            return;
-        }
-        revision = Some(metadata.revision);
-        notify(MetadataEvent::Metadata(metadata));
-    }
 }
 
 const WORKSPACE_REFRESH_INTERVAL: Duration = Duration::from_millis(250);
@@ -767,57 +622,9 @@ mod tests {
     };
     use orbit_protocol::{
         Capabilities, Colors, Cursor, CursorShape, Dimensions, Frame, Rgb, Screen,
-        session::{FocusEvent, Metadata},
+        session::FocusEvent,
     };
 
-    #[test]
-    fn metadata_observer_is_read_only_latest_only_and_releases_on_drop() {
-        let socket = TestSocket::new();
-        let listener = UnixListener::bind(&socket.path).unwrap();
-        let server = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
-                .unwrap();
-            assert_eq!(read_client(&mut stream), ClientMessage::ObserveMetadata);
-            for message in [
-                ServerMessage::ObservingMetadata,
-                ServerMessage::Metadata(Metadata {
-                    revision: 7,
-                    title: "working".into(),
-                    working_directory: "file:///tmp/one".into(),
-                }),
-                ServerMessage::Metadata(Metadata {
-                    revision: 8,
-                    title: "ready".into(),
-                    working_directory: "file:///tmp/two".into(),
-                }),
-            ] {
-                stream
-                    .write_all(&session::encode_server_message(&message).unwrap())
-                    .unwrap();
-            }
-            let mut eof = [0];
-            assert_eq!(stream.read(&mut eof).unwrap(), 0);
-        });
-        let (wakes, receiver) = mpsc::channel();
-        let observer = MetadataTransport::start(socket.path.clone(), move || {
-            let _ = wakes.send(());
-        });
-
-        receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-        while receiver.recv_timeout(Duration::from_millis(20)).is_ok() {}
-        assert_eq!(
-            observer.drain_event(),
-            Some(MetadataEvent::Metadata(Metadata {
-                revision: 8,
-                title: "ready".into(),
-                working_directory: "file:///tmp/two".into(),
-            }))
-        );
-        drop(observer);
-        server.join().unwrap();
-    }
     use std::{
         fs,
         os::unix::net::UnixListener,
@@ -1490,6 +1297,8 @@ mod tests {
                 selected_pane: Some("pane-1".into()),
                 columns: vec![eon_workspace_protocol::v20::Column {
                     panes: vec![Pane {
+                        label: "pane-1".into(),
+                        pinned_name: None,
                         id: "pane-1".into(),
                         session: "session-1".into(),
                         endpoint: b"/run/eon/orbit.sock".to_vec(),
@@ -1528,6 +1337,8 @@ mod tests {
             selected_pane: Some("pane-2".into()),
             columns: vec![eon_workspace_protocol::v20::Column {
                 panes: vec![Pane {
+                    label: "pane-2".into(),
+                    pinned_name: None,
                     id: "pane-2".into(),
                     session: "session-2".into(),
                     endpoint: b"/run/eon/session-2.sock".to_vec(),

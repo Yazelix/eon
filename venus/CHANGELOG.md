@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C7/VEN-C8: consume Runtime's bounded pane labels and pins from EONW v20;
+  retire separate workspace label observers. IDs dim when contrast permits,
+  fitting retains their identity, and accessibility/close lists keep full
+  labels. Label-only updates preserve zoom, scroll and attachments (`eon-a7xd`).
+
 - Decode canonical EONW v20 workspace snapshots; keep the shown workspace
   presentation and preserve view state on summary-only updates. No workspace
   controls or keys are added.

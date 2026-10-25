@@ -217,6 +217,8 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
                 columns: vec![eon_workspace_protocol::v20::Column {
                     panes: vec![
                         Pane {
+                            label: "pane-1".into(),
+                            pinned_name: None,
                             id: "pane-1".into(),
                             session: "session-1".into(),
                             endpoint: b"/run/eon/orbit.sock".to_vec(),
@@ -224,6 +226,8 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
                             attention: None,
                         },
                         Pane {
+                            label: "pane-2".into(),
+                            pinned_name: None,
                             id: "pane-2".into(),
                             session: "session-2".into(),
                             endpoint: b"/run/eon/session-2.sock".to_vec(),
@@ -244,6 +248,8 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
                 selected_pane: Some("pane-3".into()),
                 columns: vec![eon_workspace_protocol::v20::Column {
                     panes: vec![Pane {
+                        label: "pane-3".into(),
+                        pinned_name: None,
                         id: "pane-3".into(),
                         session: "session-3".into(),
                         endpoint: b"/run/eon/session-3.sock".to_vec(),
@@ -354,6 +360,8 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
 
     let mut fitting_snapshot = snapshot.clone();
     fitting_snapshot.tabs[0].columns[0].panes.push(Pane {
+        label: "pane-4".into(),
+        pinned_name: None,
         id: "pane-4".into(),
         session: "session-4".into(),
         endpoint: b"/run/eon/session-4.sock".to_vec(),
@@ -379,6 +387,8 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
     let mut overflow_snapshot = fitting_snapshot;
     for number in 5..=32 {
         overflow_snapshot.tabs[0].columns[0].panes.push(Pane {
+            label: format!("pane-{number}"),
+            pinned_name: None,
             id: format!("pane-{number}"),
             session: format!("session-{number}"),
             endpoint: format!("/run/eon/session-{number}.sock").into_bytes(),
@@ -1116,6 +1126,8 @@ fn cell(text: &str, width: CellWidth, foreground: StyleColor, hyperlink: &str) -
 #[test]
 fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
     let pane = |id: &str| Pane {
+        label: id.into(),
+        pinned_name: None,
         id: id.into(),
         session: format!("session-{id}"),
         endpoint: format!("/run/eon/{id}.sock").into_bytes(),
@@ -1273,7 +1285,6 @@ fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
             CellMetrics::for_scale(1.0),
             0.0,
             0.0,
-            |_| None,
             |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
             None,
             true,
@@ -1381,7 +1392,6 @@ fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
             metrics,
             0.0,
             f32::MAX,
-            |_| None,
             |_, text| (text.to_owned(), text.chars().count() as f32 * metrics.width),
             None,
             true,

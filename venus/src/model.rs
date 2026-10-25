@@ -126,9 +126,8 @@ fn attention_states(tabs: &[Tab]) -> Vec<Option<AttentionState>> {
         .collect()
 }
 
-/// The tabs without EON-C31 attention: a snapshot that differs only in
-/// attention or the sidebar is no workspace change, so it keeps rejected-action
-/// notices and disturbs no navigation, scroll or attachment.
+/// Topology comparison excludes pane labels, pins and EON-C31 attention. Text-only
+/// refreshes keep notices and disturb no navigation, scroll or attachment.
 fn without_attention(tabs: &[Tab]) -> Vec<Tab> {
     tabs.iter()
         .cloned()
@@ -136,6 +135,8 @@ fn without_attention(tabs: &[Tab]) -> Vec<Tab> {
             tab.attention_rollup = None;
             for pane in tab.columns.iter_mut().flat_map(|column| &mut column.panes) {
                 pane.attention = None;
+                pane.label.clear();
+                pane.pinned_name = None;
             }
             for popup in &mut tab.popups {
                 popup.attention = None;
@@ -145,8 +146,8 @@ fn without_attention(tabs: &[Tab]) -> Vec<Tab> {
         .collect()
 }
 
-/// Whether the projected view differs only in EON-C31 attention, ignoring unpainted workspace
-/// metadata. The caller separately checks whether sidebar rows move hit geometry.
+/// Whether the view differs only in labels, pins or attention, ignoring unpainted workspace
+/// metadata. The caller separately checks pure label changes and moving sidebar rows.
 #[must_use]
 pub fn attention_only_change(current: &Snapshot, next: &Snapshot) -> bool {
     let plain = |snapshot: &Snapshot| Snapshot {
@@ -154,6 +155,27 @@ pub fn attention_only_change(current: &Snapshot, next: &Snapshot) -> bool {
         workspaces: Vec::new(),
         active_workspace: String::new(),
         ..snapshot.clone()
+    };
+    current.tabs != next.tabs && plain(current) == plain(next)
+}
+
+/// Label/pin updates change painted text without changing any input geometry.
+#[must_use]
+pub fn labels_only_change(current: &Snapshot, next: &Snapshot) -> bool {
+    let plain = |snapshot: &Snapshot| {
+        let mut snapshot = snapshot.clone();
+        snapshot.workspaces.clear();
+        snapshot.active_workspace.clear();
+        for pane in snapshot
+            .tabs
+            .iter_mut()
+            .flat_map(|tab| &mut tab.columns)
+            .flat_map(|column| &mut column.panes)
+        {
+            pane.label.clear();
+            pane.pinned_name = None;
+        }
+        snapshot
     };
     current.tabs != next.tabs && plain(current) == plain(next)
 }
@@ -657,6 +679,70 @@ mod tests {
     };
 
     #[test]
+    fn pane_label_updates_keep_notices_and_attachment_identity() {
+        let mut snapshot = Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: vec![workspace::WorkspaceInfo {
+                id: "w1".into(),
+                name: None,
+                tab_count: 1,
+            }],
+            active_tab: "t1".into(),
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/tmp".to_vec(),
+                pending: false,
+                selected_pane: Some("p1".into()),
+                selected_popup: None,
+                columns: vec![workspace::Column {
+                    expanded: "p1".into(),
+                    panes: vec![Pane {
+                        id: "p1".into(),
+                        label: "p1  shell".into(),
+                        pinned_name: None,
+                        session: "session-1".into(),
+                        endpoint: b"/tmp/p1.sock".to_vec(),
+                        live: true,
+                        attention: None,
+                    }],
+                }],
+                popups: vec![],
+                attention_rollup: None,
+            }],
+            geometry: workspace::PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: vec![],
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: workspace::Sidebar::Open,
+        };
+        let mut model = WorkspaceModel::default();
+        model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));
+        model.reject_action("keep this notice");
+        let attachment = model
+            .active_attachment()
+            .map(|(endpoint, live)| (endpoint.to_vec(), live));
+        let before = snapshot.clone();
+        snapshot.tabs[0].columns[0].panes[0].label = "p1  Review · ../repo".into();
+        snapshot.tabs[0].columns[0].panes[0].pinned_name = Some("Review".into());
+        assert!(labels_only_change(&before, &snapshot));
+        assert_eq!(
+            model.apply(WorkspaceResponse::Snapshot(snapshot)),
+            (true, false)
+        );
+        assert_eq!(model.notice(), Some("keep this notice"));
+        assert_eq!(
+            model
+                .active_attachment()
+                .map(|(endpoint, live)| (endpoint.to_vec(), live)),
+            attachment
+        );
+    }
+
+    #[test]
     fn refused_actions_are_new_notices_but_repeated_polls_are_not() {
         let mut model = WorkspaceModel::default();
         model.reject_action("refused");
@@ -717,6 +803,8 @@ mod tests {
                     selected_pane: Some("pane-1".into()),
                     columns: vec![eon_workspace_protocol::v20::Column {
                         panes: vec![Pane {
+                            label: "pane-1".into(),
+                            pinned_name: None,
                             id: "pane-1".into(),
                             session: "session-1".into(),
                             endpoint: b"/run/eon/orbit.sock".to_vec(),
@@ -736,6 +824,8 @@ mod tests {
                     selected_pane: Some("pane-2".into()),
                     columns: vec![eon_workspace_protocol::v20::Column {
                         panes: vec![Pane {
+                            label: "pane-2".into(),
+                            pinned_name: None,
                             id: "pane-2".into(),
                             session: "session-2".into(),
                             endpoint: b"/run/eon/nova.sock".to_vec(),
@@ -1043,6 +1133,8 @@ mod tests {
     #[test]
     fn other_columns_attach_their_expanded_panes_until_a_popup_covers_the_tab() {
         let pane = |id: &str, live| Pane {
+            label: id.into(),
+            pinned_name: None,
             id: id.into(),
             session: format!("session-{id}"),
             endpoint: format!("/run/eon/{id}.sock").into_bytes(),

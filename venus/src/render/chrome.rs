@@ -21,6 +21,84 @@ use glyphon::{
 const OPENAI_BLOSSOM_ID: u16 = 1;
 const CLAUDE_SPLAT_ID: u16 = 2;
 const QUOTA_ICON_SIZE: usize = 104;
+
+fn contrast(a: SceneColor, b: SceneColor) -> f32 {
+    let luminance = |color: SceneColor| {
+        let channel = |value: u8| {
+            let value = f32::from(value) / 255.0;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
+    };
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+fn pane_id_color(
+    name: SceneColor,
+    selected: bool,
+    live: bool,
+    fill: SceneColor,
+    opacity: f32,
+) -> SceneColor {
+    if !live {
+        return name;
+    }
+    let dim = if selected {
+        SceneColor {
+            r: 162,
+            g: 174,
+            b: 190,
+        }
+    } else {
+        SceneColor {
+            r: 147,
+            g: 160,
+            b: 179,
+        }
+    };
+    // A bright desktop bounds the translucent fill; frame and hover remain opaque.
+    let resolved = |value: u8| (f32::from(value) * opacity + 255.0 * (1.0 - opacity)).round() as u8;
+    let resolved = SceneColor {
+        r: resolved(fill.r),
+        g: resolved(fill.g),
+        b: resolved(fill.b),
+    };
+    if contrast(dim, resolved) >= 4.5 && contrast(dim, DEFAULT_BACKGROUND) >= 4.5 {
+        dim
+    } else {
+        name
+    }
+}
+
+fn color_pane_identity(buffer: &mut Buffer, fonts: &mut FontSystem, id: &str, color: SceneColor) {
+    let label = buffer
+        .lines
+        .iter()
+        .map(|line| line.text())
+        .collect::<String>();
+    if !label.starts_with(id) {
+        return;
+    }
+    let attrs = Attrs::new().family(Family::SansSerif);
+    buffer.set_rich_text(
+        [
+            (
+                &label[..id.len()],
+                attrs.clone().color(Color::rgb(color.r, color.g, color.b)),
+            ),
+            (&label[id.len()..], attrs.clone()),
+        ],
+        &attrs,
+        shaping(&label),
+        None,
+    );
+    buffer.shape_until_scroll(fonts, false);
+}
 const OPENAI_BLOSSOM_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
     include_bytes!("../../assets/openai-blossom-104.alpha");
 const CLAUDE_SPLAT_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
@@ -864,6 +942,7 @@ impl Renderer {
         workspace: &WorkspaceScene,
         focus: WorkspaceFocus,
         rectangles: &mut RectangleBatch,
+        backgrounds: &[SceneColor],
     ) {
         let accent = SceneColor {
             r: 126,
@@ -1287,13 +1366,15 @@ impl Renderer {
             );
             rectangles.clip = None;
         }
-        for (panes, terminal, selected_column) in
-            std::iter::once((workspace.panes.as_slice(), workspace.terminal, true)).chain(
-                workspace
-                    .other_columns
-                    .iter()
-                    .map(|column| (column.panes.as_slice(), column.terminal, false)),
-            )
+        for (column_index, (panes, terminal, selected_column)) in
+            std::iter::once((workspace.panes.as_slice(), workspace.terminal, true))
+                .chain(
+                    workspace
+                        .other_columns
+                        .iter()
+                        .map(|column| (column.panes.as_slice(), column.terminal, false)),
+                )
+                .enumerate()
         {
             let Some(first) = panes.first() else { continue };
             let card = SceneRect {
@@ -1370,7 +1451,28 @@ impl Renderer {
                 } else {
                     pane.rect
                 };
+                let first_text = self.text.len();
                 let pill = self.build_border_title(pane.label(), row, rect, width, color);
+                let id_color = pane_id_color(
+                    color,
+                    current,
+                    pane.live,
+                    backgrounds
+                        .get(column_index)
+                        .copied()
+                        .unwrap_or(DEFAULT_BACKGROUND),
+                    self.background_opacity,
+                );
+                if id_color != color
+                    && let Some(text) = self.text.get_mut(first_text)
+                {
+                    color_pane_identity(
+                        &mut text.buffer,
+                        &mut self.fonts.font_system,
+                        &pane.id,
+                        id_color,
+                    );
+                }
                 let gaps = [
                     pill,
                     if scrollback_width > 0.0 {
@@ -1486,6 +1588,77 @@ mod tests {
     use super::*;
     use crate::EonBar;
     use glyphon::cosmic_text::SubpixelBin;
+
+    #[test]
+    fn pane_identity_dimming_preserves_contrast_and_shaped_geometry() {
+        let name = SceneColor {
+            r: 239,
+            g: 244,
+            b: 248,
+        };
+        let black = SceneColor { r: 0, g: 0, b: 0 };
+        let dim = pane_id_color(name, true, true, black, 0.8);
+        assert_ne!(dim, name);
+        assert!(
+            contrast(
+                dim,
+                SceneColor {
+                    r: 51,
+                    g: 51,
+                    b: 51
+                }
+            ) >= 4.5
+        );
+        assert_eq!(pane_id_color(name, true, true, black, 0.3), name);
+        assert_eq!(
+            pane_id_color(
+                name,
+                true,
+                true,
+                SceneColor {
+                    r: 230,
+                    g: 220,
+                    b: 200
+                },
+                1.0
+            ),
+            name
+        );
+        let mut fonts = FontSystem::new();
+        let mut buffer = Buffer::new(&mut fonts, Metrics::new(16.0, 18.0));
+        buffer.set_size(Some(600.0), Some(40.0));
+        buffer.set_text(
+            "p7  Review pane labels",
+            &Attrs::new().family(Family::SansSerif),
+            shaping("p7  Review pane labels"),
+            None,
+        );
+        buffer.shape_until_scroll(&mut fonts, false);
+        let before = buffer.layout_runs().next().unwrap().line_w;
+        color_pane_identity(&mut buffer, &mut fonts, "p7", dim);
+        let run = buffer.layout_runs().next().unwrap();
+        assert_eq!(run.line_w, before);
+        assert!(
+            run.glyphs
+                .iter()
+                .filter(|glyph| glyph.start < 2)
+                .all(|glyph| glyph.color_opt == Some(Color::rgb(dim.r, dim.g, dim.b)))
+        );
+        assert!(
+            run.glyphs
+                .iter()
+                .filter(|glyph| glyph.start >= 4)
+                .all(|glyph| glyph.color_opt.is_none())
+        );
+        let width = fit_header_text(&mut fonts, CellMetrics::for_scale(1.0), "p7", f32::INFINITY).1;
+        let fitted = fit_header_text(
+            &mut fonts,
+            CellMetrics::for_scale(1.0),
+            "p7  e\u{301} Review labels",
+            width,
+        );
+        assert_eq!(fitted.0, "p7");
+    }
 
     #[test]
     fn eon_bar_widgets_paint_only_scaled_neutral_outlines() {
@@ -1988,6 +2161,8 @@ mod tests {
                             selected_pane: Some(format!("p{}", index + 1)),
                             columns: vec![eon_workspace_protocol::v20::Column {
                                 panes: vec![Pane {
+                                    label: format!("p{}", index + 1),
+                                    pinned_name: None,
                                     id: format!("p{}", index + 1),
                                     session: format!("session-{}", index + 1),
                                     endpoint: format!("/tmp/session-{}.sock", index + 1)
@@ -2016,6 +2191,7 @@ mod tests {
                     &workspace,
                     WorkspaceFocus::Terminal,
                     &mut RectangleBatch::new(900, 600),
+                    &[],
                 );
                 let label = &renderer.text[1];
                 let line = label.buffer.layout_runs().next().unwrap();
@@ -2064,6 +2240,8 @@ mod tests {
                 );
                 let mut snapshot = snapshot;
                 snapshot.tabs[1].columns[0].panes.push(Pane {
+                    label: "p3  offline".into(),
+                    pinned_name: None,
                     id: "p3".into(),
                     session: "s3".into(),
                     endpoint: b"/tmp/p3.sock".to_vec(),
@@ -2071,6 +2249,7 @@ mod tests {
                     attention: None,
                 });
                 snapshot.tabs[1].columns[0].panes[0].live = false;
+                snapshot.tabs[1].columns[0].panes[0].label = "p2  offline".into();
                 let workspace = WorkspaceScene::from_snapshot(
                     &snapshot,
                     PhysicalSize::new(900, 600),
@@ -2103,8 +2282,8 @@ mod tests {
                         .color
                 };
                 assert_ne!(
-                    pane_color("p2 offline"),
-                    pane_color("p3 offline"),
+                    pane_color("p2  offline"),
+                    pane_color("p3  offline"),
                     "offline pane selection disappears with decorative frames off"
                 );
                 renderer.rebuild_if_needed(
@@ -2122,17 +2301,16 @@ mod tests {
                 );
                 assert!(renderer.text[1].buffer.layout_runs().count() > 1);
                 snapshot.tabs[1].columns[0].panes[0].live = true;
-                let metadata = crate::scene::PaneMetadata::Available {
-                    working_directory: format!("/{}mountain/gyp_leaf", "W".repeat(42)),
-                };
-                let workspace = WorkspaceScene::from_snapshot_with_metadata(
+                for pane in &mut snapshot.tabs[1].columns[0].panes {
+                    pane.label = format!("{}  /{}mountain/gyp_leaf", pane.id, "W".repeat(42));
+                }
+                let workspace = WorkspaceScene::from_snapshot_with_bar(
                     &snapshot,
                     EonBar::default(),
                     PhysicalSize::new(900, 600),
                     renderer.metrics(),
                     0.0,
                     0.0,
-                    |_| Some(&metadata),
                     |_, label| renderer.fit_tab_text(label, false),
                     None,
                 );
@@ -2142,7 +2320,7 @@ mod tests {
                     renderer.text.clear();
                     renderer.set_hovered_header(Some((WorkspaceFocus::Panes, "p3".into())));
                     let mut batch = RectangleBatch::new(900, 600);
-                    renderer.build_workspace(&workspace, WorkspaceFocus::Panes, &mut batch);
+                    renderer.build_workspace(&workspace, WorkspaceFocus::Panes, &mut batch, &[]);
                     let pane = &workspace.panes[0];
                     let label = renderer
                         .text
@@ -2373,7 +2551,7 @@ mod tests {
                     );
                     renderer.text.clear();
                     let mut batch = RectangleBatch::new(1600, 900);
-                    renderer.build_workspace(&workspace, WorkspaceFocus::Terminal, &mut batch);
+                    renderer.build_workspace(&workspace, WorkspaceFocus::Terminal, &mut batch, &[]);
                     let title = chrome_title_metrics(renderer.metrics);
                     for (name, card) in [
                         ("Agents", workspace.sidebar().unwrap()),

@@ -68,6 +68,7 @@ pub(crate) enum SessionOperation {
 struct Pane {
     id: String,
     session: Session,
+    pinned_name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -315,6 +316,22 @@ impl WorkspaceSet {
             .any(|workspace| workspace.session_count() != 0)
     }
 
+    pub(crate) fn pane_sessions(&self) -> Vec<Session> {
+        self.workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.tabs)
+            .flat_map(|tab| &tab.columns)
+            .flat_map(|column| &column.panes)
+            .map(|pane| pane.session.clone())
+            .collect()
+    }
+
+    pub(crate) fn home(&self) -> Option<&Path> {
+        self.workspaces
+            .first()
+            .and_then(|workspace| workspace.home.as_deref())
+    }
+
     fn resolve_workspace(&self, target: &str) -> Result<usize, Failure> {
         eon_workspace_protocol::v20::validate_workspace_name(target)
             .map_err(|error| action_error("malformed-action", error.to_string()))?;
@@ -449,6 +466,26 @@ impl WorkspaceSet {
         let index = self.caller_workspace(caller)?;
         let mutating = !matches!(action, Action::Workspace(WorkspaceAction::Inspect));
         match action {
+            Action::RenamePane { pane, name } => {
+                let name = name
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty());
+                if let Some(name) = name {
+                    eon_workspace_protocol::v20::validate_pane_name(name)
+                        .map_err(|error| action_error("malformed-action", error.to_string()))?;
+                }
+                let target = self.workspaces[index]
+                    .tabs
+                    .iter_mut()
+                    .flat_map(|tab| &mut tab.columns)
+                    .flat_map(|column| &mut column.panes)
+                    .find(|target| target.id == pane)
+                    .ok_or_else(|| {
+                        action_error("unknown-pane", format!("pane {pane} is not live"))
+                    })?;
+                target.pinned_name = name.map(str::to_owned);
+            }
             Action::Workspace(WorkspaceAction::NewWorkspace { name, focus }) => {
                 if let Some(name) = &name {
                     eon_workspace_protocol::v20::validate_workspace_name(name)
@@ -667,6 +704,7 @@ impl Workspace {
         let panes = sessions
             .into_iter()
             .map(|(number, session)| Pane {
+                pinned_name: None,
                 id: format!("p{number}"),
                 session,
             })
@@ -730,6 +768,15 @@ impl Workspace {
                                 .panes
                                 .iter()
                                 .map(|pane| SnapshotPane {
+                                    label: super::pane_labels::compose(
+                                        &pane.id,
+                                        true,
+                                        pane.pinned_name.as_deref(),
+                                        &super::pane_labels::Metadata::Unavailable,
+                                        &tab.directory,
+                                        self.home.as_deref(),
+                                    ),
+                                    pinned_name: pane.pinned_name.clone(),
                                     id: pane.id.clone(),
                                     session: pane.session.id.clone(),
                                     endpoint: pane.session.endpoint.as_os_str().as_bytes().to_vec(),
@@ -832,7 +879,7 @@ impl Workspace {
                 &mut prepare,
                 &mut operate,
             )?,
-            Action::ClosePane { .. } => {
+            Action::RenamePane { .. } | Action::ClosePane { .. } => {
                 return Err(action_error(
                     "unavailable",
                     "the supervisor stops a closed pane's terminal before pruning it",
@@ -1534,6 +1581,7 @@ impl Workspace {
             return Err("workspace exhausted pane or terminal identities".into());
         }
         let pane = Pane {
+            pinned_name: None,
             id: format!("p{}", ids.next_pane),
             session: ids.pane_session(),
         };
@@ -1931,6 +1979,7 @@ impl Workspace {
             tab.selected_popup = None;
         }
         let pane = Pane {
+            pinned_name: None,
             id: format!("p{}", ids.next_pane),
             session: popup.session,
         };
@@ -2155,13 +2204,14 @@ pub(crate) fn human(snapshot: &Snapshot) -> String {
         ));
         for (column, expanded, pane) in column_panes(tab) {
             output.push_str(&format!(
-                "  pane {} column={} expanded={} terminal={} live={} endpoint={} {}\n",
+                "  pane {} column={} expanded={} terminal={} live={} endpoint={} label={} {}\n",
                 pane.id,
                 column + 1,
                 expanded,
                 pane.session,
                 pane.live,
                 String::from_utf8_lossy(&pane.endpoint).escape_debug(),
+                pane.label.escape_debug(),
                 human_attention(pane.attention.as_ref()),
             ));
         }
@@ -2226,14 +2276,17 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
                 output.push(',');
             }
             output.push_str(&format!(
-                "{{\"id\":\"{}\",\"column\":{},\"expanded\":{},\"session\":\"{}\",\"endpoint\":{},\"live\":{},\"attention\":",
+                "{{\"id\":\"{}\",\"column\":{},\"expanded\":{},\"session\":\"{}\",\"endpoint\":{},\"live\":{},\"label\":\"{}\",\"pinned_name\":",
                 json_escape(&pane.id),
                 column + 1,
                 expanded,
                 json_escape(&pane.session),
                 json_path(&pane.endpoint),
-                pane.live
+                pane.live,
+                json_escape(&pane.label),
             ));
+            json_option(&mut output, pane.pinned_name.as_deref());
+            output.push_str(",\"attention\":");
             json_attention(&mut output, pane.attention.as_ref());
             output.push('}');
         }
@@ -2457,6 +2510,155 @@ mod tests {
             expected_instance: None,
             intent: InvokeIntent::Toggle,
         }
+    }
+
+    #[test]
+    fn pane_pin_targets_hidden_tabs_without_selection_changes_and_follows_moves() {
+        let mut set = two_workspace_set(|_| Ok(()));
+        set.dispatch(
+            "tab",
+            None,
+            Action::Workspace(WorkspaceAction::CreateTab),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let before = set.snapshot();
+        set.dispatch(
+            "name",
+            None,
+            Action::RenamePane {
+                pane: "p1".into(),
+                name: Some("  Review  ".into()),
+            },
+            prepared,
+            |_| panic!("rename runs no terminal operation"),
+        )
+        .unwrap();
+        let named = set.snapshot();
+        assert_eq!(named.active_tab, before.active_tab);
+        assert_eq!(named.active_workspace, before.active_workspace);
+        for (before, after) in before.tabs.iter().zip(&named.tabs) {
+            assert_eq!(before.selected_pane, after.selected_pane);
+            assert_eq!(before.selected_popup, after.selected_popup);
+        }
+        let pin = |set: &WorkspaceSet| {
+            set.snapshot()
+                .tabs
+                .iter()
+                .flat_map(|tab| tab.panes())
+                .find(|pane| pane.id == "p1")
+                .unwrap()
+                .pinned_name
+                .clone()
+        };
+        assert_eq!(pin(&set).as_deref(), Some("Review"));
+        assert!(json(&named).contains("\"pinned_name\":\"Review\""));
+        assert!(human(&named).contains("Review"));
+        for (id, name, expected) in [
+            ("p99", "ok", "unknown-pane"),
+            ("p1", "bad\u{202e}name", "malformed-action"),
+        ] {
+            let before = set.clone();
+            assert_eq!(
+                set.dispatch(
+                    "bad",
+                    None,
+                    Action::RenamePane {
+                        pane: id.into(),
+                        name: Some(name.into())
+                    },
+                    prepared,
+                    |_| Ok(())
+                )
+                .unwrap_err()
+                .code,
+                expected
+            );
+            assert_eq!(set, before);
+        }
+        set.dispatch(
+            "focus",
+            None,
+            Action::Workspace(WorkspaceAction::FocusId("p1".into())),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        set.dispatch(
+            "stack",
+            None,
+            Action::Workspace(WorkspaceAction::CreatePane { focus: true }),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        set.dispatch(
+            "focus-again",
+            None,
+            Action::Workspace(WorkspaceAction::FocusId("p1".into())),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        set.dispatch(
+            "column",
+            None,
+            Action::MovePaneSideways(Side::Right),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        set.dispatch(
+            "tab-move",
+            None,
+            Action::Workspace(WorkspaceAction::Move(Direction::Right)),
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(pin(&set).as_deref(), Some("Review"));
+        set.dispatch(
+            "clear",
+            None,
+            Action::RenamePane {
+                pane: "p1".into(),
+                name: Some("  ".into()),
+            },
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(pin(&set), None);
+        set.dispatch(
+            "name-again",
+            None,
+            Action::RenamePane {
+                pane: "p1".into(),
+                name: Some("Again".into()),
+            },
+            prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let session = set
+            .snapshot()
+            .tabs
+            .iter()
+            .flat_map(|tab| tab.panes())
+            .find(|pane| pane.id == "p1")
+            .unwrap()
+            .session
+            .clone();
+        set.session_ended(&session, SessionEnd::Exited, |_| Ok(()))
+            .unwrap();
+        assert!(
+            !set.snapshot()
+                .tabs
+                .iter()
+                .flat_map(|tab| tab.panes())
+                .any(|pane| pane.id == "p1")
+        );
     }
 
     #[test]
@@ -3352,7 +3554,7 @@ mod tests {
                 r#""attention":{"state":"needs-input","app":"codex","name":"eon \"9a\""}}"#
             )
         );
-        assert!(json.contains(r#""live":true,"attention":null}"#));
+        assert!(json.contains(r#""label":"p2  unavailable","pinned_name":null,"attention":null}"#));
         assert!(json.ends_with("],\"sidebar\":\"closed\"}\n"));
         let human = human(&snapshot);
         assert!(human.starts_with("active t1\nsidebar closed\ntab t1 "));
@@ -4841,6 +5043,7 @@ mod tests {
             pending: false,
             columns: vec![Column {
                 panes: vec![Pane {
+                    pinned_name: None,
                     id: "p99".into(),
                     session: Session {
                         id: "session-99".into(),

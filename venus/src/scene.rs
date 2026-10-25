@@ -4,8 +4,8 @@ use crate::{
     render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
 use eon_workspace_protocol::v20::{
-    ALT, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState, Pane, PopupEntry,
-    QuotaWindow, SHIFT, Sidebar, Snapshot, Tab,
+    ALT, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState, PopupEntry, QuotaWindow,
+    SHIFT, Sidebar, Snapshot, Tab,
 };
 use orbit_protocol::{
     Cell, CellStyle, CellWidth, CursorShape, Frame, Rgb, Row, Screen, StyleColor, Underline,
@@ -412,106 +412,6 @@ impl WorkspacePane {
     pub(crate) fn label(&self) -> &str {
         &self.label
     }
-}
-
-/// Latest bounded read-only metadata state for one visible Eon pane endpoint.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub enum PaneMetadata {
-    Connecting,
-    Available {
-        working_directory: String,
-    },
-    #[default]
-    Unavailable,
-}
-
-const MAX_PANE_METADATA_FIELD_CHARS: usize = 80;
-
-fn pane_label(id: &str, live: bool, metadata: &PaneMetadata) -> String {
-    if !live {
-        return format!("{id} offline");
-    }
-    let working_directory = match metadata {
-        PaneMetadata::Connecting => return format!("{id} connecting"),
-        PaneMetadata::Available { working_directory } => working_directory,
-        PaneMetadata::Unavailable => return format!("{id} unavailable"),
-    };
-    if working_directory.trim().is_empty() {
-        return id.to_owned();
-    }
-    let home = std::env::var_os("HOME");
-    let working_directory = bounded_metadata_field(&compact_working_directory(
-        working_directory,
-        home.as_deref().map(Path::new),
-    ));
-    format!("{id}  {working_directory}")
-}
-
-/// The label a pane's header shows.
-fn header_label<'a>(pane: &Pane, metadata: impl Fn(&[u8]) -> Option<&'a PaneMetadata>) -> String {
-    pane_label(
-        &pane.id,
-        pane.live,
-        metadata(&pane.endpoint).unwrap_or(&PaneMetadata::Unavailable),
-    )
-}
-
-fn local_working_directory(value: &str) -> &str {
-    value
-        .strip_prefix("file://")
-        .and_then(|path| path.find('/').map(|slash| &path[slash..]))
-        .unwrap_or(value)
-}
-
-fn compact_working_directory(value: &str, home: Option<&Path>) -> String {
-    let value = local_working_directory(value);
-    let path = Path::new(value);
-    if let Some(home) = home.filter(|home| !home.as_os_str().is_empty()) {
-        if path == home {
-            return "~".to_owned();
-        }
-        if let Ok(relative) = path.strip_prefix(home) {
-            return format!("~/{}", relative.display());
-        }
-    }
-    value.to_owned()
-}
-
-fn bounded_metadata_field(value: &str) -> String {
-    let value: String = value
-        .chars()
-        .map(|character| {
-            if character.is_control() {
-                '\u{fffd}'
-            } else {
-                character
-            }
-        })
-        .collect();
-    let length = value.chars().count();
-    if length <= MAX_PANE_METADATA_FIELD_CHARS {
-        return value;
-    }
-    let (prefix, tail) = if let Some(tail) = value.strip_prefix("~/") {
-        ("~/…/", tail)
-    } else if let Some(tail) = value.strip_prefix('/') {
-        ("…/", tail)
-    } else {
-        ("…", value.as_str())
-    };
-    let tail_length = MAX_PANE_METADATA_FIELD_CHARS - prefix.chars().count();
-    let start = tail
-        .char_indices()
-        .nth(tail.chars().count().saturating_sub(tail_length))
-        .map_or(0, |(index, _)| index);
-    let truncated_component = start > 0 && !tail[..start].ends_with('/');
-    let tail = &tail[start..];
-    let tail = if truncated_component {
-        tail.split_once('/').map_or(tail, |(_, tail)| tail)
-    } else {
-        tail
-    };
-    format!("{prefix}{tail}")
 }
 
 fn clean_label(text: &str) -> String {
@@ -1111,10 +1011,9 @@ impl DialogScene {
     /// The final-close prompt for `tab`: its panes by header label, then its popups by
     /// entry label.
     #[must_use]
-    pub fn close_last_tab<'a>(
+    pub fn close_last_tab(
         tab: &Tab,
         entries: &[PopupEntry],
-        metadata: impl Fn(&[u8]) -> Option<&'a PaneMetadata>,
         detach: Option<String>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
@@ -1122,7 +1021,7 @@ impl DialogScene {
     ) -> Self {
         let rows = tab
             .panes()
-            .map(|pane| ShortcutRow::new("Pane", header_label(pane, &metadata)))
+            .map(|pane| ShortcutRow::new("Pane", pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
                 ShortcutRow::new(
                     "Popup",
@@ -1948,14 +1847,13 @@ impl WorkspaceScene {
         pane_scroll: f32,
         header_text: impl FnMut(Option<&str>, &str) -> (String, f32),
     ) -> Self {
-        Self::from_snapshot_with_metadata(
+        Self::from_snapshot_with_bar(
             snapshot,
             EonBar::default(),
             size,
             metrics,
             tab_scroll,
             pane_scroll,
-            |_| None,
             header_text,
             None,
         )
@@ -1963,14 +1861,13 @@ impl WorkspaceScene {
 
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn from_snapshot_with_metadata<'a>(
+    pub fn from_snapshot_with_bar(
         snapshot: &Snapshot,
         bar: EonBar<'_>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         tab_scroll: f32,
         pane_scroll: f32,
-        metadata: impl Fn(&[u8]) -> Option<&'a PaneMetadata>,
         header_text: impl FnMut(Option<&str>, &str) -> (String, f32),
         hints: Option<ShortcutHintsScene>,
     ) -> Self {
@@ -1981,7 +1878,6 @@ impl WorkspaceScene {
             metrics,
             tab_scroll,
             pane_scroll,
-            metadata,
             header_text,
             hints,
             false,
@@ -2005,14 +1901,13 @@ impl WorkspaceScene {
     /// active tab has more than one pane and no popup covers it.
     #[must_use]
     #[allow(clippy::too_many_arguments)]
-    pub fn from_snapshot_with_zoom<'a>(
+    pub fn from_snapshot_with_zoom(
         snapshot: &Snapshot,
         bar: EonBar<'_>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         tab_scroll: f32,
         pane_scroll: f32,
-        metadata: impl Fn(&[u8]) -> Option<&'a PaneMetadata>,
         mut header_text: impl FnMut(Option<&str>, &str) -> (String, f32),
         hints: Option<ShortcutHintsScene>,
         zoom: bool,
@@ -2499,7 +2394,7 @@ impl WorkspaceScene {
                 .filter(|pane| !zoomed || pane.id == *selected)
                 .enumerate()
                 .map(|(position, pane)| {
-                    let label = header_label(pane, &metadata);
+                    let label = pane.label.clone();
                     WorkspacePane {
                         id: pane.id.clone(),
                         live: pane.live,
@@ -3629,6 +3524,7 @@ fn resolve_color(color: StyleColor, default: Rgb, palette: &[Rgb; 256]) -> Color
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eon_workspace_protocol::v20::Pane;
 
     #[test]
     fn eon_bar_pill_band_leaves_equal_title_cap_gap() {
@@ -3722,6 +3618,8 @@ mod tests {
                 columns: vec![Column {
                     panes: (1..=4)
                         .map(|n| Pane {
+                            label: format!("p{n}"),
+                            pinned_name: None,
                             id: format!("p{n}"),
                             session: format!("s{n}"),
                             endpoint: format!("/tmp/p{n}.sock").into_bytes(),
@@ -3805,7 +3703,7 @@ mod tests {
                     label: "15:43".into(),
                     description: "Clock".into(),
                 };
-                let widgets = WorkspaceScene::from_snapshot_with_metadata(
+                let widgets = WorkspaceScene::from_snapshot_with_bar(
                     &snapshot,
                     EonBar {
                         version: Some("0.1.1"),
@@ -3818,7 +3716,6 @@ mod tests {
                     metrics,
                     0.0,
                     0.0,
-                    |_| None,
                     |_, text| (text.into(), text.len() as f32 * metrics.width),
                     None,
                 );
@@ -3923,14 +3820,13 @@ mod tests {
                 WorkspaceFocus::Terminal,
                 |_| 0.0,
             );
-            let scene = WorkspaceScene::from_snapshot_with_metadata(
+            let scene = WorkspaceScene::from_snapshot_with_bar(
                 &snapshot,
                 EonBar::default(),
                 size,
                 metrics,
                 0.0,
                 0.0,
-                |_| None,
                 |_, text| (text.into(), text.len() as f32 * metrics.width),
                 Some(hints),
             );
@@ -3998,6 +3894,8 @@ mod tests {
         };
 
         let pane = |id: &str| Pane {
+            label: id.into(),
+            pinned_name: None,
             id: id.into(),
             session: format!("session-{id}"),
             endpoint: format!("/run/{id}.sock").into_bytes(),
@@ -4151,6 +4049,8 @@ mod tests {
             others: 0,
         };
         let pane = |id: &str, attention: Option<Attention>| Pane {
+            label: id.into(),
+            pinned_name: None,
             id: id.into(),
             session: format!("session-{id}"),
             endpoint: format!("/run/{id}.sock").into_bytes(),
@@ -4260,7 +4160,6 @@ mod tests {
                 metrics,
                 0.0,
                 0.0,
-                |_| None,
                 |_, text| (text.into(), text.len() as f32 * 10.0),
                 None,
                 false,
@@ -4574,6 +4473,8 @@ mod tests {
                 selected_popup: None,
                 columns: vec![eon_workspace_protocol::v20::Column {
                     panes: vec![Pane {
+                        label: "p1".into(),
+                        pinned_name: None,
                         id: "p1".into(),
                         session: "session-1".into(),
                         endpoint: b"/run/pane.sock".to_vec(),
@@ -4625,14 +4526,13 @@ mod tests {
                                 WorkspaceFocus::Terminal,
                                 |_| 0.0,
                             );
-                            let scene = WorkspaceScene::from_snapshot_with_metadata(
+                            let scene = WorkspaceScene::from_snapshot_with_bar(
                                 &snapshot,
                                 EonBar::default(),
                                 size,
                                 metrics,
                                 0.0,
                                 scroll,
-                                |_| None,
                                 |_, text| (text.into(), text.len() as f32 * metrics.width),
                                 Some(hints),
                             );
@@ -4796,7 +4696,6 @@ mod tests {
                             metrics,
                             0.0,
                             0.0,
-                            |_| None,
                             |_, text| (text.into(), text.len() as f32 * metrics.width),
                             None,
                             false,
@@ -4873,14 +4772,13 @@ mod tests {
                 WorkspaceFocus::Terminal,
                 |_| 0.0,
             );
-            let popup = WorkspaceScene::from_snapshot_with_metadata(
+            let popup = WorkspaceScene::from_snapshot_with_bar(
                 &snapshot,
                 EonBar::default(),
                 size,
                 metrics,
                 0.0,
                 0.0,
-                |_| None,
                 |_, text| (text.into(), text.len() as f32 * metrics.width),
                 Some(hints),
             );
@@ -4948,6 +4846,8 @@ mod tests {
                 .columns
                 .push(eon_workspace_protocol::v20::Column {
                     panes: vec![Pane {
+                        label: format!("p{index}"),
+                        pinned_name: None,
                         id: format!("p{index}"),
                         session: format!("session-{}", index + 1),
                         endpoint: format!("/run/pane-{index}.sock").into_bytes(),
@@ -4986,14 +4886,13 @@ mod tests {
                         text.len() as f32 * 10.0
                     });
                 let footer_rect = footer.rect;
-                let with_hints = WorkspaceScene::from_snapshot_with_metadata(
+                let with_hints = WorkspaceScene::from_snapshot_with_bar(
                     &snapshot,
                     EonBar::default(),
                     size,
                     metrics,
                     0.0,
                     0.0,
-                    |_| None,
                     |_, text| (text.into(), text.len() as f32 * 10.0),
                     Some(footer),
                 );
@@ -5199,6 +5098,8 @@ mod tests {
                     selected_popup: None,
                     columns: vec![eon_workspace_protocol::v20::Column {
                         panes: vec![Pane {
+                            label: format!("p{index}"),
+                            pinned_name: None,
                             id: format!("p{index}"),
                             session: format!("s{index}"),
                             endpoint: format!("/tmp/p{index}.sock").into_bytes(),
@@ -5311,14 +5212,13 @@ mod tests {
         snapshot.sidebar = Sidebar::Closed;
         let project = |height, metrics: CellMetrics, hints: bool| {
             let size = PhysicalSize::new(1280, height);
-            WorkspaceScene::from_snapshot_with_metadata(
+            WorkspaceScene::from_snapshot_with_bar(
                 &snapshot,
                 EonBar::default(),
                 size,
                 metrics,
                 0.0,
                 0.0,
-                |_| None,
                 |_, text| (text.into(), text.len() as f32 * metrics.width),
                 hints.then(|| {
                     ShortcutHintsScene::new(
@@ -5459,6 +5359,8 @@ mod tests {
                             .iter()
                             .enumerate()
                             .map(|(pane, state)| Pane {
+                                label: format!("p{index}-{pane}"),
+                                pinned_name: None,
                                 id: format!("p{index}-{pane}"),
                                 session: format!("s{index}-{pane}"),
                                 endpoint: format!("/tmp/p{index}-{pane}.sock").into_bytes(),
@@ -5626,103 +5528,6 @@ mod tests {
         let labels = tab_labels(4, 5, long.as_bytes());
         assert_eq!(labels.0, format!("5  {}", "eon".repeat(100)));
         assert_eq!(labels.1, format!("Tab 5 of 5  {long}"));
-    }
-
-    #[test]
-    fn pane_metadata_label_is_bounded_safe_and_has_honest_fallbacks() {
-        let metadata = PaneMetadata::Available {
-            working_directory: format!("file:///tmp/{}", "eon".repeat(30)),
-        };
-        let label = pane_label("p1", true, &metadata);
-
-        assert_eq!(label, format!("p1  …/{}", "eon".repeat(26)));
-        assert!(!label.contains("file://"));
-        assert_eq!(label.chars().count(), 84);
-        assert_eq!(
-            compact_working_directory("file:///tmp/eon", Some(Path::new(""))),
-            "/tmp/eon"
-        );
-        let home = std::env::var("HOME").expect("HOME is required by Venus");
-        assert_eq!(
-            pane_label(
-                "p1",
-                true,
-                &PaneMetadata::Available {
-                    working_directory: format!("file://localhost{home}/pjs/yazelix-dir/eon"),
-                },
-            ),
-            "p1  ~/pjs/yazelix-dir/eon"
-        );
-        let long_home_label = pane_label(
-            "p1",
-            true,
-            &PaneMetadata::Available {
-                working_directory: format!("{home}/{}/eon-desktop", "parent/".repeat(20)),
-            },
-        );
-        assert!(long_home_label.starts_with("p1  ~/…/"));
-        assert!(long_home_label.ends_with("/eon-desktop"));
-        assert!(!long_home_label.contains(&home));
-        assert!(long_home_label.chars().count() <= 84);
-        assert_eq!(
-            pane_label(
-                "p1",
-                true,
-                &PaneMetadata::Available {
-                    working_directory: "file://server/share".into(),
-                },
-            ),
-            "p1  /share"
-        );
-        assert_eq!(
-            pane_label(
-                "p1",
-                true,
-                &PaneMetadata::Available {
-                    working_directory: "file:///".into(),
-                },
-            ),
-            "p1  /"
-        );
-        assert_eq!(
-            pane_label(
-                "p1",
-                true,
-                &PaneMetadata::Available {
-                    working_directory: format!("file://host{home}"),
-                },
-            ),
-            "p1  ~"
-        );
-        assert_eq!(
-            pane_label(
-                "p1",
-                true,
-                &PaneMetadata::Available {
-                    working_directory: "file:///tmp/a\nb".into(),
-                },
-            ),
-            "p1  /tmp/a�b"
-        );
-        assert_eq!(
-            pane_label("p1", true, &PaneMetadata::Connecting),
-            "p1 connecting"
-        );
-        assert_eq!(
-            pane_label("p1", true, &PaneMetadata::Unavailable),
-            "p1 unavailable"
-        );
-        assert_eq!(
-            pane_label(
-                "p1",
-                true,
-                &PaneMetadata::Available {
-                    working_directory: String::new(),
-                },
-            ),
-            "p1"
-        );
-        assert_eq!(pane_label("p1", false, &metadata), "p1 offline");
     }
 
     fn draw_style(selected: bool) -> DrawStyle {
@@ -6207,6 +6012,8 @@ mod tests {
 
         // The close prompt fits its rows: header labels, then popup entry labels.
         let pane = |id: &str| Pane {
+            label: id.into(),
+            pinned_name: None,
             id: id.into(),
             session: format!("session-{id}"),
             endpoint: id.as_bytes().to_vec(),
@@ -6241,9 +6048,8 @@ mod tests {
             },
         }];
         let size = PhysicalSize::new(960, 600);
-        let prompt = |detach| {
-            DialogScene::close_last_tab(&tab, &entries, |_| None, detach, size, metrics, 0.0)
-        };
+        let prompt =
+            |detach| DialogScene::close_last_tab(&tab, &entries, detach, size, metrics, 0.0);
         let asked = prompt(Some("Alt+Shift+D".into()));
         let panes = tab.panes().count();
         assert_eq!(
@@ -6256,7 +6062,7 @@ mod tests {
         let rows = &asked.groups[0].rows;
         assert_eq!(rows.len(), panes + 1);
         assert!(rows[..panes].iter().all(|row| row.shortcut == "Pane"));
-        assert_eq!(rows[0].action, "p1 unavailable");
+        assert_eq!(rows[0].action, tab.panes().next().unwrap().label);
         assert_eq!(
             (rows[panes].shortcut.as_str(), rows[panes].action.as_str()),
             ("Popup", "Agent")
@@ -6274,7 +6080,6 @@ mod tests {
         let crowded = DialogScene::close_last_tab(
             &tab,
             &entries,
-            |_| None,
             None,
             PhysicalSize::new(320, 180),
             metrics,

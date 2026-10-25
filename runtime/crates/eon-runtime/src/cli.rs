@@ -112,6 +112,12 @@ const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
     &[
         ("New tab", &["tab", "create"], Close),
         ("New pane", &["pane", "create"], Close),
+        ("Rename pane", &["pane", "rename", "PANE", "NAME"], Close),
+        (
+            "Clear pane name",
+            &["pane", "rename", "PANE", "--clear"],
+            Close,
+        ),
         ("New window", &["window", "new"], Close),
         ("Close tab", &["tab", "close", "TAB"], Close),
         ("Quit this window", &["stop", "GENERATION"], Close),
@@ -200,10 +206,59 @@ fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> 
         .and_then(|index| index.trim().parse::<usize>().ok())
         .and_then(|index| RUNNER_COMMANDS.get(index))
         .ok_or("command picker returned an invalid selection")?;
-    let arguments = runner_arguments(arguments, &tab, &generation)
+    let mut arguments: Vec<OsString> = runner_arguments(arguments, &tab, &generation)
         .into_iter()
         .map(OsString::from)
         .collect();
+    if arguments.iter().any(|argument| argument == "PANE") {
+        let caller = calling_terminal(&Action::RenamePane {
+            pane: "p1".into(),
+            name: None,
+        })
+        .map_err(|error| error.detail)?;
+        let socket = generation_directory(&runtime_directory("eon"), &generation).join("eon.sock");
+        let response = send_action_from(
+            Ok(&socket),
+            caller,
+            Action::Workspace(WorkspaceAction::Inspect),
+        )
+        .map_err(|error| error.detail)?;
+        let ControlResponse::Workspace(Response::Snapshot(snapshot)) = response else {
+            return Err("cannot inspect the Commands pane".into());
+        };
+        let pane = snapshot
+            .tabs
+            .iter()
+            .find(|candidate| candidate.id == tab)
+            .and_then(|tab| tab.selected_pane.as_deref())
+            .ok_or("this tab has no pane to name")?;
+        for argument in &mut arguments {
+            if argument == "PANE" {
+                *argument = pane.into();
+            }
+        }
+        if arguments.last().is_some_and(|argument| argument == "NAME") {
+            let output = packaged_fzf(
+                "Pane name > ",
+                "Enter Set · Empty Clear · Esc/Ctrl+C Cancel",
+            )
+            .args(["--bind=enter:print-query", "--print0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .output()
+            .map_err(|error| format!("cannot read pane name: {error}"))?;
+            if matches!(output.status.code(), Some(1 | 130)) {
+                return Ok((0, RunnerOutput::Close));
+            }
+            if !output.status.success() {
+                return Err("pane-name picker failed".into());
+            }
+            let name = parse_pane_name_output(&output.stdout)?;
+            arguments.pop();
+            arguments.push("--".into());
+            arguments.push(name.into());
+        }
+    }
     let status = match execute(inputs, arguments) {
         Ok(status) => status,
         Err(error) => {
@@ -212,6 +267,14 @@ fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> 
         }
     };
     Ok((status, *kept))
+}
+
+fn parse_pane_name_output(output: &[u8]) -> Result<&str, String> {
+    let text = output
+        .strip_suffix(&[0])
+        .filter(|text| !text.contains(&0))
+        .ok_or("pane-name picker returned malformed text")?;
+    std::str::from_utf8(text).map_err(|_| "pane name is not UTF-8".into())
 }
 
 fn startup_anima(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
@@ -622,6 +685,8 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
   {command}pane create [--json] -- COMMAND...{reset}          Run COMMAND in a new pane
   {command}edit [--json] -- FILE{reset}                       Open FILE in Helix in a new pane
   {command}pane close PANE [--json]{reset}                    Close a pane of the active tab
+  {command}pane rename PANE NAME [--json]{reset}              Pin a pane name; empty clears
+  {command}pane rename PANE --clear [--json]{reset}           Restore automatic pane naming
   {command}pane move up|down|left|right [--json]{reset}       Move the selected pane
   {command}focus ID|left|right|up|down [--json]{reset}        Focus by ID or navigate
 
@@ -917,7 +982,7 @@ fn final_close_terminals(
     };
     Ok(last.then(|| {
         tab.panes()
-            .map(|pane| pane.id.clone())
+            .map(|pane| pane.label.clone())
             .chain(tab.popups.iter().map(|popup| popup.entry.clone()))
             .collect()
     }))
@@ -931,6 +996,7 @@ fn calling_terminal(action: &Action) -> Result<Option<String>, Failure> {
         Action::Workspace(WorkspaceAction::CreatePane { .. } | WorkspaceAction::Move(_))
             | Action::MovePaneSideways(_)
             | Action::ClosePane { .. }
+            | Action::RenamePane { .. }
             | Action::Edit { .. }
             | Action::CreateCommandPane { .. }
     ) {
@@ -952,6 +1018,11 @@ fn calling_terminal(action: &Action) -> Result<Option<String>, Failure> {
 }
 
 fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Error> {
+    if arguments.first().is_some_and(|value| value == "pane")
+        && arguments.get(1).is_some_and(|value| value == "rename")
+    {
+        return parse_pane_rename_arguments(&arguments[2..]);
+    }
     if let Some(action) = parse_tab_directory_arguments(arguments)? {
         return Ok(action);
     }
@@ -1006,6 +1077,41 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
         _ => return Err(Error::usage(EON_USAGE)),
     };
     Ok((action, json))
+}
+
+fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool), Error> {
+    let mut json = false;
+    let mut clear = false;
+    let mut literal = false;
+    let mut values = Vec::new();
+    for argument in arguments {
+        let value = argument
+            .to_str()
+            .ok_or_else(|| Error::usage("pane rename requires UTF-8"))?;
+        match value {
+            "--" if !literal => literal = true,
+            "--json" if !literal && !json => json = true,
+            "--clear" if !literal && !clear => clear = true,
+            value if !literal && value.starts_with('-') => return Err(Error::usage(EON_USAGE)),
+            _ => values.push(value),
+        }
+    }
+    let (pane, name) = match values.as_slice() {
+        [pane] if clear => (*pane, None),
+        [pane, name] if !clear => (*pane, Some(name.trim()).filter(|name| !name.is_empty())),
+        _ => return Err(Error::usage(EON_USAGE)),
+    };
+    if let Some(name) = name {
+        eon_workspace_protocol::v20::validate_pane_name(name)
+            .map_err(|error| Error::usage(error.to_string()))?;
+    }
+    Ok((
+        Action::RenamePane {
+            pane: pane.into(),
+            name: name.map(str::to_owned),
+        },
+        json,
+    ))
 }
 
 fn parse_tab_directory_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>, Error> {
@@ -1106,6 +1212,62 @@ fn parse_command_pane_arguments(arguments: &[OsString]) -> Result<Option<(Action
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pane_rename_preserves_literal_names_and_validates_before_connecting() {
+        let parse = |args: &[&str]| {
+            parse_control_arguments(&args.iter().map(OsString::from).collect::<Vec<_>>())
+        };
+        for (args, expected, json) in [
+            (
+                vec!["pane", "rename", "p1", "  Review  ", "--json"],
+                Some("Review"),
+                true,
+            ),
+            (vec!["pane", "rename", "p1", "--clear"], None, false),
+            (vec!["pane", "rename", "p1", "   "], None, false),
+            (
+                vec!["pane", "rename", "p1", "--json", "--", "--clear"],
+                Some("--clear"),
+                true,
+            ),
+            (
+                vec!["pane", "rename", "p1", "--", "--json"],
+                Some("--json"),
+                false,
+            ),
+        ] {
+            assert_eq!(
+                parse(&args).unwrap(),
+                (
+                    Action::RenamePane {
+                        pane: "p1".into(),
+                        name: expected.map(str::to_owned)
+                    },
+                    json
+                )
+            );
+        }
+        for args in [
+            vec!["pane", "rename", "p1"],
+            vec!["pane", "rename", "p1", "name", "--clear"],
+            vec!["pane", "rename", "p1", "bad\u{202e}name"],
+            vec!["pane", "rename", "p1", "bad\nname"],
+            vec!["pane", "rename", "p1", "--clear", "--clear"],
+        ] {
+            assert_eq!(parse(&args).unwrap_err().status, 2);
+        }
+        assert_eq!(
+            parse(&["pane", "rename", "p1", &"x".repeat(81)])
+                .unwrap_err()
+                .status,
+            2
+        );
+        assert_eq!(parse_pane_name_output(b"--clear\0").unwrap(), "--clear");
+        assert_eq!(parse_pane_name_output(b"\0").unwrap(), "");
+        assert!(parse_pane_name_output(b"name\0extra\0").is_err());
+        assert!(parse_pane_name_output(b"name\n").is_err());
+    }
 
     #[test]
     fn command_runner_workspace_entries_parse_as_eon_commands() {

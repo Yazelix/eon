@@ -250,6 +250,11 @@ setting when it starts. Alt+Shift+H shows or hides the sidebar; it also steps
 aside while the window leaves fewer than 80 cells for the terminals beside it.
 See [Agent sidebar](USAGE.md#agent-sidebar).
 
+Pane labels use a fixed policy: a pin, then sanitized terminal title, then compact
+working directory, with differing-directory context. Commands and `eon pane rename`
+set or clear a pin; pins are workspace state rather than configuration. The pane
+ID dims only when the resolved fill and configured opacity permit readable contrast.
+
 ## Agent quota
 
 Eon bundles pinned CodexBar CLI for Codex and Claude quota.

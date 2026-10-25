@@ -438,7 +438,7 @@ re-proved when that platform or feature is next touched.
     Preview movement never changes the count; accessibility exposes committed
     position as a description and the visible return action as a button, not an
     alert. The selected pane header
-    reserves space for the count and fits its directory label into the remaining
+    reserves space for the count and fits its pane label into the remaining
     width using the existing cluster-safe header fitter. Standalone and picker
     terminals use a small top-right overlay that preserves grid dimensions and yields to selection,
     links, notices, picker tab previews and an overlapping terminal cursor.
@@ -555,7 +555,8 @@ re-proved when that platform or feature is next touched.
     distinct: selected fill and brighter text identify the active tab without
     an underline; keyboard focus adds a rounded outline. Pane shell navigation
     does not rename or resize tabs.
-  - Every visible live pane endpoint has one bounded read-only metadata observer.
+  - Runtime supplies labels for every workspace pane, including collapsed panes and panes in
+    background tabs. Venus consumes those labels without reconstructing their naming policy.
   - While no popup covers the tab, and except as zoom below hides columns,
     each column's live expanded pane is an Orbit attachment resized to its
     own column. Keyboard input, IME, the cursor trail, selection, links, the
@@ -640,16 +641,14 @@ re-proved when that platform or feature is next touched.
     area to its right: the side gaps and the 40-column CreateColumn check are
     measured from that area, and the first tab pill keeps its window-edge
     position, so its alignment with the first card is suspended.
-  - Headers and AccessKit names show the opaque `pN` identity, two ASCII spaces,
-    and one compact working-directory label.
-  - Home displays `~`; descendants use `~/`; paths outside
-    home remain absolute; overlong paths elide from the left to preserve the
-    leaf; an unset or empty `HOME` keeps absolute paths.
-  - Terminal title remains available to the selected window and is not repeated
-    in pane chrome. Empty, offline, unavailable, or incompatible metadata falls
-    back to pane identity without exposing mapped Session identity.
-  - Hidden tabs have no observers, obsolete observations retire, and a 250 ms
-    reinspection exposes accepted external workspace changes without native
+  - Headers show Runtime's bounded pane label. Fitting retains the literal pane identity whenever it
+    fits and middle-elides the remaining text at shaping-cluster boundaries; AccessKit and final-close
+    pane listings retain the full bounded label. The ID may be dimmer than the name, with 4.5:1 contrast
+    as the target against the resolved fill at the configured opacity; when dimming compromises
+    readability, it uses the name's colour. Terminal title remains available for selected-window
+    compositor semantics. Labels never expose mapped Session identity.
+  - Venus opens no separate workspace-label metadata observers. Removed panes retire their label
+    projections, and a 250 ms reinspection exposes accepted external workspace changes without native
     input.
   - Pointer input, Alt+H/L column and tab traversal, Alt+K/J pane traversal,
     Alt+M pane creation, Alt+Shift+T tab requests, focused arrow traversal, and
@@ -707,11 +706,10 @@ re-proved when that platform or feature is next touched.
   terminal notice still outranks a link result or hint.
   Terminal-status alerts announce their actual error without moving focus;
   routine polling does not repeat the announcement.
-- **Owner:** Venus workspace materialization, bounded metadata observation,
-  clipping, and accessibility projection; Eon owns topology and Orbit owns
-  terminal metadata and Session lifetime.
+- **Owner:** Venus owns workspace materialization, label fitting, rendering and accessibility; Runtime owns
+  semantic pane labels and pins; Orbit owns terminal metadata and Session lifetime.
 - **Consumes:** Eon `EON-C10`, `EON-C17`, `EON-C18`, canonical EONW through the
-  in-tree `eon-workspace-protocol` 0.1.0, and Orbit metadata observation in
+  in-tree `eon-workspace-protocol` 0.1.0, and Orbit terminal presentation in
   ORBS v13 through the in-tree `orbit-protocol` 0.1.0.
 - **Boundary:** Other Linux Wayland compositors remain outside the current
   proof.

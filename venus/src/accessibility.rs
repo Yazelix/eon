@@ -934,9 +934,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        Color, DrawCell, DrawRow, DrawStyle, EonBar, PaneMetadata, ShortcutGroup, ShortcutRow,
-    };
+    use crate::{Color, DrawCell, DrawRow, DrawStyle, EonBar, ShortcutGroup, ShortcutRow};
     use eon_workspace_protocol::v20::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, CodexQuotaWindow, Pane, Popup,
         PopupEntry, PopupGeometry, Shortcut, Snapshot as WorkspaceSnapshot, Tab,
@@ -955,6 +953,8 @@ mod tests {
                 panes: panes
                     .iter()
                     .map(|id| Pane {
+                        label: format!("{id}  unavailable"),
+                        pinned_name: None,
                         id: (*id).into(),
                         session: format!("session-{id}"),
                         endpoint: format!("/run/eon/{id}.sock").into_bytes(),
@@ -1088,7 +1088,7 @@ mod tests {
                                 )
                             });
                             let project = |version| {
-                                WorkspaceScene::from_snapshot_with_metadata(
+                                WorkspaceScene::from_snapshot_with_bar(
                                     &snapshot,
                                     EonBar {
                                         version,
@@ -1098,7 +1098,6 @@ mod tests {
                                     metrics,
                                     0.0,
                                     0.0,
-                                    |_| None,
                                     |_, text| {
                                         (
                                             text.to_owned(),
@@ -1221,7 +1220,7 @@ mod tests {
                 "Local time 23:59, Wednesday 21 October 2026, UTC+05:45",
             ),
         ] {
-            let workspace = WorkspaceScene::from_snapshot_with_metadata(
+            let workspace = WorkspaceScene::from_snapshot_with_bar(
                 &WorkspaceSnapshot {
                     workspace: "w1".into(),
                     active_workspace: "w1".into(),
@@ -1249,7 +1248,6 @@ mod tests {
                 CellMetrics::for_scale(1.0),
                 0.0,
                 0.0,
-                |_| None,
                 |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
                 None,
             );
@@ -1309,7 +1307,7 @@ mod tests {
                             sidebar: eon_workspace_protocol::v20::Sidebar::Open,
                         };
                         let project = |logical_width: u32, version, clock| {
-                            WorkspaceScene::from_snapshot_with_metadata(
+                            WorkspaceScene::from_snapshot_with_bar(
                                 &snapshot,
                                 EonBar {
                                     version,
@@ -1323,7 +1321,6 @@ mod tests {
                                 metrics,
                                 0.0,
                                 0.0,
-                                |_| None,
                                 |_, text| {
                                     (
                                         text.to_owned(),
@@ -1483,7 +1480,7 @@ mod tests {
             sidebar: eon_workspace_protocol::v20::Sidebar::Open,
         };
         let project = |logical_width: u32, version, cpu, ram, clock| {
-            WorkspaceScene::from_snapshot_with_metadata(
+            WorkspaceScene::from_snapshot_with_bar(
                 &snapshot,
                 EonBar {
                     version,
@@ -1496,7 +1493,6 @@ mod tests {
                 metrics,
                 0.0,
                 0.0,
-                |_| None,
                 |_, text| {
                     (
                         text.to_owned(),
@@ -1659,7 +1655,7 @@ mod tests {
         let metrics = CellMetrics::for_scale(1.0);
         let size = PhysicalSize::new(3000, 600);
         let project = |items: &[crate::BarItem]| {
-            WorkspaceScene::from_snapshot_with_metadata(
+            WorkspaceScene::from_snapshot_with_bar(
                 &snapshot,
                 EonBar {
                     items,
@@ -1672,7 +1668,6 @@ mod tests {
                 metrics,
                 0.0,
                 0.0,
-                |_| None,
                 |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
                 None,
             )
@@ -2788,7 +2783,6 @@ mod tests {
             CellMetrics::for_scale(1.0),
             0.0,
             0.0,
-            |_| None,
             |_, text| (text.to_owned(), text.len() as f32 * 10.0),
             None,
             false,
@@ -2892,14 +2886,13 @@ mod tests {
             |text| text.len() as f32 * 10.0,
         );
         let project = |footer| {
-            WorkspaceScene::from_snapshot_with_metadata(
+            WorkspaceScene::from_snapshot_with_bar(
                 &workspace,
                 EonBar::default(),
                 size,
                 metrics,
                 0.0,
                 0.0,
-                |_| None,
                 |_, text| (text.to_owned(), text.len() as f32 * 10.0),
                 footer,
             )
@@ -3037,10 +3030,7 @@ mod tests {
 
     #[test]
     fn workspace_accessibility_order_matches_tabs_then_one_expanded_pane() {
-        let metadata = PaneMetadata::Available {
-            working_directory: "file:///tmp/eon".into(),
-        };
-        let workspace = WorkspaceScene::from_snapshot_with_metadata(
+        let workspace = WorkspaceScene::from_snapshot_with_bar(
             &WorkspaceSnapshot {
                 workspace: "w1".into(),
                 active_workspace: "w1".into(),
@@ -3061,6 +3051,8 @@ mod tests {
                         columns: vec![eon_workspace_protocol::v20::Column {
                             panes: vec![
                                 Pane {
+                                    label: "p1  offline".into(),
+                                    pinned_name: None,
                                     id: "p1".into(),
                                     session: "session-1".into(),
                                     endpoint: b"/run/eon/one.sock".to_vec(),
@@ -3068,6 +3060,8 @@ mod tests {
                                     attention: None,
                                 },
                                 Pane {
+                                    label: "p2  Review · ../repo".into(),
+                                    pinned_name: None,
                                     id: "p2".into(),
                                     session: "session-2".into(),
                                     endpoint: b"/run/eon/two.sock".to_vec(),
@@ -3088,6 +3082,8 @@ mod tests {
                         selected_pane: Some("p3".into()),
                         columns: vec![eon_workspace_protocol::v20::Column {
                             panes: vec![Pane {
+                                label: "p3".into(),
+                                pinned_name: None,
                                 id: "p3".into(),
                                 session: "session-3".into(),
                                 endpoint: b"/run/eon/three.sock".to_vec(),
@@ -3128,7 +3124,6 @@ mod tests {
             CellMetrics::for_scale(1.0),
             0.0,
             0.0,
-            |endpoint| (endpoint == b"/run/eon/two.sock").then_some(&metadata),
             |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
             None,
         );
@@ -3169,8 +3164,8 @@ mod tests {
             node(&update, tab_2).label(),
             Some("Tab 2 of 2  /tmp/nova, finished")
         );
-        assert_eq!(node(&update, pane_1).label(), Some("p1 offline"));
-        assert_eq!(workspace.panes[1].label(), "p2  /tmp/eon");
+        assert_eq!(node(&update, pane_1).label(), Some("p1  offline"));
+        assert_eq!(workspace.panes[1].label(), "p2  Review · ../repo");
         assert_eq!(
             node(&update, pane_2).label(),
             Some(workspace.panes[1].label())
@@ -3211,7 +3206,6 @@ mod tests {
                 CellMetrics::for_scale(1.0),
                 0.0,
                 0.0,
-                |_| None,
                 |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
                 None,
                 zoom,
@@ -3226,7 +3220,7 @@ mod tests {
         snapshot.set_workspace(Some(&workspace));
         let update = snapshot.tree();
         let panel = node(&update, PANE_PANEL);
-        assert_eq!(panel.label(), Some("Zoomed pane p2 unavailable"));
+        assert_eq!(panel.label(), Some("Zoomed pane p2  unavailable"));
         assert!(workspace.tabs[0].label().ends_with(" \u{f00e}"));
         assert!(!workspace.tabs[0].label().contains(" · zoom"));
         assert_eq!(panel.children(), &[snapshot.pane_ids["p2"], CONTENT]);
@@ -3402,8 +3396,8 @@ mod tests {
         let first = activation.request_initial_tree().unwrap();
         let tab_a = tree_node_id(&first, "Tab 1 of 2  /tmp/t1");
         let tab_b = tree_node_id(&first, "Tab 2 of 2  /tmp/t2");
-        let pane_a = tree_node_id(&first, "pane-a unavailable");
-        let pane_b = tree_node_id(&first, "pane-b unavailable");
+        let pane_a = tree_node_id(&first, "pane-a  unavailable");
+        let pane_b = tree_node_id(&first, "pane-b  unavailable");
         assert_ne!(tab_a, pane_a);
 
         set_workspace(
@@ -3414,7 +3408,7 @@ mod tests {
         let second = activation.request_initial_tree().unwrap();
 
         assert_eq!(tree_node_id(&second, "Tab 1 of 1  /tmp/t2"), tab_b);
-        assert_eq!(tree_node_id(&second, "pane-b unavailable"), pane_b);
+        assert_eq!(tree_node_id(&second, "pane-b  unavailable"), pane_b);
         assert_eq!(second.focus, pane_b);
         assert_eq!(
             accessibility.action_target(tab_b, Action::Click),
@@ -3445,9 +3439,9 @@ mod tests {
         let third = activation.request_initial_tree().unwrap();
 
         assert_eq!(tree_node_id(&third, "Tab 2 of 2  /tmp/t2"), tab_b);
-        assert_eq!(tree_node_id(&third, "pane-b unavailable"), pane_b);
+        assert_eq!(tree_node_id(&third, "pane-b  unavailable"), pane_b);
         assert_ne!(tree_node_id(&third, "Tab 1 of 2  /tmp/t3"), tab_a);
-        assert_ne!(tree_node_id(&third, "pane-c unavailable"), pane_a);
+        assert_ne!(tree_node_id(&third, "pane-c  unavailable"), pane_a);
         assert_eq!(third.focus, pane_b);
     }
 

@@ -46,14 +46,13 @@ pub(super) fn initial_window_size(
     // Grid admission depends on header heights, not tab text fitting.
     let measure = |size: PhysicalSize<u32>| {
         let workspace = snapshot.map(|snapshot| {
-            WorkspaceScene::from_snapshot_with_metadata(
+            WorkspaceScene::from_snapshot_with_bar(
                 snapshot,
                 EonBar::default(),
                 size,
                 metrics,
                 0.0,
                 0.0,
-                |_| None,
                 |_, _| (String::new(), 0.0),
                 Some(ShortcutHintsScene::new(
                     Vec::new(),
@@ -184,6 +183,8 @@ mod tests {
                 columns: vec![eon_workspace_protocol::v20::Column {
                     panes: (1..=3)
                         .map(|i| Pane {
+                            label: format!("p{i}"),
+                            pinned_name: None,
                             id: format!("p{i}"),
                             session: format!("s{i}"),
                             endpoint: format!("/tmp/{i}.sock").into_bytes(),
@@ -209,14 +210,13 @@ mod tests {
                     let size =
                         initial_window_size(Some(100), Some(30), metrics, scale, snapshot).unwrap();
                     let workspace = snapshot.map(|s| {
-                        WorkspaceScene::from_snapshot_with_metadata(
+                        WorkspaceScene::from_snapshot_with_bar(
                             s,
                             EonBar::default(),
                             size,
                             metrics,
                             0.0,
                             0.0,
-                            |_| None,
                             |_, _| (String::new(), 0.0),
                             Some(ShortcutHintsScene::new(
                                 Vec::new(),
@@ -242,6 +242,8 @@ mod tests {
             .columns
             .push(eon_workspace_protocol::v20::Column {
                 panes: vec![Pane {
+                    label: "p4".into(),
+                    pinned_name: None,
                     id: "p4".into(),
                     session: "s4".into(),
                     endpoint: b"/tmp/4.sock".to_vec(),

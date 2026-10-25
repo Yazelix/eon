@@ -1014,6 +1014,8 @@ mod tests {
         use eon_workspace_protocol::v20::{Column, Pane};
 
         let pane = |id: &str| Pane {
+            label: id.into(),
+            pinned_name: None,
             id: id.into(),
             session: format!("session-{id}"),
             endpoint: Vec::new(),

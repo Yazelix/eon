@@ -358,10 +358,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 - **Status:** Partially proved
 - **Consumer:** One local Eon workspace user.
-- **Trigger:** Launch, create or close a tab, create or close a pane, create a
-  column, traverse focus, reorder the active tab or selected pane, move the
-  selected pane into a neighbouring column, zoom the selected pane, receive
-  terminal exit, or recover accepted same-boot runs.
+- **Trigger:** Launch, create or close a tab, create, close or rename a pane, create a column, traverse focus,
+  reorder the active tab or selected pane, move the selected pane into a neighbouring column, zoom the
+  selected pane, receive terminal exit, or recover accepted same-boot runs.
 - **Result:**
   - A workspace contains horizontal tabs. Each established tab with panes
     holds an ordered row of one to four columns (pending and popup-only tabs
@@ -379,9 +378,14 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     path, and wheel scrolling works across the whole strip, including gaps.
     Selected fill and brighter text identify the active tab without an underline;
     keyboard focus adds a separate rounded outline.
-  - Each pane is identified as `pN`, two ASCII spaces, and a compact working-
-    directory label; home uses `~`, descendants use `~/`, and
-    external paths remain absolute.
+  - Each pane retains its stable `pN` identity. Runtime supplies its label: the identity, two ASCII
+    spaces, then the pinned name, otherwise the sanitized terminal title, otherwise the compact working
+    directory, otherwise no name. The default style appends ` · DIRECTORY` when the terminal directory
+    differs lexically from the tab's launch directory, without repeating a directory already used as the
+    name. Context uses a relative path, or the compact path when shorter; compact paths use `~` for home
+    and `~/` for its descendants. Labels preserve explicit offline, connecting and unavailable states.
+    Program metadata is untrusted display text, never identity or command input.
+  - `eon pane rename PANE NAME [--json]` pins a name; `eon pane rename PANE --clear [--json]` restores automatic naming. `--` permits an option-looking NAME. Names are trimmed; an empty result clears the pin. Invalid names fail without mutation. Rename addresses an explicit pane anywhere in the addressed workspace and changes no workspace, tab, pane or popup selection or desktop focus. Window rename and clear actions use the same mutation. Pins follow pane moves, survive presentation detach and reattach, and end with the pane or supervisor; recovery does not restore them. Workspace inspection and action replies expose each pane's `label` and nullable `pinned_name`, independently of attention records.
   - On each new or reopened full-Eon surface, `[terminal] pane_frames` in
     `config.toml` defaults to `true` and draws each pane as its own card,
     stacked without gaps in its column's allocated card area: a rounded border
@@ -783,6 +787,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - Eon returns one complete typed result from the sole live workspace owner;
     human-readable CLI output and deterministic structured output project the
     same result.
+  - `eon pane rename PANE NAME [--json]` pins a name; `eon pane rename PANE --clear [--json]` restores automatic naming. `--` permits an option-looking NAME. Names are trimmed; an empty result clears the pin. Invalid names fail without mutation. Rename addresses an explicit pane anywhere in the addressed workspace and changes no workspace, tab, pane or popup selection or desktop focus. Window rename and clear actions use the same mutation. Pins follow pane moves, survive presentation detach and reattach, and end with the pane or supervisor; recovery does not restore them. Workspace inspection and action replies expose each pane's `label` and nullable `pinned_name`, independently of attention records.
   - Workspace results carry ordered tab, pane, and terminal identities, active
     and selected identities, liveness, exact raw tab launch-directory bytes,
     and exact opaque Orbit endpoint bytes. Lifecycle results carry generation,

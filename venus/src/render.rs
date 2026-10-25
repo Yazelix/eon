@@ -1472,7 +1472,17 @@ impl Renderer {
                 self.card_stroke_width(),
                 (scroll_preview, scroll_offset),
             );
-            self.build_workspace(workspace, workspace_focus, &mut rectangles);
+            let backgrounds = card_backdrops(
+                workspace,
+                scene,
+                columns,
+                self.metrics,
+                self.card_stroke_width(),
+            )
+            .into_iter()
+            .map(|(_, color)| color)
+            .collect::<Vec<_>>();
+            self.build_workspace(workspace, workspace_focus, &mut rectangles, &backgrounds);
             for (column, scene) in workspace.other_columns.iter().zip(columns) {
                 let Some(scene) = scene else {
                     continue;
@@ -3203,6 +3213,8 @@ mod tests {
                     .map(|col| Column {
                         panes: (0..2)
                             .map(|row| Pane {
+                                label: format!("p{col}-{row}"),
+                                pinned_name: None,
                                 id: format!("p{col}-{row}"),
                                 session: format!("s{col}-{row}"),
                                 endpoint: format!("/tmp/{col}-{row}.sock").into_bytes(),
@@ -4077,6 +4089,8 @@ mod tests {
                                         .map(|column| Column {
                                             panes: (0..pane_count)
                                                 .map(|pane| Pane {
+                                                    label: (pane_id(column, pane)).to_string(),
+                                                    pinned_name: None,
                                                     id: pane_id(column, pane),
                                                     session: format!("s{column}-{pane}"),
                                                     endpoint: format!("/tmp/{column}-{pane}.sock")
@@ -4606,6 +4620,8 @@ mod tests {
                     columns: vec![Column {
                         panes: (1..=pane_count)
                             .map(|n| Pane {
+                                label: format!("p{n}"),
+                                pinned_name: None,
                                 id: format!("p{n}"),
                                 session: format!("s{n}"),
                                 endpoint: format!("/tmp/p{n}.sock").into_bytes(),
@@ -4635,7 +4651,6 @@ mod tests {
                     metrics,
                     0.0,
                     0.0,
-                    |_| None,
                     |_, text| (text.into(), text.len() as f32 * metrics.width),
                     None,
                     zoom,
@@ -4797,6 +4812,8 @@ mod tests {
                                                     1
                                                 })
                                                     .map(|n| Pane {
+                                                        label: format!("{prefix}{n}"),
+                                                        pinned_name: None,
                                                         id: format!("{prefix}{n}"),
                                                         session: format!("{prefix}-s{n}"),
                                                         endpoint: format!("/tmp/{prefix}{n}.sock")
@@ -4826,14 +4843,13 @@ mod tests {
                             };
                             let workspace_at = |height| {
                                 let size = PhysicalSize::new(width, height);
-                                WorkspaceScene::from_snapshot_with_metadata(
+                                WorkspaceScene::from_snapshot_with_bar(
                                     &snapshot,
                                     crate::EonBar::default(),
                                     size,
                                     metrics,
                                     0.0,
                                     pane_scroll,
-                                    |_| None,
                                     |_, text| (text.into(), text.len() as f32 * metrics.width),
                                     hints_visible.then(|| {
                                         crate::ShortcutHintsScene::new(
@@ -5486,6 +5502,8 @@ mod tests {
                 selected_popup: None,
                 columns: vec![Column {
                     panes: vec![Pane {
+                        label: "p1".into(),
+                        pinned_name: None,
                         id: "p1".into(),
                         session: "s1".into(),
                         endpoint: b"/tmp/s1.sock".to_vec(),
@@ -5684,6 +5702,8 @@ mod tests {
                 columns: vec![Column {
                     panes: (0..80)
                         .map(|index| Pane {
+                            label: format!("p{index}"),
+                            pinned_name: None,
                             id: format!("p{index}"),
                             session: format!("s{index}"),
                             endpoint: format!("/tmp/{index}.sock").into_bytes(),
@@ -5711,14 +5731,13 @@ mod tests {
             ShortcutHintsScene::new(vec![], size, metrics, WorkspaceFocus::Terminal, |text| {
                 text.len() as f32 * metrics.width
             });
-        WorkspaceScene::from_snapshot_with_metadata(
+        WorkspaceScene::from_snapshot_with_bar(
             &snapshot,
             EonBar::default(),
             size,
             metrics,
             0.0,
             scroll,
-            |_| None,
             |_, text| (text.into(), text.len() as f32 * metrics.width),
             Some(hints),
         )
@@ -6024,6 +6043,8 @@ mod tests {
         use eon_workspace_protocol::v20::{Column, Pane, PopupGeometry, Sidebar, Snapshot, Tab};
 
         let pane = |column, index| Pane {
+            label: format!("p{column}-{index}"),
+            pinned_name: None,
             id: format!("p{column}-{index}"),
             session: format!("s{column}-{index}"),
             endpoint: format!("/tmp/{column}-{index}.sock").into_bytes(),
@@ -6331,6 +6352,8 @@ mod tests {
                                     .map(|column| Column {
                                         panes: (0..pane_count)
                                             .map(|pane| Pane {
+                                                label: (pane_id(column, pane)).to_string(),
+                                                pinned_name: None,
                                                 id: pane_id(column, pane),
                                                 session: format!("s{column}-{pane}"),
                                                 endpoint: format!("/tmp/{column}-{pane}.sock")

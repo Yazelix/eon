@@ -934,6 +934,7 @@ fn supervise(
         quotas: (mode == LaunchMode::Workspace)
             .then(|| quota::Quotas::start(&inputs.codexbar, bar_widgets)),
         attention,
+        pane_labels: super::pane_labels::Labels::default(),
         log: Arc::clone(log),
     };
     let presentation = match admitted {
@@ -999,6 +1000,11 @@ fn supervise(
 
             if !state.stopping {
                 state.follow_attention();
+                if let Some(workspaces) = &state.workspaces {
+                    state.pane_labels.reconcile(&workspaces.pane_sessions());
+                }
+            } else {
+                state.pane_labels.reconcile(&[]);
             }
 
             if control_listener.accept(|request| {
@@ -1038,6 +1044,7 @@ struct SupervisorState {
     quotas: Option<quota::Quotas>,
     /// Full Eon only; eonbase has no poller (EON-C31).
     attention: Option<Attention>,
+    pane_labels: super::pane_labels::Labels,
     log: Arc<DiagnosticLog>,
 }
 
@@ -1061,6 +1068,7 @@ impl SupervisorState {
                 Err(error)
             }
         })?;
+        self.pane_labels.present(&mut snapshot, workspaces.home());
         if let Some(quotas) = &self.quotas {
             quotas.apply(&mut snapshot);
         }
@@ -2188,6 +2196,7 @@ mod tests {
             stopping: false,
             quotas: None,
             attention: None,
+            pane_labels: super::super::pane_labels::Labels::default(),
             log,
         };
         let inputs = crate::fixtures::inputs();
@@ -2267,6 +2276,7 @@ mod tests {
             stopping: false,
             quotas: None,
             attention: None,
+            pane_labels: super::super::pane_labels::Labels::default(),
             log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
         };
         let inputs = crate::fixtures::inputs();
@@ -2384,6 +2394,7 @@ mod tests {
             stopping: false,
             quotas: None,
             attention: None,
+            pane_labels: super::super::pane_labels::Labels::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
         let inputs = crate::fixtures::inputs();
@@ -2433,6 +2444,7 @@ mod tests {
             stopping: false,
             quotas: None,
             attention: None,
+            pane_labels: super::super::pane_labels::Labels::default(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "workspace"),
         };
 
@@ -2519,6 +2531,7 @@ mod tests {
             stopping: false,
             quotas: None,
             attention: None,
+            pane_labels: super::super::pane_labels::Labels::default(),
             log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "workspace"),
         };
         let ids = |state: &SupervisorState| {
@@ -2614,6 +2627,8 @@ mod tests {
                     selected_popup: None,
                     columns: vec![Column {
                         panes: vec![Pane {
+                            label: format!("p{number}"),
+                            pinned_name: None,
                             id: format!("p{number}"),
                             session: format!("session-{number}"),
                             endpoint: format!("/runtime/orbit-{number}.sock").into_bytes(),

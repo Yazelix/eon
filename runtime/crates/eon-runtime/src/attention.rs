@@ -600,6 +600,8 @@ mod tests {
                 panes: panes
                     .iter()
                     .map(|session| Pane {
+                        label: format!("pane-{session}"),
+                        pinned_name: None,
                         id: format!("pane-{session}"),
                         session: (*session).into(),
                         endpoint: Vec::new(),

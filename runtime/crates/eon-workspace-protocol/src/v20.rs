@@ -25,6 +25,9 @@ pub const MAX_COLUMNS: usize = 4;
 pub const MAX_ENTRIES: usize = 32;
 pub const MAX_ENTRY_ID_BYTES: usize = 64;
 pub const MAX_LABEL_BYTES: usize = 128;
+pub const MAX_PANE_LABEL_BYTES: usize = 450;
+pub const MAX_PANE_NAME_CHARS: usize = 80;
+pub const MAX_PANE_NAME_BYTES: usize = 320;
 pub const MAX_KEY_BYTES: usize = 16;
 pub const MAX_CODEX_QUOTA_WINDOWS: usize = 2;
 pub const MAX_COMMAND_ARGUMENTS: usize = 256;
@@ -55,6 +58,7 @@ const DISMISS_POPUP: u8 = 20;
 const COMMIT_DIRECTORY: u8 = 21;
 const CREATE_COLUMN: u8 = 22;
 const CLOSE_PANE: u8 = 23;
+const RENAME_PANE: u8 = 36;
 const MOVE_PANE_LEFT: u8 = 24;
 const MOVE_PANE_RIGHT: u8 = 25;
 const EDIT: u8 = 26;
@@ -158,6 +162,10 @@ pub enum Action {
     ClosePane {
         pane: String,
     },
+    RenamePane {
+        pane: String,
+        name: Option<String>,
+    },
     /// Move the selected pane into the neighbouring column on `Side`.
     MovePaneSideways(Side),
     /// Open an absolute file path in the editor in a new pane, as
@@ -257,6 +265,8 @@ pub enum Sidebar {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pane {
     pub id: String,
+    pub label: String,
+    pub pinned_name: Option<String>,
     pub session: String,
     pub endpoint: Vec<u8>,
     pub live: bool,
@@ -628,6 +638,15 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             payload.byte(CLOSE_PANE);
             payload.string(pane);
         }
+        Action::RenamePane { pane, name } => {
+            identity("pane id", pane)?;
+            if let Some(name) = name {
+                validate_pane_name(name)?;
+            }
+            payload.byte(RENAME_PANE);
+            payload.string(pane);
+            encode_optional(&mut payload, name);
+        }
         Action::MovePaneSideways(side) => payload.byte(match side {
             Side::Left => MOVE_PANE_LEFT,
             Side::Right => MOVE_PANE_RIGHT,
@@ -748,6 +767,10 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
             let pane = decoder.string("pane id", MAX_ID_BYTES)?;
             Some(Action::ClosePane { pane })
         }
+        RENAME_PANE => Some(Action::RenamePane {
+            pane: decoder.string("pane id", MAX_ID_BYTES)?,
+            name: decode_pane_name(&mut decoder)?,
+        }),
         MOVE_PANE_LEFT => Some(Action::MovePaneSideways(Side::Left)),
         MOVE_PANE_RIGHT => Some(Action::MovePaneSideways(Side::Right)),
         EDIT => Some(Action::Edit {
@@ -779,6 +802,12 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
         identity("request id", &id)?;
         match &action {
             Action::ClosePane { pane } => identity("pane id", pane)?,
+            Action::RenamePane { pane, name } => {
+                identity("pane id", pane)?;
+                if let Some(name) = name {
+                    validate_pane_name(name)?;
+                }
+            }
             Action::Edit { file } => validate_file(file)?,
             Action::CreateCommandPane { argv, .. } => validate_command(argv)?,
             Action::FocusAttention { tab, target } => {
@@ -894,6 +923,80 @@ fn decode_workspace_action(decoder: &mut Decoder<'_>, tag: u8) -> Result<Workspa
     Ok(action)
 }
 
+/// Display characters accepted for pane labels and user pins, matching ORB-C15's cleaner.
+pub fn pane_label_character(character: char) -> bool {
+    !character.is_control()
+        && !matches!(character,
+        '\u{00ad}' | '\u{0600}'..='\u{0605}' | '\u{061c}' | '\u{06dd}' | '\u{070f}'
+        | '\u{0890}'..='\u{0891}' | '\u{08e2}' | '\u{17b4}'..='\u{17b5}' | '\u{180e}'
+        | '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2060}'..='\u{206f}'
+        | '\u{feff}' | '\u{fff9}'..='\u{fffb}' | '\u{110bd}' | '\u{110cd}'
+        | '\u{13430}'..='\u{1343f}' | '\u{1bca0}'..='\u{1bca3}' | '\u{1d173}'..='\u{1d17a}'
+        | '\u{e0001}' | '\u{e0020}'..='\u{e007f}')
+}
+
+/// Validate a bounded plain-text pin; Runtime trims it and clears an empty result.
+pub fn validate_pane_name(name: &str) -> Result<()> {
+    if name.len() > MAX_PANE_NAME_BYTES {
+        return Err(Error::FieldTooLong {
+            field: "pane name",
+            length: name.len(),
+        });
+    }
+    if name.chars().count() > MAX_PANE_NAME_CHARS || !name.chars().all(pane_label_character) {
+        return Err(Error::InvalidValue { field: "pane name" });
+    }
+    Ok(())
+}
+
+fn decode_pane_name(decoder: &mut Decoder<'_>) -> Result<Option<String>> {
+    Ok(if decode_bool(decoder, "pane name")? {
+        Some(decoder.string("pane name", MAX_PANE_NAME_BYTES)?)
+    } else {
+        None
+    })
+}
+
+fn validate_pane_label(pane: &Pane) -> Result<()> {
+    if pane.label.len() > MAX_PANE_LABEL_BYTES {
+        return Err(Error::FieldTooLong {
+            field: "pane label",
+            length: pane.label.len(),
+        });
+    }
+    if let Some(pin) = &pane.pinned_name {
+        validate_pane_name(pin)?;
+        if pin.is_empty() || pin != pin.trim() {
+            return Err(Error::InvalidValue { field: "pane name" });
+        }
+    }
+    if pane.label == pane.id
+        || ["offline", "connecting", "unavailable"]
+            .iter()
+            .any(|state| pane.label == format!("{} {state}", pane.id))
+    {
+        return Ok(());
+    }
+    let Some(body) = pane
+        .label
+        .strip_prefix(&pane.id)
+        .and_then(|rest| rest.strip_prefix("  "))
+    else {
+        return Err(Error::InvalidValue {
+            field: "pane label",
+        });
+    };
+    validate_pane_name(body).map_err(|_| Error::InvalidValue {
+        field: "pane label",
+    })?;
+    if body.is_empty() {
+        return Err(Error::InvalidValue {
+            field: "pane label",
+        });
+    }
+    Ok(())
+}
+
 /// Validate a workspace display name or selector, in Unicode characters rather than bytes.
 pub fn validate_workspace_name(name: &str) -> Result<()> {
     nonempty("workspace name", name, MAX_WORKSPACE_NAME_BYTES)?;
@@ -957,6 +1060,7 @@ fn validate_popup_action(action: &Action) -> Result<()> {
         Action::Workspace(_)
         | Action::CreateColumn
         | Action::ClosePane { .. }
+        | Action::RenamePane { .. }
         | Action::MovePaneSideways(_)
         | Action::Edit { .. }
         | Action::CreateCommandPane { .. }
@@ -1185,6 +1289,8 @@ fn encode_workspace(encoder: &mut Encoder, snapshot: &Snapshot, tabs: &[WireTab]
             encoder.string(&pane.session);
             encoder.raw(&pane.endpoint);
             encoder.byte(u8::from(pane.live));
+            encoder.string(&pane.label);
+            encode_optional(encoder, &pane.pinned_name);
             encode_attention(encoder, pane.attention.as_ref());
         }
         encoder.count(tab.popups.len());
@@ -1236,6 +1342,8 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
                 session: decoder.string("session id", MAX_ID_BYTES)?,
                 endpoint: decoder.raw("endpoint", MAX_ENDPOINT_BYTES)?.to_vec(),
                 live: decode_bool(decoder, "liveness")?,
+                label: decoder.string("pane label", MAX_PANE_LABEL_BYTES)?,
+                pinned_name: decode_pane_name(decoder)?,
                 attention: decode_attention(decoder)?,
             });
         }
@@ -1404,6 +1512,9 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
                 field: "attention rollup",
             });
         }
+    }
+    for pane in tabs.iter().flat_map(|tab| &tab.panes) {
+        validate_pane_label(pane)?;
     }
     if !tabs.iter().any(|tab| tab.id == snapshot.active_tab) {
         return Err(Error::InvalidSnapshot {
@@ -2162,6 +2273,8 @@ mod tests {
 
     fn pane(id: &str) -> Pane {
         Pane {
+            label: id.into(),
+            pinned_name: None,
             id: id.into(),
             session: format!("s{id}"),
             endpoint: format!("/{id}").into_bytes(),
@@ -2442,6 +2555,86 @@ mod tests {
         frame(SNAPSHOT, payload.bytes).unwrap()
     }
 
+    #[test]
+    fn pane_rename_tag_is_supported() {
+        let mut payload = Encoder::default();
+        payload.string("rename");
+        payload.byte(0);
+        payload.byte(36);
+        payload.string("p1");
+        payload.byte(1);
+        payload.string("Review pane labels");
+        let decoded = decode_request(&frame(REQUEST, payload.bytes).unwrap());
+        assert!(decoded.is_ok(), "{decoded:?}");
+    }
+
+    #[test]
+    fn pane_labels_and_pins_round_trip_and_reject_forged_bounds() {
+        for name in [None, Some(String::new()), Some("🦀".repeat(80))] {
+            let request = Request {
+                id: "rename".into(),
+                caller: None,
+                action: Action::RenamePane {
+                    pane: "p1".into(),
+                    name,
+                },
+            };
+            assert_eq!(
+                decode_request(&encode_request(&request).unwrap()).unwrap(),
+                request
+            );
+        }
+        for name in [
+            "x".repeat(81),
+            "🦀".repeat(81),
+            "bad\nname".into(),
+            "bad\u{202e}name".into(),
+            "bad\u{17b4}name".into(),
+        ] {
+            let request = Request {
+                id: "rename".into(),
+                caller: None,
+                action: Action::RenamePane {
+                    pane: "p1".into(),
+                    name: Some(name.clone()),
+                },
+            };
+            assert!(encode_request(&request).is_err());
+            let mut payload = Encoder::default();
+            payload.string("rename");
+            payload.byte(0);
+            payload.byte(RENAME_PANE);
+            payload.string("p1");
+            payload.byte(1);
+            payload.string(&name);
+            assert!(decode_request(&frame(REQUEST, payload.bytes).unwrap()).is_err());
+        }
+        let mut state = snapshot();
+        let pane = &mut state.tabs[0].columns[0].panes[0];
+        pane.id = "p".repeat(128);
+        pane.label = format!("{}  {}", pane.id, "🦀".repeat(80));
+        pane.pinned_name = Some("🦀".repeat(80));
+        assert_eq!(pane.label.len(), 450);
+        let response = Response::Snapshot(state.clone());
+        assert_eq!(
+            decode_response(&encode_response(&response).unwrap()).unwrap(),
+            response
+        );
+        for label in [
+            "wrong identity".into(),
+            format!("{}  {}", "p".repeat(128), "🦀".repeat(81)),
+            format!("{}  bad\u{2066}name", "p".repeat(128)),
+        ] {
+            let mut invalid = state.clone();
+            invalid.tabs[0].columns[0].panes[0].label = label;
+            assert!(encode_response(&Response::Snapshot(invalid.clone())).is_err());
+            assert!(decode_response(&forge(&invalid)).is_err());
+        }
+        state.tabs[0].columns[0].panes[0].pinned_name = Some("bad\u{200b}name".into());
+        assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
+        assert!(decode_response(&forge(&state)).is_err());
+    }
+
     fn field(error: Error) -> &'static str {
         match error {
             Error::InvalidTag { field, .. }
@@ -2700,15 +2893,15 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5714008100eb0000000100020002000100010000000200743100000041",
+                    "454f4e5714008100fa0000000100020002000100010000000200743100000041",
                     "000080400100030067697403004769740404004b65794701000200743104002f",
-                    "746d700001020070330102007531030002007031030073703103002f70310100",
-                    "02007032030073703203002f7032010002007033030073703303002f70330101",
-                    "02ff0500636f6465780600656f6e2d3961",
-                    "01007401006d0100000000000000000200010002007531",
-                    "0300676974030073753103002f753100010100640000000000000001002c0100",
-                    "002a01f40100000000000001015a00000000000000010060270000070001",
-                    "0200773102007731010002007731000100",
+                    "746d700001020070330102007531030002007031030073703103002f70310102",
+                    "007031000002007032030073703203002f703201020070320000020070330300",
+                    "73703303002f70330102007033000102ff0500636f6465780600656f6e2d3961",
+                    "01007401006d0100000000000000000200010002007531030067697403007375",
+                    "3103002f753100010100640000000000000001002c0100002a01f40100000000",
+                    "000001015a000000000000000100602700000700010200773102007731010002",
+                    "007731000100",
                 ),
             ),
             (failure, "454f4e57140082000a00000004006275737902006e6f"),
@@ -3060,10 +3253,10 @@ mod tests {
                 },
             ),
             (
-                &[36],
+                &[37],
                 Error::InvalidTag {
                     field: "action",
-                    value: 36,
+                    value: 37,
                 },
             ),
             (
@@ -3482,7 +3675,19 @@ mod tests {
             + MAX_ENTRIES * (entry_id + 2 + MAX_LABEL_BYTES + 1 + 2 + MAX_KEY_BYTES)
             + 2
             + MAX_TABS * (id + 2 + MAX_DIRECTORY_BYTES + 1 + 2 * (1 + id) + 2 + 2 + 1)
-            + MAX_SESSIONS * (id + entry_id + id + 2 + MAX_ENDPOINT_BYTES + attention)
+            + MAX_SESSIONS
+                * (id
+                    + entry_id
+                    + id
+                    + 2
+                    + MAX_ENDPOINT_BYTES
+                    + attention
+                    + 1
+                    + 2
+                    + MAX_PANE_LABEL_BYTES
+                    + 1
+                    + 2
+                    + MAX_PANE_NAME_BYTES)
             + 2 * quota
             + 1
             + 2 * id
@@ -3537,6 +3742,8 @@ mod tests {
                         Column {
                             expanded: id.clone(),
                             panes: vec![Pane {
+                                label: format!("{id}  {}", "🦀".repeat(MAX_PANE_NAME_CHARS)),
+                                pinned_name: Some("🦀".repeat(MAX_PANE_NAME_CHARS)),
                                 id,
                                 session,
                                 endpoint,

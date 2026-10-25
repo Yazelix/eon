@@ -377,7 +377,10 @@ fn operation_timeout(deadline: Instant, operation: &str) -> Result<Duration, Str
         .ok_or_else(|| format!("{operation} exceeded five seconds"))
 }
 
-fn unix_connect_with_timeout(path: &Path, timeout: Duration) -> std::io::Result<UnixStream> {
+pub(super) fn unix_connect_with_timeout(
+    path: &Path,
+    timeout: Duration,
+) -> std::io::Result<UnixStream> {
     let address = socket2::SockAddr::unix(path)?;
     let socket = socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None)?;
     socket.connect_timeout(&address, timeout)?;

@@ -129,18 +129,25 @@ host owns the local socket, window, input mapping, and redraw lifecycle; it owns
 no terminal state.
 
 Each Eon workspace pane references an independent Orbit Session. Venus keeps
-the EONW connection for workspace state
-and actions, one presentation connection to the selected popup or to each
-column's expanded pane, and one read-only
-metadata observer for each visible live pane. Sessions in hidden tabs and offline
-Sessions have no Venus observer and remain alive independently; the columns a
-zoom hides keep their observers and connections.
+the EONW connection for workspace state/actions and one presentation connection
+to the selected popup or each column's expanded pane. Runtime owns read-only
+metadata observers for panes in every tab and workspace and supplies semantic
+labels over EONW. Venus opens no separate label observers. Hidden terminals keep
+running; the columns that zoom hides retain their presentation connections.
 
 Terminal accessibility text and selection come from the same accepted Scene.
 Atomic units retain their terminal columns, and AccessKit projects their
 positions and widths through the rendered grid and visible clipping. Scoped
 Linux Orca line-review evidence predates this repository and awaits re-proof
 under VEN-C1; complete composed screen-reader qualification and native reader-key delivery remain separate.
+
+Pane labels come from Runtime: the pane ID, then a pinned name, otherwise its
+sanitized terminal title, otherwise its compact working directory. A differing
+terminal directory adds ` · DIRECTORY`, using a relative or shorter compact path.
+Labels keep explicit connecting, unavailable and offline states. The ID is dimmer
+when the resolved background and opacity permit readable contrast; narrow labels
+keep the ID when it fits, while accessibility and close listings retain the full
+bounded label. Metadata and names are display text, never command input.
 
 ## Platform and limits
 

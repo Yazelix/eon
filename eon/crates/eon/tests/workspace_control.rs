@@ -1270,6 +1270,8 @@ printf '/selected-\377\n' > "$4"
             selected_popup: None,
             columns: vec![Column {
                 panes: vec![Pane {
+                    label: "p1".into(),
+                    pinned_name: None,
                     id: "p1".into(),
                     session: "session-1".into(),
                     endpoint: b"/test.sock".to_vec(),
@@ -1774,7 +1776,10 @@ cat >/dev/null
     let cancelled = wait_for_picker_close(&control, &home);
     assert_eq!(cancelled.active_tab, "t5");
     assert_eq!(cancelled.tabs.len(), 2);
-    assert_eq!(cancelled.tabs[0], before_cancel.tabs[0]);
+    assert_eq!(
+        stable_tabs(&cancelled.tabs)[0],
+        stable_tabs(&before_cancel.tabs)[0]
+    );
     assert!(!cancelled.tabs[1].pending);
     assert_eq!(cancelled.tabs[1].panes().count(), 1);
     assert!(
@@ -1805,7 +1810,10 @@ cat >/dev/null
     fs::remove_dir(&home).unwrap();
     fs::write(&release, "").unwrap();
     let failed = wait_for_picker_close(&control, &selected);
-    assert_eq!(failed.tabs[0], before_cancel.tabs[0]);
+    assert_eq!(
+        stable_tabs(&failed.tabs)[0],
+        stable_tabs(&before_cancel.tabs)[0]
+    );
     assert_eq!(failed.tabs.len(), 1);
     assert_eq!(failed.active_tab, "t4");
     assert!(supervisor.child.try_wait().unwrap().is_none());
@@ -1932,6 +1940,27 @@ fn failed_directory_picker_stop_on_detach_keeps_the_supervisor_and_picker() {
 
 fn stdout(output: &Output) -> &str {
     std::str::from_utf8(&output.stdout).unwrap()
+}
+
+// Lifecycle assertions exclude labels, which change independently as metadata arrives.
+fn stable_tabs(tabs: &[Tab]) -> Vec<Tab> {
+    let mut tabs = tabs.to_vec();
+    for tab in &mut tabs {
+        for pane in tab.columns.iter_mut().flat_map(|column| &mut column.panes) {
+            pane.label.clear();
+        }
+    }
+    tabs
+}
+
+fn stable_workspace_json(output: &Output) -> serde_json::Value {
+    let mut value: serde_json::Value = serde_json::from_str(stdout(output)).unwrap();
+    for tab in value["tabs"].as_array_mut().unwrap() {
+        for pane in tab["panes"].as_array_mut().unwrap() {
+            pane.as_object_mut().unwrap().remove("label");
+        }
+    }
+    value
 }
 
 #[test]
@@ -2866,6 +2895,162 @@ fn eonbase_replaces_exact_residue_after_its_supervisor_and_session_die() {
 }
 
 #[test]
+fn pane_rename_cli_sets_clears_and_reports_the_runtime_label() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = eon_command(&binary)
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess {
+        child,
+        stop: stop.clone(),
+    };
+    let control = generation_runtime(&runtime).join("eon.sock");
+    wait_for(&control);
+    let read = |arguments: &[&str]| {
+        let output = invoke(&binary, &runtime, &config, arguments);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let before = read(&["workspace", "--json"]);
+    let named = read(&["pane", "rename", "p1", "  Review pane labels  ", "--json"]);
+    let pane = &named["tabs"][0]["panes"][0];
+    assert_eq!(pane["pinned_name"], "Review pane labels");
+    assert!(
+        pane["label"]
+            .as_str()
+            .unwrap()
+            .starts_with("p1  Review pane labels")
+    );
+    assert_eq!(before["active_tab"], named["active_tab"]);
+    for key in ["selected_pane", "selected_popup"] {
+        assert_eq!(before["tabs"][0][key], named["tabs"][0][key]);
+    }
+    assert_eq!(
+        read(&["workspace", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
+        "Review pane labels"
+    );
+    assert_eq!(
+        read(&["pane", "rename", "p1", "--clear", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
+        serde_json::Value::Null
+    );
+    read(&["pane", "rename", "p1", "Again", "--json"]);
+    assert_eq!(
+        read(&["pane", "rename", "p1", "  ", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
+        serde_json::Value::Null
+    );
+    let literal = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["pane", "rename", "p1", "--", "--clear"],
+    );
+    assert!(literal.status.success());
+    assert_eq!(
+        read(&["workspace", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
+        "--clear"
+    );
+    let missing = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["pane", "rename", "p999", "x", "--json"],
+    );
+    assert_eq!(missing.status.code(), Some(3));
+    assert!(stdout(&missing).contains("unknown-pane"));
+    let malformed = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["pane", "rename", "p1", "bad\u{202e}name", "--json"],
+    );
+    assert_eq!(malformed.status.code(), Some(2));
+    assert_eq!(
+        read(&["workspace", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
+        "--clear"
+    );
+    let tools = root.join("tools");
+    fs::create_dir(&tools).unwrap();
+    let commands = root.join("eon-commands");
+    symlink(&binary, &commands).unwrap();
+    let environment = fs::read(format!(
+        "/proc/{}/environ",
+        live_identity(&generation_runtime(&runtime).join("orbit.sock")).process_id
+    ))
+    .unwrap();
+    let caller = environment
+        .split(|byte| *byte == 0)
+        .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+        .unwrap();
+    for (menu, expected) in [
+        ("Rename pane", Some("From Commands")),
+        ("Clear pane name", None),
+    ] {
+        executable(
+            &tools.join("fzf"),
+            &format!(
+                r#"#!/bin/sh
+case "$*" in
+  *--bind=enter:print-query*) printf 'From Commands\0';;
+  *) while IFS="$(printf '\t')" read -r index rest; do
+       case "$rest" in '{menu}'*) printf '%s\tchosen\n' "$index";; esac
+     done;;
+esac
+"#
+            ),
+        );
+        let mut command = eon_command(&commands);
+        let original = command
+            .get_envs()
+            .find_map(|(key, value)| (key == "PATH").then_some(value).flatten())
+            .unwrap()
+            .to_owned();
+        let path = std::iter::once(tools.clone()).chain(std::env::split_paths(&original));
+        let output = command
+            .env("PATH", std::env::join_paths(path).unwrap())
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_TAB", "t1")
+            .env("EON_TERMINAL", OsStr::from_bytes(caller))
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            read(&["workspace", "--json"])["tabs"][0]["panes"][0]["pinned_name"],
+            expected.map_or(serde_json::Value::Null, |value| value.into())
+        );
+    }
+    fs::write(&stop, "").unwrap();
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     let root = temporary_directory();
     let runtime = root.join("runtime");
@@ -2933,7 +3118,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         ),
         ("w1", "w2")
     );
-    assert_eq!(created.tabs, original.tabs);
+    assert_eq!(stable_tabs(&created.tabs), stable_tabs(&original.tabs));
     assert_eq!(created.workspaces.len(), 2);
     let shown = snapshot(workspace_action(&control, "shown", Action::Inspect));
     assert_eq!(shown.workspace, "w2");
@@ -2966,15 +3151,17 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     ));
     assert_eq!(switched.workspace, "w1");
     assert_eq!(
-        snapshot(workspace_action(
-            &control,
-            "same",
-            Action::SwitchWorkspace {
-                workspace: "w1".into()
-            }
-        ))
-        .tabs,
-        switched.tabs
+        stable_tabs(
+            &snapshot(workspace_action(
+                &control,
+                "same",
+                Action::SwitchWorkspace {
+                    workspace: "w1".into()
+                }
+            ))
+            .tabs
+        ),
+        stable_tabs(&switched.tabs)
     );
     snapshot(workspace_action(
         &control,
@@ -2990,7 +3177,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         ProtocolAction::Workspace(Action::Inspect),
     ));
     assert_eq!(inspected.workspace, "w1");
-    assert_eq!(inspected.tabs, original.tabs);
+    assert_eq!(stable_tabs(&inspected.tabs), stable_tabs(&original.tabs));
 
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "session-2").unwrap();
@@ -3028,7 +3215,8 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         "a removed caller workspace falls back to the shown survivor"
     );
     assert_eq!(
-        closed.tabs, shown.tabs,
+        stable_tabs(&closed.tabs),
+        stable_tabs(&shown.tabs),
         "closing a hidden workspace leaves shown terminals alone"
     );
     assert_eq!(closed.workspaces.len(), 1);
@@ -3119,7 +3307,10 @@ fn commands_from_a_terminal_target_its_column_and_stale_callers_change_nothing()
             .unwrap()
     };
     let inspect = |id: &str| match workspace_action(&control, id, Action::Inspect) {
-        Response::Snapshot(snapshot) => snapshot,
+        Response::Snapshot(mut snapshot) => {
+            snapshot.tabs = stable_tabs(&snapshot.tabs);
+            snapshot
+        }
         response => panic!("cannot inspect workspace: {response:?}"),
     };
 
@@ -3311,7 +3502,10 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
     assert!(before.status.success());
     let unchanged = invoke(&binary, &runtime, &config, &["focus", "left", "--json"]);
     assert!(unchanged.status.success());
-    assert_eq!(stdout(&before), stdout(&unchanged));
+    assert_eq!(
+        stable_workspace_json(&before),
+        stable_workspace_json(&unchanged)
+    );
     for (id, action) in [
         ("next-attention", ProtocolAction::NextAttention),
         ("previous-attention", ProtocolAction::PreviousAttention),
@@ -3323,7 +3517,10 @@ fn delayed_second_cli_receives_committed_workspace_and_controls_three_sessions()
         ));
     }
     let after = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
-    assert_eq!(stdout(&before), stdout(&after));
+    assert_eq!(
+        stable_workspace_json(&before),
+        stable_workspace_json(&after)
+    );
     let human = invoke(&binary, &runtime, &config, &["workspace"]);
     assert!(human.status.success());
     assert!(stdout(&human).contains("active t1\n"));
@@ -3597,7 +3794,10 @@ fn tab_directory_retargets_future_sessions_without_crossing_tabs() {
     assert_eq!(failed.status.code(), Some(1));
     assert!(stdout(&failed).contains("\"code\":\"session-start\""));
     let after = invoke(&binary, &runtime, &config, &["workspace", "--json"]);
-    assert_eq!(stdout(&before), stdout(&after));
+    assert_eq!(
+        stable_workspace_json(&before),
+        stable_workspace_json(&after)
+    );
     assert!(!generation.join("session-5.sock").exists());
     assert!(!artifact_path(&generation.join("session-5.sock"), ".record").exists());
 
