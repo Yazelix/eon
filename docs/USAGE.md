@@ -480,6 +480,12 @@ composition.
   (`~/.local/state/eon/logs/orbit` by default), named
   `GENERATION-SESSION-RUN.log`; Eon keeps the newest 100 plus those of running
   Orbit hosts.
+- **A command works in Yazelix Nova but not in Eon:** Eon's managed Nushell
+  and Bash load your own shell configuration (`~/.config/nushell` and
+  `~/.bashrc`), while Nova's Nushell reads `~/.config/yazelix/nu` in place of
+  `~/.config/nushell/config.nu` and `env.nu`. Environment variables, secrets
+  and hooks set in your own configuration apply in Eon terminals, so look
+  there first.
 - **A replacement window rejects configuration:** fix `config.toml` and run
   `eon attach`; the existing terminals remain alive.
 - **Graphics fail outside native Wayland or on unproved hardware:** that
