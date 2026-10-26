@@ -951,11 +951,6 @@ impl Renderer {
             g: 43,
             b: 58,
         };
-        let idle = SceneColor {
-            r: 16,
-            g: 22,
-            b: 32,
-        };
         rectangles.push(
             workspace.header.left,
             workspace.header.top,
@@ -1159,16 +1154,26 @@ impl Renderer {
             }
             let visual = workspace.bar_pill_rect(tab.rect, self.metrics);
             let radius = visual.height / 2.0;
+            // Tab pills are brighter than the shared selection and hover fills so that they stand
+            // out from the bar and each state steps up from the last.
             let fill = if tab.selected {
-                selected
+                SceneColor {
+                    r: 52,
+                    g: 72,
+                    b: 92,
+                }
             } else if self.header.hovers(WorkspaceFocus::Tabs, &tab.id) {
                 SceneColor {
-                    r: 23,
-                    g: 34,
-                    b: 46,
+                    r: 40,
+                    g: 54,
+                    b: 70,
                 }
             } else {
-                idle
+                SceneColor {
+                    r: 30,
+                    g: 40,
+                    b: 54,
+                }
             };
             rectangles.push_rounded(visual, radius, fill);
             if tab.selected && focus == WorkspaceFocus::Tabs {
@@ -1190,9 +1195,9 @@ impl Renderer {
                     }
                 } else {
                     SceneColor {
-                        r: 162,
-                        g: 174,
-                        b: 190,
+                        r: 198,
+                        g: 208,
+                        b: 220,
                     }
                 },
                 DrawStyleKind::Status(Wrap::None),

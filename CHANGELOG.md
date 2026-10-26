@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Tab pills stand out more from the Eon Bar: inactive, hovered and selected
+  tabs have brighter fills that step up in that order, and inactive tab
+  labels are brighter.
+
 - Popup margins are fixed at 8 logical pixels at the sides and 4 above and
   below. A `[popup]` table in `config.toml` is ignored with the usual
   unknown-setting warning, and `eon config defaults` no longer lists it.
