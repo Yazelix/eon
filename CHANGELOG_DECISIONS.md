@@ -9,6 +9,31 @@ Each entry has a unique `EON-D<number>` index, the next unused number. Never
 renumber or reuse an index; a later entry that replaces a decision names the
 index it supersedes.
 
+## EON-D2 — Popup geometry is not configurable
+
+**Date:** 2026-10-26
+
+**Decision:** Popups stay "full screen": a popup covers the whole area the
+tab's columns use, to the right of the agent sidebar when it is open, and Eon
+supplies fixed popup margins of 8 side and 4 vertical logical pixels. Popups
+have no geometry settings of their own; the `[popup]` margin settings are
+gone, and a leftover `[popup]` table is ignored with EON-C9's unknown-setting
+warning.
+
+**Why:** To avoid edge cases, and to avoid offering a setting that had not
+been tested in use. The edge cases lay between the margins, the terminal grid
+and short windows (`eon-5z6y`).
+
+**Rejected:**
+
+- Keeping `side_margin` and `vertical_margin` in `[popup]`: the edge cases
+  stay, for little user benefit.
+- Removing the margins from EONW: a protocol version bump; Eon keeps sending
+  its fixed values over the wire instead.
+
+Beads: `eon-5z6y`, with the popup bottom-edge fix `eon-rpt9` in the same
+batch. Contracts: EON-C10 and EON-C18 changed; VEN-C18 unchanged.
+
 ## EON-D1 — Popups keep a neutral outline
 
 **Date:** 2026-10-26

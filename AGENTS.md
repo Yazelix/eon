@@ -173,6 +173,10 @@ Index durable contracts with their owner: `EON-C<number>` in
 Stop for user approval before adding, changing, replacing, or retiring a
 contract.
 
+`CHANGELOG_DECISIONS.md` indexes product and design decisions as
+`EON-D<number>`. Add an entry only when the user explicitly asks to save a
+decision there; otherwise decisions live in their beads and contracts.
+
 In Eon, a consequential code shape (`AP-REFERENCE-001`) is a change that adds or
 changes a dependency, a protocol or wire format, a contract, or a lifecycle,
 security, or trust boundary. Before such a change, record in the owning bead:
