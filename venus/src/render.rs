@@ -37,6 +37,7 @@ mod cells;
 mod chrome;
 mod cursor_trail;
 mod fonts;
+mod palette;
 
 use cells::{
     BRAILLE_FAMILY, CellFont, CellTextKind, block_span, build_preview_rectangles,
@@ -62,16 +63,6 @@ const DEFAULT_METRICS: CellMetrics = CellMetrics {
     padding: 12.0,
 };
 
-const CARD_OUTLINE: SceneColor = SceneColor {
-    r: 58,
-    g: 75,
-    b: 91,
-};
-const DEFAULT_BACKGROUND: SceneColor = SceneColor {
-    r: 10,
-    g: 13,
-    b: 20,
-};
 const SHADER: &str = r#"
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -476,7 +467,7 @@ fn card_backdrops(
     .filter_map(|(card, shown, scene)| {
         shown.then_some((
             card,
-            scene.map_or(DEFAULT_BACKGROUND, |scene| scene.background),
+            scene.map_or(palette::TERMINAL_FALLBACK, |scene| scene.background),
         ))
     })
     .collect::<Vec<_>>();
@@ -486,7 +477,7 @@ fn card_backdrops(
         let beside = cards
             .iter()
             .min_by(|left, right| left.0.bounds.left.total_cmp(&right.0.bounds.left))
-            .map_or(DEFAULT_BACKGROUND, |(_, background)| *background);
+            .map_or(palette::TERMINAL_FALLBACK, |(_, background)| *background);
         cards.push((
             CardFill {
                 bounds: workspace.card_rect(
@@ -520,7 +511,7 @@ fn push_card_backdrop(
             rect.top,
             rect.width,
             rect.height,
-            DEFAULT_BACKGROUND,
+            palette::BAR_BACKGROUND,
             1.0,
         );
     }
@@ -540,8 +531,8 @@ fn push_card_backdrop(
         // Partition each corner row: an opaque underpaint would apply alpha twice.
         for (top, inset) in corner_rows(card, radius) {
             for (left, width, color, alpha) in [
-                (card.left, inset, DEFAULT_BACKGROUND, 1.0),
-                (card.right() - inset, inset, DEFAULT_BACKGROUND, 1.0),
+                (card.left, inset, palette::BAR_BACKGROUND, 1.0),
+                (card.right() - inset, inset, palette::BAR_BACKGROUND, 1.0),
             ] {
                 rectangles.push(left, top, width, 1.0, color, alpha);
             }
@@ -1094,7 +1085,7 @@ impl Renderer {
             spinners: Spinners::new(spinners_turn),
             cursor_tail: cursor_tail
                 .map(|(color, duration)| (color, cursor_outline(color), duration)),
-            clear: clear_color(DEFAULT_BACKGROUND, background_opacity, srgb_target),
+            clear: clear_color(palette::TERMINAL_FALLBACK, background_opacity, srgb_target),
             background_opacity,
             padding_color,
             pane_frames,
@@ -1458,7 +1449,7 @@ impl Renderer {
                         workspace.tab_viewport.bottom(),
                         right - left,
                         self.config.height as f32 - workspace.tab_viewport.bottom(),
-                        scene.map_or(DEFAULT_BACKGROUND, |scene| scene.background),
+                        scene.map_or(palette::TERMINAL_FALLBACK, |scene| scene.background),
                         self.background_opacity,
                     );
                 }
@@ -1627,7 +1618,7 @@ impl Renderer {
             }
         } else {
             self.clear = clear_color(
-                DEFAULT_BACKGROUND,
+                palette::TERMINAL_FALLBACK,
                 self.background_opacity,
                 self.config.format.is_srgb(),
             );
@@ -1637,11 +1628,7 @@ impl Renderer {
                 self.config.height as f32 * 0.42,
                 self.config.width as f32 - self.metrics.padding * 4.0,
                 self.metrics.height * 1.5,
-                SceneColor {
-                    r: 126,
-                    g: 231,
-                    b: 185,
-                },
+                palette::ACCENT,
                 DrawStyleKind::Heading,
             );
             self.push_text(
@@ -1650,11 +1637,7 @@ impl Renderer {
                 self.config.height as f32 * 0.50,
                 self.config.width as f32 - self.metrics.padding * 4.0,
                 self.metrics.height * 3.0,
-                SceneColor {
-                    r: 196,
-                    g: 202,
-                    b: 216,
-                },
+                palette::SPLASH_TEXT,
                 DrawStyleKind::Status(Wrap::WordOrGlyph),
             );
         }
@@ -1784,11 +1767,7 @@ impl Renderer {
             width - padding * 2.0,
             width - padding * 2.0,
             self.metrics.height,
-            SceneColor {
-                r: 162,
-                g: 204,
-                b: 230,
-            },
+            palette::SCROLLBACK_TEXT,
             DrawStyleKind::Status(Wrap::None),
             clip,
         );
@@ -1796,17 +1775,9 @@ impl Renderer {
             rect,
             height / 2.0,
             if in_header {
-                SceneColor {
-                    r: 37,
-                    g: 58,
-                    b: 74,
-                }
+                palette::SCROLLBACK_PILL_HEADER
             } else {
-                SceneColor {
-                    r: 28,
-                    g: 43,
-                    b: 58,
-                }
+                palette::SCROLLBACK_PILL_OVERLAY
             },
         );
         if !in_header {
@@ -1834,11 +1805,7 @@ impl Renderer {
                 rect.width,
                 rect.height,
                 1.0,
-                SceneColor {
-                    r: 137,
-                    g: 180,
-                    b: 250,
-                },
+                palette::HYPERLINK_OUTLINE,
             );
         }
     }
@@ -1864,11 +1831,7 @@ impl Renderer {
                 } else {
                     1.25 * MAX_NOTICE_LINES as f32
                 },
-            SceneColor {
-                r: 245,
-                g: 192,
-                b: 94,
-            },
+            palette::NOTICE_TEXT,
             if hyperlink {
                 DrawStyleKind::Monospace
             } else {
@@ -1909,11 +1872,7 @@ impl Renderer {
             rect.top,
             rect.width,
             rect.height,
-            SceneColor {
-                r: 35,
-                g: 29,
-                b: 18,
-            },
+            palette::NOTICE_BACKGROUND,
             0.96,
         );
     }
@@ -2652,7 +2611,7 @@ impl RectangleBatch {
                     piece.top,
                     piece.width,
                     piece.height,
-                    CARD_OUTLINE,
+                    palette::CARD_OUTLINE,
                     alpha,
                 );
             }
@@ -3001,8 +2960,8 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
-            background: DEFAULT_BACKGROUND,
-            foreground: CARD_OUTLINE,
+            background: palette::TERMINAL_FALLBACK,
+            foreground: palette::CARD_OUTLINE,
             cursor: None,
             content: (0..2)
                 .map(|row| DrawRow {
@@ -3619,7 +3578,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
-            background: DEFAULT_BACKGROUND,
+            background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
             cursor: None,
             content: Vec::new(),
@@ -3683,7 +3642,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
-            background: DEFAULT_BACKGROUND,
+            background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
             cursor: Some(DrawCursor {
                 visible: true,
@@ -4675,8 +4634,8 @@ mod tests {
                     screen: Screen::Primary,
                     title: String::new(),
                     working_directory: String::new(),
-                    background: DEFAULT_BACKGROUND,
-                    foreground: CARD_OUTLINE,
+                    background: palette::TERMINAL_FALLBACK,
+                    foreground: palette::CARD_OUTLINE,
                     cursor: None,
                     content: vec![],
                 };
@@ -4746,7 +4705,7 @@ mod tests {
                     fill,
                     paint.pane_viewport,
                     &rules,
-                    Some(CARD_OUTLINE),
+                    Some(palette::CARD_OUTLINE),
                     1.0,
                     1.0,
                 );
@@ -4800,8 +4759,8 @@ mod tests {
                 screen: Screen::Primary,
                 title: String::new(),
                 working_directory: String::new(),
-                background: DEFAULT_BACKGROUND,
-                foreground: CARD_OUTLINE,
+                background: palette::TERMINAL_FALLBACK,
+                foreground: palette::CARD_OUTLINE,
                 cursor: None,
                 content: vec![],
             };
@@ -5202,7 +5161,7 @@ mod tests {
                                 fill,
                                 workspace.pane_viewport,
                                 &rules,
-                                Some(CARD_OUTLINE),
+                                Some(palette::CARD_OUTLINE),
                                 neutral,
                                 stroke,
                             );
@@ -5224,7 +5183,7 @@ mod tests {
                                     peer_fill,
                                     workspace.pane_viewport,
                                     &rules,
-                                    Some(CARD_OUTLINE),
+                                    Some(palette::CARD_OUTLINE),
                                     neutral,
                                     neutral,
                                 );
@@ -5281,8 +5240,8 @@ mod tests {
                                             screen: Screen::Primary,
                                             title: String::new(),
                                             working_directory: String::new(),
-                                            background: DEFAULT_BACKGROUND,
-                                            foreground: CARD_OUTLINE,
+                                            background: palette::TERMINAL_FALLBACK,
+                                            foreground: palette::CARD_OUTLINE,
                                             cursor: None,
                                             content: vec![],
                                         })
@@ -5361,7 +5320,7 @@ mod tests {
                                     fill,
                                     paint.pane_viewport,
                                     &rules,
-                                    Some(CARD_OUTLINE),
+                                    Some(palette::CARD_OUTLINE),
                                     neutral,
                                     if current { stroke } else { neutral },
                                 );
@@ -5632,8 +5591,8 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
-            background: DEFAULT_BACKGROUND,
-            foreground: CARD_OUTLINE,
+            background: palette::TERMINAL_FALLBACK,
+            foreground: palette::CARD_OUTLINE,
             cursor: None,
             content: vec![],
         };
@@ -6190,8 +6149,8 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
-            background: DEFAULT_BACKGROUND,
-            foreground: CARD_OUTLINE,
+            background: palette::TERMINAL_FALLBACK,
+            foreground: palette::CARD_OUTLINE,
             cursor: Some(DrawCursor {
                 visible: true,
                 blinking: false,
@@ -6200,7 +6159,7 @@ mod tests {
                 column: 0,
                 row: 0,
                 at_wide_tail: false,
-                color: CARD_OUTLINE,
+                color: palette::CARD_OUTLINE,
                 explicit_color: false,
             }),
             content: vec![DrawRow {
@@ -6302,8 +6261,8 @@ mod tests {
                 true,
                 metrics,
                 source.terminal,
-                CARD_OUTLINE,
-                DEFAULT_BACKGROUND,
+                palette::CARD_OUTLINE,
+                palette::TERMINAL_FALLBACK,
                 1.0,
                 0.0,
             );
@@ -6328,8 +6287,8 @@ mod tests {
                     true,
                     metrics,
                     destination.terminal,
-                    CARD_OUTLINE,
-                    DEFAULT_BACKGROUND,
+                    palette::CARD_OUTLINE,
+                    palette::TERMINAL_FALLBACK,
                     1.0,
                     1.0 / 240.0,
                 );
@@ -6391,8 +6350,8 @@ mod tests {
             screen: orbit_protocol::Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
-            background: DEFAULT_BACKGROUND,
-            foreground: CARD_OUTLINE,
+            background: palette::TERMINAL_FALLBACK,
+            foreground: palette::CARD_OUTLINE,
             cursor: None,
             content: vec![DrawRow {
                 wrapped: false,
@@ -6403,9 +6362,9 @@ mod tests {
                     text: " ".into(),
                     hyperlink: String::new(),
                     style: DrawStyle {
-                        foreground: CARD_OUTLINE,
-                        background: CARD_OUTLINE,
-                        underline_color: CARD_OUTLINE,
+                        foreground: palette::CARD_OUTLINE,
+                        background: palette::CARD_OUTLINE,
+                        underline_color: palette::CARD_OUTLINE,
                         bold: false,
                         italic: false,
                         faint: false,

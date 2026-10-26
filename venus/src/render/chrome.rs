@@ -2,8 +2,8 @@
 //! header tooltip and the native dialog, plus the pointer state that highlights them.
 
 use super::{
-    CARD_OUTLINE, CellMetrics, CursorPoint, DEFAULT_BACKGROUND, DrawStyleKind, PlacedText,
-    RectangleBatch, Renderer, SceneColor, cells::NERD_FONT_FAMILY, physical_outline_width, shaping,
+    CellMetrics, CursorPoint, DrawStyleKind, PlacedText, RectangleBatch, Renderer, SceneColor,
+    cells::NERD_FONT_FAMILY, palette, physical_outline_width, shaping,
 };
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
@@ -46,17 +46,9 @@ fn pane_id_color(
         return name;
     }
     let dim = if selected {
-        SceneColor {
-            r: 162,
-            g: 174,
-            b: 190,
-        }
+        palette::SECONDARY_TEXT
     } else {
-        SceneColor {
-            r: 147,
-            g: 160,
-            b: 179,
-        }
+        palette::PANE_ID
     };
     // A bright desktop bounds the translucent fill; frame and hover remain opaque.
     let resolved = |value: u8| (f32::from(value) * opacity + 255.0 * (1.0 - opacity)).round() as u8;
@@ -65,7 +57,7 @@ fn pane_id_color(
         g: resolved(fill.g),
         b: resolved(fill.b),
     };
-    if contrast(dim, resolved) >= 4.5 && contrast(dim, DEFAULT_BACKGROUND) >= 4.5 {
+    if contrast(dim, resolved) >= 4.5 && contrast(dim, palette::BAR_BACKGROUND) >= 4.5 {
         dim
     } else {
         name
@@ -260,11 +252,6 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
         width: badge.rect.width - ring * 2.0,
         height: badge.rect.height - ring * 2.0,
     };
-    let muted = SceneColor {
-        r: 162,
-        g: 174,
-        b: 190,
-    };
     let alpha = if badge.dimmed { 0.45 } else { 1.0 };
     let at = |x: f32, y: f32| CursorPoint {
         x: glyph.left + glyph.width * x,
@@ -274,30 +261,40 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
     match badge.state {
         AttentionState::NeedsInput => rectangles.push_quad(
             [at(0.5, 0.0), at(1.0, 0.5), at(0.5, 1.0), at(0.0, 0.5)],
-            SceneColor {
-                r: 255,
-                g: 196,
-                b: 87,
-            },
+            palette::ATTENTION_NEEDS_INPUT,
             alpha,
         ),
         AttentionState::Error => {
-            let red = SceneColor {
-                r: 255,
-                g: 107,
-                b: 107,
-            };
-            rectangles.push_stroke(at(0.1, 0.1), at(0.9, 0.9), stroke, red, alpha);
-            rectangles.push_stroke(at(0.9, 0.1), at(0.1, 0.9), stroke, red, alpha);
+            rectangles.push_stroke(
+                at(0.1, 0.1),
+                at(0.9, 0.9),
+                stroke,
+                palette::ATTENTION_ERROR,
+                alpha,
+            );
+            rectangles.push_stroke(
+                at(0.9, 0.1),
+                at(0.1, 0.9),
+                stroke,
+                palette::ATTENTION_ERROR,
+                alpha,
+            );
         }
         AttentionState::Finished => {
-            let green = SceneColor {
-                r: 126,
-                g: 231,
-                b: 185,
-            };
-            rectangles.push_stroke(at(0.05, 0.55), at(0.4, 0.88), stroke, green, alpha);
-            rectangles.push_stroke(at(0.4, 0.88), at(0.95, 0.15), stroke, green, alpha);
+            rectangles.push_stroke(
+                at(0.05, 0.55),
+                at(0.4, 0.88),
+                stroke,
+                palette::ATTENTION_FINISHED,
+                alpha,
+            );
+            rectangles.push_stroke(
+                at(0.4, 0.88),
+                at(0.95, 0.15),
+                stroke,
+                palette::ATTENTION_FINISHED,
+                alpha,
+            );
         }
         AttentionState::Working => {
             push_arc(rectangles, badge.rect, glyph, phase.unwrap_or(0), alpha)
@@ -327,7 +324,7 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
                         point(inner, end),
                         point(inner, start),
                     ],
-                    muted,
+                    palette::ATTENTION_IDLE,
                     alpha,
                 );
             }
@@ -348,11 +345,6 @@ fn push_arc(
     alpha: f32,
 ) {
     const SAMPLES: u16 = 8;
-    let blue = SceneColor {
-        r: 138,
-        g: 180,
-        b: 255,
-    };
     let center_x = glyph.left + glyph.width / 2.0;
     let center_y = glyph.top + glyph.height / 2.0;
     let outer = glyph.width / 2.0;
@@ -380,7 +372,7 @@ fn push_arc(
                 }
             }
             let coverage = f32::from(covered) / f32::from(SAMPLES * SAMPLES);
-            rectangles.push(x, y, 1.0, 1.0, blue, alpha * coverage);
+            rectangles.push(x, y, 1.0, 1.0, palette::ATTENTION_WORKING, alpha * coverage);
             x += 1.0;
         }
         y += 1.0;
@@ -430,7 +422,7 @@ fn push_bar_widget(
         visual,
         visual.height / 2.0,
         physical_outline_width(border_width, scale),
-        CARD_OUTLINE,
+        palette::CHIP_OUTLINE,
     );
 }
 
@@ -696,11 +688,7 @@ impl Renderer {
             top + padding,
             width - padding * 2.0,
             height - padding * 2.0,
-            SceneColor {
-                r: 239,
-                g: 244,
-                b: 248,
-            },
+            palette::PRIMARY_TEXT,
             DrawStyleKind::Status(Wrap::WordOrGlyph),
         );
         let Some(text) = self.text.get_mut(before) else {
@@ -745,39 +733,15 @@ impl Renderer {
                 bottom: (top + height).ceil() as i32,
             },
         ));
-        rectangles.push_rounded(
-            tooltip,
-            padding / 2.0,
-            SceneColor {
-                r: 37,
-                g: 49,
-                b: 64,
-            },
-        );
+        rectangles.push_rounded(tooltip, padding / 2.0, palette::TOOLTIP_BACKGROUND);
     }
 
     pub(super) fn build_dialog(&mut self, viewer: &DialogScene, rectangles: &mut RectangleBatch) {
         let first = self.text.len();
         let padding = self.metrics.padding.min(viewer.bounds.width / 8.0);
         rectangles.clip = None;
-        rectangles.push_rounded(
-            viewer.bounds,
-            padding / 2.0,
-            SceneColor {
-                r: 16,
-                g: 22,
-                b: 32,
-            },
-        );
-        rectangles.push_rounded_outline(
-            viewer.bounds,
-            padding / 2.0,
-            SceneColor {
-                r: 58,
-                g: 75,
-                b: 91,
-            },
-        );
+        rectangles.push_rounded(viewer.bounds, padding / 2.0, palette::DIALOG_BACKGROUND);
+        rectangles.push_rounded_outline(viewer.bounds, padding / 2.0, palette::CARD_OUTLINE);
         self.text_overlay = Some((
             first,
             TextBounds {
@@ -795,11 +759,7 @@ impl Renderer {
             viewer.title.width,
             viewer.title.width,
             viewer.title.height,
-            SceneColor {
-                r: 239,
-                g: 244,
-                b: 248,
-            },
+            palette::PRIMARY_TEXT,
             DrawStyleKind::Heading,
             viewer.bounds,
         );
@@ -810,11 +770,7 @@ impl Renderer {
             viewer.subtitle.width,
             viewer.subtitle.width,
             viewer.subtitle.height,
-            SceneColor {
-                r: 162,
-                g: 174,
-                b: 190,
-            },
+            palette::SECONDARY_TEXT,
             DrawStyleKind::PopupLabel,
             viewer.bounds,
         );
@@ -835,11 +791,7 @@ impl Renderer {
                     group.heading.width,
                     group.heading.width,
                     group.heading.height,
-                    SceneColor {
-                        r: 126,
-                        g: 231,
-                        b: 185,
-                    },
+                    palette::ACCENT,
                     DrawStyleKind::PopupLabel,
                     viewer.content,
                 );
@@ -852,11 +804,7 @@ impl Renderer {
                     key_width,
                     key_width,
                     row.rect.height,
-                    SceneColor {
-                        r: 162,
-                        g: 204,
-                        b: 230,
-                    },
+                    palette::SHORTCUT_KEY_TEXT,
                     DrawStyleKind::Status(Wrap::WordOrGlyph),
                     viewer.content,
                 );
@@ -868,11 +816,7 @@ impl Renderer {
                     (row.rect.right() - action_left).max(1.0),
                     (row.rect.right() - action_left).max(1.0),
                     row.rect.height,
-                    SceneColor {
-                        r: 219,
-                        g: 226,
-                        b: 234,
-                    },
+                    palette::SHORTCUT_ACTION_TEXT,
                     DrawStyleKind::Status(Wrap::WordOrGlyph),
                     viewer.content,
                 );
@@ -885,15 +829,7 @@ impl Renderer {
                 width: self.metrics.scale * 2.0,
                 height: viewer.content.height,
             };
-            rectangles.push_rounded(
-                track,
-                track.width / 2.0,
-                SceneColor {
-                    r: 43,
-                    g: 53,
-                    b: 67,
-                },
-            );
+            rectangles.push_rounded(track, track.width / 2.0, palette::SCROLLBAR_TRACK);
             let thumb_height = (track.height * viewer.content.height
                 / (viewer.content.height + viewer.max_scroll))
                 .max(track.width * 2.0)
@@ -907,11 +843,7 @@ impl Renderer {
                     ..track
                 },
                 track.width / 2.0,
-                SceneColor {
-                    r: 126,
-                    g: 231,
-                    b: 185,
-                },
+                palette::ACCENT,
             );
         }
         rectangles.clip = None;
@@ -923,11 +855,7 @@ impl Renderer {
                 viewer.content.width,
                 viewer.content.width,
                 self.metrics.height,
-                SceneColor {
-                    r: 162,
-                    g: 174,
-                    b: 190,
-                },
+                palette::SECONDARY_TEXT,
                 DrawStyleKind::PopupLabel,
                 viewer.bounds,
             );
@@ -941,22 +869,12 @@ impl Renderer {
         rectangles: &mut RectangleBatch,
         backgrounds: &[SceneColor],
     ) {
-        let accent = SceneColor {
-            r: 126,
-            g: 231,
-            b: 185,
-        };
-        let selected = SceneColor {
-            r: 28,
-            g: 43,
-            b: 58,
-        };
         rectangles.push(
             workspace.header.left,
             workspace.header.top,
             workspace.header.width,
             workspace.header.height,
-            DEFAULT_BACKGROUND,
+            palette::BAR_BACKGROUND,
             1.0,
         );
         if let Some(sidebar) = workspace.sidebar() {
@@ -965,21 +883,6 @@ impl Renderer {
             let line = self.metrics.height;
             let text_height = chrome_title_metrics(self.metrics).text_height;
             let width = (sidebar.width - padding * 2.0).max(0.0);
-            let bright = SceneColor {
-                r: 239,
-                g: 244,
-                b: 248,
-            };
-            let muted = SceneColor {
-                r: 162,
-                g: 174,
-                b: 190,
-            };
-            let dim = SceneColor {
-                r: 104,
-                g: 114,
-                b: 128,
-            };
             let area = workspace.sidebar_area().unwrap();
             let gap = self.build_border_title(
                 SIDEBAR_TITLE,
@@ -989,7 +892,7 @@ impl Renderer {
                 },
                 area,
                 width,
-                bright,
+                palette::PRIMARY_TEXT,
             );
             if self.pane_frames {
                 rectangles.clip = Some(area);
@@ -998,7 +901,7 @@ impl Renderer {
                     workspace.card_radius(),
                     &[gap],
                     physical_outline_width(self.border_width, self.metrics.scale),
-                    CARD_OUTLINE,
+                    palette::CARD_OUTLINE,
                 );
                 rectangles.clip = None;
             }
@@ -1011,7 +914,7 @@ impl Renderer {
                     width,
                     width,
                     list.height,
-                    muted,
+                    palette::SECONDARY_TEXT,
                     DrawStyleKind::Status(Wrap::WordOrGlyph),
                     sidebar,
                 );
@@ -1024,7 +927,7 @@ impl Renderer {
                     heading.rect.left,
                     heading.rect.top,
                     heading.rect.width,
-                    accent,
+                    palette::ACCENT,
                     list,
                     rectangles,
                 );
@@ -1035,34 +938,26 @@ impl Renderer {
                 }
                 let hovered = self.header.hovers(WorkspaceFocus::Sidebar, &row.target);
                 if row.focused || hovered {
-                    rectangles.push_rounded(row.rect, padding / 2.0, selected);
+                    rectangles.push_rounded(row.rect, padding / 2.0, palette::CHROME_HIGHLIGHT);
                 }
                 // The "you are here" outline, in the pane cards' outline color, over any
                 // highlight and under a focused row's outline.
                 if row.current {
-                    rectangles.push_rounded_outline(
-                        row.rect,
-                        padding / 2.0,
-                        SceneColor {
-                            r: 58,
-                            g: 75,
-                            b: 91,
-                        },
-                    );
+                    rectangles.push_rounded_outline(row.rect, padding / 2.0, palette::CARD_OUTLINE);
                 }
                 if row.focused {
-                    rectangles.push_rounded_outline(row.rect, padding / 2.0, accent);
+                    rectangles.push_rounded_outline(row.rect, padding / 2.0, palette::ACCENT);
                 }
                 // A glyph on the translucent card needs no disc; on a highlight it matches it.
-                let ring = (row.focused || hovered).then_some(selected);
+                let ring = (row.focused || hovered).then_some(palette::CHROME_HIGHLIGHT);
                 self.spinners.push_badge(row.glyph, ring, rectangles);
                 if let Some((provider, rect)) = row.icon {
                     self.push_quota_icon(provider, rect, Some(list));
                 }
                 let (title, detail) = if row.glyph.dimmed {
-                    (muted, dim)
+                    (palette::SECONDARY_TEXT, palette::TERTIARY_TEXT)
                 } else {
-                    (bright, muted)
+                    (palette::PRIMARY_TEXT, palette::SECONDARY_TEXT)
                 };
                 let text_width = (row.rect.right() - padding / 2.0 - row.text_left).max(0.0);
                 let text_top = row.glyph.rect.top - (line - row.glyph.rect.height) / 2.0;
@@ -1099,7 +994,7 @@ impl Renderer {
                             ..hint.rect
                         },
                         self.metrics.padding / 2.0,
-                        selected,
+                        palette::HINT_KEYCAP,
                     );
                 }
                 for (text, left, width, color) in [
@@ -1107,27 +1002,19 @@ impl Renderer {
                         hint.modifiers.as_str(),
                         hint.rect.left + self.metrics.padding / 2.0,
                         hint.key_offset - self.metrics.padding * 1.5,
-                        SceneColor {
-                            r: 255,
-                            g: 107,
-                            b: 107,
-                        },
+                        palette::HINT_MODIFIER_TEXT,
                     ),
                     (
                         hint.key.as_str(),
                         hint.rect.left + hint.key_offset,
                         hint.label_offset - hint.key_offset,
-                        accent,
+                        palette::ACCENT,
                     ),
                     (
                         hint.label.as_str(),
                         hint.rect.left + hint.label_offset,
                         hint.rect.width - hint.label_offset,
-                        SceneColor {
-                            r: 162,
-                            g: 174,
-                            b: 190,
-                        },
+                        palette::SECONDARY_TEXT,
                     ),
                 ]
                 .into_iter()
@@ -1157,27 +1044,15 @@ impl Renderer {
             // Tab pills are brighter than the shared selection and hover fills so that they stand
             // out from the bar and each state steps up from the last.
             let fill = if tab.selected {
-                SceneColor {
-                    r: 52,
-                    g: 72,
-                    b: 92,
-                }
+                palette::TAB_SELECTED
             } else if self.header.hovers(WorkspaceFocus::Tabs, &tab.id) {
-                SceneColor {
-                    r: 40,
-                    g: 54,
-                    b: 70,
-                }
+                palette::TAB_HOVER
             } else {
-                SceneColor {
-                    r: 30,
-                    g: 40,
-                    b: 54,
-                }
+                palette::TAB_IDLE
             };
             rectangles.push_rounded(visual, radius, fill);
             if tab.selected && focus == WorkspaceFocus::Tabs {
-                rectangles.push_rounded_outline(visual, radius, accent);
+                rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
             }
             let label_width = (tab.rect.width - self.metrics.padding * 2.0).max(1.0);
             self.push_text_clipped(
@@ -1188,37 +1063,24 @@ impl Renderer {
                 label_width,
                 self.metrics.height,
                 if tab.selected {
-                    SceneColor {
-                        r: 239,
-                        g: 244,
-                        b: 248,
-                    }
+                    palette::PRIMARY_TEXT
                 } else {
-                    SceneColor {
-                        r: 198,
-                        g: 208,
-                        b: 220,
-                    }
+                    palette::TAB_TEXT
                 },
                 DrawStyleKind::Status(Wrap::None),
                 workspace.tab_label_clip,
             );
             if let Some(badge) = tab.badge {
                 self.spinners
-                    .push_badge(badge, Some(DEFAULT_BACKGROUND), rectangles);
+                    .push_badge(badge, Some(palette::BAR_BACKGROUND), rectangles);
             }
         }
         for badge in &workspace.edge_badges {
             self.spinners
-                .push_badge(*badge, Some(DEFAULT_BACKGROUND), rectangles);
+                .push_badge(*badge, Some(palette::BAR_BACKGROUND), rectangles);
         }
         rectangles.clip = None;
         // Quota chips and readings share the tabs' band; the version label stays plain.
-        let reading = SceneColor {
-            r: 162,
-            g: 174,
-            b: 190,
-        };
         for quota in &workspace.quotas {
             let visual = workspace.bar_pill_rect(
                 header_item_visual(quota.rect, self.metrics.padding),
@@ -1236,24 +1098,16 @@ impl Renderer {
                 label_width,
                 label_width,
                 self.metrics.height.min(quota.rect.height),
-                reading,
+                palette::SECONDARY_TEXT,
                 DrawStyleKind::Status(Wrap::None),
                 quota.rect,
             );
         }
         for (label, color, pill) in [
-            (&workspace.cpu, reading, true),
-            (&workspace.ram, reading, true),
-            (&workspace.clock, reading, true),
-            (
-                &workspace.version,
-                SceneColor {
-                    r: 124,
-                    g: 196,
-                    b: 216,
-                },
-                false,
-            ),
+            (&workspace.cpu, palette::SECONDARY_TEXT, true),
+            (&workspace.ram, palette::SECONDARY_TEXT, true),
+            (&workspace.clock, palette::SECONDARY_TEXT, true),
+            (&workspace.version, palette::VERSION_TEXT, false),
         ] {
             let Some(label) = label else {
                 continue;
@@ -1291,19 +1145,15 @@ impl Renderer {
             let pressed = self.header.pressed_header == Some(control.kind);
             let focused = focus == WorkspaceFocus::Header(control.kind);
             let fill = if pressed {
-                selected
+                palette::CHROME_HIGHLIGHT
             } else if hovered {
-                SceneColor {
-                    r: 23,
-                    g: 34,
-                    b: 46,
-                }
+                palette::CONTROL_HOVER
             } else {
-                DEFAULT_BACKGROUND
+                palette::BAR_BACKGROUND
             };
             rectangles.push_rounded(visual, visual.height / 2.0, fill);
             if focused {
-                rectangles.push_rounded_outline(visual, visual.height / 2.0, accent);
+                rectangles.push_rounded_outline(visual, visual.height / 2.0, palette::ACCENT);
             }
             let glyph_width = self.metrics.width.min(control.rect.width);
             self.push_text_clipped(
@@ -1314,17 +1164,9 @@ impl Renderer {
                 glyph_width,
                 self.metrics.height.min(control.rect.height),
                 if pressed || focused {
-                    SceneColor {
-                        r: 239,
-                        g: 244,
-                        b: 248,
-                    }
+                    palette::PRIMARY_TEXT
                 } else {
-                    SceneColor {
-                        r: 162,
-                        g: 174,
-                        b: 190,
-                    }
+                    palette::SECONDARY_TEXT
                 },
                 DrawStyleKind::Status(Wrap::None),
                 control.rect,
@@ -1351,11 +1193,7 @@ impl Renderer {
                     row,
                     workspace.chrome,
                     (row.width - self.metrics.padding * 2.0).max(0.0),
-                    SceneColor {
-                        r: 239,
-                        g: 244,
-                        b: 248,
-                    },
+                    palette::PRIMARY_TEXT,
                 )]
             } else {
                 Vec::new()
@@ -1366,7 +1204,7 @@ impl Renderer {
                 workspace.card_radius(),
                 &gaps,
                 physical_outline_width(self.border_width, self.metrics.scale),
-                CARD_OUTLINE,
+                palette::CARD_OUTLINE,
             );
             rectangles.clip = None;
         }
@@ -1428,23 +1266,11 @@ impl Renderer {
                     .max(0.0)
                     .floor();
                 let color = if current {
-                    SceneColor {
-                        r: 239,
-                        g: 244,
-                        b: 248,
-                    }
+                    palette::PRIMARY_TEXT
                 } else if !pane.live {
-                    SceneColor {
-                        r: 221,
-                        g: 126,
-                        b: 126,
-                    }
+                    palette::DEAD_PANE_TEXT
                 } else {
-                    SceneColor {
-                        r: 162,
-                        g: 174,
-                        b: 190,
-                    }
+                    palette::SECONDARY_TEXT
                 };
                 let row = if self.pane_frames && index + 1 == panes.len() && !pane.selected {
                     bottom_title_row(
@@ -1464,7 +1290,7 @@ impl Renderer {
                     backgrounds
                         .get(column_index)
                         .copied()
-                        .unwrap_or(DEFAULT_BACKGROUND),
+                        .unwrap_or(palette::TERMINAL_FALLBACK),
                     self.background_opacity,
                 );
                 if id_color != color
@@ -1489,10 +1315,18 @@ impl Renderer {
                 rectangles.clip = Some(rect);
                 if pill.width > self.metrics.padding {
                     if self.header.hovers(WorkspaceFocus::Panes, &pane.id) {
-                        rectangles.push_rounded(pill, self.metrics.padding / 2.0, selected);
+                        rectangles.push_rounded(
+                            pill,
+                            self.metrics.padding / 2.0,
+                            palette::CHROME_HIGHLIGHT,
+                        );
                     }
                     if current && focus == WorkspaceFocus::Panes {
-                        rectangles.push_rounded_outline(pill, self.metrics.padding / 2.0, accent);
+                        rectangles.push_rounded_outline(
+                            pill,
+                            self.metrics.padding / 2.0,
+                            palette::ACCENT,
+                        );
                     }
                 }
                 rectangles.clip = None;
@@ -1504,7 +1338,7 @@ impl Renderer {
                 self.pane_frames.then_some(if selected_column {
                     self.focus_color
                 } else {
-                    CARD_OUTLINE
+                    palette::CARD_OUTLINE
                 }),
                 physical_outline_width(self.border_width, self.metrics.scale),
                 physical_outline_width(
@@ -1561,8 +1395,8 @@ impl Renderer {
             return;
         };
         let (id, color) = match provider {
-            QuotaProvider::Codex => (OPENAI_BLOSSOM_ID, Color::rgb(255, 255, 255)),
-            QuotaProvider::Claude => (CLAUDE_SPLAT_ID, Color::rgb(217, 119, 87)),
+            QuotaProvider::Codex => (OPENAI_BLOSSOM_ID, palette::QUOTA_ICON_CODEX),
+            QuotaProvider::Claude => (CLAUDE_SPLAT_ID, palette::QUOTA_ICON_CLAUDE),
         };
         let mut buffer = Buffer::new_empty(Metrics::new(rect.height, rect.height));
         buffer.set_size(Some(rect.width), Some(rect.height));
@@ -1581,7 +1415,7 @@ impl Renderer {
             bottom: bounds.bottom().ceil() as i32,
             bound_left: bounds.left.floor() as i32,
             bound_top: bounds.top.floor() as i32,
-            color,
+            color: Color::rgb(color.r, color.g, color.b),
         });
     }
 }
@@ -1714,9 +1548,13 @@ mod tests {
                 }
                 assert_eq!(coverage(&batch, visual.left + 0.5, visual.top + 0.5), 0.0);
                 for vertex in batch.bytes.chunks_exact(VERTEX_SIZE as usize) {
-                    for (component, channel) in [CARD_OUTLINE.r, CARD_OUTLINE.g, CARD_OUTLINE.b]
-                        .into_iter()
-                        .enumerate()
+                    for (component, channel) in [
+                        palette::CHIP_OUTLINE.r,
+                        palette::CHIP_OUTLINE.g,
+                        palette::CHIP_OUTLINE.b,
+                    ]
+                    .into_iter()
+                    .enumerate()
                     {
                         let offset = (component + 2) * 4;
                         let actual =
@@ -1726,7 +1564,7 @@ mod tests {
                 }
             }
             let mut tab = RectangleBatch::new(128, 128);
-            tab.push_rounded(visual, visual.height / 2.0, DEFAULT_BACKGROUND);
+            tab.push_rounded(visual, visual.height / 2.0, palette::BAR_BACKGROUND);
             assert_eq!(coverage(&tab, 64.5, visual.top + visual.height / 2.0), 1.0);
         }
     }

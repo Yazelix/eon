@@ -721,7 +721,7 @@ pub(super) mod tests {
     pub(in crate::render) fn plain_style() -> DrawStyle {
         DrawStyle {
             foreground: SceneColor::default(),
-            background: DEFAULT_BACKGROUND,
+            background: palette::TERMINAL_FALLBACK,
             underline_color: SceneColor::default(),
             bold: false,
             italic: false,
@@ -788,7 +788,7 @@ pub(super) mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
-            background: DEFAULT_BACKGROUND,
+            background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
             cursor: None,
             content: vec![DrawRow {
@@ -844,7 +844,7 @@ pub(super) mod tests {
                 screen: Screen::Primary,
                 title: String::new(),
                 working_directory: String::new(),
-                background: DEFAULT_BACKGROUND,
+                background: palette::TERMINAL_FALLBACK,
                 foreground: SceneColor::default(),
                 cursor: None,
                 content: colors
@@ -937,7 +937,7 @@ pub(super) mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
-            background: DEFAULT_BACKGROUND,
+            background: palette::TERMINAL_FALLBACK,
             foreground,
             cursor: None,
             content: vec![row.clone()],
@@ -1042,7 +1042,7 @@ pub(super) mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
-            background: DEFAULT_BACKGROUND,
+            background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
             cursor: None,
             content: vec![DrawRow {
@@ -1210,7 +1210,7 @@ pub(super) mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
-            background: DEFAULT_BACKGROUND,
+            background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
             cursor: None,
             content: vec![DrawRow {
@@ -1246,7 +1246,7 @@ pub(super) mod tests {
             metrics.padding,
             metrics.width * 3.0,
             metrics.height,
-            DEFAULT_BACKGROUND,
+            palette::TERMINAL_FALLBACK,
             1.0,
         );
 
