@@ -1,4 +1,4 @@
-use super::diagnostics::DiagnosticLog;
+use super::{diagnostics::DiagnosticLog, sessions::CONFIG_WARNED_VARIABLE};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -918,7 +918,13 @@ pub(crate) fn command(
     arguments: &[OsString],
     defaults: &Defaults,
 ) -> Result<Command, String> {
+    // The supervisor marks only the default shell it starts, after warning about unknown
+    // keys in its log; stderr here is that terminal's scrollback. Every other launch warns.
+    let warned = env::var_os(CONFIG_WARNED_VARIABLE).is_some();
     let shell = match tool {
+        Tool::Nu | Tool::Bash if warned => {
+            Some(shell_config(parse_config(config)?.shell, defaults)?)
+        }
         Tool::Nu | Tool::Bash => Some(read_shell_config(config, defaults, None)?),
         _ => None,
     };
@@ -931,6 +937,8 @@ pub(crate) fn command(
         Tool::LazyGit => &programs.lazygit,
     };
     let mut command = Command::new(program);
+    // Nothing started inside the terminal inherits the one-shot marker.
+    command.env_remove(CONFIG_WARNED_VARIABLE);
     match tool {
         Tool::Nu => {
             command.arg("--experimental-options=native-clip");
@@ -1019,7 +1027,10 @@ fn read_shell_config(
     defaults: &Defaults,
     log: Option<&DiagnosticLog>,
 ) -> Result<ShellConfig, String> {
-    let settings = read_config(root, log)?.shell;
+    shell_config(read_config(root, log)?.shell, defaults)
+}
+
+fn shell_config(settings: ShellSettings, defaults: &Defaults) -> Result<ShellConfig, String> {
     let base = &defaults.shell;
     let shell = ShellConfig {
         command: settings.command.unwrap_or_else(|| base.command.clone()),
@@ -1038,7 +1049,28 @@ fn read_shell_config(
     Ok(shell)
 }
 
+/// Parses the configuration and warns once per unknown key: through `log`, which
+/// remembers what it has noted, else on stderr.
 fn read_config(root: &Path, log: Option<&DiagnosticLog>) -> Result<EonConfig, String> {
+    let config = parse_config(root)?;
+    let path = root.join("config.toml");
+    for key in config.unknown_keys() {
+        let warning = format!(
+            "eon: ignoring unknown setting {} in {}",
+            key.escape_debug(),
+            path.to_string_lossy().escape_debug(),
+        );
+        if let Some(log) = log {
+            log.note_once(&warning);
+        } else {
+            let _ = writeln!(io::stderr(), "{warning}");
+        }
+    }
+    Ok(config)
+}
+
+/// Parses the configuration without warning about unknown keys.
+fn parse_config(root: &Path) -> Result<EonConfig, String> {
     let path = root.join("config.toml");
     let source = match fs::read_to_string(&path) {
         Ok(source) => source,
@@ -1049,21 +1081,8 @@ fn read_config(root: &Path, log: Option<&DiagnosticLog>) -> Result<EonConfig, St
             return Err(format!("cannot read {}: {error}", path.display()));
         }
     };
-    let config: EonConfig = toml::from_str(&source)
-        .map_err(|error| format!("invalid Eon configuration {}: {error}", path.display()))?;
-    for key in config.unknown_keys() {
-        let warning = format!(
-            "eon: ignoring unknown setting {} in {}",
-            key.escape_debug(),
-            path.to_string_lossy().escape_debug(),
-        );
-        if let Some(log) = log {
-            log.note(&warning);
-        } else {
-            let _ = writeln!(io::stderr(), "{warning}");
-        }
-    }
-    Ok(config)
+    toml::from_str(&source)
+        .map_err(|error| format!("invalid Eon configuration {}: {error}", path.display()))
 }
 
 fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsString, String> {
@@ -1258,6 +1277,52 @@ nested = { value = true }
                 .unwrap_err()
                 .contains("background_opacity")
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    // Fails when every reread of an unchanged file warns again, as the supervisor's
+    // several reads per start and per new terminal once did (EON-C9: one warning).
+    #[test]
+    fn rereads_through_one_log_warn_once_per_unknown_key() {
+        let root = crate::supervisor::temporary_directory();
+        let log = super::DiagnosticLog::open_in(
+            Ok(root.join("logs")),
+            "g1-0123456789abcdef0123456789abcdef",
+            "workspace",
+        );
+        let path = root.join("config.toml");
+        fs::write(&path, "[popup]\nside_margin = 13.0\n").unwrap();
+        let inputs = crate::fixtures::inputs();
+        for _ in 0..3 {
+            terminal_presentation(&root, &inputs.defaults, Some(&log)).unwrap();
+            super::shell_command(&root, &inputs.defaults, Some(&log)).unwrap();
+        }
+        fs::write(
+            &path,
+            "[popup]\nside_margin = 13.0\n[terminal]\nnew_field = 1\n",
+        )
+        .unwrap();
+        for _ in 0..2 {
+            terminal_presentation(&root, &inputs.defaults, Some(&log)).unwrap();
+        }
+        let log_path = fs::read_dir(root.join("logs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| path.is_file())
+            .unwrap();
+        let logged = fs::read_to_string(log_path).unwrap();
+        for key in ["popup", "terminal.new_field"] {
+            let warning = format!("eon: ignoring unknown setting {key} in {}", path.display());
+            assert_eq!(
+                logged
+                    .lines()
+                    .filter(|line| line.ends_with(&warning))
+                    .count(),
+                1,
+                "{logged}"
+            );
+        }
+        assert_eq!(logged.matches("ignoring unknown setting").count(), 2);
         fs::remove_dir_all(root).unwrap();
     }
 

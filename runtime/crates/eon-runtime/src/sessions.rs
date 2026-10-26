@@ -1000,6 +1000,9 @@ impl RunningSession {
 pub(super) const TERMINAL_VARIABLE: &str = "EON_TERMINAL";
 /// A popup terminal's owning tab identity when it started.
 pub(super) const TAB_VARIABLE: &str = "EON_TAB";
+/// Runtime-private marker on the default shell the supervisor starts, after it read
+/// the configuration through its log; the managed shell launcher removes it.
+pub(super) const CONFIG_WARNED_VARIABLE: &str = "EON_CONFIG_WARNED";
 
 /// The `EON_TERMINAL` value of one exact Orbit run, unique across generations
 /// and windows; callers treat it as opaque.
@@ -1278,12 +1281,29 @@ fn orbit_command(
     if let Some(session_bin) = &inputs.managed.shell_bin {
         orbit_command.env("PATH", managed_environment::session_path(session_bin)?);
     }
+    let shell = if child.is_empty() {
+        managed_environment::shell_command(config, &inputs.defaults, log)?
+    } else {
+        Vec::new()
+    };
+    // Mark only Eon's own Nu and Bash launchers, which remove the marker before exec.
+    // A bare name is one only when the session PATH puts Eon's commands first; an
+    // absolute path such as /usr/bin/bash is the host's shell and would pass it on.
+    let marked = shell.first().is_some_and(|program| {
+        inputs.managed.shell_bin.is_some()
+            && !program.contains('/')
+            && matches!(
+                managed_environment::tool(OsStr::new(program)),
+                Some(managed_environment::Tool::Nu | managed_environment::Tool::Bash)
+            )
+    });
+    if marked {
+        orbit_command.env(CONFIG_WARNED_VARIABLE, "1");
+    } else {
+        orbit_command.env_remove(CONFIG_WARNED_VARIABLE);
+    }
     if child.is_empty() {
-        orbit_command.args(managed_environment::shell_command(
-            config,
-            &inputs.defaults,
-            log,
-        )?);
+        orbit_command.args(shell);
     } else {
         orbit_command.args(child);
     }
@@ -2597,6 +2617,39 @@ pub(crate) mod tests {
         );
         assert_eq!(command_environment(&default, "XDG_CONFIG_HOME"), None);
         assert_eq!(command_environment(&default, "EON_TAB"), Some(None));
+        // Fails when the default shell loses the marker that keeps the supervisor's
+        // already-logged unknown-key warning out of its scrollback.
+        assert_eq!(
+            command_environment(&default, "EON_CONFIG_WARNED"),
+            Some(Some(OsStr::new("1")))
+        );
+        // Fails when a default shell that is not Eon's launcher is marked: it would
+        // pass the marker on and silence later launches inside that terminal.
+        for shell in ["zsh", "/usr/bin/bash"] {
+            fs::write(
+                root.join("config.toml"),
+                format!("[shell]\ncommand = [\"{shell}\"]\n"),
+            )
+            .unwrap();
+            let other = orbit_command(
+                &inputs,
+                config,
+                socket,
+                "session-3",
+                "run-3",
+                "component-3",
+                root.as_path(),
+                &[],
+                None,
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                command_environment(&other, "EON_CONFIG_WARNED"),
+                Some(None),
+                "{shell}"
+            );
+        }
         assert_eq!(default.get_current_dir(), Some(root.as_path()));
         assert_eq!(
             std::env::split_paths(
@@ -2627,6 +2680,12 @@ pub(crate) mod tests {
         assert_eq!(
             command_environment(&explicit, "EON_TAB"),
             Some(Some(OsStr::new("t3")))
+        );
+        // Fails when an explicit command, whose configuration the supervisor did not
+        // read, is marked and so drops the warning.
+        assert_eq!(
+            command_environment(&explicit, "EON_CONFIG_WARNED"),
+            Some(None)
         );
         assert_eq!(
             explicit.get_args().map(OsString::from).collect::<Vec<_>>(),

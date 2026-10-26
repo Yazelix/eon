@@ -290,25 +290,56 @@ fn unknown_configuration_keys_warn_once_on_the_managed_cli() {
         fs::create_dir_all(&config).unwrap();
         let path = config.join("config.toml");
         fs::write(&path, source).unwrap();
-        let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
-            .arg0("eon-bash")
-            .env("XDG_CONFIG_HOME", &home)
-            .args(["--noprofile", "--norc", "-c", "printf 'config-loaded\\n'"])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(stdout(&output), "config-loaded\n");
-        assert_eq!(
-            String::from_utf8(output.stderr).unwrap(),
-            format!(
-                "eon: ignoring unknown setting {key} in {}\n",
-                path.to_string_lossy().replace('\n', "\\n")
-            )
-        );
+        // The supervisor marks only the default shell it starts, after logging the
+        // warning; there stderr is the terminal's scrollback.
+        // - No variables: a launch outside Eon must warn.
+        // - EON_TERMINAL alone, inherited by explicit commands, popups and a tmux
+        //   started inside Eon: fails if those launches lose the warning.
+        // - The marker: fails if each new terminal prints the warning again, or if
+        //   the shell keeps the marker for what it starts (the -c script checks).
+        for (variables, warns) in [
+            (&[][..], true),
+            (&[("EON_TERMINAL", "fixture-terminal")][..], true),
+            (
+                &[
+                    ("EON_TERMINAL", "fixture-terminal"),
+                    ("EON_CONFIG_WARNED", "1"),
+                ][..],
+                false,
+            ),
+        ] {
+            let mut command = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
+            command
+                .arg0("eon-bash")
+                .env("XDG_CONFIG_HOME", &home)
+                .env_remove("EON_TERMINAL")
+                .env_remove("EON_CONFIG_WARNED")
+                .envs(variables.iter().copied());
+            let output = command
+                .args([
+                    "--noprofile",
+                    "--norc",
+                    "-c",
+                    "[ -z \"${EON_CONFIG_WARNED+set}\" ] && printf 'config-loaded\\n'",
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(stdout(&output), "config-loaded\n");
+            let expected = if warns {
+                format!(
+                    "eon: ignoring unknown setting {key} in {}\n",
+                    path.to_string_lossy().replace('\n', "\\n")
+                )
+            } else {
+                String::new()
+            };
+            assert_eq!(String::from_utf8(output.stderr).unwrap(), expected);
+        }
     }
     fs::remove_dir_all(root).unwrap();
 }

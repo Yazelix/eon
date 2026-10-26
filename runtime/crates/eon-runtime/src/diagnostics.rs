@@ -7,6 +7,7 @@ use super::{
     supervisor::effective_uid,
 };
 use std::{
+    collections::HashSet,
     fs::{self, File},
     io::{self, Read, Write},
     os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
@@ -29,6 +30,8 @@ pub(super) struct DiagnosticLog {
     /// Where this supervisor's Orbit hosts keep their stderr: the `orbit`
     /// directory inside the log's own, which the log prune never enters.
     orbit_directory: Result<PathBuf, String>,
+    /// The messages `note_once` has already noted.
+    noted: Mutex<HashSet<String>>,
 }
 
 struct Sink {
@@ -68,6 +71,7 @@ impl DiagnosticLog {
         let log = Arc::new(Self {
             sink: Mutex::new(sink),
             orbit_directory,
+            noted: Mutex::default(),
         });
         log.record(&format!(
             "supervisor started: generation {generation}, {mode} mode, pid {}",
@@ -89,6 +93,19 @@ impl DiagnosticLog {
     pub(super) fn note(&self, message: &str) {
         self.record(message);
         let _ = writeln!(io::stderr(), "{message}");
+    }
+
+    /// Notes `message` unless this log already noted it, so a diagnostic that every
+    /// reread of the same input repeats appears once per supervisor.
+    pub(super) fn note_once(&self, message: &str) {
+        let first = self
+            .noted
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(message.to_owned());
+        if first {
+            self.note(message);
+        }
     }
 
     /// Copies a child's stderr verbatim to the log and to the supervisor's

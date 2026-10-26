@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- An unknown configuration key is reported once per supervisor start in its
+  log, and no longer printed into each new terminal; `eon-nu` and `eon-bash`
+  started other than as a terminal's default shell still print it.
+
 - Tab pills stand out more from the Eon Bar: inactive, hovered and selected
   tabs have brighter fills that step up in that order, and inactive tab
   labels are brighter.
