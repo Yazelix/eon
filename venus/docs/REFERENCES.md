@@ -82,8 +82,8 @@ a band that reaches the window's bottom edge. The existing initial grid overhead
 footer's whole reserved height. The row keeps at least the edge padding height
 at minimum fonts.
 Existing rounded outline/fill
-primitives suffice. Nova's #FF5252
-modifier color informs Eon's softer #FF6B6B coral beside mint keys and gray labels.
+primitives suffice. Nova's #FF5252 red modifier color is rejected: Eon's modifiers
+are steel blue beside mint keys and gray labels, so the footer never shows an error color.
 Native fit, focus, resize, input isolation and accessibility are the falsifiers.
 
 ### Codex quota fact chip

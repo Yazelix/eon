@@ -3981,9 +3981,9 @@ mod tests {
             b: 251,
         };
         let neutral = SceneColor {
-            r: 58,
-            g: 75,
-            b: 91,
+            r: 86,
+            g: 106,
+            b: 126,
         };
         for ((border, focus_border), scale, [border_width, focus_width]) in [
             ((1, 1), 1.0, [1.0_f32, 1.0]),

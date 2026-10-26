@@ -7,6 +7,9 @@
   seconds`; a `/proc/stat` sample without per-CPU lines shows no label
   (`eon-icoh`).
 
+- VEN-C24: hint modifier headers are steel blue, not coral red, so the footer
+  carries no error color (`eon-ffjr`).
+
 - VEN-C7/VEN-C8: consume Runtime's bounded pane labels and pins from EONW v20;
   retire separate workspace label observers. IDs dim when contrast permits,
   fitting retains their identity, and accessibility/close lists keep full

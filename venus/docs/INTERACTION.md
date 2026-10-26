@@ -153,7 +153,7 @@ way, with their titles on the boundary. Header scrolling keeps the fill's top
 fixed. Frameless mode keeps terminal-background strips across the window below
 the bar, including the sidebar and footer.
 
-Coral red modifier badges use plain aliases, such as C-A, before mint keys and gray
+Steel-blue modifier badges use plain aliases, such as C-A, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects
 the tenth tab. The move pane hint groups H/L and K/J under C-A; the move tab
 hint shows H/L under C-A-S.

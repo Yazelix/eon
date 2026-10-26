@@ -201,7 +201,7 @@ way, with their titles on the boundary. Header scrolling keeps the fill's top
 fixed. Frameless mode keeps terminal-background strips across the window below
 the bar, including the sidebar and footer.
 
-Coral red modifier badges use plain aliases, such as A-S, before mint keys and gray
+Steel-blue modifier badges use plain aliases, such as A-S, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects the tenth tab.
 Copy/Paste and Open link stay in full help, without footer hints.
 Each group uses C for Ctrl, A for Alt, and S for Shift, joined by hyphens.

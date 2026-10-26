@@ -2001,9 +2001,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   have padded rounded backgrounds without braces; group bodies stay plain.
   Insets, badge padding and minimum gaps participate in whole-hint fitting.
   The footer is the margin below the pane cards: its hints sit on the window
-  background without a frame, fill or separator, across the window's width,
+  background without a frame, band fill or separator, across the window's width,
   and its band reaches the window's bottom edge. The row is at least the edge
-  padding tall. Hints use coral red modifier headers, mint keys and gray labels.
+  padding tall. Hints use steel-blue modifier headers, mint keys and gray labels.
   Copy, Paste and Open link retain their bindings and full-help
   entries, without footer hints. Compact headers use C/A/S aliases joined by
   hyphens, such as A-S; the compact tab range is 1..9, while full help retains

@@ -1467,9 +1467,9 @@ re-proved when that platform or feature is next touched.
   have padded rounded backgrounds without braces; group bodies stay plain.
   Insets, badge padding and minimum gaps participate in whole-hint fitting.
   The footer is the margin below the pane cards: its hints sit on the window
-  background without a frame, fill or separator, across the window's width,
+  background without a frame, band fill or separator, across the window's width,
   and its band reaches the window's bottom edge. The row is at least the edge
-  padding tall. Hints use coral red modifier headers, mint keys and gray labels.
+  padding tall. Hints use steel-blue modifier headers, mint keys and gray labels.
   Copy, Paste and Open link stay in full help and dispatch, without footer hints.
   Compact modifier headers use C/A/S aliases joined by hyphens, such as A-S.
   The compact tab range is 1..9; full help retains the tenth-tab Alt+0 binding.

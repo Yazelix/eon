@@ -1041,8 +1041,7 @@ impl Renderer {
             }
             let visual = workspace.bar_pill_rect(tab.rect, self.metrics);
             let radius = visual.height / 2.0;
-            // Tab pills are brighter than the shared selection and hover fills so that they stand
-            // out from the bar and each state steps up from the last.
+            // Each tab state steps up from the last so that the pills stand out from the bar.
             let fill = if tab.selected {
                 palette::TAB_SELECTED
             } else if self.header.hovers(WorkspaceFocus::Tabs, &tab.id) {
@@ -2233,7 +2232,7 @@ mod tests {
                             hovered.rect.left + renderer.metrics.padding + 8.0,
                             hovered.rect.top + hovered.rect.height / 2.0
                         ),
-                        vec![[28, 43, 58]],
+                        vec![[40, 54, 70]],
                         "hover pill remains visible in both modes"
                     );
                 }

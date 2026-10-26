@@ -8,6 +8,12 @@ installation, and proven contract changes.
 - The CPU chip's tooltip names how many logical CPUs its percentage covers,
   as `CPU use 12% across 16 logical CPUs, over the last 2 seconds`.
 
+- Venus chrome layers separate more clearly: pane, popup, sidebar and chip
+  outlines, hover and highlight fills, tooltips, the Shortcuts viewer and
+  scrollback pills are brighter, and dimmed sidebar details are easier to
+  read. Finished agent badges are leaf green instead of the mint focus color,
+  and hint modifiers (A, A-S) are steel blue instead of the error red.
+
 - An unknown configuration key is reported once per supervisor start in its
   log, and no longer printed into each new terminal; `eon-nu` and `eon-bash`
   started other than as a terminal's default shell still print it.
