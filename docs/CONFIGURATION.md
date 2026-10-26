@@ -96,10 +96,6 @@ warning_close_last_tab = true # Ask before stopping the final tab's terminals.
 [sidebar]
 enabled = true # Enable this feature or popup.
 
-[popup]
-side_margin = 8.0 # Popup side margin in logical pixels.
-vertical_margin = 4.0 # Popup vertical margin in logical pixels.
-
 [popups.agent]
 command = "auto" # Direct argv, or auto for Agent's command selection.
 enabled = true # Enable this feature or popup.
@@ -293,13 +289,10 @@ start a fresh workspace with the updated command to use this backend.
 
 ## Popups
 
-Popup geometry and entries use the same file:
+Popup entries use the same file. Popup margins are fixed at 8 logical pixels
+at the sides and 4 above and below; a `[popup]` table is ignored with a warning.
 
 ```toml
-[popup]
-side_margin = 8
-vertical_margin = 4
-
 [popups.monitor]
 command = ["btop"]
 keybinding = "Alt+Shift+O"

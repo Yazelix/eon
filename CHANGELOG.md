@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Popup margins are fixed at 8 logical pixels at the sides and 4 above and
+  below. A `[popup]` table in `config.toml` is ignored with the usual
+  unknown-setting warning, and `eon config defaults` no longer lists it.
+
 - A popup's outline ends on the same bottom edge as the pane cards and the
   agent sidebar, including while a resize is in flight and with pane frames off.
 

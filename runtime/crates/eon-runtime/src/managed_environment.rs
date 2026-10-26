@@ -31,7 +31,6 @@ struct EonConfig {
     anima: AnimationSettings,
     workspace: WorkspaceSettings,
     sidebar: SidebarSettings,
-    popup: PopupSettings,
     popups: BTreeMap<String, PopupEntrySettings>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
@@ -48,7 +47,6 @@ impl EonConfig {
             ("anima.", &self.anima.unknown),
             ("workspace.", &self.workspace.unknown),
             ("sidebar.", &self.sidebar.unknown),
-            ("popup.", &self.popup.unknown),
         ] {
             keys.extend(unknown.keys().map(|key| format!("{prefix}{key}")));
         }
@@ -145,15 +143,6 @@ struct WorkspaceSettings {
 #[serde(default)]
 struct SidebarSettings {
     enabled: Option<bool>,
-    #[serde(flatten)]
-    unknown: BTreeMap<String, toml::Value>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct PopupSettings {
-    side_margin: Option<f32>,
-    vertical_margin: Option<f32>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
@@ -340,10 +329,6 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
         "anima": defaults.anima,
         "workspace": { "warning_close_last_tab": defaults.warning_close_last_tab },
         "sidebar": { "enabled": defaults.sidebar_enabled },
-        "popup": {
-            "side_margin": defaults.popups.geometry.side_margin,
-            "vertical_margin": defaults.popups.geometry.vertical_margin,
-        },
         "popups": popups,
     });
     if json {
@@ -357,15 +342,7 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
     }
     let mut output =
         String::from("# Built-in defaults. Unset and Eon-owned settings remain omitted.\n");
-    for section in [
-        "bar",
-        "terminal",
-        "shell",
-        "anima",
-        "workspace",
-        "sidebar",
-        "popup",
-    ] {
+    for section in ["bar", "terminal", "shell", "anima", "workspace", "sidebar"] {
         defaults_table(&mut output, section, &config[section])?;
     }
     for (id, settings) in config["popups"].as_object().unwrap() {
@@ -416,8 +393,6 @@ fn defaults_table(
             "style" => "Startup animation style.",
             "duration_seconds" => "Startup animation duration in seconds.",
             "warning_close_last_tab" => "Ask before stopping the final tab's terminals.",
-            "side_margin" => "Popup side margin in logical pixels.",
-            "vertical_margin" => "Popup vertical margin in logical pixels.",
             "label" => "Popup display name.",
             "keybinding" => "Popup shortcut using physical keys.",
             "keep_alive" => "Keep this popup running when hidden.",
@@ -647,26 +622,8 @@ pub(crate) fn popup_catalog(
     log: Option<&DiagnosticLog>,
 ) -> Result<PopupCatalog, String> {
     let mut config = read_config(root, log)?;
-    let geometry = PopupGeometry {
-        side_margin: config
-            .popup
-            .side_margin
-            .unwrap_or(defaults.popups.geometry.side_margin),
-        vertical_margin: config
-            .popup
-            .vertical_margin
-            .unwrap_or(defaults.popups.geometry.vertical_margin),
-    };
-    for (field, value) in [
-        ("side_margin", geometry.side_margin),
-        ("vertical_margin", geometry.vertical_margin),
-    ] {
-        if !value.is_finite() || !(0.0..=128.0).contains(&value) {
-            return Err(format!(
-                "popup.{field} must be a finite number from 0 through 128"
-            ));
-        }
-    }
+    // Popup margins are Eon's fixed values, not configuration (EON-C10).
+    let geometry = defaults.popups.geometry;
 
     let mut entries = Vec::new();
     for builtin in &defaults.popups.entries {
@@ -1250,7 +1207,6 @@ nested = { value = true }
         assert_eq!(config.anima.enabled, Some(false));
         assert_eq!(config.workspace.warning_close_last_tab, Some(false));
         assert_eq!(config.sidebar.enabled, Some(false));
-        assert_eq!(config.popup.side_margin, Some(13.0));
         assert_eq!(
             config.popups["agent"].label.as_deref(),
             Some("Configured Agent")
@@ -1260,7 +1216,7 @@ nested = { value = true }
             "bar.new_field",
             "new_table",
             "new_top_level",
-            "popup.new_field",
+            "popup",
             "popups.agent.new_field",
             "shell.new_field",
             "sidebar.new_field",
@@ -1364,10 +1320,7 @@ nested = { value = true }
             ("aquarium", 2)
         );
         let popups = super::popup_catalog(&root, &defaults, None).unwrap();
-        assert_eq!(
-            (popups.geometry.side_margin, popups.geometry.vertical_margin),
-            (23.0, 0.0)
-        );
+        assert_eq!(popups.geometry, defaults.popups.geometry);
         assert_eq!(
             popups.entries[1].command,
             defaults.popups.entries[1].command
@@ -1647,11 +1600,7 @@ nested = { value = true }
 
         fs::write(
             root.join("config.toml"),
-            r#"[popup]
-side_margin = 12
-vertical_margin = 0
-
-[popups.git]
+            r#"[popups.git]
 enabled = false
 
 [popups.agent]
@@ -1667,13 +1616,6 @@ keep_alive = false
         )
         .unwrap();
         let configured = popup_catalog(&root, &inputs.defaults, None).unwrap();
-        assert_eq!(
-            (
-                configured.geometry.side_margin,
-                configured.geometry.vertical_margin
-            ),
-            (12.0, 0.0)
-        );
         assert_eq!(
             configured
                 .entries

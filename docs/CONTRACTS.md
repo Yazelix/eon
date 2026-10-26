@@ -1007,8 +1007,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   shown. Esc, Ctrl+C or no match runs nothing. The Commands popup follows the
   existing popup catalog rules, so a configured popup on the same key is a
   collision.
-- **Configuration:** `[popup]` owns finite side and vertical margins, defaulting
-  to 8 and 4 logical pixels. `[popups.<id>]` owns direct argv, physical shortcut,
+- **Configuration:** Eon fixes popup margins at 8 side and 4 vertical logical
+  pixels; a `[popup]` table is an unknown key and warns as described in EON-C9.
+  `[popups.<id>]` owns direct argv, physical shortcut,
   label, enabled state and keep-alive lifetime. Only Agent accepts `"auto"`.
   Eon ignores unknown fields with the warning described in EON-C9. It rejects
   malformed or colliding shortcuts, unbounded values and unavailable executables
@@ -1628,7 +1629,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     while the initial tab is pending; the picker endpoint in its first snapshot
     is the sole terminal attachment.
   - Venus keeps the tab bar visible and replaces the pane stack with the picker,
-    using Eon's shared configured popup margins. The
+    using Eon's fixed popup margins. The
     previous terminal is not composited underneath. Attach and recovery never
     create an automatic picker; recovering only a stale initial picker stops it
     and applies the validated launch-directory fallback.
