@@ -7,10 +7,7 @@ use super::{
 };
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
-    scene::{
-        QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics,
-        popup_card_rect,
-    },
+    scene::{QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics},
 };
 use eon_workspace_protocol::v20::AttentionState;
 use glyphon::{
@@ -1331,7 +1328,9 @@ impl Renderer {
         if let Some(label) = workspace.popup_label()
             && let Some(terminal) = workspace.visible_terminal()
         {
-            let card = popup_card_rect(workspace.chrome, self.metrics);
+            let card = workspace
+                .card_fill(workspace.chrome, self.metrics, self.card_stroke_width())
+                .bounds;
             let title = chrome_title_metrics(self.metrics);
             let row = SceneRect {
                 height: title.text_height,

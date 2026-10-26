@@ -2662,9 +2662,6 @@ impl WorkspaceScene {
         metrics: CellMetrics,
         grids: impl Iterator<Item = (SceneRect, SceneRect)>,
     ) -> Cow<'_, Self> {
-        if self.popup_label.is_some() {
-            return Cow::Borrowed(self);
-        }
         let displayed_grid_bottoms = grids
             .filter_map(|(terminal, grid)| {
                 // Layout clipping bounds visible retained cells; card clipping must not hide a collision.
@@ -2734,7 +2731,16 @@ impl WorkspaceScene {
         stroke_width: f32,
     ) -> CardFill {
         let bounds = if self.popup_label.is_some() {
-            popup_card_rect(allocated, metrics)
+            // The popup keeps its own top edge but ends where column and sidebar cards end.
+            let card = popup_card_rect(allocated, metrics);
+            let bottom = self
+                .card_rect(allocated, metrics, stroke_width)
+                .bottom()
+                .max(card.top);
+            SceneRect {
+                height: bottom - card.top,
+                ..card
+            }
         } else {
             self.card_rect(allocated, metrics, stroke_width)
         };
@@ -4587,10 +4593,11 @@ mod tests {
             painted.top,
             stack.panes[0].rect.top + stack.panes[0].rect.height / 2.0
         );
-        assert_eq!(
-            popup_card_rect(popup.chrome, CellMetrics::for_scale(1.0)).bottom(),
-            popup.chrome.bottom()
-        );
+        // The popup ends on the edge the column card and the sidebar card share.
+        let popup_card = popup
+            .card_fill(popup.chrome, CellMetrics::for_scale(1.0), 2.0)
+            .bounds;
+        assert_eq!(popup_card.bottom(), painted.bottom());
         assert_eq!(
             popup.card_rect(popup.chrome, CellMetrics::for_scale(1.0), 2.0),
             painted
@@ -4638,6 +4645,23 @@ mod tests {
                     painted.top
                 );
                 assert_eq!(popup.sidebar().unwrap().top, painted.top);
+                let stroke = crate::render::physical_outline_width(2, metrics.scale);
+                let popup_bottom = popup
+                    .card_fill(popup.chrome, metrics, stroke)
+                    .bounds
+                    .bottom();
+                assert_eq!(
+                    popup_bottom,
+                    painted.bottom(),
+                    "popup bottom at scale {scale}, {count} columns"
+                );
+                assert_eq!(
+                    popup_bottom,
+                    popup
+                        .card_rect(popup.sidebar_area().unwrap(), metrics, stroke)
+                        .bottom(),
+                    "popup and sidebar bottoms at scale {scale}, {count} columns"
+                );
                 for column in &panes.other_columns {
                     assert_eq!(
                         panes
@@ -4751,6 +4775,23 @@ mod tests {
                     {
                         assert_eq!(popup_card.top, pane_card.top);
                     }
+                    let stroke = crate::render::physical_outline_width(2, metrics.scale);
+                    let popup_bottom = popup
+                        .card_fill(popup.chrome, metrics, stroke)
+                        .bounds
+                        .bottom();
+                    assert_eq!(
+                        popup_bottom,
+                        pane_card.bottom(),
+                        "popup bottom: scale {scale}, {count} columns, height {height}"
+                    );
+                    assert_eq!(
+                        popup_bottom,
+                        popup
+                            .card_rect(popup.sidebar_area().unwrap(), metrics, stroke)
+                            .bottom(),
+                        "popup and sidebar bottoms: scale {scale}, {count} columns, height {height}"
+                    );
                 }
             }
         }

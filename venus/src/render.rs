@@ -557,7 +557,9 @@ fn terminal_paint_clip(
     pane_frames: bool,
     stroke_width: f32,
 ) -> Option<(SceneRect, Option<CardFill>)> {
-    let card = pane_frames.then(|| workspace.card_fill(allocated, metrics, stroke_width));
+    // The popup card is outlined in both frame modes, so it always bounds its paint.
+    let card = (pane_frames || workspace.popup_label().is_some())
+        .then(|| workspace.card_fill(allocated, metrics, stroke_width));
     let viewport = card.map_or(workspace.pane_viewport, |card| card.bounds);
     Some((
         terminal
@@ -1181,7 +1183,7 @@ impl Renderer {
     ) -> Result<PresentOutcome, RenderError> {
         ensure_device_available(&self.device_lost)?;
         let paint = workspace
-            .filter(|_| self.pane_frames)
+            .filter(|workspace| self.pane_frames || workspace.popup_label().is_some())
             .map(|workspace| workspace_paint(workspace, scene, columns, self.metrics));
         let workspace = paint.as_deref().or(workspace);
         let content_changed = self.rebuild_if_needed(
@@ -4757,6 +4759,99 @@ mod tests {
                     );
                 }
             }
+            if pane_count != 1 {
+                continue;
+            }
+            // A popup's retained rows lower its card in both frame modes until the resize lands.
+            let mut snapshot = snapshot.clone();
+            snapshot.entries = vec![eon_workspace_protocol::v20::PopupEntry {
+                id: "agent".into(),
+                label: "Agent".into(),
+                shortcut: eon_workspace_protocol::v20::Shortcut {
+                    modifiers: eon_workspace_protocol::v20::ALT,
+                    key: "KeyA".into(),
+                },
+            }];
+            snapshot.tabs[0].popups = vec![eon_workspace_protocol::v20::Popup {
+                id: "u1".into(),
+                entry: "agent".into(),
+                session: "s-popup".into(),
+                endpoint: b"/tmp/popup.sock".to_vec(),
+                attention: None,
+            }];
+            snapshot.tabs[0].selected_popup = Some("u1".into());
+            let popup = |height| {
+                WorkspaceScene::from_snapshot(
+                    &snapshot,
+                    PhysicalSize::new(1280, height),
+                    metrics,
+                    0.0,
+                    0.0,
+                    |_, text| (text.into(), text.len() as f32 * metrics.width),
+                )
+            };
+            let old = popup(740);
+            let current = popup(720);
+            let size = metrics.surface_size(old.terminal.screen_size()).unwrap();
+            let retained = Scene {
+                revision: 1,
+                columns: size.cols,
+                rows: size.rows,
+                screen: Screen::Primary,
+                title: String::new(),
+                working_directory: String::new(),
+                background: DEFAULT_BACKGROUND,
+                foreground: CARD_OUTLINE,
+                cursor: None,
+                content: vec![],
+            };
+            let displayed = scene_grid(&retained, current.terminal, metrics)
+                .intersection(current.terminal)
+                .unwrap()
+                .intersection(current.pane_viewport)
+                .unwrap();
+            assert!(
+                displayed.bottom()
+                    > current
+                        .card_fill(current.chrome, metrics, 1.0)
+                        .bounds
+                        .bottom()
+            );
+            let paint = workspace_paint(&current, Some(&retained), &[], metrics);
+            let fill = paint.card_fill(paint.chrome, metrics, 1.0);
+            assert!(fill.bounds.bottom() >= displayed.bottom());
+            assert_eq!(
+                paint
+                    .card_rect(paint.sidebar_area().unwrap(), metrics, 1.0)
+                    .bottom(),
+                fill.bounds.bottom()
+            );
+            for pane_frames in [true, false] {
+                let (clip, card) = terminal_paint_clip(
+                    &paint,
+                    paint.chrome,
+                    paint.terminal,
+                    metrics,
+                    pane_frames,
+                    1.0,
+                )
+                .unwrap();
+                assert!(card.is_some());
+                assert_eq!(
+                    displayed.intersection(clip),
+                    Some(displayed),
+                    "popup rows clipped with pane_frames={pane_frames}"
+                );
+            }
+            let mut resized = retained.clone();
+            resized.rows = metrics
+                .surface_size(current.terminal.screen_size())
+                .unwrap()
+                .rows;
+            assert!(matches!(
+                workspace_paint(&current, Some(&resized), &[], metrics),
+                Cow::Borrowed(_)
+            ));
         }
     }
 
@@ -6420,20 +6515,28 @@ mod tests {
                                             .map(|column| (column.terminal, column.chrome)),
                                     )
                                 {
-                                    assert_eq!(
+                                    let clip_with = |pane_frames| {
                                         terminal_paint_clip(
                                             &workspace,
                                             allocated,
                                             terminal,
                                             metrics,
-                                            false,
-                                            physical_outline_width(2, metrics.scale)
+                                            pane_frames,
+                                            physical_outline_width(2, metrics.scale),
                                         )
-                                        .map(|(clip, card)| (clip, card.is_none())),
-                                        terminal
-                                            .intersection(workspace.pane_viewport)
-                                            .map(|clip| (clip, true))
-                                    );
+                                        .map(|(clip, card)| (clip, card.map(|card| card.bounds)))
+                                    };
+                                    if popup {
+                                        // The popup card bounds its paint in both frame modes.
+                                        assert_eq!(clip_with(false), clip_with(true));
+                                    } else {
+                                        assert_eq!(
+                                            clip_with(false),
+                                            terminal
+                                                .intersection(workspace.pane_viewport)
+                                                .map(|clip| (clip, None))
+                                        );
+                                    }
                                     let Some((clip, card_clip)) = terminal_paint_clip(
                                         &workspace,
                                         allocated,
@@ -6510,7 +6613,13 @@ mod tests {
                                         .collect::<Vec<_>>()
                                 };
                                 let mut expected = vec![if popup {
-                                    crate::scene::popup_card_rect(workspace.chrome, metrics)
+                                    workspace
+                                        .card_fill(
+                                            workspace.chrome,
+                                            metrics,
+                                            physical_outline_width(2, metrics.scale),
+                                        )
+                                        .bounds
                                 } else {
                                     workspace.card_rect(
                                         workspace.chrome,

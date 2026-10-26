@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A popup's outline ends on the same bottom edge as the pane cards and the
+  agent sidebar, including while a resize is in flight and with pane frames off.
+
 - Workspace CLI commands follow the calling terminal's own supervisor and
   workspace across compatible builds. `--generation` and `--window` select
   explicit targets, and workspace results identify their generation, window
