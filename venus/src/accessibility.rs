@@ -1439,8 +1439,14 @@ mod tests {
     #[test]
     fn readings_yield_after_the_clock_and_have_no_actions() {
         let cpu = crate::CpuUse::between(
-            crate::CpuTimes::parse("cpu 0 0 0 0 0 0 0 0").unwrap(),
-            crate::CpuTimes::parse("cpu 12 0 0 88 0 0 0 0").unwrap(),
+            crate::CpuTimes::parse(
+                "cpu 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0\ncpu1 0 0 0 0 0 0 0 0",
+            )
+            .unwrap(),
+            crate::CpuTimes::parse(
+                "cpu 12 0 0 88 0 0 0 0\ncpu0 6 0 0 44 0 0 0 0\ncpu1 6 0 0 44 0 0 0 0",
+            )
+            .unwrap(),
         )
         .unwrap();
         let ram =
@@ -1586,7 +1592,10 @@ mod tests {
                     labels.iter().map(|(id, _)| *id).collect::<Vec<_>>()[..]
                 );
                 for (id, value) in [
-                    (CPU, "CPU use 12%, all cores, over the last 2 seconds"),
+                    (
+                        CPU,
+                        "CPU use 12% across 2 logical CPUs, over the last 2 seconds",
+                    ),
                     (RAM, "RAM use 43% of 31.3 GiB"),
                 ] {
                     if id == RAM && scene.ram.is_none() {
@@ -1606,8 +1615,14 @@ mod tests {
     #[test]
     fn eon_orders_and_omits_bar_items() {
         let cpu = crate::CpuUse::between(
-            crate::CpuTimes::parse("cpu 0 0 0 0 0 0 0 0").unwrap(),
-            crate::CpuTimes::parse("cpu 12 0 0 88 0 0 0 0").unwrap(),
+            crate::CpuTimes::parse(
+                "cpu 0 0 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0\ncpu1 0 0 0 0 0 0 0 0",
+            )
+            .unwrap(),
+            crate::CpuTimes::parse(
+                "cpu 12 0 0 88 0 0 0 0\ncpu0 6 0 0 44 0 0 0 0\ncpu1 6 0 0 44 0 0 0 0",
+            )
+            .unwrap(),
         )
         .unwrap();
         let ram =

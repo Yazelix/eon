@@ -1,15 +1,16 @@
-//! Whole-machine CPU and memory use for the Eon Bar (VEN-C28), from the aggregate `/proc/stat`
-//! line and `/proc/meminfo`.
+//! Whole-machine CPU and memory use for the Eon Bar (VEN-C28), from `/proc/stat`'s aggregate
+//! and per-CPU lines and `/proc/meminfo`.
 
-/// Cumulative whole-machine CPU time since boot, in kernel ticks.
+/// Cumulative whole-machine CPU time since boot, in kernel ticks, and the logical CPUs online.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CpuTimes {
     busy: u64,
     total: u64,
+    cpus: usize,
 }
 
 impl CpuTimes {
-    /// Reads the aggregate line of `/proc/stat`; other platforms have no reading.
+    /// Reads `/proc/stat`; other platforms have no reading.
     #[must_use]
     pub fn read() -> Option<Self> {
         if !cfg!(target_os = "linux") {
@@ -18,10 +19,13 @@ impl CpuTimes {
         Self::parse(&std::fs::read_to_string("/proc/stat").ok()?)
     }
 
-    /// Parses the first `/proc/stat` line. Idle is idle plus iowait; total is the first eight
-    /// fields, leaving out guest and guest_nice, which the kernel already counts in user and nice.
+    /// Parses the aggregate first line and counts the `cpuN` lines right after it, which list the
+    /// logical CPUs online; a reading without them is malformed. Idle is idle plus iowait; total
+    /// is the first eight fields, leaving out guest and guest_nice, which the kernel already
+    /// counts in user and nice.
     pub(crate) fn parse(stat: &str) -> Option<Self> {
-        let mut fields = stat.lines().next()?.split_ascii_whitespace();
+        let mut lines = stat.lines();
+        let mut fields = lines.next()?.split_ascii_whitespace();
         if fields.next()? != "cpu" {
             return None;
         }
@@ -32,9 +36,19 @@ impl CpuTimes {
         let total = ticks
             .iter()
             .try_fold(0_u64, |sum, tick| sum.checked_add(*tick))?;
+        let cpus = lines
+            .take_while(|line| {
+                line.strip_prefix("cpu")
+                    .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+            })
+            .count();
+        if cpus == 0 {
+            return None;
+        }
         Some(Self {
             busy: total - ticks[3] - ticks[4],
             total,
+            cpus,
         })
     }
 }
@@ -57,9 +71,13 @@ impl CpuUse {
             return None;
         }
         let percent = (u128::from(busy) * 200 + u128::from(total)) / (u128::from(total) * 2);
+        let cpus = later.cpus;
+        let plural = if cpus == 1 { "" } else { "s" };
         Some(Self {
             label: format!("CPU {percent}%"),
-            description: format!("CPU use {percent}%, all cores, over the last 2 seconds"),
+            description: format!(
+                "CPU use {percent}% across {cpus} logical CPU{plural}, over the last 2 seconds"
+            ),
         })
     }
 }
@@ -114,21 +132,34 @@ impl RamUse {
 mod tests {
     use super::*;
 
+    /// A reading whose aggregate line is `line`, from a machine with `cpus` logical CPUs.
+    fn times_on(cpus: usize, line: &str) -> CpuTimes {
+        let per_cpu: String = (0..cpus)
+            .map(|cpu| format!("\ncpu{cpu} 0 0 0 0 0 0 0 0"))
+            .collect();
+        CpuTimes::parse(&format!("{line}{per_cpu}\nintr 1 2")).unwrap()
+    }
+
     fn times(line: &str) -> CpuTimes {
-        CpuTimes::parse(line).unwrap()
+        times_on(1, line)
     }
 
     #[test]
     fn cpu_use_counts_iowait_idle_and_guest_once() {
         // user nice system idle iowait irq softirq steal guest guest_nice
-        let earlier = times("cpu  100 0 0 800 100 0 0 0 50 50\ncpu0 1 2 3 4 5 6 7 8\n");
+        let earlier_line = "cpu  100 0 0 800 100 0 0 0 50 50";
         // 30 busy (10 of it steal) and 70 idle (20 of it iowait); guest moves but is not counted.
-        let later = times("cpu  115 0 5 850 120 0 0 10 90 90\n");
-        let shown = CpuUse::between(earlier, later).unwrap();
+        let later_line = "cpu  115 0 5 850 120 0 0 10 90 90";
+        let shown = CpuUse::between(times_on(16, earlier_line), times_on(16, later_line)).unwrap();
         assert_eq!(shown.label, "CPU 30%");
         assert_eq!(
             shown.description,
-            "CPU use 30%, all cores, over the last 2 seconds"
+            "CPU use 30% across 16 logical CPUs, over the last 2 seconds"
+        );
+        let shown = CpuUse::between(times(earlier_line), times(later_line)).unwrap();
+        assert_eq!(
+            shown.description,
+            "CPU use 30% across 1 logical CPU, over the last 2 seconds"
         );
         // Whole percentages round to nearest, from 0 to 100.
         let at = |busy, idle| times(&format!("cpu {busy} 0 0 {idle} 0 0 0 0"));
@@ -149,12 +180,16 @@ mod tests {
     fn cpu_use_rejects_bad_readings_instead_of_showing_zero() {
         for stat in [
             "",
-            "intr 1 2 3 4 5 6 7 8",
-            "cpu0 1 2 3 4 5 6 7 8",
-            "cpu 1 2 3 4 5 6 7",
-            "cpu 1 2 3 4 x 6 7 8",
-            "cpu 1 2 3 -4 5 6 7 8",
-            "cpu 18446744073709551615 1 0 0 0 0 0 0",
+            "intr 1 2 3 4 5 6 7 8\ncpu0 0 0 0 0 0 0 0 0",
+            "cpu0 1 2 3 4 5 6 7 8\ncpu1 0 0 0 0 0 0 0 0",
+            "cpu 1 2 3 4 5 6 7\ncpu0 0 0 0 0 0 0 0 0",
+            "cpu 1 2 3 4 x 6 7 8\ncpu0 0 0 0 0 0 0 0 0",
+            "cpu 1 2 3 -4 5 6 7 8\ncpu0 0 0 0 0 0 0 0 0",
+            "cpu 18446744073709551615 1 0 0 0 0 0 0\ncpu0 0 0 0 0 0 0 0 0",
+            // A valid aggregate line without the per-CPU lines right after it.
+            "cpu 1 2 3 4 5 6 7 8",
+            "cpu 1 2 3 4 5 6 7 8\nintr 1 2\ncpu0 0 0 0 0 0 0 0 0",
+            "cpu 1 2 3 4 5 6 7 8\ncpux 0 0 0 0 0 0 0 0",
         ] {
             assert_eq!(CpuTimes::parse(stat), None, "{stat:?}");
         }

@@ -225,8 +225,8 @@ struct ContentKey {
     scrollback_label: Option<String>,
     /// The whole dialog, since its rows and kind change without a new generation.
     dialog: Option<DialogScene>,
-    /// CPU and RAM use and the clock change without a new presentation generation. RAM keys on
-    /// its description, whose total the hover shows and the label does not.
+    /// CPU and RAM use and the clock change without a new presentation generation. CPU and RAM
+    /// key on their descriptions, whose CPU count and total the hover shows and the label does not.
     cpu: Option<String>,
     ram: Option<String>,
     clock: Option<String>,
@@ -1362,7 +1362,7 @@ impl Renderer {
             dialog: dialog.cloned(),
             cpu: workspace
                 .and_then(|workspace| workspace.cpu.as_ref())
-                .map(|cpu| cpu.label.clone()),
+                .map(|cpu| cpu.description.clone()),
             ram: workspace
                 .and_then(|workspace| workspace.ram.as_ref())
                 .map(|ram| ram.description.clone()),

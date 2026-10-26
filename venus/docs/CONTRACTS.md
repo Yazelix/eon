@@ -1703,26 +1703,28 @@ re-proved when that platform or feature is next touched.
   first appears one interval after the surface opens. The RAM label shows
   whole-machine memory use, MemTotal minus MemAvailable over MemTotal from
   `/proc/meminfo`, as a whole percentage read on the same wake; it appears with
-  the first reading. Hover and static AccessKit labels say `CPU use 12%, all
-  cores, over the last 2 seconds` and `RAM use 43% of 31.3 GiB`. The labels
+  the first reading. Hover and static AccessKit labels say `CPU use 12% across
+  16 logical CPUs, over the last 2 seconds`, counting the later sample's
+  per-CPU `/proc/stat` lines, and `RAM use 43% of 31.3 GiB`. The labels
   use only spare drag-region space and keep that region's minimum; they appear
   only while every quota chip is at full width, so width fitting hides the
   clock first, then the RAM label, then the CPU label, before the version
   label, quota compaction, tabs or controls.
 - **Important failures:** An unreadable, malformed or non-advancing CPU
-  sample, or an unreadable or malformed memory reading, one without MemTotal or
-  MemAvailable, with a zero MemTotal or with MemAvailable above MemTotal, shows
-  no label for that reading, never 0%; a hidden label returns with the next
-  valid reading. A change to
-  either reading does not replace attachments, recenter navigation, cancel
-  scrolling or send an Orbit resize. Neither label has an action, focus target
-  or drag behavior. Other platforms show neither label.
+  sample, one without per-CPU lines, or an unreadable or malformed memory
+  reading, one without MemTotal or MemAvailable, with a zero MemTotal or with
+  MemAvailable above MemTotal, shows no label for that reading, never 0%; a
+  hidden label returns with the next valid reading. A change to either reading
+  does not replace attachments, recenter navigation, cancel scrolling or send
+  an Orbit resize. Neither label has an action, focus target or drag behavior.
+  Other platforms show neither label.
 - **Owner:** Venus Scene owns the text and geometry, the application owns the
   2-second wake, and a Venus module reads and parses `/proc/stat` and
   `/proc/meminfo` on Linux.
 - **Boundary:** No EONW or runtime change, configuration, per-core view, swap,
   per-process or GPU memory, history, graph, dependency or platform expansion.
-- **Proof:** `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`, `eon-igae.14.4`
+- **Proof:** `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`, `eon-igae.14.4`,
+  `eon-icoh`
   - **Environment:** Automated and installed.
   - **Evidence:** `cpu_use_counts_iowait_idle_and_guest_once`,
     `cpu_use_rejects_bad_readings_instead_of_showing_zero`,
@@ -1730,8 +1732,9 @@ re-proved when that platform or feature is next touched.
     `ram_use_rejects_bad_readings_instead_of_showing_zero` and
     `readings_yield_after_the_clock_and_have_no_actions` in the Venus suite;
     isolated installed observations recorded in
-    `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3` and `eon-igae.14.4`, the last
-    for the one-space label centered in its fixed-width chip.
+    `eon-cpu-widget-eon-bar-acxs`, `eon-igae.3`, `eon-igae.14.4`, for the
+    one-space label centered in its fixed-width chip, and `eon-icoh`, for the
+    hover text naming the logical CPU count.
 
 ## VEN-C29 — Eon Bar item order
 

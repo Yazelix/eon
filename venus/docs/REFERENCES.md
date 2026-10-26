@@ -140,12 +140,20 @@ VEN-C28 (`eon-cpu-widget-eon-bar-acxs`) compares btop v1.4.7
 `Documentation/filesystems/proc.rst` and `kernel/sched/cputime.c`. Venus
 keeps btop's formula: idle is idle plus iowait, total is the first eight
 fields, so steal counts as busy and guest time, which the kernel already adds
-to user and nice, is not counted twice as Waybar does. It reads only the
-aggregate line, which covers every possible CPU and so needs no hotplug
-handling. It rejects btop's clamping of a counter that went backwards into a
-false 0% or 100%, Waybar's 32-bit total and unclamped casts, and both
-projects' since-boot or 100 ms first value: the first reading is only a
-baseline, and a failed or non-advancing reading shows nothing.
+to user and nice, is not counted twice as Waybar does. Its percentage reads
+only the aggregate line, which covers every possible CPU and so needs no
+hotplug handling. The tooltip's count (`eon-icoh`, against Linux v7.3
+`fs/proc/stat.c` and `kernel/sched/cputime.c`) is the `cpuN` lines that
+follow it in the later reading: they list the online CPUs, and an offline
+CPU's counters do not advance, so the aggregate's change comes from those
+CPUs, apart from a CPU brought online or offline between the two readings.
+btop likewise counts online logical CPUs (`_SC_NPROCESSORS_ONLN`, raised to
+its `cpuN` lines). Venus rejects Waybar's padding to every present CPU,
+which would count CPUs that add no time. It also rejects btop's clamping of
+a counter that went backwards into a false 0% or 100%, Waybar's 32-bit total
+and unclamped casts, and both projects' since-boot or 100 ms first value: the
+first reading is only a baseline, and a failed or non-advancing reading shows
+nothing.
 
 Memory use (`eon-igae.3`) compares btop v1.4.7's Linux memory collection and
 Waybar 0.15.0's `src/modules/memory/` at the same revisions against Linux

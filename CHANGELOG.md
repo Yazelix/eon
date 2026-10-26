@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The CPU chip's tooltip names how many logical CPUs its percentage covers,
+  as `CPU use 12% across 16 logical CPUs, over the last 2 seconds`.
+
 - An unknown configuration key is reported once per supervisor start in its
   log, and no longer printed into each new terminal; `eon-nu` and `eon-bash`
   started other than as a terminal's default shell still print it.

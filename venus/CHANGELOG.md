@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- VEN-C28: the CPU tooltip and AccessKit label name the logical CPUs the
+  percentage covers, as `CPU use 12% across 16 logical CPUs, over the last 2
+  seconds`; a `/proc/stat` sample without per-CPU lines shows no label
+  (`eon-icoh`).
+
 - VEN-C7/VEN-C8: consume Runtime's bounded pane labels and pins from EONW v20;
   retire separate workspace label observers. IDs dim when contrast permits,
   fitting retains their identity, and accessibility/close lists keep full
