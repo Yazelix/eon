@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- A small touchpad scroll of less than one row at live output no longer leaves
+  an old history row drawn at the terminal's top edge while a program keeps
+  printing; the edge follows the output, refreshed about every 50 ms.
+
 - When a terminal's Orbit worker dies, its Orbit log names how the worker
   ended, such as `signal: 9 (SIGKILL)`, with the terminal's session and run,
   instead of nothing.

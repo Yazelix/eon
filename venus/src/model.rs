@@ -415,6 +415,15 @@ impl SessionModel {
         self.scroll_preview.as_ref()
     }
 
+    /// Whether the accepted viewport is at live output, where later output moves the
+    /// history above it; away from live, Orbit keeps the viewport pinned.
+    #[must_use]
+    pub fn at_live(&self) -> bool {
+        self.reducer
+            .current()
+            .is_some_and(|frame| frame.scroll_position.rows_from_live == 0)
+    }
+
     /// Release preview rows while keeping routing evidence until the next frame.
     pub fn clear_viewport_preview(&mut self) {
         if matches!(self.scroll_preview, Some(ScenePreview::Viewport { .. })) {

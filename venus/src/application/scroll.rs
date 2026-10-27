@@ -15,6 +15,7 @@ const MIN_FLING_VELOCITY: f64 = 40.0;
 const MAX_FLING_VELOCITY: f64 = 8_000.0;
 // Orbit's output queue lets a newer frame replace a preview answer it has not started
 // writing, so a frame that follows a preview request starts this wait for the answer.
+// It also spaces the previews that replace one retained under output at live.
 const PREVIEW_ANSWER_GRACE: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -34,6 +35,8 @@ pub(super) struct TerminalScroll {
     last_advance: Option<Instant>,
     // The outstanding PreviewVertical's direction, and when a frame first followed it.
     preview_pending: Option<(VerticalDirection, Option<Instant>)>,
+    // The earliest time another retained preview may be replaced.
+    replace_after: Option<Instant>,
 }
 
 impl TerminalScroll {
@@ -188,18 +191,28 @@ impl TerminalScroll {
     }
 
     pub(super) fn preview_retry_at(&self) -> Option<Instant> {
-        self.preview_pending
+        let answer = self
+            .preview_pending
             .and_then(|(_, followed)| followed)
-            .map(|followed| followed + PREVIEW_ANSWER_GRACE)
+            .map(|followed| followed + PREVIEW_ANSWER_GRACE);
+        answer.into_iter().chain(self.replace_after).min()
     }
 
-    /// Gives up on an answer a frame may have replaced, once its grace has passed.
+    /// Gives up on an answer a frame may have replaced, once its grace has passed, and
+    /// reports when a retained preview may be replaced again.
     pub(super) fn retry_preview(&mut self, now: Instant) -> bool {
-        let due = self.preview_retry_at().is_some_and(|at| now >= at);
-        if due {
+        let answer_due = self
+            .preview_pending
+            .and_then(|(_, followed)| followed)
+            .is_some_and(|followed| now >= followed + PREVIEW_ANSWER_GRACE);
+        if answer_due {
             self.preview_pending = None;
         }
-        due
+        let replace_due = self.replace_after.is_some_and(|at| now >= at);
+        if replace_due {
+            self.replace_after = None;
+        }
+        answer_due || replace_due
     }
 
     pub(super) fn resolve_preview(&mut self, preview: Option<&ScenePreview>) -> Option<f64> {
@@ -235,6 +248,7 @@ impl TerminalScroll {
         frame_revision: u64,
         preview: Option<&ScenePreview>,
         cell_height: f64,
+        live: Option<Instant>,
     ) -> Option<ClientMessage> {
         if pending.is_some()
             || self.preview_pending.is_some()
@@ -251,29 +265,38 @@ impl TerminalScroll {
                 rows,
                 ..
             }) if *candidate == direction => (*revision, rows),
-            _ => {
-                self.preview_pending = Some((direction, None));
-                return Some(ClientMessage::PreviewVertical {
-                    frame_revision,
-                    direction,
-                });
-            }
+            _ => return Some(self.request_preview(frame_revision, direction)),
         };
         let available = i64::try_from(rows.len())
             .unwrap_or(i64::MAX)
             .min(i64::from(MAX_SCROLL_ROWS));
-        if available == 0 {
-            return None;
-        }
         let crossed = (self.pixels / cell_height).trunc();
-        if crossed == 0.0 {
-            return None;
+        if available == 0 || crossed == 0.0 {
+            // At live, output moves the history a retained preview shows, so it asks for
+            // current rows, at most once per grace, instead of drawing old ones over newer
+            // frames. `live` is the current time while the accepted viewport is at live.
+            let now = live
+                .filter(|_| preview_revision != frame_revision && self.replace_after.is_none())?;
+            self.replace_after = Some(now + PREVIEW_ANSWER_GRACE);
+            return Some(self.request_preview(frame_revision, direction));
         }
         let requested = (-(crossed as i64)).clamp(-available, available) as i16;
         Some(ClientMessage::ScrollVertical {
             frame_revision: preview_revision,
             rows: requested,
         })
+    }
+
+    fn request_preview(
+        &mut self,
+        frame_revision: u64,
+        direction: VerticalDirection,
+    ) -> ClientMessage {
+        self.preview_pending = Some((direction, None));
+        ClientMessage::PreviewVertical {
+            frame_revision,
+            direction,
+        }
     }
 
     pub(super) fn accept_batch(
@@ -615,7 +638,7 @@ mod tests {
         let mut continuous = TerminalScroll::default();
         continuous.push_pixels(20.0, TouchPhase::Moved, start, 20.0);
         assert_eq!(
-            continuous.next_request(None, 8, Some(&preview), 20.0),
+            continuous.next_request(None, 8, Some(&preview), 20.0, None),
             Some(ClientMessage::ScrollVertical {
                 frame_revision: 7,
                 rows: -2,
@@ -626,18 +649,18 @@ mod tests {
         scroll.push_pixels(50.0, TouchPhase::Moved, start, 20.0);
 
         assert_eq!(
-            scroll.next_request(pending, 7, None, 20.0),
+            scroll.next_request(pending, 7, None, 20.0, None),
             Some(ClientMessage::PreviewVertical {
                 frame_revision: 7,
                 direction: VerticalDirection::Up,
             })
         );
-        assert_eq!(scroll.next_request(pending, 7, None, 20.0), None);
+        assert_eq!(scroll.next_request(pending, 7, None, 20.0, None), None);
         scroll.preview_arrived(VerticalDirection::Up);
         scroll.resolve_preview(Some(&preview));
         assert_eq!(scroll.offset(Some(&preview), 20.0), 100.0);
         assert_eq!(
-            scroll.next_request(pending, 7, Some(&preview), 20.0),
+            scroll.next_request(pending, 7, Some(&preview), 20.0, None),
             Some(ClientMessage::ScrollVertical {
                 frame_revision: 7,
                 rows: -5,
@@ -649,7 +672,7 @@ mod tests {
             cancelled: false,
         });
         scroll.push_pixels(40.0, TouchPhase::Moved, start, 20.0);
-        assert_eq!(scroll.next_request(pending, 8, None, 20.0), None);
+        assert_eq!(scroll.next_request(pending, 8, None, 20.0, None), None);
         assert!(!scroll.accept_batch(&mut pending, -4, -4, 20.0));
         assert!(scroll.accept_batch(&mut pending, -5, -5, 20.0));
         assert_eq!(scroll.pixels, 80.0);
@@ -657,10 +680,10 @@ mod tests {
         let mut cancelled = TerminalScroll::default();
         let mut cancelled_pending = None;
         cancelled.push_pixels(20.0, TouchPhase::Moved, start, 20.0);
-        cancelled.next_request(cancelled_pending, 7, None, 20.0);
+        cancelled.next_request(cancelled_pending, 7, None, 20.0, None);
         cancelled.preview_arrived(VerticalDirection::Up);
         cancelled.resolve_preview(Some(&preview));
-        cancelled.next_request(cancelled_pending, 7, Some(&preview), 20.0);
+        cancelled.next_request(cancelled_pending, 7, Some(&preview), 20.0, None);
         cancelled_pending = Some(PendingViewportRequest::Scroll {
             rows: -2,
             cancelled: false,
@@ -669,7 +692,7 @@ mod tests {
         assert!(!cancelled.active(cancelled_pending));
         cancelled.push_pixels(20.0, TouchPhase::Moved, start, 20.0);
         assert_eq!(
-            cancelled.next_request(cancelled_pending, 7, Some(&preview), 20.0),
+            cancelled.next_request(cancelled_pending, 7, Some(&preview), 20.0, None),
             None
         );
         assert!(cancelled.accept_batch(&mut cancelled_pending, -2, -2, 20.0));
@@ -687,7 +710,7 @@ mod tests {
         down.resolve_preview(Some(&down_preview));
         assert_eq!(down.offset(Some(&down_preview), 20.0), -60.0);
         assert_eq!(
-            down.next_request(None, 7, Some(&down_preview), 20.0),
+            down.next_request(None, 7, Some(&down_preview), 20.0, None),
             Some(ClientMessage::ScrollVertical {
                 frame_revision: 7,
                 rows: 3,
@@ -695,7 +718,7 @@ mod tests {
         );
 
         assert_eq!(
-            scroll.next_request(pending, 9, None, 20.0),
+            scroll.next_request(pending, 9, None, 20.0, None),
             Some(ClientMessage::PreviewVertical {
                 frame_revision: 9,
                 direction: VerticalDirection::Up,
@@ -753,7 +776,7 @@ mod tests {
         for revision in 7..17 {
             let now = start + Duration::from_millis(revision - 7);
             assert!(!scroll.retry_preview(now));
-            if let Some(message) = scroll.next_request(None, revision, None, 20.0) {
+            if let Some(message) = scroll.next_request(None, revision, None, 20.0, None) {
                 assert_eq!(
                     message,
                     ClientMessage::PreviewVertical {
@@ -773,7 +796,7 @@ mod tests {
         scroll.preview_arrived(VerticalDirection::Up);
         assert_eq!(scroll.preview_retry_at(), None);
         assert_eq!(
-            scroll.next_request(None, 17, None, 20.0),
+            scroll.next_request(None, 17, None, 20.0, None),
             Some(ClientMessage::PreviewVertical {
                 frame_revision: 17,
                 direction: VerticalDirection::Up,
@@ -788,28 +811,28 @@ mod tests {
         let retry = start + Duration::from_millis(20) + PREVIEW_ANSWER_GRACE;
         assert_eq!(scroll.preview_retry_at(), Some(retry));
         assert!(!scroll.retry_preview(retry - Duration::from_millis(1)));
-        assert_eq!(scroll.next_request(None, 18, None, 20.0), None);
+        assert_eq!(scroll.next_request(None, 18, None, 20.0, None), None);
         assert!(scroll.retry_preview(retry));
         assert_eq!(
-            scroll.next_request(None, 18, None, 20.0),
+            scroll.next_request(None, 18, None, 20.0, None),
             Some(ClientMessage::PreviewVertical {
                 frame_revision: 18,
                 direction: VerticalDirection::Up,
             })
         );
-        assert_eq!(scroll.next_request(None, 19, None, 20.0), None);
+        assert_eq!(scroll.next_request(None, 19, None, 20.0, None), None);
 
         // A cancelled gesture's preview still holds the next gesture's request, and
         // only an answer in its direction releases it.
         scroll.cancel(&mut None);
         assert!(!scroll.active(None));
         scroll.push_pixels(-20.0, TouchPhase::Moved, start, 20.0);
-        assert_eq!(scroll.next_request(None, 18, None, 20.0), None);
+        assert_eq!(scroll.next_request(None, 18, None, 20.0, None), None);
         scroll.preview_arrived(VerticalDirection::Down);
-        assert_eq!(scroll.next_request(None, 18, None, 20.0), None);
+        assert_eq!(scroll.next_request(None, 18, None, 20.0, None), None);
         scroll.preview_arrived(VerticalDirection::Up);
         assert_eq!(
-            scroll.next_request(None, 18, None, 20.0),
+            scroll.next_request(None, 18, None, 20.0, None),
             Some(ClientMessage::PreviewVertical {
                 frame_revision: 18,
                 direction: VerticalDirection::Down,
@@ -817,7 +840,7 @@ mod tests {
         );
 
         // A failed request, lost or swapped attachment, or reconnect expects no answer.
-        assert_eq!(scroll.next_request(None, 19, None, 20.0), None);
+        assert_eq!(scroll.next_request(None, 19, None, 20.0, None), None);
         finish_scroll_failure(
             &mut None,
             &mut scroll,
@@ -825,10 +848,92 @@ mod tests {
             false,
         );
         scroll.push_pixels(20.0, TouchPhase::Moved, start, 20.0);
-        assert!(scroll.next_request(None, 19, None, 20.0).is_some());
+        assert!(scroll.next_request(None, 19, None, 20.0, None).is_some());
         scroll.reset();
         scroll.push_pixels(20.0, TouchPhase::Moved, start, 20.0);
-        assert!(scroll.next_request(None, 20, None, 20.0).is_some());
+        assert!(scroll.next_request(None, 20, None, 20.0, None).is_some());
+    }
+
+    #[test]
+    fn sub_row_remainder_replaces_a_preview_older_than_the_frame() {
+        let start = Instant::now();
+        let preview = |frame_revision| ScenePreview::Viewport {
+            frame_revision,
+            direction: VerticalDirection::Up,
+            edge_reached: false,
+            rows: vec![
+                yazelix_venus::DrawRow {
+                    wrapped: false,
+                    wrap_continuation: false,
+                    cells: Vec::new(),
+                };
+                5
+            ],
+        };
+        let request = |frame_revision| {
+            Some(ClientMessage::PreviewVertical {
+                frame_revision,
+                direction: VerticalDirection::Up,
+            })
+        };
+        let mut scroll = TerminalScroll::default();
+        scroll.push_pixels(3.0, TouchPhase::Moved, start, 20.0);
+        assert_eq!(scroll.offset(Some(&preview(7)), 20.0), 6.0);
+        assert_eq!(
+            scroll.next_request(None, 7, Some(&preview(7)), 20.0, Some(start)),
+            None
+        );
+        // Away from live, Orbit keeps the viewport and the rows above it pinned.
+        assert_eq!(
+            scroll.next_request(None, 8, Some(&preview(7)), 20.0, None),
+            None
+        );
+
+        // At live, output moved the history above, so the retained rows ask for current
+        // ones through the one-outstanding hold.
+        assert_eq!(
+            scroll.next_request(None, 8, Some(&preview(7)), 20.0, Some(start)),
+            request(8)
+        );
+        assert_eq!(
+            scroll.next_request(None, 9, Some(&preview(7)), 20.0, Some(start)),
+            None
+        );
+        scroll.preview_arrived(VerticalDirection::Up);
+        assert_eq!(
+            scroll.next_request(None, 9, Some(&preview(9)), 20.0, Some(start)),
+            None
+        );
+
+        // Answered at once, a frame every 5 ms still asks only once per grace, and the
+        // grace deadline asks again after output stops.
+        let mut requests = 0;
+        let mut retained = 9;
+        for step in 1..20 {
+            let now = start + Duration::from_millis(5 * step);
+            let revision = 9 + step;
+            scroll.retry_preview(now);
+            let sent =
+                scroll.next_request(None, revision, Some(&preview(retained)), 20.0, Some(now));
+            if sent.is_some() {
+                assert_eq!(sent, request(revision));
+                requests += 1;
+                scroll.preview_arrived(VerticalDirection::Up);
+                retained = revision;
+            }
+        }
+        assert_eq!(requests, 1);
+        let stopped = start + Duration::from_millis(95);
+        let due = scroll.preview_retry_at().unwrap();
+        assert!(due > stopped);
+        assert!(scroll.retry_preview(due));
+        assert_eq!(
+            scroll.next_request(None, 28, Some(&preview(retained)), 20.0, Some(due)),
+            request(28)
+        );
+        scroll.preview_arrived(VerticalDirection::Up);
+        assert!(scroll.retry_preview(scroll.preview_retry_at().unwrap()));
+        assert_eq!(scroll.preview_retry_at(), None);
     }
 
     #[test]
