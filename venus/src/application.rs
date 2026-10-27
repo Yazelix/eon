@@ -2313,9 +2313,7 @@ impl Application {
                     _ => None,
                 };
                 let preview_response = match &message {
-                    ServerMessage::VerticalPreview(preview) => {
-                        Some((preview.frame_revision, preview.direction))
-                    }
+                    ServerMessage::VerticalPreview(preview) => Some(preview.direction),
                     _ => None,
                 };
                 let batch_response = match &message {
@@ -2420,15 +2418,13 @@ impl Application {
                             &mut self.terminal.selection_scroll,
                             expected_selection_rejection,
                         );
-                    } else if let Some((revision, direction)) = preview_response {
-                        self.terminal
-                            .terminal_scroll
-                            .preview_arrived(revision, direction);
+                    } else if let Some(direction) = preview_response {
+                        self.terminal.terminal_scroll.preview_arrived(direction);
                     }
                     if terminal_owned_batch {
                         self.cancel_terminal_scroll();
-                    } else if plain_frame {
-                        self.terminal.terminal_scroll.rebase();
+                    } else if frame {
+                        self.terminal.terminal_scroll.frame_arrived(Instant::now());
                     }
                 }
                 if server_failure
@@ -4166,6 +4162,9 @@ impl ApplicationHandler<UserEvent> for Application {
             self.refresh_client_view();
         }
         self.drive_selection_autoscroll(now);
+        if self.terminal.terminal_scroll.retry_preview(now) {
+            self.drive_terminal_scroll();
+        }
         let blinking = std::iter::once(&self.terminal)
             .chain(&self.column_views)
             .filter_map(|view| view.model.scene())
@@ -4208,6 +4207,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.next_age,
                 self.next_reading,
                 self.terminal.selection_scroll.next,
+                self.terminal.terminal_scroll.preview_retry_at(),
                 self.terminal.orbit_retry.deadline,
                 self.column_views
                     .iter()
