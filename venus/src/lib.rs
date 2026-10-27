@@ -16,18 +16,20 @@ mod transport;
 pub use accessibility::{Accessibility, AccessibilityTarget, Activation};
 pub use input::InputState;
 pub use model::{
-    ClipboardEffect, ConnectionState, LocalNoticeSource, ModelError, SessionModel, WorkspaceModel,
-    active_popup, attention_only_change, focused_terminal, labels_only_change,
+    ClipboardEffect, ConnectionState, ImageResource, LocalNoticeSource, ModelEffect, ModelError,
+    SessionModel, WorkspaceModel, active_popup, attention_only_change, focused_terminal,
+    labels_only_change,
 };
 pub use render::{
     CellMetrics, FontSettings, FontSetup, PaddingColor, PresentOutcome, RenderError, Renderer,
 };
 pub use scene::{
     BarItem, Color, DialogKind, DialogScene, DrawCell, DrawCursor, DrawRow, DrawStyle, EonBar,
-    GlyphRun, HeaderText, Hyperlink, LocalClock, Scene, ScenePreview, SceneRect, ShortcutGroup,
-    ShortcutHint, ShortcutHintsScene, ShortcutRow, SidebarRow, SidebarView, WorkspaceColumn,
-    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspacePane, WorkspaceScene,
-    WorkspaceTab, shown_workspace, validate_copy_uri, validate_open_uri, workspace_column_width,
+    GlyphRun, HeaderText, Hyperlink, LocalClock, Scene, SceneGraphics, ScenePlacement,
+    ScenePreview, SceneRect, ShortcutGroup, ShortcutHint, ShortcutHintsScene, ShortcutRow,
+    SidebarRow, SidebarView, WorkspaceColumn, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit,
+    WorkspacePane, WorkspaceScene, WorkspaceTab, shown_workspace, validate_copy_uri,
+    validate_open_uri, workspace_column_width,
 };
 pub use system::{CpuTimes, CpuUse, RamUse};
 pub use transport::{

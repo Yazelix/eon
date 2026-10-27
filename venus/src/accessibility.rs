@@ -973,7 +973,9 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Color, DrawCell, DrawRow, DrawStyle, EonBar, ShortcutGroup, ShortcutRow};
+    use crate::{
+        Color, DrawCell, DrawRow, DrawStyle, EonBar, SceneGraphics, ShortcutGroup, ShortcutRow,
+    };
     use eon_workspace_protocol::v21::{
         ClaudeQuota, ClaudeQuotaState, CodexQuota, CodexQuotaState, CodexQuotaWindow, Pane, Popup,
         PopupEntry, PopupGeometry, PopupKey, Shortcut, Snapshot as WorkspaceSnapshot, Tab,
@@ -2215,6 +2217,7 @@ mod tests {
             screen: Screen::Primary,
             title: "shell".into(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),

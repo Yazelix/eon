@@ -2979,7 +2979,7 @@ fn handle_uncaptured_gpu_error(device_lost: &AtomicBool, error: WgpuError) {
 mod tests {
     use super::cells::tests::plain_style;
     use super::*;
-    use crate::{DrawCell, DrawCursor, DrawRow};
+    use crate::{DrawCell, DrawCursor, DrawRow, SceneGraphics};
     use orbit_protocol::{CellWidth, CursorShape, Screen};
 
     fn painted_rects(batch: &RectangleBatch) -> impl Iterator<Item = SceneRect> + '_ {
@@ -3008,6 +3008,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: palette::CARD_OUTLINE,
@@ -3801,6 +3802,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
@@ -3865,6 +3867,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
@@ -4850,6 +4853,7 @@ mod tests {
                     screen: Screen::Primary,
                     title: String::new(),
                     working_directory: String::new(),
+                    graphics: SceneGraphics::default(),
                     images: Vec::new(),
                     background: palette::TERMINAL_FALLBACK,
                     foreground: palette::CARD_OUTLINE,
@@ -4978,6 +4982,7 @@ mod tests {
                 screen: Screen::Primary,
                 title: String::new(),
                 working_directory: String::new(),
+                graphics: SceneGraphics::default(),
                 images: Vec::new(),
                 background: palette::TERMINAL_FALLBACK,
                 foreground: palette::CARD_OUTLINE,
@@ -5460,6 +5465,7 @@ mod tests {
                                             screen: Screen::Primary,
                                             title: String::new(),
                                             working_directory: String::new(),
+                                            graphics: SceneGraphics::default(),
                                             images: Vec::new(),
                                             background: palette::TERMINAL_FALLBACK,
                                             foreground: palette::CARD_OUTLINE,
@@ -5812,6 +5818,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: palette::CARD_OUTLINE,
@@ -6371,6 +6378,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: palette::CARD_OUTLINE,
@@ -6574,6 +6582,7 @@ mod tests {
             screen: orbit_protocol::Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: palette::CARD_OUTLINE,

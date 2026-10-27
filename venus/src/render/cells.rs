@@ -569,7 +569,7 @@ pub(super) mod tests {
     use super::super::cursor_trail::inset_cursor_quad;
     use super::super::*;
     use super::*;
-    use crate::DrawCell;
+    use crate::{DrawCell, SceneGraphics};
     use glyphon::fontdb;
     use orbit_protocol::Screen;
 
@@ -806,6 +806,7 @@ pub(super) mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
@@ -863,6 +864,7 @@ pub(super) mod tests {
                 screen: Screen::Primary,
                 title: String::new(),
                 working_directory: String::new(),
+                graphics: SceneGraphics::default(),
                 images: Vec::new(),
                 background: palette::TERMINAL_FALLBACK,
                 foreground: SceneColor::default(),
@@ -955,6 +957,7 @@ pub(super) mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground,
@@ -1062,6 +1065,7 @@ pub(super) mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
@@ -1231,6 +1235,7 @@ pub(super) mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),

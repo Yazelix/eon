@@ -8,8 +8,8 @@ use eon_workspace_protocol::v21::{
     SHIFT, Sidebar, Snapshot, Tab,
 };
 use orbit_protocol::{
-    Cell, CellStyle, CellWidth, CursorShape, Frame, Rgb, Row, Screen, StyleColor, Underline,
-    session::VerticalDirection,
+    Cell, CellStyle, CellWidth, CursorShape, Frame, PlacementState, Rgb, Row, Screen, SourceRect,
+    StyleColor, Underline, session::VerticalDirection,
 };
 use std::{
     borrow::Cow,
@@ -3263,8 +3263,32 @@ pub struct Scene {
     pub foreground: Color,
     pub cursor: Option<DrawCursor>,
     pub content: Vec<DrawRow>,
+    pub graphics: SceneGraphics,
     /// Images drawn between the cell backgrounds and the text, in order (VEN-C31).
     pub images: Vec<SceneImage>,
+}
+
+/// A frame's image placements and the attachment whose resources they reference (VEN-C31).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SceneGraphics {
+    pub attachment: u64,
+    /// The frame's placement entries, in drawing order.
+    pub placements: Vec<ScenePlacement>,
+    /// Whether Orbit omitted placements past the frame's caps.
+    pub placements_omitted: bool,
+}
+
+/// One image placement entry of a frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScenePlacement {
+    /// Orbit's identity for the resource in this attachment.
+    pub resource: u64,
+    pub state: PlacementState,
+    /// The drawn part of the resource in its pixels, not yet clipped to its bounds.
+    pub source: SourceRect,
+    /// Where the entry lands, in cells from the grid's top-left corner, measured with the frame's
+    /// cell size so the current cell size places and scales it.
+    pub target: SceneRect,
 }
 
 /// One image in a terminal's image band.
@@ -3409,9 +3433,10 @@ impl Scene {
         links
     }
 
-    /// Materialize a validated Orbit frame without retaining a second wire schema.
+    /// Materialize a validated Orbit frame of one attachment without retaining a second wire
+    /// schema.
     #[must_use]
-    pub fn from_frame(frame: &Frame) -> Self {
+    pub fn from_frame(frame: &Frame, attachment: u64) -> Self {
         let background = Color::from(frame.colors.background);
         let foreground = Color::from(frame.colors.foreground);
         let content = frame
@@ -3430,6 +3455,30 @@ impl Scene {
             color: Color::from(frame.colors.cursor.unwrap_or(frame.colors.foreground)),
             explicit_color: frame.colors.cursor.is_some(),
         });
+        let mut graphics = SceneGraphics {
+            attachment,
+            ..SceneGraphics::default()
+        };
+        if let Some(frame_graphics) = &frame.graphics {
+            let cell_width = frame_graphics.cell_width as f32;
+            let cell_height = frame_graphics.cell_height as f32;
+            graphics.placements_omitted = frame_graphics.placements_omitted;
+            graphics.placements = frame_graphics
+                .placements
+                .iter()
+                .map(|placement| ScenePlacement {
+                    resource: placement.resource,
+                    state: placement.state,
+                    source: placement.source,
+                    target: SceneRect {
+                        left: placement.col as f32 + placement.offset_x as f32 / cell_width,
+                        top: placement.row as f32 + placement.offset_y as f32 / cell_height,
+                        width: placement.width as f32 / cell_width,
+                        height: placement.height as f32 / cell_height,
+                    },
+                })
+                .collect();
+        }
 
         Self {
             revision: frame.revision,
@@ -3442,6 +3491,7 @@ impl Scene {
             foreground,
             cursor,
             content,
+            graphics,
             images: Vec::new(),
         }
     }
@@ -5835,6 +5885,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
@@ -5934,6 +5985,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
@@ -5986,6 +6038,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
@@ -6099,6 +6152,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            graphics: SceneGraphics::default(),
             images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),

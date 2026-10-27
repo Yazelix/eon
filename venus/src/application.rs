@@ -32,8 +32,8 @@ use winit::{
 use yazelix_venus::{
     Accessibility, AccessibilityTarget, BarItem, CellMetrics, ClipboardEffect, Color,
     ConnectionState, CpuTimes, CpuUse, DialogKind, DialogScene, EonBar, FontSettings, FontSetup,
-    HeaderText, Hyperlink, InputState, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelError,
-    PaddingColor, PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel,
+    HeaderText, Hyperlink, InputState, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect,
+    ModelError, PaddingColor, PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel,
     ShortcutHintsScene, SidebarView, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus,
     WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
     active_popup, attention_only_change, focused_terminal, labels_only_change, shown_workspace,
@@ -1722,8 +1722,11 @@ impl Application {
                     view.retry_suppressed = true;
                 }
                 match view.model.apply(message) {
-                    Ok(Some(effect)) => write_clipboard_effect(&mut view.model, effect),
-                    Ok(None) => {}
+                    Ok(Some(ModelEffect::Clipboard(effect))) => {
+                        write_clipboard_effect(&mut view.model, effect);
+                    }
+                    // Refused until orb-j2i.11 uploads resources; Orbit sends none before then.
+                    Ok(Some(ModelEffect::Resource(_)) | None) => {}
                     Err(error) => view.model.mark_lost(error.to_string()),
                 }
             }
@@ -2445,8 +2448,9 @@ impl Application {
                 let accepted_frame = frame && result.is_ok();
                 let accepted = result.is_ok();
                 match result {
-                    Ok(Some(effect)) => self.write_clipboard(effect),
-                    Ok(None) => {}
+                    Ok(Some(ModelEffect::Clipboard(effect))) => self.write_clipboard(effect),
+                    // Refused until orb-j2i.11 uploads resources; Orbit sends none before then.
+                    Ok(Some(ModelEffect::Resource(_)) | None) => {}
                     Err(error) => self.terminal.model.mark_lost(error.to_string()),
                 }
                 if accepted {

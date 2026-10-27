@@ -4,9 +4,21 @@ use eon_workspace_protocol::v21::{
 };
 use orbit_protocol::FrameReducer;
 use orbit_protocol::session::{
-    ClipboardLocation, FailureCode, PreviewOutcome, ScrollOutcome, ServerMessage, WheelOutcome,
+    ClipboardLocation, FailureCode, PixelFormat, PreviewOutcome, RESOURCE_CHUNK_BYTES,
+    ResourceAnnounce, ResourceChunk, ScrollOutcome, ServerMessage, WheelOutcome,
 };
-use std::{error::Error, fmt};
+use std::{
+    collections::HashSet,
+    error::Error,
+    fmt,
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+/// ORB-C16's cap on resources announced and not retired in one attachment.
+const MAX_UNRETIRED_RESOURCES: usize = 1024;
+
+/// Numbers every attachment in this process, so resources and scenes name theirs.
+static NEXT_ATTACHMENT: AtomicU64 = AtomicU64::new(1);
 
 /// Bounded lifecycle state for one local Orbit attachment.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,6 +36,43 @@ pub enum ConnectionState {
 pub enum ModelError {
     UnexpectedMessage,
     Frame(orbit_protocol::Error),
+    /// A resource message broke VEN-C31's order or size rules.
+    Resource(&'static str),
+}
+
+/// One effect of an accepted Orbit message that the caller carries out.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ModelEffect {
+    Clipboard(ClipboardEffect),
+    /// A completely received resource, which the caller uploads or refuses before it handles the
+    /// next message (VEN-C31).
+    Resource(ImageResource),
+}
+
+/// One completely received image resource of one attachment.
+#[derive(Clone, PartialEq, Eq)]
+pub struct ImageResource {
+    pub attachment: u64,
+    /// Orbit's identity for the resource in this attachment.
+    pub resource: u64,
+    pub format: PixelFormat,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u8>,
+}
+
+impl fmt::Debug for ImageResource {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ImageResource")
+            .field("attachment", &self.attachment)
+            .field("resource", &self.resource)
+            .field("format", &self.format)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("pixels", &self.pixels.len())
+            .finish()
+    }
 }
 
 /// One transient native clipboard effect from Orbit.
@@ -46,6 +95,7 @@ impl fmt::Display for ModelError {
                 formatter.write_str("Orbit sent a local-session message out of order")
             }
             Self::Frame(error) => write!(formatter, "Orbit frame rejected: {error}"),
+            Self::Resource(detail) => write!(formatter, "Orbit image resource rejected: {detail}"),
         }
     }
 }
@@ -83,6 +133,106 @@ pub struct SessionModel {
     connection: ConnectionState,
     awaiting_current_frame: bool,
     notices: Vec<Notice>,
+    attachment: u64,
+    resources: Resources,
+}
+
+/// One attachment's resource order state (VEN-C31).
+#[derive(Debug, Default)]
+struct Resources {
+    last_announced: Option<u64>,
+    assembly: Option<Assembly>,
+    /// Completely received resources not yet retired, including ones Venus freed.
+    complete: HashSet<u64>,
+}
+
+struct Assembly {
+    announce: ResourceAnnounce,
+    next_chunk: u32,
+    pixels: Vec<u8>,
+}
+
+impl fmt::Debug for Assembly {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("Assembly")
+            .field("announce", &self.announce)
+            .field("next_chunk", &self.next_chunk)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Resources {
+    fn announce(&mut self, announce: ResourceAnnounce) -> Result<(), ModelError> {
+        if self
+            .last_announced
+            .is_some_and(|last| announce.resource <= last)
+        {
+            return Err(ModelError::Resource(
+                "identity is not greater than every earlier one",
+            ));
+        }
+        if self.assembly.is_some() {
+            return Err(ModelError::Resource("another resource is still incomplete"));
+        }
+        if self.complete.len() >= MAX_UNRETIRED_RESOURCES {
+            return Err(ModelError::Resource("too many resources are not retired"));
+        }
+        let derived = ResourceAnnounce::new(
+            announce.resource,
+            announce.generation,
+            announce.format,
+            announce.width,
+            announce.height,
+        );
+        if derived != Some(announce) {
+            return Err(ModelError::Resource("metadata is outside the limits"));
+        }
+        self.last_announced = Some(announce.resource);
+        self.assembly = Some(Assembly {
+            announce,
+            next_chunk: 0,
+            pixels: Vec::with_capacity(announce.byte_length as usize),
+        });
+        Ok(())
+    }
+
+    fn chunk(&mut self, chunk: ResourceChunk) -> Result<Option<Assembly>, ModelError> {
+        let assembly = self
+            .assembly
+            .as_mut()
+            .ok_or(ModelError::Resource("chunk of no incomplete resource"))?;
+        if chunk.resource != assembly.announce.resource || chunk.index != assembly.next_chunk {
+            return Err(ModelError::Resource("chunk is out of order"));
+        }
+        let last = chunk.index + 1 == assembly.announce.chunk_count;
+        let expected = if last {
+            assembly.announce.byte_length - chunk.index * RESOURCE_CHUNK_BYTES
+        } else {
+            RESOURCE_CHUNK_BYTES
+        };
+        if chunk.bytes.len() != expected as usize {
+            return Err(ModelError::Resource("chunk has the wrong size"));
+        }
+        assembly.pixels.extend_from_slice(&chunk.bytes);
+        assembly.next_chunk += 1;
+        if !last {
+            return Ok(None);
+        }
+        let assembly = self.assembly.take();
+        self.complete.insert(chunk.resource);
+        Ok(assembly)
+    }
+
+    fn retire(&mut self, resource: u64) -> Result<(), ModelError> {
+        if self.complete.remove(&resource) {
+            Ok(())
+        } else {
+            Err(ModelError::Resource(
+                "retirement names no complete, unretired resource",
+            ))
+        }
+    }
 }
 
 /// The last complete Eon-authored workspace accepted by Venus.
@@ -386,6 +536,8 @@ impl SessionModel {
             connection: ConnectionState::Connecting,
             awaiting_current_frame: true,
             notices: Vec::with_capacity(4),
+            attachment: next_attachment(),
+            resources: Resources::default(),
         }
     }
 
@@ -464,7 +616,7 @@ impl SessionModel {
         )
     }
 
-    pub fn apply(&mut self, message: ServerMessage) -> Result<Option<ClipboardEffect>, ModelError> {
+    pub fn apply(&mut self, message: ServerMessage) -> Result<Option<ModelEffect>, ModelError> {
         let connecting = matches!(self.connection, ConnectionState::Connecting);
         let attached = self.is_attached();
         match message {
@@ -484,7 +636,7 @@ impl SessionModel {
                         && current.colors.palette == frame.colors.palette
                 });
                 let frame = self.reducer.push(*frame).map_err(ModelError::Frame)?;
-                self.scene = Some(Scene::from_frame(frame));
+                self.scene = Some(Scene::from_frame(frame, self.attachment));
                 if !preview_compatible {
                     self.scroll_preview = None;
                 }
@@ -492,7 +644,7 @@ impl SessionModel {
             }
             ServerMessage::WheelOutcome(WheelOutcome::Viewport { frame, .. }) if attached => {
                 let frame = self.reducer.push(*frame).map_err(ModelError::Frame)?;
-                self.scene = Some(Scene::from_frame(frame));
+                self.scene = Some(Scene::from_frame(frame, self.attachment));
                 self.scroll_preview = None;
                 self.awaiting_current_frame = false;
             }
@@ -529,7 +681,7 @@ impl SessionModel {
                 let preview =
                     scene_preview(frame.as_ref(), scroll_direction(requested_rows), next)?;
                 let frame = self.reducer.push(*frame).map_err(ModelError::Frame)?;
-                self.scene = Some(Scene::from_frame(frame));
+                self.scene = Some(Scene::from_frame(frame, self.attachment));
                 self.scroll_preview = Some(preview);
                 self.awaiting_current_frame = false;
             }
@@ -562,14 +714,58 @@ impl SessionModel {
                 self.connection = ConnectionState::Exited { code };
                 self.scroll_preview = None;
                 self.notices.clear();
+                self.resources = Resources::default();
             }
             ServerMessage::CopiedText { location, text } if attached => {
                 self.clear_orbit_notice();
-                return Ok(Some(ClipboardEffect::SelectionCopy { location, text }));
+                return Ok(Some(ModelEffect::Clipboard(
+                    ClipboardEffect::SelectionCopy { location, text },
+                )));
             }
             ServerMessage::ClipboardWrite { location, text } if attached => {
-                return Ok(Some(ClipboardEffect::TerminalWrite { location, text }));
+                return Ok(Some(ModelEffect::Clipboard(
+                    ClipboardEffect::TerminalWrite { location, text },
+                )));
             }
+            ServerMessage::ResourceAnnounce(_)
+            | ServerMessage::ResourceChunk(_)
+            | ServerMessage::ResourceRetire { .. }
+                if attached =>
+            {
+                return self.apply_resource(message).inspect_err(|_| {
+                    self.resources.assembly = None;
+                });
+            }
+            _ => return Err(ModelError::UnexpectedMessage),
+        }
+        Ok(None)
+    }
+
+    fn apply_resource(
+        &mut self,
+        message: ServerMessage,
+    ) -> Result<Option<ModelEffect>, ModelError> {
+        if self.reducer.current().is_none() {
+            return Err(ModelError::Resource(
+                "resource message before the first frame",
+            ));
+        }
+        match message {
+            ServerMessage::ResourceAnnounce(announce) => self.resources.announce(announce)?,
+            ServerMessage::ResourceChunk(chunk) => {
+                if let Some(assembly) = self.resources.chunk(chunk)? {
+                    let announce = assembly.announce;
+                    return Ok(Some(ModelEffect::Resource(ImageResource {
+                        attachment: self.attachment,
+                        resource: announce.resource,
+                        format: announce.format,
+                        width: announce.width,
+                        height: announce.height,
+                        pixels: assembly.pixels,
+                    })));
+                }
+            }
+            ServerMessage::ResourceRetire { resource } => self.resources.retire(resource)?,
             _ => return Err(ModelError::UnexpectedMessage),
         }
         Ok(None)
@@ -582,6 +778,7 @@ impl SessionModel {
         self.connection = ConnectionState::Incompatible { version };
         self.scroll_preview = None;
         self.notices.clear();
+        self.resources = Resources::default();
     }
 
     pub fn mark_lost(&mut self, detail: impl Into<String>) {
@@ -593,6 +790,7 @@ impl SessionModel {
         };
         self.scroll_preview = None;
         self.notices.clear();
+        self.resources = Resources::default();
     }
 
     pub fn mark_lost_preserving_constraining_notice(&mut self, detail: impl Into<String>) {
@@ -609,14 +807,18 @@ impl SessionModel {
                 Notice::Orbit(FailureCode::Protocol | FailureCode::Terminal, _)
             )
         });
+        self.resources = Resources::default();
     }
 
+    /// Start a new attachment, which discards the old one's resources and identities.
     pub fn prepare_reconnect(&mut self) {
         self.reducer = FrameReducer::default();
         self.connection = ConnectionState::Connecting;
         self.awaiting_current_frame = true;
         self.scroll_preview = None;
         self.notices.clear();
+        self.attachment = next_attachment();
+        self.resources = Resources::default();
     }
 
     pub fn set_venus_notice(&mut self, source: LocalNoticeSource, detail: impl Into<String>) {
@@ -678,6 +880,10 @@ fn scene_preview(
             }
         }
     })
+}
+
+fn next_attachment() -> u64 {
+    NEXT_ATTACHMENT.fetch_add(1, Ordering::Relaxed)
 }
 
 fn bounded(mut detail: String) -> String {

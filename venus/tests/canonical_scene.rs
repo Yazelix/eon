@@ -1,16 +1,19 @@
 use eon_workspace_protocol::v21::{Pane, Snapshot, Tab};
 use orbit_protocol::{
     Capabilities, Cell, CellStyle, CellWidth, Colors, Cursor, CursorShape, CursorViewport,
-    Dimensions, Frame, Rgb, Row, Screen, StyleColor, Underline,
+    Dimensions, Frame, Graphics, ImageLayer, Placement, PlacementState, Rgb, Row, Screen,
+    SourceRect, StyleColor, Underline,
     session::{
-        self, ClipboardLocation, Failure, FailureCode, PreviewOutcome, ScrollOutcome,
-        ServerMessage, VerticalDirection, VerticalPreview, WheelOutcome,
+        self, ClipboardLocation, Failure, FailureCode, PixelFormat, PreviewOutcome,
+        RESOURCE_CHUNK_BYTES, ResourceAnnounce, ResourceChunk, ScrollOutcome, ServerMessage,
+        VerticalDirection, VerticalPreview, WheelOutcome,
     },
 };
 use winit::dpi::PhysicalSize;
 use yazelix_venus::{
-    CellMetrics, ClipboardEffect, ConnectionState, EonBar, LocalNoticeSource, ModelError,
-    ScenePreview, SessionModel, WorkspaceHit, WorkspaceScene,
+    CellMetrics, ClipboardEffect, ConnectionState, EonBar, ImageResource, LocalNoticeSource,
+    ModelEffect, ModelError, ScenePlacement, ScenePreview, SceneRect, SessionModel, WorkspaceHit,
+    WorkspaceScene,
 };
 
 #[test]
@@ -491,7 +494,9 @@ fn canonical_orbit_frame_becomes_one_deterministic_scene() {
     assert!(!scene.cursor.unwrap().explicit_color);
     let mut explicit = frame(8, Screen::Alternate);
     explicit.colors.cursor = Some(Rgb { r: 1, g: 2, b: 3 });
-    let explicit_cursor = yazelix_venus::Scene::from_frame(&explicit).cursor.unwrap();
+    let explicit_cursor = yazelix_venus::Scene::from_frame(&explicit, 0)
+        .cursor
+        .unwrap();
     assert!(explicit_cursor.explicit_color);
     assert_eq!(
         explicit_cursor.color,
@@ -514,7 +519,7 @@ fn blinking_state_drives_native_wakeups_without_changing_frame_data() {
     blinking.rows[0].cells[0].style.blink = true;
     blinking.cursor.blinking = true;
 
-    let scene = yazelix_venus::Scene::from_frame(&blinking);
+    let scene = yazelix_venus::Scene::from_frame(&blinking, 0);
     assert!(scene.has_blinking_content());
     assert!(scene.content[0].cells[0].style.blink);
     assert!(scene.cursor.unwrap().blinking);
@@ -526,7 +531,7 @@ fn concealed_cells_stay_out_of_drawing_and_accessibility() {
     concealed.rows[0].cells[0].text = "secret".into();
     concealed.rows[0].cells[0].style.invisible = true;
 
-    let scene = yazelix_venus::Scene::from_frame(&concealed);
+    let scene = yazelix_venus::Scene::from_frame(&concealed, 0);
     assert!(
         scene
             .glyph_runs()
@@ -541,7 +546,7 @@ fn orbit_selected_style_is_the_only_visual_selection_source() {
     let mut selected = frame(10, Screen::Primary);
     selected.rows[0].cells[0].style.selected = true;
 
-    let scene = yazelix_venus::Scene::from_frame(&selected);
+    let scene = yazelix_venus::Scene::from_frame(&selected, 0);
     assert!(scene.has_selected_content());
     assert!(scene.content[0].cells[0].style.selected);
     assert_eq!(scene.content[0].cells[0].style.foreground, scene.background);
@@ -782,10 +787,10 @@ fn clipboard_text_is_an_attached_one_shot_effect_not_presentation_state() {
                 text: "e\u{301}界\nsecond".into(),
             })
             .unwrap(),
-        Some(ClipboardEffect::SelectionCopy {
+        Some(ModelEffect::Clipboard(ClipboardEffect::SelectionCopy {
             location: ClipboardLocation::Selection,
             text: "e\u{301}界\nsecond".into(),
-        })
+        }))
     );
     model
         .apply(ServerMessage::Failure(Failure {
@@ -800,10 +805,10 @@ fn clipboard_text_is_an_attached_one_shot_effect_not_presentation_state() {
                 text: "terminal".into(),
             })
             .unwrap(),
-        Some(ClipboardEffect::TerminalWrite {
+        Some(ModelEffect::Clipboard(ClipboardEffect::TerminalWrite {
             location: ClipboardLocation::Selection,
             text: "terminal".into(),
-        })
+        }))
     );
     assert_eq!(model.notice(), Some("Orbit rejected input: bad key"));
     assert_eq!(model.apply(ServerMessage::Accepted).unwrap(), None);
@@ -1018,6 +1023,361 @@ fn invalid_session_and_frame_bytes_never_reach_draw_state() {
         ModelError::UnexpectedMessage
     );
     assert!(attached.is_attached());
+}
+
+#[test]
+fn resource_streams_assemble_complete_pixels_and_frames_carry_placements() {
+    let mut model = attached_model();
+    let mut first = frame(1, Screen::Primary);
+    first.graphics = Some(Graphics {
+        cell_width: 10,
+        cell_height: 20,
+        placements_omitted: true,
+        placements: vec![
+            placement(5, -1, 0, PlacementState::Pending),
+            placement(9, 2, 1, PlacementState::Unavailable),
+        ],
+    });
+    apply_wire(&mut model, ServerMessage::Frame(Box::new(first))).unwrap();
+    let graphics = &model.scene().unwrap().graphics;
+    let attachment = graphics.attachment;
+    assert!(graphics.placements_omitted);
+    assert_eq!(
+        graphics.placements,
+        [
+            ScenePlacement {
+                resource: 5,
+                state: PlacementState::Pending,
+                source: SourceRect {
+                    x: 1,
+                    y: 2,
+                    width: 30,
+                    height: 40,
+                },
+                target: SceneRect {
+                    left: -0.5,
+                    top: 0.25,
+                    width: 3.0,
+                    height: 2.0,
+                },
+            },
+            ScenePlacement {
+                resource: 9,
+                state: PlacementState::Unavailable,
+                source: SourceRect {
+                    x: 1,
+                    y: 2,
+                    width: 30,
+                    height: 40,
+                },
+                target: SceneRect {
+                    left: 2.5,
+                    top: 1.25,
+                    width: 3.0,
+                    height: 2.0,
+                },
+            },
+        ]
+    );
+
+    // 300 by 300 RGBA is one full chunk and a short last one.
+    assert_eq!(
+        resource_wire(&mut model, announce(5, PixelFormat::Rgba, 300, 300)),
+        Ok(None)
+    );
+    let first_chunk = vec![1; RESOURCE_CHUNK_BYTES as usize];
+    let last_chunk = vec![2; 300 * 300 * 4 - RESOURCE_CHUNK_BYTES as usize];
+    assert_eq!(
+        resource_wire(&mut model, chunk(5, 0, first_chunk.clone())),
+        Ok(None)
+    );
+    assert_eq!(
+        resource_wire(&mut model, chunk(5, 1, last_chunk.clone())),
+        Ok(Some(ModelEffect::Resource(ImageResource {
+            attachment,
+            resource: 5,
+            format: PixelFormat::Rgba,
+            width: 300,
+            height: 300,
+            pixels: [first_chunk, last_chunk].concat(),
+        })))
+    );
+    assert_eq!(
+        resource_wire(&mut model, announce(7, PixelFormat::Rgb, 1, 1)),
+        Ok(None)
+    );
+    assert_eq!(
+        resource_wire(&mut model, chunk(7, 0, vec![3, 4, 5])),
+        Ok(Some(ModelEffect::Resource(ImageResource {
+            attachment,
+            resource: 7,
+            format: PixelFormat::Rgb,
+            width: 1,
+            height: 1,
+            pixels: vec![3, 4, 5],
+        })))
+    );
+    assert_eq!(
+        resource_wire(&mut model, ServerMessage::ResourceRetire { resource: 5 }),
+        Ok(None)
+    );
+
+    // A new attachment starts identities over and forgets the old resources; the scene kept
+    // through the reconnect still names the old attachment.
+    model.prepare_reconnect();
+    apply_wire(&mut model, ServerMessage::Attached).unwrap();
+    assert_eq!(model.scene().unwrap().graphics.attachment, attachment);
+    assert_eq!(
+        resource_wire(&mut model, ServerMessage::ResourceRetire { resource: 7 }),
+        Err(ModelError::Resource(
+            "resource message before the first frame"
+        ))
+    );
+    apply_wire(
+        &mut model,
+        ServerMessage::Frame(Box::new(frame(1, Screen::Primary))),
+    )
+    .unwrap();
+    assert_ne!(model.scene().unwrap().graphics.attachment, attachment);
+    assert!(model.scene().unwrap().graphics.placements.is_empty());
+    assert_eq!(
+        resource_wire(&mut model, ServerMessage::ResourceRetire { resource: 7 }),
+        Err(ModelError::Resource(
+            "retirement names no complete, unretired resource"
+        ))
+    );
+    assert_eq!(
+        resource_wire(&mut model, announce(1, PixelFormat::Rgb, 1, 1)),
+        Ok(None)
+    );
+}
+
+#[test]
+fn invalid_resource_streams_fail_deterministically() {
+    let complete = |identity| {
+        [
+            announce(identity, PixelFormat::Rgb, 1, 1),
+            chunk(identity, 0, vec![0; 3]),
+        ]
+    };
+    let full = || vec![0; RESOURCE_CHUNK_BYTES as usize];
+    let cases: Vec<(Vec<ServerMessage>, &str)> = vec![
+        (
+            [
+                complete(5).as_slice(),
+                &[announce(5, PixelFormat::Rgb, 1, 1)],
+            ]
+            .concat(),
+            "identity is not greater than every earlier one",
+        ),
+        (
+            [
+                complete(5).as_slice(),
+                &[announce(4, PixelFormat::Rgb, 1, 1)],
+            ]
+            .concat(),
+            "identity is not greater than every earlier one",
+        ),
+        (
+            vec![
+                announce(5, PixelFormat::Rgba, 300, 300),
+                announce(6, PixelFormat::Rgb, 1, 1),
+            ],
+            "another resource is still incomplete",
+        ),
+        (
+            vec![chunk(5, 0, vec![0; 3])],
+            "chunk of no incomplete resource",
+        ),
+        (
+            [complete(5).as_slice(), &[chunk(5, 1, vec![0; 3])]].concat(),
+            "chunk of no incomplete resource",
+        ),
+        (
+            vec![
+                announce(5, PixelFormat::Rgba, 300, 300),
+                chunk(5, 1, vec![0; 97_856]),
+            ],
+            "chunk is out of order",
+        ),
+        (
+            vec![
+                announce(5, PixelFormat::Rgba, 300, 300),
+                chunk(6, 0, full()),
+            ],
+            "chunk is out of order",
+        ),
+        (
+            vec![
+                announce(5, PixelFormat::Rgba, 300, 300),
+                chunk(5, 0, full()),
+                chunk(5, 0, full()),
+            ],
+            "chunk is out of order",
+        ),
+        (
+            vec![
+                announce(5, PixelFormat::Rgba, 300, 300),
+                chunk(5, 0, vec![0; 97_856]),
+            ],
+            "chunk has the wrong size",
+        ),
+        (
+            vec![
+                announce(5, PixelFormat::Rgba, 300, 300),
+                chunk(5, 0, full()),
+                chunk(5, 1, vec![0; 97_855]),
+            ],
+            "chunk has the wrong size",
+        ),
+        (
+            vec![announce(5, PixelFormat::Rgb, 1, 1), chunk(5, 0, vec![0; 4])],
+            "chunk has the wrong size",
+        ),
+        (
+            vec![ServerMessage::ResourceRetire { resource: 5 }],
+            "retirement names no complete, unretired resource",
+        ),
+        (
+            vec![
+                announce(5, PixelFormat::Rgba, 300, 300),
+                ServerMessage::ResourceRetire { resource: 5 },
+            ],
+            "retirement names no complete, unretired resource",
+        ),
+        (
+            [
+                complete(5).as_slice(),
+                &[
+                    ServerMessage::ResourceRetire { resource: 5 },
+                    ServerMessage::ResourceRetire { resource: 5 },
+                ],
+            ]
+            .concat(),
+            "retirement names no complete, unretired resource",
+        ),
+    ];
+    for (messages, detail) in cases {
+        let mut model = streaming_model();
+        let (failing, accepted) = messages.split_last().unwrap();
+        for message in accepted {
+            resource_wire(&mut model, message.clone()).unwrap();
+        }
+        assert_eq!(
+            resource_wire(&mut model, failing.clone()),
+            Err(ModelError::Resource(detail)),
+            "{messages:?}"
+        );
+        // The failure dropped any assembly, so only order state remains.
+        assert_eq!(
+            resource_wire(&mut model, announce(100, PixelFormat::Rgb, 1, 1)),
+            Ok(None),
+            "{messages:?}"
+        );
+    }
+
+    // Before attachment the message is out of order; before the first frame it is a resource
+    // failure.
+    assert_eq!(
+        SessionModel::new().apply(announce(5, PixelFormat::Rgb, 1, 1)),
+        Err(ModelError::UnexpectedMessage)
+    );
+    assert_eq!(
+        attached_model().apply(announce(5, PixelFormat::Rgb, 1, 1)),
+        Err(ModelError::Resource(
+            "resource message before the first frame"
+        ))
+    );
+
+    // Metadata the codec would refuse is refused again before any reservation.
+    let oversized = ResourceAnnounce {
+        resource: 5,
+        generation: 1,
+        format: PixelFormat::Rgba,
+        width: 4096,
+        height: 4096,
+        byte_length: 4096 * 4096 * 4,
+        chunk_count: 256,
+    };
+    assert_eq!(
+        streaming_model().apply(ServerMessage::ResourceAnnounce(oversized)),
+        Err(ModelError::Resource("metadata is outside the limits"))
+    );
+
+    // At most 1,024 resources are announced and not retired.
+    let mut model = streaming_model();
+    for identity in 0..1024 {
+        for message in complete(identity) {
+            model.apply(message).unwrap();
+        }
+    }
+    assert_eq!(
+        model.apply(announce(2000, PixelFormat::Rgb, 1, 1)),
+        Err(ModelError::Resource("too many resources are not retired"))
+    );
+    model
+        .apply(ServerMessage::ResourceRetire { resource: 3 })
+        .unwrap();
+    assert_eq!(
+        model.apply(announce(2000, PixelFormat::Rgb, 1, 1)),
+        Ok(None)
+    );
+}
+
+fn streaming_model() -> SessionModel {
+    let mut model = attached_model();
+    apply_wire(
+        &mut model,
+        ServerMessage::Frame(Box::new(frame(1, Screen::Primary))),
+    )
+    .unwrap();
+    model
+}
+
+/// Apply a resource message after a round trip through the codec, which it must pass.
+fn resource_wire(
+    model: &mut SessionModel,
+    message: ServerMessage,
+) -> Result<Option<ModelEffect>, ModelError> {
+    let bytes = session::encode_server_message(&message).unwrap();
+    model.apply(session::decode_server_message(&bytes).unwrap())
+}
+
+fn announce(resource: u64, format: PixelFormat, width: u32, height: u32) -> ServerMessage {
+    ServerMessage::ResourceAnnounce(
+        ResourceAnnounce::new(resource, 1, format, width, height).unwrap(),
+    )
+}
+
+fn chunk(resource: u64, index: u32, bytes: Vec<u8>) -> ServerMessage {
+    ServerMessage::ResourceChunk(ResourceChunk {
+        resource,
+        index,
+        bytes,
+    })
+}
+
+fn placement(resource: u64, col: i32, row: i32, state: PlacementState) -> Placement {
+    Placement {
+        resource,
+        layer: ImageLayer::BelowText,
+        z: 0,
+        col,
+        row,
+        grid_cols: 3,
+        grid_rows: 2,
+        offset_x: 5,
+        offset_y: 5,
+        width: 30,
+        height: 40,
+        source: SourceRect {
+            x: 1,
+            y: 2,
+            width: 30,
+            height: 40,
+        },
+        state,
+    }
 }
 
 fn attached_model() -> SessionModel {

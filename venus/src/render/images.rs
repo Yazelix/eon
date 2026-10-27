@@ -415,7 +415,8 @@ mod tests {
     use super::super::cells::{build_scene_rectangles, tests::plain_style};
     use super::*;
     use crate::{
-        Color as SceneColor, DrawCell, DrawCursor, DrawRow, Scene, ScenePreview, scene::CardFill,
+        Color as SceneColor, DrawCell, DrawCursor, DrawRow, Scene, SceneGraphics, ScenePreview,
+        scene::CardFill,
     };
     use orbit_protocol::{CellWidth, CursorShape, Screen, Underline, session::VerticalDirection};
 
@@ -467,6 +468,7 @@ mod tests {
                 explicit_color: false,
             }),
             content,
+            graphics: SceneGraphics::default(),
             images,
         }
     }
@@ -592,6 +594,7 @@ mod tests {
         // A terminal clip that misses the grid, as when padding is wider than the terminal,
         // leaves no image in that padding, even one placed to reach into it.
         let reaching = Scene {
+            graphics: SceneGraphics::default(),
             images: vec![whole(
                 1,
                 SceneRect {

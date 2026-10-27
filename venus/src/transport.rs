@@ -776,6 +776,15 @@ mod tests {
             ]
         );
 
+        let retirement = TransportEvent::Server(ServerMessage::ResourceRetire { resource: 1 });
+        assert!(events.push(server_frame(5)));
+        assert!(!events.push(retirement.clone()));
+        assert!(!events.push(server_frame(6)));
+        assert_eq!(
+            events.drain(),
+            [server_frame(5), retirement, server_frame(6)]
+        );
+
         assert!(events.push(server_frame(9)));
         assert!(!events.push(server_scroll_frame(10)));
         assert_eq!(events.drain(), [server_scroll_frame(10)]);
