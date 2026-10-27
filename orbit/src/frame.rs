@@ -121,7 +121,7 @@ impl FrameExtractor {
                     style.bg_color = GhosttyStyleColor::Rgb(background);
                 }
                 let grapheme_count = cell.graphemes_len().map_err(|_| errno(libc::EIO))?;
-                if grapheme_count > MAX_FRAME_BYTES / size_of::<char>() {
+                if grapheme_count as usize > MAX_FRAME_BYTES / size_of::<char>() {
                     return Err(errno(libc::EOVERFLOW));
                 }
                 text.clear();
@@ -295,14 +295,14 @@ impl FrameExtractor {
 }
 
 /// The terminal's title and working directory, each empty when libghostty
-/// refuses to read it, as it does invalid UTF-8: an OSC 7 directory can be,
+/// cannot read it or it is not UTF-8: an OSC 7 directory can be invalid UTF-8,
 /// and so is a title cut inside a character at libghostty's 1024 bytes. A
 /// program's bad metadata never ends its terminal.
 pub(crate) fn title_and_directory<'a>(terminal: &'a Terminal<'static, '_>) -> (&'a str, &'a str) {
-    (
-        terminal.title().unwrap_or_default(),
-        terminal.pwd().unwrap_or_default(),
-    )
+    let text = |bytes: libghostty_vt::error::Result<&'a [u8]>| {
+        std::str::from_utf8(bytes.unwrap_or_default()).unwrap_or_default()
+    };
+    (text(terminal.title()), text(terminal.pwd()))
 }
 
 /// Up to one viewport of rows beyond the viewport, nearest first, bounded like a frame.

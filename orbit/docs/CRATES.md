@@ -13,9 +13,9 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 
 ### Authoritative terminal semantics
 
-- **Selected shape:** `libghostty-vt` and `libghostty-vt-sys` 0.2.1 from the
-  `Yazelix/libghostty-rs` fork at `6313a9b4e594a08fb30979133fc85aabaa405760`, building
-  pinned Ghostty `8c425a7bd57de848aa83cb9b003b1ecd6037c56a` with Zig 0.17
+- **Selected shape:** `libghostty-vt` and `libghostty-vt-sys` 0.2.1 from upstream
+  `Uzaaft/libghostty-rs` master at `9ede35b8ea94a55ed3608408d67e102883129f1e`, building
+  pinned Ghostty `521cf2c5d30bd48028ca61546c64e7913764073d` with Zig 0.17
 - **Status:** Selected for the experiment
 - **Credible alternatives:** Formatter reconstruction with the same crate; waiting for a
   crates.io release that builds Ghostty `8c425a7bd`; replacement by `rio-vt`
@@ -26,21 +26,21 @@ defines the dependency gate, and Beads retain the full candidate evidence.
   `LIBGHOSTTY_VT_SYS_CPU` permits an intentional deployment-specific override.
   Rust-only CPU flags do not control this Zig build. No owned runtime logic is added.
   OSC 7501 program status needs Ghostty `8c425a7bd` or later, which no release of the
-  binding builds. The fork is upstream master `0ef8041` plus four commits: the Ghostty
-  and Zig 0.17 bump, enum-prefix fixes, the program-status and semantic-prompt
-  callbacks, and a docs resync. Master already carries the 0.2.2 release's soundness,
-  Windows-linking and baseline-CPU fixes, so the fork drops none of them. The same
-  series is offered upstream in
-  [Uzaaft/libghostty-rs#111](https://github.com/Uzaaft/libghostty-rs/issues/111).
-  Lucca approved this git pin, an exception to `orb-ze3`'s rule against unpublished
-  Git dependencies, for this dependency only (`eon-a9tr.1`, 2026-10-21). The pin moves
-  only by a bead. Exit condition: return to crates.io with the first release whose
-  `GHOSTTY_COMMIT` contains `8c425a7bd` and whose API has both callback wrappers.
+  binding builds. Upstream master, which replaced the `Yazelix/libghostty-rs` fork
+  Orbit used before, carries the program-status and semantic-prompt callbacks and the
+  render-state image iterator, as well as the 0.2.2 release's soundness,
+  Windows-linking and baseline-CPU fixes. Lucca approved a git pin, an
+  exception to `orb-ze3`'s rule against unpublished Git dependencies, for this
+  dependency only (`eon-a9tr.1`, 2026-10-21), and approved moving it from the fork to an
+  exact upstream master commit (`eon-9rtt.4`, 2026-10-26). The pin moves only by a
+  bead. Exit condition: return to crates.io with the first release whose
+  `GHOSTTY_COMMIT` contains `8c425a7bd` and whose API has both callback wrappers and
+  the image iterator (`eon-9rtt.3`).
 - **Evidence:** `orb-bi4.1` and its immutable negative corpus; accepted `orb-bi4.3`
   proof; portable build adoption with downstream acceptance tracked by Eon
   `eon-portable-orbit-cpu-omxq`. Those Beads record the pre-consolidation
   revisions. `eon-a9tr.1` measured the bump and chose the fork; `eon-a9tr.2`
-  landed it.
+  landed it; `eon-9rtt.4` moved the pin to upstream.
 
 ### Platform-specific PTY and local-runtime mechanics
 
@@ -168,7 +168,7 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 ### Structured presentation extraction
 
 - **Selected shape:** The `RenderState`, row/cell iterators, and terminal grid
-  references of the `libghostty-vt` 0.2.1 fork pinned above
+  references of the `libghostty-vt` 0.2.1 binding pinned above
 - **Status:** Selected for the headless proof
 - **Credible alternatives:** A small approved binding extension; libghostty fork;
   replacement by `rio-vt`; secondary oracle using `vt100` or `termwiz`

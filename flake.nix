@@ -31,7 +31,7 @@
     # carries; it supplies Orbit's Zig and nothing else (eon-a9tr.1).
     nixpkgs-zig.url = "github:NixOS/nixpkgs/02c087f3fe673c9e317f206a627cb6b910336dbe";
     ghostty = {
-      url = "github:ghostty-org/ghostty/8c425a7bd57de848aa83cb9b003b1ecd6037c56a";
+      url = "github:ghostty-org/ghostty/521cf2c5d30bd48028ca61546c64e7913764073d";
       flake = false;
     };
     # Orbit's build-time Bend compiler (orbit/build.rs).
@@ -137,7 +137,7 @@
         lockFile = ./Cargo.lock;
         outputHashes."dpi-0.1.1" = "sha256-fJQqcXhKPGtivKo1AyyGhy1oNebTFGyzWDmOesFsltI=";
         outputHashes."accesskit-0.24.1" = "sha256-W4Zk2BcKSPztJeeWBtQS3ugV0WPZWD0x8aX6R37zqj8=";
-        outputHashes."libghostty-vt-0.2.1" = "sha256-rkG665SNP8JkafV5AheE2RDwn0MZCbYEwnzV5co1gmA=";
+        outputHashes."libghostty-vt-0.2.1" = "sha256-Zojd1ziCw9+tbhmGYaFHFPlaxgbNbtmVBR99Otmg+o0=";
       };
       codexbarIdentity = component "codexbar";
       animaIdentity = component "anima";
@@ -258,7 +258,7 @@
       # real-PTY checks. tests/lifecycle.rs needs host /usr/bin/setsid, which
       # the build sandbox lacks, so eon-test runs it.
       orbitPackage =
-        assert ghostty.rev == "8c425a7bd57de848aa83cb9b003b1ecd6037c56a";
+        assert ghostty.rev == "521cf2c5d30bd48028ca61546c64e7913764073d";
         assert bend.rev == "234cb9b950800f20b15feafcb4ce2f43e76e7fae";
         pkgs.rustPlatform.buildRustPackage {
           pname = workspacePackages.orbit;

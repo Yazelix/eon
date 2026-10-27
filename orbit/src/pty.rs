@@ -110,7 +110,7 @@ impl ClipboardWrites {
         let (Some(content), None) = (contents.next(), contents.next()) else {
             return Err(ClipboardWriteError::Unsupported);
         };
-        if content.mime != "text/plain" {
+        if content.mime != b"text/plain" {
             return Err(ClipboardWriteError::Unsupported);
         }
         let text =

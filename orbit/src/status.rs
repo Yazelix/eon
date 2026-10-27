@@ -7,8 +7,8 @@
 //! them.
 
 use libghostty_vt::terminal::{
-    ProgramStatus, ProgramStatusKind, ProgramStatusState, SemanticPrompt, SemanticPromptKind,
-    SemanticPromptPromptKind,
+    ProgramStatus, ProgramStatusKind, ProgramStatusState, PromptKind, SemanticPrompt,
+    SemanticPromptKind,
 };
 use orbit_protocol::management::{self as protocol, ProgramKind, ProgramRecord, ProgramState};
 use std::{collections::HashMap, time::Instant};
@@ -76,7 +76,8 @@ impl Turn {
         self.events.push(Event::Report(Report {
             id: report.id().to_vec(),
             state,
-            kind: report.kind(),
+            // A kind these bindings do not know yet.
+            kind: report.kind().unwrap_or(ProgramStatusKind::None),
             progress: report.progress(),
             app: report.app().to_vec(),
             title: disarmed(report.title()),
@@ -87,7 +88,7 @@ impl Turn {
     /// Collects a primary prompt start; adjacent ones count once.
     pub(crate) fn prompt(&mut self, event: SemanticPrompt<'_>) {
         if matches!(event.kind(), Ok(SemanticPromptKind::PromptStart))
-            && matches!(event.prompt_kind(), Ok(SemanticPromptPromptKind::Primary))
+            && matches!(event.prompt_kind(), Ok(PromptKind::Primary))
             && !matches!(self.events.last(), Some(Event::Mark))
         {
             self.events.push(Event::Mark);
@@ -630,14 +631,14 @@ mod tests {
     fn replies_carry_the_sanitized_terminal_title() {
         let mut fixture = Fixture::new();
         fixture.turn(&["\x1b]0;\u{202e}eon\u{200b}-9a\x07"], false);
-        let title = fixture.terminal.title().unwrap();
+        let title = std::str::from_utf8(fixture.terminal.title().unwrap()).unwrap();
         assert_eq!(
             fixture.records.reply(title, Instant::now()).terminal_title,
             "eon-9a"
         );
         let cut = format!("{}é", "a".repeat(63));
         fixture.turn(&[&format!("\x1b]2;{cut}\x1b\\")], false);
-        let title = fixture.terminal.title().unwrap();
+        let title = std::str::from_utf8(fixture.terminal.title().unwrap()).unwrap();
         assert_eq!(title, cut);
         assert_eq!(
             fixture.records.reply(title, Instant::now()).terminal_title,

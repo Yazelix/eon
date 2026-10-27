@@ -114,7 +114,7 @@ counterexample corpus. The current suite exercises the accepted authoritative
 runtime through real PTY lifecycle and structured-presentation checks. The
 repository carries no permanent test target for the rejected reconstruction
 path. Orbit uses no compatibility wrapper, second terminal engine, or replay
-fallback; its one binding fork is recorded in [`CRATES.md`](CRATES.md).
+fallback; its one binding pin is recorded in [`CRATES.md`](CRATES.md).
 
 The focused Orbit terminal conformance cases of the black-box suite
 run under one filter:

@@ -397,7 +397,7 @@ of the stream, and a new observer is then admitted. Without the refusal, the
 check failed.
 
 Rust reads the title and working directory through one fallback: when
-libghostty refuses either as invalid UTF-8, frames and the observer's
+either is not valid UTF-8, frames and the observer's
 metadata carry it empty, and so does the ProgramStatus reply for the title,
 so the terminal keeps running.
 The late-observer check sets a title of 1023 ASCII bytes and `é`, which
