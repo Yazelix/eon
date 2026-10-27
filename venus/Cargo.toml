@@ -27,4 +27,5 @@ arboard = { version = "=3.6.1", default-features = false }
 wgpu = { version = "=30.0.0", default-features = false, features = ["metal"] }
 
 [dev-dependencies]
+accesskit_consumer = "=0.38.0"
 wgpu = { version = "=30.0.0", default-features = false, features = ["noop"] }

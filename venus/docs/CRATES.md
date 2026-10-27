@@ -162,6 +162,9 @@ Nix consumers need one fixed-output hash for the shared Git source. Replace
 this patch with an accepted upstream release passing the cache-wire and real
 Orca return-to-live selection checks. `ven-resolve-reader-focus-after-return-to-live-lmt`
 owns the decision and scoped delivery proof.
+Separately from the patch, Venus's tests use the pinned `accesskit_consumer` as
+a dev-dependency, so they feed tree updates through the same validation the
+adapters apply.
 
 ### Native text clipboard
 

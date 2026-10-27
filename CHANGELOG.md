@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- With a screen reader running, Venus no longer exits when the active tab has
+  no panes and shows nothing, such as a tab left with only a dismissed popup.
+
 - Extended terminal backgrounds reach the pane's title line, filling the band
   below it under the existing title text, cutout and outline. Primary-screen
   exceptions still apply; background mode, popups, zoom and frameless mode keep

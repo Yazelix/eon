@@ -529,7 +529,8 @@ impl Snapshot {
                     .sum::<usize>()
                     + 1,
             );
-            if workspace.panes.is_empty() && (visible_terminal.is_some() || !self.status.is_empty())
+            if workspace.panes.is_empty()
+                && (terminal || visible_terminal.is_some() || !self.status.is_empty())
             {
                 children.push(CONTENT);
             }
@@ -540,6 +541,11 @@ impl Snapshot {
                         children.push(CONTENT);
                     }
                 }
+            }
+            if !children.contains(&CONTENT) {
+                // AccessKit rejects a node without a parent. A tab without panes leaves CONTENT
+                // out only when it holds no terminal (so no rows or links) and no status.
+                nodes.retain(|(id, _)| *id != CONTENT);
             }
             panel.set_children(children);
             nodes.push((PANE_PANEL, panel));
@@ -1014,6 +1020,20 @@ mod tests {
             .find(|(_, node)| node.label() == Some(label))
             .map(|(id, _)| *id)
             .unwrap()
+    }
+
+    struct IgnoreChanges;
+
+    impl accesskit_consumer::TreeChangeHandler for IgnoreChanges {
+        fn node_added(&mut self, _: &accesskit_consumer::Node) {}
+        fn node_updated(&mut self, _: &accesskit_consumer::Node, _: &accesskit_consumer::Node) {}
+        fn focus_moved(
+            &mut self,
+            _: Option<&accesskit_consumer::Node>,
+            _: Option<&accesskit_consumer::Node>,
+        ) {
+        }
+        fn node_removed(&mut self, _: &accesskit_consumer::Node) {}
     }
 
     fn node(update: &TreeUpdate, id: NodeId) -> &Node {
@@ -3321,6 +3341,26 @@ mod tests {
         snapshot.set_workspace(Some(&workspace));
         let tab = snapshot.tab_ids["t1"];
         let update = snapshot.tree();
+        let mut reader = accesskit_consumer::Tree::new(update.clone(), true);
+        // A popup card with no area still holds its terminal rows, so the panel keeps CONTENT.
+        let tiny_size = PhysicalSize::new(800, 20);
+        let mut tiny = Snapshot {
+            size: tiny_size,
+            status: String::new(),
+            ..snapshot.clone()
+        };
+        tiny.set_workspace(Some(&WorkspaceScene::from_snapshot(
+            &state,
+            tiny_size,
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_, text| (text.into(), text.len() as f32 * 10.0),
+        )));
+        let tiny = tiny.tree();
+        accesskit_consumer::Tree::new(tiny.clone(), true);
+        assert_eq!(node(&tiny, CONTENT).bounds(), None);
+        assert_eq!(node(&tiny, PANE_PANEL).children(), &[CONTENT]);
 
         assert_eq!(node(&update, PANE_PANEL).label(), Some("Project"));
         assert_eq!(node(&update, PANE_PANEL).children(), &[CONTENT]);
@@ -3348,8 +3388,10 @@ mod tests {
         )));
         snapshot.workspace_focus = WorkspaceFocus::Terminal;
         let empty = snapshot.tree();
-        assert_eq!(node(&empty, CONTENT).role(), Role::GenericContainer);
-        assert!(node(&empty, CONTENT).children().is_empty());
+        // AccessKit panics on a node that has no parent, both as the first tree and as an update.
+        accesskit_consumer::Tree::new(empty.clone(), true);
+        reader.update_and_process_changes(empty.clone(), &mut IgnoreChanges);
+        assert!(empty.nodes.iter().all(|(id, _)| *id != CONTENT));
         assert!(node(&empty, PANE_PANEL).children().is_empty());
         assert_eq!(node(&empty, PANE_PANEL).label(), Some("Empty tab"));
         assert_eq!(empty.focus, tab);
@@ -3358,6 +3400,7 @@ mod tests {
         assert_eq!(snapshot.action_target(CONTENT, Action::Click), None);
         snapshot.status = "popup action rejected".into();
         let failed = snapshot.tree();
+        reader.update_and_process_changes(failed.clone(), &mut IgnoreChanges);
         assert_eq!(node(&failed, PANE_PANEL).children(), &[CONTENT]);
         assert_eq!(node(&failed, CONTENT).role(), Role::Alert);
         assert_eq!(
