@@ -187,7 +187,9 @@ impl InputState {
     /// such as CapsLock and Backspace under `caps:backspace`, a release is
     /// consumed so that key is released once, after the last. A press that
     /// meets a shortcut capture the other key holds ends that capture and
-    /// retires the other key, so the press acts on its own. A retired key
+    /// retires the other key, so the press acts on its own; a capture that
+    /// meets a terminal press instead hands that one release to the terminal
+    /// (`consumes_shortcut`). A retired key
     /// keeps its pin so its release pairs, but its repeats never reach a new
     /// attachment and it never holds back another key's release.
     fn pin_key(
@@ -484,6 +486,9 @@ impl InputState {
         {
             if state == ElementState::Released {
                 self.captured_shortcuts.swap_remove(index);
+                // Another native key on the same resolved key (VEN-C2) still
+                // holds it in the terminal, and this is that key's one release.
+                return !self.pressed_keys.contains(&key);
             }
             return true;
         }
@@ -1045,6 +1050,47 @@ mod tests {
             for (native, expected) in releases {
                 assert_eq!(input.pin_key(native, escape, Released, false), expected);
             }
+        }
+    }
+
+    #[test]
+    fn a_capture_on_a_terminal_held_key_releases_it_to_the_terminal() {
+        use ElementState::{Pressed, Released};
+        use KeyCode as K;
+        let backspace = WinitPhysicalKey::Code(K::Backspace);
+        let caps = WinitPhysicalKey::Code(K::CapsLock);
+        // caps:backspace with an Alt+Backspace popup whose request fails, so
+        // the attachment stays: Backspace reaches the terminal, then CapsLock
+        // starts a capture on the same key. Returns the action Orbit sees.
+        let dispatch = |input: &mut InputState, native, state, recognized| {
+            let key = input.pin_key(native, backspace, state, false)?;
+            if input.consumes_shortcut(key, state, false, recognized)
+                || !input.key_is_current(key, state, false)
+            {
+                return None;
+            }
+            input.commit_key(key, state);
+            Some(state)
+        };
+        for backspace_first in [true, false] {
+            let mut input = InputState::default();
+            assert_eq!(
+                dispatch(&mut input, backspace, Pressed, false),
+                Some(Pressed)
+            );
+            assert_eq!(dispatch(&mut input, caps, Pressed, true), None);
+            let releases = if backspace_first {
+                [backspace, caps]
+            } else {
+                [caps, backspace]
+            };
+            assert_eq!(dispatch(&mut input, releases[0], Released, false), None);
+            assert_eq!(
+                dispatch(&mut input, releases[1], Released, false),
+                Some(Released)
+            );
+            assert!(input.pressed_keys.is_empty());
+            assert!(input.captured_shortcuts.is_empty());
         }
     }
 
