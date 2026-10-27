@@ -138,6 +138,46 @@ let
       env.ORBIT_BASH = bash;
     }
     {
+      name = "kitty-replacement";
+      timeout = "60s";
+      env.ORBIT_BASH = bash;
+    }
+    {
+      name = "kitty-erase";
+      timeout = "60s";
+      env.ORBIT_BASH = bash;
+    }
+    {
+      name = "kitty-scroll";
+      timeout = "60s";
+      env.ORBIT_BASH = bash;
+    }
+    {
+      name = "kitty-screens";
+      timeout = "60s";
+      env.ORBIT_BASH = bash;
+    }
+    {
+      name = "kitty-reattach";
+      timeout = "60s";
+      env.ORBIT_BASH = bash;
+    }
+    {
+      name = "kitty-pressure";
+      timeout = "60s";
+      env.ORBIT_BASH = bash;
+    }
+    {
+      name = "kitty-exit";
+      timeout = "60s";
+      env.ORBIT_BASH = bash;
+    }
+    {
+      name = "kitty-cap";
+      timeout = "60s";
+      env.ORBIT_BASH = bash;
+    }
+    {
       name = "silent-peer";
       variable = "EXIT_SHELL";
       script = "detached-exit-shell";

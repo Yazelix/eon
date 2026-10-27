@@ -1238,7 +1238,20 @@ on. Its PTY pixel size rule needs no wire change.
   approval of 2026-10-26, relayed by eon-overseer (`orb-j2i.2`).
   `orb-j2i.4` sizes the PTY; `orb-j2i.5` adds the wire revisions;
   `orb-j2i.6` and `orb-j2i.7` extract placements and send resources;
-  `orb-j2i.8` proves the lifecycle.
+  `orb-j2i.8` proves the lifecycle. With the switch on, the real-PTY checks
+  [`orbit-kitty-placements`](../tests/real_pty/kitty_placements.rs),
+  [`orbit-kitty-replacement`](../tests/real_pty/kitty_replacement.rs),
+  [`orbit-kitty-erase`](../tests/real_pty/kitty_erase.rs),
+  [`orbit-kitty-scroll`](../tests/real_pty/kitty_scroll.rs),
+  [`orbit-kitty-screens`](../tests/real_pty/kitty_screens.rs),
+  [`orbit-kitty-reattach`](../tests/real_pty/kitty_reattach.rs),
+  [`orbit-kitty-pressure`](../tests/real_pty/kitty_pressure.rs),
+  [`orbit-kitty-exit`](../tests/real_pty/kitty_exit.rs) and
+  [`orbit-kitty-cap`](../tests/real_pty/kitty_cap.rs) cover transfer,
+  replacement, deletion, clear, scroll, resize, both screens, reattachment,
+  pressure, exit and the cap
+  ([BEHAVIOR.md](BEHAVIOR.md#kitty-graphics-placements)).
+  The contract stays Planned while the shipped build keeps the switch off.
 
 ## Focused terminal conformance corpus
 

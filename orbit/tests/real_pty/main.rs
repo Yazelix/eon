@@ -8,6 +8,7 @@
 //! child script, tests/NAME-shell.sh, comes from the variable nix/orbit-checks.nix sets,
 //! or from the source tree.
 
+mod kitty;
 mod support;
 
 macro_rules! checks {
@@ -35,7 +36,15 @@ checks!(
     history,
     interactive_pressure,
     key_live,
+    kitty_cap,
+    kitty_erase,
+    kitty_exit,
     kitty_placements,
+    kitty_pressure,
+    kitty_reattach,
+    kitty_replacement,
+    kitty_screens,
+    kitty_scroll,
     late_observer,
     lifecycle,
     management_lease,

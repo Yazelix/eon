@@ -517,6 +517,84 @@ failed. The image then arrives as one announcement and two chunks in order,
 of 262,144 and 97,856 bytes, holding its pixels. Without further output from
 the child, a frame at a later revision shows both entries ready.
 
+Eight more real-PTY checks prove the image lifecycle. Each runs Orbit with
+the switch on and a child that plays prepared Kitty steps, each ending in a
+synchronized update that names the terminal, under a client of 10x20-pixel
+cells. A client holds a transfer of a 9,000,000-byte image by not reading,
+which needs the kernel's default socket send buffer
+(`net.core.wmem_default`, 212,992 bytes unless tuned) to stay well below
+the image; the checks assert at most 2,000,000 bytes when they can read
+it. Where a check must know that Orbit handled a step while its client is
+not reading, a metadata observer hears the step's title, which Orbit
+publishes with the frame. One ledger, [tests/real_pty/kitty.rs](../tests/real_pty/kitty.rs),
+reads every frame and resource message and checks on each that:
+- an announcement names a resource that a frame has referenced;
+  announcements carry strictly increasing identities and each starts once,
+  after the previous resource's last chunk;
+- chunks come in order, each of 262,144 bytes but the last, and hold the
+  announced length;
+- a retirement names a resource whose chunks have all arrived, which the last
+  frame does not reference;
+- every frame carries graphics, and no entry references a retired resource,
+  is ready before its resource's last chunk, or reuses a number that left the
+  frames before its resource started.
+
+Each check adds:
+- kitty-replacement: new pixels under the same Kitty id are a new resource
+  with a greater number, sent, and the old one retires. When the replacement
+  comes while the client holds a 9,000,000-byte transfer, the frame naming
+  the new resource pending arrives first, the transfer finishes with the old
+  pixels, the old resource retires, and only then the new one is announced.
+- kitty-erase: clearing the screen, and Yazi's hide (spaces, then
+  `a=d,d=A`), remove the entries but keep the image stored, so printing the
+  cells again shows the sent resource ready at once. `a=d,d=A` while the
+  cells remain keeps the entries, since it deletes no virtual placement.
+  `a=d,d=I` while the cells remain blanks them with no entry (ORB-C16's
+  recorded gap), and the resource then retires. Nothing is sent twice.
+- kitty-scroll: a new cell size gives entries of the new geometry, 36x24
+  pixels for 12x24 cells, without sending again. Output that scrolls moves
+  the entries up with their cells and drops them once off the viewport. A
+  viewport scrolled into history shows them at their rows, and returning to
+  the bottom drops them again.
+- kitty-screens: on the alternate screen, the primary screen's image id
+  shows nothing, and the alternate screen's own image is sent. Leaving and
+  re-entering the alternate screen shows each screen's sent resource ready
+  at once; nothing is sent again or retired.
+- kitty-reattach: a client that leaves during a transfer, and one that
+  leaves after both images arrived, are each followed by an attachment whose
+  first frame lists every entry pending and which receives both images again
+  from storage.
+- kitty-pressure: while the client holds a 9,000,000-byte transfer, the
+  child erases one waiting image's cells, deletes another image and shows a
+  third. The frame showing the third pending arrives during the transfer.
+  Afterwards only the third image is sent: neither the erased image nor the
+  deleted one.
+- kitty-exit: the child exits while the client holds a 9,000,000-byte
+  transfer, and the client reads again once Orbit has reaped the child. It
+  reads the chunk Orbit was writing whole, then Exited and the end of the
+  stream; the transfer stays cut short and the waiting small image is never
+  announced. The socket unit test
+  `resource_messages_never_pressure_the_client_and_end_before_exited` covers
+  which queued chunks are dropped.
+- kitty-cap: 1,025 one-pixel images stay stored. Four frames of 256 send
+  1,024 resources, then the 1,025th waits pending and nothing arrives for a
+  second. Deleting image 1 retires its resource, and then the 1,025th is
+  announced and turns ready.
+
+Scratch mutations, each restored, failed these checks:
+- an attachment keeping the previous attachment's resources: kitty-reattach
+  (a first-frame entry ready before its chunks);
+- extraction never marking a resource gone: kitty-replacement and
+  kitty-erase (no retirement);
+- a cap of 1,025: kitty-cap (an announcement while it waited);
+- resources recorded against the other screen: kitty-screens (the primary
+  image pending under a fresh number on return);
+- exit dropping the partly written resource message: kitty-exit (a broken
+  message);
+- the writer emptying the resource queue before frames: kitty-pressure and
+  kitty-replacement (the next resource announced before the frame that
+  references it arrived).
+
 ## Resource plane law
 
 Bend decides when a resource starts and when retirements are queued, with
@@ -1553,7 +1631,9 @@ ORB_BASELINE_CPUS=6-11 ORB_BASELINE_GRID="54 90" \
   delayed-output, request-half-close, detached-exit,
   three-attach, late-observer, detached-observer, synchronized-output,
   held-attach, history, preview, scroll, return-to-live, schema-mismatch,
-  paste-flood, terminal-replies, pixel-size, kitty-placements, silent-peer,
+  paste-flood, terminal-replies, pixel-size, kitty-placements,
+  kitty-replacement, kitty-erase, kitty-scroll, kitty-screens,
+  kitty-reattach, kitty-pressure, kitty-exit, kitty-cap, silent-peer,
   pty-reopen,
   descendant-exit, unsupported, interactive-pressure, key-live, mouse,
   slow-observer, observer-finish, stale-socket, clipboard, clipboard-pressure,
