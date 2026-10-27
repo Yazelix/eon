@@ -518,14 +518,23 @@ mod tests {
         (fixture, now)
     }
 
-    /// Writes an executable shell script; callers use a fresh path for each one (eon-1fxc).
+    /// Writes an executable shell script; callers use a fresh path for each one (eon-1fxc). A
+    /// child shell writes it: had this process opened it for writing, a child forked meanwhile by
+    /// a parallel test would inherit that descriptor, and exec would fail with ETXTBSY.
     fn script(path: &Path, body: &str) {
         use std::{env, os::unix::fs::PermissionsExt};
         let sh = env::split_paths(&env::var_os("PATH").unwrap())
             .map(|p| p.join("sh"))
             .find(|p| p.is_file())
             .unwrap();
-        fs::write(path, format!("#!{}\n{body}\n", sh.display())).unwrap();
+        let status = Command::new(&sh)
+            .args(["-c", "printf '%s' \"$1\" > \"$0\""])
+            .arg(path)
+            .arg(format!("#!{}\n{body}\n", sh.display()))
+            .stdin(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "{status}");
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
 
