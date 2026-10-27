@@ -37,15 +37,17 @@ mod cells;
 mod chrome;
 mod cursor_trail;
 mod fonts;
+mod images;
 mod palette;
 
 use cells::{
-    BRAILLE_FAMILY, CellFont, CellTextKind, block_span, build_preview_rectangles,
-    build_scene_rectangles, cell_ink_right, cell_text_attrs, cell_text_segments, cursor_bounds,
-    cursor_outline, fitted_cell_font, set_cell_layer,
+    BRAILLE_FAMILY, CellFont, CellTextKind, block_span, build_scene_rectangles, cell_ink_right,
+    cell_text_attrs, cell_text_segments, cursor_bounds, cursor_outline, fitted_cell_font,
+    set_cell_layer,
 };
 use chrome::{HeaderInteraction, Spinners, fit_header_text, rasterize_quota_icon};
 use cursor_trail::{CursorAnimation, build_tail_cursor};
+use images::{DrawStep, ImageDraw, Images, draw_steps};
 
 pub use fonts::{FontSettings, FontSetup};
 
@@ -855,6 +857,7 @@ pub struct Renderer {
     dynamic_vertices: wgpu::Buffer,
     dynamic_vertex_capacity: u64,
     dynamic_vertex_count: u32,
+    images: Images,
     fonts: FontSetup,
     swash_cache: SwashCache,
     viewport: Viewport,
@@ -1058,6 +1061,8 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
+        let images = Images::new(&device, config.format);
+
         let metrics = fonts.metrics(window.scale_factor());
         let cell_font = fitted_cell_font(
             &mut fonts.font_system,
@@ -1093,6 +1098,7 @@ impl Renderer {
             dynamic_vertices,
             dynamic_vertex_capacity: vertex_capacity,
             dynamic_vertex_count: 0,
+            images,
             fonts,
             swash_cache,
             viewport,
@@ -1185,6 +1191,19 @@ impl Renderer {
     #[must_use]
     pub fn cursor_animation_active(&self) -> bool {
         !self.terminal.cursor_handoff && self.terminal.cursor_animation.is_active()
+    }
+
+    /// Uploads RGBA pixels as the texture that scene images name by `key`, replacing any texture
+    /// under that key. A refusal leaves no texture under `key` and the renderer working.
+    pub fn upload_image(
+        &mut self,
+        key: u64,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<(), RenderError> {
+        self.images
+            .upload(&self.device, &self.queue, key, width, height, rgba)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1326,25 +1345,24 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            let cursor_boundary = cursor_vertex_boundary(
+            for step in draw_steps(
                 self.vertex_count,
-                self.cursor_vertex_boundary,
-                self.dynamic_vertex_count > 0,
-            );
-            if self.vertex_count > 0 || self.dynamic_vertex_count > 0 {
-                pass.set_pipeline(&self.rectangle_pipeline);
-            }
-            if cursor_boundary > 0 {
-                pass.set_vertex_buffer(0, self.vertices.slice(..));
-                pass.draw(0..cursor_boundary, 0..1);
-            }
-            if self.dynamic_vertex_count > 0 {
-                pass.set_vertex_buffer(0, self.dynamic_vertices.slice(..));
-                pass.draw(0..self.dynamic_vertex_count, 0..1);
-            }
-            if cursor_boundary < self.vertex_count {
-                pass.set_vertex_buffer(0, self.vertices.slice(..));
-                pass.draw(cursor_boundary..self.vertex_count, 0..1);
+                (self.dynamic_vertex_count > 0).then_some(self.cursor_vertex_boundary),
+                &self.images.draws,
+            ) {
+                match step {
+                    DrawStep::Rectangles(vertices) => {
+                        pass.set_pipeline(&self.rectangle_pipeline);
+                        pass.set_vertex_buffer(0, self.vertices.slice(..));
+                        pass.draw(vertices, 0..1);
+                    }
+                    DrawStep::Cursor => {
+                        pass.set_pipeline(&self.rectangle_pipeline);
+                        pass.set_vertex_buffer(0, self.dynamic_vertices.slice(..));
+                        pass.draw(0..self.dynamic_vertex_count, 0..1);
+                    }
+                    DrawStep::Image(index) => self.images.draw(&mut pass, index),
+                }
             }
             self.text_renderer
                 .render(&self.atlas, &self.viewport, &mut pass)
@@ -1538,6 +1556,7 @@ impl Renderer {
                 build_scene_rectangles(
                     &mut rectangles,
                     scene,
+                    None,
                     blink_visible,
                     self.metrics,
                     column.terminal,
@@ -1568,18 +1587,11 @@ impl Renderer {
                 cursor_vertex_boundary = build_scene_rectangles(
                     &mut rectangles,
                     scene,
-                    blink_visible,
-                    self.metrics,
-                    origin,
-                    self.cursor_tail.is_none(),
-                );
-                build_preview_rectangles(
-                    &mut rectangles,
-                    scene,
                     scroll_preview,
                     blink_visible,
                     self.metrics,
                     origin,
+                    self.cursor_tail.is_none(),
                 );
                 self.build_preedit(scene, preedit, &mut rectangles, origin, text_clip);
                 self.build_hyperlink(scene, &mut rectangles, origin);
@@ -1631,18 +1643,11 @@ impl Renderer {
             cursor_vertex_boundary = build_scene_rectangles(
                 &mut rectangles,
                 scene,
-                blink_visible,
-                self.metrics,
-                origin,
-                self.cursor_tail.is_none(),
-            );
-            build_preview_rectangles(
-                &mut rectangles,
-                scene,
                 scroll_preview,
                 blink_visible,
                 self.metrics,
                 origin,
+                self.cursor_tail.is_none(),
             );
             self.build_preedit(scene, preedit, &mut rectangles, origin, clip);
             self.build_hyperlink(scene, &mut rectangles, origin);
@@ -1682,6 +1687,12 @@ impl Renderer {
         }
         self.cursor_vertex_boundary = cursor_vertex_boundary;
         self.upload_vertices(&rectangles.bytes);
+        self.images.prepare(
+            &self.device,
+            &self.queue,
+            &rectangles.image_bytes,
+            rectangles.images,
+        );
         self.content_key = Some(key);
         true
     }
@@ -2243,7 +2254,8 @@ impl Renderer {
     }
 
     fn upload_vertices(&mut self, bytes: &[u8]) {
-        self.vertex_count = upload_vertices(
+        self.vertex_count = vertex_count(bytes);
+        upload_vertices(
             &self.device,
             &self.queue,
             &mut self.vertices,
@@ -2254,7 +2266,8 @@ impl Renderer {
     }
 
     fn upload_dynamic_vertices(&mut self, bytes: &[u8]) {
-        self.dynamic_vertex_count = upload_vertices(
+        self.dynamic_vertex_count = vertex_count(bytes);
+        upload_vertices(
             &self.device,
             &self.queue,
             &mut self.dynamic_vertices,
@@ -2270,10 +2283,6 @@ fn vertex_count(bytes: &[u8]) -> u32 {
         .expect("bounded draw inputs fit the vertex count")
 }
 
-fn cursor_vertex_boundary(total: u32, boundary: u32, dynamic: bool) -> u32 {
-    (if dynamic { boundary } else { total }).min(total)
-}
-
 fn upload_vertices(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
@@ -2281,10 +2290,9 @@ fn upload_vertices(
     capacity: &mut u64,
     bytes: &[u8],
     label: &'static str,
-) -> u32 {
-    let count = vertex_count(bytes);
+) {
     if bytes.is_empty() {
-        return count;
+        return;
     }
     let needed = bytes.len() as u64;
     if needed > *capacity {
@@ -2297,7 +2305,6 @@ fn upload_vertices(
         });
     }
     queue.write_buffer(buffer, 0, bytes);
-    count
 }
 
 #[derive(Clone, Copy)]
@@ -2553,6 +2560,9 @@ struct RectangleBatch {
     height: u32,
     clip: Option<SceneRect>,
     card_clip: Option<CardFill>,
+    /// Image draws in stream order and their own vertices.
+    images: Vec<ImageDraw>,
+    image_bytes: Vec<u8>,
 }
 
 impl RectangleBatch {
@@ -2741,6 +2751,8 @@ impl RectangleBatch {
             height,
             clip: None,
             card_clip: None,
+            images: Vec::new(),
+            image_bytes: Vec::new(),
         }
     }
 
@@ -2996,6 +3008,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: palette::CARD_OUTLINE,
             cursor: None,
@@ -3787,6 +3800,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
             cursor: None,
@@ -3851,6 +3865,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
             cursor: Some(DrawCursor {
@@ -4043,13 +4058,6 @@ mod tests {
         ));
         assert!(hidden.bytes.is_empty());
         assert!(!animation.is_active());
-    }
-
-    #[test]
-    fn dynamic_cursor_keeps_later_static_overlays_on_top() {
-        assert_eq!(cursor_vertex_boundary(18, 12, true), 12);
-        assert_eq!(cursor_vertex_boundary(18, 12, false), 18);
-        assert_eq!(cursor_vertex_boundary(18, 24, true), 18);
     }
 
     #[test]
@@ -4843,6 +4851,7 @@ mod tests {
                     screen: Screen::Primary,
                     title: String::new(),
                     working_directory: String::new(),
+                    images: Vec::new(),
                     background: palette::TERMINAL_FALLBACK,
                     foreground: palette::CARD_OUTLINE,
                     cursor: None,
@@ -4968,6 +4977,7 @@ mod tests {
                 screen: Screen::Primary,
                 title: String::new(),
                 working_directory: String::new(),
+                images: Vec::new(),
                 background: palette::TERMINAL_FALLBACK,
                 foreground: palette::CARD_OUTLINE,
                 cursor: None,
@@ -5449,6 +5459,7 @@ mod tests {
                                             screen: Screen::Primary,
                                             title: String::new(),
                                             working_directory: String::new(),
+                                            images: Vec::new(),
                                             background: palette::TERMINAL_FALLBACK,
                                             foreground: palette::CARD_OUTLINE,
                                             cursor: None,
@@ -5800,6 +5811,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: palette::CARD_OUTLINE,
             cursor: None,
@@ -6358,6 +6370,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: palette::CARD_OUTLINE,
             cursor: Some(DrawCursor {
@@ -6524,6 +6537,7 @@ mod tests {
                     build_scene_rectangles(
                         &mut cells,
                         &scene,
+                        None,
                         true,
                         metrics,
                         SceneRect {
@@ -6559,6 +6573,7 @@ mod tests {
             screen: orbit_protocol::Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: palette::CARD_OUTLINE,
             cursor: None,
@@ -6721,6 +6736,7 @@ mod tests {
                                     build_scene_rectangles(
                                         &mut cells,
                                         &terminal_scene,
+                                        None,
                                         true,
                                         metrics,
                                         terminal,

@@ -3110,7 +3110,7 @@ pub struct GlyphRun {
 }
 
 /// One immutable, revision-tagged Venus draw scene.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Scene {
     pub revision: u64,
     pub columns: u16,
@@ -3122,6 +3122,20 @@ pub struct Scene {
     pub foreground: Color,
     pub cursor: Option<DrawCursor>,
     pub content: Vec<DrawRow>,
+    /// Images drawn between the cell backgrounds and the text, in order (VEN-C31).
+    pub images: Vec<SceneImage>,
+}
+
+/// One image in a terminal's image band.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SceneImage {
+    /// The renderer's key for the uploaded texture.
+    pub texture: u64,
+    /// The drawn part of the texture, from 0 to 1 on each axis.
+    pub source: SceneRect,
+    /// Where the image lands, in cells from the grid's top-left corner, so the current cell size
+    /// places and scales it.
+    pub target: SceneRect,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -3287,6 +3301,7 @@ impl Scene {
             foreground,
             cursor,
             content,
+            images: Vec::new(),
         }
     }
 
@@ -5680,6 +5695,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
             cursor: None,
@@ -5778,6 +5794,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
             cursor: None,
@@ -5830,6 +5847,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
             cursor: Some(DrawCursor {
@@ -5944,6 +5962,7 @@ mod tests {
             screen: Screen::Primary,
             title: String::new(),
             working_directory: String::new(),
+            images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
             cursor: None,

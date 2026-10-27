@@ -113,9 +113,11 @@ for one zero-payload semantic action without a new dependency or adapter.
 - **Selected shape:** wgpu 30.0.0 with Vulkan and WGSL only; glyphon 0.12.0 with its
   cosmic-text 0.19.0 re-export; pollster 1.0.1 for bounded initialization
 - **Status:** Active on Linux/Vulkan
-- **Owner consequence:** Venus owns a small rectangle/decorations pipeline. Glyphon owns
-  shaping, fallback, clipping, raster cache, atlas, and text preparation. Neither sees
-  transport or terminal state.
+- **Owner consequence:** Venus owns a small rectangle/decorations pipeline and a
+  textured-quad pipeline for terminal images (VEN-C31), which draws each terminal's images
+  between its cell backgrounds and its foreground and creates image textures inside wgpu
+  error scopes. Glyphon owns shaping, fallback, clipping, raster cache, atlas, and text
+  preparation. None sees transport or terminal state.
 
 ### Ordered startup font fallback
 

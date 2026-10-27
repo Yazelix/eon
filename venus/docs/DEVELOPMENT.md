@@ -25,3 +25,11 @@ disposable proof storage, then run:
 ```sh
 timeout 30s cargo test --locked --bin yazelix-venus live_output_keeps_application_input_admitted_before_repaint -- --ignored
 ```
+
+The image regression runs the same way. It checks that oversize image uploads are
+refused without failing the renderer, then shows a test image in a pane, in a popup and
+under a notice for 2.5 seconds each, so a capture of that display can confirm the band:
+
+```sh
+timeout 60s cargo test --locked --lib images_draw_in_panes_and_popups_and_refusals_keep_the_renderer -- --ignored
+```

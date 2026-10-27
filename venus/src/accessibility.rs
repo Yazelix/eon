@@ -2181,6 +2181,7 @@ mod tests {
             screen: Screen::Primary,
             title: "shell".into(),
             working_directory: String::new(),
+            images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
             cursor: None,
