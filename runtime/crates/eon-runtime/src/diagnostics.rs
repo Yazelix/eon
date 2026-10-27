@@ -359,7 +359,9 @@ mod tests {
     fn pruning_keeps_the_newest_and_live_logs_only() {
         let root = crate::supervisor::temporary_directory();
         let logs = root.join("logs");
-        drop(create(&logs, GENERATION).unwrap());
+        // Unlock, not only drop: a child forked meanwhile by a parallel test shares this open file
+        // description until it execs, and the lock would last as long (eon-prune-test-flake-sj0c).
+        create(&logs, GENERATION).unwrap().file.unlock().unwrap();
         let own = format!("-{}.log", std::process::id());
         // Fixtures carry another PID, so none can pass for the log create() made.
         let pid = std::process::id() + 1;
