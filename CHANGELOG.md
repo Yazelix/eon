@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Several workspaces in one window (EON-C33) are proven on the installed
+  product, x86_64 Linux Wayland. One window held three workspaces.
+  Alt+Shift+S switched between them and created one by name; Commands and
+  the CLI, including from a terminal inside Eon, created, switched, renamed
+  and closed them. Switching never took desktop focus from another window.
+  Closing a middle workspace's last tab kept the window. Detach and attach
+  came back on the last shown workspace. An agent needing input in a hidden
+  workspace badged the workspace label, and Alt+G showed that workspace.
+
 - Agent attention now spans every workspace of a window. Alt+G and Alt+Shift+G
   walk agents in hidden workspaces too, and jumping to one shows its
   workspace; a finish or error in a hidden workspace stays unseen until you

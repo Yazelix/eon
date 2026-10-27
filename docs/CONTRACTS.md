@@ -2723,7 +2723,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 
 ## EON-C33 — Several workspaces in one window
 
-- **Status:** Planned. Approved by Lucca on 2026-10-22
+- **Status:** Proven on x86_64 Linux Wayland. Approved by Lucca on 2026-10-22
   (`eon-workspace-switching-shn4.1`, shape D of `eon-n77e`). The children of
   `eon-workspace-switching-shn4` implement it. Each child folds its part into
   the contract it amends: EON-C8 the final-close and emptying rules, EON-C10
@@ -2866,4 +2866,88 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   next/previous/last-workspace shortcut beyond the picker's order,
   per-workspace detach or configuration, or a second workspace in eonbase,
   which keeps one workspace, no picker and no workspace commands.
-- **Proof:** None yet; `eon-workspace-switching-shn4.9` is the batch proof.
+- **Proof:** `eon-workspace-switching-shn4.9`
+  - **Environment:** Automated tier and isolated installed dogfood at edge
+    `57718aee6278aeb700256d891a7c5fb752cc1bea`; the dogfood ran on x86_64 Linux
+    with the installed `eon` profile
+    `/nix/store/d52p46myxlci6r61k60waw39xcvlpz0h-eon-0.1.5` (EONW v22),
+    private headless Sway 1.12 (pixman) at 1600x900, keys and pointer from
+    wdotool. An OSC 7501 fixture stood in for an agent, and the host's foot
+    1.16.2 was the second client.
+  - **Evidence:**
+    - **Automated:** the full `nix develop -c eon-test` run on that revision,
+      recorded in `eon-workspace-switching-shn4.8`. In
+      `runtime/crates/eon-runtime/src/workspace.rs`:
+      - `workspace_requests_keep_order_projection_names_and_bounds` covers the
+        duplicate, ambiguous, unknown, malformed and limit refusals;
+      - `workspace_replay_windows_are_bounded_and_inspections_do_not_evict_mutations`
+        covers the 256-mutation replay window;
+      - `workspace_set_refuses_foreign_targets` covers identities from another
+        workspace.
+
+      `workspace_refusals_use_the_existing_exit_status_classes` in
+      `runtime/crates/eon-runtime/src/control.rs` covers the exit classes.
+      `hidden_raises_stay_unseen_and_the_queue_crosses_into_their_workspace`
+      in `runtime/crates/eon-runtime/src/attention.rs` and
+      `only_a_queue_jump_crosses_workspaces_and_it_shows_its_target` in
+      `workspace.rs` cover attention across workspaces, and
+      `workspace_label_leads_the_tabs_and_opens_the_picker` in
+      `venus/src/accessibility.rs` covers the label's accessible name. In
+      `eon/crates/eon/tests/workspace_control.rs`:
+      - `workspace_requests_project_callers_and_close_only_the_target_workspace`
+        covers a failed stop while closing and per-workspace state across
+        switches;
+      - `workspace_cli_lists_creates_switches_renames_and_closes` covers the CLI;
+      - `a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it` covers
+        emptying;
+      - `workspace_picker_switches_creates_and_cancels` covers the picker.
+
+      `workspace_picker_lists_by_recency_with_the_shown_last_and_maps_its_result`
+      in `runtime/crates/eon-runtime/src/cli.rs` covers the picker's order.
+    - **Installed:** results come from captures, `eon workspaces --json`
+      dumps, Sway trees and process lists, over four runs.
+      - Three workspaces in one window. `eon workspace new --name notes`
+        created and showed one; Alt+Shift+S with the unmatched query `build`
+        created and showed another. The label read `build 3/3`.
+      - The picker listed notes, w1, then `build · shown`, most recently
+        shown first. Enter showed notes. `eon workspace switch w1` and
+        `switch build` (by name) switched from outside Eon.
+      - From a terminal in w1, with the picker closed, the agent path worked:
+        - `eon workspace rename w1 main`;
+        - `eon workspace new --no-focus --name tmp`, after which w1 stayed
+          shown;
+        - `eon workspace close w4 --json`;
+        - `eon workspace switch w3`.
+
+        In the fourth run, a reply saved from a terminal's
+        `eon workspaces --json` listed the window's workspaces with
+        `attention` and `recency`.
+      - Commands > New, Rename, Switch and Close this workspace each worked.
+        Close asked "Close workspace w2 (docs)? This stops every terminal in
+        it. [y/N]"; n kept the workspace and y removed it. On a TTY,
+        `eon workspace close scratch` answered with n printed "cancelled;
+        workspace w3 stays open", and y removed it. A gone `w2` exited 3.
+      - Attention. The fixture in hidden notes went to `needs-input` in
+        `eon workspaces`. The label showed its ◆ badge, and the picker row
+        read `notes 1 tab · needs input`. Alt+G showed notes with the
+        fixture's pane selected, and the badge cleared.
+      - Alt+Shift+W on notes, the middle of three, asked "Close the last tab?
+        This closes workspace notes and stops 1 terminal." Enter removed only
+        notes, stopped its terminal and showed build, the most recently
+        shown survivor. With one workspace left, the prompt read "This quits
+        the window".
+      - Closing the window from the compositor, and later Alt+Shift+D, ended
+        Venus and kept the Orbit hosts and every workspace. `eon attach`
+        showed build, the last shown workspace, and main's scrollback was
+        intact.
+      - Recovery. SIGKILL to the exact supervisor PID ended Venus, and the
+        three Orbit hosts kept running. A fresh `eon` recovered one unnamed
+        workspace `w1` whose tab `t1` held all three terminals.
+      - Commands > Quit this window runs `eon stop` for the generation. With
+        two workspaces open, it listed all five live terminals. After y, no
+        Eon, Venus or Orbit process of the run remained.
+      - Desktop focus. Sway used `focus_on_window_activation smart`, and a
+        foot window beside Eon held focus. It kept focus through
+        `eon workspace switch`, `eon workspace new --name gamma`, which shows
+        the new workspace, and a needs-input raise in a hidden workspace. No
+        window turned urgent.

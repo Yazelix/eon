@@ -771,8 +771,16 @@ re-proved when that platform or feature is next touched.
     checks `close_prompt_asks_for_a_final_close`,
     `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space`,
     `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog` and
-    `quota_refresh_and_workspace_failures_preserve_structure`; the installed
-    observation is pending (`eon-workspace-switching-shn4.9`).
+    `quota_refresh_and_workspace_failures_preserve_structure`. Installed
+    (`eon-workspace-switching-shn4.9`; edge
+    `57718aee6278aeb700256d891a7c5fb752cc1bea`, installed `eon` profile
+    `/nix/store/d52p46myxlci6r61k60waw39xcvlpz0h-eon-0.1.5`, x86_64 Linux,
+    private headless Sway at 1600x900): with three workspaces, Alt+Shift+W
+    on the middle one's last tab read "Close the last tab? This closes
+    workspace notes and stops 1 terminal.", listed `p2` and offered "Enter
+    Close · Esc Cancel". Enter closed only that workspace. With two
+    workspaces Escape kept it, and with one left the prompt read "This quits
+    the window and stops 1 terminal." and offered "Enter Quit".
   - **Agent sidebar layout (`eon-agent-sidebar-yx8.13`):**
     `agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state`
     and the installed dogfood recorded under VEN-C30: the sidebar pushed the
@@ -1363,8 +1371,18 @@ re-proved when that platform or feature is next touched.
   - **Workspace label (`eon-workspace-switching-shn4.7`):** added checks
     `workspace_label_leads_the_tabs_and_opens_the_picker`,
     `eon_bar_controls_reuse_existing_actions_and_local_viewer` and
-    `quota_refresh_and_workspace_failures_preserve_structure`; the installed
-    observation is pending (`eon-workspace-switching-shn4.9`).
+    `quota_refresh_and_workspace_failures_preserve_structure`. Installed
+    (`eon-workspace-switching-shn4.9`, with the build and environment recorded
+    under VEN-C8):
+    - One unnamed workspace showed no label.
+    - The label read `notes 2/2`, `build 3/3`, `main 1/4`, `w2 2/2` for an
+      unnamed workspace, and plain `main` for one named workspace.
+    - Hovering it showed `Workspaces — Alt+Shift+S`, and a click opened the
+      picker.
+    - While a hidden workspace needed input, a ◆ badge sat on the label's
+      corner with the sidebar open, and the label and tabs kept their places.
+      It cleared once Alt+G showed that workspace.
+    - The accessible name was not read.
   - **Final-tab close (`eon-prove-close-and-detach-batch-bf8t`):** isolated
     installed dogfood (edge `22915af5dca41f87e706ad548c0506f79c17648f`,
     installed `eon` profile
