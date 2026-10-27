@@ -5,7 +5,7 @@ use std::fmt;
 const MESSAGE_MAGIC: [u8; 4] = *b"ORBM";
 const RECORD_MAGIC: [u8; 4] = *b"ORBR";
 
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 pub const RECORD_GENERATION: u16 = 1;
 pub const HEADER_BYTES: usize = 12;
 pub const MAX_MESSAGE_BYTES: usize = 4 * 1024;
@@ -128,12 +128,16 @@ pub struct ProgramRecord {
     pub changed_age_ms: u64,
 }
 
-/// The `ProgramStatus` reply: the terminal's record count, its latest update
-/// sequence, its title, and as many records as fit in 4 KiB in ORB-C15's
-/// fill order; `omitted` holds the creation sequence of each of the rest.
+/// The `ProgramStatus` reply: the terminal's record count, its background
+/// process count, its latest update sequence, its title, and as many records
+/// as fit in 4 KiB in ORB-C15's fill order; `omitted` holds the creation
+/// sequence of each of the rest.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProgramStatus {
     pub count: u16,
+    /// The terminal's background processes, at most 255; 0 while it holds
+    /// no records.
+    pub background: u8,
     pub update: u64,
     /// The terminal's window title, sanitized; empty when it has none.
     pub terminal_title: String,
@@ -574,7 +578,7 @@ pub fn program_record_len(record: &ProgramRecord) -> usize {
 
 /// The bytes a reply's message takes before its terminal title's text, its
 /// records and omitted creation sequences.
-pub const PROGRAM_STATUS_HEADER_BYTES: usize = HEADER_BYTES + 2 + 8 + 2 + 2;
+pub const PROGRAM_STATUS_HEADER_BYTES: usize = HEADER_BYTES + 2 + 1 + 8 + 2 + 2;
 
 /// The bytes one omitted record's creation sequence takes in a reply.
 pub const PROGRAM_OMITTED_BYTES: usize = 8;
@@ -582,6 +586,7 @@ pub const PROGRAM_OMITTED_BYTES: usize = 8;
 fn encode_program_status(out: &mut Encoder, status: &ProgramStatus) -> Result<()> {
     validate_program_counts(status.count, status.omitted.len(), status.records.len())?;
     out.u16(status.count);
+    out.u8(status.background);
     out.u64(status.update);
     out.text(
         "terminal title",
@@ -636,6 +641,7 @@ fn encode_program_status(out: &mut Encoder, status: &ProgramStatus) -> Result<()
 
 fn decode_program_status(input: &mut Decoder<'_>) -> Result<ProgramStatus> {
     let count = input.u16()?;
+    let background = input.u8()?;
     let update = input.u64()?;
     let terminal_title = input.text("terminal title", MAX_TERMINAL_TITLE_BYTES, true)?;
     let omitted = input.u16()?;
@@ -693,6 +699,7 @@ fn decode_program_status(input: &mut Decoder<'_>) -> Result<ProgramStatus> {
     }
     Ok(ProgramStatus {
         count,
+        background,
         update,
         terminal_title,
         omitted,

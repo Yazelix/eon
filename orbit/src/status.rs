@@ -198,11 +198,11 @@ impl Records {
         }
     }
 
-    /// The `ProgramStatus` reply: the terminal title, sanitized and cut to
-    /// its bound, and as many records as fit in one 4 KiB message beside the
-    /// creation sequences of the rest, first blocked, error and done, then
-    /// the rest, each group most recent change first, with each record's
-    /// `title` and `msg` cut to their reply bounds.
+    /// The `ProgramStatus` reply, without its background count: the terminal
+    /// title, sanitized and cut to its bound, and as many records as fit in
+    /// one 4 KiB message beside the creation sequences of the rest, first
+    /// blocked, error and done, then the rest, each group most recent change
+    /// first, with each record's `title` and `msg` cut to their reply bounds.
     pub(crate) fn reply(&self, title: &str, now: Instant) -> protocol::ProgramStatus {
         let terminal_title = truncated(
             &title
@@ -239,6 +239,7 @@ impl Records {
         }
         protocol::ProgramStatus {
             count: self.records.len() as u16,
+            background: 0,
             update: self.update,
             terminal_title,
             omitted: order[records.len()..]

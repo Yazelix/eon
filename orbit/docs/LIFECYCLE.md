@@ -43,7 +43,7 @@ the socket mode is `0600`. Orbit:
   the owned socket after normal or signal-driven shutdown.
 
 On Linux and Apple Silicon macOS, the private same-boot management owner is
-enabled with `serve SOCKET --management-v2 SESSION_ID RUN_ID COMPONENT_GENERATION -- COMMAND`.
+enabled with `serve SOCKET --management-v3 SESSION_ID RUN_ID COMPONENT_GENERATION -- COMMAND`.
 It derives `SOCKET.management` and `SOCKET.record`, publishes the live record
 only after the PTY, terminal owner, and both sockets are usable, and permits one
 UID- and identity-validated management lease. A launcher may retain an empty
@@ -102,14 +102,16 @@ decision.
 One seam, [src/platform.rs](../src/platform.rs), holds the host's Unix calls:
 pipes, polling, termination signals, the PTY and its window size, the worker's
 and child's setup between fork and exec, process-group signals, the
-zero-length send, peer credentials and process-start identities. The
+zero-length send, peer credentials, process-start identities and the
+background count's process-tree reads. The
 mechanisms that use them keep their policy: [src/pty.rs](../src/pty.rs) the
 PTY child, [src/socket.rs](../src/socket.rs) the socket path, permissions and
 peers, and [src/management.rs](../src/management.rs) the managed records. Only
 pipe creation, the death signal of the worker and child, a zero-length send's
-flags, peer credentials and process-start identities diverge by OS, all inside
-the seam ([BEHAVIOR.md](BEHAVIOR.md#macos-evidence)). The Bend worker sees
-only facts and never a `libc` value.
+flags, peer credentials, process-start identities and the background count's
+process-tree reads diverge by OS, all inside the seam
+([BEHAVIOR.md](BEHAVIOR.md#macos-evidence)). The Bend worker sees only facts
+and never a `libc` value.
 
 The subprocess checks in [`tests/lifecycle.rs`](../tests/lifecycle.rs),
 which run unmodified against this server, synchronize on typed responses,

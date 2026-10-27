@@ -55,7 +55,7 @@ blind to the schema.
 `yazelix-orbit` takes this command line:
 
 ```sh
-yazelix-orbit serve [SOCKET] [--management-v2 SESSION_ID RUN_ID COMPONENT_GENERATION]
+yazelix-orbit serve [SOCKET] [--management-v3 SESSION_ID RUN_ID COMPONENT_GENERATION]
                   [--ansi-palette-v1 RGB,...] [-- COMMAND ...]
 ```
 
@@ -102,7 +102,7 @@ after it. With the entry removed, the check failed.
 
 ## Management record
 
-`--management-v2` makes the run managed (ORB-C13).
+`--management-v3` makes the run managed (ORB-C13).
 Each identity has 1 to 128 UTF-8 bytes. Before the child starts, Rust opens a
 private management socket at `SOCKET.management`; at Ready it publishes an
 exact user-owned 0600 live record at `SOCKET.record` naming the three
@@ -894,8 +894,32 @@ that twenty records with 252-byte messages fit thirteen beside an empty title
 and twelve beside a 64-byte one. Leaving the title out of the fill made it
 fail, and so did keeping the invisible characters.
 
+While the terminal holds a record, the reply also counts the terminal's
+background processes, sampled as the host builds it: the processes below the
+PTY child that descend, by parent process, from a member of the PTY's
+foreground process group, are outside that group, are neither stopped nor
+zombies (Linux states `T`, `t`, `Z` and `X`; macOS `SSTOP` and `SZOMB`) and
+started at least 1 s before the request. With no record, or once the child is
+reaped, the count is 0 and nothing is walked. The walk follows parent links
+from the child down, through `/proc/<pid>/task/<tid>/children` and
+`/proc/<pid>/stat` on Linux (start times against `CLOCK_BOOTTIME`) and
+`proc_listchildpids` and `proc_pidinfo` on macOS (start times against the
+wall clock), and skips a process whose parent no longer matches, so a reused
+pid is not followed. It counts at most 255, and a walk that reaches 512
+processes or 255 counted ones reports 255; it lists no more children than
+that bound leaves room for. On Linux it reads one children list per thread
+of each walked process, so a sample costs walked processes times their
+threads in file reads, on the host loop. It reads the stat fields after the
+process name as bytes, since a name the kernel cut mid-character is not
+UTF-8. The macOS path compiles in a scratch crate against `libc` for
+`aarch64-apple-darwin` (recorded on `eon-agent-background-work-yte0.1`) and
+is otherwise unproved (ORB-C14). The protocol test
+`program_status_replies_keep_their_bounds` carries a count of 255 through the
+codec, and the one byte it adds to the header still leaves room for seven
+records at their bounds.
+
 The real-PTY program-status check reads the records through a
-`--management-v2` lease:
+`--management-v3` lease:
 
 - One write carrying `working`, `blocked` and `done` reports, a prompt mark
   and a `working` report leaves the `done` record and the last report. The
@@ -904,6 +928,16 @@ The real-PTY program-status check reads the records through a
   title of 1023 ASCII bytes and `é`, which libghostty's 1024-byte cut leaves
   invalid UTF-8, and the next reply carries an empty title and the run goes
   on.
+- A Bash with job control starts a job of its own, then a foreground job.
+  The foreground job starts a process in its group, then, with job control,
+  one in its own group that stops itself and one in its own group that
+  renames itself to bytes that are not UTF-8. After that one has run for
+  1.1 s and the stopped one is stopped, a reply before any report counts 0.
+  The job then starts a second process in its own group and reports `done`:
+  the reply counts 1 while the second is under 1 s old (checked only when
+  the reply came that soon; otherwise the check says so), then 2, and still
+  2 a moment later, so the shell's own job, the in-group process and the
+  stopped one never count. Once both exit it counts 0.
 - In a Bash with job control and no prompt marks, a request while a job leads
   keeps a `working` record; the request after the job returns drops it and
   advances the update sequence by one; a report after the return survives the

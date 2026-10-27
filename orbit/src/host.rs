@@ -1412,10 +1412,17 @@ impl Host {
                 Decision::ManageLease => self.managed()?.lease()?,
                 Decision::ManageStatus => self.managed()?.status()?,
                 Decision::ManageProgramStatus => {
-                    let status = self
+                    let mut status = self
                         .orbit
                         .status
                         .reply(title_and_directory(&self.orbit.terminal).0, Instant::now());
+                    // Counted only while the terminal holds records (ORB-C15).
+                    if status.count > 0 && self.orbit.child.is_some() {
+                        status.background = platform::background_processes(
+                            self.orbit.pid as platform::pid_t,
+                            self.orbit.foreground_group(),
+                        );
+                    }
                     self.managed()?.program_status(status)?
                 }
                 Decision::ManageRefuse => self.managed()?.refuse()?,

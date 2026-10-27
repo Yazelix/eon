@@ -745,7 +745,7 @@ PTY pixel size rule needs no wire change.
     PTY, presentation, child observation, or shutdown.
 - **Owner:** Orbit's private management owner and canonical protocol package;
   platform mechanics remain isolated, while Eon owns consumer policy.
-- **Consumes:** Canonical management v2 and ORB-C12.
+- **Consumes:** Canonical management v3 and ORB-C12.
 - **Boundary:**
   - The contract is per live Orbit run. Eon retains topology, enumeration,
     cleanup, and recovery policy.
@@ -845,7 +845,9 @@ PTY pixel size rule needs no wire change.
   `eon-agent-sidebar-yx8.1`). `eon-agent-sidebar-yx8.4` stores the records
   and decides their lifetime; `eon-agent-sidebar-yx8.5` serves the
   `ProgramStatus` reply; `eon-agent-sidebar-yx8.11` adds the terminal title
-  to the reply.
+  to the reply. Amended on 2026-10-27 (approved by Lucca, relayed by
+  eon-overseer) by `eon-agent-background-work-yte0`: the reply counts
+  background processes.
 - **Consumer:**
   - a program in an Orbit terminal that speaks the Program Status Protocol
     (OSC 7501, rev 0.4), such as Claude Code 2.1.295 or later, or Codex 0.163
@@ -908,6 +910,17 @@ PTY pixel size rule needs no wire change.
       created record.
     - **Ages.** The Orbit-monotonic ages, in milliseconds, of the last update
       and of the last state change.
+  - **Background processes.** On each `ProgramStatus` request, while Orbit
+    holds at least one record, Orbit counts the terminal's background
+    processes: processes that descend, by parent process, from a member of
+    the PTY foreground process group, are not in that group, are neither
+    stopped nor zombies, and started at least 1 s before the request. Orbit
+    walks at most 512 processes below its child and counts at most 255; a
+    walk that reaches either bound reports the bound. The count is 0 while
+    Orbit holds no records. It is a neutral terminal fact, like the terminal
+    title: Orbit gives it no status meaning. A process that leaves the tree,
+    such as a double fork that init adopts, is not counted. Linux reads
+    `/proc`; macOS uses libproc, unproved until ORB-C14's native proof.
   - **Lifetime.** Orbit removes `working` and `blocked` records on any of
     these:
     - the child exits, which ends the run and every record with it;
@@ -940,11 +953,11 @@ PTY pixel size rule needs no wire change.
     heartbeat. The spec forbids requiring re-sends and leaves to the terminal
     when to stop showing `done` or `error`; EON-C31 decides that.
   - **ProgramStatus reply.** One request gets one reply of at most 4 KiB. It
-    carries the record count, the terminal's latest update sequence, the
-    terminal title, the creation sequence of each record omitted for size, and
-    as many records as fit in a neutral fill order: first `blocked`, `error`
-    and `done`, most recent change first; then every other record, most
-    recent change first.
+    carries the record count, the background process count, the terminal's
+    latest update sequence, the terminal title, the creation sequence of each
+    record omitted for size, and as many records as fit in a neutral fill
+    order: first `blocked`, `error` and `done`, most recent change first; then
+    every other record, most recent change first.
     Each record carries its full `id`, `state`, `kind`, `progress`, `app`
     (32 bytes or less), `title` (96 or less) and `msg` (256 or less), its
     update sequence, creation sequence, change sequence, previous state and
@@ -994,12 +1007,15 @@ PTY pixel size rule needs no wire change.
 - **Boundary:** No inference from the screen, process names or elapsed
   silence; no change to ORBS or ORB-C3; no event stream, no reading back by
   the program in Orbit, and no notifications; no OSC 9, 99 or 777 handling; no
-  records across Orbit restarts. Portability is neutral: `tcgetpgrp` and the
-  PTY are POSIX, and macOS stays deferred.
+  records across Orbit restarts. Portability: the background count uses an
+  isolated Linux (`/proc`) and Darwin (libproc) mechanism in Orbit's platform
+  seam; everything else is POSIX (`tcgetpgrp`, the PTY), and macOS stays
+  deferred.
 - **Proof:** the `eon-agent-sidebar-yx8.5` commit, with the
   `eon-agent-sidebar-yx8.4` commit for the records and their lifetime, the
-  `eon-agent-sidebar-yx8.12` commit for creation sequences and the
-  `eon-agent-sidebar-yx8.11` commit for the terminal title
+  `eon-agent-sidebar-yx8.12` commit for creation sequences, the
+  `eon-agent-sidebar-yx8.11` commit for the terminal title and the
+  `eon-agent-background-work-yte0.1` commit for the background process count
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, every `orbit-<name>` real-PTY check); sandboxed
     `nix develop -c eon-test` (workspace and installer)
@@ -1008,10 +1024,12 @@ PTY pixel size rule needs no wire change.
       through a management lease, the reply carries the child's window title,
       a prompt mark drops in stream order, a foreground return drops once on
       a terminal without prompt marks, a return inside a detached turn ends
-      the turn there, and requests are answered within the worker-stall
+      the turn there, requests are answered within the worker-stall
       bound while the child floods the PTY
       ([BEHAVIOR.md](BEHAVIOR.md#program-status) records the measured
-      answer times)
+      answer times), and the reply counts a foreground job's processes in
+      their own groups after 1 s and only while a record exists, never the
+      shell's own job, an in-group or a stopped process
     - Real-PTY check [`orbit-terminal-replies`](../tests/real_pty/terminal_replies.rs):
       the probe's answer arrives before the device attributes reply
     - Host unit tests in [src/status.rs](../src/status.rs) on real

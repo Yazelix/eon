@@ -1262,7 +1262,7 @@ fn orbit_command(
     orbit_command
         .arg("serve")
         .arg(socket)
-        .arg("--management-v2")
+        .arg("--management-v3")
         .arg(session_id)
         .arg(run_id)
         .arg(component_generation)
@@ -2391,6 +2391,7 @@ pub(crate) mod tests {
             &management::encode_server_message(&ManagementServerMessage::ProgramStatus(
                 management::ProgramStatus {
                     count: 0,
+                    background: 0,
                     update: 1,
                     terminal_title: String::new(),
                     omitted: Vec::new(),
@@ -2609,7 +2610,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v2",
+                "--management-v3",
                 "session-1",
                 "run-1",
                 "component-1",
@@ -2706,7 +2707,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v2",
+                "--management-v3",
                 "session-2",
                 "run-2",
                 "component-2",

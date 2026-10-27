@@ -220,6 +220,188 @@ pub(crate) fn foreground_group(master: RawFd) -> Option<pid_t> {
     (group > 0).then_some(group)
 }
 
+/// The most processes the background count walks below the child.
+const BACKGROUND_WALK: usize = 512;
+
+/// The terminal's background processes (ORB-C15): processes below `child`
+/// that descend, by parent process, from a member of the `foreground` group,
+/// are outside it, are neither stopped nor zombies, and started at least 1 s
+/// ago. A walk that reaches 512 processes or counts 255 reports 255.
+pub(crate) fn background_processes(child: pid_t, foreground: Option<pid_t>) -> u8 {
+    let (Some(foreground), Some(clock)) = (foreground, Clock::now()) else {
+        return 0;
+    };
+    let Some(root) = process(child, &clock) else {
+        return 0;
+    };
+    // Each pending process and whether its children descend from a member.
+    let mut pending = vec![(child, root.group == foreground)];
+    let (mut walked, mut count) = (0, 0u8);
+    while let Some((parent, below)) = pending.pop() {
+        for pid in children(parent, BACKGROUND_WALK - walked) {
+            walked += 1;
+            if walked == BACKGROUND_WALK {
+                return u8::MAX;
+            }
+            // A process that exited, or whose pid was reused, is skipped.
+            let Some(process) = process(pid, &clock).filter(|process| process.parent == parent)
+            else {
+                continue;
+            };
+            let member = process.group == foreground;
+            if below && !member && process.running && process.settled {
+                count += 1;
+                if count == u8::MAX {
+                    return count;
+                }
+            }
+            pending.push((pid, below || member));
+        }
+    }
+    count
+}
+
+/// One process as the background count reads it.
+struct Process {
+    parent: pid_t,
+    group: pid_t,
+    /// Neither stopped nor a zombie.
+    running: bool,
+    /// Started at least 1 s before the count.
+    settled: bool,
+}
+
+/// The boot clock in ticks, which `/proc` start times count.
+#[cfg(target_os = "linux")]
+struct Clock {
+    now: u64,
+    second: u64,
+}
+
+#[cfg(target_os = "linux")]
+impl Clock {
+    fn now() -> Option<Self> {
+        // SAFETY: sysconf has no preconditions.
+        let second = u64::try_from(unsafe { libc::sysconf(libc::_SC_CLK_TCK) }).ok()?;
+        // SAFETY: clock_gettime fills the zeroed time.
+        let mut time: libc::timespec = unsafe { std::mem::zeroed() };
+        if unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &raw mut time) } == -1 {
+            return None;
+        }
+        let now = u64::try_from(time.tv_sec).ok()? * second
+            + u64::try_from(time.tv_nsec).ok()? * second / 1_000_000_000;
+        Some(Self { now, second })
+    }
+}
+
+/// At most `limit` children of `pid`, from every thread's list.
+#[cfg(target_os = "linux")]
+fn children(pid: pid_t, limit: usize) -> Vec<pid_t> {
+    let mut found = Vec::new();
+    let Ok(tasks) = std::fs::read_dir(format!("/proc/{pid}/task")) else {
+        return found;
+    };
+    for task in tasks.flatten() {
+        let Ok(children) = std::fs::read_to_string(task.path().join("children")) else {
+            continue;
+        };
+        for child in children.split_whitespace() {
+            if found.len() == limit {
+                return found;
+            }
+            found.extend(child.parse::<pid_t>().ok());
+        }
+    }
+    found
+}
+
+/// The fields of `/proc/<pid>/stat` after the process name, which may hold
+/// any bytes, numbered from the state as 0.
+#[cfg(target_os = "linux")]
+fn stat(pid: &str) -> io::Result<Vec<String>> {
+    let stat = std::fs::read(format!("/proc/{pid}/stat"))?;
+    let name_end = stat.iter().rposition(|&byte| byte == b')');
+    let fields = name_end
+        .and_then(|end| std::str::from_utf8(&stat[end + 1..]).ok())
+        .ok_or_else(|| errno(libc::EPROTO))?;
+    Ok(fields.split_whitespace().map(str::to_owned).collect())
+}
+
+#[cfg(target_os = "linux")]
+fn process(pid: pid_t, clock: &Clock) -> Option<Process> {
+    let fields = stat(&pid.to_string()).ok()?;
+    let started: u64 = fields.get(19)?.parse().ok()?;
+    Some(Process {
+        parent: fields.get(1)?.parse().ok()?,
+        group: fields.get(2)?.parse().ok()?,
+        running: !matches!(fields.first()?.as_str(), "T" | "t" | "Z" | "X"),
+        settled: started.saturating_add(clock.second) <= clock.now,
+    })
+}
+
+/// The wall clock in microseconds, which libproc start times count.
+#[cfg(target_os = "macos")]
+struct Clock {
+    now: u64,
+}
+
+#[cfg(target_os = "macos")]
+impl Clock {
+    fn now() -> Option<Self> {
+        let since = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        Some(Self {
+            now: u64::try_from(since.as_micros()).ok()?,
+        })
+    }
+}
+
+/// At most `limit` children of `pid`.
+#[cfg(target_os = "macos")]
+fn children(pid: pid_t, limit: usize) -> Vec<pid_t> {
+    let mut pids = vec![0 as pid_t; limit];
+    let size = std::mem::size_of_val(pids.as_slice()) as libc::c_int;
+    // SAFETY: proc_listchildpids fills at most `size` bytes of the owned
+    // buffer and returns how many pids it wrote.
+    let found = unsafe { libc::proc_listchildpids(pid, pids.as_mut_ptr().cast(), size) };
+    pids.truncate(usize::try_from(found).unwrap_or(0));
+    pids
+}
+
+/// The BSD record of `pid`, if libproc returns all of it for that process.
+#[cfg(target_os = "macos")]
+fn bsd_info(pid: pid_t) -> Option<libc::proc_bsdinfo> {
+    // SAFETY: proc_pidinfo fills the zeroed record for `pid`.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&info) as libc::c_int;
+    let read =
+        unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
+    (read == size && u32::try_from(pid) == Ok(info.pbi_pid)).then_some(info)
+}
+
+/// A BSD record's start time in microseconds.
+#[cfg(target_os = "macos")]
+fn started(info: &libc::proc_bsdinfo) -> Option<u64> {
+    if info.pbi_start_tvusec >= 1_000_000 {
+        return None;
+    }
+    info.pbi_start_tvsec
+        .checked_mul(1_000_000)?
+        .checked_add(info.pbi_start_tvusec)
+}
+
+#[cfg(target_os = "macos")]
+fn process(pid: pid_t, clock: &Clock) -> Option<Process> {
+    let info = bsd_info(pid)?;
+    Some(Process {
+        parent: info.pbi_ppid.try_into().ok()?,
+        group: info.pbi_pgid.try_into().ok()?,
+        running: !matches!(info.pbi_status, libc::SSTOP | libc::SZOMB),
+        settled: started(&info)?.saturating_add(1_000_000) <= clock.now,
+    })
+}
+
 /// Fails unless `parent` still parents this process, then makes it a session
 /// leader with its standard input, the PTY slave, as its controlling
 /// terminal. Only async-signal-safe calls run.
@@ -343,9 +525,8 @@ pub(crate) fn peer_uid(stream: &UnixStream) -> io::Result<u32> {
 /// The kernel's start time of this process, in clock ticks since boot.
 #[cfg(target_os = "linux")]
 pub(crate) fn process_start_identity() -> io::Result<u64> {
-    let stat = std::fs::read_to_string("/proc/self/stat")?;
-    stat.rsplit_once(')')
-        .and_then(|(_, fields)| fields.split_whitespace().nth(19))
+    stat("self")?
+        .get(19)
         .and_then(|value| value.parse().ok())
         .ok_or_else(|| errno(libc::EPROTO))
 }
@@ -354,25 +535,8 @@ pub(crate) fn process_start_identity() -> io::Result<u64> {
 /// reports it.
 #[cfg(target_os = "macos")]
 pub(crate) fn process_start_identity() -> io::Result<u64> {
-    let pid = std::process::id();
-    // SAFETY: proc_pidinfo fills the zeroed record for this process.
-    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of_val(&info) as libc::c_int;
-    let read = unsafe {
-        libc::proc_pidinfo(
-            pid as libc::c_int,
-            libc::PROC_PIDTBSDINFO,
-            0,
-            (&raw mut info).cast(),
-            size,
-        )
-    };
-    if read != size || info.pbi_pid != pid || info.pbi_start_tvusec >= 1_000_000 {
-        return Err(errno(libc::EPROTO));
-    }
-    info.pbi_start_tvsec
-        .checked_mul(1_000_000)
-        .and_then(|seconds| seconds.checked_add(info.pbi_start_tvusec))
+    bsd_info(std::process::id() as pid_t)
+        .and_then(|info| started(&info))
         .filter(|identity| *identity != 0)
         .ok_or_else(|| errno(libc::EPROTO))
 }

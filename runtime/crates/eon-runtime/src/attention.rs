@@ -649,6 +649,7 @@ mod tests {
     fn status(update: u64, records: Vec<ProgramRecord>) -> ProgramStatus {
         ProgramStatus {
             count: records.len() as u16,
+            background: 0,
             update,
             terminal_title: String::new(),
             omitted: Vec::new(),
@@ -1069,6 +1070,7 @@ mod tests {
         // it is omitted.
         let crowded = ProgramStatus {
             count: 2,
+            background: 0,
             update: 7,
             terminal_title: String::new(),
             omitted: vec![5],
@@ -1099,6 +1101,7 @@ mod tests {
         for update in churn.clone() {
             let churning = ProgramStatus {
                 count: 2,
+                background: 0,
                 update,
                 terminal_title: String::new(),
                 omitted: vec![5],

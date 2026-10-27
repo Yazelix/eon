@@ -92,6 +92,7 @@ fn management_messages_and_records_round_trip_canonically() {
         }),
         ServerMessage::ProgramStatus(ProgramStatus {
             count: 3,
+            background: 2,
             update: 9,
             terminal_title: "eon-9a 🪐".into(),
             omitted: vec![2],
@@ -224,6 +225,7 @@ fn program_status_replies_keep_their_bounds() {
     let reply = |records: Vec<ProgramRecord>, omitted: usize| {
         ServerMessage::ProgramStatus(ProgramStatus {
             count: (records.len() + omitted) as u16,
+            background: u8::MAX,
             update: 1,
             terminal_title: title.clone(),
             omitted: (0..omitted as u64).collect(),
@@ -267,6 +269,7 @@ fn program_status_replies_keep_their_bounds() {
         assert!(matches!(
             refused(ProgramStatus {
                 count: 1,
+                background: 0,
                 update: 1,
                 terminal_title: String::new(),
                 omitted: Vec::new(),
@@ -278,6 +281,7 @@ fn program_status_replies_keep_their_bounds() {
     assert!(matches!(
         refused(ProgramStatus {
             count: 2,
+            background: 0,
             update: 1,
             terminal_title: String::new(),
             omitted: Vec::new(),
@@ -288,6 +292,7 @@ fn program_status_replies_keep_their_bounds() {
     assert!(matches!(
         refused(ProgramStatus {
             count: 0,
+            background: 0,
             update: 1,
             terminal_title: "a".repeat(management::MAX_TERMINAL_TITLE_BYTES + 1),
             omitted: Vec::new(),

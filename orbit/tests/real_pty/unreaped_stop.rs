@@ -27,7 +27,7 @@ fn held() -> Held {
         &[shell.as_os_str()],
         &[],
         &[],
-        &["--management-v2", "session-3", "run-3", "component-3"],
+        &["--management-v3", "session-3", "run-3", "component-3"],
     );
     let record = suffixed(&server.path, ".record");
     wait_for(&record);

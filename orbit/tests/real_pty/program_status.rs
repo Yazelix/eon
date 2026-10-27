@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MANAGED: [&str; 4] = ["--management-v2", "session-3", "run-3", "component-3"];
+const MANAGED: [&str; 4] = ["--management-v3", "session-3", "run-3", "component-3"];
 
 /// A managed run of a bash script, with `env` and a lease on its management
 /// socket.
@@ -63,9 +63,7 @@ fn until_reported(lease: &mut Manager, id: &str) -> ProgramStatus {
 
 /// Whether the terminal's foreground group is the child's own, from /proc.
 fn child_leads(child: i32) -> bool {
-    let stat = fs::read_to_string(format!("/proc/{child}/stat")).expect("stat");
-    let (_, fields) = stat.rsplit_once(')').expect("stat fields");
-    let tpgid: i32 = fields.split_whitespace().nth(5).expect("tpgid").parse().expect("a number");
+    let tpgid: i32 = stat_fields(child)[5].parse().expect("a number");
     tpgid == child
 }
 
@@ -92,6 +90,7 @@ pub fn run() {
     prompt_marks_drop_in_stream_order();
     foreground_returns_drop_once();
     detached_turns_end_at_a_return();
+    background_processes_count();
     answer_time_under_load();
 }
 
@@ -164,6 +163,144 @@ fn foreground_returns_drop_once() {
     sleep(0.1);
     let again = status(&mut lease);
     assert_eq!(records(&again), [("v", ProgramState::Working)], "{again:?}");
+    stop(server, lease);
+}
+
+/// A process's `/proc` stat fields after its name, which may hold any bytes.
+fn stat_fields(pid: i32) -> Vec<String> {
+    let stat = fs::read(format!("/proc/{pid}/stat")).expect("stat");
+    let name_end = stat.iter().rposition(|&byte| byte == b')').expect("a name");
+    let fields = std::str::from_utf8(&stat[name_end + 1..]).expect("ASCII fields");
+    fields.split_whitespace().map(str::to_owned).collect()
+}
+
+/// How long ago a process started, on the boot clock `/proc` counts in.
+fn age(pid: i32) -> Duration {
+    let started: f64 = stat_fields(pid)[19].parse().expect("a start time");
+    // SAFETY: sysconf has no preconditions.
+    let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
+    let mut now = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: clock_gettime fills the owned time.
+    assert_eq!(unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut now) }, 0);
+    let now = now.tv_sec as f64 + now.tv_nsec as f64 / 1e9;
+    Duration::from_secs_f64((now - started / ticks).max(0.0))
+}
+
+/// Waits for a grandchild's PID file.
+fn grandchild(directory: &Path, name: &str) -> i32 {
+    let path = directory.join(name);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !fs::metadata(&path).is_ok_and(|metadata| metadata.len() > 0) {
+        assert!(Instant::now() < deadline, "{name} never wrote its PID");
+        sleep(0.01);
+    }
+    read_pid(&path)
+}
+
+/// Asks until the reply counts `background` processes.
+fn until_background(lease: &mut Manager, background: u8) -> ProgramStatus {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let status = status(lease);
+        if status.background == background {
+            return status;
+        }
+        assert!(Instant::now() < deadline, "never {background}: {status:?}");
+        sleep(0.05);
+    }
+}
+
+/// Kills the grandchildren that the run's stop leaves behind.
+struct Leftovers(Vec<i32>);
+
+impl Drop for Leftovers {
+    fn drop(&mut self) {
+        for &pid in &self.0 {
+            if alive(pid) {
+                // SAFETY: sending a signal has no memory effects.
+                unsafe { libc::kill(pid, libc::SIGKILL) };
+            }
+        }
+    }
+}
+
+/// The reply counts the processes below a foreground job that sit in their
+/// own process groups once they have run for 1 s, and only while the
+/// terminal holds a record. The shell's own job beside the foreground job, a
+/// process in the job's group and a stopped one never count, a process name
+/// that is not UTF-8 does not hide one, and one that exits stops counting.
+fn background_processes_count() {
+    let directory = TempDir::new();
+    let gate = Gate::new(&directory, "gate");
+    let apart = Gate::new(&directory, "apart");
+    let agent = executable(
+        &directory,
+        "agent.sh",
+        &format!(
+            "#!{}\n\
+             read -r _ < \"$ORBIT_GATE\"\n\
+             \"$BASH\" -c 'echo $$ > \"$ORBIT_DIR/in\"; exec sleep 60' &\n\
+             set -m\n\
+             \"$BASH\" -c 'echo $$ > \"$ORBIT_DIR/stopped\"; kill -STOP $$; exec sleep 60' &\n\
+             \"$BASH\" -c 'printf \"bg\\347\\267\" > /proc/$$/comm\n\
+               echo $$ > \"$ORBIT_DIR/first\"; read -r _ < \"$ORBIT_APART\"' &\n\
+             read -r _ < \"$ORBIT_GATE\"\n\
+             \"$BASH\" -c 'echo $$ > \"$ORBIT_DIR/second\"; read -r _ < \"$ORBIT_APART\"' &\n\
+             printf '\\033]7501;state=done\\007'\n\
+             read -r _ < \"$ORBIT_GATE\"\n",
+            bash().display()
+        ),
+    );
+    let (server, mut lease) = managed(
+        &directory,
+        "set -m\n\
+         \"$BASH\" -c 'echo $$ > \"$ORBIT_DIR/job\"; exec sleep 60' &\n\
+         \"$ORBIT_AGENT\"\n",
+        &[
+            ("ORBIT_GATE", gate.path()),
+            ("ORBIT_APART", apart.path()),
+            ("ORBIT_DIR", &directory),
+            ("ORBIT_AGENT", &agent),
+        ],
+    );
+    let mut leftovers = Leftovers(vec![grandchild(&directory, "job")]);
+    until_leads(server.child, false);
+    gate.release();
+    for name in ["in", "stopped", "first"] {
+        leftovers.0.push(grandchild(&directory, name));
+    }
+    let [_, _, stopped, first] = leftovers.0[..] else {
+        unreachable!()
+    };
+    assert_eq!(fs::read(format!("/proc/{first}/comm")).expect("comm"), b"bg\xe7\xb7\n");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while stat_fields(stopped)[0] != "T" || age(first) < Duration::from_millis(1100) {
+        assert!(Instant::now() < deadline, "the processes never settled");
+        sleep(0.02);
+    }
+    let unrecorded = status(&mut lease);
+    assert_eq!((unrecorded.count, unrecorded.background), (0, 0), "{unrecorded:?}");
+
+    gate.release();
+    let recorded = until_reported(&mut lease, "");
+    let second = grandchild(&directory, "second");
+    leftovers.0.push(second);
+    // Only a reply sent within the second process's first second shows its
+    // grace; a slower machine checks the rest.
+    if age(second) < Duration::from_millis(900) {
+        assert_eq!(recorded.background, 1, "{recorded:?}");
+    } else {
+        eprintln!("program_status: the reply came too late to check the 1 s grace");
+    }
+    until_background(&mut lease, 2);
+    sleep(0.2);
+    assert_eq!(status(&mut lease).background, 2, "the others never count");
+
+    apart.release();
+    until_background(&mut lease, 0);
     stop(server, lease);
 }
 

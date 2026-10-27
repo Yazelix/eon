@@ -165,6 +165,18 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   across resizing, deletion, the alternate screen, detach and reattach; a
   directly placed image scrolled with its rows and back from history. Wire and behavior are
   unchanged (`orb-j2i.12`).
+- Management moves to generation 3, a breaking change with no compatibility
+  window (`eon-agent-background-work-yte0.1`). The `ProgramStatus` reply
+  gains a one-byte background process count after the record count: while
+  the terminal holds a record, the processes below the PTY child that
+  descend from a member of the foreground process group, sit outside it,
+  are neither stopped nor zombies and started at least 1 s before the
+  request, at most 255. Linux reads `/proc`; macOS uses libproc and is
+  unproved. `--management-v2` becomes `--management-v3`, and the live record
+  and tombstone are framed as generation 3, so Eon Runtime and Eon move to
+  generation 3 in the same change; Venus does not use management. A new Eon
+  cannot stop or recover a run started by a generation-2 Orbit. ORB-C15
+  gains the count.
 
 ## Before this repository
 

@@ -1281,7 +1281,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime generation identity/selection, namespaces, discovery,
   Present, explicit Stop and exact owned residue; Eon supplies immutable
   assembly/default/validator/graph/Cargo/Nix-generated inputs.
-- **Consumes:** Orbit management v2 and Venus `VEN-C14`.
+- **Consumes:** Orbit management v3 and Venus `VEN-C14`.
 - **Boundary:** No manager daemon, persisted topology, machine-restart recovery,
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
   identity, presentation compatibility window, remote runtime, plugin API, service-manager
@@ -1501,7 +1501,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   projection, lease collection, deadline, EONW ordering, retained launch claim,
   and exact residue; Orbit `ORB-C13` owns live identity, Ready, lease, terminal state,
   `ORB-C12` cleanup, tombstone, and endpoint cleanup.
-- **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v2, and Venus `VEN-C14`.
+- **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v3, and Venus `VEN-C14`.
 - **Boundary:** Same boot and login only; no prior-topology persistence, Orbit or
   machine restart recovery, logout/reboot survival, remote authority, service
   manager, broker, or compatibility adapter. Tombstones grant no authority and
@@ -2630,7 +2630,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 2, EON-C8 topology, and EON-C10 (EONW v22, still
+- **Consumes:** ORB-C15, ORB-C13 generation 3, EON-C8 topology, and EON-C10 (EONW v22, still
   request and response, with no event stream).
 - **Boundary:**
   - no hooks and no edits to agent configuration;
