@@ -15,7 +15,7 @@ import ./status.bend as Status
 # output bound in bytes (one maximum frame, one maximum payload, two headers
 # and 4 KiB).
 def bounds() -> String:
-  Boundary.schema() ++ Boundary.encode([Boundary.Bounds{1000, 1000, 1000, 12587045}])
+  Boundary.schema() ++ Boundary.encode([Boundary.Bounds{1000, 1000, 1000, 13094971}])
 
 @unsafe
 def wrote_answer(

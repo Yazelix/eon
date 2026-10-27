@@ -1059,10 +1059,7 @@ fn frame(revision: u64, screen: Screen) -> Frame {
         scroll_position: orbit_protocol::ScrollPosition::default(),
         title: "Eon ✦".into(),
         working_directory: "/tmp/venus".into(),
-        capabilities: Capabilities {
-            hyperlinks: true,
-            kitty_graphics: false,
-        },
+        capabilities: Capabilities { hyperlinks: true },
         colors: Colors {
             background,
             foreground,
@@ -1083,7 +1080,6 @@ fn frame(revision: u64, screen: Screen) -> Frame {
         rows: vec![Row {
             wrapped: false,
             wrap_continuation: false,
-            kitty_virtual_placeholder: false,
             cells: vec![
                 cell("e\u{301}", CellWidth::Narrow, StyleColor::None, ""),
                 cell(
@@ -1096,6 +1092,7 @@ fn frame(revision: u64, screen: Screen) -> Frame {
                 cell("", CellWidth::Narrow, StyleColor::None, ""),
             ],
         }],
+        graphics: None,
     }
 }
 

@@ -425,7 +425,6 @@ mod tests {
         DrawRow {
             wrapped: false,
             wrap_continuation: false,
-            kitty_virtual_placeholder: false,
             cells: text
                 .chars()
                 .map(|character| {

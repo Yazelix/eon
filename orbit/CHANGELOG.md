@@ -116,6 +116,17 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   carries ORB-C16's state states Kitty graphics supported, and one that does
   not still declares them unsupported. Behavior and wire are unchanged until
   `orb-j2i.4` to `orb-j2i.7` land (`orb-j2i.2`).
+- ORBF v3 in ORBS v14, a breaking, exact-version revision for Venus, Eon
+  Runtime and Eon with no adapter. A frame that states the Kitty graphics
+  capability ends with ORB-C16's graphics block: the cell size its geometry
+  uses, an omitted-placements flag and up to 4,096 placement entries
+  referencing at most 256 resources, outside the 4 MiB frame budget for cells
+  and links. Rows drop the `kitty_virtual_placeholder` flag. ORBS v14 adds
+  resource announcements, chunks of 262,144 bytes and retirements. The largest
+  frame grows to 4,448,267 bytes and the largest payload to 8,642,584, so the
+  worker's per-client output bound grows to 13,094,971 bytes and ORB-C7's room
+  for a scroll outcome behind a started frame holds. Orbit still states Kitty
+  graphics unsupported and sends no resources (`orb-j2i.5`).
 
 ## Before this repository
 

@@ -193,8 +193,10 @@ defines the dependency gate, and Beads retain the full candidate evidence.
 
 - **Selected shape:** Private `orbit-protocol` 0.1.0 workspace library with `std` only and
   no external dependency
-- **Status:** Selected for ORBS v13, which Venus and Eon consume from the in-tree crate. Its
-  ORBS v9 and v10 proofs predate consolidation; Eonova is outside Eon's component graph
+- **Status:** Selected for ORBF v3 in ORBS v14, which Venus and Eon consume from the in-tree
+  crate. ORBF v3 adds ORB-C16's graphics block and ORBS v14 its resource announcements, chunks
+  and retirements, still with `std` only (`orb-j2i.5`). Its ORBS v9 and v10 proofs predate
+  consolidation; Eonova is outside Eon's component graph
 - **Credible alternatives:** Root library target with terminal features; a second Venus
   decoder; a second handwritten session schema; bincode 2.0.1; postcard 1.1.3; prost 0.14.4;
   rkyv 0.8.17; capnp 0.27.0; a separately published protocol repository

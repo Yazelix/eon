@@ -12,18 +12,26 @@ use std::{fmt, str};
 pub mod management;
 pub mod session;
 
-/// Maximum decoded cell count accepted by ORBF v2.
+/// Maximum decoded cell count accepted by ORBF v3.
 pub const MAX_CELLS: usize = 100_000;
-/// Maximum encoded ORBF v2 payload size.
-pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+/// ORB-C6's frame budget: the encoded header, rows, cells and links.
+pub const FRAME_BUDGET_BYTES: usize = 4 * 1024 * 1024;
+/// Most placement entries in one ORBF v3 frame (ORB-C16).
+pub const MAX_PLACEMENTS: usize = 4096;
+/// Most distinct resources the entries of one ORBF v3 frame reference.
+pub const MAX_FRAME_RESOURCES: usize = 256;
+/// Maximum encoded ORBF v3 payload: the frame budget plus the largest
+/// graphics block, which the budget does not count.
+pub const MAX_FRAME_BYTES: usize =
+    FRAME_BUDGET_BYTES + GRAPHICS_FIXED_BYTES + MAX_PLACEMENTS * PLACEMENT_BYTES;
 /// ORBF frame discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBF";
 /// The only protocol revision accepted by this package.
-pub const VERSION: u16 = 2;
-/// Number of RGB entries in an ORBF v2 palette.
+pub const VERSION: u16 = 3;
+/// Number of RGB entries in an ORBF v3 palette.
 pub const PALETTE_LEN: usize = 256;
 
-const ROW_FLAG_MASK: u8 = 0b0000_0111;
+const ROW_FLAG_MASK: u8 = 0b0000_0011;
 const STYLE_FLAG_MASK: u16 = 0b0000_0011_1111_1111;
 const STRING_LENGTH_BYTES: usize = std::mem::size_of::<u32>();
 const FRAME_FIXED_BYTES: usize = 817;
@@ -31,12 +39,15 @@ const ROW_FIXED_BYTES: usize = 1;
 const CELL_FIXED_BYTES: usize = 16;
 const MIN_FRAME_BYTES: usize =
     FRAME_FIXED_BYTES + ROW_FIXED_BYTES + CELL_FIXED_BYTES + 4 * STRING_LENGTH_BYTES;
+const GRAPHICS_FIXED_BYTES: usize = 11;
+const PLACEMENT_BYTES: usize = 62;
 
 /// A protocol validation or revision-ordering failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error {
-    /// The payload exceeds [`MAX_FRAME_BYTES`].
+    /// The payload exceeds [`MAX_FRAME_BYTES`], or its header, rows, cells
+    /// and links exceed [`FRAME_BUDGET_BYTES`].
     FrameTooLarge { size: usize },
     /// The payload is not an ORBF frame.
     InvalidMagic,
@@ -56,7 +67,7 @@ pub enum Error {
     InvalidFlags { field: &'static str, value: u16 },
     /// An owned frame does not match its declared dimensions.
     InvalidShape { field: &'static str },
-    /// A string cannot be represented by the ORBF v2 length prefix.
+    /// A string cannot be represented by the ORBF v3 length prefix.
     StringTooLong { field: &'static str, length: usize },
     /// A complete frame revision is not strictly newer than the current one.
     RevisionNotNewer { current: u64, incoming: u64 },
@@ -67,7 +78,7 @@ impl fmt::Display for Error {
         match self {
             Self::FrameTooLarge { size } => write!(
                 formatter,
-                "presentation frame is {size} bytes; maximum is {MAX_FRAME_BYTES}"
+                "presentation frame is {size} bytes, over its bound"
             ),
             Self::InvalidMagic => formatter.write_str("invalid presentation frame magic"),
             Self::UnsupportedVersion { version } => {
@@ -128,13 +139,78 @@ pub enum Screen {
     Alternate,
 }
 
-/// Capabilities carried by this complete frame.
+/// Capabilities carried by this complete frame. The Kitty graphics
+/// capability is [`Frame::graphics`] being present.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Capabilities {
-    /// Must be true in ORBF v2: frames carry hyperlink metadata.
+    /// Must be true in ORBF v3: frames carry hyperlink metadata.
     pub hyperlinks: bool,
-    /// Must be false in ORBF v2: Kitty graphics are unsupported.
-    pub kitty_graphics: bool,
+}
+
+/// ORB-C16's graphics state for one complete frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Graphics {
+    /// Cell width in pixels that the placement geometry uses; nonzero.
+    pub cell_width: u32,
+    /// Cell height in pixels that the placement geometry uses; nonzero.
+    pub cell_height: u32,
+    /// Placements past [`MAX_PLACEMENTS`] or [`MAX_FRAME_RESOURCES`] were
+    /// left out.
+    pub placements_omitted: bool,
+    /// Placements in drawing order: by layer, then z-index, then Orbit's order.
+    pub placements: Vec<Placement>,
+}
+
+/// One image placement that libghostty resolves for the viewport.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Placement {
+    /// Orbit's identity number for the referenced resource.
+    pub resource: u64,
+    pub layer: ImageLayer,
+    pub z: i32,
+    /// Viewport column of the top-left cell; negative left of the viewport.
+    pub col: i32,
+    /// Viewport row of the top-left cell; negative above the viewport.
+    pub row: i32,
+    pub grid_cols: u32,
+    pub grid_rows: u32,
+    /// Pixel offset from the top-left cell's corner; can exceed one cell.
+    pub offset_x: u32,
+    pub offset_y: u32,
+    /// Drawn size in pixels.
+    pub width: u32,
+    pub height: u32,
+    /// Source rectangle in image pixels.
+    pub source: SourceRect,
+    pub state: PlacementState,
+}
+
+/// A rectangle in image pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourceRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// The layer libghostty resolves for a placement, in drawing order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ImageLayer {
+    BelowBackground,
+    BelowText,
+    AboveText,
+}
+
+/// Whether a placement's resource has been sent in this attachment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PlacementState {
+    /// The resource's last chunk has been written.
+    Ready,
+    /// The resource's last chunk has not been written yet.
+    Pending,
+    /// The image breaks the resource limits and is never sent.
+    Unavailable,
 }
 
 /// An RGB color with eight-bit channels.
@@ -246,7 +322,6 @@ pub struct Cell {
 pub struct Row {
     pub wrapped: bool,
     pub wrap_continuation: bool,
-    pub kitty_virtual_placeholder: bool,
     pub cells: Vec<Cell>,
 }
 
@@ -260,7 +335,7 @@ pub struct ScrollPosition {
     pub history_rows: u64,
 }
 
-/// One complete ORBF v2 presentation revision.
+/// One complete ORBF v3 presentation revision.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Frame {
     pub revision: u64,
@@ -273,16 +348,20 @@ pub struct Frame {
     pub cursor: Cursor,
     pub scroll_position: ScrollPosition,
     pub rows: Vec<Row>,
+    /// Present exactly when the frame states the Kitty graphics capability.
+    pub graphics: Option<Graphics>,
 }
 
 impl Frame {
-    /// Encode this frame as canonical ORBF v2 bytes.
+    /// Encode this frame as canonical ORBF v3 bytes.
     pub fn encode(&self) -> Result<Vec<u8>> {
         encode_frame(self)
     }
 }
 
-/// Incremental ORBF v2 byte accounting for bounded frame construction.
+/// Incremental byte accounting against [`FRAME_BUDGET_BYTES`] for bounded
+/// frame construction. It counts the header, rows, cells and links, not the
+/// graphics block.
 ///
 /// Producers use this before retaining variable-sized strings in an owned
 /// [`Frame`]. The final value is also checked by [`encode_frame`].
@@ -332,7 +411,7 @@ impl FrameSize {
     }
 
     fn from_bytes(bytes: usize) -> Result<Self> {
-        if bytes > MAX_FRAME_BYTES {
+        if bytes > FRAME_BUDGET_BYTES {
             Err(Error::FrameTooLarge { size: bytes })
         } else {
             Ok(Self { bytes })
@@ -350,7 +429,7 @@ impl FrameSize {
 }
 
 /// Retains frames with valid capabilities, scroll position, cell-width topology,
-/// and strictly increasing revisions.
+/// graphics, and strictly increasing revisions.
 #[derive(Debug, Default)]
 pub struct FrameReducer {
     current: Option<Frame>,
@@ -362,12 +441,16 @@ impl FrameReducer {
         self.current.as_ref()
     }
 
-    /// Validate canonical capabilities, scroll position and cell widths before admission.
+    /// Validate canonical capabilities, scroll position, cell widths and
+    /// graphics before admission.
     pub fn push(&mut self, frame: Frame) -> Result<&Frame> {
         validate_capabilities(frame.capabilities)?;
         validate_scroll_position(frame.scroll_position, frame.screen)?;
         for row in &frame.rows {
             validate_cell_width_topology(row)?;
+        }
+        if let Some(graphics) = &frame.graphics {
+            validate_graphics(graphics)?;
         }
         if let Some(current) = &self.current
             && frame.revision <= current.revision
@@ -381,7 +464,7 @@ impl FrameReducer {
         Ok(self.current.as_ref().expect("frame was stored"))
     }
 
-    /// Decode and accept one complete ORBF v2 frame.
+    /// Decode and accept one complete ORBF v3 frame.
     pub fn decode_and_push(&mut self, bytes: &[u8]) -> Result<&Frame> {
         self.push(decode_frame(bytes)?)
     }
@@ -392,7 +475,7 @@ impl FrameReducer {
     }
 }
 
-/// Encode one owned frame as canonical ORBF v2 bytes.
+/// Encode one owned frame as canonical ORBF v3 bytes.
 pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>> {
     let encoded_size = validate_frame(frame)?;
     let mut encoder = Encoder(Vec::with_capacity(encoded_size));
@@ -405,7 +488,7 @@ pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>> {
     encoder.string("title", &frame.title)?;
     encoder.string("working directory", &frame.working_directory)?;
     encoder.boolean(frame.capabilities.hyperlinks)?;
-    encoder.boolean(frame.capabilities.kitty_graphics)?;
+    encoder.boolean(frame.graphics.is_some())?;
     encoder.rgb(frame.colors.background)?;
     encoder.rgb(frame.colors.foreground)?;
     encoder.boolean(frame.colors.cursor.is_some())?;
@@ -431,11 +514,14 @@ pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>> {
     for row in &frame.rows {
         encode_row(&mut encoder, row)?;
     }
+    if let Some(graphics) = &frame.graphics {
+        encode_graphics(&mut encoder, graphics)?;
+    }
     debug_assert_eq!(encoder.0.len(), encoded_size);
     Ok(encoder.0)
 }
 
-/// Decode and strictly validate one complete ORBF v2 payload.
+/// Decode and strictly validate one complete ORBF v3 payload.
 pub fn decode_frame(bytes: &[u8]) -> Result<Frame> {
     if bytes.len() > MAX_FRAME_BYTES {
         return Err(Error::FrameTooLarge { size: bytes.len() });
@@ -460,9 +546,9 @@ pub fn decode_frame(bytes: &[u8]) -> Result<Frame> {
     let working_directory = decoder.string("working directory")?;
     let capabilities = Capabilities {
         hyperlinks: decoder.boolean("hyperlink capability")?,
-        kitty_graphics: decoder.boolean("Kitty graphics capability")?,
     };
     validate_capabilities(capabilities)?;
+    let kitty_graphics = decoder.boolean("Kitty graphics capability")?;
     let background = decoder.rgb()?;
     let foreground = decoder.rgb()?;
     let color_cursor = if decoder.boolean("cursor color presence")? {
@@ -505,6 +591,16 @@ pub fn decode_frame(bytes: &[u8]) -> Result<Frame> {
     for _ in 0..dimensions.rows {
         rows.push(decode_row(&mut decoder, dimensions.cols)?);
     }
+    if decoder.position > FRAME_BUDGET_BYTES {
+        return Err(Error::FrameTooLarge {
+            size: decoder.position,
+        });
+    }
+    let graphics = if kitty_graphics {
+        Some(decode_graphics(&mut decoder)?)
+    } else {
+        None
+    };
     if decoder.position != bytes.len() {
         return Err(Error::TrailingBytes {
             count: bytes.len() - decoder.position,
@@ -526,6 +622,7 @@ pub fn decode_frame(bytes: &[u8]) -> Result<Frame> {
         cursor,
         scroll_position,
         rows,
+        graphics,
     })
 }
 
@@ -562,7 +659,7 @@ pub(crate) fn decode_canonical_row(bytes: &[u8], cols: u16) -> Result<Row> {
 pub(crate) fn decode_canonical_rows(bytes: &[u8], cols: u16, row_count: u16) -> Result<Vec<Row>> {
     validate_row_columns(cols)?;
     validate_row_count(usize::from(row_count), cols)?;
-    if bytes.len() > MAX_FRAME_BYTES {
+    if bytes.len() > FRAME_BUDGET_BYTES {
         return Err(Error::FrameTooLarge { size: bytes.len() });
     }
     let mut decoder = Decoder { bytes, position: 0 };
@@ -579,9 +676,7 @@ pub(crate) fn decode_canonical_rows(bytes: &[u8], cols: u16, row_count: u16) -> 
 }
 
 fn encode_row(encoder: &mut Encoder, row: &Row) -> Result<()> {
-    let flags = u8::from(row.wrapped)
-        | (u8::from(row.wrap_continuation) << 1)
-        | (u8::from(row.kitty_virtual_placeholder) << 2);
+    let flags = u8::from(row.wrapped) | (u8::from(row.wrap_continuation) << 1);
     encoder.u8(flags)?;
     for cell in &row.cells {
         encoder.u8(cell_width_tag(cell.width))?;
@@ -612,7 +707,6 @@ fn decode_row(decoder: &mut Decoder<'_>, cols: u16) -> Result<Row> {
     let row = Row {
         wrapped: flags & 1 != 0,
         wrap_continuation: flags & (1 << 1) != 0,
-        kitty_virtual_placeholder: flags & (1 << 2) != 0,
         cells,
     };
     validate_cell_width_topology(&row)?;
@@ -711,7 +805,117 @@ fn validate_frame(frame: &Frame) -> Result<usize> {
             size.add_cell(&cell.text, &cell.hyperlink)?;
         }
     }
-    Ok(size.bytes())
+    let graphics = match &frame.graphics {
+        Some(graphics) => validate_graphics(graphics)?,
+        None => 0,
+    };
+    Ok(size.bytes() + graphics)
+}
+
+/// Check the graphics block and return its encoded size.
+fn validate_graphics(graphics: &Graphics) -> Result<usize> {
+    if graphics.cell_width == 0 || graphics.cell_height == 0 {
+        return Err(Error::InvalidShape {
+            field: "graphics cell size",
+        });
+    }
+    if graphics.placements.len() > MAX_PLACEMENTS {
+        return Err(Error::InvalidShape {
+            field: "placement count",
+        });
+    }
+    if graphics
+        .placements
+        .windows(2)
+        .any(|pair| (pair[0].layer, pair[0].z) > (pair[1].layer, pair[1].z))
+    {
+        return Err(Error::InvalidShape {
+            field: "placement order",
+        });
+    }
+    let mut resources: Vec<u64> = graphics
+        .placements
+        .iter()
+        .map(|placement| placement.resource)
+        .collect();
+    resources.sort_unstable();
+    resources.dedup();
+    if resources.len() > MAX_FRAME_RESOURCES {
+        return Err(Error::InvalidShape {
+            field: "placement resources",
+        });
+    }
+    Ok(GRAPHICS_FIXED_BYTES + graphics.placements.len() * PLACEMENT_BYTES)
+}
+
+fn encode_graphics(encoder: &mut Encoder, graphics: &Graphics) -> Result<()> {
+    encoder.u32(graphics.cell_width)?;
+    encoder.u32(graphics.cell_height)?;
+    encoder.boolean(graphics.placements_omitted)?;
+    let count = u16::try_from(graphics.placements.len()).expect("placement count is validated");
+    encoder.u16(count)?;
+    for placement in &graphics.placements {
+        encoder.u64(placement.resource)?;
+        encoder.u8(image_layer_tag(placement.layer))?;
+        encoder.i32(placement.z)?;
+        encoder.i32(placement.col)?;
+        encoder.i32(placement.row)?;
+        encoder.u32(placement.grid_cols)?;
+        encoder.u32(placement.grid_rows)?;
+        encoder.u32(placement.offset_x)?;
+        encoder.u32(placement.offset_y)?;
+        encoder.u32(placement.width)?;
+        encoder.u32(placement.height)?;
+        encoder.u32(placement.source.x)?;
+        encoder.u32(placement.source.y)?;
+        encoder.u32(placement.source.width)?;
+        encoder.u32(placement.source.height)?;
+        encoder.u8(placement_state_tag(placement.state))?;
+    }
+    Ok(())
+}
+
+fn decode_graphics(decoder: &mut Decoder<'_>) -> Result<Graphics> {
+    let cell_width = decoder.u32()?;
+    let cell_height = decoder.u32()?;
+    let placements_omitted = decoder.boolean("placements omitted")?;
+    let count = usize::from(decoder.u16()?);
+    if count > MAX_PLACEMENTS {
+        return Err(Error::InvalidShape {
+            field: "placement count",
+        });
+    }
+    let mut placements = Vec::with_capacity(count);
+    for _ in 0..count {
+        placements.push(Placement {
+            resource: decoder.u64()?,
+            layer: decode_image_layer(decoder.u8()?)?,
+            z: decoder.i32()?,
+            col: decoder.i32()?,
+            row: decoder.i32()?,
+            grid_cols: decoder.u32()?,
+            grid_rows: decoder.u32()?,
+            offset_x: decoder.u32()?,
+            offset_y: decoder.u32()?,
+            width: decoder.u32()?,
+            height: decoder.u32()?,
+            source: SourceRect {
+                x: decoder.u32()?,
+                y: decoder.u32()?,
+                width: decoder.u32()?,
+                height: decoder.u32()?,
+            },
+            state: decode_placement_state(decoder.u8()?)?,
+        });
+    }
+    let graphics = Graphics {
+        cell_width,
+        cell_height,
+        placements_omitted,
+        placements,
+    };
+    validate_graphics(&graphics)?;
+    Ok(graphics)
 }
 
 fn validate_scroll_position(position: ScrollPosition, screen: Screen) -> Result<()> {
@@ -727,7 +931,7 @@ fn validate_scroll_position(position: ScrollPosition, screen: Screen) -> Result<
 }
 
 fn validate_capabilities(capabilities: Capabilities) -> Result<()> {
-    if !capabilities.hyperlinks || capabilities.kitty_graphics {
+    if !capabilities.hyperlinks {
         Err(Error::InvalidShape {
             field: "capabilities",
         })
@@ -808,6 +1012,46 @@ fn decode_cell_width(tag: u8) -> Result<CellWidth> {
     }
 }
 
+fn image_layer_tag(layer: ImageLayer) -> u8 {
+    match layer {
+        ImageLayer::BelowBackground => 0,
+        ImageLayer::BelowText => 1,
+        ImageLayer::AboveText => 2,
+    }
+}
+
+fn decode_image_layer(tag: u8) -> Result<ImageLayer> {
+    match tag {
+        0 => Ok(ImageLayer::BelowBackground),
+        1 => Ok(ImageLayer::BelowText),
+        2 => Ok(ImageLayer::AboveText),
+        value => Err(Error::InvalidTag {
+            field: "image layer",
+            value,
+        }),
+    }
+}
+
+fn placement_state_tag(state: PlacementState) -> u8 {
+    match state {
+        PlacementState::Ready => 0,
+        PlacementState::Pending => 1,
+        PlacementState::Unavailable => 2,
+    }
+}
+
+fn decode_placement_state(tag: u8) -> Result<PlacementState> {
+    match tag {
+        0 => Ok(PlacementState::Ready),
+        1 => Ok(PlacementState::Pending),
+        2 => Ok(PlacementState::Unavailable),
+        value => Err(Error::InvalidTag {
+            field: "placement state",
+            value,
+        }),
+    }
+}
+
 fn underline_tag(underline: Underline) -> u8 {
     match underline {
         Underline::None => 0,
@@ -859,6 +1103,14 @@ impl Encoder {
     }
 
     fn u16(&mut self, value: u16) -> Result<()> {
+        self.bytes(&value.to_le_bytes())
+    }
+
+    fn u32(&mut self, value: u32) -> Result<()> {
+        self.bytes(&value.to_le_bytes())
+    }
+
+    fn i32(&mut self, value: i32) -> Result<()> {
         self.bytes(&value.to_le_bytes())
     }
 
@@ -941,6 +1193,12 @@ impl<'a> Decoder<'a> {
 
     fn u32(&mut self) -> Result<u32> {
         Ok(u32::from_le_bytes(
+            self.take(4)?.try_into().expect("slice has four bytes"),
+        ))
+    }
+
+    fn i32(&mut self) -> Result<i32> {
+        Ok(i32::from_le_bytes(
             self.take(4)?.try_into().expect("slice has four bytes"),
         ))
     }
@@ -1055,10 +1313,7 @@ mod tests {
             scroll_position: ScrollPosition::default(),
             title: String::new(),
             working_directory: String::new(),
-            capabilities: Capabilities {
-                hyperlinks: true,
-                kitty_graphics: false,
-            },
+            capabilities: Capabilities { hyperlinks: true },
             colors: Colors {
                 background: Rgb::BLACK,
                 foreground: Rgb::BLACK,
@@ -1075,7 +1330,6 @@ mod tests {
             rows: vec![Row {
                 wrapped: false,
                 wrap_continuation: false,
-                kitty_virtual_placeholder: false,
                 cells: vec![Cell {
                     width: CellWidth::Narrow,
                     style: plain_style(),
@@ -1083,6 +1337,7 @@ mod tests {
                     hyperlink: String::new(),
                 }],
             }],
+            graphics: None,
         }
     }
 
@@ -1138,10 +1393,7 @@ mod tests {
             scroll_position: ScrollPosition::default(),
             title: "rich 🪐".into(),
             working_directory: "file:///tmp/orbit".into(),
-            capabilities: Capabilities {
-                hyperlinks: true,
-                kitty_graphics: false,
-            },
+            capabilities: Capabilities { hyperlinks: true },
             colors: Colors {
                 background: Rgb { r: 1, g: 2, b: 3 },
                 foreground: Rgb { r: 4, g: 5, b: 6 },
@@ -1163,7 +1415,6 @@ mod tests {
                 Row {
                     wrapped: true,
                     wrap_continuation: false,
-                    kitty_virtual_placeholder: true,
                     cells: vec![
                         Cell {
                             width: CellWidth::Narrow,
@@ -1182,7 +1433,6 @@ mod tests {
                 Row {
                     wrapped: false,
                     wrap_continuation: true,
-                    kitty_virtual_placeholder: false,
                     cells: vec![
                         Cell {
                             width: CellWidth::Wide,
@@ -1199,6 +1449,60 @@ mod tests {
                     ],
                 },
             ],
+            graphics: Some(Graphics {
+                cell_width: 9,
+                cell_height: 18,
+                placements_omitted: true,
+                placements: vec![
+                    placement(7, ImageLayer::BelowBackground, i32::MIN),
+                    Placement {
+                        col: -3,
+                        row: -2,
+                        offset_x: 40,
+                        state: PlacementState::Pending,
+                        ..placement(u64::MAX, ImageLayer::BelowText, -1)
+                    },
+                    Placement {
+                        state: PlacementState::Unavailable,
+                        ..placement(7, ImageLayer::AboveText, i32::MAX)
+                    },
+                ],
+            }),
+        }
+    }
+
+    fn placement(resource: u64, layer: ImageLayer, z: i32) -> Placement {
+        Placement {
+            resource,
+            layer,
+            z,
+            col: 1,
+            row: 0,
+            grid_cols: 2,
+            grid_rows: 3,
+            offset_x: 4,
+            offset_y: 5,
+            width: 60,
+            height: 70,
+            source: SourceRect {
+                x: 8,
+                y: 9,
+                width: u32::MAX,
+                height: 11,
+            },
+            state: PlacementState::Ready,
+        }
+    }
+
+    fn graphics_frame(placements: Vec<Placement>) -> Frame {
+        Frame {
+            graphics: Some(Graphics {
+                cell_width: 8,
+                cell_height: 16,
+                placements_omitted: false,
+                placements,
+            }),
+            ..minimal_frame(1)
         }
     }
 
@@ -1278,7 +1582,7 @@ mod tests {
     }
 
     #[test]
-    fn orbf_v2_capabilities_are_truthful_at_every_acceptance_boundary() {
+    fn orbf_v3_capabilities_are_truthful_at_every_acceptance_boundary() {
         let canonical = minimal_frame(0);
         let error = Error::InvalidShape {
             field: "capabilities",
@@ -1286,23 +1590,206 @@ mod tests {
         let mut reducer = FrameReducer::default();
         reducer.push(canonical.clone()).unwrap();
         let bytes = canonical.encode().unwrap();
-        for (hyperlinks, kitty_graphics) in [(false, false), (false, true), (true, true)] {
-            let mut frame = canonical.clone();
-            frame.revision = 1;
-            frame.capabilities = Capabilities {
-                hyperlinks,
-                kitty_graphics,
-            };
+        assert_eq!(bytes[KITTY_GRAPHICS_CAPABILITY_OFFSET], 0);
+
+        let mut frame = canonical.clone();
+        frame.revision = 1;
+        frame.capabilities = Capabilities { hyperlinks: false };
+        assert_eq!(frame.encode().unwrap_err(), error);
+        assert_eq!(reducer.push(frame).unwrap_err(), error);
+        assert_eq!(reducer.current(), Some(&canonical));
+        let mut invalid = bytes.clone();
+        invalid[HYPERLINK_CAPABILITY_OFFSET] = 0;
+        assert_eq!(decode_frame(&invalid).unwrap_err(), error);
+        assert_eq!(decode_frame(&bytes).unwrap(), canonical);
+
+        // The Kitty graphics capability is exactly the presence of a graphics
+        // block: true with no block is truncated, false with one trails.
+        let mut claimed = bytes.clone();
+        claimed[KITTY_GRAPHICS_CAPABILITY_OFFSET] = 1;
+        assert_eq!(decode_frame(&claimed).unwrap_err(), Error::Truncated);
+        let graphics = graphics_frame(Vec::new());
+        let mut denied = graphics.encode().unwrap();
+        assert_eq!(denied[KITTY_GRAPHICS_CAPABILITY_OFFSET], 1);
+        assert_eq!(decode_frame(&denied).unwrap(), graphics);
+        denied[KITTY_GRAPHICS_CAPABILITY_OFFSET] = 0;
+        assert_eq!(
+            decode_frame(&denied).unwrap_err(),
+            Error::TrailingBytes {
+                count: GRAPHICS_FIXED_BYTES
+            }
+        );
+        let mut tag = bytes;
+        tag[KITTY_GRAPHICS_CAPABILITY_OFFSET] = 2;
+        assert!(matches!(
+            decode_frame(&tag),
+            Err(Error::InvalidTag {
+                field: "Kitty graphics capability",
+                value: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn orbf_v3_graphics_are_validated_at_every_acceptance_boundary() {
+        let canonical = minimal_frame(0);
+        let offset = canonical.encode().unwrap().len();
+        let mut too_many = vec![placement(0, ImageLayer::BelowText, 0); MAX_PLACEMENTS + 1];
+        let resources = (0..=MAX_FRAME_RESOURCES as u64)
+            .map(|resource| placement(resource, ImageLayer::BelowText, 0))
+            .collect();
+        let zero_width = Frame {
+            graphics: Some(Graphics {
+                cell_width: 0,
+                cell_height: 16,
+                placements_omitted: false,
+                placements: Vec::new(),
+            }),
+            ..minimal_frame(1)
+        };
+        let invalid = [
+            (
+                graphics_frame(vec![
+                    placement(1, ImageLayer::BelowText, 0),
+                    placement(2, ImageLayer::BelowBackground, 9),
+                ]),
+                "placement order",
+            ),
+            (
+                graphics_frame(vec![
+                    placement(1, ImageLayer::BelowText, 1),
+                    placement(2, ImageLayer::BelowText, 0),
+                ]),
+                "placement order",
+            ),
+            (graphics_frame(resources), "placement resources"),
+            (zero_width, "graphics cell size"),
+            (graphics_frame(too_many.clone()), "placement count"),
+        ];
+        let mut reducer = FrameReducer::default();
+        reducer.push(canonical.clone()).unwrap();
+        for (frame, field) in invalid {
+            let error = Error::InvalidShape { field };
             assert_eq!(frame.encode().unwrap_err(), error);
-            assert_eq!(reducer.push(frame).unwrap_err(), error);
+            assert_eq!(reducer.push(frame.clone()).unwrap_err(), error);
             assert_eq!(reducer.current(), Some(&canonical));
 
-            let mut invalid = bytes.clone();
-            invalid[HYPERLINK_CAPABILITY_OFFSET] = u8::from(hyperlinks);
-            invalid[KITTY_GRAPHICS_CAPABILITY_OFFSET] = u8::from(kitty_graphics);
-            assert_eq!(decode_frame(&invalid).unwrap_err(), error);
+            // Encode the same block without validation and decode it.
+            let graphics = frame.graphics.as_ref().unwrap();
+            let mut encoder = Encoder(canonical.encode().unwrap());
+            encoder.0[KITTY_GRAPHICS_CAPABILITY_OFFSET] = 1;
+            encoder.u32(graphics.cell_width).unwrap();
+            encoder.u32(graphics.cell_height).unwrap();
+            encoder.boolean(false).unwrap();
+            encoder.u16(graphics.placements.len() as u16).unwrap();
+            for entry in &graphics.placements {
+                let one = Graphics {
+                    cell_width: 1,
+                    cell_height: 1,
+                    placements_omitted: false,
+                    placements: vec![*entry],
+                };
+                let mut bytes = Encoder(Vec::new());
+                encode_graphics(&mut bytes, &one).unwrap();
+                encoder
+                    .0
+                    .extend_from_slice(&bytes.0[GRAPHICS_FIXED_BYTES..]);
+            }
+            assert_eq!(decode_frame(&encoder.0).unwrap_err(), error);
         }
-        assert_eq!(decode_frame(&bytes).unwrap(), canonical);
+
+        // The largest graphics block, with the most resources, fits ORBF v3.
+        let mut most = too_many.split_off(1);
+        for (index, entry) in most.iter_mut().enumerate() {
+            entry.resource = (index % MAX_FRAME_RESOURCES) as u64;
+        }
+        let largest = graphics_frame(most);
+        let bytes = largest.encode().unwrap();
+        assert_eq!(
+            bytes.len(),
+            offset + GRAPHICS_FIXED_BYTES + MAX_PLACEMENTS * PLACEMENT_BYTES
+        );
+        assert_eq!(decode_frame(&bytes).unwrap(), largest);
+        assert_eq!(
+            MAX_FRAME_BYTES,
+            FRAME_BUDGET_BYTES + GRAPHICS_FIXED_BYTES + MAX_PLACEMENTS * PLACEMENT_BYTES
+        );
+
+        let mut tags = graphics_frame(vec![placement(1, ImageLayer::BelowText, 0)])
+            .encode()
+            .unwrap();
+        let entry = offset + GRAPHICS_FIXED_BYTES;
+        tags[entry + 8] = 3;
+        assert!(matches!(
+            decode_frame(&tags),
+            Err(Error::InvalidTag {
+                field: "image layer",
+                value: 3
+            })
+        ));
+        tags[entry + 8] = 1;
+        tags[entry + PLACEMENT_BYTES - 1] = 3;
+        assert!(matches!(
+            decode_frame(&tags),
+            Err(Error::InvalidTag {
+                field: "placement state",
+                value: 3
+            })
+        ));
+        tags[entry + PLACEMENT_BYTES - 1] = 0;
+        tags[offset + 8] = 2;
+        assert!(matches!(
+            decode_frame(&tags),
+            Err(Error::InvalidTag {
+                field: "placements omitted",
+                value: 2
+            })
+        ));
+        tags[offset + 8] = 0;
+        tags[offset + 9..offset + 11].copy_from_slice(&(MAX_PLACEMENTS as u16 + 1).to_le_bytes());
+        assert_eq!(
+            decode_frame(&tags).unwrap_err(),
+            Error::InvalidShape {
+                field: "placement count"
+            }
+        );
+    }
+
+    #[test]
+    fn the_frame_budget_excludes_only_the_graphics_block() {
+        // Cells and links over the budget fail even when the whole payload
+        // fits MAX_FRAME_BYTES.
+        let mut frame = minimal_frame(0);
+        let fixed = frame.encode().unwrap().len();
+        frame.rows[0].cells[0].text = "x".repeat(FRAME_BUDGET_BYTES - fixed);
+        let at_budget = frame.encode().unwrap();
+        assert_eq!(at_budget.len(), FRAME_BUDGET_BYTES);
+        let with_graphics = Frame {
+            graphics: graphics_frame(vec![placement(1, ImageLayer::BelowText, 0)]).graphics,
+            ..frame.clone()
+        };
+        assert_eq!(
+            decode_frame(&with_graphics.encode().unwrap()).unwrap(),
+            with_graphics
+        );
+
+        frame.rows[0].cells[0].text.push('x');
+        assert!(matches!(frame.encode(), Err(Error::FrameTooLarge { .. })));
+        // The same frame decoded with one more byte of cell text.
+        let mut over = at_budget;
+        let text = UNDERLINE_OFFSET + 1;
+        over[text..text + 4].copy_from_slice(
+            &u32::try_from(FRAME_BUDGET_BYTES - fixed + 1)
+                .unwrap()
+                .to_le_bytes(),
+        );
+        over.insert(FRAME_BUDGET_BYTES - STRING_LENGTH_BYTES, b'x');
+        assert_eq!(
+            decode_frame(&over),
+            Err(Error::FrameTooLarge {
+                size: FRAME_BUDGET_BYTES + 1
+            })
+        );
     }
 
     #[test]
@@ -1383,11 +1870,16 @@ mod tests {
                 size.add_cell(&cell.text, &cell.hyperlink).unwrap();
             }
         }
-        assert_eq!(size.bytes(), frame.encode().unwrap().len());
+        // The budget counts everything but the graphics block.
+        let graphics = frame.graphics.as_ref().unwrap().placements.len();
+        assert_eq!(
+            size.bytes() + GRAPHICS_FIXED_BYTES + graphics * PLACEMENT_BYTES,
+            frame.encode().unwrap().len()
+        );
 
         let mut size = FrameSize::new("", "", false, false).unwrap();
         let before = size;
-        let oversized = "x".repeat(MAX_FRAME_BYTES);
+        let oversized = "x".repeat(FRAME_BUDGET_BYTES);
         assert!(matches!(
             size.add_cell(&oversized, ""),
             Err(Error::FrameTooLarge { .. })

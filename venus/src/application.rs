@@ -2435,7 +2435,7 @@ impl Application {
                 let result = if !batch_accepted {
                     Err(ModelError::UnexpectedMessage)
                 } else if expected_selection_rejection {
-                    // ORBS v13 rejects terminal-routed synthetic ticks as invalid input.
+                    // ORBS v14 rejects terminal-routed synthetic ticks as invalid input.
                     self.terminal.model.clear_viewport_preview();
                     Ok(None)
                 } else {
@@ -5524,10 +5524,7 @@ mod tests {
                 scroll_position: orbit_protocol::ScrollPosition::default(),
                 title: format!("output {revision}"),
                 working_directory: String::new(),
-                capabilities: Capabilities {
-                    hyperlinks: true,
-                    kitty_graphics: false,
-                },
+                capabilities: Capabilities { hyperlinks: true },
                 colors: Colors {
                     background: Rgb::BLACK,
                     foreground: Rgb::BLACK,
@@ -5542,6 +5539,7 @@ mod tests {
                     viewport: None,
                 },
                 rows: Vec::new(),
+                graphics: None,
             })))
         }
 
@@ -5577,7 +5575,6 @@ mod tests {
             frame.rows = vec![Row {
                 wrapped: false,
                 wrap_continuation: false,
-                kitty_virtual_placeholder: false,
                 cells: vec![
                     cell.clone(),
                     Cell {
@@ -6093,7 +6090,6 @@ mod tests {
                     orbit_protocol::Row {
                         wrapped: false,
                         wrap_continuation: false,
-                        kitty_virtual_placeholder: false,
                         cells: vec![blank; usize::from(size.cols)],
                     };
                     usize::from(size.rows)

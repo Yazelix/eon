@@ -12,7 +12,7 @@ use std::{
     time::Instant,
 };
 
-const OUTPUT_BOUND: usize = 12_587_045; // Bend's output_bound_bytes
+const OUTPUT_BOUND: usize = 13_094_971; // Bend's output_bound_bytes
 
 pub fn run() {
     let directory = TempDir::new();

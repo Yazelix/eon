@@ -6,7 +6,7 @@ codecs.
 
 ## Framing and validation
 
-ORBS v13 starts with a 12-byte little-endian header: `ORBS` magic, exact
+ORBS v14 starts with a 12-byte little-endian header: `ORBS` magic, exact
 revision, typed message kind, zero reserved flags, and bounded payload length.
 The incremental decoder rejects unsupported versions, wrong-role or unknown
 kinds, and impossible message declarations before payload-sized buffering. It
@@ -32,6 +32,12 @@ then checks typed values, truncation, and trailing bytes.
 - `AutoscrollUp` extends an active host selection after moving at most one
   retained row upward. Zero applied rows marks the oldest edge. Ordinary
   signed scrolling clears selection.
+- ORBF v3 frames that state the Kitty graphics capability end with a graphics
+  block: the cell size in pixels, an omitted-placements flag and up to 4,096
+  placement entries in drawing order, referencing at most 256 resources.
+  Resource announcements, chunks of 262,144 bytes and retirements carry
+  ORB-C16's decoded pixels; the codec checks that an announcement's byte length
+  and chunk count follow from its format and size.
 
 The session layer embeds canonical ORBF frames without interpreting them again.
 Copy and gesture cancellation remain explicit; terminal authority stays in Orbit.

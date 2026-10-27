@@ -10,7 +10,7 @@ use libghostty_vt::{
 };
 use orbit_protocol::{
     Capabilities, Cell as ProtocolCell, CellStyle, CellWidth, Colors, Cursor, CursorShape,
-    CursorViewport, Dimensions, Frame, FrameSize, MAX_CELLS, MAX_FRAME_BYTES, Rgb, Row,
+    CursorViewport, Dimensions, FRAME_BUDGET_BYTES, Frame, FrameSize, MAX_CELLS, Rgb, Row,
     Screen as ProtocolScreen, ScrollPosition, StyleColor, Underline,
     session::{PreviewOutcome, VerticalDirection},
 };
@@ -38,7 +38,7 @@ impl FrameExtractor {
         revision: u64,
         terminal: &Terminal<'static, '_>,
     ) -> io::Result<Frame> {
-        self.frame_within(revision, terminal, MAX_FRAME_BYTES)
+        self.frame_within(revision, terminal, FRAME_BUDGET_BYTES)
     }
 
     /// A frame that fits `budget` bytes: every cell's first codepoint, then
@@ -121,7 +121,7 @@ impl FrameExtractor {
                     style.bg_color = GhosttyStyleColor::Rgb(background);
                 }
                 let grapheme_count = cell.graphemes_len().map_err(|_| errno(libc::EIO))?;
-                if grapheme_count as usize > MAX_FRAME_BYTES / size_of::<char>() {
+                if grapheme_count as usize > FRAME_BUDGET_BYTES / size_of::<char>() {
                     return Err(errno(libc::EOVERFLOW));
                 }
                 text.clear();
@@ -165,9 +165,6 @@ impl FrameExtractor {
                 wrap_continuation: raw_row
                     .is_wrap_continuation()
                     .map_err(|_| errno(libc::EIO))?,
-                kitty_virtual_placeholder: raw_row
-                    .has_kitty_virtual_placeholder()
-                    .map_err(|_| errno(libc::EIO))?,
                 cells: frame_cells,
             });
         }
@@ -198,10 +195,7 @@ impl FrameExtractor {
             screen,
             title,
             working_directory,
-            capabilities: Capabilities {
-                hyperlinks: true,
-                kitty_graphics: false,
-            },
+            capabilities: Capabilities { hyperlinks: true },
             colors: Colors {
                 background: rgb(colors.background),
                 foreground: rgb(colors.foreground),
@@ -216,6 +210,7 @@ impl FrameExtractor {
                 history_rows,
             },
             rows: frame_rows,
+            graphics: None,
         })
     }
 }
@@ -255,7 +250,7 @@ impl FrameExtractor {
             let length = match reference.graphemes(&mut chars) {
                 Ok(length) => length,
                 Err(GhosttyError::OutOfSpace { required })
-                    if required <= MAX_FRAME_BYTES / size_of::<char>() =>
+                    if required <= FRAME_BUDGET_BYTES / size_of::<char>() =>
                 {
                     chars.resize(required, '\0');
                     reference
@@ -285,9 +280,6 @@ impl FrameExtractor {
             wrapped: raw_row.is_wrapped().map_err(|_| errno(libc::EIO))?,
             wrap_continuation: raw_row
                 .is_wrap_continuation()
-                .map_err(|_| errno(libc::EIO))?,
-            kitty_virtual_placeholder: raw_row
-                .has_kitty_virtual_placeholder()
                 .map_err(|_| errno(libc::EIO))?,
             cells,
         })
@@ -374,7 +366,7 @@ fn hyperlink_uri(reference: &GridRef<'_>) -> io::Result<String> {
     let mut bytes = vec![0; 256];
     let length = match reference.hyperlink_uri(&mut bytes) {
         Ok(length) => length,
-        Err(GhosttyError::OutOfSpace { required }) if required <= MAX_FRAME_BYTES => {
+        Err(GhosttyError::OutOfSpace { required }) if required <= FRAME_BUDGET_BYTES => {
             bytes.resize(required, 0);
             reference
                 .hyperlink_uri(&mut bytes)
@@ -503,7 +495,7 @@ mod tests {
             .count();
         assert!(kept > 0 && kept < cells.len());
         assert!(cells[kept..].iter().all(|cell| cell.hyperlink.is_empty()));
-        assert!(frame.encode().unwrap().len() + uri.len() > MAX_FRAME_BYTES);
+        assert!(frame.encode().unwrap().len() + uri.len() > FRAME_BUDGET_BYTES);
     }
 
     /// A frame whose cell text exceeds its budget keeps every cell's first

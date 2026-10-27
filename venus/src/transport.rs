@@ -1395,10 +1395,7 @@ mod tests {
             scroll_position: orbit_protocol::ScrollPosition::default(),
             title: String::new(),
             working_directory: String::new(),
-            capabilities: Capabilities {
-                hyperlinks: false,
-                kitty_graphics: false,
-            },
+            capabilities: Capabilities { hyperlinks: false },
             colors: Colors {
                 background: Rgb::BLACK,
                 foreground: Rgb::BLACK,
@@ -1413,6 +1410,7 @@ mod tests {
                 viewport: None,
             },
             rows: Vec::new(),
+            graphics: None,
         }
     }
 

@@ -3016,7 +3016,6 @@ mod tests {
                 .map(|row| DrawRow {
                     wrapped: false,
                     wrap_continuation: false,
-                    kitty_virtual_placeholder: false,
                     cells: (0..3)
                         .map(|col| DrawCell {
                             width: CellWidth::Narrow,
@@ -3810,7 +3809,6 @@ mod tests {
         let row = DrawRow {
             wrapped: false,
             wrap_continuation: false,
-            kitty_virtual_placeholder: false,
             cells: Vec::new(),
         };
         let viewport = SceneRect {
@@ -3883,7 +3881,6 @@ mod tests {
             content: vec![DrawRow {
                 wrapped: false,
                 wrap_continuation: false,
-                kitty_virtual_placeholder: false,
                 cells: [
                     CellWidth::Narrow,
                     CellWidth::Wide,
@@ -6388,7 +6385,6 @@ mod tests {
             content: vec![DrawRow {
                 wrapped: false,
                 wrap_continuation: false,
-                kitty_virtual_placeholder: false,
                 cells: vec![DrawCell {
                     width: CellWidth::Narrow,
                     text: "█".into(),
@@ -6581,7 +6577,6 @@ mod tests {
             content: vec![DrawRow {
                 wrapped: false,
                 wrap_continuation: false,
-                kitty_virtual_placeholder: false,
                 cells: vec![crate::DrawCell {
                     width: orbit_protocol::CellWidth::Narrow,
                     text: " ".into(),

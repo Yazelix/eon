@@ -20,7 +20,7 @@ distribution have not adopted macOS.
 
 ### Scrollback and wire versions
 
-Each ORBF v2 frame reports two wrapped display-row counts:
+Each ORBF v3 frame reports two wrapped display-row counts:
 
 - `rows_from_live` is the distance from live output, zero at the bottom.
 - `history_rows` excludes the active viewport; distance cannot exceed it.
@@ -35,7 +35,7 @@ cells. Extraction failure does not publish an estimated position.
 | ORBS v12 | `f8ad14e5195109ba8cb421f30e5ae4a9619a1419` | Return to live output. |
 | ORBS v13 | `b6cecf8f2ee35570b41cfdc578b095889d917fe2` | One upward host-selection tick with an applied distance and complete frame. |
 
-Wire versions are exact and have no adapter. Venus and Eon consume ORBS v13 from
+Wire versions are exact and have no adapter. Venus and Eon consume ORBS v14 from
 the in-tree `orbit-protocol` crate. The [contract index](CONTRACTS.md) records
 the current proofs and gaps. Eonova
 remains an independent product line outside Eon's component graph.
@@ -148,7 +148,9 @@ support and declare Kitty graphics unsupported.
 
 Publication stays bounded:
 
-- A frame holds at most 4 MiB and 100,000 cells. Nonblocking output keeps its
+- A frame holds at most 100,000 cells, and its header, rows, cells and links
+  at most 4 MiB; an ORBF v3 graphics block adds at most 253,963 bytes outside
+  that budget. Nonblocking output keeps its
   initial frame and at most one coalesced latest frame between other messages.
 - DEC 2026 synchronized output holds complete frames while PTY parsing, replies,
   and ordered effects continue. Release publishes the latest frame; a one-second
@@ -167,10 +169,13 @@ slow-observer, paste-flood and held-attach checks in
 updates, slow clients, input that waits for the PTY, and convergence after
 reattach.
 
-[`crates/protocol`](../crates/protocol) is the sole ORBF v2 format owner. Its
+[`crates/protocol`](../crates/protocol) is the sole ORBF v3 format owner. Its
 strict decoder validates magic, version, dimensions, tags, reserved flags,
-UTF-8, cursor/scroll bounds, truncation, trailing bytes, and the 4 MiB/100,000-cell
-limits before making payload-sized allocations. Canonical incremental size
+UTF-8, cursor/scroll bounds, truncation and trailing bytes. It checks
+dimensions, the 100,000-cell bound, the payload size and the 4,096-entry
+placement count before making payload-sized allocations, and the 4 MiB frame
+budget and the 256-resource bound once the rows and entries are read.
+Canonical incremental size
 accounting prevents Orbit from retaining rows or cells beyond the same frame
 budget while it materializes authoritative state. Its rich owned-frame corpus
 round-trips byte-for-byte, every truncated prefix is rejected, and its reducer

@@ -1,5 +1,5 @@
 use crate::support::*;
-use orbit_protocol::session::{ClientMessage, FailureCode, FocusEvent, ServerMessage};
+use orbit_protocol::session::{ClientMessage, FailureCode, FocusEvent, ServerMessage, VERSION};
 use std::path::Path;
 
 /// A canonical message sent with another ORBS version.
@@ -18,7 +18,7 @@ fn first_message(path: &Path, data: &[u8]) -> Peer {
 /// Bad first messages end only their peer.
 fn refusals(path: &Path) {
     // An unsupported version is dropped silently.
-    first_message(path, &with_version(&ClientMessage::Hello, 14)).expect_closed();
+    first_message(path, &with_version(&ClientMessage::Hello, VERSION + 1)).expect_closed();
     let mut magic = encode(&ClientMessage::Hello);
     magic[..4].copy_from_slice(b"ORBX");
     let mut peer = first_message(path, &magic);
@@ -74,7 +74,7 @@ pub fn run() {
     drop(malformed);
     let mut changed = Peer::attach(&server.path, 4.0);
     changed.frame_with("FIRST a");
-    changed.send_bytes(&with_version(&ClientMessage::ReturnToLive, 14));
+    changed.send_bytes(&with_version(&ClientMessage::ReturnToLive, VERSION + 1));
     changed.expect_closed(); // A changed version is closed silently.
     drop(changed);
 

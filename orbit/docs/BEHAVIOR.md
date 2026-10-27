@@ -311,7 +311,7 @@ Rust queues every message to the interactive client and writes only what the
 socket takes, so a slow or stopped client never parks Bend's loop.
 A newer frame replaces queued frames and previews that have
 not started to send, and a newer preview replaces one such preview. Bend sets
-the queue's bound at attachment to 12,587,045 bytes: one maximum
+the queue's bound at attachment to 13,094,971 bytes: one maximum
 frame, one maximum payload, two headers, and 4 KiB. A message that would pass
 the bound is not queued. The session's next wait reports the pressure, and
 Bend detaches the client (ORB-C7) while the child, listener, and observer keep

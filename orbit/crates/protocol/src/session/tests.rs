@@ -1,11 +1,14 @@
 use super::codec::{
     CLIENT_HELLO, CLIENT_PASTE, SERVER_BUSY, SERVER_CLIPBOARD_WRITE, SERVER_COPIED_TEXT,
-    SERVER_FAILURE, SERVER_FRAME, SERVER_SCROLL_VIEWPORT, mouse_action_tag,
+    SERVER_FAILURE, SERVER_FRAME, SERVER_RESOURCE_ANNOUNCE, SERVER_RESOURCE_CHUNK,
+    SERVER_SCROLL_VIEWPORT, mouse_action_tag,
 };
 use super::*;
 use crate::{
-    Capabilities, Cell, CellStyle, CellWidth, Colors, Cursor, CursorShape, Dimensions, Frame,
-    MAX_FRAME_BYTES, MIN_FRAME_BYTES, PALETTE_LEN, Rgb, Row, Screen, StyleColor, Underline,
+    Capabilities, Cell, CellStyle, CellWidth, Colors, Cursor, CursorShape, Dimensions,
+    FRAME_BUDGET_BYTES, Frame, Graphics, ImageLayer, MAX_FRAME_BYTES, MAX_PLACEMENTS,
+    MIN_FRAME_BYTES, PALETTE_LEN, Placement, PlacementState, Rgb, Row, Screen, SourceRect,
+    StyleColor, Underline,
 };
 
 fn frame() -> Frame {
@@ -19,10 +22,7 @@ fn frame() -> Frame {
         },
         title: "session".into(),
         working_directory: "/tmp".into(),
-        capabilities: Capabilities {
-            hyperlinks: true,
-            kitty_graphics: false,
-        },
+        capabilities: Capabilities { hyperlinks: true },
         colors: Colors {
             background: Rgb::BLACK,
             foreground: Rgb {
@@ -43,7 +43,6 @@ fn frame() -> Frame {
         rows: vec![Row {
             wrapped: false,
             wrap_continuation: false,
-            kitty_virtual_placeholder: false,
             cells: vec![Cell {
                 width: CellWidth::Narrow,
                 style: CellStyle {
@@ -66,7 +65,12 @@ fn frame() -> Frame {
                 hyperlink: "https://example.test".into(),
             }],
         }],
+        graphics: None,
     }
+}
+
+fn announce(format: PixelFormat, width: u32, height: u32) -> ResourceAnnounce {
+    ResourceAnnounce::new(5, 2, format, width, height).unwrap()
 }
 
 fn header(kind: u8, payload: usize) -> [u8; HEADER_BYTES] {
@@ -175,6 +179,19 @@ fn every_server_message_round_trips() {
             text: "copied by zellij".into(),
         },
         ServerMessage::Exited { code: 17 },
+        ServerMessage::ResourceAnnounce(announce(PixelFormat::Rgb, 600, 900)),
+        ServerMessage::ResourceAnnounce(announce(PixelFormat::Rgba, 1, 1)),
+        ServerMessage::ResourceChunk(ResourceChunk {
+            resource: u64::MAX,
+            index: 8,
+            bytes: vec![7; RESOURCE_CHUNK_BYTES as usize],
+        }),
+        ServerMessage::ResourceChunk(ResourceChunk {
+            resource: 0,
+            index: 0,
+            bytes: vec![1],
+        }),
+        ServerMessage::ResourceRetire { resource: 5 },
     ];
 
     for message in messages {
@@ -394,6 +411,211 @@ fn declared_payloads_are_validated_from_the_header() {
             maximum: MAX_PAYLOAD_BYTES,
         })
     );
+    assert_eq!(
+        server_message_len(&header(
+            SERVER_RESOURCE_CHUNK,
+            12 + RESOURCE_CHUNK_BYTES as usize + 1
+        )),
+        Err(Error::PayloadTooLarge {
+            size: 12 + RESOURCE_CHUNK_BYTES as usize + 1,
+            maximum: 12 + RESOURCE_CHUNK_BYTES as usize,
+        })
+    );
+    assert_eq!(
+        server_message_len(&header(SERVER_RESOURCE_CHUNK, 12)),
+        Err(Error::InvalidValue {
+            field: "message payload length",
+        })
+    );
+}
+
+#[test]
+fn resource_announcements_follow_from_format_and_size() {
+    // Yazi's default largest preview is 9 chunks; the last carries the rest.
+    let yazi = announce(PixelFormat::Rgba, 600, 900);
+    assert_eq!(yazi.byte_length, 2_160_000);
+    assert_eq!(yazi.chunk_count, 9);
+    let exact = announce(PixelFormat::Rgba, 256, 256);
+    assert_eq!(exact.byte_length, RESOURCE_CHUNK_BYTES);
+    assert_eq!(exact.chunk_count, 1);
+    assert_eq!(announce(PixelFormat::Rgb, 1, 1).chunk_count, 1);
+    let widest = announce(PixelFormat::Rgba, MAX_RESOURCE_SIDE, 610);
+    assert_eq!(widest.byte_length, 9_994_240);
+
+    for (format, width, height) in [
+        (PixelFormat::Rgb, 0, 1),
+        (PixelFormat::Rgb, 1, 0),
+        (PixelFormat::Rgb, MAX_RESOURCE_SIDE + 1, 1),
+        (PixelFormat::Rgb, 1, MAX_RESOURCE_SIDE + 1),
+        (PixelFormat::Rgba, MAX_RESOURCE_SIDE, 611),
+        (PixelFormat::Rgb, MAX_RESOURCE_SIDE, MAX_RESOURCE_SIDE),
+    ] {
+        assert_eq!(ResourceAnnounce::new(1, 1, format, width, height), None);
+    }
+
+    let error = Error::InvalidValue {
+        field: "resource announcement",
+    };
+    let unchecked = |announce: ResourceAnnounce| {
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&announce.resource.to_le_bytes());
+        payload.extend_from_slice(&announce.generation.to_le_bytes());
+        payload.push(u8::from(announce.format == PixelFormat::Rgba));
+        for value in [
+            announce.width,
+            announce.height,
+            announce.byte_length,
+            announce.chunk_count,
+        ] {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+        let mut message = header(SERVER_RESOURCE_ANNOUNCE, payload.len()).to_vec();
+        message.extend_from_slice(&payload);
+        message
+    };
+    assert_eq!(
+        decode_server_message(&unchecked(yazi)),
+        Ok(ServerMessage::ResourceAnnounce(yazi))
+    );
+    for invalid in [
+        ResourceAnnounce {
+            byte_length: yazi.byte_length - 1,
+            ..yazi
+        },
+        ResourceAnnounce {
+            chunk_count: 10,
+            ..yazi
+        },
+        ResourceAnnounce {
+            format: PixelFormat::Rgb,
+            ..yazi
+        },
+        ResourceAnnounce {
+            width: 0,
+            byte_length: 0,
+            chunk_count: 0,
+            ..yazi
+        },
+        ResourceAnnounce {
+            width: MAX_RESOURCE_SIDE + 1,
+            height: 1,
+            byte_length: (MAX_RESOURCE_SIDE + 1) * 4,
+            chunk_count: 1,
+            ..yazi
+        },
+        ResourceAnnounce {
+            width: MAX_RESOURCE_SIDE,
+            height: 611,
+            byte_length: MAX_RESOURCE_SIDE * 611 * 4,
+            chunk_count: 39,
+            ..yazi
+        },
+    ] {
+        assert_eq!(
+            encode_server_message(&ServerMessage::ResourceAnnounce(invalid)).unwrap_err(),
+            error
+        );
+        assert_eq!(
+            decode_server_message(&unchecked(invalid)).unwrap_err(),
+            error
+        );
+    }
+    let mut format = unchecked(yazi);
+    format[HEADER_BYTES + 16] = 2;
+    assert_eq!(
+        decode_server_message(&format),
+        Err(Error::InvalidTag {
+            field: "pixel format",
+            value: 2,
+        })
+    );
+
+    let empty = ServerMessage::ResourceChunk(ResourceChunk {
+        resource: 1,
+        index: 0,
+        bytes: Vec::new(),
+    });
+    assert_eq!(
+        encode_server_message(&empty),
+        Err(Error::InvalidValue {
+            field: "resource chunk length",
+        })
+    );
+    let oversized = ServerMessage::ResourceChunk(ResourceChunk {
+        resource: 1,
+        index: 0,
+        bytes: vec![0; RESOURCE_CHUNK_BYTES as usize + 1],
+    });
+    assert!(matches!(
+        encode_server_message(&oversized),
+        Err(Error::PayloadTooLarge { .. })
+    ));
+
+    let retire = encode_server_message(&ServerMessage::ResourceRetire { resource: 1 }).unwrap();
+    for length in 0..retire.len() {
+        assert!(decode_server_message(&retire[..length]).is_err());
+    }
+    let mut trailing = retire.clone();
+    trailing.push(0);
+    assert!(decode_server_message(&trailing).is_err());
+}
+
+#[test]
+fn the_largest_scroll_outcome_fills_the_payload_bound() {
+    let mut cell_frame = frame();
+    cell_frame.rows[0].cells[0].text.clear();
+    cell_frame.rows[0].cells[0].hyperlink.clear();
+    let fixed = cell_frame.encode().unwrap().len();
+    cell_frame.rows[0].cells[0].text = "x".repeat(FRAME_BUDGET_BYTES - fixed);
+    let entry = Placement {
+        resource: 1,
+        layer: ImageLayer::BelowText,
+        z: -1,
+        col: 0,
+        row: 0,
+        grid_cols: 1,
+        grid_rows: 1,
+        offset_x: 0,
+        offset_y: 0,
+        width: 8,
+        height: 16,
+        source: SourceRect {
+            x: 0,
+            y: 0,
+            width: 8,
+            height: 16,
+        },
+        state: PlacementState::Pending,
+    };
+    let largest = Frame {
+        graphics: Some(Graphics {
+            cell_width: 8,
+            cell_height: 16,
+            placements_omitted: true,
+            placements: vec![entry; MAX_PLACEMENTS],
+        }),
+        ..cell_frame
+    };
+    assert_eq!(largest.encode().unwrap().len(), MAX_FRAME_BYTES);
+
+    let mut row = frame().rows.remove(0);
+    row.cells[0].text.clear();
+    row.cells[0].hyperlink.clear();
+    let row_fixed = crate::encode_canonical_row(&row, 1).unwrap().len();
+    row.cells[0].text = "x".repeat(FRAME_BUDGET_BYTES - row_fixed);
+    let message = ServerMessage::ScrollOutcome(ScrollOutcome::Viewport {
+        requested_rows: -1,
+        applied_rows: -1,
+        frame: Box::new(largest),
+        next: PreviewOutcome::Viewport {
+            cols: 1,
+            edge_reached: false,
+            rows: vec![row],
+        },
+    });
+    let encoded = encode_server_message(&message).unwrap();
+    assert_eq!(encoded.len(), HEADER_BYTES + MAX_PAYLOAD_BYTES);
+    assert_eq!(decode_server_message(&encoded).unwrap(), message);
 }
 
 #[test]
@@ -911,7 +1133,7 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
     }
 
     let mut oversized = frame().rows.remove(0);
-    oversized.cells[0].text = "x".repeat(MAX_FRAME_BYTES);
+    oversized.cells[0].text = "x".repeat(FRAME_BUDGET_BYTES);
     assert!(matches!(
         encode_server_message(&ServerMessage::VerticalPreview(VerticalPreview {
             frame_revision: 7,
@@ -925,7 +1147,8 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
         Err(Error::Frame(crate::Error::FrameTooLarge { .. }))
     ));
     let mut maximum_row = frame().rows.remove(0);
-    let remaining = MAX_FRAME_BYTES - crate::encode_canonical_row(&maximum_row, 1).unwrap().len();
+    let remaining =
+        FRAME_BUDGET_BYTES - crate::encode_canonical_row(&maximum_row, 1).unwrap().len();
     maximum_row.cells[0].text.push_str(&"x".repeat(remaining));
     let maximum = encode_server_message(&ServerMessage::VerticalPreview(VerticalPreview {
         frame_revision: 7,
@@ -937,7 +1160,7 @@ fn vertical_preview_and_wheel_outcomes_are_canonical() {
         },
     }))
     .unwrap();
-    assert_eq!(maximum.len(), HEADER_BYTES + MAX_FRAME_BYTES + 15);
+    assert_eq!(maximum.len(), HEADER_BYTES + FRAME_BUDGET_BYTES + 15);
 
     let preview = ServerMessage::VerticalPreview(VerticalPreview {
         frame_revision: 7,

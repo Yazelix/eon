@@ -2,7 +2,7 @@
 
 use std::fmt;
 
-use crate::{Frame, MAX_FRAME_BYTES, Row};
+use crate::{FRAME_BUDGET_BYTES, Frame, MAX_FRAME_BYTES, Row};
 
 mod codec;
 pub use codec::{
@@ -16,11 +16,18 @@ mod tests;
 /// Local-session framing discriminator.
 pub const MAGIC: &[u8; 4] = b"ORBS";
 /// The only local-session revision understood by this package.
-pub const VERSION: u16 = 13;
+pub const VERSION: u16 = 14;
 /// Fixed bytes before a message payload.
 pub const HEADER_BYTES: usize = 12;
-/// Largest payload accepted by the local-session decoder.
-pub const MAX_PAYLOAD_BYTES: usize = 2 * MAX_FRAME_BYTES + 13;
+/// Largest payload accepted by the local-session decoder: a scroll outcome's
+/// frame and its preview rows, which carry no graphics.
+pub const MAX_PAYLOAD_BYTES: usize = MAX_FRAME_BYTES + FRAME_BUDGET_BYTES + 13;
+/// Largest width or height of a resource in pixels (ORB-C16).
+pub const MAX_RESOURCE_SIDE: u32 = 4096;
+/// Largest decoded byte length of a resource.
+pub const MAX_RESOURCE_BYTES: u32 = 10_000_000;
+/// Payload bytes in every resource chunk but the last, which carries the rest.
+pub const RESOURCE_CHUNK_BYTES: u32 = 262_144;
 /// Largest paste accepted as one semantic event.
 pub const MAX_PASTE_BYTES: usize = 1024 * 1024;
 /// Largest copied plain text returned as one semantic result.
@@ -196,6 +203,80 @@ pub enum ServerMessage {
     WheelOutcome(WheelOutcome),
     /// Typed result of one bounded vertical viewport commit.
     ScrollOutcome(ScrollOutcome),
+    /// Starts one resource; its chunks follow in order.
+    ResourceAnnounce(ResourceAnnounce),
+    /// One chunk of the resource being sent.
+    ResourceChunk(ResourceChunk),
+    /// A sent resource left libghostty storage.
+    ResourceRetire { resource: u64 },
+}
+
+/// One resource's metadata: an image's decoded pixels at one libghostty
+/// generation. The codec checks that the length and chunk count follow from
+/// the format and size; Venus checks the order of resource messages.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ResourceAnnounce {
+    /// Orbit's identity number, which frame placements reference.
+    pub resource: u64,
+    pub generation: u64,
+    pub format: PixelFormat,
+    pub width: u32,
+    pub height: u32,
+    /// `width * height * format.bytes_per_pixel()`, at most [`MAX_RESOURCE_BYTES`].
+    pub byte_length: u32,
+    /// `byte_length` divided by [`RESOURCE_CHUNK_BYTES`], rounded up.
+    pub chunk_count: u32,
+}
+
+impl ResourceAnnounce {
+    /// The announcement for an image of this format and size, or `None` when
+    /// the image breaks the resource limits.
+    pub fn new(
+        resource: u64,
+        generation: u64,
+        format: PixelFormat,
+        width: u32,
+        height: u32,
+    ) -> Option<Self> {
+        if !(1..=MAX_RESOURCE_SIDE).contains(&width) || !(1..=MAX_RESOURCE_SIDE).contains(&height) {
+            return None;
+        }
+        let byte_length = (width * height).checked_mul(format.bytes_per_pixel())?;
+        (byte_length <= MAX_RESOURCE_BYTES).then_some(Self {
+            resource,
+            generation,
+            format,
+            width,
+            height,
+            byte_length,
+            chunk_count: byte_length.div_ceil(RESOURCE_CHUNK_BYTES),
+        })
+    }
+}
+
+/// Eight-bit pixel layout of a resource.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PixelFormat {
+    Rgb,
+    Rgba,
+}
+
+impl PixelFormat {
+    pub fn bytes_per_pixel(self) -> u32 {
+        match self {
+            Self::Rgb => 3,
+            Self::Rgba => 4,
+        }
+    }
+}
+
+/// One chunk of a resource, `index` counting from 0. It carries 1 to
+/// [`RESOURCE_CHUNK_BYTES`] bytes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ResourceChunk {
+    pub resource: u64,
+    pub index: u32,
+    pub bytes: Vec<u8>,
 }
 
 /// One bounded, read-only terminal metadata observation.

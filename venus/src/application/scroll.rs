@@ -604,7 +604,6 @@ mod tests {
         let row = yazelix_venus::DrawRow {
             wrapped: false,
             wrap_continuation: false,
-            kitty_virtual_placeholder: false,
             cells: Vec::new(),
         };
         let preview = ScenePreview::Viewport {

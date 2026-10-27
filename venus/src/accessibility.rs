@@ -2222,7 +2222,6 @@ mod tests {
             content: vec![DrawRow {
                 wrapped: false,
                 wrap_continuation: false,
-                kitty_virtual_placeholder: false,
                 cells: vec![DrawCell {
                     width: CellWidth::Narrow,
                     text: "x".into(),

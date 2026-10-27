@@ -46,8 +46,8 @@
       { "component": "venus", "contract": "VEN-C25" }
     ],
     "required_interfaces": [
-      { "component": "orbit", "interface": "ORBF", "version": 2 },
-      { "component": "orbit", "interface": "ORBS", "version": 13 },
+      { "component": "orbit", "interface": "ORBF", "version": 3 },
+      { "component": "orbit", "interface": "ORBS", "version": 14 },
       { "component": "eon-workspace-protocol", "interface": "EONW", "version": 20 }
     ]
   },
@@ -98,8 +98,8 @@
         { "id": "ORB-C13", "proof": "7de9980ffbd6417758698d5c33356204eeb24de5" }
       ],
       "interfaces": [
-        { "id": "ORBF", "version": 2, "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
-        { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
+        { "id": "ORBF", "version": 3, "proof": "d4dbae7b92144030956f2c51f3ea060c8b4a23f8" },
+        { "id": "ORBS", "version": 14, "proof": "d4dbae7b92144030956f2c51f3ea060c8b4a23f8" }
       ],
       "requires": []
     },
@@ -145,8 +145,8 @@
         {
           "component": "orbit",
           "interfaces": [
-            { "id": "ORBF", "version": 2, "proof": "ea9fd28ce0908f218cf65d4e6df368f0a4e565f5" },
-            { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
+            { "id": "ORBF", "version": 3, "proof": "d4dbae7b92144030956f2c51f3ea060c8b4a23f8" },
+            { "id": "ORBS", "version": 14, "proof": "d4dbae7b92144030956f2c51f3ea060c8b4a23f8" }
           ]
         },
         {
@@ -381,7 +381,7 @@
         {
           "component": "orbit",
           "interfaces": [
-            { "id": "ORBS", "version": 13, "proof": "b6cecf8f2ee35570b41cfdc578b095889d917fe2" }
+            { "id": "ORBS", "version": 14, "proof": "d4dbae7b92144030956f2c51f3ea060c8b4a23f8" }
           ]
         }
       ]

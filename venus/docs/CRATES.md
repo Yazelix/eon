@@ -85,7 +85,7 @@ for one zero-payload semantic action without a new dependency or adapter.
   publish-false `orbit-protocol` 0.1.0 package; before consolidation Venus pinned
   Orbit revision `6bc269c40b18f08b95778939518f77556ba91c67`
 - **Status:** Active
-- **Owner consequence:** Orbit alone owns ORBS v13, ORBF v2, semantic values, history, its display-row position and absolute return-to-live,
+- **Owner consequence:** Orbit alone owns ORBS v14, ORBF v3, semantic values, history, its display-row position and absolute return-to-live,
   terminal-versus-host left-pointer routing, selection and completion revisions, typed wheel
   outcomes, signed scroll batches, bounded row-window previews, destination-tagged copied
   text, compatible-live-output gesture preservation, terminal clipboard effects, read-only

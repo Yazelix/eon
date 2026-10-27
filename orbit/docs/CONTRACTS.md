@@ -8,7 +8,7 @@ system must preserve.
 Orbit builds `libghostty-vt` and `libghostty-vt-sys` 0.2.1 from the
 upstream `Uzaaft/libghostty-rs` commit that [`CRATES.md`](CRATES.md) records. The
 native build explicitly passes `-Dcpu=baseline` by default, building Ghostty
-`521cf2c5d30bd48028ca61546c64e7913764073d`, with ORBF v2 / ORBS v13. This
+`521cf2c5d30bd48028ca61546c64e7913764073d`, with ORBF v3 / ORBS v14. This
 preserves the headless terminal contract checks; it does not establish
 older-CPU compatibility for a published cache artifact.
 
@@ -26,7 +26,7 @@ Proofs cite revisions of this repository. "Pending re-proof in this
 repository" marks an earlier proof that was not repeated after consolidation;
 it is re-proved when that platform or feature is next touched.
 
-Canonical ORBF v2 carries two little-endian `u64` fields after cursor metadata
+Canonical ORBF v3 carries two little-endian `u64` fields after cursor metadata
 and before rows: `ScrollPosition.rows_from_live` and
 `ScrollPosition.history_rows`. The latter excludes the active viewport; the
 former cannot exceed it and is zero at live bottom. Both are zero on the
@@ -35,14 +35,17 @@ logical lines, and are extracted with each complete frame through the existing
 synchronized publication owner. Output, scrolling, reflow, pruning,
 clear/reset, screen switches and reattachment therefore carry position at that
 frame's revision. Failed engine extraction does not fabricate zero or publish a
-partial frame. Existing 4 MiB/100,000-cell bounds remain.
+partial frame. The 100,000-cell bound and the 4 MiB frame budget for the
+header, rows, cells and links remain; ORBF v3's graphics block lies outside
+that budget under its own bound (ORB-C16).
 
-ORBS v7 through v13 are explicitly breaking, exact-version boundaries with no
+ORBS v7 through v14 are explicitly breaking, exact-version boundaries with no
 compatibility window or adapter; each replaced its predecessor. Orbit's
 real-PTY checks and lifecycle tests, Venus and Eon consume the canonical crate
-in this repository. Each contract below states the current ORBS v13 behavior,
-except ORB-C16, which is Planned and states the ORBF v3 in ORBS v14 behavior it
-enters with; its PTY pixel size rule needs no wire change.
+in this repository. Each contract below states the current ORBF v3 in ORBS v14
+behavior, except ORB-C16, which is Planned: ORBF v3 and ORBS v14 carry its
+values, and Orbit sends no graphics state or resources until its switch is
+on. Its PTY pixel size rule needs no wire change.
 
 ## ORB-C1 — Session survival across client loss
 
@@ -130,7 +133,7 @@ enters with; its PTY pixel size rule needs no wire change.
     as empty and never ends the terminal.
 - **Owner:** Orbit's Bend admission policy and Rust socket transport with
   canonical `orbit-protocol` ORBS v7.
-- **Consumes:** Canonical ORBS v7 behavior, preserved through ORBS v13; Venus
+- **Consumes:** Canonical ORBS v7 behavior, preserved through ORBS v14; Venus
   and Eon consume it in this repository.
 - **Boundary:** Visible text observation, agent observation, multiple observers,
   multiple interactive clients, remote access, and process authority are
@@ -166,7 +169,7 @@ enters with; its PTY pixel size rule needs no wire change.
 - **Owner:** Orbit's Bend session policy, which decides each publication and
   its revision, and its Rust host's frame extraction and socket transport, with
   canonical session and complete-frame codecs.
-- **Consumes:** Canonical ORBF v2 in ORBS v13; Venus and Eon consume it in this
+- **Consumes:** Canonical ORBF v3 in ORBS v14; Venus and Eon consume it in this
   repository.
 - **Boundary:** Native presentation quality remains Venus-owned.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.2` commit
@@ -210,7 +213,7 @@ enters with; its PTY pixel size rule needs no wire change.
 - **Owner:** Canonical platform-neutral `orbit-protocol` values, Orbit's Bend
   selection policy for the pointer route, and its Rust host's libghostty input
   encoding.
-- **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v13;
+- **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v14;
   Venus and Eon consume it in this repository.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.1` commit
@@ -249,7 +252,7 @@ enters with; its PTY pixel size rule needs no wire change.
     no link, and the terminal keeps running.
 - **Owner:** Orbit's authoritative extraction and synchronized publication with
   canonical `orbit-protocol` values and codecs.
-- **Consumes:** Canonical ORBF v2 in ORBS v13; Venus and Eon consume it in this
+- **Consumes:** Canonical ORBF v3 in ORBS v14; Venus and Eon consume it in this
   repository.
 - **Boundary:** A frame states `kitty_graphics` true exactly when it carries
   ORB-C16's graphics state; one that does not, such as every ORBF v2 frame,
@@ -362,7 +365,7 @@ enters with; its PTY pixel size rule needs no wire change.
   - An explicit return-to-live action moves any retained primary viewport to
     zero in one authoritative complete frame without sending PTY input. It
     clears host selection and does not require a client-side row counter.
-  - During an active primary-screen host selection, one ORBS v13 upward tick
+  - During an active primary-screen host selection, one ORBS v14 upward tick
     advances at most one row toward older retained history and returns its
     applied distance, complete frame, and next bounded preview without clearing
     the tracked gesture. Zero applied rows reports the oldest edge.
@@ -386,14 +389,14 @@ enters with; its PTY pixel size rule needs no wire change.
 - **Owner:** Orbit's Bend vertical policy and its Rust host's synchronized
   output handling, with libghostty's native viewport, byte-budgeted history,
   one canonical row extractor, and bounded output queue.
-- **Consumes:** Canonical ORBF v2 in accepted ORBS v13; Venus and Eon consume
+- **Consumes:** Canonical ORBF v3 in accepted ORBS v14; Venus and Eon consume
   it in this repository.
 - **Boundary:** Arbitrary line-count guarantees, gesture cadence, downward
   selection autoscroll, velocity, kinetic effects, graphics, and restart
   persistence are excluded; physical wheels retain their existing typed
   terminal-routed or one-row behavior. This does not accept Eonova, or any
-  ORBS v13 client on Apple Silicon (Venus or Eon); ORB-C14 covers Orbit's own
-  native ORBS v13 behavior.
+  ORBS v14 client on Apple Silicon (Venus or Eon); ORB-C14 covers Orbit's own
+  native behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.3` commit
   for scroll position, selection clearing and granular ticks
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
@@ -437,7 +440,7 @@ enters with; its PTY pixel size rule needs no wire change.
 ## ORB-C9 — Authoritative bounded selection and copy
 
 - **Status:** Partially proved
-- **Consumer:** One healthy exact-version ORBS v13 attachment for upward ticks.
+- **Consumer:** One healthy exact-version ORBS v14 attachment for upward ticks.
 - **Trigger:** The client begins, updates, finishes, cancels, or copies one
   left-pointer sequence; a held host gesture may tick upward with a top-row
   surface position. Pointer phases carry current modifiers; Begin names a frame
@@ -500,9 +503,9 @@ enters with; its PTY pixel size rule needs no wire change.
     movement or PTY input; an invalidated tracked anchor cancels the gesture.
 - **Owner:** Orbit's Bend selection policy and its Rust host's pointer
   mechanism, with authoritative mouse modes, libghostty current-viewport
-  gesture selection, and canonical ORBS v13. Venus owns native event delivery
+  gesture selection, and canonical ORBS v14. Venus owns native event delivery
   and clipboard effects.
-- **Consumes:** Accepted ORBS v13 and ORB-C7 bounded-pressure behavior; Venus
+- **Consumes:** Accepted ORBS v14 and ORB-C7 bounded-pressure behavior; Venus
   and Eon consume it in this repository.
 - **Boundary:** Configurable word separators or click thresholds, block selection,
   downward autoscroll, cadence, semantic command-output selection, search,

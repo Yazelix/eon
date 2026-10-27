@@ -2993,7 +2993,6 @@ pub struct DrawCell {
 pub struct DrawRow {
     pub wrapped: bool,
     pub wrap_continuation: bool,
-    pub kitty_virtual_placeholder: bool,
     pub cells: Vec<DrawCell>,
 }
 
@@ -3168,7 +3167,6 @@ impl DrawRow {
         Self {
             wrapped: row.wrapped,
             wrap_continuation: row.wrap_continuation,
-            kitty_virtual_placeholder: row.kitty_virtual_placeholder,
             cells: row
                 .cells
                 .iter()
@@ -5790,7 +5788,6 @@ mod tests {
         let mut row = DrawRow {
             wrapped: false,
             wrap_continuation: false,
-            kitty_virtual_placeholder: false,
             cells: vec![
                 draw_cell("A", CellWidth::Narrow, false),
                 draw_cell("界", CellWidth::Wide, false),
@@ -5822,7 +5819,6 @@ mod tests {
             .map(|(index, (text, wrapped))| DrawRow {
                 wrapped: *wrapped,
                 wrap_continuation: index > 0 && rows[index - 1].1,
-                kitty_virtual_placeholder: false,
                 cells: format!("{text:columns$}")
                     .chars()
                     .map(|c| draw_cell(&c.to_string(), CellWidth::Narrow, false))
@@ -5942,7 +5938,6 @@ mod tests {
             content: vec![DrawRow {
                 wrapped: false,
                 wrap_continuation: false,
-                kitty_virtual_placeholder: false,
                 cells: vec![
                     draw_cell("A", CellWidth::Narrow, false),
                     draw_cell("e\u{301}", CellWidth::Narrow, false),
@@ -6006,7 +6001,6 @@ mod tests {
                 DrawRow {
                     wrapped: false,
                     wrap_continuation: false,
-                    kitty_virtual_placeholder: false,
                     cells: vec![
                         draw_cell("a", CellWidth::Narrow, false),
                         draw_cell("e\u{301}", CellWidth::Narrow, true),
@@ -6017,7 +6011,6 @@ mod tests {
                 DrawRow {
                     wrapped: false,
                     wrap_continuation: false,
-                    kitty_virtual_placeholder: false,
                     cells: vec![
                         draw_cell("界", CellWidth::Wide, true),
                         draw_cell("", CellWidth::SpacerTail, true),
@@ -6110,7 +6103,6 @@ mod tests {
             content: vec![DrawRow {
                 wrapped: false,
                 wrap_continuation: false,
-                kitty_virtual_placeholder: false,
                 cells,
             }],
         };

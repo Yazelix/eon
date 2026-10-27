@@ -5,6 +5,8 @@ use crate::{
 };
 use std::str;
 
+const RESOURCE_CHUNK_PAYLOAD_BYTES: usize = RESOURCE_CHUNK_BYTES as usize;
+
 pub(super) const CLIENT_HELLO: u8 = 1;
 const CLIENT_KEY: u8 = 2;
 const CLIENT_MOUSE: u8 = 3;
@@ -34,6 +36,12 @@ const SERVER_METADATA: u8 = 144;
 const SERVER_SCROLL_TERMINAL_OWNED: u8 = 145;
 pub(super) const SERVER_SCROLL_VIEWPORT: u8 = 146;
 const SERVER_SELECTION_FINISHED: u8 = 147;
+pub(super) const SERVER_RESOURCE_ANNOUNCE: u8 = 148;
+pub(super) const SERVER_RESOURCE_CHUNK: u8 = 149;
+const SERVER_RESOURCE_RETIRE: u8 = 150;
+
+const PIXEL_FORMAT_RGB: u8 = 0;
+const PIXEL_FORMAT_RGBA: u8 = 1;
 
 const SELECTION_BEGIN: u8 = 0;
 const SELECTION_UPDATE: u8 = 1;
@@ -114,10 +122,13 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
         SERVER_WHEEL_VIEWPORT_UP | SERVER_WHEEL_VIEWPORT_STILL | SERVER_WHEEL_VIEWPORT_DOWN => {
             Ok((MIN_FRAME_BYTES, MAX_FRAME_BYTES))
         }
-        SERVER_VERTICAL_PREVIEW => Ok((10, MAX_FRAME_BYTES + 15)),
+        SERVER_VERTICAL_PREVIEW => Ok((10, FRAME_BUDGET_BYTES + 15)),
         SERVER_SCROLL_TERMINAL_OWNED => Ok((2, 2)),
         SERVER_SCROLL_VIEWPORT => Ok((MIN_FRAME_BYTES + 13, MAX_PAYLOAD_BYTES)),
         SERVER_SELECTION_FINISHED => Ok((8, 8)),
+        SERVER_RESOURCE_ANNOUNCE => Ok((33, 33)),
+        SERVER_RESOURCE_CHUNK => Ok((13, 12 + RESOURCE_CHUNK_PAYLOAD_BYTES)),
+        SERVER_RESOURCE_RETIRE => Ok((8, 8)),
         value => Err(Error::InvalidTag {
             field: "server message",
             value,
@@ -125,7 +136,7 @@ fn server_payload_limits(kind: u8) -> Result<(usize, usize)> {
     }
 }
 
-/// Encodes one client message with an ORBS v13 header.
+/// Encodes one client message with an ORBS v14 header.
 pub fn encode_client_message(message: &ClientMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -409,7 +420,7 @@ pub fn decode_client_message(bytes: &[u8]) -> Result<ClientMessage> {
     Ok(message)
 }
 
-/// Encodes one server message with an ORBS v13 header.
+/// Encodes one server message with an ORBS v14 header.
 pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
     let mut payload = Vec::new();
     let kind = match message {
@@ -509,6 +520,31 @@ pub fn encode_server_message(message: &ServerMessage) -> Result<Vec<u8>> {
             encode_preview_window(&mut payload, next)?;
             SERVER_SCROLL_VIEWPORT
         }
+        ServerMessage::ResourceAnnounce(announce) => {
+            validate_announce(announce)?;
+            payload.extend_from_slice(&announce.resource.to_le_bytes());
+            payload.extend_from_slice(&announce.generation.to_le_bytes());
+            payload.push(match announce.format {
+                PixelFormat::Rgb => PIXEL_FORMAT_RGB,
+                PixelFormat::Rgba => PIXEL_FORMAT_RGBA,
+            });
+            put_u32(&mut payload, announce.width);
+            put_u32(&mut payload, announce.height);
+            put_u32(&mut payload, announce.byte_length);
+            put_u32(&mut payload, announce.chunk_count);
+            SERVER_RESOURCE_ANNOUNCE
+        }
+        ServerMessage::ResourceChunk(chunk) => {
+            validate_chunk_bytes(chunk.bytes.len())?;
+            payload.extend_from_slice(&chunk.resource.to_le_bytes());
+            put_u32(&mut payload, chunk.index);
+            payload.extend_from_slice(&chunk.bytes);
+            SERVER_RESOURCE_CHUNK
+        }
+        ServerMessage::ResourceRetire { resource } => {
+            payload.extend_from_slice(&resource.to_le_bytes());
+            SERVER_RESOURCE_RETIRE
+        }
     };
     frame_message(kind, payload, server_payload_limits(kind)?.1)
 }
@@ -577,6 +613,42 @@ pub fn decode_server_message(bytes: &[u8]) -> Result<ServerMessage> {
         }
         SERVER_EXITED => ServerMessage::Exited {
             code: i32::from_le_bytes(reader.array()?),
+        },
+        SERVER_RESOURCE_ANNOUNCE => {
+            let announce = ResourceAnnounce {
+                resource: u64::from_le_bytes(reader.array()?),
+                generation: u64::from_le_bytes(reader.array()?),
+                format: match reader.u8()? {
+                    PIXEL_FORMAT_RGB => PixelFormat::Rgb,
+                    PIXEL_FORMAT_RGBA => PixelFormat::Rgba,
+                    value => {
+                        return Err(Error::InvalidTag {
+                            field: "pixel format",
+                            value,
+                        });
+                    }
+                },
+                width: reader.u32()?,
+                height: reader.u32()?,
+                byte_length: reader.u32()?,
+                chunk_count: reader.u32()?,
+            };
+            validate_announce(&announce)?;
+            ServerMessage::ResourceAnnounce(announce)
+        }
+        SERVER_RESOURCE_CHUNK => {
+            let resource = u64::from_le_bytes(reader.array()?);
+            let index = reader.u32()?;
+            let bytes = reader.take_remaining().to_vec();
+            validate_chunk_bytes(bytes.len())?;
+            ServerMessage::ResourceChunk(ResourceChunk {
+                resource,
+                index,
+                bytes,
+            })
+        }
+        SERVER_RESOURCE_RETIRE => ServerMessage::ResourceRetire {
+            resource: u64::from_le_bytes(reader.array()?),
         },
         SERVER_COPIED_TEXT => {
             let location = decode_clipboard_location(reader.u8()?)?;
@@ -667,6 +739,36 @@ fn exact_message(bytes: &[u8], length: Option<usize>) -> Result<(u8, &[u8])> {
 fn validate_bound(size: usize, maximum: usize) -> Result<()> {
     if size > maximum {
         Err(Error::PayloadTooLarge { size, maximum })
+    } else {
+        Ok(())
+    }
+}
+
+/// An announcement must be the one [`ResourceAnnounce::new`] derives from its
+/// format and size.
+fn validate_announce(announce: &ResourceAnnounce) -> Result<()> {
+    let derived = ResourceAnnounce::new(
+        announce.resource,
+        announce.generation,
+        announce.format,
+        announce.width,
+        announce.height,
+    );
+    if derived.as_ref() == Some(announce) {
+        Ok(())
+    } else {
+        Err(Error::InvalidValue {
+            field: "resource announcement",
+        })
+    }
+}
+
+fn validate_chunk_bytes(length: usize) -> Result<()> {
+    validate_bound(length, RESOURCE_CHUNK_PAYLOAD_BYTES)?;
+    if length == 0 {
+        Err(Error::InvalidValue {
+            field: "resource chunk length",
+        })
     } else {
         Ok(())
     }

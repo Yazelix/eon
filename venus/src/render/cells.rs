@@ -813,7 +813,6 @@ pub(super) mod tests {
             content: vec![DrawRow {
                 wrapped: false,
                 wrap_continuation: false,
-                kitty_virtual_placeholder: false,
                 cells: vec![DrawCell {
                     width: CellWidth::Narrow,
                     text: "secret".into(),
@@ -873,7 +872,6 @@ pub(super) mod tests {
                     .map(|row| DrawRow {
                         wrapped: false,
                         wrap_continuation: false,
-                        kitty_virtual_placeholder: false,
                         cells: row
                             .iter()
                             .map(|foreground| DrawCell {
@@ -928,7 +926,6 @@ pub(super) mod tests {
         let row = DrawRow {
             wrapped: false,
             wrap_continuation: false,
-            kitty_virtual_placeholder: false,
             cells: [
                 ("▄", true, false, false),
                 ("▀", false, true, false),
@@ -1072,7 +1069,6 @@ pub(super) mod tests {
             content: vec![DrawRow {
                 wrapped: false,
                 wrap_continuation: false,
-                kitty_virtual_placeholder: false,
                 cells: [CellWidth::Narrow, CellWidth::Wide, CellWidth::SpacerTail]
                     .into_iter()
                     .map(|width| DrawCell {
@@ -1242,7 +1238,6 @@ pub(super) mod tests {
             content: vec![DrawRow {
                 wrapped: false,
                 wrap_continuation: false,
-                kitty_virtual_placeholder: false,
                 cells: (0..4)
                     .map(|_| DrawCell {
                         width: CellWidth::Narrow,

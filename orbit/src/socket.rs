@@ -1250,8 +1250,8 @@ mod tests {
     #[test]
     fn socket_protocol_mechanics_preserve_canonical_bytes_and_bend_policy() {
         let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
-        const HELLO: [u8; 12] = [b'O', b'R', b'B', b'S', 13, 0, 1, 0, 0, 0, 0, 0];
-        const ATTACHED: [u8; 12] = [b'O', b'R', b'B', b'S', 13, 0, 129, 0, 0, 0, 0, 0];
+        const HELLO: [u8; 12] = [b'O', b'R', b'B', b'S', 14, 0, 1, 0, 0, 0, 0, 0];
+        const ATTACHED: [u8; 12] = [b'O', b'R', b'B', b'S', 14, 0, 129, 0, 0, 0, 0, 0];
 
         assert_eq!(
             session::encode_client_message(&ClientMessage::Hello).unwrap(),

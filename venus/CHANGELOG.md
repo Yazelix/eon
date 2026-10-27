@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Consume ORBF v3 in ORBS v14. Frames may carry ORB-C16 placement entries,
+  which Venus does not draw yet, and a resource announcement, chunk or
+  retirement fails the attachment as an unexpected message until VEN-C31's
+  store lands; Orbit sends none while it states Kitty graphics unsupported.
+  Draw rows drop the placeholder flag (`orb-j2i.5`).
+
 - VEN-C8: closing the last tab or its last pane shows the final-close prompt
   whatever the workspace count. While the snapshot lists other workspaces it
   reads "This closes workspace NAME and stops N terminals." with "Enter Close ·
