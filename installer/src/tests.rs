@@ -146,7 +146,10 @@ fn failed_selection_and_locking_leave_current_usable() {
     let unrelated = temp.path().join("unrelated");
     fs::create_dir(&unrelated).unwrap();
     fs::set_permissions(&unrelated, fs::Permissions::from_mode(0o700)).unwrap();
-    assert!(prefix_lock(&unrelated, true).is_err());
+    assert_eq!(
+        prefix_lock(&unrelated, true).unwrap_err().to_string(),
+        "prefix is not owned by eon-install"
+    );
     assert!(unrelated.read_dir().unwrap().next().is_none());
 }
 

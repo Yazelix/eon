@@ -120,7 +120,12 @@ fn prefix_lock(prefix: &Path, create: bool) -> io::Result<File> {
             .open(&marker)?;
         file.write_all(MARKER.as_bytes())?;
     }
-    if !fs::symlink_metadata(&marker)?.is_file() || fs::read_to_string(&marker)? != MARKER {
+    let owned = match fs::symlink_metadata(&marker) {
+        Ok(metadata) => metadata.is_file() && fs::read_to_string(&marker)? == MARKER,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => false,
+        Err(error) => return Err(error),
+    };
+    if !owned {
         return Err(invalid("prefix is not owned by eon-install"));
     }
     let lock = OpenOptions::new().read(true).write(true).open(marker)?;
