@@ -48,6 +48,13 @@ Click a tab or pane header to select it, or click another column's terminal
 to select that column's expanded pane. The fixed controls in the Eon Bar are
 `+` for a tab, `?` for Shortcuts when needed, and `×` to close the exact active tab. Only
 the empty region between tabs and controls drags an undecorated window.
+While the snapshot lists two or more workspaces, or its one workspace has a
+name, an outlined label leads the tabs with the shown workspace's name or `wN`
+and, with several, its `N/M` position. A click, or Enter or Space when it has
+focus, invokes Eon's `workspaces` popup entry as that entry's key does; without
+that entry the label is inert text. A final close shows the close prompt
+whatever the workspace count; while other workspaces remain, it says it closes
+the workspace, by name or `wN`, and its footer reads `Enter Close`.
 
 | Keys | Action |
 |---|---|
@@ -87,7 +94,9 @@ jump leaves focus on the row beside its notice. Keyboard focus returns to the
 terminal when the sidebar closes or hides for width, or loses the focused
 row. Arrow keys traverse focused tabs or panes, and Left/Right with tabs
 focused walks columns before tabs like Alt+H/L; Tab and Shift+Tab traverse
-header controls; Enter or Space activates one. Escape returns chrome focus to
+header controls, the workspace label first while it opens the picker; Enter or
+Space activates one. Focus on the label moves to the tabs when it hides or
+turns inert. Escape returns chrome focus to
 the terminal. With terminal focus, Escape, Ctrl+C, Tab, and Enter reach Orbit as
 ordinary input.
 

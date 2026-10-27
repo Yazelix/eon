@@ -1016,22 +1016,18 @@ fn control(
     } else {
         None
     };
-    if let Some(terminals) = final_close
+    if let Some((terminals, workspace)) = final_close
         && managed_environment::warning_close_last_tab(
             &configuration_directory()?,
             &inputs.defaults,
             None,
         )?
     {
-        eprint!(
-            "Close the last tab? This quits the window and stops {} terminal{} [{}]. [y/N] ",
-            terminals.len(),
-            if terminals.len() == 1 { "" } else { "s" },
-            terminals.join(", ")
-        );
+        let (question, cancelled) = final_close_prompt(&terminals, workspace.as_deref());
+        eprint!("{question}");
         let answer = read_stop_confirmation()?;
         if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
-            write_stdout("cancelled; the window stays open\n")?;
+            write_stdout(cancelled)?;
             return Ok(0);
         }
     }
@@ -1195,16 +1191,21 @@ fn unreachable_supervisor(error: EndpointFailure, generation: &str) -> Failure {
     )
 }
 
+/// The terminals a final close stops, and the workspace it removes while
+/// others remain.
+type FinalClose = (Vec<String>, Option<String>);
+
 /// The terminals a tab or pane close would stop when it closes the final tab,
-/// labelled by pane identity and popup entry, and `None` for any other action.
-/// A close that cannot inspect the workspace first fails rather than skip the
+/// labelled by pane identity and popup entry, with the workspace's name or wN
+/// while other workspaces remain, and `None` for any other action. A close
+/// that cannot inspect the workspace first fails rather than skip the
 /// question.
 fn final_close_terminals(
     socket: &Path,
     action: &Action,
     generation: &str,
     caller: Option<&str>,
-) -> Result<Option<Vec<String>>, Failure> {
+) -> Result<Option<FinalClose>, Failure> {
     if !matches!(
         action,
         Action::Workspace(WorkspaceAction::CloseTab { .. }) | Action::ClosePane { .. }
@@ -1215,9 +1216,6 @@ fn final_close_terminals(
     let [tab] = snapshot.tabs.as_slice() else {
         return Ok(None);
     };
-    if snapshot.workspaces.len() != 1 {
-        return Ok(None);
-    }
     let last = match action {
         Action::Workspace(WorkspaceAction::CloseTab { tab: id }) => *id == tab.id,
         // Runtime refuses closing the last pane under a popup, so it is not asked about.
@@ -1229,12 +1227,47 @@ fn final_close_terminals(
         }
         _ => false,
     };
+    // The close removes the workspace the reply projects while others remain (EON-C33).
+    let workspace = snapshot
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == snapshot.workspace)
+        .filter(|_| snapshot.workspaces.len() >= 2)
+        .map(|workspace| {
+            workspace
+                .name
+                .clone()
+                .unwrap_or_else(|| workspace.id.clone())
+        });
     Ok(last.then(|| {
-        tab.panes()
-            .map(|pane| pane.label.clone())
-            .chain(tab.popups.iter().map(|popup| popup.entry.clone()))
-            .collect()
+        (
+            tab.panes()
+                .map(|pane| pane.label.clone())
+                .chain(tab.popups.iter().map(|popup| popup.entry.clone()))
+                .collect(),
+            workspace,
+        )
     }))
+}
+
+/// The final-close question and its cancel note: the window's, or EON-C33's
+/// wording for the workspace the close removes while others remain.
+fn final_close_prompt(terminals: &[String], workspace: Option<&str>) -> (String, String) {
+    let ends = workspace.map_or_else(
+        || "quits the window".into(),
+        |name| format!("closes workspace {}", name.escape_debug()),
+    );
+    let question = format!(
+        "Close the last tab? This {ends} and stops {} terminal{} [{}]. [y/N] ",
+        terminals.len(),
+        if terminals.len() == 1 { "" } else { "s" },
+        terminals.join(", ")
+    );
+    let cancelled = workspace.map_or_else(
+        || "cancelled; the window stays open\n".into(),
+        |name| format!("cancelled; workspace {} stays open\n", name.escape_debug()),
+    );
+    (question, cancelled)
 }
 
 /// The workspace `eon workspace` reports: the caller's, else the shown one.
@@ -1577,6 +1610,28 @@ mod parity;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_close_prompt_names_the_workspace_it_closes() {
+        let terminals = ["p1".to_owned(), "agent".to_owned()];
+        assert_eq!(
+            final_close_prompt(&terminals[..1], None),
+            (
+                "Close the last tab? This quits the window and stops 1 terminal [p1]. [y/N] "
+                    .to_owned(),
+                "cancelled; the window stays open\n".to_owned()
+            )
+        );
+        assert_eq!(
+            final_close_prompt(&terminals, Some("my \"notes\"")),
+            (
+                "Close the last tab? This closes workspace my \\\"notes\\\" and stops 2 \
+                 terminals [p1, agent]. [y/N] "
+                    .to_owned(),
+                "cancelled; workspace my \\\"notes\\\" stays open\n".to_owned()
+            )
+        );
+    }
 
     #[test]
     fn workspace_target_flags_stop_at_the_operand_separator() {

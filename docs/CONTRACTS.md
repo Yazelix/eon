@@ -500,11 +500,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     terminals." It lists the tab's panes and popups by title from the current
     snapshot, then "Enter Quit · Esc Cancel", then the hint line "Alt+Shift+D
     keeps it running instead", which is left out while a popup takes
-    Alt+Shift+D (EON-C20); Alt+Shift+D works while the prompt is open. If
-    the snapshot gains a tab while the prompt is open, Enter closes only the
-    named tab and the window stays. When the setting is false, a final close
-    quits at once. Closing a workspace's final tab while other workspaces
-    remain asks nothing yet; EON-C33's workspace-worded prompt is planned.
+    Alt+Shift+D (EON-C20); Alt+Shift+D works while the prompt is open. While
+    other workspaces remain, the prompt shows too, with EON-C33's wording:
+    "This closes workspace NAME and stops N terminals." and "Enter Close ·
+    Esc Cancel". The prompt follows the current snapshot, so an open prompt
+    re-words when the workspace count changes. If the snapshot gains a tab
+    while the prompt is open, Enter closes only the named tab and the window
+    stays. When the setting is false, a final close happens at once.
     Venus receives the setting as a launch argument (VEN-C8).
     Venus maps Alt+Shift+W directly to this stable-target action; lowercase
     Ctrl+W remains terminal input. Closing the window itself, or
@@ -597,7 +599,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     `delayed_second_cli_receives_committed_workspace_and_controls_three_sessions`
     and `pane_close_targets_the_active_tab_and_prunes_like_an_exit`; the Venus
     prompt and its launch argument by
-    `close_prompt_asks_only_for_a_window_ending_close`,
+    `close_prompt_asks_only_for_a_window_ending_close` (renamed
+    `close_prompt_asks_for_a_final_close` by
+    `eon-workspace-switching-shn4.7`),
     `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space`,
     `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog`,
     `pane_frame_option_is_a_strict_single_boolean` and
@@ -875,15 +879,17 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     tab's popup, as above.
   - `eon tab close TAB` and `eon pane close PANE` may name the final tab or
     its last pane, which ends the window (EON-C8), or, while other workspaces
-    remain, removes that workspace and asks nothing yet (EON-C33). Before a
-    close that ends the window, when
+    remain, removes that workspace (EON-C33). Before either final close, when
     `[workspace] warning_close_last_tab` is true, its default, and stdin is a
     terminal, the CLI first lists the terminals that will stop and asks, as
-    `eon stop` does; `--json` never asks, and neither does the CLI when the
+    `eon stop` does. While other workspaces remain, it words the question as
+    EON-C33 does, `Close the last tab? This closes workspace NAME and stops N
+    terminals [...]. [y/N]`, and a cancel prints `cancelled; workspace NAME
+    stays open`. `--json` never asks, and neither does the CLI when the
     setting is false. Run from a terminal, a close that cannot first inspect
-    the workspace fails without closing. A final close prints that the
-    generation ended, or with `--json` `{"ended":{"generation":...}}`, and
-    exits 0. The caller's own
+    the workspace fails without closing. A close that ends the window prints
+    that the generation ended, or with `--json`
+    `{"ended":{"generation":...}}`, and exits 0. The caller's own
     terminal may end with it, as with Stop. Eon rejects a non-boolean
     `warning_close_last_tab` with the rest of `config.toml`.
   - Both CLI projections, human and JSON, leave out the EONW attention fields
@@ -2695,7 +2701,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   the workspace requests, targeting and exit statuses, EON-C11 attach, EON-C23
   the workspaces a window holds, EON-C28 the `eon workspaces --json` fields,
   EON-C31 focus, the queue and the rollup, VEN-C8 the shown workspace, and
-  VEN-C21 the label.
+  VEN-C21 the label. `eon-workspace-switching-shn4.7` implements the Eon Bar
+  label, except its badge, and the workspace-worded final-close prompt in
+  Venus and the CLI.
 - **Consumer:** One full-Eon user, or an agent working for them, who keeps
   several separate sets of work in one Eon window.
 - **Trigger:** Alt+Shift+S or Commands > Switch workspace; Commands > New
@@ -2783,7 +2791,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     the shown workspace's name or `wN`, followed by `N/M` when there are
     several. Its accessible name reads "Workspace NAME, N of M", clicking it
     opens the picker, and it shows a badge while a hidden workspace needs
-    input.
+    input. Implemented on EONW v20 (`eon-workspace-switching-shn4.7`) except
+    the badge: v20 carries no per-workspace attention, so the badge waits
+    for `eon-workspace-switching-shn4.8`.
   - **Attention.** Each workspace carries the most urgent normalized EON-C31
     state of its terminals. The Alt+G queue (EON-C31) spans every workspace of
     the window, and a jump to a terminal in a hidden workspace shows that

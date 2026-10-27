@@ -3768,6 +3768,7 @@ mod tests {
                     crate::DialogKind::CloseLastTab {
                         terminals: 32,
                         detach: None,
+                        workspace: None,
                     },
                     0.0,
                 ),

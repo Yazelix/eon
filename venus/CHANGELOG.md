@@ -2,9 +2,19 @@
 
 ## Unreleased
 
-- VEN-C8: closing the last tab or its last pane while the snapshot lists other
-  workspaces shows no final-close prompt, since it only removes the shown
-  workspace (EON-C33, `eon-workspace-switching-shn4.4`).
+- VEN-C8: closing the last tab or its last pane shows the final-close prompt
+  whatever the workspace count. While the snapshot lists other workspaces it
+  reads "This closes workspace NAME and stops N terminals." with "Enter Close ·
+  Esc Cancel", and an open prompt re-words from each snapshot (EON-C33,
+  `eon-workspace-switching-shn4.7`).
+
+- VEN-C21: while the snapshot lists two or more workspaces, or its one
+  workspace has a name, the Eon Bar leads with an outlined workspace label,
+  `NAME N/M`, read from EONW v20's `workspace` and `workspaces`. Clicking it,
+  or Enter or Space on it, invokes the `workspaces` popup entry; without that
+  entry it is inert text. AccessKit orders it first, as `Workspace NAME, N of
+  M`. Quota chips yield before it, and it yields before the tabs' minimum
+  (`eon-workspace-switching-shn4.7`).
 
 - VEN-C8/VEN-C11: edge backgrounds extend through the expanded pane's header band
   below its title rule, with the same top-padding exceptions and rounded

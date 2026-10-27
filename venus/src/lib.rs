@@ -24,10 +24,10 @@ pub use render::{
 };
 pub use scene::{
     BarItem, Color, DialogKind, DialogScene, DrawCell, DrawCursor, DrawRow, DrawStyle, EonBar,
-    GlyphRun, Hyperlink, LocalClock, Scene, ScenePreview, SceneRect, ShortcutGroup, ShortcutHint,
-    ShortcutHintsScene, ShortcutRow, SidebarRow, SidebarView, WorkspaceColumn, WorkspaceFocus,
-    WorkspaceHeaderControl, WorkspaceHit, WorkspacePane, WorkspaceScene, WorkspaceTab,
-    validate_copy_uri, validate_open_uri, workspace_column_width,
+    GlyphRun, HeaderText, Hyperlink, LocalClock, Scene, ScenePreview, SceneRect, ShortcutGroup,
+    ShortcutHint, ShortcutHintsScene, ShortcutRow, SidebarRow, SidebarView, WorkspaceColumn,
+    WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspacePane, WorkspaceScene,
+    WorkspaceTab, shown_workspace, validate_copy_uri, validate_open_uri, workspace_column_width,
 };
 pub use system::{CpuTimes, CpuUse, RamUse};
 pub use transport::{

@@ -29,8 +29,14 @@ installation, and proven contract changes.
   [--no-focus]`, `eon workspace switch WS`, `eon workspace rename [WS] NAME`
   and `eon workspace close WS` add, show, name and close one, where WS is a
   workspace ID such as `w2` or its exact name. Closing a workspace's last tab
-  while others remain closes only that workspace. The window has no workspace
-  label yet.
+  while others remain closes only that workspace.
+
+- While a window holds several workspaces, or its one workspace has a name,
+  the Eon Bar starts with a label naming the shown workspace and its position,
+  as `notes 2/3`; clicking it opens the Workspaces picker. Closing the last tab
+  while other workspaces remain asks first too, in the window and from
+  `eon tab close` or `eon pane close`, with "This closes workspace NAME and
+  stops N terminals" instead of "This quits the window".
 
 - Alt+Shift+S opens the Workspaces picker, which lists this window's
   workspaces in window order with their tab counts and the shown one last.

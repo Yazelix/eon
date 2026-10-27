@@ -1,4 +1,4 @@
-use crate::scene::{DrawRow, Scene, ScenePreview};
+use crate::scene::{DrawRow, Scene, ScenePreview, bar_workspace};
 use eon_workspace_protocol::v20::{
     AttentionState, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
 };
@@ -146,8 +146,9 @@ fn without_attention(tabs: &[Tab]) -> Vec<Tab> {
         .collect()
 }
 
-/// Whether the view differs only in labels, pins or attention, ignoring unpainted workspace
-/// metadata. The caller separately checks pure label changes and moving sidebar rows.
+/// Whether the view differs only in labels, pins or attention, ignoring workspace metadata the
+/// Eon Bar's workspace label does not show. The caller separately checks pure label changes and
+/// moving sidebar rows.
 #[must_use]
 pub fn attention_only_change(current: &Snapshot, next: &Snapshot) -> bool {
     let plain = |snapshot: &Snapshot| Snapshot {
@@ -156,10 +157,13 @@ pub fn attention_only_change(current: &Snapshot, next: &Snapshot) -> bool {
         active_workspace: String::new(),
         ..snapshot.clone()
     };
-    current.tabs != next.tabs && plain(current) == plain(next)
+    current.tabs != next.tabs
+        && plain(current) == plain(next)
+        && bar_workspace(current) == bar_workspace(next)
 }
 
-/// Label/pin updates change painted text without changing any input geometry.
+/// Label/pin updates change painted text without changing any input geometry; the workspace
+/// label's text sizes it, so it is geometry.
 #[must_use]
 pub fn labels_only_change(current: &Snapshot, next: &Snapshot) -> bool {
     let plain = |snapshot: &Snapshot| {
@@ -177,7 +181,9 @@ pub fn labels_only_change(current: &Snapshot, next: &Snapshot) -> bool {
         }
         snapshot
     };
-    current.tabs != next.tabs && plain(current) == plain(next)
+    current.tabs != next.tabs
+        && plain(current) == plain(next)
+        && bar_workspace(current) == bar_workspace(next)
 }
 
 #[must_use]
@@ -233,12 +239,15 @@ impl WorkspaceModel {
                             && without_attention(&current.tabs)
                                 != without_attention(&snapshot.tabs))
                 });
+                // The workspace label's inputs repaint the bar; other workspaces' names and tab
+                // counts show nowhere. Neither disturbs the shown workspace (EON-C33).
                 let snapshot_changed = workspace_changed
                     || self.snapshot.as_ref().is_some_and(|current| {
                         current.tabs != snapshot.tabs
                             || current.codex_quota != snapshot.codex_quota
                             || current.claude_quota != snapshot.claude_quota
                             || current.sidebar != snapshot.sidebar
+                            || bar_workspace(current) != bar_workspace(&snapshot)
                     });
                 let notice_cleared = (workspace_changed
                     || matches!(self.notice, Some(WorkspaceNotice::Unavailable(_)))
@@ -908,6 +917,8 @@ mod tests {
             model.apply(WorkspaceResponse::Snapshot(snapshot.clone())),
             (false, false)
         );
+        // The workspace label's name and count repaint the bar, and leave the shown
+        // workspace's navigation, attachments and notice as they were (EON-C33).
         let mut summaries = snapshot.clone();
         summaries.workspaces[0].name = Some("renamed".into());
         summaries.workspaces.push(workspace::WorkspaceInfo {
@@ -917,10 +928,27 @@ mod tests {
         });
         assert_eq!(
             model.apply(WorkspaceResponse::Snapshot(summaries.clone())),
-            (false, false),
-            "summary-only edits do not invalidate the shown view"
+            (true, false),
+            "the workspace label's inputs repaint the bar"
         );
         assert_eq!(model.snapshot(), Some(&summaries));
+        assert_eq!(
+            model.active_attachment(),
+            Some((&b"/run/eon/orbit.sock"[..], true))
+        );
+        assert!(
+            model.notice().is_some(),
+            "workspace label edits retain the action failure"
+        );
+        let mut hidden = summaries.clone();
+        hidden.workspaces[1].name = Some("notes".into());
+        hidden.workspaces[1].tab_count = 1;
+        assert_eq!(
+            model.apply(WorkspaceResponse::Snapshot(hidden.clone())),
+            (false, false),
+            "hidden workspace edits do not invalidate the shown view"
+        );
+        assert_eq!(model.snapshot(), Some(&hidden));
         assert!(
             model.notice().is_some(),
             "hidden workspace edits retain the action failure"
@@ -933,10 +961,15 @@ mod tests {
         attention.tabs[1].attention_rollup = Some(workspace::AttentionState::Unavailable);
         assert!(attention_only_change(&snapshot, &attention));
         let mut combined = attention.clone();
-        combined.workspaces = summaries.workspaces.clone();
+        combined.workspaces[0].tab_count = 5;
         assert!(
             attention_only_change(&snapshot, &combined),
             "unpainted workspace metadata must not retire a held link during an attention refresh"
+        );
+        combined.workspaces = summaries.workspaces.clone();
+        assert!(
+            !attention_only_change(&snapshot, &combined),
+            "the workspace label's width moves the tabs"
         );
         assert!(!attention_only_change(&snapshot, &snapshot));
         attention.sidebar = workspace::Sidebar::Closed;

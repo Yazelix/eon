@@ -629,12 +629,12 @@ impl Renderer {
 
     /// Measure an exact, non-truncated Eon Bar fact label with header typography.
     pub fn measure_header_text(&mut self, label: &str) -> (String, f32) {
-        fit_header_text(
-            &mut self.fonts.font_system,
-            self.metrics,
-            label,
-            f32::INFINITY,
-        )
+        self.fit_header_text(label, f32::INFINITY)
+    }
+
+    /// Fit header text to `width` pixels with header typography, as tab labels are.
+    pub fn fit_header_text(&mut self, label: &str, width: f32) -> (String, f32) {
+        fit_header_text(&mut self.fonts.font_system, self.metrics, label, width)
     }
 
     pub(super) fn build_header_tooltip(
@@ -670,6 +670,18 @@ impl Renderer {
             (clock.description.as_str(), clock.rect)
         } else if let Some(tab) = hovered_tab {
             (tab.accessible_label(), tab.rect)
+        } else if let Some((label, tooltip)) = workspace
+            .workspace_label
+            .as_ref()
+            .and_then(|label| Some((label, label.tooltip.as_deref()?)))
+            .filter(|_| {
+                self.header.hovers(
+                    WorkspaceFocus::Header(WorkspaceHeaderControl::Workspaces),
+                    "",
+                )
+            })
+        {
+            (tooltip, label.rect)
         } else if let Some(control) = workspace
             .controls
             .iter()
@@ -1085,6 +1097,40 @@ impl Renderer {
                 .push_badge(*badge, Some(palette::BAR_BACKGROUND), rectangles);
         }
         rectangles.clip = None;
+        // The workspace label shares the tabs' band but reads as a bar widget, with the header
+        // controls' hover, pressed and focus states while it opens the picker.
+        if let Some(label) = &workspace.workspace_label {
+            let control = WorkspaceHeaderControl::Workspaces;
+            let visual = workspace.bar_pill_rect(label.rect, self.metrics);
+            let radius = visual.height / 2.0;
+            if workspace.has_control(control) {
+                if self.header.pressed_header == Some(control) {
+                    rectangles.push_rounded(visual, radius, palette::CHROME_HIGHLIGHT);
+                } else if self.header.hovers(WorkspaceFocus::Header(control), "") {
+                    rectangles.push_rounded(visual, radius, palette::CONTROL_HOVER);
+                }
+            }
+            push_bar_widget(rectangles, visual, self.border_width, self.metrics.scale);
+            if focus == WorkspaceFocus::Header(control) && workspace.has_control(control) {
+                rectangles.push_rounded_outline(visual, radius, palette::ACCENT);
+            }
+            let label_width = (label.rect.width - self.metrics.padding * 2.0).max(1.0);
+            self.push_text_clipped(
+                &label.label,
+                label.rect.left + self.metrics.padding,
+                visual.top + (visual.height - self.metrics.height) / 2.0,
+                label_width,
+                label_width,
+                self.metrics.height,
+                palette::PRIMARY_TEXT,
+                DrawStyleKind::Status(Wrap::None),
+                SceneRect {
+                    top: workspace.header.top,
+                    height: workspace.header.height,
+                    ..label.rect
+                },
+            );
+        }
         // Quota chips and readings share the tabs' band; the version label stays plain.
         for quota in &workspace.quotas {
             let visual = workspace.bar_pill_rect(

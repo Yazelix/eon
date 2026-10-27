@@ -603,7 +603,8 @@ re-proved when that platform or feature is next touched.
     allocated column card areas keep it from the window's sides, from each other,
     and below them the footer's band is the margin, or one gap when hints are hidden. In both modes the tab pills
     keep the gap from the window's left edge, so the first pill lines up with
-    the first card. Pill height follows VEN-C21; the gap between pills and
+    the first card, unless the VEN-C21 workspace label leads them; then the
+    label takes that position and the first pill follows it. Pill height follows VEN-C21; the gap between pills and
     header button width stay as before; on a short window the extra inset
     yields before the pills do. On a window too small for the gaps they
     yield before a terminal cell does. Each pane's top edge passes through the
@@ -644,8 +645,9 @@ re-proved when that platform or feature is next touched.
     persistent configuration and composed-launch policy.
   - While the agent sidebar is visible (VEN-C30), the cards share the content
     area to its right: the side gaps and the 40-column CreateColumn check are
-    measured from that area, and the first tab pill keeps its window-edge
-    position, so its alignment with the first card is suspended.
+    measured from that area, and the first tab pill, or the VEN-C21 workspace
+    label leading it, keeps its window-edge position, so its alignment with
+    the first card is suspended.
   - Headers show Runtime's bounded pane label. Fitting retains the literal pane identity whenever it
     fits and middle-elides the remaining text at shaping-cluster boundaries; AccessKit and final-close
     pane listings retain the full bounded label. The ID may be dimmer than the name, with 4.5:1 contrast
@@ -675,17 +677,24 @@ re-proved when that platform or feature is next touched.
     non-repeating close naming the snapshot's active stable `tN`; Alt+W sends
     one EONW v11 close naming the active tab's selected `pN` and is consumed
     without an action when the tab has none. Both may target the final tab and
-    its last pane. While the snapshot lists other workspaces (EON-C33), that
-    close only removes the shown workspace and Venus sends it without a
-    prompt. Otherwise such a final close, when the `--warning-close-last-tab`
-    launch argument is true (its default), first shows the EON-C8 prompt, which
-    Venus owns: Enter sends the held close, first focusing its tab if another
-    tab became active, Escape dismisses it, Alt+Shift+D detaches, the wheel and
-    the viewer's navigation keys scroll a long list, and other keys and pointer
-    input reach nothing while it is open.
+    its last pane. Such a final close, whatever the workspace count, when the
+    `--warning-close-last-tab` launch argument is true (its default), first
+    shows the EON-C8 prompt, which Venus owns: Enter sends the held close,
+    first focusing its tab if another tab became active, Escape dismisses it,
+    Alt+Shift+D detaches, the wheel and the viewer's navigation keys scroll a
+    long list, and other keys and pointer input reach nothing while it is
+    open.
     The prompt closes itself when its named tab or pane leaves the snapshot or
-    the workspace becomes unavailable; it is an AccessKit alert dialog. When the
-    argument is false, the close is sent at once. Alt+Shift+D is a
+    the workspace becomes unavailable; it is an AccessKit alert dialog. Venus
+    words it from the current snapshot whenever it draws it, so an open prompt
+    re-words when the workspace count changes. While the snapshot lists other
+    workspaces (EON-C33), the close removes only the shown workspace: the
+    subtitle reads "This closes workspace NAME and stops N terminals.", with
+    its name or `wN`, the footer "Enter Close · Esc Cancel", and the AccessKit
+    description "Press Enter to close it" where it otherwise reads "Press
+    Enter to quit". Runtime decides whether the sent close ends the window or
+    removes the workspace. When the argument is false, the close is sent at
+    once. Alt+Shift+D is a
     non-repeating key that detaches by the same path as a compositor close
     request (VEN-C14). Venus consumes
     each exact press and matching release without forwarding either to the
@@ -743,7 +752,9 @@ re-proved when that platform or feature is next touched.
     suite; dogfood checklist items 3, 4 and 10.
   - **Final close (`eon-final-close-prompt-and-detach-key-m798`):** the
     prompt's trigger, key answers and Alt+Shift+D mapping by
-    `close_prompt_asks_only_for_a_window_ending_close`, its scene and
+    `close_prompt_asks_only_for_a_window_ending_close` (renamed
+    `close_prompt_asks_for_a_final_close` by
+    `eon-workspace-switching-shn4.7`), its scene and
     AccessKit projection by
     `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space` and
     `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog`, and the
@@ -756,6 +767,12 @@ re-proved when that platform or feature is next touched.
     Escape kept the window, Enter ended it, and Alt+Shift+D from the prompt
     detached it. With `warning_close_last_tab = false`, Alt+Shift+W ended the
     window at once.
+  - **Workspace-worded prompt (`eon-workspace-switching-shn4.7`):** added
+    checks `close_prompt_asks_for_a_final_close`,
+    `shortcut_viewer_clamps_scroll_and_keeps_fixed_dismissal_space`,
+    `shortcut_viewer_replaces_terminal_tree_with_a_focused_dialog` and
+    `quota_refresh_and_workspace_failures_preserve_structure`; the installed
+    observation is pending (`eon-workspace-switching-shn4.9`).
   - **Agent sidebar layout (`eon-agent-sidebar-yx8.13`):**
     `agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state`
     and the installed dogfood recorded under VEN-C30: the sidebar pushed the
@@ -1244,8 +1261,8 @@ re-proved when that platform or feature is next touched.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
 - **Trigger:** The person points at, focuses, or activates the workspace header;
-  uses New tab, Keyboard shortcuts, or active-tab Close; scrolls the tab region;
-  or left-presses its empty drag region.
+  uses the workspace label, New tab, Keyboard shortcuts, or active-tab Close;
+  scrolls the tab region; or left-presses its empty drag region.
 - **Result:** The existing workspace tab strip remains one row at its existing
   height. Tabs keep their filled pills. Tab pills and the quota, CPU, RAM and clock widgets share
   one height and centre line, starting half the card title height below the window's top edge; the
@@ -1269,11 +1286,28 @@ re-proved when that platform or feature is next touched.
   (`New tab`, `Close tab`). A bounded empty region between New tab and the
   trailing controls starts compositor-owned window movement only from its
   immediate left press.
-  The accessibility tree orders tabs, New tab, optional quota, Shortcuts,
-  then Close tab.
+  The accessibility tree orders the workspace label while it shows, tabs, New
+  tab, optional quota, Shortcuts, then Close tab.
   It yields before tabs or controls when width contracts. Tab and Shift+Tab
   traverse focused header controls; Enter and Space activate them. Hover,
   pressed, and focus states remain distinct, and focus includes an outline.
+- **Workspace label (EON-C33):** While the snapshot lists two or more
+  workspaces, or its one workspace has a name, a label sits at the bar's left
+  inset on the tabs' centre line, and the tab region starts one tab gap after
+  it. It reads the shown workspace's name, or its `wN` when unnamed, then
+  ` N/M` when M ≥ 2, where N is its 1-based position in window order and M
+  the count. The name is fitted to a tab's widest text, and ` N/M` stays
+  whole. It draws like the widgets, an outline with no fill and primary text,
+  so it does not read as a tab. A left press and release on it while the
+  presentation is current, or Enter or Space after Tab focuses it, invokes the
+  snapshot's `workspaces` popup entry as that entry's key does. Its tooltip is
+  that entry's label and chord, such as `Workspaces — Alt+Shift+S`; it takes
+  the header controls' hover, pressed and focus states and is the first header
+  control in Tab order. Without that entry it is inert text with no hover,
+  focus, tooltip or action. Its AccessKit node is a button, or a label while
+  inert, named `Workspace NAME, N of M` with the scene's rectangle. Quota chips
+  yield before it, and it is dropped rather than shrink the tabs below their
+  one-pill minimum. With one unnamed workspace the bar is unchanged.
 - **Attention badges (EON-C31):** These rules apply while the agent sidebar is
   not visible (`Closed`, `Off`, or hidden for width):
   - every tab whose rollup is needs input, error, finished or working shows a
@@ -1305,9 +1339,10 @@ re-proved when that platform or feature is next touched.
   workspace's patched winit 0.30.13.
 - **Boundary:** No second row, widget framework, status/quota data, polling,
   configuration, Nova compatibility, inactive-tab close, protocol change,
-  dependency, native-decoration policy, or platform-support expansion. The one
-  exception is the EON-C31 tab attention marker, read from the EONW v20
-  snapshot that Venus already polls.
+  dependency, native-decoration policy, or platform-support expansion. The
+  exceptions are the EON-C31 tab attention marker and the EON-C33 workspace
+  label, read from the EONW v20 snapshot that Venus already polls, the label
+  from its `workspace` and `workspaces`.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** Automated and installed.
   - **Evidence:** `eon_bar_controls_reuse_existing_actions_and_local_viewer`,
@@ -1318,6 +1353,11 @@ re-proved when that platform or feature is next touched.
   - **Override evidence (`eon-igae.10`):**
     `eon_bar_buttons_share_scene_bounds_and_separate_focus_from_activation`; the
     installed observation is pending.
+  - **Workspace label (`eon-workspace-switching-shn4.7`):** added checks
+    `workspace_label_leads_the_tabs_and_opens_the_picker`,
+    `eon_bar_controls_reuse_existing_actions_and_local_viewer` and
+    `quota_refresh_and_workspace_failures_preserve_structure`; the installed
+    observation is pending (`eon-workspace-switching-shn4.9`).
   - **Final-tab close (`eon-prove-close-and-detach-batch-bf8t`):** isolated
     installed dogfood (edge `22915af5dca41f87e706ad548c0506f79c17648f`,
     installed `eon` profile

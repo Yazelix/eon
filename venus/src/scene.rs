@@ -451,9 +451,11 @@ pub(crate) fn tab_max_width(metrics: CellMetrics, viewport_width: f32) -> f32 {
         .min((viewport_width - card_gap(metrics) - metrics.padding / 3.0).max(1.0))
 }
 
-/// One fixed action in the native Eon workspace header.
+/// One action in the native Eon workspace header: the workspace label, while it opens the
+/// workspace picker, or a fixed control.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkspaceHeaderControl {
+    Workspaces,
     NewTab,
     Shortcuts,
     CloseTab,
@@ -469,6 +471,8 @@ impl WorkspaceHeaderControl {
                 .any(|entry| entry.shortcut.modifiers == ALT | SHIFT && entry.shortcut.key == key)
         };
         match self {
+            // The workspace label names itself from its popup entry.
+            Self::Workspaces => "",
             Self::NewTab if taken("KeyT") => "New tab",
             Self::NewTab => "New tab — Alt+Shift+T",
             Self::Shortcuts => "Keyboard shortcuts — Alt+/",
@@ -479,6 +483,7 @@ impl WorkspaceHeaderControl {
 
     pub(crate) fn glyph(self) -> &'static str {
         match self {
+            Self::Workspaces => "",
             Self::NewTab => "+",
             Self::Shortcuts => "?",
             Self::CloseTab => "×",
@@ -537,6 +542,56 @@ pub(crate) struct WorkspaceLabel {
     pub(crate) description: String,
 }
 
+/// The Eon Bar's leading workspace label (VEN-C21).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WorkspaceNameLabel {
+    pub(crate) rect: SceneRect,
+    pub(crate) label: String,
+    pub(crate) accessible_label: String,
+    /// The `workspaces` popup entry's label and chord, while that entry makes the label open
+    /// the workspace picker; without it the label is inert.
+    pub(crate) tooltip: Option<String>,
+}
+
+/// The shown workspace's name, or its `wN` when unnamed, with its 1-based position in window
+/// order and the window's workspace count.
+#[must_use]
+pub fn shown_workspace(snapshot: &Snapshot) -> Option<(&str, usize, usize)> {
+    let position = snapshot
+        .workspaces
+        .iter()
+        .position(|workspace| workspace.id == snapshot.workspace)?;
+    let workspace = &snapshot.workspaces[position];
+    Some((
+        workspace.name.as_deref().unwrap_or(&workspace.id),
+        position + 1,
+        snapshot.workspaces.len(),
+    ))
+}
+
+/// What the Eon Bar's workspace label shows: the shown workspace, while the window holds two or
+/// more workspaces or its one workspace has a name (VEN-C21).
+pub(crate) fn bar_workspace(snapshot: &Snapshot) -> Option<(&str, usize, usize)> {
+    shown_workspace(snapshot).filter(|&(_, _, count)| {
+        count >= 2
+            || snapshot
+                .workspaces
+                .iter()
+                .any(|workspace| workspace.name.is_some())
+    })
+}
+
+/// What one header text measurement is for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum HeaderText<'a> {
+    /// The label of the tab with this ID, fitted to a tab.
+    Tab(&'a str),
+    /// An exact Eon Bar fact.
+    Fact,
+    /// Text fitted to at most this many pixels.
+    Fit(f32),
+}
+
 /// One item Eon may place in the Eon Bar between the drag region and Shortcuts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BarItem {
@@ -567,6 +622,9 @@ pub struct EonBar<'a> {
     pub cpu: Option<&'a CpuUse>,
     pub ram: Option<&'a RamUse>,
     pub clock: Option<&'a LocalClock>,
+    /// The `workspaces` popup entry's label and chord, while Eon configures that entry; the
+    /// workspace label then opens it.
+    pub workspace_picker: Option<&'a str>,
 }
 
 impl Default for EonBar<'_> {
@@ -577,6 +635,7 @@ impl Default for EonBar<'_> {
             cpu: None,
             ram: None,
             clock: None,
+            workspace_picker: None,
         }
     }
 }
@@ -849,11 +908,12 @@ impl ShortcutGroup {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DialogKind {
     Shortcuts,
-    /// The final-close prompt: how many terminals the close stops, and the detach chord
-    /// unless a popup takes it.
+    /// The final-close prompt: how many terminals the close stops, the detach chord unless a
+    /// popup takes it, and the shown workspace's name or `wN` while other workspaces remain.
     CloseLastTab {
         terminals: usize,
         detach: Option<String>,
+        workspace: Option<String>,
     },
 }
 
@@ -870,8 +930,16 @@ impl DialogKind {
     pub(crate) fn subtitle(&self) -> Cow<'static, str> {
         match self {
             Self::Shortcuts => "Eon surface · physical keys".into(),
-            Self::CloseLastTab { terminals, .. } => format!(
-                "This quits the window and stops {terminals} terminal{}.",
+            Self::CloseLastTab {
+                terminals,
+                workspace,
+                ..
+            } => format!(
+                "This {} and stops {terminals} terminal{}.",
+                workspace.as_ref().map_or_else(
+                    || "quits the window".into(),
+                    |workspace| format!("closes workspace {workspace}")
+                ),
                 if *terminals == 1 { "" } else { "s" }
             )
             .into(),
@@ -882,13 +950,22 @@ impl DialogKind {
     pub(crate) fn footer(&self) -> Vec<String> {
         match self {
             Self::Shortcuts => vec!["Wheel or ↑↓ to scroll · Esc or Alt+/ to close".into()],
-            Self::CloseLastTab { detach, .. } => std::iter::once("Enter Quit · Esc Cancel".into())
-                .chain(
-                    detach
-                        .iter()
-                        .map(|chord| format!("{chord} keeps it running instead")),
-                )
-                .collect(),
+            Self::CloseLastTab {
+                detach, workspace, ..
+            } => std::iter::once(
+                if workspace.is_some() {
+                    "Enter Close · Esc Cancel"
+                } else {
+                    "Enter Quit · Esc Cancel"
+                }
+                .into(),
+            )
+            .chain(
+                detach
+                    .iter()
+                    .map(|chord| format!("{chord} keeps it running instead")),
+            )
+            .collect(),
         }
     }
 }
@@ -1009,12 +1086,13 @@ impl DialogScene {
     }
 
     /// The final-close prompt for `tab`: its panes by header label, then its popups by
-    /// entry label.
+    /// entry label. `workspace` names the workspace the close removes while others remain.
     #[must_use]
     pub fn close_last_tab(
         tab: &Tab,
         entries: &[PopupEntry],
         detach: Option<String>,
+        workspace: Option<String>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
         scroll: f32,
@@ -1038,6 +1116,7 @@ impl DialogScene {
             DialogKind::CloseLastTab {
                 terminals: rows.len(),
                 detach,
+                workspace,
             },
             vec![ShortcutGroup::new("", rows)],
             size,
@@ -1056,6 +1135,8 @@ pub struct WorkspaceScene {
     /// The tab viewport less the columns its edge badges take, so no label is drawn over them.
     pub(crate) tab_label_clip: SceneRect,
     pub(crate) header: SceneRect,
+    /// The shown workspace's label before the tabs, while it shows.
+    pub(crate) workspace_label: Option<WorkspaceNameLabel>,
     pub(crate) drag_region: SceneRect,
     pub(crate) quotas: Vec<WorkspaceQuota>,
     pub(crate) version: Option<WorkspaceLabel>,
@@ -1526,10 +1607,14 @@ fn card_area(
     }
 }
 
+/// The header's regions. A requested lead before the tab viewport, the workspace label and the
+/// gap after it, is kept while the tabs keep their minimum after it, and quota chips show only
+/// once it is kept; the tab viewport starts after it.
 fn workspace_header_geometry(
     size: PhysicalSize<u32>,
     tab_height: f32,
     metrics: CellMetrics,
+    requested_lead: f32,
     requested_quota_width: Option<f32>,
     show_shortcuts: bool,
     entries: &[PopupEntry],
@@ -1556,19 +1641,21 @@ fn workspace_header_geometry(
     let controls_width = control_width * control_count;
     let drag_width =
         (metrics.font_size * 4.0).min((width - controls_width - minimum_tabs).max(0.0));
+    // The room past the tabs' minimum, which the lead takes before any quota chip.
+    let spare = (width - controls_width - drag_width - minimum_tabs).max(0.0);
+    let lead_fits = requested_lead.is_finite() && requested_lead <= spare;
+    let lead = if lead_fits { requested_lead } else { 0.0 };
     let quota_width = requested_quota_width
-        .filter(|quota| {
-            quota.is_finite()
-                && *quota <= (width - controls_width - drag_width - minimum_tabs).max(0.0)
-        })
+        .filter(|quota| lead_fits && quota.is_finite() && *quota <= spare - lead)
         .unwrap_or(0.0);
-    let tab_width = (width - controls_width - drag_width - quota_width).max(0.0);
+    let tab_width = (width - controls_width - drag_width - lead - quota_width).max(0.0);
     let header = SceneRect {
         width,
         height: tab_height,
         ..SceneRect::default()
     };
     let tab_viewport = SceneRect {
+        left: lead,
         width: tab_width,
         height: tab_height,
         ..SceneRect::default()
@@ -1800,7 +1887,7 @@ impl WorkspaceScene {
         // Header widths depend only on the pill row, never on the header's extra inset.
         let tab_height = header_heights(metrics).0.min(size.height as f32);
         let (_, tab_viewport, _, _, _) =
-            workspace_header_geometry(size, tab_height, metrics, None, true, &[]);
+            workspace_header_geometry(size, tab_height, metrics, 0.0, None, true, &[]);
         (tab_max_width(metrics, tab_viewport.width) - metrics.padding * 2.0)
             .max(0.0)
             .floor()
@@ -1845,7 +1932,7 @@ impl WorkspaceScene {
         metrics: CellMetrics,
         tab_scroll: f32,
         pane_scroll: f32,
-        header_text: impl FnMut(Option<&str>, &str) -> (String, f32),
+        header_text: impl FnMut(HeaderText<'_>, &str) -> (String, f32),
     ) -> Self {
         Self::from_snapshot_with_bar(
             snapshot,
@@ -1868,7 +1955,7 @@ impl WorkspaceScene {
         metrics: CellMetrics,
         tab_scroll: f32,
         pane_scroll: f32,
-        header_text: impl FnMut(Option<&str>, &str) -> (String, f32),
+        header_text: impl FnMut(HeaderText<'_>, &str) -> (String, f32),
         hints: Option<ShortcutHintsScene>,
     ) -> Self {
         Self::from_snapshot_with_zoom(
@@ -1908,7 +1995,7 @@ impl WorkspaceScene {
         metrics: CellMetrics,
         tab_scroll: f32,
         pane_scroll: f32,
-        mut header_text: impl FnMut(Option<&str>, &str) -> (String, f32),
+        mut header_text: impl FnMut(HeaderText<'_>, &str) -> (String, f32),
         hints: Option<ShortcutHintsScene>,
         zoom: bool,
         sidebar_view: SidebarView<'_>,
@@ -1933,6 +2020,30 @@ impl WorkspaceScene {
         let tab_height = header_height(metrics, height, content_height, minimum_height);
         let gap = tab_gap(metrics, tab_height);
         let inset = tab_inset(metrics, tab_height);
+        // The workspace label fits its name to a tab's widest text and keeps its position whole.
+        let mut workspace_label = bar_workspace(snapshot).map(|(name, position, count)| {
+            let (suffix, suffix_width) = if count >= 2 {
+                header_text(HeaderText::Fact, &format!(" {position}/{count}"))
+            } else {
+                (String::new(), 0.0)
+            };
+            let fit = (Self::tab_text_width(size, metrics) - suffix_width).max(0.0);
+            let (fitted, name_width) = header_text(HeaderText::Fit(fit), name);
+            WorkspaceNameLabel {
+                rect: SceneRect {
+                    left: inset,
+                    top: inset,
+                    width: (name_width + suffix_width).ceil() + metrics.padding * 2.0,
+                    height: (tab_height - inset * 2.0).max(0.0),
+                },
+                label: fitted + &suffix,
+                accessible_label: format!("Workspace {name}, {position} of {count}"),
+                tooltip: bar.workspace_picker.map(str::to_owned),
+            }
+        });
+        let lead = workspace_label
+            .as_ref()
+            .map_or(0.0, |label| label.rect.right() + gap);
         let quota_texts = bar
             .items
             .iter()
@@ -1986,7 +2097,8 @@ impl WorkspaceScene {
             quota_texts
                 .iter()
                 .map(|(provider, window, (wide, short, description))| {
-                    let (label, width) = header_text(None, if compact { short } else { wide });
+                    let (label, width) =
+                        header_text(HeaderText::Fact, if compact { short } else { wide });
                     WorkspaceQuota {
                         provider: *provider,
                         window: *window,
@@ -2011,6 +2123,7 @@ impl WorkspaceScene {
                 size,
                 tab_height,
                 metrics,
+                lead,
                 requested,
                 show_shortcuts,
                 &snapshot.entries,
@@ -2027,6 +2140,10 @@ impl WorkspaceScene {
             }
         };
         let (header, mut tab_viewport, mut drag_region, quota_rect, mut controls) = geometry;
+        // Without room for the tabs' minimum after it, the label is dropped.
+        if tab_viewport.left == 0.0 {
+            workspace_label = None;
+        }
         let mut left = quota_rect.map_or(0.0, |rect| rect.left + controls[0].rect.width);
         for quota in &mut quotas {
             quota.rect.left = left;
@@ -2073,7 +2190,12 @@ impl WorkspaceScene {
             || (Vec::new(), Vec::new(), SceneRect::default()),
             |card| sidebar_contents(snapshot, card, metrics, sidebar_view),
         );
-        let mut tab_end = inset;
+        // Tabs follow the label's gap, or else the bar's left inset.
+        let mut tab_end = if workspace_label.is_some() {
+            tab_viewport.left
+        } else {
+            inset
+        };
         let mut tabs: Vec<_> = snapshot
             .tabs
             .iter()
@@ -2085,7 +2207,7 @@ impl WorkspaceScene {
                     label.push_str(" \u{f00e}");
                     accessible_label.push_str(", zoomed");
                 }
-                let (label, text_width) = header_text(Some(&tab.id), &label);
+                let (label, text_width) = header_text(HeaderText::Tab(&tab.id), &label);
                 let tab_width = (text_width.ceil() + metrics.padding * 2.0)
                     .clamp((metrics.font_size * 4.0).min(max_tab_width), max_tab_width);
                 let left = tab_end;
@@ -2129,7 +2251,7 @@ impl WorkspaceScene {
                 }
             })
             .collect();
-        tab_viewport.width = tab_viewport.width.min(tab_end);
+        tab_viewport.width = tab_viewport.width.min(tab_end - tab_viewport.left);
         controls[0].rect.left = tab_viewport.right();
         drag_region.left = controls[0].rect.right();
         drag_region.width = (quotas
@@ -2219,13 +2341,13 @@ impl WorkspaceScene {
             }
         }
         let [(_, cpu), (_, ram), (_, clock), (_, version)] = labels;
-        let tab_scroll_limit = (tab_end - tab_viewport.width).max(0.0);
+        let tab_scroll_limit = (tab_end - tab_viewport.right()).max(0.0);
         let active = tabs[active_tab].rect;
         // Revealing the first tab never scrolls.
         let active_tab_scroll = if active_tab == 0 {
             0.0
         } else {
-            (active.left - (tab_viewport.width - active.width).max(0.0) / 2.0)
+            (active.left - tab_viewport.left - (tab_viewport.width - active.width).max(0.0) / 2.0)
                 .clamp(0.0, tab_scroll_limit)
         };
         let tab_scroll = if tab_scroll.is_finite() {
@@ -2274,6 +2396,7 @@ impl WorkspaceScene {
                 edge_badges,
                 tab_label_clip,
                 header,
+                workspace_label,
                 drag_region,
                 quotas,
                 version,
@@ -2453,6 +2576,7 @@ impl WorkspaceScene {
             edge_badges,
             tab_label_clip,
             header,
+            workspace_label,
             drag_region,
             quotas,
             version,
@@ -2582,6 +2706,15 @@ impl WorkspaceScene {
                 return Some(WorkspaceHit::Tab(&tab.id));
             }
         }
+        // An inert workspace label is no target.
+        if self.has_control(WorkspaceHeaderControl::Workspaces)
+            && self
+                .workspace_label
+                .as_ref()
+                .is_some_and(|label| label.rect.contains(x, y))
+        {
+            return Some(WorkspaceHit::Control(WorkspaceHeaderControl::Workspaces));
+        }
         for control in self.controls {
             if control.rect.contains(x, y) {
                 return Some(WorkspaceHit::Control(control.kind));
@@ -2650,8 +2783,16 @@ impl WorkspaceScene {
             .map(|_| WorkspaceHit::Terminal)
     }
 
+    /// Whether `kind` shows and takes input; the workspace label does only while its popup
+    /// entry exists.
     #[must_use]
     pub fn has_control(&self, kind: WorkspaceHeaderControl) -> bool {
+        if kind == WorkspaceHeaderControl::Workspaces {
+            return self
+                .workspace_label
+                .as_ref()
+                .is_some_and(|label| label.tooltip.is_some());
+        }
         self.controls
             .iter()
             .any(|control| control.kind == kind && control.rect.width > 0.0)
@@ -6109,7 +6250,7 @@ mod tests {
         }];
         let size = PhysicalSize::new(960, 600);
         let prompt =
-            |detach| DialogScene::close_last_tab(&tab, &entries, detach, size, metrics, 0.0);
+            |detach| DialogScene::close_last_tab(&tab, &entries, detach, None, size, metrics, 0.0);
         let asked = prompt(Some("Alt+Shift+D".into()));
         let panes = tab.panes().count();
         assert_eq!(
@@ -6117,6 +6258,7 @@ mod tests {
             DialogKind::CloseLastTab {
                 terminals: panes + 1,
                 detach: Some("Alt+Shift+D".into()),
+                workspace: None,
             }
         );
         let rows = &asked.groups[0].rows;
@@ -6136,10 +6278,33 @@ mod tests {
         let taken = prompt(None);
         assert_eq!(taken.kind.footer(), ["Enter Quit · Esc Cancel"]);
         assert!(taken.bounds.height < asked.bounds.height);
+        // While other workspaces remain, the close removes the shown one instead.
+        let workspace = DialogScene::close_last_tab(
+            &tab,
+            &entries,
+            Some("Alt+Shift+D".into()),
+            Some("notes".into()),
+            size,
+            metrics,
+            0.0,
+        );
+        assert_eq!(workspace.kind.title(), "Close the last tab?");
+        assert_eq!(
+            workspace.kind.subtitle(),
+            "This closes workspace notes and stops 3 terminals."
+        );
+        assert_eq!(
+            workspace.kind.footer(),
+            [
+                "Enter Close · Esc Cancel",
+                "Alt+Shift+D keeps it running instead"
+            ]
+        );
         // A list taller than the window scrolls within the prompt.
         let crowded = DialogScene::close_last_tab(
             &tab,
             &entries,
+            None,
             None,
             PhysicalSize::new(320, 180),
             metrics,

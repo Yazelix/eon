@@ -32,12 +32,12 @@ use winit::{
 use yazelix_venus::{
     Accessibility, AccessibilityTarget, BarItem, CellMetrics, ClipboardEffect, Color,
     ConnectionState, CpuTimes, CpuUse, DialogKind, DialogScene, EonBar, FontSettings, FontSetup,
-    Hyperlink, InputState, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelError, PaddingColor,
-    PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel, ShortcutHintsScene,
-    SidebarView, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl,
-    WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport, active_popup,
-    attention_only_change, focused_terminal, labels_only_change, validate_copy_uri,
-    validate_open_uri,
+    HeaderText, Hyperlink, InputState, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelError,
+    PaddingColor, PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel,
+    ShortcutHintsScene, SidebarView, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus,
+    WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
+    active_popup, attention_only_change, focused_terminal, labels_only_change, shown_workspace,
+    validate_copy_uri, validate_open_uri,
 };
 
 mod geometry;
@@ -52,10 +52,10 @@ use geometry::{
 use scroll::{PendingViewportRequest, SelectionAutoscroll, TerminalScroll, finish_scroll_failure};
 
 use shortcuts::{
-    NativeShortcutAction, NativeShortcutTrigger, copy_paste_modifiers, detach_chord,
-    native_key_shortcut, native_key_shortcut_for, native_pointer_shortcut, paste_shortcut,
-    popup_shortcut, shortcut_groups, shortcut_hints_for, sideways_move_opens_column,
-    tab_shortcut_index, workspace_shortcut,
+    NativeShortcutAction, NativeShortcutTrigger, WORKSPACES_ENTRY, copy_paste_modifiers,
+    detach_chord, invoke_popup, native_key_shortcut, native_key_shortcut_for,
+    native_pointer_shortcut, paste_shortcut, popup_shortcut, shortcut_groups, shortcut_hints_for,
+    sideways_move_opens_column, tab_shortcut_index, workspace_picker_tooltip, workspace_shortcut,
 };
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
@@ -603,6 +603,8 @@ struct Application {
     zoom: Option<ZoomTarget>,
     tab_texts: HashMap<String, (String, f32)>,
     quota_widths: HashMap<String, f32>,
+    /// Fitted header texts, the workspace label's name, by their text.
+    fitted_texts: HashMap<String, (String, f32)>,
     tab_scroll: f32,
     pane_scroll: f32,
     cursor: PhysicalPosition<f64>,
@@ -697,6 +699,7 @@ impl Application {
             zoom: None,
             tab_texts: HashMap::new(),
             quota_widths: HashMap::new(),
+            fitted_texts: HashMap::new(),
             tab_scroll: 0.0,
             pane_scroll: 0.0,
             cursor: PhysicalPosition::new(0.0, 0.0),
@@ -924,6 +927,7 @@ impl Application {
     fn workspace_scene(&self) -> Option<WorkspaceScene> {
         let state = self.window.as_ref()?;
         self.workspace_model.snapshot().map(|snapshot| {
+            let picker = workspace_picker_tooltip(&snapshot.entries);
             WorkspaceScene::from_snapshot_with_zoom(
                 snapshot,
                 EonBar {
@@ -932,16 +936,17 @@ impl Application {
                     cpu: self.cpu.as_ref(),
                     ram: self.ram.as_ref(),
                     clock: self.clock.as_ref(),
+                    workspace_picker: picker.as_deref(),
                 },
                 state.renderer.size(),
                 state.renderer.metrics(),
                 self.tab_scroll,
                 self.pane_scroll,
-                |id, label| {
-                    id.map_or_else(
-                        || (label.to_owned(), self.quota_widths[label]),
-                        |id| self.tab_texts[id].clone(),
-                    )
+                // Replays the last measurement, which every change to these texts rebuilds.
+                |kind, label| match kind {
+                    HeaderText::Tab(id) => self.tab_texts[id].clone(),
+                    HeaderText::Fact => (label.to_owned(), self.quota_widths[label]),
+                    HeaderText::Fit(_) => self.fitted_texts[label].clone(),
                 },
                 self.hints.clone(),
                 self.zoomed(),
@@ -974,10 +979,12 @@ impl Application {
         let state = self.window.as_ref()?;
         let snapshot = self.workspace_model.snapshot()?;
         let tab = snapshot.tabs.iter().find(|tab| tab.id == prompt.tab)?;
+        // Worded from the current snapshot, so an open prompt follows the workspace count.
         Some(DialogScene::close_last_tab(
             tab,
             &snapshot.entries,
             detach_chord(&snapshot.entries),
+            close_prompt_workspace(snapshot),
             state.renderer.size(),
             state.renderer.metrics(),
             prompt.scroll,
@@ -1291,6 +1298,8 @@ impl Application {
         });
         self.tab_texts.clear();
         self.quota_widths.clear();
+        self.fitted_texts.clear();
+        let picker = workspace_picker_tooltip(&snapshot.entries);
         Some(WorkspaceScene::from_snapshot_with_zoom(
             snapshot,
             EonBar {
@@ -1299,25 +1308,30 @@ impl Application {
                 cpu: self.cpu.as_ref(),
                 ram: self.ram.as_ref(),
                 clock: self.clock.as_ref(),
+                workspace_picker: picker.as_deref(),
             },
             state.renderer.size(),
             state.renderer.metrics(),
             tab_scroll,
             pane_scroll,
-            |id, label| {
-                let fitted = if id.is_some() {
-                    state
+            |kind, label| match kind {
+                HeaderText::Tab(id) => {
+                    let fitted = state
                         .renderer
-                        .fit_tab_text(label, zoom && id == Some(snapshot.active_tab.as_str()))
-                } else {
-                    state.renderer.measure_header_text(label)
-                };
-                if let Some(id) = id {
+                        .fit_tab_text(label, zoom && id == snapshot.active_tab);
                     self.tab_texts.insert(id.to_owned(), fitted.clone());
-                } else {
-                    self.quota_widths.insert(label.to_owned(), fitted.1);
+                    fitted
                 }
-                fitted
+                HeaderText::Fact => {
+                    let fitted = state.renderer.measure_header_text(label);
+                    self.quota_widths.insert(label.to_owned(), fitted.1);
+                    fitted
+                }
+                HeaderText::Fit(width) => {
+                    let fitted = state.renderer.fit_header_text(label, width);
+                    self.fitted_texts.insert(label.to_owned(), fitted.clone());
+                    fitted
+                }
             },
             self.hints.clone(),
             zoom,
@@ -1398,8 +1412,9 @@ impl Application {
     }
 
     /// Returns keyboard focus to the terminal when the sidebar holds it but closes, hides for
-    /// width or loses the focused row.
-    fn retain_sidebar_focus(&mut self) {
+    /// width or loses the focused row, and to the tabs when the workspace label holds it but
+    /// hides or turns inert.
+    fn retain_chrome_focus(&mut self) {
         if self.workspace_focus == WorkspaceFocus::Sidebar
             && !self.sidebar_row.as_deref().is_some_and(|row| {
                 self.workspace_scene()
@@ -1407,6 +1422,14 @@ impl Application {
             })
         {
             self.set_workspace_focus(WorkspaceFocus::Terminal);
+        }
+        let label = WorkspaceHeaderControl::Workspaces;
+        if self.workspace_focus == WorkspaceFocus::Header(label)
+            && !self
+                .workspace_scene()
+                .is_some_and(|scene| scene.has_control(label))
+        {
+            self.set_workspace_focus(WorkspaceFocus::Tabs);
         }
     }
 
@@ -1458,6 +1481,8 @@ impl Application {
         self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
         self.presentation.invalidate();
         self.send_resize();
+        // The hints line changes the bar's inset, which can hide the workspace label.
+        self.retain_chrome_focus();
         self.refresh_client_view();
     }
 
@@ -1856,20 +1881,11 @@ impl Application {
         if self.zoom.is_some() && !self.zoomed() {
             self.zoom = None;
         }
-        // The prompt closes with its target or the workspace connection.
-        if self.close_prompt.as_ref().is_some_and(|prompt| {
-            unavailable
-                || !self
-                    .workspace_model
-                    .snapshot()
-                    .is_some_and(|snapshot| prompt.names_live_target(snapshot))
-        }) {
-            self.change_dialog(|app| app.close_prompt = None);
-        }
         if self.window.is_none() || self.initial_scale_pending {
             if snapshot_changed && view_changed {
                 self.reveal_workspace_selection();
             }
+            self.close_stale_prompt(unavailable);
             return;
         }
         if unavailable && quota_expired {
@@ -1927,13 +1943,14 @@ impl Application {
                 self.send_resize();
             }
         }
+        self.close_stale_prompt(unavailable);
         if received_snapshot {
             self.settle_attention_jump(None);
         } else if unavailable {
             // Workspace loss ends a pending jump with focus on its row, beside the notice.
             self.attention_jump = None;
         }
-        self.retain_sidebar_focus();
+        self.retain_chrome_focus();
         if self.workspace_model.snapshot().is_some()
             && self.workspace_model.active_attachment().is_none()
         {
@@ -1944,25 +1961,44 @@ impl Application {
         }
     }
 
+    /// Closes the prompt with its target or the workspace connection. Closing it refreshes the
+    /// view, so it runs once the scene's texts are measured.
+    fn close_stale_prompt(&mut self, unavailable: bool) {
+        if self.close_prompt.as_ref().is_some_and(|prompt| {
+            unavailable
+                || !self
+                    .workspace_model
+                    .snapshot()
+                    .is_some_and(|snapshot| prompt.names_live_target(snapshot))
+        }) {
+            self.change_dialog(|app| app.close_prompt = None);
+        }
+    }
+
     fn send_workspace(&mut self, action: CommonAction) -> bool {
         self.presentation.has_presented_geometry()
             && self.queue_workspace(WorkspaceAction::Workspace(action))
     }
 
     fn activate_workspace_header(&mut self, control: WorkspaceHeaderControl) {
-        let Some(active_tab) = self
-            .workspace_model
-            .snapshot()
-            .map(|snapshot| snapshot.active_tab.clone())
-        else {
+        let Some(snapshot) = self.workspace_model.snapshot() else {
             return;
         };
-        match workspace_header_action(control, &active_tab) {
+        match workspace_header_action(control, &snapshot.active_tab) {
             WorkspaceHeaderAction::Workspace(action) => {
                 self.request_workspace(WorkspaceAction::Workspace(action));
             }
             WorkspaceHeaderAction::ToggleShortcuts => {
                 self.set_shortcut_viewer(!self.shortcut_viewer.open);
+            }
+            // The workspace label opens the picker as the picker's key does from the chrome:
+            // every activation first focuses the label, so it focuses the picker, never toggles.
+            WorkspaceHeaderAction::PickWorkspace => {
+                if let Some(action) = invoke_popup(snapshot, WORKSPACES_ENTRY, false)
+                    && self.request_workspace(action)
+                {
+                    self.set_workspace_focus(WorkspaceFocus::Terminal);
+                }
             }
         }
     }
@@ -2198,12 +2234,20 @@ impl Application {
                 && code == KeyCode::Tab
                 && (modifiers == session::Modifiers::empty()
                     || modifiers == session::Modifiers::SHIFT)
-                && let Some(next) = cycle_header_focus(
-                    focus,
-                    modifiers == session::Modifiers::SHIFT,
-                    self.workspace_scene()
-                        .is_some_and(|scene| scene.has_control(WorkspaceHeaderControl::Shortcuts)),
-                )
+                && let Some(next) = {
+                    let scene = self.workspace_scene();
+                    let shows = |control| {
+                        scene
+                            .as_ref()
+                            .is_some_and(|scene| scene.has_control(control))
+                    };
+                    cycle_header_focus(
+                        focus,
+                        modifiers == session::Modifiers::SHIFT,
+                        shows(WorkspaceHeaderControl::Workspaces),
+                        shows(WorkspaceHeaderControl::Shortcuts),
+                    )
+                }
             {
                 self.set_workspace_focus(next);
                 return true;
@@ -3424,8 +3468,8 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.reveal_workspace_selection();
                 self.presentation.invalidate();
                 self.send_resize();
-                // A sidebar hidden for width gives its focus back to the terminal.
-                self.retain_sidebar_focus();
+                // A sidebar or workspace label hidden for width gives up its focus.
+                self.retain_chrome_focus();
                 self.refresh_client_view();
             }
             WindowEvent::ScaleFactorChanged {
@@ -4615,8 +4659,8 @@ fn accessibility_workspace_focus(
     queue(CommonAction::FocusId(id)).then_some(focus)
 }
 
-/// The tab a close would end the window with: the only tab of the only workspace, closed
-/// whole or through its last pane. With other workspaces the close removes just this one
+/// The tab a final close names: the shown workspace's only tab, closed whole or through its
+/// last pane. That close ends the window, or with other workspaces removes just this one
 /// (EON-C33). Runtime refuses a pane close under a popup, so that close is not asked about.
 fn final_close_tab(
     snapshot: &eon_workspace_protocol::v20::Snapshot,
@@ -4625,9 +4669,6 @@ fn final_close_tab(
     let [tab] = snapshot.tabs.as_slice() else {
         return None;
     };
-    if snapshot.workspaces.len() != 1 {
-        return None;
-    }
     let last = match action {
         WorkspaceAction::Workspace(CommonAction::CloseTab { tab: id }) => *id == tab.id,
         WorkspaceAction::ClosePane { pane } => {
@@ -4639,6 +4680,14 @@ fn final_close_tab(
         _ => false,
     };
     last.then(|| tab.id.clone())
+}
+
+/// The shown workspace's name or `wN`, which a final close removes while other workspaces
+/// remain; `None` while that close ends the window.
+fn close_prompt_workspace(snapshot: &eon_workspace_protocol::v20::Snapshot) -> Option<String> {
+    shown_workspace(snapshot)
+        .filter(|&(_, _, count)| count >= 2)
+        .map(|(name, _, _)| name.to_owned())
 }
 
 /// The close prompt's answer to a key: Enter quits, Escape cancels.
@@ -4683,6 +4732,7 @@ fn shortcut_viewer_command(
 enum WorkspaceHeaderAction {
     Workspace(CommonAction),
     ToggleShortcuts,
+    PickWorkspace,
 }
 
 fn workspace_header_action(
@@ -4690,6 +4740,7 @@ fn workspace_header_action(
     active_tab: &str,
 ) -> WorkspaceHeaderAction {
     match control {
+        WorkspaceHeaderControl::Workspaces => WorkspaceHeaderAction::PickWorkspace,
         WorkspaceHeaderControl::NewTab => WorkspaceHeaderAction::Workspace(CommonAction::CreateTab),
         WorkspaceHeaderControl::Shortcuts => WorkspaceHeaderAction::ToggleShortcuts,
         WorkspaceHeaderControl::CloseTab => {
@@ -4700,15 +4751,21 @@ fn workspace_header_action(
     }
 }
 
+/// Tab and Shift+Tab move from the tabs through the header controls: the workspace label while
+/// it opens the picker, New tab, Shortcuts while it shows, then Close tab.
 fn cycle_header_focus(
     focus: WorkspaceFocus,
     backwards: bool,
+    workspace_label: bool,
     shortcuts_visible: bool,
 ) -> Option<WorkspaceFocus> {
-    use WorkspaceHeaderControl::{CloseTab, NewTab, Shortcuts};
+    use WorkspaceHeaderControl::{CloseTab, NewTab, Shortcuts, Workspaces};
 
     Some(match (focus, backwards) {
-        (WorkspaceFocus::Tabs, false) => WorkspaceFocus::Header(NewTab),
+        (WorkspaceFocus::Tabs, false) if workspace_label => WorkspaceFocus::Header(Workspaces),
+        (WorkspaceFocus::Tabs | WorkspaceFocus::Header(Workspaces), false) => {
+            WorkspaceFocus::Header(NewTab)
+        }
         (WorkspaceFocus::Header(NewTab), false) => WorkspaceFocus::Header(if shortcuts_visible {
             Shortcuts
         } else {
@@ -4721,7 +4778,10 @@ fn cycle_header_focus(
             WorkspaceFocus::Header(if shortcuts_visible { Shortcuts } else { NewTab })
         }
         (WorkspaceFocus::Header(Shortcuts), true) => WorkspaceFocus::Header(NewTab),
-        (WorkspaceFocus::Header(NewTab), true) => WorkspaceFocus::Tabs,
+        (WorkspaceFocus::Header(NewTab), true) if workspace_label => {
+            WorkspaceFocus::Header(Workspaces)
+        }
+        (WorkspaceFocus::Header(NewTab | Workspaces), true) => WorkspaceFocus::Tabs,
         _ => return None,
     })
 }
@@ -4974,7 +5034,7 @@ mod tests {
     }
 
     #[test]
-    fn close_prompt_asks_only_for_a_window_ending_close() {
+    fn close_prompt_asks_for_a_final_close() {
         use orbit_protocol::session::Modifiers;
 
         let pane = |id: &str| Pane {
@@ -5048,7 +5108,7 @@ mod tests {
         let two = snapshot(vec![tab("t1", &["p1"]), tab("t2", &["p2"])]);
         assert_eq!(final_close_tab(&two, &close_tab("t1")), None);
         assert_eq!(final_close_tab(&two, &close_pane("p1")), None);
-        // With another workspace, closing the shown one's last tab keeps the window.
+        // With another workspace, closing the shown one's last tab asks too.
         let mut shared = one.clone();
         shared
             .workspaces
@@ -5057,8 +5117,25 @@ mod tests {
                 name: None,
                 tab_count: 1,
             });
-        assert_eq!(final_close_tab(&shared, &close_tab("t1")), None);
-        assert_eq!(final_close_tab(&shared, &close_pane("p1")), None);
+        assert_eq!(
+            final_close_tab(&shared, &close_tab("t1")),
+            Some("t1".into())
+        );
+        assert_eq!(
+            final_close_tab(&shared, &close_pane("p1")),
+            Some("t1".into())
+        );
+        // An open prompt is worded from each snapshot, so one that adds a workspace repaints
+        // it as closing the shown workspace.
+        let mut model = WorkspaceModel::default();
+        model.apply(eon_workspace_protocol::v20::Response::Snapshot(one.clone()));
+        let worded = |model: &WorkspaceModel| close_prompt_workspace(model.snapshot().unwrap());
+        assert_eq!(worded(&model), None);
+        assert_eq!(
+            model.apply(eon_workspace_protocol::v20::Response::Snapshot(shared)),
+            (true, false)
+        );
+        assert_eq!(worded(&model).as_deref(), Some("w1"));
 
         // The prompt keeps its close while the named tab and pane live, even when a tab appears.
         let prompt = |action| ClosePrompt {
@@ -7311,6 +7388,63 @@ mod tests {
 
     #[test]
     fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
+        // The workspace label opens the picker as its key does, from the snapshot's entry.
+        assert_eq!(
+            workspace_header_action(WorkspaceHeaderControl::Workspaces, "t7"),
+            WorkspaceHeaderAction::PickWorkspace
+        );
+        let mut snapshot = Snapshot {
+            workspace: "w1".into(),
+            active_workspace: "w1".into(),
+            workspaces: Vec::new(),
+            active_tab: "t1".into(),
+            geometry: eon_workspace_protocol::v20::PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            tabs: vec![Tab {
+                id: "t1".into(),
+                directory: b"/tmp".to_vec(),
+                pending: false,
+                selected_pane: None,
+                selected_popup: None,
+                columns: Vec::new(),
+                popups: Vec::new(),
+                attention_rollup: None,
+            }],
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: eon_workspace_protocol::v20::Sidebar::Off,
+        };
+        assert_eq!(workspace_picker_tooltip(&snapshot.entries), None);
+        assert_eq!(invoke_popup(&snapshot, WORKSPACES_ENTRY, true), None);
+        snapshot.entries.push(PopupEntry {
+            id: WORKSPACES_ENTRY.into(),
+            label: "Workspaces".into(),
+            shortcut: Shortcut {
+                modifiers: eon_workspace_protocol::v20::ALT | eon_workspace_protocol::v20::SHIFT,
+                key: "KeyS".into(),
+            },
+        });
+        assert_eq!(
+            workspace_picker_tooltip(&snapshot.entries).as_deref(),
+            Some(match NATIVE_PLATFORM {
+                NativePlatform::Linux => "Workspaces — Alt+Shift+S",
+                NativePlatform::Macos => "Workspaces — Option+Shift+S",
+            })
+        );
+        let key = popup_shortcut(KeyCode::KeyS, ALT_SHIFT, &snapshot, true);
+        assert_eq!(
+            key,
+            Some(WorkspaceAction::InvokePopup {
+                tab: "t1".into(),
+                entry: WORKSPACES_ENTRY.into(),
+                expected_instance: None,
+                intent: InvokeIntent::Toggle,
+            })
+        );
+        assert_eq!(invoke_popup(&snapshot, WORKSPACES_ENTRY, true), key);
         assert_eq!(
             workspace_header_action(WorkspaceHeaderControl::NewTab, "t7"),
             WorkspaceHeaderAction::Workspace(CommonAction::CreateTab)
@@ -7324,21 +7458,26 @@ mod tests {
             WorkspaceHeaderAction::Workspace(CommonAction::CloseTab { tab: "t7".into() })
         );
         assert_eq!(
-            cycle_header_focus(WorkspaceFocus::Tabs, false, true),
+            cycle_header_focus(WorkspaceFocus::Tabs, false, false, true),
             Some(WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab))
         );
         assert_eq!(
             cycle_header_focus(
                 WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab),
                 true,
+                false,
                 true
             ),
             Some(WorkspaceFocus::Tabs)
         );
-        assert_eq!(cycle_header_focus(WorkspaceFocus::Panes, false, true), None);
+        assert_eq!(
+            cycle_header_focus(WorkspaceFocus::Panes, false, false, true),
+            None
+        );
         assert_eq!(
             cycle_header_focus(
                 WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab),
+                false,
                 false,
                 false
             ),
@@ -7348,9 +7487,33 @@ mod tests {
             cycle_header_focus(
                 WorkspaceFocus::Header(WorkspaceHeaderControl::CloseTab),
                 true,
+                false,
                 false
             ),
             Some(WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab))
+        );
+        // A workspace label that opens the picker is the first header control.
+        let label = WorkspaceFocus::Header(WorkspaceHeaderControl::Workspaces);
+        assert_eq!(
+            cycle_header_focus(WorkspaceFocus::Tabs, false, true, true),
+            Some(label)
+        );
+        assert_eq!(
+            cycle_header_focus(label, false, true, true),
+            Some(WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab))
+        );
+        assert_eq!(
+            cycle_header_focus(
+                WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab),
+                true,
+                true,
+                true
+            ),
+            Some(label)
+        );
+        assert_eq!(
+            cycle_header_focus(label, true, true, true),
+            Some(WorkspaceFocus::Tabs)
         );
     }
 

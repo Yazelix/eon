@@ -37,6 +37,7 @@ const RAM: NodeId = NodeId(16);
 const CLAUDE_SEVEN_DAY_QUOTA: NodeId = NodeId(17);
 const SIDEBAR: NodeId = NodeId(18);
 const SIDEBAR_EMPTY_STATE: NodeId = NodeId(19);
+const WORKSPACE_LABEL: NodeId = NodeId(20);
 // Scene rows are u16, so this range cannot collide with fixed or text-run nodes.
 const WORKSPACE_NODE_START: u64 = 1 << 32;
 const LINK_NODE_START: u64 = 1 << 48;
@@ -214,15 +215,22 @@ impl Snapshot {
                     );
                     dialog
                 }
-                DialogKind::CloseLastTab { detach, .. } => {
+                DialogKind::CloseLastTab {
+                    detach, workspace, ..
+                } => {
                     let mut dialog = Node::new(Role::AlertDialog);
                     dialog.set_label(viewer.kind.title());
                     let subtitle = viewer.kind.subtitle();
+                    let enter = if workspace.is_some() {
+                        "close it"
+                    } else {
+                        "quit"
+                    };
                     dialog.set_description(match detach {
                         Some(chord) => format!(
-                            "{subtitle} Press Enter to quit, Escape to cancel, or {chord} to keep it running instead."
+                            "{subtitle} Press Enter to {enter}, Escape to cancel, or {chord} to keep it running instead."
                         ),
-                        None => format!("{subtitle} Press Enter to quit or Escape to cancel."),
+                        None => format!("{subtitle} Press Enter to {enter} or Escape to cancel."),
                     });
                     dialog
                 }
@@ -275,7 +283,13 @@ impl Snapshot {
         }
         let status_alert = terminal && !self.status.is_empty();
         let mut root_children = if let Some(workspace) = &self.workspace {
-            let mut children = vec![TAB_LIST, NEW_TAB];
+            let mut children = workspace
+                .workspace_label
+                .as_ref()
+                .map(|_| WORKSPACE_LABEL)
+                .into_iter()
+                .chain([TAB_LIST, NEW_TAB])
+                .collect::<Vec<_>>();
             // Quota chips and labels follow their visual order, which Eon chooses.
             let mut items = workspace
                 .quotas
@@ -386,6 +400,23 @@ impl Snapshot {
             nodes.push((SCROLLBACK, button));
         }
         if let Some(workspace) = &self.workspace {
+            if let Some(label) = &workspace.workspace_label {
+                // Without its popup entry the label is read-only text.
+                let mut node = if let Some(tooltip) = &label.tooltip {
+                    let mut node = Node::new(Role::Button);
+                    node.set_label(label.accessible_label.as_str());
+                    node.set_description(tooltip.as_str());
+                    node.add_action(Action::Click);
+                    node.add_action(Action::Focus);
+                    node
+                } else {
+                    let mut node = Node::new(Role::Label);
+                    node.set_value(label.accessible_label.as_str());
+                    node
+                };
+                node.set_bounds(rect(label.rect));
+                nodes.push((WORKSPACE_LABEL, node));
+            }
             let mut tab_list = Node::new(Role::TabList);
             tab_list.set_label("Eon workspace tabs");
             tab_list.set_orientation(Orientation::Horizontal);
@@ -832,6 +863,7 @@ pub enum AccessibilityTarget {
 
 fn control_node_id(control: WorkspaceHeaderControl) -> NodeId {
     match control {
+        WorkspaceHeaderControl::Workspaces => WORKSPACE_LABEL,
         WorkspaceHeaderControl::NewTab => NEW_TAB,
         WorkspaceHeaderControl::Shortcuts => SHORTCUTS,
         WorkspaceHeaderControl::CloseTab => CLOSE_TAB,
@@ -840,6 +872,7 @@ fn control_node_id(control: WorkspaceHeaderControl) -> NodeId {
 
 fn header_control_for_node(node: NodeId) -> Option<WorkspaceHeaderControl> {
     match node {
+        WORKSPACE_LABEL => Some(WorkspaceHeaderControl::Workspaces),
         NEW_TAB => Some(WorkspaceHeaderControl::NewTab),
         SHORTCUTS => Some(WorkspaceHeaderControl::Shortcuts),
         CLOSE_TAB => Some(WorkspaceHeaderControl::CloseTab),
@@ -1698,6 +1731,7 @@ mod tests {
                     cpu: Some(&cpu),
                     ram: Some(&ram),
                     clock: Some(&clock),
+                    workspace_picker: None,
                 },
                 size,
                 metrics,
@@ -2249,6 +2283,7 @@ mod tests {
             DialogKind::CloseLastTab {
                 terminals: 2,
                 detach: Some("Alt+Shift+D".into()),
+                workspace: None,
             },
             vec![ShortcutGroup::new(
                 "",
@@ -2280,6 +2315,25 @@ mod tests {
             .map(|id| node(&update, *id).value())
             .collect::<Vec<_>>();
         assert_eq!(rows, [Some("Pane p1"), Some("Popup Agent")]);
+        // While other workspaces remain, Enter closes the shown one instead.
+        snapshot.dialog = Some(DialogScene::new(
+            DialogKind::CloseLastTab {
+                terminals: 1,
+                detach: None,
+                workspace: Some("w2".into()),
+            },
+            vec![ShortcutGroup::new("", vec![ShortcutRow::new("Pane", "p1")])],
+            size,
+            CellMetrics::for_scale(1.0),
+            0.0,
+        ));
+        assert_eq!(
+            node(&snapshot.tree(), DIALOG).description(),
+            Some(
+                "This closes workspace w2 and stops 1 terminal. Press Enter to close it \
+                 or Escape to cancel."
+            )
+        );
     }
 
     #[test]
@@ -3062,6 +3116,189 @@ mod tests {
             node(&update, CLOSE_TAB).label(),
             Some("Close tab — Alt+Shift+W")
         );
+    }
+
+    #[test]
+    fn workspace_label_leads_the_tabs_and_opens_the_picker() {
+        use crate::{HeaderText, WorkspaceHit};
+
+        let metrics = CellMetrics::for_scale(1.0);
+        let tabs = (1..=6)
+            .map(|n| {
+                let pane = format!("p{n}");
+                workspace_tab(&format!("t{n}"), &[&pane], &pane)
+            })
+            .collect::<Vec<_>>();
+        let snapshot = |names: &[Option<&str>], shown: &str| WorkspaceSnapshot {
+            workspace: shown.into(),
+            active_workspace: "w1".into(),
+            workspaces: names
+                .iter()
+                .enumerate()
+                .map(|(index, name)| eon_workspace_protocol::v20::WorkspaceInfo {
+                    id: format!("w{}", index + 1),
+                    name: name.map(Into::into),
+                    tab_count: 1,
+                })
+                .collect(),
+            active_tab: "t1".into(),
+            tabs: tabs.clone(),
+            geometry: PopupGeometry {
+                side_margin: 8.0,
+                vertical_margin: 4.0,
+            },
+            entries: Vec::new(),
+            codex_quota: None,
+            claude_quota: None,
+            sidebar: eon_workspace_protocol::v20::Sidebar::Open,
+        };
+        let picker = "Workspaces — Alt+Shift+S";
+        let project = |snapshot: &WorkspaceSnapshot, width, picker, tab_scroll| {
+            WorkspaceScene::from_snapshot_with_bar(
+                snapshot,
+                EonBar {
+                    workspace_picker: picker,
+                    ..EonBar::default()
+                },
+                PhysicalSize::new(width, 600),
+                metrics,
+                tab_scroll,
+                0.0,
+                // Ten pixels a character, fitted by whole characters.
+                |kind, text| {
+                    let kept = match kind {
+                        HeaderText::Fit(width) => (width / 10.0) as usize,
+                        _ => usize::MAX,
+                    };
+                    let text = text.chars().take(kept).collect::<String>();
+                    let width = text.chars().count() as f32 * 10.0;
+                    (text, width)
+                },
+                None,
+            )
+        };
+        fn label_hit(scene: &WorkspaceScene) -> Option<WorkspaceHit<'_>> {
+            let rect = scene.workspace_label.as_ref().unwrap().rect;
+            scene.hit_test(rect.left + rect.width / 2.0, rect.top + rect.height / 2.0)
+        }
+        let control = WorkspaceHeaderControl::Workspaces;
+
+        // One unnamed workspace leaves the bar as it is without the label.
+        let plain = project(&snapshot(&[None], "w1"), 1200, Some(picker), 0.0);
+        assert!(plain.workspace_label.is_none() && !plain.has_control(control));
+        assert_eq!(plain, project(&snapshot(&[None], "w1"), 1200, None, 0.0));
+        assert_eq!(plain.tab_viewport.left, 0.0);
+        let mut accessible = Snapshot::new(PhysicalSize::new(1200, 600));
+        accessible.set_workspace(Some(&plain));
+        let tree = accessible.tree();
+        assert_eq!(node(&tree, WINDOW).children()[0], TAB_LIST);
+        assert!(tree.nodes.iter().all(|(id, _)| *id != WORKSPACE_LABEL));
+
+        // Two workspaces: the shown one's name and position lead the tabs and open the picker.
+        let two = snapshot(&[None, Some("notes")], "w2");
+        let scene = project(&two, 1200, Some(picker), 0.0);
+        let label = scene.workspace_label.as_ref().unwrap();
+        assert_eq!(label.label, "notes 2/2");
+        assert_eq!(label.rect.left, plain.tabs[0].rect.left);
+        assert!(label.rect.right() < scene.tab_viewport.left);
+        assert_eq!(scene.tabs[0].rect.left, scene.tab_viewport.left);
+        assert_eq!(label_hit(&scene), Some(WorkspaceHit::Control(control)));
+        accessible.set_workspace(Some(&scene));
+        let tree = accessible.tree();
+        assert_eq!(
+            node(&tree, WINDOW).children()[..2],
+            [WORKSPACE_LABEL, TAB_LIST]
+        );
+        let button = node(&tree, WORKSPACE_LABEL);
+        assert_eq!(button.role(), Role::Button);
+        assert_eq!(button.label(), Some("Workspace notes, 2 of 2"));
+        assert_eq!(button.description(), Some(picker));
+        assert_eq!(button.bounds(), Some(rect(label.rect)));
+        for (action, activate) in [(Action::Focus, false), (Action::Click, true)] {
+            assert_eq!(
+                accessible.action_target(WORKSPACE_LABEL, action),
+                Some(AccessibilityTarget::HeaderControl { control, activate })
+            );
+        }
+        accessible.workspace_focus = WorkspaceFocus::Header(control);
+        assert_eq!(accessible.tree().focus, WORKSPACE_LABEL);
+        // Tabs scrolled to their end stay inside their viewport, after the label.
+        let scrolled = project(&two, 500, Some(picker), f32::MAX);
+        assert!(scrolled.tab_scroll() > 0.0);
+        assert_eq!(label_hit(&scrolled), Some(WorkspaceHit::Control(control)));
+
+        // A long name is clipped to a tab's widest text, and the position stays whole.
+        let long = "x".repeat(200);
+        let clipped = project(
+            &snapshot(&[Some(&long), None], "w1"),
+            1200,
+            Some(picker),
+            0.0,
+        );
+        let label = clipped.workspace_label.as_ref().unwrap();
+        assert!(label.label.ends_with("x 1/2"));
+        assert!(
+            label.rect.width
+                <= WorkspaceScene::tab_text_width(PhysicalSize::new(1200, 600), metrics)
+                    + metrics.padding * 2.0
+        );
+        assert_eq!(label.accessible_label, format!("Workspace {long}, 1 of 2"));
+
+        // One named workspace shows its name alone.
+        let named = project(&snapshot(&[Some("notes")], "w1"), 1200, Some(picker), 0.0);
+        let label = named.workspace_label.as_ref().unwrap();
+        assert_eq!(
+            (label.label.as_str(), label.accessible_label.as_str()),
+            ("notes", "Workspace notes, 1 of 1")
+        );
+
+        // Without the picker's entry the label is inert text.
+        let inert = project(&two, 1200, None, 0.0);
+        assert!(!inert.has_control(control));
+        assert_eq!(label_hit(&inert), None);
+        accessible.set_workspace(Some(&inert));
+        let tree = accessible.tree();
+        let text = node(&tree, WORKSPACE_LABEL);
+        assert_eq!(text.role(), Role::Label);
+        assert_eq!(text.value(), Some("Workspace notes, 2 of 2"));
+        assert!(!text.supports_action(Action::Click) && !text.supports_action(Action::Focus));
+        assert_eq!(
+            accessible.action_target(WORKSPACE_LABEL, Action::Click),
+            None
+        );
+
+        // Under width pressure quota chips yield first and the label next, before it would
+        // shrink the tabs below their minimum; nothing overlaps.
+        let mut quota = two.clone();
+        quota.codex_quota = Some(CodexQuota {
+            state: CodexQuotaState::Fresh,
+            observed_at: 1,
+            windows: vec![CodexQuotaWindow {
+                duration_minutes: 300,
+                remaining_percent: 74,
+                resets_at: None,
+            }],
+        });
+        let (mut dropped, mut kept_over_quota) = (false, false);
+        for width in (40..=1600).step_by(8) {
+            let scene = project(&quota, width, Some(picker), 0.0);
+            assert!(scene.quotas.is_empty() || scene.workspace_label.is_some());
+            match &scene.workspace_label {
+                Some(label) => {
+                    assert!(label.rect.right() < scene.tab_viewport.left, "{width}");
+                    assert_eq!(label_hit(&scene), Some(WorkspaceHit::Control(control)));
+                    kept_over_quota |= scene.quotas.is_empty();
+                }
+                None => {
+                    assert_eq!(scene.tab_viewport.left, 0.0, "{width}");
+                    dropped = true;
+                }
+            }
+            assert!(scene.tab_viewport.right() <= scene.controls[0].rect.left + 0.01);
+            assert!(scene.controls[0].rect.right() <= scene.drag_region.left + 0.01);
+            assert!(scene.drag_region.right() <= scene.controls[1].rect.left + 0.01);
+        }
+        assert!(dropped && kept_over_quota);
     }
 
     #[test]

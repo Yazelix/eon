@@ -50,10 +50,12 @@ longer want it. The initial workspace uses the directory where Eon was launched.
 
 A terminal starts after choosing a directory or dismissing the picker. Closing the last
 tab quits the window and stops its terminals; in a window with several
-workspaces, it closes only that workspace. Closing the Eon window instead detaches
-the desktop without stopping its terminals or PTY commands. Alt+Shift+D does the
-same from the keyboard. The first time, Eon shows a desktop notification saying
-it is still running in the background. Reconnect with:
+workspaces, it closes only that workspace. By default Eon asks first, listing the
+terminals that stop, and the question names the workspace while others remain.
+Closing the Eon window instead detaches the desktop without stopping its
+terminals or PTY commands. Alt+Shift+D does the same from the keyboard. The
+first time, Eon shows a desktop notification saying it is still running in the
+background. Reconnect with:
 
 ```sh
 eon attach
@@ -151,6 +153,15 @@ between the scrollable tabs and those controls moves the undecorated window;
 tabs, controls, pane headers, and terminal content remain ordinary targets.
 A zoomed tab shows a zoom-in magnifier after its name, or ` · zoom` if the
 bundled Symbols Nerd Font face is unavailable. Its accessible name says `, zoomed`.
+While the window holds two or more workspaces, or its one workspace has a name,
+an outlined label before the tabs names the shown workspace, or gives its ID
+such as `w2`, followed, when there are several, by its position and the
+count, as in `notes 2/3`.
+Clicking it, or Enter after Tab focuses it, opens the Workspaces picker as
+Alt+Shift+S does, and its tooltip names that key. With the Workspaces popup
+turned off the label is plain text. A long name is shortened while the position
+stays whole; quota chips hide before the label, and the label hides before the
+tabs would lose their room.
 Pinned CodexBar CLI supplies read-only Codex and Claude quota from their local
 authentication. Codex also needs a compatible `codex` executable on `PATH`.
 Codex chips show its white mark and Claude chips its orange splat.
@@ -356,13 +367,13 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon workspace rename [WS] NAME [--json]` | Name workspace WS, or the caller's workspace; an empty NAME clears the name |
 | `eon workspace close WS [--json]` | Stop every terminal of WS and remove it, asking first without `--json`; closing the last workspace quits the window |
 | `eon tab create [--json]` | Create a distinct pending tab with its directory picker, even while another picker is open |
-| `eon tab close TAB [--json]` | Close the expected active tab; the final tab quits the window, asking first from a terminal, or closes the workspace while others remain |
+| `eon tab close TAB [--json]` | Close the expected active tab; the final tab quits the window, or closes the workspace while others remain, asking first from a terminal |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
 | `eon pane create [--json] [--no-focus]` | Create a pane in the active tab's selected column, or in the calling pane's column; with `--no-focus`, the tab's selected pane and any shown popup stay as they are |
 | `eon pane create [--json] [--no-focus] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, at the tab's directory, with `--no-focus` as above; refused with exit 1 outside an Eon terminal |
 | `eon edit [--json] -- FILE` | Open FILE in Helix in a new pane, placed as `pane create` places it, at the tab's directory |
-| `eon pane close PANE [--json]` | Close a pane of the active tab, or of the calling terminal's tab, stopping its terminal; the final tab's last pane quits the window, asking first from a terminal, or closes the workspace while others remain |
+| `eon pane close PANE [--json]` | Close a pane of the active tab, or of the calling terminal's tab, stopping its terminal; the final tab's last pane quits the window, or closes the workspace while others remain, asking first from a terminal |
 | `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |
 | `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |

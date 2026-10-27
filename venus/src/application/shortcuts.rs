@@ -806,6 +806,38 @@ pub(super) fn popup_shortcut(
     terminal_focused: bool,
 ) -> Option<WorkspaceAction> {
     let entry = popup_entry(&snapshot.entries, code, modifiers)?;
+    invoke_popup(snapshot, &entry.id, terminal_focused)
+}
+
+/// The popup entry the Eon Bar's workspace label opens (VEN-C21).
+pub(super) const WORKSPACES_ENTRY: &str = "workspaces";
+
+/// The workspace label's tooltip: its popup entry's label and chord, while Eon configures it.
+pub(super) fn workspace_picker_tooltip(entries: &[PopupEntry]) -> Option<String> {
+    entries
+        .iter()
+        .find(|entry| entry.id == WORKSPACES_ENTRY)
+        .map(|entry| {
+            format!(
+                "{} — {}",
+                entry.label,
+                physical_shortcut_label_for(
+                    NATIVE_PLATFORM,
+                    entry.shortcut.modifiers,
+                    &entry.shortcut.key
+                )
+            )
+        })
+}
+
+/// Invokes the configured popup `entry` in the active tab as its key does: toggling it while
+/// the terminal has focus, else focusing it.
+pub(super) fn invoke_popup(
+    snapshot: &Snapshot,
+    entry: &str,
+    terminal_focused: bool,
+) -> Option<WorkspaceAction> {
+    let entry = snapshot.entries.iter().find(|known| known.id == entry)?;
     let tab = snapshot
         .tabs
         .iter()

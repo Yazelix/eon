@@ -244,13 +244,15 @@ animation continues to the picker. Attachment, recovery, later tabs, and
 eonbase do not play the startup animation.
 
 Closing the last tab quits its window and stops its terminals. While the
-window holds other workspaces, it closes only that workspace, asking nothing.
+window holds other workspaces, it closes only that workspace.
 `warning_close_last_tab = true` makes `eon tab close` and
 `eon pane close` ask first when run from a terminal, listing the terminals that
-will stop; `--json` never asks. In the window, Alt+Shift+W, the bar's `×` and
+will stop and, while other workspaces remain, naming the workspace that
+closes; `--json` never asks. In the window, Alt+Shift+W, the bar's `×` and
 Alt+W on the last pane show a prompt listing the same terminals: Enter quits,
-Escape cancels, and Alt+Shift+D keeps them running instead. With `false`, both
-close at once. The window reads the setting when it starts.
+or closes the workspace while others remain, Escape cancels, and Alt+Shift+D
+keeps them running instead. With `false`, both close at once. The window reads
+the setting when it starts.
 
 `[sidebar] enabled = true` offers the agent sidebar, which lists
 the coding agents in the window's tabs that report their status. `false` turns
