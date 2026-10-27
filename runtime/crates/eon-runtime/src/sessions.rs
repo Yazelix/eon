@@ -8,7 +8,7 @@ use super::{
     },
     workspace::{is_directory_picker_endpoint, is_directory_picker_session},
 };
-use eon_workspace_protocol::v20::MAX_SESSIONS;
+use eon_workspace_protocol::v21::MAX_SESSIONS;
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, LiveIdentity,
     ObjectIdentity, ProcessOutcome, ProgramStatus, Record as ManagementRecord,

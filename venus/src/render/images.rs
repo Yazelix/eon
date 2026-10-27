@@ -784,9 +784,9 @@ mod tests {
     fn images_draw_in_panes_and_popups_and_refusals_keep_the_renderer() {
         use super::super::{FontSettings, FontSetup, PaddingColor, PresentOutcome, Renderer};
         use crate::{WorkspaceFocus, WorkspaceScene};
-        use eon_workspace_protocol::v20::{
-            ALT, Column, Pane, Popup, PopupEntry, PopupGeometry, Shortcut, Sidebar, Snapshot, Tab,
-            WorkspaceInfo,
+        use eon_workspace_protocol::v21::{
+            ALT, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut, Sidebar,
+            Snapshot, Tab, WorkspaceInfo,
         };
         use std::{
             sync::Arc,
@@ -865,10 +865,10 @@ mod tests {
                 entries: vec![PopupEntry {
                     id: "files".into(),
                     label: "Files".into(),
-                    shortcut: Shortcut {
+                    shortcut: PopupKey::Bound(Shortcut {
                         modifiers: ALT,
                         key: "KeyF".into(),
-                    },
+                    }),
                 }],
                 codex_quota: None,
                 claude_quota: None,

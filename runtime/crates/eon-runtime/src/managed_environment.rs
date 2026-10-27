@@ -11,9 +11,9 @@ use std::{
     process::Command,
 };
 
-use eon_workspace_protocol::v20::{
-    ALT, CTRL, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry, SHIFT, SUPER,
-    Shortcut,
+use eon_workspace_protocol::v21::{
+    ALT, CTRL, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES, PopupGeometry, PopupKey, SHIFT,
+    SUPER, Shortcut,
 };
 
 pub(super) fn nonempty_environment_path(name: &str) -> Option<PathBuf> {
@@ -177,7 +177,7 @@ pub enum PopupCommand {
 pub struct PopupDefinition {
     pub id: String,
     pub label: String,
-    pub shortcut: Shortcut,
+    pub shortcut: PopupKey,
     pub command: PopupCommand,
     pub keep_alive: bool,
 }
@@ -280,24 +280,25 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
     let mut popups = serde_json::Map::new();
     for entry in &defaults.popups.entries {
         let mut keys = Vec::new();
-        for (bit, name) in [
-            (CTRL, "Ctrl"),
-            (ALT, "Alt"),
-            (SHIFT, "Shift"),
-            (SUPER, "Super"),
-        ] {
-            if entry.shortcut.modifiers & bit != 0 {
-                keys.push(name);
+        if let Some(shortcut) = entry.shortcut.bound() {
+            for (bit, name) in [
+                (CTRL, "Ctrl"),
+                (ALT, "Alt"),
+                (SHIFT, "Shift"),
+                (SUPER, "Super"),
+            ] {
+                if shortcut.modifiers & bit != 0 {
+                    keys.push(name);
+                }
             }
+            keys.push(
+                shortcut
+                    .key
+                    .strip_prefix("Key")
+                    .or_else(|| shortcut.key.strip_prefix("Digit"))
+                    .unwrap_or(&shortcut.key),
+            );
         }
-        keys.push(
-            entry
-                .shortcut
-                .key
-                .strip_prefix("Key")
-                .or_else(|| entry.shortcut.key.strip_prefix("Digit"))
-                .unwrap_or(&entry.shortcut.key),
-        );
         let mut settings = json!({ "label": entry.label, "keybinding": keys.join("+") });
         if entry.id != "project" {
             settings["enabled"] = true.into();
@@ -626,6 +627,8 @@ pub(crate) fn popup_catalog(
     let geometry = defaults.popups.geometry;
 
     let mut entries = Vec::new();
+    // Whether each entry's key came from the configuration rather than a default.
+    let mut configured = Vec::new();
     for builtin in &defaults.popups.entries {
         let id = builtin.id.as_str();
         let settings = config.popups.remove(id).unwrap_or_default();
@@ -653,13 +656,12 @@ pub(crate) fn popup_catalog(
             Some(command) => configured_popup_command(id, command)?,
             None => builtin.command.clone(),
         };
+        configured.push(settings.keybinding.is_some());
         entries.push(PopupDefinition {
             id: id.into(),
             label: settings.label.unwrap_or_else(|| builtin.label.clone()),
             shortcut: match settings.keybinding {
-                Some(keybinding) => {
-                    parse_shortcut(&format!("popups.{id}.keybinding"), &keybinding)?
-                }
+                Some(keybinding) => popup_key(id, &keybinding)?,
                 None => builtin.shortcut.clone(),
             },
             command,
@@ -678,9 +680,10 @@ pub(crate) fn popup_catalog(
         let keybinding = settings
             .keybinding
             .ok_or_else(|| format!("popups.{id}.keybinding is required"))?;
+        configured.push(true);
         entries.push(PopupDefinition {
             label: settings.label.unwrap_or_else(|| id.clone()),
-            shortcut: parse_shortcut(&format!("popups.{id}.keybinding"), &keybinding)?,
+            shortcut: popup_key(&id, &keybinding)?,
             command: configured_popup_command(&id, command)?,
             keep_alive: settings
                 .keep_alive
@@ -688,8 +691,16 @@ pub(crate) fn popup_catalog(
             id,
         });
     }
-    validate_popup_entries(&entries)?;
+    resolve_popup_entries(&mut entries, &configured)?;
     Ok(PopupCatalog { geometry, entries })
+}
+
+/// An empty keybinding leaves the popup without a key.
+fn popup_key(id: &str, keybinding: &str) -> Result<PopupKey, String> {
+    if keybinding.is_empty() {
+        return Ok(PopupKey::Unbound);
+    }
+    parse_shortcut(&format!("popups.{id}.keybinding"), keybinding).map(PopupKey::Bound)
 }
 
 fn configured_popup_command(
@@ -785,21 +796,19 @@ fn parse_shortcut(path: &str, value: &str) -> Result<Shortcut, String> {
     Ok(shortcut)
 }
 
-fn validate_popup_entries(entries: &[PopupDefinition]) -> Result<(), String> {
+/// Configured keys claim their shortcuts first; a built-in default then
+/// yields to the configured popup holding it (EON-C10).
+fn resolve_popup_entries(
+    entries: &mut [PopupDefinition],
+    configured: &[bool],
+) -> Result<(), String> {
     if entries.len() > MAX_ENTRIES {
         return Err(format!(
             "popups accepts at most {MAX_ENTRIES} enabled entries"
         ));
     }
-    let mut shortcuts = HashMap::new();
-    for entry in entries {
+    for entry in entries.iter() {
         validate_popup_id(&entry.id)?;
-        entry.shortcut.validate().map_err(|_| {
-            format!(
-                "popups.{}.keybinding is not a supported modified physical key",
-                entry.id
-            )
-        })?;
         if entry.label.is_empty()
             || entry.label.len() > MAX_LABEL_BYTES
             || entry.label.chars().any(char::is_control)
@@ -809,17 +818,49 @@ fn validate_popup_entries(entries: &[PopupDefinition]) -> Result<(), String> {
                 entry.id
             ));
         }
-        if reserved_shortcut(&entry.shortcut) {
-            return Err(format!(
-                "popups.{}.keybinding is reserved for an Eon shortcut",
-                entry.id
-            ));
-        }
-        if let Some(previous) = shortcuts.insert(entry.shortcut.clone(), entry.id.as_str()) {
-            return Err(format!(
-                "popups.{}.keybinding conflicts with popups.{previous}.keybinding",
-                entry.id
-            ));
+    }
+    // Chords are unique among configured keys and among defaults; two defaults
+    // on one chord are a product bug even while a configured popup holds it.
+    let mut configured_keys = HashMap::new();
+    let mut default_keys = HashMap::new();
+    for pass in [true, false] {
+        for (entry, _) in entries
+            .iter_mut()
+            .zip(configured)
+            .filter(|(_, configured)| **configured == pass)
+        {
+            let Some(shortcut) = entry.shortcut.bound().cloned() else {
+                continue;
+            };
+            shortcut.validate().map_err(|_| {
+                format!(
+                    "popups.{}.keybinding is not a supported modified physical key",
+                    entry.id
+                )
+            })?;
+            if reserved_shortcut(&shortcut) {
+                return Err(format!(
+                    "popups.{}.keybinding is reserved for an Eon shortcut",
+                    entry.id
+                ));
+            }
+            let keys = if pass {
+                &mut configured_keys
+            } else {
+                &mut default_keys
+            };
+            if let Some(previous) = keys.insert(shortcut.clone(), entry.id.clone()) {
+                return Err(format!(
+                    "popups.{}.keybinding conflicts with popups.{previous}.keybinding",
+                    entry.id
+                ));
+            }
+            if !pass && let Some(holder) = configured_keys.get(&shortcut) {
+                entry.shortcut = PopupKey::Overridden {
+                    default: shortcut,
+                    by: holder.clone(),
+                };
+            }
         }
     }
     Ok(())
@@ -1099,9 +1140,10 @@ fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsSt
 #[cfg(test)]
 mod tests {
     use super::{
-        ManagedPrograms, PopupCommand, Tool, command as managed_command, integration_mask,
-        popup_catalog, prepare_popup_command, prepend_path, read_shell_config, sidebar_enabled,
-        startup_animation, terminal_presentation, tool, warning_close_last_tab,
+        ALT, ManagedPrograms, PopupCommand, PopupDefinition, PopupKey, SHIFT, Shortcut, Tool,
+        command as managed_command, integration_mask, popup_catalog, prepare_popup_command,
+        prepend_path, read_shell_config, sidebar_enabled, startup_animation, terminal_presentation,
+        tool, warning_close_last_tab,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -1775,8 +1817,20 @@ keep_alive = false
 
         for (source, expected) in [
             (
-                "[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"Alt+Z\"\n",
-                "conflicts with popups.project.keybinding",
+                "[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"Alt+Shift+F\"\n[popups.other]\ncommand = [\"tool\"]\nkeybinding = \"Alt+Shift+F\"\n",
+                "popups.other.keybinding conflicts with popups.extra.keybinding",
+            ),
+            (
+                "[popups.agent]\nkeybinding = \"Alt+Shift+F\"\n[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"Alt+Shift+F\"\n",
+                "popups.extra.keybinding conflicts with popups.agent.keybinding",
+            ),
+            (
+                "[popups.project]\nkeybinding = \"Alt+5\"\n",
+                "popups.project.keybinding is reserved for an Eon shortcut",
+            ),
+            (
+                "[popups.extra]\ncommand = [\"tool\"]\n",
+                "popups.extra.keybinding is required",
             ),
             (
                 "[popups.project]\ncommand = [\"other\"]\n",
@@ -1790,6 +1844,86 @@ keep_alive = false
                     .contains(expected)
             );
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn configured_popup_keys_take_built_in_defaults() {
+        let mut inputs = crate::fixtures::inputs();
+        inputs.defaults.popups.entries.push(PopupDefinition {
+            id: "commands".into(),
+            label: "Commands".into(),
+            shortcut: PopupKey::Bound(Shortcut {
+                modifiers: ALT | SHIFT,
+                key: "KeyM".into(),
+            }),
+            command: PopupCommand::Argv(vec!["fixture-commands".into()]),
+            keep_alive: false,
+        });
+        let root = std::env::temp_dir().join(format!(
+            "eon-managed-environment-test-{}-popup-keys",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        let key = |modifiers, key: &str| Shortcut {
+            modifiers,
+            key: key.into(),
+        };
+        let overridden = |default, by: &str| PopupKey::Overridden {
+            default,
+            by: by.into(),
+        };
+        for (source, expected) in [
+            // A custom popup on a built-in default takes it, wherever the
+            // built-in sits in the catalog.
+            (
+                "[popups.editor]\ncommand = [\"hx\"]\nkeybinding = \"Alt+Shift+M\"\n",
+                vec![
+                    ("commands", overridden(key(ALT | SHIFT, "KeyM"), "editor")),
+                    ("editor", PopupKey::Bound(key(ALT | SHIFT, "KeyM"))),
+                ],
+            ),
+            (
+                "[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"Alt+Z\"\n",
+                vec![
+                    ("project", overridden(key(ALT, "KeyZ"), "extra")),
+                    ("extra", PopupKey::Bound(key(ALT, "KeyZ"))),
+                ],
+            ),
+            // So does a built-in the user moved onto another's default.
+            (
+                "[popups.anima]\nkeybinding = \"Alt+Shift+J\"\n",
+                vec![
+                    ("git", overridden(key(ALT | SHIFT, "KeyJ"), "anima")),
+                    ("anima", PopupKey::Bound(key(ALT | SHIFT, "KeyJ"))),
+                ],
+            ),
+            // An empty keybinding leaves any popup without a key.
+            (
+                "[popups.project]\nkeybinding = \"\"\n[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"\"\n",
+                vec![("project", PopupKey::Unbound), ("extra", PopupKey::Unbound)],
+            ),
+        ] {
+            fs::write(root.join("config.toml"), source).unwrap();
+            let catalog = popup_catalog(&root, &inputs.defaults, None).unwrap();
+            for (id, key) in expected {
+                let entry = catalog.entries.iter().find(|entry| entry.id == id);
+                assert_eq!(entry.map(|entry| &entry.shortcut), Some(&key), "{source}");
+            }
+        }
+        // Two defaults on one chord stay an error even while a configured popup holds it.
+        inputs.defaults.popups.entries.last_mut().unwrap().shortcut =
+            PopupKey::Bound(key(ALT | SHIFT, "KeyJ"));
+        fs::write(
+            root.join("config.toml"),
+            "[popups.extra]\ncommand = [\"tool\"]\nkeybinding = \"Alt+Shift+J\"\n",
+        )
+        .unwrap();
+        assert!(
+            popup_catalog(&root, &inputs.defaults, None)
+                .unwrap_err()
+                .contains("popups.commands.keybinding conflicts with popups.git.keybinding")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

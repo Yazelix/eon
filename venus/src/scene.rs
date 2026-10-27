@@ -3,7 +3,7 @@ use crate::{
     model::{active_popup, focused_terminal, presented_panes},
     render::{CellMetrics, FALLBACK_CAP_HEIGHT_EM},
 };
-use eon_workspace_protocol::v20::{
+use eon_workspace_protocol::v21::{
     ALT, AttentionKind, AttentionState, ClaudeQuotaState, CodexQuotaState, PopupEntry, QuotaWindow,
     SHIFT, Sidebar, Snapshot, Tab,
 };
@@ -466,9 +466,11 @@ impl WorkspaceHeaderControl {
     /// this control's key (VEN-C20). Eon reserves Alt+/.
     fn label(self, entries: &[PopupEntry]) -> &'static str {
         let taken = |key: &str| {
-            entries
-                .iter()
-                .any(|entry| entry.shortcut.modifiers == ALT | SHIFT && entry.shortcut.key == key)
+            entries.iter().any(|entry| {
+                entry.shortcut.bound().is_some_and(|shortcut| {
+                    shortcut.modifiers == ALT | SHIFT && shortcut.key == key
+                })
+            })
         };
         match self {
             // The workspace label names itself from its popup entry.
@@ -3684,7 +3686,7 @@ fn resolve_color(color: StyleColor, default: Rgb, palette: &[Rgb; 256]) -> Color
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v20::Pane;
+    use eon_workspace_protocol::v21::Pane;
 
     #[test]
     fn eon_bar_pill_band_leaves_equal_title_cap_gap() {
@@ -3758,12 +3760,12 @@ mod tests {
 
     #[test]
     fn compact_pane_headers_share_title_height_and_full_row_targets() {
-        use eon_workspace_protocol::v20::{Column, PopupGeometry};
+        use eon_workspace_protocol::v21::{Column, PopupGeometry};
 
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -3844,7 +3846,7 @@ mod tests {
                 );
             }
             if scale <= 1.3 {
-                use eon_workspace_protocol::v20::{CodexQuota, CodexQuotaState};
+                use eon_workspace_protocol::v21::{CodexQuota, CodexQuotaState};
                 let mut snapshot = snapshot.clone();
                 snapshot.codex_quota = Some(CodexQuota {
                     state: CodexQuotaState::Unknown,
@@ -4049,8 +4051,8 @@ mod tests {
 
     #[test]
     fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
-        use eon_workspace_protocol::v20::{
-            AttentionState, Column, Popup, PopupEntry, PopupGeometry, Shortcut,
+        use eon_workspace_protocol::v21::{
+            AttentionState, Column, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut,
         };
 
         let pane = |id: &str| Pane {
@@ -4065,7 +4067,7 @@ mod tests {
         let mut snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -4078,10 +4080,10 @@ mod tests {
             entries: vec![PopupEntry {
                 id: "agent".into(),
                 label: "Agent".into(),
-                shortcut: Shortcut {
+                shortcut: PopupKey::Bound(Shortcut {
                     modifiers: ALT,
                     key: "KeyA".into(),
-                },
+                }),
             }],
             tabs: vec![Tab {
                 id: "t1".into(),
@@ -4182,7 +4184,7 @@ mod tests {
 
         // Any attention replaces the empty state.
         snapshot.sidebar = Sidebar::Open;
-        snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v20::Attention {
+        snapshot.tabs[0].popups[0].attention = Some(eon_workspace_protocol::v21::Attention {
             state: AttentionState::Unavailable,
             record: None,
         });
@@ -4192,8 +4194,9 @@ mod tests {
 
     #[test]
     fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
-        use eon_workspace_protocol::v20::{
-            Attention, AttentionRecord, Column, Popup, PopupEntry, PopupGeometry, Shortcut,
+        use eon_workspace_protocol::v21::{
+            Attention, AttentionRecord, Column, Popup, PopupEntry, PopupGeometry, PopupKey,
+            Shortcut,
         };
 
         const NOW: u64 = 1_800_000_000_000;
@@ -4263,7 +4266,7 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 3,
@@ -4276,10 +4279,10 @@ mod tests {
             entries: vec![PopupEntry {
                 id: "agent".into(),
                 label: "Agent popup".into(),
-                shortcut: Shortcut {
+                shortcut: PopupKey::Bound(Shortcut {
                     modifiers: ALT,
                     key: "KeyA".into(),
-                },
+                }),
             }],
             tabs: vec![
                 tab("t1", "/work", vec![pane("p1", None)], Vec::new(), None),
@@ -4600,14 +4603,14 @@ mod tests {
 
     #[test]
     fn popup_outer_chrome_reuses_the_pane_stack_rectangle() {
-        use eon_workspace_protocol::v20::{
-            ALT, Pane, Popup, PopupEntry, PopupGeometry, Shortcut, Tab,
+        use eon_workspace_protocol::v21::{
+            ALT, Pane, Popup, PopupEntry, PopupGeometry, PopupKey, Shortcut, Tab,
         };
 
         let mut snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -4620,10 +4623,10 @@ mod tests {
             entries: vec![PopupEntry {
                 id: "agent".into(),
                 label: "Agent".into(),
-                shortcut: Shortcut {
+                shortcut: PopupKey::Bound(Shortcut {
                     modifiers: ALT,
                     key: "KeyA".into(),
-                },
+                }),
             }],
             tabs: vec![Tab {
                 id: "t1".into(),
@@ -4631,7 +4634,7 @@ mod tests {
                 pending: false,
                 selected_pane: Some("p1".into()),
                 selected_popup: None,
-                columns: vec![eon_workspace_protocol::v20::Column {
+                columns: vec![eon_workspace_protocol::v21::Column {
                     panes: vec![Pane {
                         label: "p1".into(),
                         pinned_name: None,
@@ -4654,7 +4657,7 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v20::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v21::Sidebar::Open,
         };
         // Even the smallest windows keep terminal padding; only the gaps and empty grid yield.
         for scale in [1.0, 1.25, 1.3, 2.0] {
@@ -4855,7 +4858,7 @@ mod tests {
                         let id = format!("p{}", index + 1);
                         let mut column = column.clone();
                         column.panes[0].id.clone_from(&id);
-                        column.panes[0].attention = Some(eon_workspace_protocol::v20::Attention {
+                        column.panes[0].attention = Some(eon_workspace_protocol::v21::Attention {
                             state: AttentionState::Unavailable,
                             record: None,
                         });
@@ -5039,7 +5042,7 @@ mod tests {
         for index in 2..=3 {
             columns.tabs[0]
                 .columns
-                .push(eon_workspace_protocol::v20::Column {
+                .push(eon_workspace_protocol::v21::Column {
                     panes: vec![Pane {
                         label: format!("p{index}"),
                         pinned_name: None,
@@ -5268,12 +5271,12 @@ mod tests {
 
     #[test]
     fn eon_bar_keeps_tabs_controls_and_drag_hits_disjoint_under_pressure() {
-        use eon_workspace_protocol::v20::{Pane, PopupGeometry, Tab};
+        use eon_workspace_protocol::v21::{Pane, PopupGeometry, Tab};
 
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -5291,7 +5294,7 @@ mod tests {
                     pending: false,
                     selected_pane: Some(format!("p{index}")),
                     selected_popup: None,
-                    columns: vec![eon_workspace_protocol::v20::Column {
+                    columns: vec![eon_workspace_protocol::v21::Column {
                         panes: vec![Pane {
                             label: format!("p{index}"),
                             pinned_name: None,
@@ -5309,7 +5312,7 @@ mod tests {
                 .collect(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v20::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v21::Sidebar::Open,
         };
         let metrics = CellMetrics::for_scale(1.0);
 
@@ -5494,7 +5497,7 @@ mod tests {
 
     #[test]
     fn attention_badges_mark_tab_corners_without_moving_tabs() {
-        use eon_workspace_protocol::v20::{
+        use eon_workspace_protocol::v21::{
             Attention, AttentionRecord, AttentionState as State, Column, Pane, PopupGeometry,
         };
 
@@ -5529,7 +5532,7 @@ mod tests {
         let mut snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
@@ -5571,7 +5574,7 @@ mod tests {
                 .collect(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v20::Sidebar::Closed,
+            sidebar: eon_workspace_protocol::v21::Sidebar::Closed,
         };
         let metrics = CellMetrics::for_scale(1.0);
         let project = |snapshot: &Snapshot, width, scroll| {
@@ -5631,7 +5634,7 @@ mod tests {
         );
         // While the sidebar shows, the tabs carry no badge or state; hidden for width, they do.
         let mut open = snapshot.clone();
-        open.sidebar = eon_workspace_protocol::v20::Sidebar::Open;
+        open.sidebar = eon_workspace_protocol::v21::Sidebar::Open;
         let beside = project(&open, 1600, 0.0);
         assert!(beside.sidebar().is_some());
         assert!(beside.tabs.iter().all(|tab| tab.badge.is_none()));
@@ -6219,11 +6222,11 @@ mod tests {
             pending: false,
             selected_pane: Some("p1".into()),
             selected_popup: None,
-            columns: vec![eon_workspace_protocol::v20::Column {
+            columns: vec![eon_workspace_protocol::v21::Column {
                 panes: vec![pane("p1"), pane("p2")],
                 expanded: "p1".into(),
             }],
-            popups: vec![eon_workspace_protocol::v20::Popup {
+            popups: vec![eon_workspace_protocol::v21::Popup {
                 id: "u1".into(),
                 entry: "agent".into(),
                 session: "popup-session".into(),
@@ -6235,10 +6238,12 @@ mod tests {
         let entries = [PopupEntry {
             id: "agent".into(),
             label: "Agent".into(),
-            shortcut: eon_workspace_protocol::v20::Shortcut {
-                modifiers: ALT | SHIFT,
-                key: "KeyL".into(),
-            },
+            shortcut: eon_workspace_protocol::v21::PopupKey::Bound(
+                eon_workspace_protocol::v21::Shortcut {
+                    modifiers: ALT | SHIFT,
+                    key: "KeyL".into(),
+                },
+            ),
         }];
         let size = PhysicalSize::new(960, 600);
         let prompt =

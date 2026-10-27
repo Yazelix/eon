@@ -1,9 +1,9 @@
 use super::managed_environment::{PopupCatalog, PopupCommand, PopupDefinition};
-use eon_workspace_protocol::v20::{
+use eon_workspace_protocol::v21::{
     Action, Attention, AttentionState, Column as SnapshotColumn, Direction, Failure, InvokeIntent,
     MAX_COLUMNS, MAX_DIRECTORY_BYTES, MAX_SESSIONS, MAX_TABS, Pane as SnapshotPane,
-    Popup as SnapshotPopup, PopupEntry as SnapshotEntry, PopupTarget, Side, Sidebar, Snapshot,
-    Tab as SnapshotTab, WorkspaceAction, check_popup_action,
+    Popup as SnapshotPopup, PopupEntry as SnapshotEntry, PopupKey, PopupTarget, Side, Sidebar,
+    Snapshot, Tab as SnapshotTab, WorkspaceAction, check_popup_action,
 };
 use std::{
     collections::VecDeque,
@@ -301,7 +301,7 @@ impl WorkspaceSet {
         snapshot.workspaces = self
             .workspaces
             .iter()
-            .map(|workspace| eon_workspace_protocol::v20::WorkspaceInfo {
+            .map(|workspace| eon_workspace_protocol::v21::WorkspaceInfo {
                 id: workspace.id.clone(),
                 name: workspace.name.clone(),
                 tab_count: workspace.tabs.len(),
@@ -333,7 +333,7 @@ impl WorkspaceSet {
     }
 
     fn resolve_workspace(&self, target: &str) -> Result<usize, Failure> {
-        eon_workspace_protocol::v20::validate_workspace_name(target)
+        eon_workspace_protocol::v21::validate_workspace_name(target)
             .map_err(|error| action_error("malformed-action", error.to_string()))?;
         resolve_selector(
             self.workspaces
@@ -447,7 +447,7 @@ impl WorkspaceSet {
                     .map(str::trim)
                     .filter(|name| !name.is_empty());
                 if let Some(name) = name {
-                    eon_workspace_protocol::v20::validate_pane_name(name)
+                    eon_workspace_protocol::v21::validate_pane_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = self.workspaces[index]
@@ -463,10 +463,10 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::NewWorkspace { name, focus }) => {
                 if let Some(name) = &name {
-                    eon_workspace_protocol::v20::validate_workspace_name(name)
+                    eon_workspace_protocol::v21::validate_workspace_name(name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
-                if self.workspaces.len() >= eon_workspace_protocol::v20::MAX_WORKSPACES {
+                if self.workspaces.len() >= eon_workspace_protocol::v21::MAX_WORKSPACES {
                     return Err(action_error(
                         "workspace-limit",
                         "a window holds at most 32 workspaces",
@@ -499,7 +499,7 @@ impl WorkspaceSet {
             }
             Action::Workspace(WorkspaceAction::RenameWorkspace { workspace, name }) => {
                 if !name.is_empty() {
-                    eon_workspace_protocol::v20::validate_workspace_name(&name)
+                    eon_workspace_protocol::v21::validate_workspace_name(&name)
                         .map_err(|error| action_error("malformed-action", error.to_string()))?;
                 }
                 let target = workspace
@@ -706,7 +706,7 @@ impl Workspace {
         Snapshot {
             workspace: self.id.clone(),
             active_workspace: self.id.clone(),
-            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
                 id: self.id.clone(),
                 name: self.name.clone(),
                 tab_count: self.tabs.len(),
@@ -2200,7 +2200,13 @@ pub(crate) fn human(snapshot: &Snapshot) -> String {
                 popup.id,
                 popup.entry,
                 entry.map_or("?", |entry| entry.label.as_str()),
-                entry.map_or_else(|| "?".into(), |entry| shortcut_text(&entry.shortcut)),
+                entry.map_or_else(
+                    || "?".into(),
+                    |entry| entry
+                        .shortcut
+                        .bound()
+                        .map_or_else(|| "none".into(), shortcut_text)
+                ),
                 popup.session,
                 tab.selected_popup.as_deref() == Some(&popup.id),
                 String::from_utf8_lossy(&popup.endpoint).escape_debug(),
@@ -2223,11 +2229,23 @@ pub(crate) fn json(snapshot: &Snapshot) -> String {
             output.push(',');
         }
         output.push_str(&format!(
-            "{{\"id\":\"{}\",\"label\":\"{}\",\"keybinding\":\"{}\"}}",
+            "{{\"id\":\"{}\",\"label\":\"{}\",\"keybinding\":",
             json_escape(&entry.id),
             json_escape(&entry.label),
-            json_escape(&shortcut_text(&entry.shortcut)),
         ));
+        let (keybinding, overridden_by, default) = match &entry.shortcut {
+            PopupKey::Bound(shortcut) => (Some(shortcut_text(shortcut)), None, None),
+            PopupKey::Unbound => (None, None, None),
+            PopupKey::Overridden { default, by } => {
+                (None, Some(by.as_str()), Some(shortcut_text(default)))
+            }
+        };
+        json_option(&mut output, keybinding.as_deref());
+        output.push_str(",\"overridden_by\":");
+        json_option(&mut output, overridden_by);
+        output.push_str(",\"default_keybinding\":");
+        json_option(&mut output, default.as_deref());
+        output.push('}');
     }
     output.push_str("],\"tabs\":[");
     for (tab_index, tab) in snapshot.tabs.iter().enumerate() {
@@ -2458,13 +2476,13 @@ fn action_error(code: &'static str, detail: impl Into<String>) -> Failure {
     }
 }
 
-fn shortcut_text(shortcut: &eon_workspace_protocol::v20::Shortcut) -> String {
+fn shortcut_text(shortcut: &eon_workspace_protocol::v21::Shortcut) -> String {
     let mut parts = Vec::new();
     for (bit, name) in [
-        (eon_workspace_protocol::v20::CTRL, "Ctrl"),
-        (eon_workspace_protocol::v20::ALT, "Alt"),
-        (eon_workspace_protocol::v20::SHIFT, "Shift"),
-        (eon_workspace_protocol::v20::SUPER, "Super"),
+        (eon_workspace_protocol::v21::CTRL, "Ctrl"),
+        (eon_workspace_protocol::v21::ALT, "Alt"),
+        (eon_workspace_protocol::v21::SHIFT, "Shift"),
+        (eon_workspace_protocol::v21::SUPER, "Super"),
     ] {
         if shortcut.modifiers & bit != 0 {
             parts.push(name.to_string());
@@ -2524,7 +2542,7 @@ pub(crate) fn json_escape(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v20::{ALT, PopupGeometry, Shortcut};
+    use eon_workspace_protocol::v21::{ALT, PopupGeometry, Shortcut};
 
     fn two_workspace_set(
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
@@ -2780,8 +2798,8 @@ mod tests {
             ("w1", "w3")
         );
         assert_eq!(caller_view.tabs, original);
-        eon_workspace_protocol::v20::encode_response(
-            &eon_workspace_protocol::v20::Response::Snapshot(caller_view),
+        eon_workspace_protocol::v21::encode_response(
+            &eon_workspace_protocol::v21::Response::Snapshot(caller_view),
         )
         .unwrap();
 
@@ -2872,7 +2890,7 @@ mod tests {
             .code,
             "malformed-action"
         );
-        while set.workspaces.len() < eon_workspace_protocol::v20::MAX_WORKSPACES {
+        while set.workspaces.len() < eon_workspace_protocol::v21::MAX_WORKSPACES {
             set.dispatch(
                 &format!("new-{}", set.workspaces.len()),
                 None,
@@ -2928,8 +2946,8 @@ mod tests {
         )
         .unwrap();
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v20::encode_response(
-            &eon_workspace_protocol::v20::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v21::encode_response(
+            &eon_workspace_protocol::v21::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspaces.len(), 1);
@@ -3001,8 +3019,8 @@ mod tests {
         assert_eq!(error.code, "session-start");
         assert_eq!(error.detail, "start failed");
         let snapshot = set.snapshot();
-        eon_workspace_protocol::v20::encode_response(
-            &eon_workspace_protocol::v20::Response::Snapshot(snapshot.clone()),
+        eon_workspace_protocol::v21::encode_response(
+            &eon_workspace_protocol::v21::Response::Snapshot(snapshot.clone()),
         )
         .unwrap();
         assert_eq!(snapshot.workspace, "w1");
@@ -3586,7 +3604,7 @@ mod tests {
         let mut snapshot = workspace.snapshot();
         snapshot.tabs[0].columns[0].panes[0].attention = Some(Attention {
             state: AttentionState::NeedsInput,
-            record: Some(eon_workspace_protocol::v20::AttentionRecord {
+            record: Some(eon_workspace_protocol::v21::AttentionRecord {
                 kind: None,
                 progress: Some(40),
                 app: "codex".into(),
@@ -3629,40 +3647,40 @@ mod tests {
                 PopupDefinition {
                     id: "project".into(),
                     label: "Project".into(),
-                    shortcut: Shortcut {
+                    shortcut: PopupKey::Bound(Shortcut {
                         modifiers: ALT,
                         key: "KeyZ".into(),
-                    },
+                    }),
                     command: PopupCommand::Project,
                     keep_alive: false,
                 },
                 PopupDefinition {
                     id: "agent".into(),
                     label: "Agent".into(),
-                    shortcut: Shortcut {
+                    shortcut: PopupKey::Bound(Shortcut {
                         modifiers: ALT,
                         key: "KeyA".into(),
-                    },
+                    }),
                     command: PopupCommand::Argv(vec!["agent".into()]),
                     keep_alive: true,
                 },
                 PopupDefinition {
                     id: "git".into(),
                     label: "Git".into(),
-                    shortcut: Shortcut {
+                    shortcut: PopupKey::Bound(Shortcut {
                         modifiers: ALT,
                         key: "KeyG".into(),
-                    },
+                    }),
                     command: PopupCommand::Argv(vec!["git".into()]),
                     keep_alive: true,
                 },
                 PopupDefinition {
                     id: "files".into(),
                     label: "Files".into(),
-                    shortcut: Shortcut {
+                    shortcut: PopupKey::Bound(Shortcut {
                         modifiers: ALT,
                         key: "KeyY".into(),
-                    },
+                    }),
                     command: PopupCommand::Argv(vec!["files".into()]),
                     keep_alive: true,
                 },
@@ -3739,8 +3757,8 @@ mod tests {
         let after = workspace.snapshot();
         assert_eq!(after.tabs.len(), 1);
         assert_eq!(after.tabs[0].columns.len(), MAX_COLUMNS);
-        eon_workspace_protocol::v20::encode_response(
-            &eon_workspace_protocol::v20::Response::Snapshot(after),
+        eon_workspace_protocol::v21::encode_response(
+            &eon_workspace_protocol::v21::Response::Snapshot(after),
         )
         .unwrap();
         fs::remove_dir_all(root).unwrap();
@@ -3925,10 +3943,10 @@ mod tests {
         catalog.entries.push(PopupDefinition {
             id: "anima".into(),
             label: "Anima".into(),
-            shortcut: Shortcut {
+            shortcut: PopupKey::Bound(Shortcut {
                 modifiers: ALT,
                 key: "KeyN".into(),
-            },
+            }),
             command: PopupCommand::Argv(vec!["anima".into()]),
             keep_alive: false,
         });
@@ -5545,8 +5563,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.code, "session-start");
         assert_eq!(workspace.snapshot(), initial);
-        eon_workspace_protocol::v20::encode_response(
-            &eon_workspace_protocol::v20::Response::Snapshot(workspace.snapshot()),
+        eon_workspace_protocol::v21::encode_response(
+            &eon_workspace_protocol::v21::Response::Snapshot(workspace.snapshot()),
         )
         .unwrap();
 
@@ -5566,6 +5584,56 @@ mod tests {
             assert_eq!(workspace.snapshot(), before);
         }
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_keyless_project_still_opens_for_a_pending_tab() {
+        let overridden = PopupKey::Overridden {
+            default: Shortcut {
+                modifiers: ALT,
+                key: "KeyA".into(),
+            },
+            by: "agent".into(),
+        };
+        for (key, text, json_key) in [
+            (
+                PopupKey::Unbound,
+                "key=none",
+                r#""keybinding":null,"overridden_by":null,"default_keybinding":null}"#,
+            ),
+            (
+                overridden,
+                "key=none",
+                r#""keybinding":null,"overridden_by":"agent","default_keybinding":"Alt+A"}"#,
+            ),
+        ] {
+            let mut catalog = catalog();
+            catalog.entries[0].shortcut = key.clone();
+            let workspace = WorkspaceSet::pending(
+                "/runtime".into(),
+                "/".into(),
+                Some("/".into()),
+                catalog,
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+            let state = workspace.snapshot();
+            assert!(state.tabs[0].pending);
+            assert_eq!(state.tabs[0].popups[0].entry, "project");
+            assert_eq!(state.entries[0].shortcut, key);
+            assert!(human(&state).contains(&format!("entry=project label=Project {text} ")));
+            assert!(
+                json(&state).contains(&format!(r#"{{"id":"project","label":"Project",{json_key}"#))
+            );
+            assert!(json(&state).contains(
+                r#"{"id":"agent","label":"Agent","keybinding":"Alt+A","overridden_by":null,"default_keybinding":null}"#
+            ));
+            eon_workspace_protocol::v21::encode_response(
+                &eon_workspace_protocol::v21::Response::Snapshot(state),
+            )
+            .unwrap();
+        }
     }
 
     #[test]

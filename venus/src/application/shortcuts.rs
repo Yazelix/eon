@@ -1,7 +1,7 @@
 use super::{NATIVE_PLATFORM, NativePlatform};
-use eon_workspace_protocol::v20::{
-    Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, PopupEntry, Side,
-    Sidebar, Snapshot, Tab, WorkspaceAction as CommonAction,
+use eon_workspace_protocol::v21::{
+    Action as WorkspaceAction, Direction as WorkspaceDirection, InvokeIntent, PopupEntry, PopupKey,
+    Side, Sidebar, Snapshot, Tab, WorkspaceAction as CommonAction,
 };
 use orbit_protocol::session;
 use winit::{
@@ -526,26 +526,29 @@ pub(super) fn shortcut_groups_for(
             )
         })
         .collect::<Vec<_>>();
-    if !entries.is_empty() {
-        groups.insert(
-            2,
-            ShortcutGroup::new(
-                "Projects and tools",
-                entries
-                    .iter()
-                    .map(|entry| {
-                        ShortcutRow::new(
-                            physical_shortcut_label_for(
-                                platform,
-                                entry.shortcut.modifiers,
-                                &entry.shortcut.key,
-                            ),
-                            entry.label.clone(),
-                        )
-                    })
-                    .collect(),
-            ),
-        );
+    // An overridden entry keeps its default chord's row; an unbound one has none.
+    let rows = entries
+        .iter()
+        .filter_map(|entry| {
+            let (shortcut, label) = match &entry.shortcut {
+                PopupKey::Bound(shortcut) => (shortcut, entry.label.clone()),
+                PopupKey::Overridden { default, by } => {
+                    let by = entries
+                        .iter()
+                        .find(|other| &other.id == by)
+                        .map_or(by.as_str(), |other| other.label.as_str());
+                    (default, format!("{} (overridden by {by})", entry.label))
+                }
+                PopupKey::Unbound => return None,
+            };
+            Some(ShortcutRow::new(
+                physical_shortcut_label_for(platform, shortcut.modifiers, &shortcut.key),
+                label,
+            ))
+        })
+        .collect::<Vec<_>>();
+    if !rows.is_empty() {
+        groups.insert(2, ShortcutGroup::new("Projects and tools", rows));
     }
     groups
 }
@@ -592,7 +595,7 @@ pub(super) fn shortcut_hints_for(
             NativeShortcutTrigger::Key(code, modifiers) => {
                 (wire_modifiers(modifiers), format!("{code:?}"))
             }
-            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v20::ALT, "1..9".into()),
+            NativeShortcutTrigger::AltDigits => (eon_workspace_protocol::v21::ALT, "1..9".into()),
             _ => continue,
         };
         let modifiers = physical_modifiers_label_for(platform, modifiers, true);
@@ -629,17 +632,14 @@ pub(super) fn shortcut_hints_for(
         entries
             .iter()
             .filter(|entry| entry.id != "project")
-            .map(|entry| ShortcutHint {
-                modifiers: physical_modifiers_label_for(platform, entry.shortcut.modifiers, true),
-                key: physical_key_label(&entry.shortcut.key).into(),
+            .filter_map(|entry| Some((entry, entry.shortcut.bound()?)))
+            .map(|(entry, shortcut)| ShortcutHint {
+                modifiers: physical_modifiers_label_for(platform, shortcut.modifiers, true),
+                key: physical_key_label(&shortcut.key).into(),
                 label: entry.label.clone(),
                 accessible_label: format!(
                     "{} — {}",
-                    physical_shortcut_label_for(
-                        platform,
-                        entry.shortcut.modifiers,
-                        &entry.shortcut.key
-                    ),
+                    physical_shortcut_label_for(platform, shortcut.modifiers, &shortcut.key),
                     entry.label
                 ),
                 priority: if matches!(entry.id.as_str(), "git" | "agent") {
@@ -663,7 +663,7 @@ fn physical_shortcut_label_for(platform: NativePlatform, modifiers: u8, key: &st
 }
 
 fn physical_modifiers_label_for(platform: NativePlatform, modifiers: u8, compact: bool) -> String {
-    use eon_workspace_protocol::v20 as wire;
+    use eon_workspace_protocol::v21 as wire;
 
     let mut parts = Vec::with_capacity(5);
     let labels = match (platform, compact) {
@@ -707,7 +707,7 @@ fn physical_key_label(key: &str) -> &str {
 }
 
 fn wire_modifiers(modifiers: session::Modifiers) -> u8 {
-    use eon_workspace_protocol::v20 as wire;
+    use eon_workspace_protocol::v21 as wire;
 
     [
         (session::Modifiers::SHIFT, wire::SHIFT),
@@ -812,21 +812,18 @@ pub(super) fn popup_shortcut(
 /// The popup entry the Eon Bar's workspace label opens (VEN-C21).
 pub(super) const WORKSPACES_ENTRY: &str = "workspaces";
 
-/// The workspace label's tooltip: its popup entry's label and chord, while Eon configures it.
+/// The workspace label's tooltip: its popup entry's label and any chord, while Eon configures it.
 pub(super) fn workspace_picker_tooltip(entries: &[PopupEntry]) -> Option<String> {
     entries
         .iter()
         .find(|entry| entry.id == WORKSPACES_ENTRY)
-        .map(|entry| {
-            format!(
+        .map(|entry| match entry.shortcut.bound() {
+            Some(shortcut) => format!(
                 "{} — {}",
                 entry.label,
-                physical_shortcut_label_for(
-                    NATIVE_PLATFORM,
-                    entry.shortcut.modifiers,
-                    &entry.shortcut.key
-                )
-            )
+                physical_shortcut_label_for(NATIVE_PLATFORM, shortcut.modifiers, &shortcut.key)
+            ),
+            None => entry.label.clone(),
         })
 }
 
@@ -863,9 +860,12 @@ fn popup_entry(
     let modifiers = wire_modifiers(modifiers);
     // winit's physical KeyCode names are the canonical names in EONW v9.
     let key = format!("{code:?}");
-    entries
-        .iter()
-        .find(|entry| entry.shortcut.modifiers == modifiers && entry.shortcut.key == key)
+    entries.iter().find(|entry| {
+        entry
+            .shortcut
+            .bound()
+            .is_some_and(|shortcut| shortcut.modifiers == modifiers && shortcut.key == key)
+    })
 }
 
 #[cfg(test)]
@@ -1043,7 +1043,7 @@ mod tests {
 
     #[test]
     fn sideways_moves_open_a_column_only_for_a_stacked_outer_pane() {
-        use eon_workspace_protocol::v20::{Column, Pane};
+        use eon_workspace_protocol::v21::{Column, Pane};
 
         let pane = |id: &str| Pane {
             label: id.into(),
@@ -1085,18 +1085,22 @@ mod tests {
         let entry = PopupEntry {
             id: "agent".into(),
             label: "My agent".into(),
-            shortcut: eon_workspace_protocol::v20::Shortcut {
-                modifiers: eon_workspace_protocol::v20::SUPER,
-                key: "KeyF".into(),
-            },
+            shortcut: eon_workspace_protocol::v21::PopupKey::Bound(
+                eon_workspace_protocol::v21::Shortcut {
+                    modifiers: eon_workspace_protocol::v21::SUPER,
+                    key: "KeyF".into(),
+                },
+            ),
         };
         let project = PopupEntry {
             id: "project".into(),
             label: "Folder chooser".into(),
-            shortcut: eon_workspace_protocol::v20::Shortcut {
-                modifiers: eon_workspace_protocol::v20::ALT,
-                key: "KeyZ".into(),
-            },
+            shortcut: eon_workspace_protocol::v21::PopupKey::Bound(
+                eon_workspace_protocol::v21::Shortcut {
+                    modifiers: eon_workspace_protocol::v21::ALT,
+                    key: "KeyZ".into(),
+                },
+            ),
         };
         let entries = [entry.clone(), project.clone()];
         for platform in [NativePlatform::Linux, NativePlatform::Macos] {
@@ -1176,8 +1180,8 @@ mod tests {
                         && row.shortcut
                             == physical_shortcut_label_for(
                                 platform,
-                                project.shortcut.modifiers,
-                                &project.shortcut.key,
+                                eon_workspace_protocol::v21::ALT,
+                                "KeyZ",
                             ))
             );
             let agent = terminal
@@ -1198,8 +1202,8 @@ mod tests {
                     "{} — {}",
                     physical_shortcut_label_for(
                         platform,
-                        entry.shortcut.modifiers,
-                        &entry.shortcut.key
+                        eon_workspace_protocol::v21::SUPER,
+                        "KeyF"
                     ),
                     entry.label,
                 )
@@ -1291,15 +1295,15 @@ mod tests {
 
     #[test]
     fn configured_popups_take_fixed_bindings_except_reserved_keys() {
-        use eon_workspace_protocol::v20::{ALT, SHIFT, Shortcut};
+        use eon_workspace_protocol::v21::{ALT, SHIFT, Shortcut};
 
         let popup = |id: &str, modifiers, key: &str| PopupEntry {
             id: id.into(),
             label: "Files".into(),
-            shortcut: Shortcut {
+            shortcut: PopupKey::Bound(Shortcut {
                 modifiers,
                 key: key.into(),
-            },
+            }),
         };
         let new_window = PhysicalKey::Code(KeyCode::KeyN);
         for platform in [NativePlatform::Linux, NativePlatform::Macos] {
@@ -1393,13 +1397,13 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
             }],
             active_tab: "t1".into(),
-            geometry: eon_workspace_protocol::v20::PopupGeometry {
+            geometry: eon_workspace_protocol::v21::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1416,7 +1420,7 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v20::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v21::Sidebar::Open,
         };
         assert!(matches!(
             popup_shortcut(KeyCode::KeyW, session::Modifiers::ALT, &snapshot, true),
@@ -1433,6 +1437,66 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn keyless_popup_entries_list_overrides_and_never_dispatch() {
+        use eon_workspace_protocol::v21::{ALT, SHIFT, Shortcut};
+
+        let chord = Shortcut {
+            modifiers: ALT | SHIFT,
+            key: "KeyM".into(),
+        };
+        let popup = |id: &str, label: &str, shortcut| PopupEntry {
+            id: id.into(),
+            label: label.into(),
+            shortcut,
+        };
+        let commands = popup(
+            "commands",
+            "Commands",
+            PopupKey::Overridden {
+                default: chord.clone(),
+                by: "editor".into(),
+            },
+        );
+        let entries = [
+            commands.clone(),
+            popup("project", "Project", PopupKey::Unbound),
+            popup("editor", "Editor", PopupKey::Bound(chord)),
+        ];
+        let keyless = [commands, entries[1].clone()];
+        assert_eq!(
+            popup_entry(&entries, KeyCode::KeyM, ALT_SHIFT).map(|entry| entry.id.as_str()),
+            Some("editor")
+        );
+        assert!(popup_entry(&keyless, KeyCode::KeyM, ALT_SHIFT).is_none());
+        for platform in [NativePlatform::Linux, NativePlatform::Macos] {
+            let label = physical_shortcut_label_for(platform, ALT | SHIFT, "KeyM");
+            let tools = |entries| {
+                shortcut_groups_for(platform, entries, Sidebar::Open)
+                    .into_iter()
+                    .find(|group| group.title == "Projects and tools")
+                    .map(|group| group.rows)
+            };
+            assert_eq!(
+                tools(&entries),
+                Some(vec![
+                    ShortcutRow::new(label.clone(), "Commands (overridden by Editor)"),
+                    ShortcutRow::new(label, "Editor"),
+                ])
+            );
+            // An unbound entry has no row, so it alone leaves no group.
+            assert_eq!(tools(&keyless[1..]), None);
+            let hints =
+                shortcut_hints_for(platform, WorkspaceFocus::Terminal, &entries, Sidebar::Open);
+            assert!(hints.iter().any(|hint| hint.label == "Editor"));
+            assert!(
+                hints
+                    .iter()
+                    .all(|hint| !matches!(hint.label.as_str(), "Commands" | "Project"))
+            );
+        }
     }
 
     #[test]

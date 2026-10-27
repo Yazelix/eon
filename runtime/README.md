@@ -6,7 +6,7 @@ Both crates build and test without the Eon crates.
 | Package | Owns | Version |
 |---|---|---|
 | `eon-runtime` | Invocation, terminal lifecycle, workspace state, configuration parsing and generation identity | `0.1.0` |
-| `eon-workspace-protocol` | EONW v20 types and bounded codec | `0.1.0` |
+| `eon-workspace-protocol` | EONW v21 types and bounded codec | `0.1.0` |
 
 ## Consumer boundary
 
@@ -69,7 +69,9 @@ Successful missing quota clears prior facts.
 Eon's [EON-C27](../docs/CONTRACTS.md#eon-c27--codexbar-quota-collection)
 owns product policy and installed acceptance.
 
-EONW v20 adds the ordered workspace summaries, shown and projected workspace
+EONW v21 gives each popup entry a shortcut, or none because the configuration
+unbound it or because another entry holds its default shortcut. v20 adds the
+ordered workspace summaries, shown and projected workspace
 identities, create/switch/rename/close workspace requests, and pane labels,
 nullable pins and `RenamePane`. Runtime observes existing ORBS metadata for all
 workspace panes and owns label composition; clients render that bounded text. v19 adds the
@@ -85,7 +87,7 @@ its calling terminal; v12 adds a request that
 moves the selected pane into the neighbouring column; v11 adds a request that
 closes one pane by its stable identity; v10 arranges each tab's panes into up
 to four columns; v9 permits genuinely absent provider resets, including stale
-observations. Only v20 remains: the CLI
+observations. Only v21 remains: the CLI
 inspects and stops supervisors that use it, lists any other as incompatible,
 and presentation remains bound to the original exact executable.
 
@@ -95,7 +97,7 @@ Runtime and codec have separate package manifests and version owners. Runtime
 depends on the in-tree Orbit protocol crate.
 
 EONW's complete package is its Cargo manifest, `src/lib.rs` and
-`src/v20.rs`. It has no external dependencies, feature declarations,
+`src/v21.rs`. It has no external dependencies, feature declarations,
 build script or workspace-inherited settings.
 
 Runtime evolution has one owner here; Eon owns product composition and

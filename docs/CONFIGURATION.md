@@ -316,24 +316,38 @@ keep_alive = true
 ```
 
 Built-in popup commands, labels and shortcuts are listed in the defaults above.
-Agent's `auto` command selects the first available command among Codex, Grok,
-OpenCode, Pi, and Claude.
+Every built-in popup accepts `keybinding` and `label`. Git, Agent, Files,
+Commands and Workspaces also accept `command`, `enabled` and `keep_alive`, and
+Agent's `command` may also be `"auto"`. Anima also accepts `enabled`; it
+rejects `command` and `keep_alive = true`. Project rejects `command`,
+`enabled = false` and `keep_alive = true`, since it is the required chooser. A
+custom popup needs `command` and `keybinding`; its `label` defaults to its ID
+and its `keep_alive` to `true`.
+Agent's `auto` command runs the first of `codex resume`, `grok`, `opencode`,
+`pi` and `claude --resume` whose executable is on the terminal PATH.
 Files opens Yazi with Eon's own popup keys on Alt+Shift+Y and reads no Yazi
 configuration of yours. Setting `[popups.files].command` replaces it, for
 example with `["eon-yazi"]`, which reads the `yazi` directory under Eon's
 configuration root.
-Anima opens a random animation and stops when dismissed
-or replaced. Set `[popups.anima].enabled = false` to hide that shortcut; its
-command and transient lifetime are fixed.
-Commands searches and runs Eon commands; a custom
-popup on the same key collides with it until one of them moves.
+Anima opens a random animation and stops when dismissed or replaced.
+Commands searches and runs Eon commands.
 Workspaces lists this window's workspaces in window order: Enter shows the
 highlighted one, and Enter on a name that matches none creates a workspace with
 that name.
-Set `enabled = false` on Git, Agent, Files, Commands, Workspaces, or a custom
-popup to disable it. Project is the required chooser. A popup shortcut on the
-key of a built-in Eon shortcut takes that key, and Alt+/ lists the built-in one
-as overridden.
+Set `enabled = false` on Git, Agent, Files, Anima, Commands, Workspaces, or a
+custom popup to disable it.
+
+A `keybinding` you configure, on a custom popup or a built-in one, takes its
+key first. A built-in popup's default key applies only while no configured
+popup holds it; otherwise the built-in popup stays without a key, and Alt+/
+lists it under its default key as overridden by the popup that holds it.
+`keybinding = ""` leaves any popup, Project included, without a key. Until the
+CLI path `eon-agent-parity-a9g0.1` lands, a popup without a key cannot be
+opened from the window, except that Project still opens for a new tab's folder
+choice and the Eon Bar's workspace label still opens Workspaces.
+Two configured popups on one key fail at load. A popup shortcut on the key of a
+built-in Eon shortcut takes that key, and Alt+/ lists the built-in one as
+overridden.
 Alt+/ and Alt+0 through Alt+9 are reserved and cannot be bound.
 
 Set `EON_CONFIG_HOME` to select another configuration root and `EON_RUNTIME_DIR`

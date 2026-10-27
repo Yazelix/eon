@@ -567,7 +567,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v20 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v21 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -980,7 +980,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v20 and accepted Orbit management operations.
+- **Consumes:** Current EONW v21 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
@@ -989,10 +989,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v20 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v21 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
-- **Runtime policy:** Project is required on Alt+Z and uses Eon's existing
-  transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
+- **Runtime policy:** Project is required, defaults to Alt+Z, and uses Eon's
+  existing transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
   Agent defaults to the first available provider in the accepted Nova order on
   Alt+Shift+L. Git and Agent remain live when hidden. Reopening at the same tab
   directory preserves identity. When a tab's directory changes explicitly
@@ -1046,8 +1046,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   only that window. New pane dismisses the popup before it
   starts the pane, as Alt+M does, so a failure after that dismissal is not
   shown. Esc, Ctrl+C or no match runs nothing. The Commands popup follows the
-  existing popup catalog rules, so a configured popup on the same key is a
-  collision.
+  popup catalog's key precedence below.
   Workspaces defaults to Alt+Shift+S and runs `eon-workspaces`, a transient
   fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
   Switch workspace runs the same list in the Commands popup. Each row shows
@@ -1067,10 +1066,16 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Configuration:** Eon fixes popup margins at 8 side and 4 vertical logical
   pixels; a `[popup]` table is an unknown key and warns as described in EON-C9.
   `[popups.<id>]` owns direct argv, physical shortcut,
-  label, enabled state and keep-alive lifetime. Only Agent accepts `"auto"`.
+  label, enabled state and keep-alive lifetime. A configured `keybinding`,
+  every custom popup's and a built-in's that the user set, takes its key
+  first. A built-in popup's default key applies only while no configured popup
+  holds it; otherwise the built-in stays in the catalog without a key,
+  overridden by that popup. `keybinding = ""` leaves any popup, Project
+  included, in the catalog without a key. Only Agent accepts `"auto"`.
   Eon ignores unknown fields with the warning described in EON-C9. It rejects
-  malformed or colliding shortcuts, unbounded values and unavailable executables
-  before mutating workspace state. It does
+  malformed shortcuts, reserved shortcuts, two configured popups on one
+  shortcut, unbounded values and unavailable executables before mutating
+  workspace state. It does
   not install providers, cache selection, interpret shell strings, or expose
   commands over EONW beyond a calling terminal's `pane create -- COMMAND`. Bare executables resolve through the terminal PATH;
   relative executable paths resolve against the owning tab's launch directory.
@@ -1090,8 +1095,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   except a program's own status report text (`app`, `title`, `msg`) and its
   terminal title (`name`), which are not screen content: Orbit has validated,
   sanitized and bounded them under ORB-C15.
-- **Popup snapshot:** The catalog carries enabled entries, normalized physical
-  shortcuts and logical-pixel margins; per-tab popup terminals/selection and
+- **Popup snapshot:** The catalog carries enabled entries, each with its
+  normalized physical shortcut or, without one, whether the configuration
+  unbound it or another entry holds its default shortcut, and logical-pixel
+  margins; per-tab popup terminals/selection and
   pending-tab state are explicit. Popup-only tabs are valid. Popup commands,
   provider selection, cwd and lifetime remain runtime policy and never cross EONW;
   the EON-C31 `app` that crosses is the program's own report, not Eon's
@@ -1843,7 +1850,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   readable vertical space at normal and compact window sizes. A configured
   popup shortcut on the key of any other fixed binding takes that key; the
   fixed binding is unbound while that configuration is active, and the viewer
-  lists it as overridden by the popup. The fixed bindings include
+  lists it as overridden by the popup. A built-in popup whose default key a
+  configured popup holds is listed with that key as overridden by the
+  configured popup; a popup configured without a key has no row. The fixed
+  bindings include
   Alt+Shift+D, listed as "Detach: close the window, keep terminals running",
   Alt+Shift+H, listed as "Show or hide the agent sidebar" (EON-C31,
   VEN-C30) and omitted while `sidebar` is `Off`, and Alt+G and Alt+Shift+G,
@@ -1856,7 +1866,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   refresh preserves running supervisors and terminals; they retain their older
   client until a normal restart.
 - **Owner:** Eon owns component/default selection, profile delivery and
-  installed acceptance; Eon Runtime enforces configured popup collisions.
+  installed acceptance; Eon Runtime resolves popup keys and enforces
+  configured popup collisions.
   Venus owns viewer state, input, rendering, focus, accessibility, and a
   configured popup's precedence over its other fixed bindings.
 - **Consumes:** Venus VEN-C20 and VEN-C5, current EONW v7 and Orbit terminals.
@@ -1864,7 +1875,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Orbit update, child-application bindings, rebinding UI, command palette,
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
-  EONW. One exception: the viewer reads `sidebar` from EONW v20.
+  EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
+  from EONW v21.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -1930,13 +1942,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, EONW v7 (v20 for the EON-C31 tab attention
+- **Consumes:** Venus VEN-C21, EONW v7 (v21 for the EON-C31 tab attention
   marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion. The one exception is the
-  EON-C31 tab attention marker, which Venus reads from the EONW v20 snapshot it
+  EON-C31 tab attention marker, which Venus reads from the EONW v21 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2092,7 +2104,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Boundary:** No minor-mode framework, child-application key discovery,
   interactive hints, durable preference, configuration option, dependency,
   wire change or platform expansion, except that the hints read `sidebar` from
-  EONW v20. Future real modes replace contents from
+  EONW v21. Future real modes replace contents from
   their actual bindings at the same footer height.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2287,7 +2299,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Shortcuts:** every default shortcut the Alt+/ viewer lists at 1.0 keeps
     its action. A later default never makes a 1.0 configuration fail: a
     shortcut the user configured takes precedence over a default on the same
-    key (`eon-igae.10`, required before 1.0), except the reserved keys
+    key (`eon-igae.10` for fixed shortcuts and `eon-configurability-qkq8.1`
+    for built-in popups, required before 1.0), except the reserved keys
     [EON-C20](#eon-c20--discoverable-native-shortcuts) names (Alt+Slash and
     Alt+0 through Alt+9), which 1.x never enlarges.
   - **Upgrades:** installing a later 1.x never stops live terminals. The new
@@ -2494,7 +2507,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       - `sidebar` on the snapshot.
 
       It leaves out `kind`, `progress`, `title`, `msg`, `changed_at`, the stale flag and the
-      record count. v20 ships in 1.0, because `eon-agent-sidebar-yx8.9` gates
+      record count. v21 ships in 1.0, because `eon-agent-sidebar-yx8.9` gates
       eon-igae.7, .8 and .11, so EON-C28 freezes exactly these fields.
       - A program inside an Eon terminal can run `eon workspace`, so it can read every
         terminal's attention `state`, `app` and `name`. `title` and `msg` never appear through `eon
@@ -2587,7 +2600,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 2, EON-C8 topology, and EON-C10 (EONW v20, still
+- **Consumes:** ORB-C15, ORB-C13 generation 2, EON-C8 topology, and EON-C10 (EONW v21, still
   request and response, with no event stream).
 - **Boundary:**
   - no hooks and no edits to agent configuration;

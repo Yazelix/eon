@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v14 through the
-in-tree `orbit-protocol` crate and canonical EONW v20 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v21 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version. VEN-C31 is Planned and names the ORBF v3 in ORBS v14
@@ -1196,7 +1196,9 @@ re-proved when that platform or feature is next touched.
   grouped native workspace, host, and current Eon popup shortcuts. Fixed
   bindings share their descriptor owner with dispatch; popup rows use the exact
   enabled label and normalized physical shortcut from the current Eon
-  snapshot. A popup on the key of a fixed binding other than Alt+Slash and
+  snapshot; an entry the snapshot marks overridden is listed with its default
+  shortcut as "<label> (overridden by <popup label>)", and an entry without a
+  shortcut otherwise has no row. A popup on the key of a fixed binding other than Alt+Slash and
   Alt+0 through Alt+9 takes that key: dispatch invokes the popup, the footer
   omits the fixed hint, and the viewer row reads "<action> (overridden by
   <popup label>)". Wheel and navigation keys scroll bounded content. Opening,
@@ -1216,7 +1218,7 @@ re-proved when that platform or feature is next touched.
   workspace actions do not reach their normal targets.
 - **Owner:** Venus owns viewer state, fixed native binding descriptors, scene,
   rendering, input precedence, and AccessKit projection. Eon owns the enabled
-  popup catalog and must reserve Alt+Slash and Alt+0 through Alt+9 before
+  popup catalog and its key resolution and must reserve Alt+Slash and Alt+0 through Alt+9 before
   full-product delivery.
 - **Consumes:** Canonical EONW through the in-tree `eon-workspace-protocol`
   0.1.0.
@@ -1301,7 +1303,7 @@ re-proved when that platform or feature is next touched.
   so it does not read as a tab. A left press and release on it while the
   presentation is current, or Enter or Space after Tab focuses it, invokes the
   snapshot's `workspaces` popup entry as that entry's key does. Its tooltip is
-  that entry's label and chord, such as `Workspaces — Alt+Shift+S`; it takes
+  that entry's label and any chord, such as `Workspaces — Alt+Shift+S`; it takes
   the header controls' hover, pressed and focus states and is the first header
   control in Tab order. Without that entry it is inert text with no hover,
   focus, tooltip or action. Its AccessKit node is a button, or a label while
@@ -1341,7 +1343,7 @@ re-proved when that platform or feature is next touched.
   configuration, Nova compatibility, inactive-tab close, protocol change,
   dependency, native-decoration policy, or platform-support expansion. The
   exceptions are the EON-C31 tab attention marker and the EON-C33 workspace
-  label, read from the EONW v20 snapshot that Venus already polls, the label
+  label, read from the EONW v21 snapshot that Venus already polls, the label
   from its `workspace` and `workspaces`.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** Automated and installed.
@@ -1549,7 +1551,7 @@ re-proved when that platform or feature is next touched.
 - **Consumes:** Existing VEN-C19/C20/C21, canonical EONW, and ORBF v2 / ORBS v13.
 - **Boundary:** No new input mode, child-application key discovery, interactive
   hints, durable preference, generic widget registry, dependency, wire change
-  or platform expansion, except that the hints read `sidebar` from EONW v20.
+  or platform expansion, except that the hints read `sidebar` from EONW v21.
   Future Eon modes supply hints from their own actual bindings and replace
   contents at the same footer height.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
@@ -1840,7 +1842,7 @@ re-proved when that platform or feature is next touched.
   Alt+Shift+G work under `Off` too.
 - **Trigger:**
   - Alt+Shift+H;
-  - a new EONW v20 snapshot;
+  - a new EONW v21 snapshot;
   - the pointer, keyboard or AccessKit acts on the sidebar;
   - the window is resized.
 - **Result:**
@@ -1952,7 +1954,7 @@ re-proved when that platform or feature is next touched.
   scroll, attachment or resize, as quota-only refreshes already do (VEN-C22);
   a change in the sidebar's visibility resizes the columns as Layout says.
   VEN-C8, VEN-C22 and EON-C8 carry this clause.
-- **Consumes:** EONW v20 and the VEN-C22 and VEN-C26 icons, under the
+- **Consumes:** EONW v21 and the VEN-C22 and VEN-C26 icons, under the
   exceptions those contracts record for sidebar rows.
 - **Boundary:**
   - no interpretation of provider events, terminal output or process data,

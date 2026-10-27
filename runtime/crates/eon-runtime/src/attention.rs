@@ -7,7 +7,7 @@ use super::{
     sessions::{self, ProgramStatusRead, RunningSession},
     workspace::is_directory_picker_session,
 };
-use eon_workspace_protocol::v20::{
+use eon_workspace_protocol::v21::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
@@ -550,7 +550,7 @@ impl Attention {
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v20::{Column, Pane, Popup, PopupGeometry, Tab};
+    use eon_workspace_protocol::v21::{Column, Pane, Popup, PopupGeometry, Tab};
     use std::{fs, thread};
 
     /// A record created at its change `changed`.
@@ -629,7 +629,7 @@ mod tests {
         Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v20::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: tabs.len(),

@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v20 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v21 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -6,7 +6,7 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 20;
+pub const VERSION: u16 = 21;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -341,11 +341,30 @@ impl Shortcut {
     }
 }
 
+/// An entry's key: its shortcut, none because the configuration unbound it,
+/// or none because the entry `by` holds its `default` shortcut.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PopupKey {
+    Bound(Shortcut),
+    Unbound,
+    Overridden { default: Shortcut, by: String },
+}
+
+impl PopupKey {
+    /// The shortcut that opens the entry, if any.
+    pub fn bound(&self) -> Option<&Shortcut> {
+        match self {
+            Self::Bound(shortcut) => Some(shortcut),
+            Self::Unbound | Self::Overridden { .. } => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PopupEntry {
     pub id: String,
     pub label: String,
-    pub shortcut: Shortcut,
+    pub shortcut: PopupKey,
 }
 
 /// One live instance. A replacement receives a fresh id and endpoint.
@@ -1273,8 +1292,7 @@ fn encode_workspace(encoder: &mut Encoder, snapshot: &Snapshot, tabs: &[WireTab]
     for entry in &snapshot.entries {
         encoder.string(&entry.id);
         encoder.string(&entry.label);
-        encoder.byte(entry.shortcut.modifiers);
-        encoder.string(&entry.shortcut.key);
+        encode_popup_key(encoder, &entry.shortcut);
     }
     encoder.count(tabs.len());
     for tab in tabs {
@@ -1318,10 +1336,7 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
         entries.push(PopupEntry {
             id: decoder.string("entry id", MAX_ENTRY_ID_BYTES)?,
             label: decoder.string("entry label", MAX_LABEL_BYTES)?,
-            shortcut: Shortcut {
-                modifiers: decoder.byte()?,
-                key: decoder.string("shortcut key", MAX_KEY_BYTES)?,
-            },
+            shortcut: decode_popup_key(decoder)?,
         });
     }
     let count = decoder.count("tabs", MAX_TABS)?;
@@ -1386,6 +1401,50 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
     Ok((snapshot, tabs))
 }
 
+/// A tag (0 bound, 1 unbound, 2 overridden), then a bound or default
+/// shortcut as modifiers and key, then an overriding entry's id.
+fn encode_popup_key(encoder: &mut Encoder, key: &PopupKey) {
+    let shortcut = |encoder: &mut Encoder, shortcut: &Shortcut| {
+        encoder.byte(shortcut.modifiers);
+        encoder.string(&shortcut.key);
+    };
+    match key {
+        PopupKey::Bound(bound) => {
+            encoder.byte(0);
+            shortcut(encoder, bound);
+        }
+        PopupKey::Unbound => encoder.byte(1),
+        PopupKey::Overridden { default, by } => {
+            encoder.byte(2);
+            shortcut(encoder, default);
+            encoder.string(by);
+        }
+    }
+}
+
+fn decode_popup_key(decoder: &mut Decoder<'_>) -> Result<PopupKey> {
+    let shortcut = |decoder: &mut Decoder<'_>| -> Result<Shortcut> {
+        Ok(Shortcut {
+            modifiers: decoder.byte()?,
+            key: decoder.string("shortcut key", MAX_KEY_BYTES)?,
+        })
+    };
+    Ok(match decoder.byte()? {
+        0 => PopupKey::Bound(shortcut(decoder)?),
+        1 => PopupKey::Unbound,
+        2 => PopupKey::Overridden {
+            default: shortcut(decoder)?,
+            by: decoder.string("entry id", MAX_ENTRY_ID_BYTES)?,
+        },
+        value => {
+            return Err(Error::InvalidTag {
+                field: "popup key",
+                value,
+            });
+        }
+    })
+}
+
 fn entry_id(id: &str) -> Result<()> {
     nonempty("entry id", id, MAX_ENTRY_ID_BYTES)?;
     identity("entry id", id)
@@ -1420,8 +1479,23 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
                 field: "entry label",
             });
         }
-        entry.shortcut.validate()?;
-        if !entries.insert(entry.id.as_str()) || !shortcuts.insert(&entry.shortcut) {
+        let unique = match &entry.shortcut {
+            PopupKey::Bound(shortcut) => {
+                shortcut.validate()?;
+                shortcuts.insert(shortcut)
+            }
+            PopupKey::Unbound => true,
+            PopupKey::Overridden { default, by } => {
+                default.validate()?;
+                entry_id(by)?;
+                // The overriding entry is another listed one bound to the default.
+                snapshot
+                    .entries
+                    .iter()
+                    .any(|other| &other.id == by && other.shortcut.bound() == Some(default))
+            }
+        };
+        if !entries.insert(entry.id.as_str()) || !unique {
             return Err(Error::InvalidSnapshot { field: "entries" });
         }
     }
@@ -2434,10 +2508,10 @@ mod tests {
         let entry = |id: &str, key: &str| PopupEntry {
             id: id.into(),
             label: id.into(),
-            shortcut: Shortcut {
+            shortcut: PopupKey::Bound(Shortcut {
                 modifiers: ALT | SHIFT,
                 key: key.into(),
-            },
+            }),
         };
         let tab = |id: &str, columns, popups: Vec<Popup>| Tab {
             id: id.into(),
@@ -2714,14 +2788,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57140001000a00000002007231001202007431",
+                "454f4e57150001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57140001001000000002007231000c0200743104002f746d70",
+                "454f4e57150001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -2730,55 +2804,55 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571400010015000000020072310013020074310300676974010200753101",
+                "454f4e571500010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e571400010014000000020072310015020074310200753104002f746d70",
+                "454f4e571500010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e571400010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571500010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57140001000a00000002007231001702007032",
+                "454f4e57150001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571400010006000000020072310019",
+                "454f4e571500010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57140001000e00000002007231001a06002f746d702f61",
+                "454f4e57150001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57140001001000000002007231001b00020002006878010061",
+                "454f4e57150001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57140001000600000002007231001c",
+                "454f4e57150001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57140001000e00000002007231001d0200743102007032",
+                "454f4e57150001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57140001000600000002007231001e",
+                "454f4e57150001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57140001000600000002007231001f",
+                "454f4e57150001000600000002007231001f",
             ),
         ] {
             let request = Request {
@@ -2798,7 +2872,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57140001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e57150001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -2825,10 +2899,10 @@ mod tests {
             entries: vec![PopupEntry {
                 id: "git".into(),
                 label: "Git".into(),
-                shortcut: Shortcut {
+                shortcut: PopupKey::Bound(Shortcut {
                     modifiers: ALT,
                     key: "KeyG".into(),
-                },
+                }),
             }],
             tabs: vec![Tab {
                 id: "t1".into(),
@@ -2893,23 +2967,23 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5714008100fa0000000100020002000100010000000200743100000041",
-                    "000080400100030067697403004769740404004b65794701000200743104002f",
-                    "746d700001020070330102007531030002007031030073703103002f70310102",
-                    "007031000002007032030073703203002f703201020070320000020070330300",
-                    "73703303002f70330102007033000102ff0500636f6465780600656f6e2d3961",
-                    "01007401006d0100000000000000000200010002007531030067697403007375",
-                    "3103002f753100010100640000000000000001002c0100002a01f40100000000",
-                    "000001015a000000000000000100602700000700010200773102007731010002",
-                    "007731000100",
+                    "454f4e5715008100fb0000000100020002000100010000000200743100000041",
+                    "00008040010003006769740300476974000404004b6579470100020074310400",
+                    "2f746d700001020070330102007531030002007031030073703103002f703101",
+                    "02007031000002007032030073703203002f7032010200703200000200703303",
+                    "0073703303002f70330102007033000102ff0500636f6465780600656f6e2d39",
+                    "6101007401006d01000000000000000002000100020075310300676974030073",
+                    "753103002f753100010100640000000000000001002c0100002a01f401000000",
+                    "00000001015a0000000000000001006027000007000102007731020077310100",
+                    "02007731000100",
                 ),
             ),
-            (failure, "454f4e57140082000a00000004006275737902006e6f"),
+            (failure, "454f4e57150082000a00000004006275737902006e6f"),
             (
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57140085000400000002006731",
+                "454f4e57150085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -2935,7 +3009,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e571400830026000000020067310500302e392e30140002006f6b010002",
+                    "454f4e571500830026000000020067310500302e392e30150002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -2944,7 +3018,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571400840006000000020067310000",
+                "454f4e571500840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -3376,9 +3450,12 @@ mod tests {
         let bytes = encode_response(&Response::Snapshot(state.clone())).unwrap();
         assert_eq!(forge(&state), bytes);
 
-        let valid: [fn(&mut Snapshot); 8] = [
+        let valid: [fn(&mut Snapshot); 10] = [
             |_| {},
             |s| s.sidebar = Sidebar::Off,
+            // An entry may be keyless, or overridden by another listed entry.
+            |s| s.entries[0].shortcut = PopupKey::Unbound,
+            |s| s.entries[0].shortcut = overridden("KeyL", "agent"),
             // The states, kinds and visibility the fixture leaves out.
             |s| {
                 s.sidebar = Sidebar::Open;
@@ -3435,6 +3512,21 @@ mod tests {
             let pane = &mut s.tabs[0].columns[0].panes[1];
             pane.attention.as_mut().unwrap().record.as_mut().unwrap()
         }
+        fn bound(s: &mut Snapshot, entry: usize) -> &mut Shortcut {
+            match &mut s.entries[entry].shortcut {
+                PopupKey::Bound(shortcut) => shortcut,
+                key => panic!("{key:?}"),
+            }
+        }
+        fn overridden(key: &str, by: &str) -> PopupKey {
+            PopupKey::Overridden {
+                default: Shortcut {
+                    modifiers: ALT | SHIFT,
+                    key: key.into(),
+                },
+                by: by.into(),
+            }
+        }
         type Change = fn(&mut Snapshot);
         let invalid: [(&str, &[Change]); 27] = [
             // Every tab, pane and popup owns its identity, session and endpoint.
@@ -3480,23 +3572,35 @@ mod tests {
                     |s| s.tabs[1].popups[0].entry = "agent".into(),
                 ],
             ),
+            // Bound shortcuts are unique, and an overriding entry is another
+            // listed one bound to the overridden default.
             (
                 "entries",
                 &[
                     |s| s.entries[1].id = PROJECT_ENTRY.into(),
-                    |s| s.entries[1].shortcut.key = "KeyZ".into(),
+                    |s| bound(s, 1).key = "KeyZ".into(),
+                    |s| s.entries[0].shortcut = overridden("KeyL", "missing"),
+                    |s| s.entries[1].shortcut = overridden("KeyL", "agent"),
+                    |s| s.entries[0].shortcut = overridden("KeyZ", "agent"),
                 ],
             ),
             (
                 "shortcut",
                 &[
-                    |s| s.entries[0].shortcut.modifiers = 128,
-                    |s| s.entries[0].shortcut.key = "keyz".into(),
+                    |s| bound(s, 0).modifiers = 128,
+                    |s| bound(s, 0).key = "keyz".into(),
+                    |s| s.entries[0].shortcut = overridden("keyl", "agent"),
                 ],
             ),
             (
                 "entry id",
-                &[|s| s.entries[0].id = "x".repeat(MAX_ENTRY_ID_BYTES + 1)],
+                &[
+                    |s| s.entries[0].id = "x".repeat(MAX_ENTRY_ID_BYTES + 1),
+                    |s| {
+                        let by = "x".repeat(MAX_ENTRY_ID_BYTES + 1);
+                        s.entries[0].shortcut = overridden("KeyL", &by);
+                    },
+                ],
             ),
             (
                 "entry label",
@@ -3635,6 +3739,23 @@ mod tests {
             }
         }
 
+        // A popup key carries a known tag; agent's follows its id and label.
+        let mut forged = bytes.clone();
+        let named = [&[5, 0][..], b"agent", &[5, 0], b"agent"].concat();
+        let tag = forged
+            .windows(named.len())
+            .position(|window| window == named)
+            .unwrap()
+            + named.len();
+        forged[tag] = 3;
+        assert_eq!(
+            decode_response(&forged),
+            Err(Error::InvalidTag {
+                field: "popup key",
+                value: 3
+            })
+        );
+
         // A layout covering fewer panes than the tab carries cannot drop the rest.
         // The payload opens with the tab count, then t1's column count and its
         // first column's pane count.
@@ -3672,7 +3793,7 @@ mod tests {
             + id
             + 8
             + 2
-            + MAX_ENTRIES * (entry_id + 2 + MAX_LABEL_BYTES + 1 + 2 + MAX_KEY_BYTES)
+            + MAX_ENTRIES * (entry_id + 2 + MAX_LABEL_BYTES + 1 + 1 + 2 + MAX_KEY_BYTES + entry_id)
             + 2
             + MAX_TABS * (id + 2 + MAX_DIRECTORY_BYTES + 1 + 2 * (1 + id) + 2 + 2 + 1)
             + MAX_SESSIONS
@@ -3700,13 +3821,23 @@ mod tests {
             format!("{name}{}", "x".repeat(length - name.len()))
         };
         let mut state = snapshot();
+        // The longest entry form is one overridden by the longest id.
+        let default = Shortcut {
+            modifiers: SHIFT | CTRL | ALT | SUPER,
+            key: "BracketRight".into(),
+        };
+        let first = name("entry", 0, MAX_ENTRY_ID_BYTES);
         state.entries = (0..MAX_ENTRIES)
             .map(|n| PopupEntry {
                 id: name("entry", n, MAX_ENTRY_ID_BYTES),
                 label: "x".repeat(MAX_LABEL_BYTES),
-                shortcut: Shortcut {
-                    modifiers: (n % 15 + 1) as u8,
-                    key: ["BracketRight", "BracketLeft", "ArrowRight"][n / 15].into(),
+                shortcut: if n == 0 {
+                    PopupKey::Bound(default.clone())
+                } else {
+                    PopupKey::Overridden {
+                        default: default.clone(),
+                        by: first.clone(),
+                    }
                 },
             })
             .collect();

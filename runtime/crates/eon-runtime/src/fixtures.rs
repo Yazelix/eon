@@ -4,7 +4,7 @@ use crate::{
     Defaults, Inputs, ManagedPrograms, PaddingColor, PopupCatalog, PopupCommand, PopupDefinition,
     ShellConfig, StartupAnimation, TerminalConfig,
 };
-use eon_workspace_protocol::v20::{ALT, PopupGeometry, SHIFT, Shortcut};
+use eon_workspace_protocol::v21::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) fn inputs() -> Inputs {
     Inputs {
@@ -81,10 +81,10 @@ pub(crate) fn inputs() -> Inputs {
                     |(id, key, modifiers, command, keep_alive)| PopupDefinition {
                         id: id.into(),
                         label: format!("Fixture {id}"),
-                        shortcut: Shortcut {
+                        shortcut: PopupKey::Bound(Shortcut {
                             modifiers,
                             key: key.into(),
-                        },
+                        }),
                         command,
                         keep_alive,
                     },

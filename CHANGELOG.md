@@ -9,6 +9,15 @@ installation, and proven contract changes.
   an old history row drawn at the terminal's top edge while a program keeps
   printing; the edge follows the output, refreshed about every 50 ms.
 
+- A popup you configure on a built-in popup's default key now takes that key
+  instead of failing to load; the built-in popup stays in Alt+/ under its
+  default key as "overridden by" yours. `keybinding = ""` leaves any popup,
+  Project included, without a key. `eon workspace --json` entries add
+  `overridden_by` and `default_keybinding`, and an entry's `keybinding` can be
+  `null`; the text form shows `key=none`. EONW moves to v21 and Eon to 0.1.4,
+  so after a profile refresh the new `eon` cannot control a window started
+  from an older build until that window is restarted.
+
 - When a terminal's Orbit worker dies, its Orbit log names how the worker
   ended, such as `signal: 9 (SIGKILL)`, with the terminal's session and run,
   instead of nothing.
