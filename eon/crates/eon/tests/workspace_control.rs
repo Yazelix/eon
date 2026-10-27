@@ -4362,6 +4362,166 @@ fn closing_the_final_tab_ends_the_window_and_its_terminals() {
 }
 
 #[test]
+fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    // A font size makes Present hand each Venus its startup workspace.
+    fs::write(
+        config.join("config.toml"),
+        "[terminal]\nfont_fallbacks = []\nfont_size = 20\n\n[anima]\nenabled = false\n",
+    )
+    .unwrap();
+    let stop = root.join("stop");
+    let venus_pids = root.join("venus.pids");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    // Each Venus keeps its input. Told to detach, it exits 0, as Venus does when its window
+    // closes.
+    executable(
+        &venus,
+        "#!/bin/sh\nprintf '%s\\n' \"$$\" >> \"$EON_TEST_VENUS_PIDS\"\nexec 3<&0\n(cat <&3 > \"$EON_TEST_VENUS_INPUT.$$\"; touch \"$EON_TEST_VENUS_INPUT.$$.eof\") &\nprintf ready-v1\nwhile test ! -e \"$EON_TEST_VENUS_INPUT.$$.detach\" && test ! -e \"$EON_TEST_VENUS_INPUT.$$.eof\"; do sleep 0.01; done\n",
+    );
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let eon = |arguments: &[&str]| {
+        let mut command = eon_command(&binary);
+        command
+            .args(arguments)
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_TEST_STOP", &stop)
+            .env("EON_TEST_VENUS_PIDS", &venus_pids)
+            .env("EON_TEST_VENUS_INPUT", root.join("venus-input"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    };
+    let mut supervisor = TestProcess {
+        child: eon(&["run"]).spawn().unwrap(),
+        stop: stop.clone(),
+    };
+    let generation = generation_runtime(&runtime);
+    let control = generation.join("eon.sock");
+    wait_for(&control);
+    let venus_pid = |count: usize| -> u32 {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let pids = fs::read_to_string(&venus_pids).unwrap_or_default();
+            if let Some(pid) = pids.lines().nth(count - 1) {
+                return pid.parse().unwrap();
+            }
+            assert!(Instant::now() < deadline, "Venus {count} did not start");
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+    let snapshot = |response| match response {
+        Response::Snapshot(snapshot) => snapshot,
+        other => panic!("expected a workspace: {other:?}"),
+    };
+    let ids = |snapshot: &Snapshot| {
+        snapshot
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.id.clone())
+            .collect::<Vec<_>>()
+    };
+    let first_venus = venus_pid(1);
+    for id in ["w2", "w3"] {
+        let created = snapshot(workspace_action(
+            &control,
+            &format!("new-{id}"),
+            Action::NewWorkspace {
+                name: None,
+                focus: true,
+            },
+        ));
+        assert_eq!(created.active_workspace, id);
+    }
+    // Shown w1, w2, w3, then w1 again: closing w1 shows w3, the most recent, rather than
+    // its following sibling or the first remaining workspace, both w2.
+    let first = snapshot(workspace_action(
+        &control,
+        "back",
+        Action::SwitchWorkspace {
+            workspace: "w1".into(),
+        },
+    ));
+    assert_eq!(first.tabs.len(), 1);
+    let closed = snapshot(workspace_action(
+        &control,
+        "close-w1",
+        Action::CloseTab {
+            tab: first.active_tab.clone(),
+        },
+    ));
+    assert_eq!(
+        (closed.workspace.as_str(), closed.active_workspace.as_str()),
+        ("w3", "w3")
+    );
+    assert_eq!(ids(&closed), ["w2", "w3"]);
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    assert!(Path::new("/proc").join(first_venus.to_string()).exists());
+
+    // Detaching keeps every workspace, and attach presents the one last shown.
+    fs::write(root.join(format!("venus-input.{first_venus}.detach")), "").unwrap();
+    wait_for_process_removal(first_venus, "Venus did not detach");
+    let generation_id = generation.file_name().unwrap().to_str().unwrap();
+    assert!(eon(&["attach", generation_id]).status().unwrap().success());
+    let second_venus = venus_pid(2);
+    let input = root.join(format!("venus-input.{second_venus}"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let presented = loop {
+        let bytes = fs::read(&input).unwrap_or_default();
+        if bytes.len() >= HEADER_BYTES {
+            let length = declared_message_len(&bytes[..HEADER_BYTES]).unwrap();
+            if bytes.len() >= length {
+                break snapshot(decode_response(&bytes[..length]).unwrap());
+            }
+        }
+        assert!(Instant::now() < deadline, "attach sent Venus no workspace");
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert_eq!(
+        (
+            presented.workspace.as_str(),
+            presented.active_workspace.as_str()
+        ),
+        ("w3", "w3")
+    );
+    assert_eq!(ids(&presented), ["w2", "w3"]);
+
+    // Only the last workspace's final close ends the window.
+    let emptied = snapshot(workspace_action(
+        &control,
+        "close-w3",
+        Action::CloseTab {
+            tab: presented.active_tab.clone(),
+        },
+    ));
+    assert_eq!(ids(&emptied), ["w2"]);
+    assert_eq!(emptied.active_workspace, "w2");
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+    assert!(matches!(
+        workspace_action(
+            &control,
+            "close-w2",
+            Action::CloseTab {
+                tab: emptied.active_tab.clone(),
+            },
+        ),
+        Response::Ended(_)
+    ));
+    wait_for_successful_exit(&mut supervisor.child);
+    assert!(!control.exists());
+    wait_for_process_removal(second_venus, "a final close left Venus running");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn launch_overlapping_last_session_exit_starts_a_fresh_session() {
     let root = temporary_directory();
     let runtime = root.join("runtime");

@@ -670,7 +670,9 @@ re-proved when that platform or feature is next touched.
     non-repeating close naming the snapshot's active stable `tN`; Alt+W sends
     one EONW v11 close naming the active tab's selected `pN` and is consumed
     without an action when the tab has none. Both may target the final tab and
-    its last pane. Such a final close, when the `--warning-close-last-tab`
+    its last pane. While the snapshot lists other workspaces (EON-C33), that
+    close only removes the shown workspace and Venus sends it without a
+    prompt. Otherwise such a final close, when the `--warning-close-last-tab`
     launch argument is true (its default), first shows the EON-C8 prompt, which
     Venus owns: Enter sends the held close, first focusing its tab if another
     tab became active, Escape dismisses it, Alt+Shift+D detaches, the wheel and

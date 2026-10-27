@@ -4615,8 +4615,9 @@ fn accessibility_workspace_focus(
     queue(CommonAction::FocusId(id)).then_some(focus)
 }
 
-/// The tab a close would end the window with: the only tab, closed whole or through its
-/// last pane. Runtime refuses a pane close under a popup, so that close is not asked about.
+/// The tab a close would end the window with: the only tab of the only workspace, closed
+/// whole or through its last pane. With other workspaces the close removes just this one
+/// (EON-C33). Runtime refuses a pane close under a popup, so that close is not asked about.
 fn final_close_tab(
     snapshot: &eon_workspace_protocol::v20::Snapshot,
     action: &WorkspaceAction,
@@ -4624,6 +4625,9 @@ fn final_close_tab(
     let [tab] = snapshot.tabs.as_slice() else {
         return None;
     };
+    if snapshot.workspaces.len() != 1 {
+        return None;
+    }
     let last = match action {
         WorkspaceAction::Workspace(CommonAction::CloseTab { tab: id }) => *id == tab.id,
         WorkspaceAction::ClosePane { pane } => {
@@ -5044,6 +5048,17 @@ mod tests {
         let two = snapshot(vec![tab("t1", &["p1"]), tab("t2", &["p2"])]);
         assert_eq!(final_close_tab(&two, &close_tab("t1")), None);
         assert_eq!(final_close_tab(&two, &close_pane("p1")), None);
+        // With another workspace, closing the shown one's last tab keeps the window.
+        let mut shared = one.clone();
+        shared
+            .workspaces
+            .push(eon_workspace_protocol::v20::WorkspaceInfo {
+                id: "w2".into(),
+                name: None,
+                tab_count: 1,
+            });
+        assert_eq!(final_close_tab(&shared, &close_tab("t1")), None);
+        assert_eq!(final_close_tab(&shared, &close_pane("p1")), None);
 
         // The prompt keeps its close while the named tab and pane live, even when a tab appears.
         let prompt = |action| ClosePrompt {

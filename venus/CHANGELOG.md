@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C8: closing the last tab or its last pane while the snapshot lists other
+  workspaces shows no final-close prompt, since it only removes the shown
+  workspace (EON-C33, `eon-workspace-switching-shn4.4`).
+
 - VEN-C28: the CPU tooltip and AccessKit label name the logical CPUs the
   percentage covers, as `CPU use 12% across 16 logical CPUs, over the last 2
   seconds`; a `/proc/stat` sample without per-CPU lines shows no label

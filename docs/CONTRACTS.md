@@ -482,10 +482,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     failure, and every remaining live terminal stays represented in the
     partially pruned tab. A terminal that ended naturally during the request is
     reconciled and pruned as an exit rather than reported as a successful Stop.
-    Closing the final tab ends the window. Eon stops its pane and popup
+    Closing the final tab of the window's last workspace (EON-C33) ends the
+    window. Eon stops its pane and popup
     terminals as above, then, as Stop does, any run of the generation that no
     tab tracks; once every stop is confirmed it ends the generation, as when
     the last terminal exits. The reply is EONW `Ended`, and Venus then exits.
+    While other workspaces remain, closing a workspace's final tab stops that
+    tab's pane and popup terminals and removes the workspace; if it was shown, the
+    most recently shown remaining workspace is shown. The reply is that
+    snapshot, and the window stays.
     A failed tab stop keeps the window
     and its remaining terminals, as a partial close does; a failed stop of an
     untracked run fails as Stop does. `[workspace] warning_close_last_tab`,
@@ -498,10 +503,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Alt+Shift+D (EON-C20); Alt+Shift+D works while the prompt is open. If
     the snapshot gains a tab while the prompt is open, Enter closes only the
     named tab and the window stays. When the setting is false, a final close
-    quits at once. Venus receives the setting as a launch argument (VEN-C8).
+    quits at once. Closing a workspace's final tab while other workspaces
+    remain asks nothing yet; EON-C33's workspace-worded prompt is planned.
+    Venus receives the setting as a launch argument (VEN-C8).
     Venus maps Alt+Shift+W directly to this stable-target action; lowercase
     Ctrl+W remains terminal input. Closing the window itself, or
-    Alt+Shift+D, detaches without asking.
+    Alt+Shift+D, detaches every workspace together without asking; attach
+    then shows the last shown workspace (EON-C11).
     The first time any of the user's windows detaches this way, the
     supervisor sends one non-activating desktop notification, titled "Eon is
     still running in the background", with the body "Open Eon to return;
@@ -513,8 +521,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     terminal's tab under EON-C10. Eon stops that pane's
     terminal and prunes the confirmed end through the normal terminal-exit
     owner, so its column, its tab and focus follow the ended-terminal rules
-    below. Closing the final tab's last pane ends the window as final-tab
-    close does, stopping that tab's popups with it. Closing is unavailable
+    below. Closing the final tab's last pane acts as final-tab close does,
+    stopping that tab's popups with it. Closing is unavailable
     while a popup or picker covers the tab, except that a calling terminal
     of that tab, pane or popup (EON-C10), may close a named pane other than
     the tab's last; the popup stays shown and selected, and the tab's pane
@@ -525,8 +533,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     v11 action.
   - Ended terminals leave no dead pane or empty tab; focus moves deterministically
     to the same identity when possible, otherwise the following sibling at the
-    removed index, otherwise the preceding sibling; an empty workspace closes
-    Venus and the supervisor. A column whose last pane ends disappears; if it
+    removed index, otherwise the preceding sibling. A workspace left empty
+    while other workspaces remain is removed, and if it was shown, the most
+    recently shown remaining workspace is shown (EON-C33); the last workspace
+    left empty closes Venus and the supervisor. A column whose last pane ends disappears; if it
     held the selection, selection moves to the following column, otherwise the
     preceding one.
   - Same-boot recovered runs project numerically into one column of synthetic
@@ -864,7 +874,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     Without `--no-focus`, `pane create` selects the new pane and dismisses the
     tab's popup, as above.
   - `eon tab close TAB` and `eon pane close PANE` may name the final tab or
-    its last pane, which ends the window (EON-C8). When
+    its last pane, which ends the window (EON-C8), or, while other workspaces
+    remain, removes that workspace and asks nothing yet (EON-C33). Before a
+    close that ends the window, when
     `[workspace] warning_close_last_tab` is true, its default, and stdin is a
     terminal, the CLI first lists the terminals that will stop and asks, as
     `eon stop` does; `--json` never asks, and neither does the CLI when the
@@ -1194,7 +1206,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     replacement cannot overlap cleanup; concurrent launch converges on one
     supervisor and terminal set.
   - Present requests native presentation without replacing the live Venus
-    process, Orbit attachment, or terminal.
+    process, Orbit attachment, or terminal. A detach keeps every workspace of
+    the window, and a Venus that Present starts shows the last shown workspace
+    (EON-C33; its installed proof is `eon-workspace-switching-shn4.9`).
   - Dead exact residue is removed only after the recorded process is absent or
     dead; a later launch may then create one fresh run.
   - A current launch overlapping clean exit of the final terminal waits for the
@@ -1615,8 +1629,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     exactly one first `pN` terminal there. Dismissing a pending picker keeps
     the tab and starts its first pane at that tab's validated starting directory.
     Explicitly closing a pending tab stops its picker and removes that tab
-    without starting a pane; when it is the final tab, the close ends the
-    window (EON-C8).
+    without starting a pane; when it is the final tab, the close acts as
+    EON-C8's final-tab close.
   - Alt+Z keeps the existing explicit retarget behavior after a tab has panes;
     it never changes or restarts a running pane.
   - Current EONW v7 exposes Project as a popup endpoint bound to one live

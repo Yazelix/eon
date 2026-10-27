@@ -1463,8 +1463,8 @@ impl Workspace {
 
     /// Validates closing one pane of the caller's tab, else of the active tab,
     /// and names the terminals to stop: the pane's, and when it is the final
-    /// tab's last pane, every terminal of that tab, since the close ends the
-    /// window.
+    /// tab's last pane, every terminal of that tab, since the close removes the
+    /// workspace, or ends the window when it is the last one.
     pub(crate) fn prepare_close_pane(
         &mut self,
         caller: Option<&str>,
