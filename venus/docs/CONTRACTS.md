@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v14 through the
-in-tree `orbit-protocol` crate and canonical EONW v22 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v23 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
@@ -1356,7 +1356,7 @@ re-proved when that platform or feature is next touched.
   configuration, Nova compatibility, inactive-tab close, protocol change,
   dependency, native-decoration policy, or platform-support expansion. The
   exceptions are the EON-C31 tab attention marker and the EON-C33 workspace
-  label, read from the EONW v22 snapshot that Venus already polls, the label
+  label, read from the EONW v23 snapshot that Venus already polls, the label
   and its badge from its `workspace` and `workspaces`, and the
   `--animate-working-badge` launch argument.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
@@ -1600,7 +1600,7 @@ re-proved when that platform or feature is next touched.
 - **Consumes:** Existing VEN-C19/C20/C21, canonical EONW, and ORBF v2 / ORBS v13.
 - **Boundary:** No new input mode, child-application key discovery, interactive
   hints, durable preference, generic widget registry, dependency, wire change
-  or platform expansion, except that the hints read `sidebar` from EONW v22.
+  or platform expansion, except that the hints read `sidebar` from EONW v23.
   Future Eon modes supply hints from their own actual bindings and replace
   contents at the same footer height.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
@@ -1928,7 +1928,7 @@ re-proved when that platform or feature is next touched.
   Alt+Shift+G work under `Off` too.
 - **Trigger:**
   - Alt+Shift+H;
-  - a new EONW v22 snapshot;
+  - a new EONW v23 snapshot;
   - the pointer, keyboard or AccessKit acts on the sidebar;
   - the window is resized.
 - **Result:**
@@ -2040,7 +2040,7 @@ re-proved when that platform or feature is next touched.
   scroll, attachment or resize, as quota-only refreshes already do (VEN-C22);
   a change in the sidebar's visibility resizes the columns as Layout says.
   VEN-C8, VEN-C22 and EON-C8 carry this clause.
-- **Consumes:** EONW v22 and the VEN-C22 and VEN-C26 icons, under the
+- **Consumes:** EONW v23 and the VEN-C22 and VEN-C26 icons, under the
   exceptions those contracts record for sidebar rows.
 - **Boundary:**
   - no interpretation of provider events, terminal output or process data,

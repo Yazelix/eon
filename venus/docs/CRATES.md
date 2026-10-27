@@ -58,7 +58,7 @@ for one zero-payload semantic action without a new dependency or adapter.
 ### Eon workspace protocol consumer
 
 - **Selected shape:** The in-tree path dependency on the dependency-free,
-  publish-false, Apache-2.0 `eon-workspace-protocol` 0.1.0 package (EONW v22);
+  publish-false, Apache-2.0 `eon-workspace-protocol` 0.1.0 package (EONW v23);
   before consolidation Venus pinned Eon Runtime revision
   `d0a184bb4d45d3e50787f7c17606df652727fb9a`.
 - **Status:** Active for internal development

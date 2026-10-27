@@ -11,7 +11,7 @@ use crate::{
         QuotaPace, QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics,
     },
 };
-use eon_workspace_protocol::v22::AttentionState;
+use eon_workspace_protocol::v23::AttentionState;
 use glyphon::{
     Attrs, Buffer, Color, ContentType, CustomGlyph, Family, FontSystem, Metrics,
     RasterizeCustomGlyphRequest, RasterizedCustomGlyph, TextBounds, Weight, Wrap, fontdb,
@@ -303,8 +303,9 @@ fn push_popup_marker(rectangles: &mut RectangleBatch, rect: SceneRect, color: Sc
 }
 
 /// Draws one attention badge's glyph inside its disc: ◆ needs input, ✕ error, ✓ finished, the
-/// braille frame at `phase` for working, or the first frame without one, and, in sidebar rows,
-/// ○ idle and · unavailable. Quads keep the glyphs independent of fonts.
+/// braille frame at `phase` for working, or the first frame without one, that first frame for
+/// background, and, in sidebar rows, ○ idle and · unavailable. Quads keep the glyphs independent
+/// of fonts.
 fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Option<usize>) {
     // The ring yields entirely on the smallest badges, so the glyph never leaves the badge.
     let ring = (badge.rect.width / 12.0).floor();
@@ -361,6 +362,8 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
         AttentionState::Working => {
             push_braille(rectangles, glyph, SPINNER_FRAMES[phase.unwrap_or(0)], alpha)
         }
+        // Until its own glyph, background shows the working badge's first frame, still.
+        AttentionState::Background => push_braille(rectangles, glyph, SPINNER_FRAMES[0], alpha),
         AttentionState::Idle | AttentionState::Unavailable => {
             // A thin ring for idle and a small round dot for unavailable, each drawn as 16 joined
             // segments.
@@ -2176,7 +2179,7 @@ mod tests {
     #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
     fn long_workspace_labels_stay_on_the_visible_line() {
         use crate::EonBar;
-        use eon_workspace_protocol::v22::{Pane, Snapshot, Tab};
+        use eon_workspace_protocol::v23::{Pane, Snapshot, Tab};
         use winit::{
             application::ApplicationHandler, event::WindowEvent, event_loop::EventLoop,
             platform::wayland::EventLoopBuilderExtWayland, window::WindowId,
@@ -2211,7 +2214,7 @@ mod tests {
                 let snapshot = Snapshot {
                     workspace: "w1".into(),
                     active_workspace: "w1".into(),
-                    workspaces: vec![eon_workspace_protocol::v22::WorkspaceInfo {
+                    workspaces: vec![eon_workspace_protocol::v23::WorkspaceInfo {
                         id: "w1".into(),
                         name: None,
                         tab_count: 1,
@@ -2219,7 +2222,7 @@ mod tests {
                         recency: 0,
                     }],
                     active_tab: "t2".into(),
-                    geometry: eon_workspace_protocol::v22::PopupGeometry {
+                    geometry: eon_workspace_protocol::v23::PopupGeometry {
                         side_margin: 8.0,
                         vertical_margin: 4.0,
                     },
@@ -2234,7 +2237,7 @@ mod tests {
                             id: format!("t{}", index + 1),
                             directory: format!("/tmp/{directory}").into_bytes(),
                             selected_pane: Some(format!("p{}", index + 1)),
-                            columns: vec![eon_workspace_protocol::v22::Column {
+                            columns: vec![eon_workspace_protocol::v23::Column {
                                 panes: vec![Pane {
                                     label: format!("p{}", index + 1),
                                     pinned_name: None,
@@ -2252,7 +2255,7 @@ mod tests {
                         .collect(),
                     codex_quota: None,
                     claude_quota: None,
-                    sidebar: eon_workspace_protocol::v22::Sidebar::Open,
+                    sidebar: eon_workspace_protocol::v23::Sidebar::Open,
                 };
                 let workspace = WorkspaceScene::from_snapshot(
                     &snapshot,
@@ -2600,19 +2603,19 @@ mod tests {
                 // Shared popup/sidebar titles use the pane metric and interrupt their top edge.
                 snapshot
                     .entries
-                    .push(eon_workspace_protocol::v22::PopupEntry {
+                    .push(eon_workspace_protocol::v23::PopupEntry {
                         id: "files".into(),
                         label: "Files".into(),
-                        shortcut: eon_workspace_protocol::v22::PopupKey::Bound(
-                            eon_workspace_protocol::v22::Shortcut {
-                                modifiers: eon_workspace_protocol::v22::ALT,
+                        shortcut: eon_workspace_protocol::v23::PopupKey::Bound(
+                            eon_workspace_protocol::v23::Shortcut {
+                                modifiers: eon_workspace_protocol::v23::ALT,
                                 key: "KeyF".into(),
                             },
                         ),
                     });
                 snapshot.tabs[1]
                     .popups
-                    .push(eon_workspace_protocol::v22::Popup {
+                    .push(eon_workspace_protocol::v23::Popup {
                         id: "u1".into(),
                         entry: "files".into(),
                         session: "files-session".into(),

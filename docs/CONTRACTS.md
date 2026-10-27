@@ -567,7 +567,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v22 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v23 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -983,7 +983,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v22 and accepted Orbit management operations.
+- **Consumes:** Current EONW v23 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
@@ -992,7 +992,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v22 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v23 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required, defaults to Alt+Z, and uses Eon's
   existing transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -1054,8 +1054,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
   Switch workspace runs the same list in the Commands popup. Each row shows
   the workspace's name, or its `wN` when unnamed, its tab count, and
-  ` · needs input` when its EONW v22 `attention` is needs input. Rows run by
-  EONW v22 `recency`, most recently shown first, with the shown workspace last
+  ` · needs input` when its EONW v23 `attention` is needs input. Rows run by
+  EONW v23 `recency`, most recently shown first, with the shown workspace last
   and marked ` · shown`, and the query matches only that name or `wN`. Enter on the highlighted row,
   including on an empty query, runs `eon workspace switch wN` once the CLI
   has checked again that the `wN` is live; otherwise it changes nothing and
@@ -1881,7 +1881,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
   EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
-  from EONW v22.
+  from EONW v23.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -1947,13 +1947,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, EONW v7 (v22 for the EON-C31 tab attention
+- **Consumes:** Venus VEN-C21, EONW v7 (v23 for the EON-C31 tab attention
   marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion. The one exception is the
-  EON-C31 tab attention marker, which Venus reads from the EONW v22 snapshot it
+  EON-C31 tab attention marker, which Venus reads from the EONW v23 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2109,7 +2109,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Boundary:** No minor-mode framework, child-application key discovery,
   interactive hints, durable preference, configuration option, dependency,
   wire change or platform expansion, except that the hints read `sidebar` from
-  EONW v22. Future real modes replace contents from
+  EONW v23. Future real modes replace contents from
   their actual bindings at the same footer height.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2403,6 +2403,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   EONW; `eon-agent-sidebar-yx8.9` proves it on the installed product.
   Amended on 2026-10-27 (approved by Lucca, relayed by eon-overseer) by
   `eon-eon-attention-working-hides-finish-7df0`: newer work sees a finish.
+  Amended on 2026-10-27 (approved by Lucca, relayed by eon-overseer) by
+  `eon-agent-background-work-yte0`: waiting on background work.
 - **Consumer:** One person supervising coding agents across the tabs and workspaces (EON-C33)
   of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
@@ -2465,8 +2467,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     | error | `error` whose raise is unseen |
     | finished | `done`, or a raised `idle`, whose raise is unseen |
     | working | `working`, with `progress` |
+    | background | `done` or `idle` whose terminal's reply counts background processes (ORB-C15) |
     | idle | any other `idle`; or `done`/`error`/raised `idle` whose raise has been seen |
     | unavailable | an Agent popup with no records |
+
+    Background takes precedence over finished and idle for that record: while the count is
+    above 0 the record maps to background, not finished or idle.
 
   - **Seen.** Seen is keyed by (run, `id`, raise). A raise becomes seen when a Venus is attached
     and its exact terminal is the focused target (the selected pane of the shown workspace's
@@ -2487,6 +2493,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     shows, and it does not return when the work stops. An `idle` that keeps its `done`'s raise
     compares at that `done`. A finish raised after the work's last change still shows
     finished. An error and needs input are never seen this way.
+
+    Background holds a raise: it neither sees nor clears it, and focus sees it as usual. When
+    the count returns to 0, the record maps as before, so an unseen finish shows finished unless
+    newer work saw it. Claude Code goes `working` when its background task ends, so its next
+    `done` raises a fresh finish.
   - **Rollup.** A tab's rollup is the highest-priority state among its terminals, and a
     workspace's rollup the highest among all its terminals (EON-C33), which EONW v22 carries
     as `attention` on each `WorkspaceInfo`. A stale terminal counts with its last state, and
@@ -2500,8 +2511,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **EONW v18 and v19** (amend EON-C10) add:
     - an optional `attention` on `Pane` and `Popup`, holding:
       - `state`: the *normalized* EON-C31 state of the terminal's most urgent record, one of
-        needs input, error, finished, working, idle or unavailable. Venus never normalizes,
-        and seen is already folded into this state;
+        needs input, error, finished, working, background, idle or unavailable. EONW v23
+        adds background. Venus never normalizes, and seen is already folded into this state;
       - from that record: kind, progress, `app`, `title` and `msg`;
       - `name`, which EONW v19 adds: the terminal title from the same reply (ORB-C15), passed
         through unchanged, so rows can tell agents apart. Claude Code sets it to its session
@@ -2527,7 +2538,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       - `sidebar` on the snapshot.
 
       It leaves out `kind`, `progress`, `title`, `msg`, `changed_at`, the stale flag and the
-      record count. v22 ships in 1.0, because `eon-agent-sidebar-yx8.9` gates
+      record count. v23 ships in 1.0, because `eon-agent-sidebar-yx8.9` gates
       eon-igae.7, .8 and .11, so EON-C28 freezes exactly these fields.
       - A program inside an Eon terminal can run `eon workspace`, so it can read every
         terminal's attention `state`, `app` and `name`. `title` and `msg` never appear through `eon
@@ -2597,6 +2608,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Leftover idle records.** An agent killed by SIGKILL in a shell pane can leave an `idle`
     record, which shows as an idle row until the run ends or the record is replaced. The spec
     allows dropping `idle` on exit, but keeping it lets a finish raise. This is accepted for 1.0.
+    If that shell then runs jobs of its own in the background, such as `sleep 100 &`, they count
+    as background processes (ORB-C15), so the row shows background until they end.
   - **Finishes that vanish with their record.** An unseen finish disappears with its record in
     these cases:
     - Claude Code clears its records on exit, and Codex clears its record on exit, on suspend,
@@ -2616,6 +2629,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     of that cycle does not show when the cached raise was already seen, or when a `working`
     record changed after the cached `done`. Polls at 2 Hz make this rare. This is accepted
     for 1.0.
+  - **Background work Orbit cannot count.** Work that leaves the process tree (a double fork,
+    Claude Code's "Move to background and exit") or that runs no process (Claude Code's
+    ScheduleWakeup and cron waits) is not counted, so its terminal shows finished or idle. A
+    helper that lives past 1 s outside the agent's process group counts as background work;
+    none was found in Claude Code 2.1.303 with Lucca's configuration. This is accepted for 1.0.
   - **Window focus.** Eon does not know desktop window focus, so a raise in the focused terminal
     counts as seen even while the window sits behind another app. This is accepted under D5.
   - **Detached windows.** While no Venus is attached, only newer work makes a raise seen. The
@@ -2630,7 +2648,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 3, EON-C8 topology, and EON-C10 (EONW v22, still
+- **Consumes:** ORB-C15, ORB-C13 generation 3, EON-C8 topology, and EON-C10 (EONW v23, still
   request and response, with no event stream).
 - **Boundary:**
   - no hooks and no edits to agent configuration;

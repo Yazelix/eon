@@ -17,7 +17,7 @@ use super::{
         resolve_selector,
     },
 };
-use eon_workspace_protocol::v22::{
+use eon_workspace_protocol::v23::{
     Action, AttentionState, Direction, Failure, PopupTarget, Response, Side, Snapshot, VERSION,
     WorkspaceAction, WorkspaceInfo, valid_caller,
 };
@@ -1038,7 +1038,7 @@ fn control(
     // by Runtime's rule; a WS that resolves to none or several fails unasked.
     // After a yes it checks again that the wN is live before closing it, since
     // Runtime would read a departed wN as another workspace's name; the check
-    // and the close are not atomic. v22 lists only
+    // and the close are not atomic. v23 lists only
     // the caller's or shown workspace's terminals, so the prompt names none.
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
@@ -1440,7 +1440,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v22::validate_pane_name(name)
+        eon_workspace_protocol::v23::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C21/VEN-C30: consume EONW v23, whose attention state adds background,
+  waiting on background work, ranked between working and idle. Until its own
+  badge (`eon-agent-background-work-yte0.3`), Venus draws background as the
+  working badge's first frame, still, and its tab badge and sidebar row read
+  as working (`eon-agent-background-work-yte0.2`).
+
 - VEN-C22/VEN-C26: each fresh quota window with a reset, past its first tenth,
   colors its text on a green, yellow, orange, red gradient by how early its
   linear pace runs out before the reset; a used-up window is always colored.
@@ -224,7 +230,7 @@
   the previous agent needing attention", and the hints as "next agent" and
   "previous agent" (VEN-C20, VEN-C24, `eon-agent-sidebar-yx8.8`).
 
-- Venus consumes EONW v22, whose attention carries `name`, the terminal
+- Venus consumes EONW v23, whose attention carries `name`, the terminal
   title. A sidebar row's first line shows one label: for `app=claude-code`
   the name, which is the session's name, else the record title, else the
   app's name (`Claude`, `Codex`, or the `app` verbatim). Other apps'
@@ -233,7 +239,7 @@
   heading shows. The row's accessible name includes Claude Code's session
   name (VEN-C30, `eon-agent-sidebar-yx8.11`).
 
-- EONW v18 (now v22, above) adds EON-C31 agent attention to panes,
+- EONW v18 (now v23, above) adds EON-C31 agent attention to panes,
   popups and tabs, the window's sidebar visibility, and the `ToggleSidebar`,
   `FocusAttention`, `NextAttention` and `PreviousAttention` actions; the
   VEN-C21 and VEN-C30 entries above render and send them. VEN-C8 and VEN-C22: a

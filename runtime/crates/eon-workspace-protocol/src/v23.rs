@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v22 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v23 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -6,7 +6,7 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 22;
+pub const VERSION: u16 = 23;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -210,6 +210,9 @@ pub enum AttentionState {
     Error,
     Finished,
     Working,
+    /// A `done` or `idle` record while its terminal runs background
+    /// processes (ORB-C15).
+    Background,
     Idle,
     /// An Agent popup with no records.
     Unavailable,
@@ -1862,6 +1865,7 @@ fn encode_state(encoder: &mut Encoder, state: Option<AttentionState>) {
         Some(AttentionState::Working) => 4,
         Some(AttentionState::Idle) => 5,
         Some(AttentionState::Unavailable) => 6,
+        Some(AttentionState::Background) => 7,
     });
 }
 
@@ -1874,6 +1878,7 @@ fn decode_state(decoder: &mut Decoder<'_>, field: &'static str) -> Result<Option
         4 => AttentionState::Working,
         5 => AttentionState::Idle,
         6 => AttentionState::Unavailable,
+        7 => AttentionState::Background,
         value => return Err(Error::InvalidTag { field, value }),
     }))
 }
@@ -2826,14 +2831,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57160001000a00000002007231001202007431",
+                "454f4e57170001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57160001001000000002007231000c0200743104002f746d70",
+                "454f4e57170001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -2842,55 +2847,55 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571600010015000000020072310013020074310300676974010200753101",
+                "454f4e571700010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e571600010014000000020072310015020074310200753104002f746d70",
+                "454f4e571700010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e571600010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571700010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57160001000a00000002007231001702007032",
+                "454f4e57170001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571600010006000000020072310019",
+                "454f4e571700010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57160001000e00000002007231001a06002f746d702f61",
+                "454f4e57170001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57160001001000000002007231001b00020002006878010061",
+                "454f4e57170001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57160001000600000002007231001c",
+                "454f4e57170001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57160001000e00000002007231001d0200743102007032",
+                "454f4e57170001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57160001000600000002007231001e",
+                "454f4e57170001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57160001000600000002007231001f",
+                "454f4e57170001000600000002007231001f",
             ),
         ] {
             let request = Request {
@@ -2910,7 +2915,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57160001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e57170001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -3007,7 +3012,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5716008100fd0000000100020002000100010000000200743100000041",
+                    "454f4e5717008100fd0000000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -3020,12 +3025,12 @@ mod tests {
                     "0100",
                 ),
             ),
-            (failure, "454f4e57160082000a00000004006275737902006e6f"),
+            (failure, "454f4e57170082000a00000004006275737902006e6f"),
             (
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57160085000400000002006731",
+                "454f4e57170085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -3051,7 +3056,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e571600830026000000020067310500302e392e30160002006f6b010002",
+                    "454f4e571700830026000000020067310500302e392e30170002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -3060,7 +3065,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571600840006000000020067310000",
+                "454f4e571700840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -3492,7 +3497,7 @@ mod tests {
         let bytes = encode_response(&Response::Snapshot(state.clone())).unwrap();
         assert_eq!(forge(&state), bytes);
 
-        let valid: [fn(&mut Snapshot); 10] = [
+        let valid: [fn(&mut Snapshot); 11] = [
             |_| {},
             |s| s.sidebar = Sidebar::Off,
             // An entry may be keyless, or overridden by another listed entry.
@@ -3508,6 +3513,7 @@ mod tests {
                 working_attention(s).state = AttentionState::Idle;
                 asking(s).kind = Some(AttentionKind::Permission);
             },
+            |s| working_attention(s).state = AttentionState::Background,
             |s| {
                 s.codex_quota = None;
                 s.claude_quota = None;

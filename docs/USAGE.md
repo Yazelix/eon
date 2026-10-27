@@ -280,7 +280,9 @@ the panes' rows in pane order. A row shows:
 
 - the state: ◆ needs input, ✕ error, ✓ finished, stepping braille dots while
   working (still without GPU rendering or with
-  `[workspace] animate_working_badge = false`), or ○ idle;
+  `[workspace] animate_working_badge = false`), the same dots shown still while
+  the agent waits on background work (it reported done or idle while processes
+  it started still run), or ○ idle;
 - the Claude or Codex icon;
 - a Claude Code session's name, such as `eon-9a` for a session started
   with `claude --name eon-9a`; otherwise the title the agent reports, and

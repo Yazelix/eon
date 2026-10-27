@@ -7,7 +7,7 @@ use super::{
     sessions::{self, ProgramStatusRead, RunningSession},
     workspace::is_directory_picker_session,
 };
-use eon_workspace_protocol::v22::{
+use eon_workspace_protocol::v23::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
@@ -105,13 +105,18 @@ struct Record {
 }
 
 impl Record {
-    /// Its normalized state, and the time its order key uses: when it entered
-    /// `blocked`, else its raise, else its change.
-    fn normalized(&self) -> (State, Instant) {
+    /// Its normalized state, given whether its terminal runs `background`
+    /// processes, and the time its order key uses: when it entered `blocked`,
+    /// else its raise, else its change. Background masks a raise without
+    /// seeing it.
+    fn normalized(&self, background: bool) -> (State, Instant) {
         let unseen = self.raise.filter(|raise| !raise.seen);
         match (self.record.state, unseen) {
             (ProgramState::Blocked, _) => (State::NeedsInput, self.changed_at),
             (ProgramState::Error, Some(raise)) => (State::Error, raise.at),
+            (ProgramState::Done | ProgramState::Idle, _) if background => {
+                (State::Background, self.changed_at)
+            }
             (ProgramState::Done | ProgramState::Idle, Some(raise)) => (State::Finished, raise.at),
             (ProgramState::Working, _) => (State::Working, self.changed_at),
             _ => (State::Idle, self.changed_at),
@@ -125,6 +130,8 @@ struct Terminal {
     run: String,
     update: u64,
     count: u16,
+    /// Its background process count (ORB-C15).
+    background: u8,
     /// The terminal title, which the attention carries as `name`.
     name: String,
     records: Vec<Record>,
@@ -141,7 +148,7 @@ impl Terminal {
         self.records
             .iter()
             .map(|record| {
-                let (state, at) = record.normalized();
+                let (state, at) = record.normalized(self.background > 0);
                 (record, state, at)
             })
             .min_by_key(|&(record, state, _)| (state, Reverse(record.record.changed)))
@@ -349,6 +356,7 @@ impl Attention {
             run: run.into(),
             update: status.update,
             count: status.count,
+            background: status.background,
             name: status.terminal_title,
             records: fresh,
             omitted,
@@ -619,7 +627,7 @@ impl Attention {
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v22::{Column, Pane, Popup, PopupGeometry, Tab};
+    use eon_workspace_protocol::v23::{Column, Pane, Popup, PopupGeometry, Tab};
     use std::{fs, slice, thread};
 
     /// A record created at its change `changed`.
@@ -699,7 +707,7 @@ mod tests {
         Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v22::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v23::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: tabs.len(),
@@ -1024,6 +1032,122 @@ mod tests {
     }
 
     #[test]
+    fn background_masks_finishes_and_idle_and_holds_their_raise() {
+        let tabs = vec![tab("t", &["s1", "s2", "s3", "s4"], &[], None)];
+        let (targets, _) = targets(&[snapshot("t", tabs)]);
+        let mut attention = Attention::new(true);
+        let base = Instant::now();
+        let at = |attention: &mut Attention,
+                  session: &str,
+                  update: u64,
+                  background: u8,
+                  records: Vec<ProgramRecord>| {
+            let now = base + Duration::from_secs(update);
+            let reply = ProgramStatus {
+                background,
+                ..status(update, records)
+            };
+            attention.apply(&targets, session, "run", reply, now);
+            state(attention, &targets, session, now)
+        };
+        // As Claude Code reports a background task: its session's record goes
+        // done while the task runs, so it waits on that work, out of the queue.
+        let main = |state, previous, changed| ProgramRecord {
+            created: 1,
+            ..record("", state, previous, changed)
+        };
+        assert_eq!(
+            at(
+                &mut attention,
+                "s1",
+                2,
+                1,
+                vec![main(Done, Some(Working), 2)]
+            ),
+            Some(State::Background)
+        );
+        assert_eq!(attention.entry(&targets, "s1"), None);
+        // When the work ends, the held raise shows finished.
+        assert_eq!(
+            at(
+                &mut attention,
+                "s1",
+                3,
+                0,
+                vec![main(Done, Some(Working), 2)]
+            ),
+            Some(State::Finished)
+        );
+        // An idle, raised or not, waits too; errors and needs input show.
+        assert_eq!(
+            at(&mut attention, "s1", 4, 2, vec![main(Idle, Some(Done), 4)]),
+            Some(State::Background)
+        );
+        assert_eq!(
+            at(&mut attention, "s2", 1, 1, vec![record("", Idle, None, 1)]),
+            Some(State::Background)
+        );
+        assert_eq!(
+            at(&mut attention, "s3", 1, 1, vec![record("", Error, None, 1)]),
+            Some(State::Error)
+        );
+        assert_eq!(
+            at(
+                &mut attention,
+                "s4",
+                1,
+                1,
+                vec![record("", Blocked, None, 1)]
+            ),
+            Some(State::NeedsInput)
+        );
+
+        // Work that changed after the finish sees it, as without background:
+        // a subagent starts, then ends with the background work.
+        let agent = record("a8196066adeaa6815", Working, None, 5);
+        assert_eq!(
+            at(
+                &mut attention,
+                "s1",
+                5,
+                1,
+                vec![main(Idle, Some(Done), 4), agent]
+            ),
+            Some(State::Working)
+        );
+        assert_eq!(
+            at(&mut attention, "s1", 6, 0, vec![main(Idle, Some(Done), 4)]),
+            Some(State::Idle)
+        );
+        // Focus sees a raise that background holds.
+        assert_eq!(
+            at(&mut attention, "s3", 2, 1, vec![record("", Done, None, 2)]),
+            Some(State::Background)
+        );
+        attention.observe(Some("s3".into()), true);
+        assert_eq!(
+            at(&mut attention, "s3", 3, 0, vec![record("", Done, None, 2)]),
+            Some(State::Idle)
+        );
+
+        // Background ranks below working and above idle.
+        let rollup = |attention: &Attention| attention.rollup(&targets, 0, Some(0), base);
+        at(
+            &mut attention,
+            "s3",
+            4,
+            0,
+            vec![record("", Working, None, 4)],
+        );
+        at(&mut attention, "s4", 2, 0, vec![record("", Idle, None, 2)]);
+        assert_eq!(rollup(&attention), Some(State::Working));
+        at(&mut attention, "s3", 5, 0, vec![]);
+        assert_eq!(rollup(&attention), Some(State::Background));
+        at(&mut attention, "s2", 2, 0, vec![record("", Idle, None, 1)]);
+        assert_eq!(rollup(&attention), Some(State::Idle));
+    }
+
+    #[test]
     fn identity_fixes_change_times_and_discards_older_replies_until_a_new_run() {
         let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
         let mut attention = Attention::new(true);
@@ -1313,7 +1437,7 @@ mod tests {
         // carries its own rollup.
         let mut reply = before[1].clone();
         reply.workspaces = ["w1", "w2"]
-            .map(|id| eon_workspace_protocol::v22::WorkspaceInfo {
+            .map(|id| eon_workspace_protocol::v23::WorkspaceInfo {
                 id: id.into(),
                 ..reply.workspaces[0].clone()
             })
