@@ -128,6 +128,11 @@ let
     { name = "paste-flood"; variable = "PASTE_SHELL"; timeout = "60s"; }
     { name = "terminal-replies"; variable = "REPLY_SHELL"; timeout = "30s"; }
     {
+      name = "pixel-size";
+      timeout = "60s";
+      env.ORBIT_BASH = bash;
+    }
+    {
       name = "silent-peer";
       variable = "EXIT_SHELL";
       script = "detached-exit-shell";

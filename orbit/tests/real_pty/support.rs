@@ -10,6 +10,7 @@ use orbit_protocol::{
     },
 };
 use std::{
+    collections::HashMap,
     env,
     ffi::{OsStr, OsString},
     fs,
@@ -146,6 +147,18 @@ pub fn script(directory: &Path, variable: &str, name: &str) -> PathBuf {
     let text =
         fs::read_to_string(&source).unwrap_or_else(|error| panic!("{}: {error}", source.display()));
     executable(directory, name, &format!("#!{}\n{text}", bash().display()))
+}
+
+/// The named answers a child script recorded, one `NAME REPLY` per line.
+pub fn replies(path: &Path) -> HashMap<String, String> {
+    fs::read_to_string(path)
+        .expect("replies")
+        .lines()
+        .map(|line| {
+            let (name, reply) = line.split_once(' ').expect("a named reply");
+            (name.to_string(), reply.to_string())
+        })
+        .collect()
 }
 
 /// Waits up to ten seconds for a path to exist.

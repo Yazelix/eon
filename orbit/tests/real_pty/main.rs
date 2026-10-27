@@ -43,6 +43,7 @@ checks!(
     observer_finish,
     palette_reset,
     paste_flood,
+    pixel_size,
     preview,
     program_status,
     pty_reopen,

@@ -368,6 +368,29 @@ frames keep arriving. The real-PTY terminal-replies check has the child ask for
 its cursor position before any client attaches, and for its cursor position and
 device attributes while one is, and receive each answer.
 
+## PTY pixel size
+
+The PTY's pixel fields hold the text area, the columns times the cell width by
+the rows times the cell height of the client's last size, without its padding
+(ORB-C16). libghostty answers CSI 14t, 16t, 18t and 19t, and mode 2048's
+in-band size report when a program sets the mode, through a callback that
+returns the size Orbit last gave the PTY, so the answers and the PTY agree. A
+program's own switch to 132 or 80 columns (DECCOLM, with mode 40 set) resizes
+libghostty's grid but changes neither. Orbit starts the child at 80x24 before
+any client sends a size, and no cell size is known until one does: the pixel
+fields and the pixel answers are then zero, so a program that reads its size
+at startup, such as the first program in a popup, sees the real size only
+after the SIGWINCH that the client's size brings.
+
+The real-PTY pixel-size check reads the PTY's size with `TIOCGWINSZ` from the
+child's terminal, 80x24 with zero pixels before any client size, and has the
+child ask CSI 14t, 16t, 18t and 19t and set mode 2048, which answer zero
+pixels and 80x24. A client then sends a 50x20 surface of 9x17 cells inside
+padding: the PTY holds 450x340 pixels, and the same questions answer 450x340,
+9x17 and 50x20, before and after the child switches to 132 columns. With the
+padded surface in the pixel fields, without the callback, or with a callback
+that derives the cell size from libghostty's grid, the check failed.
+
 ## PTY output wake
 
 The attached Venus loop waits on the client socket, PTY master, and listener.
@@ -1371,11 +1394,12 @@ ORB_BASELINE_CPUS=6-11 ORB_BASELINE_GRID="54 90" \
   delayed-output, request-half-close, detached-exit,
   three-attach, late-observer, detached-observer, synchronized-output,
   held-attach, history, preview, scroll, return-to-live, schema-mismatch,
-  paste-flood, terminal-replies, silent-peer, pty-reopen, descendant-exit,
-  unsupported, interactive-pressure, key-live, mouse, slow-observer,
-  observer-finish, stale-socket, clipboard, clipboard-pressure, command-line,
-  palette-reset, selection, selection-tick, refused-flush, management-record,
-  management-lease, program-status, terminal-identity and stopped-client-exit.
+  paste-flood, terminal-replies, pixel-size, silent-peer, pty-reopen,
+  descendant-exit, unsupported, interactive-pressure, key-live, mouse,
+  slow-observer, observer-finish, stale-socket, clipboard, clipboard-pressure,
+  command-line, palette-reset, selection, selection-tick, refused-flush,
+  management-record, management-lease, program-status, terminal-identity and
+  stopped-client-exit.
 
 Building the package runs the Rust unit tests. The real-PTY checks are Rust
 integration tests in [tests/real_pty](../tests/real_pty). They encode every

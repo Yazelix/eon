@@ -16,7 +16,7 @@ use libghostty_vt::{
     style::RgbColor,
     terminal::{
         ClipboardLocation as GhosttyClipboardLocation, ClipboardWrite, ClipboardWriteError, Mode,
-        ScrollViewport,
+        ScrollViewport, SizeReportSize,
     },
 };
 use orbit_protocol::{
@@ -148,6 +148,11 @@ pub(crate) struct Orbit {
     pub(crate) hold: Timer,
     hold_armed: bool,
     surface: session::SurfaceSize,
+    /// The size the PTY reports, which libghostty's size answers repeat:
+    /// the text area of the client's last size, with zero-pixel cells until
+    /// one arrives (ORB-C16). A program's own column switch, which resizes
+    /// libghostty's grid, does not change it.
+    pty_size: Rc<Cell<SizeReportSize>>,
     /// The child's exit status once it is reaped.
     reaped: Option<ExitStatus>,
     /// Bytes for the PTY, written as it drains so the host never waits on it.
@@ -215,6 +220,18 @@ impl Orbit {
             .map_err(|_| errno(libc::EIO))?
             .on_semantic_prompt(move |_, event| prompts.borrow_mut().prompt(event))
             .map_err(|_| errno(libc::EIO))?;
+        // libghostty answers CSI 14t, 16t, 18t and 19t, and mode 2048's
+        // report when a program sets it, from the PTY's size.
+        let pty_size = Rc::new(Cell::new(SizeReportSize {
+            rows,
+            columns: cols,
+            cell_width: 0,
+            cell_height: 0,
+        }));
+        let reported = Rc::clone(&pty_size);
+        terminal
+            .on_size(move |_| Some(reported.get()))
+            .map_err(|_| errno(libc::EIO))?;
         let extractor = FrameExtractor::new()?;
         let hold = Timer::default();
         let (master, child) = spawn_pty_child(command, cols, rows)?;
@@ -227,6 +244,7 @@ impl Orbit {
             extractor,
             hold,
             hold_armed: false,
+            pty_size,
             surface: session::SurfaceSize {
                 cols,
                 rows,
@@ -357,14 +375,25 @@ impl Orbit {
         Ok(())
     }
 
+    /// Resizes the PTY and the terminal. The PTY's pixel fields hold the
+    /// text area, without the surface's padding (ORB-C16).
     fn resize(&mut self, size: session::SurfaceSize) -> io::Result<()> {
+        let pixels = |cells: u16, cell: u32| {
+            u16::try_from(u32::from(cells).saturating_mul(cell)).unwrap_or(u16::MAX)
+        };
         platform::set_window_size(
             self.master.as_raw_fd(),
             size.cols,
             size.rows,
-            u16::try_from(size.screen_width).unwrap_or(u16::MAX),
-            u16::try_from(size.screen_height).unwrap_or(u16::MAX),
+            pixels(size.cols, size.cell_width),
+            pixels(size.rows, size.cell_height),
         )?;
+        self.pty_size.set(SizeReportSize {
+            rows: size.rows,
+            columns: size.cols,
+            cell_width: size.cell_width,
+            cell_height: size.cell_height,
+        });
         self.terminal
             .resize(size.cols, size.rows, size.cell_width, size.cell_height)
             .map_err(|_| errno(libc::EIO))?;

@@ -1,16 +1,5 @@
 use crate::support::*;
-use std::{collections::HashMap, fs, path::Path, time::Instant};
-
-fn replies(path: &Path) -> HashMap<String, String> {
-    fs::read_to_string(path)
-        .expect("replies")
-        .lines()
-        .map(|line| {
-            let (name, reply) = line.split_once(' ').expect("a named reply");
-            (name.to_string(), reply.to_string())
-        })
-        .collect()
-}
+use std::time::Instant;
 
 pub fn run() {
     let directory = TempDir::new();

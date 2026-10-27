@@ -9,6 +9,12 @@ installation, and proven contract changes.
   ended, such as `signal: 9 (SIGKILL)`, with the terminal's session and run,
   instead of nothing.
 
+- A program in an Eon terminal reads the pane's text area, without its
+  padding, from the terminal's pixel size, and gets answers to the size
+  queries CSI 14t, 16t, 18t and 19t and a size report when it turns on mode
+  2048, so programs that size images from cell pixels, such as Yazi, match
+  the terminal's cells.
+
 - With a screen reader running, Venus no longer exits when the active tab has
   no panes and shows nothing, such as a tab left with only a dismissed popup.
 
