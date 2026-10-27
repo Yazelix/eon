@@ -431,7 +431,7 @@ mod tests {
         let size = size(16, 4);
         terminal.vt_write(b"prefix alpha:beta/gamma suffix");
         let mut pointer = Pointer::default();
-        let mut extractor = FrameExtractor::new().unwrap();
+        let mut extractor = FrameExtractor::new(false).unwrap();
         let line = "prefix alpha:beta/gamma suffix";
         for (time_ns, expected, highlighted) in [
             (1_000_000_000, None, 0..0),
@@ -508,7 +508,7 @@ mod tests {
         let size = size(12, 4);
         terminal.vt_write(b"alpha beta");
         let mut pointer = Pointer::default();
-        let mut extractor = FrameExtractor::new().unwrap();
+        let mut extractor = FrameExtractor::new(false).unwrap();
         let modifiers = session::Modifiers::empty();
         // Whether the phase presents a selection, and how many cells it highlights.
         let mut phase = |action| {

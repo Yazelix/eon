@@ -178,10 +178,20 @@ impl Orbit {
         palette: Option<[RgbColor; 16]>,
         cols: u16,
         rows: u16,
+        graphics: bool,
     ) -> io::Result<Self> {
         let mut terminal = Terminal::new(cols, rows).map_err(|_| errno(libc::EIO))?;
         terminal
             .set_scrollback_max_bytes(Some(SCROLLBACK_BUDGET_BYTES))
+            .map_err(|_| errno(libc::EIO))?;
+        // libghostty stores Kitty images within its limit on each screen,
+        // read only from the escape sequence itself, and with no PNG decoder
+        // installed decodes none (ORB-C16).
+        terminal
+            .set_kitty_image_storage_limit(10_000_000)
+            .and_then(|terminal| terminal.set_kitty_image_from_file_allowed(false))
+            .and_then(|terminal| terminal.set_kitty_image_temp_file_dir(None))
+            .and_then(|terminal| terminal.set_kitty_image_from_shared_mem_allowed(false))
             .map_err(|_| errno(libc::EIO))?;
         if let Some(colors) = palette {
             let mut defaults = terminal
@@ -232,7 +242,7 @@ impl Orbit {
         terminal
             .on_size(move |_| Some(reported.get()))
             .map_err(|_| errno(libc::EIO))?;
-        let extractor = FrameExtractor::new()?;
+        let extractor = FrameExtractor::new(graphics)?;
         let hold = Timer::default();
         let (master, child) = spawn_pty_child(command, cols, rows)?;
         let pid = child.id();

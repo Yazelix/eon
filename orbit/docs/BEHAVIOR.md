@@ -391,6 +391,68 @@ padding: the PTY holds 450x340 pixels, and the same questions answer 450x340,
 padded surface in the pixel fields, without the callback, or with a callback
 that derives the cell size from libghostty's grid, the check failed.
 
+## Kitty graphics placements
+
+libghostty alone parses Kitty graphics and stores images. Orbit sets its
+storage limit to 10,000,000 decoded bytes on each screen, keeps the file,
+temporary-file and shared-memory mediums off, and installs no PNG decoder, so
+it stores only images sent in the escape sequence itself (ORB-C16). These
+settings match libghostty's defaults. Orbit sets them explicitly so that a
+change in those defaults cannot widen what a program may make Orbit read.
+The real-PTY kitty-placements check below covers the file medium. No check
+covers the other settings.
+`ORBIT_KITTY_GRAPHICS=1` in Orbit's environment turns on ORB-C16's internal
+switch. It is not configuration: only Orbit's checks set it, until
+`orb-j2i.11` turns it on in the shipped build. While the switch is off,
+frames state Kitty graphics unsupported and keep placeholder cells as they
+are.
+
+While the switch is on, every complete frame carries a graphics block:
+- the cell size libghostty's geometry uses: its pixel width and height,
+  which a client's size sets, divided by its columns and rows. Before any
+  client size it is 1, and the list is empty;
+- each placement that libghostty's render state lists for the viewport, with
+  no overscan rows. Unicode placeholder images come as one entry per run of
+  cells in a row. Entries are sorted by layer, z-index and Kitty image id,
+  and ties keep libghostty's order.
+
+The list stops at the first entry that would pass 4,096 entries or 256
+resources, and the frame then says placements were omitted. Each image
+generation that a frame references takes the attachment's next identity
+number. It keeps that number while frames keep referencing it, and a new
+attachment starts again. No resource is sent yet, so an entry is pending. It
+is unavailable when its image is not 8-bit RGB or RGBA, 1 to 4,096 pixels on
+each side and at most 10,000,000 bytes, or when the storage cannot look the
+image up. Placeholder cells (U+10EEEE) are
+blank in frames and previews. They keep their width, colors, inverse,
+selection and protection, and drop their text, link, underline and other
+text attributes.
+
+The frame unit test `placeholder_rows_are_pending_entries_over_blank_cells`
+covers Yazi's placeholder stream:
+- before a client size there is no cell size and no entry;
+- after one, two rows give two pending 3x1 entries cut from the image, over
+  blank cells without their underline or link, in the frame and in a preview
+  row;
+- new pixels under the same id take a new identity, and so does an image
+  that left the frames and returns;
+- a new attachment starts its numbering again;
+- with the switch off, there is no graphics block, and the placeholder text
+  and link stay.
+
+`placements_are_ordered_and_capped` covers the order by layer, z-index and
+image id, an unavailable image 4,097 pixels wide, and the cut with the
+omitted flag at 256 resources and at 4,096 entries. Without the sort, the
+order check failed.
+
+The real-PTY kitty-placements check runs Orbit with the switch on. After a
+client gives a 10x20-pixel cell, the child plays Yazi's stream for a 30x40
+image in 3x2 placeholder cells, then a file-medium image with its own
+placeholder cell. The frame carries the two expected pending entries for one
+resource and blank placeholder cells, and nothing for the file-medium image.
+With the file medium allowed, that image showed up as a third entry and the
+check failed.
+
 ## PTY output wake
 
 The attached Venus loop waits on the client socket, PTY master, and listener.
@@ -1394,7 +1456,8 @@ ORB_BASELINE_CPUS=6-11 ORB_BASELINE_GRID="54 90" \
   delayed-output, request-half-close, detached-exit,
   three-attach, late-observer, detached-observer, synchronized-output,
   held-attach, history, preview, scroll, return-to-live, schema-mismatch,
-  paste-flood, terminal-replies, pixel-size, silent-peer, pty-reopen,
+  paste-flood, terminal-replies, pixel-size, kitty-placements, silent-peer,
+  pty-reopen,
   descendant-exit, unsupported, interactive-pressure, key-live, mouse,
   slow-observer, observer-finish, stale-socket, clipboard, clipboard-pressure,
   command-line, palette-reset, selection, selection-tick, refused-flush,

@@ -737,7 +737,7 @@ mod tests {
              printf '\\033]7501;state=working:id=b\\007'; \
              (read x); read x";
         let command = ["/bin/sh", "-c", script].map(OsString::from);
-        let mut orbit = Orbit::spawn(&command, None, 80, 24).unwrap();
+        let mut orbit = Orbit::spawn(&command, None, 80, 24, false).unwrap();
         orbit.start_turn();
         let mut data = [0; 8192];
         let mut phases = [Foreground::Child, Foreground::Other, Foreground::Child].into_iter();

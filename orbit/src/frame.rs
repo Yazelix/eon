@@ -3,34 +3,72 @@
 use crate::errno;
 use libghostty_vt::{
     Error as GhosttyError, RenderState, Terminal,
-    render::{CellIterator, CursorVisualStyle as GhosttyCursorShape, RowIterator},
+    kitty::graphics::{Image, ImageFormat},
+    render::{
+        CellIterator, CursorVisualStyle as GhosttyCursorShape, ImageIterator,
+        ImageLayer as GhosttyImageLayer, ImageProtocol, RowIterator, Snapshot,
+    },
     screen::{CellContentTag, CellWide as GhosttyCellWidth, GridRef, Screen as GhosttyScreen},
     style::{RgbColor, Style, StyleColor as GhosttyStyleColor, Underline as GhosttyUnderline},
     terminal::{Point, PointCoordinate},
 };
 use orbit_protocol::{
     Capabilities, Cell as ProtocolCell, CellStyle, CellWidth, Colors, Cursor, CursorShape,
-    CursorViewport, Dimensions, FRAME_BUDGET_BYTES, Frame, FrameSize, MAX_CELLS, Rgb, Row,
-    Screen as ProtocolScreen, ScrollPosition, StyleColor, Underline,
-    session::{PreviewOutcome, VerticalDirection},
+    CursorViewport, Dimensions, FRAME_BUDGET_BYTES, Frame, FrameSize, Graphics, ImageLayer,
+    MAX_CELLS, MAX_FRAME_RESOURCES, MAX_PLACEMENTS, Placement, PlacementState, Rgb, Row,
+    Screen as ProtocolScreen, ScrollPosition, SourceRect, StyleColor, Underline,
+    session::{
+        MAX_RESOURCE_BYTES, MAX_RESOURCE_SIDE, PixelFormat, PreviewOutcome, VerticalDirection,
+    },
 };
-use std::io::{self};
+use std::{
+    collections::HashMap,
+    io::{self},
+};
 
 pub(crate) const SCROLLBACK_BUDGET_BYTES: usize = 16 * 1024 * 1024;
+
+/// The Kitty graphics Unicode placeholder, which ORB-C16 frames carry blank.
+const PLACEHOLDER: char = '\u{10EEEE}';
 
 pub(crate) struct FrameExtractor {
     state: RenderState<'static>,
     rows: RowIterator<'static>,
     cells: CellIterator<'static>,
+    images: ImageIterator<'static>,
+    /// ORB-C16's internal switch: frames carry graphics state and blank
+    /// placeholder cells.
+    graphics: bool,
+    resources: Resources,
+}
+
+/// The current attachment's resource identities (ORB-C16).
+#[derive(Default)]
+struct Resources {
+    /// The number the next new resource takes.
+    next: u64,
+    /// Numbers by libghostty image generation, which no other image, screen
+    /// or terminal reuses, for the resources the last frame referenced. No
+    /// resource is ever started, so one that leaves the frames is skipped and
+    /// takes a fresh number when referenced again.
+    numbers: HashMap<u64, u64>,
 }
 
 impl FrameExtractor {
-    pub(crate) fn new() -> io::Result<Self> {
+    pub(crate) fn new(graphics: bool) -> io::Result<Self> {
         Ok(Self {
             state: RenderState::new().map_err(|_| errno(libc::EIO))?,
             rows: RowIterator::new().map_err(|_| errno(libc::EIO))?,
             cells: CellIterator::new().map_err(|_| errno(libc::EIO))?,
+            images: ImageIterator::new().map_err(|_| errno(libc::EIO))?,
+            graphics,
+            resources: Resources::default(),
         })
+    }
+
+    /// Starts a new attachment, which has no resource identities yet.
+    pub(crate) fn attach(&mut self) {
+        self.resources = Resources::default();
     }
 
     pub(crate) fn frame(
@@ -127,6 +165,10 @@ impl FrameExtractor {
                 text.clear();
                 cell.graphemes_utf8(&mut text)
                     .map_err(|_| errno(libc::EOVERFLOW))?;
+                let placeholder = self.graphics && text.starts_with(PLACEHOLDER);
+                if placeholder {
+                    text.clear();
+                }
                 // The cell reserves its first codepoint and an empty link, so
                 // its other codepoints and its link add only their bytes.
                 // Later cells only shrink the room, so once the text or the
@@ -138,7 +180,8 @@ impl FrameExtractor {
                 if size.bytes() + text_bytes > budget {
                     text.truncate(base);
                 }
-                let hyperlink = if size.bytes() + link_bytes <= budget
+                let hyperlink = if !placeholder
+                    && size.bytes() + link_bytes <= budget
                     && raw_cell.has_hyperlink().map_err(|_| errno(libc::EIO))?
                 {
                     hyperlink(terminal, x, y)?
@@ -146,13 +189,14 @@ impl FrameExtractor {
                     String::new()
                 };
                 link_bytes += hyperlink.len();
+                let style = cell_style(
+                    style,
+                    cell.is_selected().map_err(|_| errno(libc::EIO))?,
+                    raw_cell.is_protected().map_err(|_| errno(libc::EIO))?,
+                )?;
                 frame_cells.push(ProtocolCell {
                     width: cell_width(raw_cell.wide().map_err(|_| errno(libc::EIO))?),
-                    style: cell_style(
-                        style,
-                        cell.is_selected().map_err(|_| errno(libc::EIO))?,
-                        raw_cell.is_protected().map_err(|_| errno(libc::EIO))?,
-                    )?,
+                    style: if placeholder { blank(style) } else { style },
                     text: text.clone(),
                     hyperlink,
                 });
@@ -189,6 +233,16 @@ impl FrameExtractor {
                 cell.hyperlink.clear();
             }
         }
+        let graphics = if self.graphics {
+            Some(graphics(
+                &mut self.images,
+                &mut self.resources,
+                &snapshot,
+                terminal,
+            )?)
+        } else {
+            None
+        };
         Ok(Frame {
             revision,
             dimensions: Dimensions { cols, rows },
@@ -210,7 +264,7 @@ impl FrameExtractor {
                 history_rows,
             },
             rows: frame_rows,
-            graphics: None,
+            graphics,
         })
     }
 }
@@ -260,6 +314,20 @@ impl FrameExtractor {
                 Err(GhosttyError::OutOfSpace { .. }) => return Err(errno(libc::EOVERFLOW)),
                 Err(_) => return Err(errno(libc::EIO)),
             };
+            let style = cell_style(
+                style,
+                false,
+                raw_cell.is_protected().map_err(|_| errno(libc::EIO))?,
+            )?;
+            if self.graphics && chars[..length].first() == Some(&PLACEHOLDER) {
+                cells.push(ProtocolCell {
+                    width: cell_width(raw_cell.wide().map_err(|_| errno(libc::EIO))?),
+                    style: blank(style),
+                    text: String::new(),
+                    hyperlink: String::new(),
+                });
+                continue;
+            }
             let hyperlink = if raw_cell.has_hyperlink().map_err(|_| errno(libc::EIO))? {
                 hyperlink_uri(&reference)?
             } else {
@@ -267,11 +335,7 @@ impl FrameExtractor {
             };
             cells.push(ProtocolCell {
                 width: cell_width(raw_cell.wide().map_err(|_| errno(libc::EIO))?),
-                style: cell_style(
-                    style,
-                    false,
-                    raw_cell.is_protected().map_err(|_| errno(libc::EIO))?,
-                )?,
+                style,
                 text: chars[..length].iter().collect(),
                 hyperlink,
             });
@@ -346,6 +410,146 @@ pub(crate) fn viewport_preview(
         edge_reached,
         rows,
     })
+}
+
+/// ORB-C16's graphics state for the snapshot's viewport: libghostty's
+/// placements by layer, z-index and Kitty image id, libghostty's order
+/// breaking ties, up to the first entry that would pass either cap. No
+/// resource is started, so every entry within the resource limits is pending.
+fn graphics(
+    images: &mut ImageIterator<'static>,
+    resources: &mut Resources,
+    snapshot: &Snapshot<'static, '_>,
+    terminal: &Terminal<'static, '_>,
+) -> io::Result<Graphics> {
+    let storage = terminal.kitty_graphics().map_err(|_| errno(libc::EIO))?;
+    let mut entries = Vec::new();
+    let mut iteration = images.update(snapshot).map_err(|_| errno(libc::EIO))?;
+    while let Some(placement) = iteration.next() {
+        // Another protocol, including one this crate does not know, is not
+        // ORB-C16's.
+        let Ok(ImageProtocol::Kitty) = placement.protocol() else {
+            continue;
+        };
+        let id = placement.image_id().map_err(|_| errno(libc::EIO))?;
+        let state = match storage.image(id) {
+            Some(image) if sendable(&image)? => PlacementState::Pending,
+            _ => PlacementState::Unavailable,
+        };
+        let entry = Placement {
+            resource: 0,
+            layer: image_layer(placement.layer().map_err(|_| errno(libc::EIO))?),
+            z: placement.z().map_err(|_| errno(libc::EIO))?,
+            col: placement.viewport_col().map_err(|_| errno(libc::EIO))?,
+            row: placement.viewport_row().map_err(|_| errno(libc::EIO))?,
+            grid_cols: placement.grid_cols().map_err(|_| errno(libc::EIO))?,
+            grid_rows: placement.grid_rows().map_err(|_| errno(libc::EIO))?,
+            offset_x: placement.cell_offset_x().map_err(|_| errno(libc::EIO))?,
+            offset_y: placement.cell_offset_y().map_err(|_| errno(libc::EIO))?,
+            width: placement.pixel_width().map_err(|_| errno(libc::EIO))?,
+            height: placement.pixel_height().map_err(|_| errno(libc::EIO))?,
+            source: SourceRect {
+                x: placement.source_x().map_err(|_| errno(libc::EIO))?,
+                y: placement.source_y().map_err(|_| errno(libc::EIO))?,
+                width: placement.source_width().map_err(|_| errno(libc::EIO))?,
+                height: placement.source_height().map_err(|_| errno(libc::EIO))?,
+            },
+            state,
+        };
+        let generation = placement.image_generation().map_err(|_| errno(libc::EIO))?;
+        entries.push((id, generation, entry));
+    }
+    // A stable sort keeps libghostty's order among equal keys.
+    entries.sort_by_key(|(id, _, entry)| (entry.layer, entry.z, *id));
+    let mut numbers = HashMap::new();
+    let mut placements = Vec::with_capacity(entries.len().min(MAX_PLACEMENTS));
+    let mut placements_omitted = false;
+    for (_, generation, mut entry) in entries {
+        if placements.len() == MAX_PLACEMENTS
+            || !numbers.contains_key(&generation) && numbers.len() == MAX_FRAME_RESOURCES
+        {
+            placements_omitted = true;
+            break;
+        }
+        entry.resource = *numbers.entry(generation).or_insert_with(|| {
+            resources
+                .numbers
+                .get(&generation)
+                .copied()
+                .unwrap_or_else(|| {
+                    let number = resources.next;
+                    resources.next += 1;
+                    number
+                })
+        });
+        placements.push(entry);
+    }
+    resources.numbers = numbers;
+    // libghostty's geometry uses these cells; with no client size yet it
+    // has none, and the list is empty.
+    let cell = |pixels: libghostty_vt::error::Result<u32>, cells| {
+        pixels
+            .map(|pixels| (pixels / u32::from(cells)).max(1))
+            .map_err(|_| errno(libc::EIO))
+    };
+    Ok(Graphics {
+        cell_width: cell(
+            terminal.width_px(),
+            terminal.cols().map_err(|_| errno(libc::EIO))?,
+        )?,
+        cell_height: cell(
+            terminal.height_px(),
+            terminal.rows().map_err(|_| errno(libc::EIO))?,
+        )?,
+        placements_omitted,
+        placements,
+    })
+}
+
+/// Whether an image is within ORB-C16's resource limits: 8-bit RGB or RGBA,
+/// 1 to 4,096 pixels on each side and at most 10,000,000 decoded bytes.
+fn sendable(image: &Image<'_>) -> io::Result<bool> {
+    let format = match image.format() {
+        Ok(ImageFormat::Rgb) => PixelFormat::Rgb,
+        Ok(ImageFormat::Rgba) => PixelFormat::Rgba,
+        _ => return Ok(false),
+    };
+    let width = image.width().map_err(|_| errno(libc::EIO))?;
+    let height = image.height().map_err(|_| errno(libc::EIO))?;
+    let side = 1..=MAX_RESOURCE_SIDE;
+    Ok(side.contains(&width)
+        && side.contains(&height)
+        && u64::from(width) * u64::from(height) * u64::from(format.bytes_per_pixel())
+            <= u64::from(MAX_RESOURCE_BYTES))
+}
+
+fn image_layer(layer: GhosttyImageLayer) -> ImageLayer {
+    match layer {
+        GhosttyImageLayer::BelowBackground => ImageLayer::BelowBackground,
+        GhosttyImageLayer::BelowText => ImageLayer::BelowText,
+        GhosttyImageLayer::AboveText => ImageLayer::AboveText,
+    }
+}
+
+/// A placeholder cell's style, keeping only what decides the background a
+/// client paints: its colors, inverse, selection and protection (ORB-C16).
+fn blank(style: CellStyle) -> CellStyle {
+    CellStyle {
+        foreground: style.foreground,
+        background: style.background,
+        underline_color: StyleColor::None,
+        bold: false,
+        italic: false,
+        faint: false,
+        blink: false,
+        inverse: style.inverse,
+        invisible: false,
+        strikethrough: false,
+        overline: false,
+        selected: style.selected,
+        protected: style.protected,
+        underline: Underline::None,
+    }
 }
 
 fn first_codepoint_len(text: &str) -> usize {
@@ -451,11 +655,197 @@ mod tests {
     use libghostty_vt::terminal::ScrollViewport;
     use orbit_protocol::session::{self, ServerMessage, VerticalPreview};
 
+    /// Transmits a white RGB image of `width` by `height` pixels as Kitty
+    /// image `id`, with the control keys `keys`.
+    fn transmit(
+        terminal: &mut Terminal<'static, '_>,
+        id: u32,
+        width: u32,
+        height: u32,
+        keys: &str,
+    ) {
+        // Three 0xFF bytes are one "////" in base64.
+        let pixels = "////".repeat((width * height) as usize);
+        terminal.vt_write(
+            format!("\x1b_Gf=24,s={width},v={height},i={id},q=2,{keys};{pixels}\x1b\\").as_bytes(),
+        );
+    }
+
+    fn graphics(frame: &Frame) -> &Graphics {
+        frame.graphics.as_ref().expect("the switch is on")
+    }
+
+    /// Yazi's Kitty stream: a virtual placement, then rows of Unicode
+    /// placeholder cells whose foreground names the image and whose
+    /// diacritics name its row. Each row is one pending entry with
+    /// libghostty's geometry, and its cells are blank in frames and previews
+    /// (ORB-C16). Identities hold while frames reference a resource, and a
+    /// new generation or a skipped resource takes a fresh one.
+    #[test]
+    fn placeholder_rows_are_pending_entries_over_blank_cells() {
+        let mut terminal = Terminal::new(10, 4).unwrap();
+        let mut extractor = FrameExtractor::new(true).unwrap();
+        // With no client size libghostty has no cells to place images in.
+        transmit(&mut terminal, 7, 30, 40, "a=T,U=1,c=3,r=2");
+        let before_size = extractor.frame(1, &terminal).unwrap();
+        assert_eq!(
+            (
+                graphics(&before_size).cell_width,
+                graphics(&before_size).placements.len()
+            ),
+            (1, 0)
+        );
+        terminal.resize(10, 4, 10, 20).unwrap();
+        // Two rows of three cells at column 2, under a background, an
+        // underline and a link.
+        let rows = "\x1b]8;;https://example.test\x1b\\\x1b[38;5;7;48;2;1;2;3;4m\x1b[2;3H\u{10EEEE}\u{305}\u{305}\u{10EEEE}\u{10EEEE}\x1b[3;3H\u{10EEEE}\u{30D}\u{305}\u{10EEEE}\u{10EEEE}\x1b[0m\x1b]8;;\x1b\\";
+        terminal.vt_write(rows.as_bytes());
+        let frame = extractor.frame(2, &terminal).unwrap();
+        let entry = |row, source_y| Placement {
+            resource: 0,
+            layer: ImageLayer::BelowText,
+            z: -1,
+            col: 2,
+            row,
+            grid_cols: 3,
+            grid_rows: 1,
+            offset_x: 0,
+            offset_y: 0,
+            width: 30,
+            height: 20,
+            source: SourceRect {
+                x: 0,
+                y: source_y,
+                width: 30,
+                height: 20,
+            },
+            state: PlacementState::Pending,
+        };
+        assert_eq!(
+            *graphics(&frame),
+            Graphics {
+                cell_width: 10,
+                cell_height: 20,
+                placements_omitted: false,
+                placements: vec![entry(1, 0), entry(2, 20)],
+            }
+        );
+        let blank_cells = |row: &Row| {
+            row.cells[2..5].iter().all(|cell| {
+                cell.text.is_empty()
+                    && cell.style.background == StyleColor::Rgb(Rgb { r: 1, g: 2, b: 3 })
+                    && cell.style.underline == Underline::None
+                    && cell.hyperlink.is_empty()
+            })
+        };
+        assert!(blank_cells(&frame.rows[1]) && blank_cells(&frame.rows[2]));
+        assert!(blank_cells(&extractor.row(&terminal, 1, 10).unwrap()));
+        session::encode_server_message(&ServerMessage::Frame(Box::new(frame))).unwrap();
+
+        // Pixels sent again under the same id are a new generation.
+        transmit(&mut terminal, 7, 30, 40, "a=T,U=1,c=3,r=2");
+        let replaced = extractor.frame(3, &terminal).unwrap();
+        let resources = |frame: &Frame| -> Vec<u64> {
+            graphics(frame)
+                .placements
+                .iter()
+                .map(|entry| entry.resource)
+                .collect()
+        };
+        assert_eq!(resources(&replaced), [1, 1]);
+        assert_eq!(
+            graphics(&extractor.frame(4, &terminal).unwrap()).placements,
+            graphics(&replaced).placements
+        );
+        // Erased cells leave the image stored but unreferenced, so printing
+        // them again starts over with a fresh identity.
+        terminal.vt_write(b"\x1b[2;3H   \x1b[3;3H   ");
+        assert!(
+            graphics(&extractor.frame(5, &terminal).unwrap())
+                .placements
+                .is_empty()
+        );
+        terminal.vt_write(rows.as_bytes());
+        assert_eq!(resources(&extractor.frame(6, &terminal).unwrap()), [2, 2]);
+        // A new attachment numbers its resources afresh.
+        extractor.attach();
+        assert_eq!(resources(&extractor.frame(7, &terminal).unwrap()), [0, 0]);
+
+        // With the switch off frames carry no graphics and keep the cells.
+        let off = FrameExtractor::new(false)
+            .unwrap()
+            .frame(8, &terminal)
+            .unwrap();
+        assert!(off.graphics.is_none());
+        let kept = &off.rows[1].cells[2];
+        assert!(kept.text.starts_with(PLACEHOLDER) && kept.hyperlink == "https://example.test");
+    }
+
+    /// Fixed placements are listed by layer, z-index and image id, and an
+    /// image past the resource limits is unavailable. Past 256 resources or
+    /// 4,096 entries the list stops and says so, and the terminal goes on
+    /// (ORB-C16).
+    #[test]
+    fn placements_are_ordered_and_capped() {
+        let mut terminal = Terminal::new(10, 4).unwrap();
+        terminal.resize(10, 4, 10, 20).unwrap();
+        let mut extractor = FrameExtractor::new(true).unwrap();
+        // Image 3 is two pixels wide, which tells it from image 1.
+        for (id, width, z) in [(3, 2, 5), (1, 1, 5), (2, 1, -1), (4, 1, i32::MIN)] {
+            transmit(&mut terminal, id, width, 1, &format!("a=T,C=1,z={z}"));
+        }
+        transmit(&mut terminal, 5, MAX_RESOURCE_SIDE + 1, 1, "a=T,C=1");
+        let frame = extractor.frame(1, &terminal).unwrap();
+        let order: Vec<_> = graphics(&frame)
+            .placements
+            .iter()
+            .map(|entry| (entry.layer, entry.z, entry.width, entry.state))
+            .collect();
+        let pending = PlacementState::Pending;
+        assert_eq!(
+            order,
+            [
+                (ImageLayer::BelowBackground, i32::MIN, 1, pending),
+                (ImageLayer::BelowText, -1, 1, pending),
+                (ImageLayer::AboveText, 0, 4097, PlacementState::Unavailable),
+                (ImageLayer::AboveText, 5, 1, pending),
+                (ImageLayer::AboveText, 5, 2, pending),
+            ]
+        );
+        assert!(!graphics(&frame).placements_omitted);
+
+        // 257 more images: the list stops at the 256th resource.
+        terminal.vt_write(b"\x1bc");
+        terminal.resize(10, 4, 10, 20).unwrap();
+        for id in 1..=257 {
+            transmit(&mut terminal, id, 1, 1, "a=T,C=1");
+        }
+        let frame = extractor.frame(2, &terminal).unwrap();
+        assert_eq!(graphics(&frame).placements.len(), MAX_FRAME_RESOURCES);
+        assert!(graphics(&frame).placements_omitted);
+        frame.encode().unwrap();
+
+        // 4,097 placements of one image: the list stops at 4,096 entries.
+        terminal.vt_write(b"\x1bc");
+        terminal.resize(10, 4, 10, 20).unwrap();
+        transmit(&mut terminal, 1, 1, 1, "a=t");
+        for placement in 1..=4097 {
+            terminal.vt_write(format!("\x1b_Ga=p,i=1,p={placement},C=1,q=2\x1b\\").as_bytes());
+        }
+        let frame = extractor.frame(3, &terminal).unwrap();
+        assert_eq!(graphics(&frame).placements.len(), MAX_PLACEMENTS);
+        assert!(graphics(&frame).placements_omitted);
+        frame.encode().unwrap();
+    }
+
     #[test]
     fn terminal_frame_uses_the_canonical_protocol_owner() {
         let mut terminal = Terminal::new(8, 2).unwrap();
         terminal.vt_write(b"\x1b]8;;https://example.test\x1b\\READY\x1b]8;;\x1b\\");
-        let frame = FrameExtractor::new().unwrap().frame(1, &terminal).unwrap();
+        let frame = FrameExtractor::new(false)
+            .unwrap()
+            .frame(1, &terminal)
+            .unwrap();
         assert_eq!(
             (frame.revision, frame.dimensions.cols, frame.dimensions.rows),
             (1, 8, 2)
@@ -481,7 +871,10 @@ mod tests {
         let uri = format!("https://example.test/{}", "x".repeat(2000));
         terminal
             .vt_write(format!("\x1b]8;;{uri}\x1b\\{}\x1b]8;;\x1b\\", "L".repeat(2399)).as_bytes());
-        let frame = FrameExtractor::new().unwrap().frame(1, &terminal).unwrap();
+        let frame = FrameExtractor::new(false)
+            .unwrap()
+            .frame(1, &terminal)
+            .unwrap();
         let cells: Vec<_> = frame
             .rows
             .iter()
@@ -514,7 +907,7 @@ mod tests {
             )
             .as_bytes(),
         );
-        let mut extractor = FrameExtractor::new().unwrap();
+        let mut extractor = FrameExtractor::new(false).unwrap();
         let whole = extractor
             .frame(1, &terminal)
             .unwrap()
@@ -543,7 +936,7 @@ mod tests {
             "\x1b]8;;https://example.test\x1b\\\x1b[1\"q\x1b[1;38;2;12;34;56;48;5;17mAe\u{301}界1234567界wrap-me-long\x1b[0m\x1b[0\"q\x1b]8;;\x1b\\\r\n\x1b[48;2;5;6;7m\x1b[2K\x1b[0m\r\nplain\r\ntail-1\r\ntail-2\r\ntail-3"
                 .as_bytes(),
         );
-        let mut extractor = FrameExtractor::new().unwrap();
+        let mut extractor = FrameExtractor::new(false).unwrap();
         let mut frame_at_top = |terminal: &mut Terminal<'static, '_>, revision| {
             terminal.scroll_viewport(ScrollViewport::Top);
             let frame = extractor.frame(revision, terminal).unwrap();
@@ -599,7 +992,7 @@ mod tests {
     fn scroll_position_follows_reflow_eviction_and_clears() {
         let mut terminal = Terminal::new(8, 4).unwrap();
         terminal.set_scrollback_max_bytes(Some(64 * 1024)).unwrap();
-        let mut extractor = FrameExtractor::new().unwrap();
+        let mut extractor = FrameExtractor::new(false).unwrap();
         let mut frame = |terminal: &Terminal<'static, '_>| extractor.frame(0, terminal).unwrap();
         let position = |rows_from_live, history_rows| ScrollPosition {
             rows_from_live,
@@ -672,7 +1065,7 @@ mod tests {
         terminal.vt_write(
             b"\x1b]8;;https://example.test\x1b\\one\x1b]8;;\x1b\\\r\n\x1b]8;;http://x/\xff\x1b\\two\x1b]8;;\x1b\\\r\nthree\r\nlongerthan8\r\nlast",
         );
-        let extractor = FrameExtractor::new().unwrap();
+        let extractor = FrameExtractor::new(false).unwrap();
         let text = |row: &Row| {
             row.cells
                 .iter()

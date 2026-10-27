@@ -127,6 +127,16 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   worker's per-client output bound grows to 13,094,971 bytes and ORB-C7's room
   for a scroll outcome behind a started frame holds. Orbit still states Kitty
   graphics unsupported and sends no resources (`orb-j2i.5`).
+- Orbit sets libghostty's Kitty storage rules from ORB-C16 explicitly:
+  10,000,000 decoded bytes per screen, only the direct transmission medium,
+  and no PNG decoder. These match libghostty's defaults, so storage behaves
+  as before. Behind ORB-C16's internal switch, which
+  only Orbit's real-PTY checks turn on (`ORBIT_KITTY_GRAPHICS=1`), frames
+  state Kitty graphics and carry libghostty's placements as pending or
+  unavailable entries, and placeholder cells are blank in frames and
+  previews. The shipped wire is unchanged: the switch is off, so frames
+  still state Kitty graphics unsupported, and Orbit sends no resources
+  (`orb-j2i.6`).
 
 ## Before this repository
 

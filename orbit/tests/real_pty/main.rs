@@ -35,6 +35,7 @@ checks!(
     history,
     interactive_pressure,
     key_live,
+    kitty_placements,
     late_observer,
     lifecycle,
     management_lease,

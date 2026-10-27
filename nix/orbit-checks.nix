@@ -133,6 +133,11 @@ let
       env.ORBIT_BASH = bash;
     }
     {
+      name = "kitty-placements";
+      timeout = "30s";
+      env.ORBIT_BASH = bash;
+    }
+    {
       name = "silent-peer";
       variable = "EXIT_SHELL";
       script = "detached-exit-shell";
