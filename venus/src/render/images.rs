@@ -1747,6 +1747,7 @@ mod tests {
                     },
                     1,
                     2,
+                    true,
                     FontSetup::new(&FontSettings::default()).unwrap(),
                 ))
                 .unwrap();

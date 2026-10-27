@@ -396,6 +396,7 @@ fn venus_command(
     application_id: &str,
     decorations: bool,
     warning_close_last_tab: bool,
+    animate_working_badge: bool,
 ) -> Command {
     let mut command = Command::new(&inputs.venus);
     command
@@ -469,6 +470,8 @@ fn venus_command(
             .arg(terminal.pane_frames.to_string())
             .arg("--warning-close-last-tab")
             .arg(warning_close_last_tab.to_string())
+            .arg("--animate-working-badge")
+            .arg(animate_working_badge.to_string())
             .arg("--workspace");
     }
     command.arg(socket);
@@ -763,6 +766,8 @@ fn supervise(
     }
     let warning_close_last_tab =
         managed_environment::warning_close_last_tab(config, &inputs.defaults, Some(log))?;
+    let animate_working_badge =
+        managed_environment::animate_working_badge(config, &inputs.defaults, Some(log))?;
     // Full Eon only; eonbase has no poller and no sidebar (EON-C31).
     let mut attention = if mode == LaunchMode::Workspace {
         Some(Attention::new(managed_environment::sidebar_enabled(
@@ -851,6 +856,7 @@ fn supervise(
             application_id,
             decorations,
             warning_close_last_tab,
+            animate_working_badge,
         );
         Some(PresentationProcess::start(
             command,
@@ -952,6 +958,7 @@ fn supervise(
                 application_id,
                 decorations,
                 warning_close_last_tab,
+                animate_working_badge,
             ),
             false,
             None,
@@ -1863,6 +1870,11 @@ fn dispatch_control_request(
                     &state.application_id,
                     state.decorations,
                     managed_environment::warning_close_last_tab(
+                        config,
+                        &inputs.defaults,
+                        Some(&state.log),
+                    )?,
+                    managed_environment::animate_working_badge(
                         config,
                         &inputs.defaults,
                         Some(&state.log),
@@ -2783,6 +2795,7 @@ mod tests {
                 "eon",
                 true,
                 true,
+                true,
             );
             let args = command.get_args().collect::<Vec<_>>();
             args.windows(2)
@@ -2896,6 +2909,7 @@ rows = 30
                 "eon",
                 true,
                 true,
+                true,
             );
             let args = command
                 .get_args()
@@ -2949,6 +2963,7 @@ rows = 30
                     "eon",
                     true,
                     true,
+                    true,
                 );
                 let args = command.get_args().collect::<Vec<_>>();
                 assert!(
@@ -2980,6 +2995,7 @@ rows = 30
                     "eon",
                     true,
                     true,
+                    true,
                 );
                 let args = command.get_args().collect::<Vec<_>>();
                 let expected = if source.is_empty() { "2" } else { "3" };
@@ -3005,6 +3021,7 @@ rows = 30
                 &terminal,
                 inputs.defaults.bar_widgets,
                 "eon",
+                true,
                 true,
                 true,
             )
@@ -3043,6 +3060,7 @@ rows = 30
                     &terminal,
                     inputs.defaults.bar_widgets,
                     "eon",
+                    true,
                     true,
                     true,
                 );
@@ -3107,6 +3125,7 @@ rows = 30
                         "eon",
                         true,
                         true,
+                        true,
                     );
                     let args = command.get_args().collect::<Vec<_>>();
                     assert_eq!(
@@ -3163,6 +3182,7 @@ rows = 30
                     "eon",
                     true,
                     true,
+                    true,
                 );
                 let args = command.get_args().collect::<Vec<_>>();
                 assert_eq!(
@@ -3199,6 +3219,7 @@ rows = 30
                 "eon",
                 true,
                 true,
+                true,
             );
             assert!(
                 command
@@ -3233,6 +3254,7 @@ rows = 30
                     &terminal,
                     inputs.defaults.bar_widgets,
                     "eon",
+                    true,
                     true,
                     true,
                 );
@@ -3284,6 +3306,7 @@ rows = 30
             "eon",
             true,
             false,
+            false,
         );
         assert_eq!(
             workspace.get_args().map(OsString::from).collect::<Vec<_>>(),
@@ -3301,6 +3324,8 @@ rows = 30
                 "true",
                 "--warning-close-last-tab",
                 "false",
+                "--animate-working-badge",
+                "false",
                 "--workspace",
                 "/runtime/eon.sock",
             ]
@@ -3315,6 +3340,7 @@ rows = 30
             &terminal_presentation(1.0, false),
             inputs.defaults.bar_widgets,
             "eonbase",
+            true,
             true,
             true,
         );
@@ -3348,6 +3374,7 @@ rows = 30
             inputs.defaults.bar_widgets,
             "eonova",
             false,
+            true,
             true,
         );
         assert_eq!(

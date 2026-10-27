@@ -160,8 +160,9 @@ pub(super) fn rasterize_quota_icon(
     })
 }
 
-/// The phases of a working badge's arc, each turned 45° clockwise from the one before.
-const SPINNER_PHASES: usize = 8;
+/// A working badge's phases, Nova's braille frames ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏, each as its offset from
+/// U+2800: dot n, numbered down the left column (1–3) and then the right (4–6), is bit n − 1.
+const SPINNER_FRAMES: [u8; 10] = [0x0B, 0x19, 0x39, 0x38, 0x3C, 0x34, 0x26, 0x27, 0x07, 0x0F];
 
 /// A working badge's spinner within the static rectangle vertices: a tick rewrites only these
 /// bytes, which keep their length in every phase. The badge lies wholly inside its clip, so the
@@ -172,11 +173,17 @@ struct SpinnerSlot {
 }
 
 /// The working badges in the current static vertices and the phase they are drawn at. On a
-/// software adapter, where every turn re-rasterizes the whole frame, there is no phase: working
-/// badges are drawn still and never tick (VEN-C21).
+/// software adapter, where every turn re-rasterizes the whole frame, or when Eon turns the
+/// animation off, there is no phase: working badges are drawn still and never tick (VEN-C21).
 pub(super) struct Spinners {
     slots: Vec<SpinnerSlot>,
     phase: Option<usize>,
+}
+
+/// Whether working badges turn: only on a hardware adapter, and only while
+/// `--animate-working-badge` is true (VEN-C21).
+pub(super) fn spinners_turn(device: wgpu::DeviceType, animate: bool) -> bool {
+    animate && device != wgpu::DeviceType::Cpu
 }
 
 impl Spinners {
@@ -246,7 +253,7 @@ fn push_popup_marker(rectangles: &mut RectangleBatch, rect: SceneRect, color: Sc
 }
 
 /// Draws one attention badge's glyph inside its disc: ◆ needs input, ✕ error, ✓ finished, the
-/// arc turned to `phase` for working, or at its first phase without one, and, in sidebar rows,
+/// braille frame at `phase` for working, or the first frame without one, and, in sidebar rows,
 /// ○ idle and · unavailable. Quads keep the glyphs independent of fonts.
 fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Option<usize>) {
     // The ring yields entirely on the smallest badges, so the glyph never leaves the badge.
@@ -302,7 +309,7 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
             );
         }
         AttentionState::Working => {
-            push_arc(rectangles, badge.rect, glyph, phase.unwrap_or(0), alpha)
+            push_braille(rectangles, glyph, SPINNER_FRAMES[phase.unwrap_or(0)], alpha)
         }
         AttentionState::Idle | AttentionState::Unavailable => {
             // A thin ring for idle and a small round dot for unavailable, each drawn as 16 joined
@@ -337,61 +344,63 @@ fn push_badge_glyph(rectangles: &mut RectangleBatch, badge: TabBadge, phase: Opt
     }
 }
 
-/// Draws a working badge's arc: a 270° band inside `glyph` that trails its head, which points up
-/// at phase 0 and turns clockwise. Every pixel the glyph touches inside `badge` is one 1x1 quad
-/// whose alpha is the arc's coverage of 8x8 samples, kept at zero outside it, so each phase writes
-/// the same vertices and only alpha turns. Pixels past `badge` stay undrawn, so its clip check
-/// covers them.
-fn push_arc(
-    rectangles: &mut RectangleBatch,
-    badge: SceneRect,
-    glyph: SceneRect,
-    phase: usize,
-    alpha: f32,
-) {
-    const SAMPLES: u16 = 8;
-    let center_x = glyph.left + glyph.width / 2.0;
-    let center_y = glyph.top + glyph.height / 2.0;
-    let outer = glyph.width / 2.0;
-    let inner = (outer - (glyph.width * 0.2).max(1.6)).max(0.0);
-    let (sin, cos) = (phase as f32 * std::f32::consts::TAU / SPINNER_PHASES as f32
-        - std::f32::consts::FRAC_PI_2)
-        .sin_cos();
-    let left = glyph.left.floor().max(badge.left.ceil());
-    let right = glyph.right().ceil().min(badge.right().floor());
-    let top = glyph.top.floor().max(badge.top.ceil());
-    let bottom = glyph.bottom().ceil().min(badge.bottom().floor());
-    let mut y = top;
-    while y < bottom {
-        let mut x = left;
-        while x < right {
-            let mut covered = 0u16;
-            for sample in 0..SAMPLES * SAMPLES {
-                let dx = x + (f32::from(sample % SAMPLES) + 0.5) / f32::from(SAMPLES) - center_x;
-                let dy = y + (f32::from(sample / SAMPLES) + 0.5) / f32::from(SAMPLES) - center_y;
-                let radius = dx * dx + dy * dy;
-                // The quarter gap lies clockwise of the head, between it and 90° past it.
-                let gap = cos * dy - sin * dx > 0.0 && cos * dx + sin * dy > 0.0;
-                if radius <= outer * outer && radius >= inner * inner && !gap {
-                    covered += 1;
-                }
-            }
-            let coverage = f32::from(covered) / f32::from(SAMPLES * SAMPLES);
-            rectangles.push(x, y, 1.0, 1.0, palette::ATTENTION_WORKING, alpha * coverage);
-            x += 1.0;
+/// Draws a working badge's braille `frame` as a 2x3 grid of square dots centred on the whole
+/// pixels inside `glyph`: dots twice as wide as the gaps between them, two pixels and one at the
+/// default badge, scaled by whole pixels with the glyph. All six dots are pushed in every frame
+/// with unlit ones at zero alpha, so each phase writes the same vertices and only alpha changes.
+/// A glyph too small for the grid keeps the dots that fit; none leave `glyph`, so the badge's
+/// clip check covers them.
+fn push_braille(rectangles: &mut RectangleBatch, glyph: SceneRect, frame: u8, alpha: f32) {
+    let left = glyph.left.ceil();
+    let top = glyph.top.ceil();
+    let area = SceneRect {
+        left,
+        top,
+        width: (glyph.right().floor() - left).max(0.0),
+        height: (glyph.bottom().floor() - top).max(0.0),
+    };
+    let unit = (area.height / 8.0).min(area.width / 5.0).floor();
+    let (dot, gap) = if unit >= 1.0 {
+        (unit * 2.0, unit)
+    } else if area.height >= 5.0 && area.width >= 3.0 {
+        (1.0, 1.0)
+    } else {
+        (1.0, 0.0)
+    };
+    let x = left + ((area.width - dot * 2.0 - gap) / 2.0).floor().max(0.0);
+    let y = top
+        + ((area.height - dot * 3.0 - gap * 2.0) / 2.0)
+            .floor()
+            .max(0.0);
+    for bit in 0..6u8 {
+        let rect = SceneRect {
+            left: x + f32::from(bit / 3) * (dot + gap),
+            top: y + f32::from(bit % 3) * (dot + gap),
+            width: dot,
+            height: dot,
+        };
+        if let Some(rect) = rect.intersection(area) {
+            let lit = (frame >> bit) & 1 == 1;
+            rectangles.push(
+                rect.left,
+                rect.top,
+                rect.width,
+                rect.height,
+                palette::ATTENTION_WORKING,
+                if lit { alpha } else { 0.0 },
+            );
         }
-        y += 1.0;
     }
 }
 
 impl Renderer {
-    /// Turns every drawn arc one phase by rewriting only its own uploaded vertices, so the
-    /// scene, text and terminal layers stay cached.
+    /// Steps every drawn working badge one frame by rewriting only its own uploaded vertices,
+    /// so the scene, text and terminal layers stay cached.
     pub fn turn_spinners(&mut self) {
         let Some(phase) = &mut self.spinners.phase else {
             return;
         };
-        *phase = (*phase + 1) % SPINNER_PHASES;
+        *phase = (*phase + 1) % SPINNER_FRAMES.len();
         for slot in &self.spinners.slots {
             let mut batch = RectangleBatch::new(self.config.width, self.config.height);
             push_badge_glyph(&mut batch, slot.badge, self.spinners.phase);
@@ -1661,7 +1670,7 @@ mod tests {
     }
 
     #[test]
-    fn spinner_phases_rewrite_only_alpha_in_place() {
+    fn braille_phases_rewrite_only_alpha_in_place_and_light_their_dots() {
         // A tick rewrites without the tab viewport's clip, which leaves a drawn badge unchanged,
         // down to the one-pixel badge of the smallest typography, at the viewport's edge.
         let viewport = Some(SceneRect {
@@ -1669,7 +1678,7 @@ mod tests {
             height: 40.0,
             ..SceneRect::default()
         });
-        for size in [12.0, 1.0] {
+        for size in [24.0, 12.0, 6.0, 1.0] {
             let badge = TabBadge {
                 state: AttentionState::Working,
                 dimmed: false,
@@ -1692,109 +1701,146 @@ mod tests {
             };
             assert!(badge_inside(badge, viewport));
             let first = glyph(0, None);
-            for phase in 0..SPINNER_PHASES {
+            for (phase, character) in "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏".chars().enumerate() {
+                let bits = SPINNER_FRAMES[phase];
+                assert_eq!(char::from_u32(0x2800 + u32::from(bits)), Some(character));
                 let turned = glyph(phase, None);
                 assert_eq!(turned, glyph(phase, viewport));
                 assert_eq!(turned.len(), first.len());
-                // Each vertex is x, y, r, g, b, alpha: only alpha turns.
+                // Each vertex is x, y, r, g, b, alpha: only alpha changes.
                 for (vertex, first) in turned.chunks_exact(6).zip(first.chunks_exact(6)) {
                     assert_eq!(vertex[..5], first[..5]);
                 }
-                // A one-pixel arc covers its pixel equally at every quarter turn.
-                if size > 1.0 {
-                    assert_eq!(phase == 0, turned == first);
+                if size < 6.0 {
+                    continue;
                 }
+                // Six dots of six vertices each; a lit dot's column and row name its braille dot.
+                // Vertices are in clip space, whose y points up.
+                let dots = turned
+                    .chunks_exact(36)
+                    .map(|dot| (dot[0], -dot[1], dot[5]))
+                    .collect::<Vec<_>>();
+                assert_eq!(dots.len(), 6);
+                let mut columns = dots.iter().map(|dot| dot.0).collect::<Vec<_>>();
+                let mut rows = dots.iter().map(|dot| dot.1).collect::<Vec<_>>();
+                for axis in [&mut columns, &mut rows] {
+                    axis.sort_by(f32::total_cmp);
+                    axis.dedup();
+                }
+                assert_eq!((columns.len(), rows.len()), (2, 3));
+                let lit = dots
+                    .iter()
+                    .filter(|dot| dot.2 > 0.0)
+                    .map(|dot| {
+                        let column = columns.iter().position(|x| *x == dot.0).unwrap();
+                        let row = rows.iter().position(|y| *y == dot.1).unwrap();
+                        1u32 << (column * 3 + row)
+                    })
+                    .sum::<u32>();
+                assert_eq!(lit, character as u32 - 0x2800, "{character} at {size}");
             }
         }
     }
 
     #[test]
-    fn working_badges_draw_an_antialiased_open_arc() {
-        // The badges of the default typography at scales 1 and 2, as rows of coverage per pixel.
-        let coverage = |size: f32, phase| {
+    fn working_badges_draw_braille_dots_on_whole_pixels() {
+        // The badges of the default typography at scales 1 and 2, as one character per pixel:
+        // # a lit dot, . an unlit one.
+        let art = |left: f32, top: f32, size: f32, phase| {
             let badge = TabBadge {
                 state: AttentionState::Working,
                 dimmed: false,
                 rect: SceneRect {
-                    left: 4.0,
-                    top: 4.0,
+                    left,
+                    top,
                     width: size,
                     height: size,
                 },
             };
             let mut rectangles = RectangleBatch::new(800, 600);
             push_badge_glyph(&mut rectangles, badge, phase);
-            // Each pixel is one quad of six vertices of x, y, r, g, b, alpha.
-            let alphas = rectangles
-                .bytes
-                .chunks_exact(24 * 6)
-                .map(|quad| f32::from_ne_bytes(quad[20..24].try_into().unwrap()))
-                .collect::<Vec<_>>();
-            let side = (alphas.len() as f32).sqrt() as usize;
-            assert_eq!(side * side, alphas.len());
-            alphas.chunks(side).map(<[f32]>::to_vec).collect::<Vec<_>>()
-        };
-        let art = |rows: Vec<Vec<f32>>| {
-            rows.iter()
-                .map(|row| {
-                    row.iter()
-                        .map(|alpha| [' ', '.', '+', '*', '#'][(alpha * 4.0).round() as usize])
-                        .collect::<String>()
-                })
+            let side = size as usize;
+            let mut rows = vec![vec![' '; side]; side];
+            // Each dot is one quad of six vertices of x, y, r, g, b, alpha, in clip space.
+            for dot in rectangles.bytes.chunks_exact(24 * 6) {
+                let value = |at: usize| f32::from_ne_bytes(dot[at..at + 4].try_into().unwrap());
+                let xs = [0, 24, 48].map(|at| (value(at) + 1.0) * 400.0);
+                let ys = [4, 28, 52].map(|at| (1.0 - value(at)) * 300.0);
+                let low = |values: [f32; 3]| values.into_iter().fold(f32::MAX, f32::min);
+                let high = |values: [f32; 3]| values.into_iter().fold(0.0, f32::max);
+                let (dot_left, dot_top, dot_right, dot_bottom) =
+                    (low(xs), low(ys), high(xs), high(ys));
+                for edge in [dot_left, dot_top, dot_right, dot_bottom] {
+                    assert!(
+                        (edge - edge.round()).abs() < 1e-3,
+                        "dots keep to whole pixels"
+                    );
+                }
+                let [dot_left, dot_top, dot_right, dot_bottom] =
+                    [dot_left, dot_top, dot_right, dot_bottom].map(f32::round);
+                assert!(dot_left >= left && dot_right <= left + size);
+                assert!(dot_top >= top && dot_bottom <= top + size);
+                let mark = if value(20) > 0.0 { '#' } else { '.' };
+                let (x, y) = (left.ceil(), top.ceil());
+                for row in &mut rows[(dot_top - y) as usize..(dot_bottom - y) as usize] {
+                    row[(dot_left - x) as usize..(dot_right - x) as usize].fill(mark);
+                }
+            }
+            rows.into_iter()
+                .map(|row| row.into_iter().collect::<String>())
                 .collect::<Vec<_>>()
         };
-        // Phase 0, also the still form, opens a quarter between 12 and 3 o'clock.
+        // Frame 0, ⠋, is also the still form.
         assert_eq!(
-            art(coverage(12.0, None)),
+            art(4.0, 4.0, 12.0, None),
             [
-                "  .*#     ",
-                " +###     ",
-                ".##+      ",
-                "*#+       ",
-                "##        ",
-                "##      ##",
-                "*#+    +#*",
-                ".##+  +##.",
-                " +######+ ",
-                "  .*##*.  ",
+                "            ",
+                "            ",
+                "   ## ##    ",
+                "   ## ##    ",
+                "            ",
+                "   ## ..    ",
+                "   ## ..    ",
+                "            ",
+                "   .. ..    ",
+                "   .. ..    ",
+                "            ",
+                "            ",
             ]
         );
         assert_eq!(
-            art(coverage(24.0, None)),
+            art(4.0, 4.0, 24.0, None),
             [
-                "      .*##          ",
-                "    .#####          ",
-                "   +######          ",
-                "  +#######          ",
-                " .#####+.           ",
-                " #####.             ",
-                ".####.              ",
-                "*###+               ",
-                "####.               ",
-                "####                ",
-                "####            ####",
-                "####.          .####",
-                "*###+          +###*",
-                ".####.        .####.",
-                " #####.      .##### ",
-                " .#####+.  .+#####. ",
-                "  +##############+  ",
-                "   +############+   ",
-                "    .##########.    ",
-                "      .*####*.      ",
+                "                        ",
+                "                        ",
+                "                        ",
+                "                        ",
+                "       ####  ####       ",
+                "       ####  ####       ",
+                "       ####  ####       ",
+                "       ####  ####       ",
+                "                        ",
+                "                        ",
+                "       ####  ....       ",
+                "       ####  ....       ",
+                "       ####  ....       ",
+                "       ####  ....       ",
+                "                        ",
+                "                        ",
+                "       ....  ....       ",
+                "       ....  ....       ",
+                "       ....  ....       ",
+                "       ....  ....       ",
+                "                        ",
+                "                        ",
+                "                        ",
+                "                        ",
             ]
         );
-        // Every second phase turns the arc a quarter clockwise.
         for size in [12.0, 24.0] {
-            assert_eq!(coverage(size, None), coverage(size, Some(0)));
-            for phase in (0..SPINNER_PHASES).step_by(2) {
-                let rows = coverage(size, Some(phase));
-                let side = rows.len();
-                let turned = (0..side)
-                    .map(|y| (0..side).map(|x| rows[side - 1 - x][y]).collect())
-                    .collect::<Vec<Vec<f32>>>();
-                assert_eq!(turned, coverage(size, Some((phase + 2) % SPINNER_PHASES)));
-            }
+            assert_eq!(art(4.0, 4.0, size, None), art(4.0, 4.0, size, Some(0)));
+            // A badge between pixels still draws whole-pixel dots inside it.
+            art(4.5, 3.25, size, Some(4));
         }
     }
 
@@ -1826,6 +1872,22 @@ mod tests {
         // `update_spinner` schedules no tick.
         assert_eq!((turning_slots, still_slots), (1, 0));
         assert_eq!(turning, still);
+    }
+
+    #[test]
+    fn working_badges_turn_only_on_hardware_adapters_with_animation_on() {
+        use wgpu::DeviceType;
+        for device in [
+            DeviceType::Other,
+            DeviceType::IntegratedGpu,
+            DeviceType::DiscreteGpu,
+            DeviceType::VirtualGpu,
+            DeviceType::Cpu,
+        ] {
+            assert_eq!(spinners_turn(device, true), device != DeviceType::Cpu);
+            // `--animate-working-badge false` keeps every adapter's badge still.
+            assert!(!spinners_turn(device, false));
+        }
     }
 
     #[test]
@@ -2040,6 +2102,7 @@ mod tests {
                     },
                     1,
                     2,
+                    true,
                     FontSetup::new(&FontSettings::default()).unwrap(),
                 ))
                 .unwrap();

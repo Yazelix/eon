@@ -39,6 +39,7 @@ duration_seconds = 3
 
 [workspace]
 warning_close_last_tab = true
+animate_working_badge = true
 
 [sidebar]
 enabled = true
@@ -91,6 +92,7 @@ enabled = true # Enable this feature or popup.
 style = "random" # Startup animation style.
 
 [workspace]
+animate_working_badge = true # Animate the working badge; false keeps it still.
 warning_close_last_tab = true # Ask before stopping the final tab's terminals.
 
 [sidebar]
@@ -253,6 +255,12 @@ Alt+W on the last pane show a prompt listing the same terminals: Enter quits,
 or closes the workspace while others remain, Escape cancels, and Alt+Shift+D
 keeps them running instead. With `false`, both close at once. The window reads
 the setting when it starts.
+
+`animate_working_badge = true` steps the working attention badge, on tabs and
+in the agent sidebar, through the braille dots ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ten times a
+second. `false` keeps it still at ⠋, for people who prefer no motion. Without
+GPU rendering (a software graphics adapter) the badge is always still. The
+window reads the setting when it starts.
 
 `[sidebar] enabled = true` offers the agent sidebar, which lists
 the coding agents in the window's tabs that report their status. `false` turns

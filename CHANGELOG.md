@@ -12,6 +12,13 @@ installation, and proven contract changes.
   seen, so its check does not come back when the work stops. A finish reported
   after the work still shows. Errors and needs input are unchanged.
 
+- The working attention badge, on tabs and in the agent sidebar, is now
+  braille dots stepping through ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ten times a second, one cycle a
+  second, instead of an open arc turning five times a second. Set
+  `[workspace] animate_working_badge = false` to keep it still at ⠋; without
+  GPU rendering it is always still. The window reads the setting when it
+  starts.
+
 - Terminal images: programs that show pictures through the Kitty graphics
   protocol, such as Yazi's image previews, now draw them in Eon's panes and
   popups, between the cell backgrounds and the text. Until an image arrives,

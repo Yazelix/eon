@@ -1325,11 +1325,12 @@ re-proved when that platform or feature is next touched.
 - **Attention badges (EON-C31):** These rules apply while the agent sidebar is
   not visible (`Closed`, `Off`, or hidden for width):
   - every tab whose rollup is needs input, error, finished or working shows a
-    corner badge (◆, ✕, ✓, or a spinner), the active tab included. A stale
+    corner badge (◆, ✕, ✓, or braille dots), the active tab included. A stale
     tab's badge is dimmed;
-  - on a software (CPU) graphics adapter the working badge is a still open arc
-    that never repaints to animate; otherwise the arc turns, repainting at no
-    more than 5 Hz under AP-PERF-001, and only the badge;
+  - the working badge's dots step through ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏, repainting at no more
+    than 10 Hz under AP-PERF-001, and only the badge. On a software (CPU)
+    graphics adapter, or when Eon passes `--animate-working-badge false`, it
+    is the still frame ⠋ and never repaints to animate;
   - the badge changes neither the tab's width nor its label text;
   - with tab overflow, the scroll edge shows the most urgent hidden badge;
   - a tab's accessible name appends its state, for example
@@ -1356,7 +1357,8 @@ re-proved when that platform or feature is next touched.
   dependency, native-decoration policy, or platform-support expansion. The
   exceptions are the EON-C31 tab attention marker and the EON-C33 workspace
   label, read from the EONW v22 snapshot that Venus already polls, the label
-  and its badge from its `workspace` and `workspaces`.
+  and its badge from its `workspace` and `workspaces`, and the
+  `--animate-working-badge` launch argument.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** Automated and installed.
   - **Evidence:** `eon_bar_controls_reuse_existing_actions_and_local_viewer`,
@@ -1432,6 +1434,30 @@ re-proved when that platform or feature is next touched.
     - Under Sway's Vulkan renderer on the Intel GPU, Venus had no llvmpipe
       threads and render-engine time on `renderD129`. The spinner turned,
       giving 7 distinct frames, and Venus used 11 ticks of 10 ms over 20 s.
+  - **Braille dots (`eon-spinner-braille-dots-hmg0`):** automated proof in
+    `braille_phases_rewrite_only_alpha_in_place_and_light_their_dots`,
+    `working_badges_draw_braille_dots_on_whole_pixels`,
+    `working_badges_turn_only_on_hardware_adapters_with_animation_on`,
+    `software_adapters_draw_working_badges_still_and_never_tick`,
+    `spinner_turns_at_most_ten_times_a_second_and_only_while_shown` and
+    `pane_frame_option_is_a_strict_single_boolean`. Isolated installed
+    observation of this commit's tree on edge `5a86244`, the candidate's
+    `nix build` of `/nix/store/csfx2il7xaf96dw03iyzbbryzsxx7rk1-eon-0.1.5`,
+    private headless Sway 1.12 with its Vulkan renderer on the Intel GPU at
+    1600x900, one pane reporting working over OSC 7501. Venus had no llvmpipe
+    threads and render-engine time on `renderD129`. Ten captures were taken
+    about 140 ms apart.
+    - With the default setting and the sidebar closed, the tab corner showed
+      ⠋, then ⠹, as 2 px dots with 1 px gaps. The captures gave 7 distinct
+      frames, and every difference lay within the badge's 5x8 dot grid. The
+      sidebar's working row stepped likewise within its own 5x8 box. Venus
+      CPU over 20 s: 32 ticks of 10 ms with the tab badge, 31 with the sidebar
+      row, and 7 with no working terminal, at load average 1.9 to 2.5.
+    - With `[workspace] animate_working_badge = false`, the badge stayed ⠋:
+      the badge areas were identical in all captures, in the tabs and in the
+      sidebar. Venus CPU over 20 s: 6 ticks with the tab badge, 7 with the
+      sidebar row, and 6 with no working terminal, at load average 1.5 to
+      1.7.
 - **Open proof:** Pending re-proof in this repository: compositor window drag
   from the empty header region, narrow-width captures, and AT-SPI header order.
 

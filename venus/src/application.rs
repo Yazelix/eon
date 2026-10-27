@@ -62,8 +62,8 @@ use shortcuts::{
 };
 
 const BLINK_INTERVAL: Duration = Duration::from_millis(500);
-/// A working badge's spinner turns at most 5 times a second (VEN-C21, AP-PERF-001).
-const SPINNER_INTERVAL: Duration = Duration::from_millis(200);
+/// A working badge steps one braille frame at most 10 times a second (VEN-C21, AP-PERF-001).
+const SPINNER_INTERVAL: Duration = Duration::from_millis(100);
 const MINUTE: Duration = Duration::from_secs(60);
 const READING_INTERVAL: Duration = Duration::from_secs(2);
 const ANIMATION_FRAME_INTERVAL: Duration = Duration::from_millis(16);
@@ -660,6 +660,8 @@ struct Application {
     focus_color: Color,
     border_width: u8,
     focus_border_width: u8,
+    /// Whether working badges may turn; Eon's `--animate-working-badge` (VEN-C21).
+    animate_working_badge: bool,
     eon_version: Option<String>,
     bar_items: Vec<BarItem>,
     background_opacity: f32,
@@ -741,6 +743,7 @@ impl Application {
             border_width,
             focus_border_width,
             warning_close_last_tab,
+            animate_working_badge,
             eon_version,
             bar_items,
             background_opacity,
@@ -772,6 +775,7 @@ impl Application {
             focus_color,
             border_width,
             focus_border_width,
+            animate_working_badge,
             eon_version,
             bar_items,
             background_opacity,
@@ -869,6 +873,7 @@ impl Application {
             self.focus_color,
             self.border_width,
             self.focus_border_width,
+            self.animate_working_badge,
             fonts,
         ))?;
         window.set_visible(true);
@@ -7066,7 +7071,7 @@ mod tests {
     }
 
     #[test]
-    fn spinner_turns_at_most_five_times_a_second_and_only_while_shown() {
+    fn spinner_turns_at_most_ten_times_a_second_and_only_while_shown() {
         let now = Instant::now();
         let mut deadline = None;
 
@@ -7081,6 +7086,14 @@ mod tests {
         ));
         assert!(!update_spinner(false, &mut deadline, late));
         assert_eq!(deadline, None);
+
+        // Polled every millisecond for two seconds, the badge steps every 100 ms: ten frames, one
+        // braille cycle, a second.
+        let turns = (0..=2000u64)
+            .filter(|&ms| update_spinner(true, &mut deadline, now + Duration::from_millis(ms)))
+            .collect::<Vec<_>>();
+        assert_eq!(turns.len(), 20);
+        assert!(turns.windows(2).all(|pair| pair[1] - pair[0] == 100));
     }
 
     #[test]

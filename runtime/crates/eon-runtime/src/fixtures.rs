@@ -52,6 +52,7 @@ pub(crate) fn inputs() -> Inputs {
                 duration_seconds: 2,
             },
             warning_close_last_tab: true,
+            animate_working_badge: true,
             sidebar_enabled: true,
             popups: PopupCatalog {
                 geometry: PopupGeometry {

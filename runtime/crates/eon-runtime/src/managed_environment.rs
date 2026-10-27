@@ -66,6 +66,8 @@ pub struct Defaults {
     pub anima: StartupAnimation,
     /// Whether closing the final tab, which quits its window, asks first.
     pub warning_close_last_tab: bool,
+    /// Whether the working badge animates on a hardware graphics adapter.
+    pub animate_working_badge: bool,
     /// Whether full Eon offers the agent sidebar (EON-C31).
     pub sidebar_enabled: bool,
     pub popups: PopupCatalog,
@@ -135,6 +137,7 @@ struct AnimationSettings {
 #[serde(default)]
 struct WorkspaceSettings {
     warning_close_last_tab: Option<bool>,
+    animate_working_badge: Option<bool>,
     #[serde(flatten)]
     unknown: BTreeMap<String, toml::Value>,
 }
@@ -328,7 +331,10 @@ pub(crate) fn print_defaults(defaults: &Defaults, json: bool) -> Result<String, 
         "terminal": terminal,
         "shell": defaults.shell,
         "anima": defaults.anima,
-        "workspace": { "warning_close_last_tab": defaults.warning_close_last_tab },
+        "workspace": {
+            "warning_close_last_tab": defaults.warning_close_last_tab,
+            "animate_working_badge": defaults.animate_working_badge,
+        },
         "sidebar": { "enabled": defaults.sidebar_enabled },
         "popups": popups,
     });
@@ -394,6 +400,7 @@ fn defaults_table(
             "style" => "Startup animation style.",
             "duration_seconds" => "Startup animation duration in seconds.",
             "warning_close_last_tab" => "Ask before stopping the final tab's terminals.",
+            "animate_working_badge" => "Animate the working badge; false keeps it still.",
             "label" => "Popup display name.",
             "keybinding" => "Popup shortcut using physical keys.",
             "keep_alive" => "Keep this popup running when hidden.",
@@ -505,6 +512,17 @@ pub(crate) fn warning_close_last_tab(
         .workspace
         .warning_close_last_tab
         .unwrap_or(defaults.warning_close_last_tab))
+}
+
+pub(crate) fn animate_working_badge(
+    root: &Path,
+    defaults: &Defaults,
+    log: Option<&DiagnosticLog>,
+) -> Result<bool, String> {
+    Ok(read_config(root, log)?
+        .workspace
+        .animate_working_badge
+        .unwrap_or(defaults.animate_working_badge))
 }
 
 pub(crate) fn sidebar_enabled(
@@ -1141,9 +1159,9 @@ fn prepend_path(prefix: &Path, path: Option<&OsStr>, owner: &str) -> Result<OsSt
 mod tests {
     use super::{
         ALT, ManagedPrograms, PopupCommand, PopupDefinition, PopupKey, SHIFT, Shortcut, Tool,
-        command as managed_command, integration_mask, popup_catalog, prepare_popup_command,
-        prepend_path, read_shell_config, sidebar_enabled, startup_animation, terminal_presentation,
-        tool, warning_close_last_tab,
+        animate_working_badge, command as managed_command, integration_mask, popup_catalog,
+        prepare_popup_command, prepend_path, read_shell_config, sidebar_enabled, startup_animation,
+        terminal_presentation, tool, warning_close_last_tab,
     };
     use std::{
         ffi::{OsStr, OsString},
@@ -1171,6 +1189,7 @@ mod tests {
                 defaults.terminal.columns = Some(100);
                 defaults.terminal.rows = Some(30);
                 defaults.anima.enabled = false;
+                defaults.animate_working_badge = false;
                 defaults.popups.entries[1].command = PopupCommand::Argv(vec![
                     "fixture-git".into(),
                     "quote\"and\\slash".into(),
@@ -1201,6 +1220,7 @@ mod tests {
                     popup_catalog(root, &defaults, None).unwrap(),
                     super::bar_widgets(root, &defaults, None).unwrap(),
                     warning_close_last_tab(root, &defaults, None).unwrap(),
+                    animate_working_badge(root, &defaults, None).unwrap(),
                     sidebar_enabled(root, &defaults, None).unwrap(),
                 )
             };
@@ -1238,6 +1258,7 @@ enabled = false
 new_field = true
 [workspace]
 warning_close_last_tab = false
+animate_working_badge = false
 new_field = true
 [sidebar]
 enabled = false
@@ -1267,6 +1288,7 @@ nested = { value = true }
         );
         assert_eq!(config.anima.enabled, Some(false));
         assert_eq!(config.workspace.warning_close_last_tab, Some(false));
+        assert_eq!(config.workspace.animate_working_badge, Some(false));
         assert_eq!(config.sidebar.enabled, Some(false));
         assert_eq!(
             config.popups["agent"].label.as_deref(),
@@ -1533,6 +1555,34 @@ nested = { value = true }
             warning_close_last_tab(&root, &inputs.defaults, None)
                 .unwrap_err()
                 .contains("warning_close_last_tab")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_working_badge_setting_reads_its_value_and_rejects_non_booleans() {
+        let inputs = crate::fixtures::inputs();
+        let root = std::env::temp_dir().join(format!(
+            "eon-managed-environment-test-{}-working-badge",
+            std::process::id()
+        ));
+        fs::create_dir(&root).unwrap();
+        assert!(animate_working_badge(&root, &inputs.defaults, None).unwrap());
+        fs::write(
+            root.join("config.toml"),
+            "[workspace]\nanimate_working_badge = false\n",
+        )
+        .unwrap();
+        assert!(!animate_working_badge(&root, &inputs.defaults, None).unwrap());
+        fs::write(
+            root.join("config.toml"),
+            "[workspace]\nanimate_working_badge = 'no'\n",
+        )
+        .unwrap();
+        assert!(
+            animate_working_badge(&root, &inputs.defaults, None)
+                .unwrap_err()
+                .contains("animate_working_badge")
         );
         fs::remove_dir_all(root).unwrap();
     }

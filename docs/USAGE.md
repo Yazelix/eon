@@ -278,8 +278,9 @@ same outline, background and background opacity. Each tab gets a heading such
 as `3  site`, then one row per reporting terminal: a popup's row first, then
 the panes' rows in pane order. A row shows:
 
-- the state: ◆ needs input, ✕ error, ✓ finished, a turning open arc while
-  working (a still arc without GPU rendering), or ○ idle;
+- the state: ◆ needs input, ✕ error, ✓ finished, stepping braille dots while
+  working (still without GPU rendering or with
+  `[workspace] animate_working_badge = false`), or ○ idle;
 - the Claude or Codex icon;
 - a Claude Code session's name, such as `eon-9a` for a session started
   with `claude --name eon-9a`; otherwise the title the agent reports, and

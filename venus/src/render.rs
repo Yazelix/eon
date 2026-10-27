@@ -46,7 +46,7 @@ use cells::{
     cell_text_attrs, cell_text_segments, cursor_bounds, cursor_outline, fitted_cell_font,
     set_cell_layer,
 };
-use chrome::{HeaderInteraction, Spinners, fit_header_text, rasterize_quota_icon};
+use chrome::{HeaderInteraction, Spinners, fit_header_text, rasterize_quota_icon, spinners_turn};
 use cursor_trail::{CursorAnimation, build_tail_cursor};
 use images::{BandItem, DrawStep, ImageDraw, Images, draw_steps};
 
@@ -948,6 +948,7 @@ impl Renderer {
         focus_color: SceneColor,
         border_width: u8,
         focus_border_width: u8,
+        animate_working_badge: bool,
         mut fonts: FontSetup,
     ) -> Result<Self, RenderError> {
         let size = nonzero(window.inner_size());
@@ -964,7 +965,7 @@ impl Renderer {
             })
             .await
             .map_err(display_error("no compatible Venus GPU adapter"))?;
-        let spinners_turn = adapter.get_info().device_type != wgpu::DeviceType::Cpu;
+        let spinners_turn = spinners_turn(adapter.get_info().device_type, animate_working_badge);
         let (device, queue) = adapter
             .request_device(&DeviceDescriptor::default())
             .await

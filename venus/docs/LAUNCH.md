@@ -111,6 +111,13 @@ of first showing the close prompt (VEN-C8). The default is `true`. Missing,
 duplicate or invalid boolean values fail before window creation. Eon passes its
 `[workspace] warning_close_last_tab` setting on every workspace launch.
 
+Pass `--animate-working-badge false` to draw the working attention badge as the
+still braille frame ⠋ instead of stepping through ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ at 10 Hz
+(VEN-C21). The default is `true`; a software (CPU) graphics adapter draws the
+badge still either way. Missing, duplicate or invalid boolean values fail
+before window creation. Eon passes its `[workspace] animate_working_badge`
+setting on every workspace launch.
+
 Workspace mode opens the EONW transport first and waits for its accepted
 snapshot before attaching its terminal endpoint. The first snapshot may select
 a popup or have no visible terminal; no initial Orbit endpoint, durable pane,

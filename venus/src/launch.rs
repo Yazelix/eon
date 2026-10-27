@@ -22,7 +22,7 @@ const CURSOR_COLOR_PRESETS: [(&str, Color); 8] = [
     ("nebula", rgb(0xa970ff)),
     ("bubblegum", rgb(0xff5da2)),
 ];
-const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
+const USAGE: &str = "usage: yazelix-venus [--application-id ID] [--no-decorations] [--pane-frames true|false] [--focus-color preset:NAME|custom:#RRGGBB] [--border-width 1..3] [--focus-border-width 1..3] [--warning-close-last-tab true|false] [--animate-working-badge true|false] [--eon-version VERSION] [--bar-items ITEM,...] [--background-opacity VALUE] [--background-blur] [--padding-color extend|extend-always|background] [--cursor-trail-color random|preset:NAME|custom:#RRGGBB] [--cursor-effect-v1 none|tail] [--cursor-trail-color-v1 #RRGGBB] [--cursor-trail-duration-v1 0.25..4.0] [--font-family FAMILY] [--font-fallback FAMILY] [--font-size 6..96] [--line-height 1..3] [--columns N] [--rows N] [ORBIT_SOCKET | --workspace EON_WORKSPACE_SOCKET]";
 
 #[derive(Debug)]
 pub(super) struct LaunchArguments {
@@ -37,6 +37,7 @@ pub(super) struct LaunchArguments {
     pub(super) border_width: u8,
     pub(super) focus_border_width: u8,
     pub(super) warning_close_last_tab: bool,
+    pub(super) animate_working_badge: bool,
     pub(super) eon_version: Option<String>,
     pub(super) bar_items: Vec<BarItem>,
     pub(super) background_opacity: f32,
@@ -62,6 +63,7 @@ pub(super) fn launch_arguments(
     let mut border_width = None;
     let mut focus_border_width = None;
     let mut warning_close_last_tab = None;
+    let mut animate_working_badge = None;
     let mut eon_version = None;
     let mut bar_items = None;
     let mut background_opacity = None;
@@ -143,6 +145,8 @@ pub(super) fn launch_arguments(
             }
         } else if argument == "--warning-close-last-tab" {
             option_value(&mut warning_close_last_tab, arguments.next())?;
+        } else if argument == "--animate-working-badge" {
+            option_value(&mut animate_working_badge, arguments.next())?;
         } else if argument == "--application-id" {
             if application_id.is_some() {
                 return Err(USAGE.into());
@@ -299,6 +303,7 @@ pub(super) fn launch_arguments(
         border_width: border_width.unwrap_or(1),
         focus_border_width: focus_border_width.unwrap_or(1),
         warning_close_last_tab: warning_close_last_tab.unwrap_or(true),
+        animate_working_badge: animate_working_badge.unwrap_or(true),
         eon_version,
         bar_items: bar_items.unwrap_or_else(|| BarItem::DEFAULT.into()),
         background_opacity: background_opacity.unwrap_or(1.0),
@@ -556,24 +561,35 @@ mod tests {
     fn pane_frame_option_is_a_strict_single_boolean() {
         use std::os::unix::ffi::OsStringExt;
         let parse = |args: &[&str]| launch_arguments(args.iter().map(OsString::from), None);
-        let read =
-            |arguments: LaunchArguments| (arguments.pane_frames, arguments.warning_close_last_tab);
+        let read = |arguments: LaunchArguments| {
+            (
+                arguments.pane_frames,
+                arguments.warning_close_last_tab,
+                arguments.animate_working_badge,
+            )
+        };
         assert_eq!(
             read(parse(&["--workspace", "eon.sock"]).unwrap()),
-            (true, true)
+            (true, true, true)
         );
         for (flag, value, expected) in [
-            ("--pane-frames", "false", (false, true)),
-            ("--pane-frames", "true", (true, true)),
-            ("--warning-close-last-tab", "false", (true, false)),
-            ("--warning-close-last-tab", "true", (true, true)),
+            ("--pane-frames", "false", (false, true, true)),
+            ("--pane-frames", "true", (true, true, true)),
+            ("--warning-close-last-tab", "false", (true, false, true)),
+            ("--warning-close-last-tab", "true", (true, true, true)),
+            ("--animate-working-badge", "false", (true, true, false)),
+            ("--animate-working-badge", "true", (true, true, true)),
         ] {
             assert_eq!(
                 read(parse(&[flag, value, "--workspace", "eon.sock"]).unwrap()),
                 expected
             );
         }
-        for flag in ["--pane-frames", "--warning-close-last-tab"] {
+        for flag in [
+            "--pane-frames",
+            "--warning-close-last-tab",
+            "--animate-working-badge",
+        ] {
             for args in [
                 vec![flag],
                 vec![flag, ""],

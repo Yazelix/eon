@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C21: the working badge draws braille dots stepping through
+  ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ at no more than 10 Hz instead of an open arc turning at 5 Hz.
+  The new `--animate-working-badge true|false` launch argument, true by
+  default, keeps it at the still frame ⠋ when false, as on a software adapter
+  (`eon-spinner-braille-dots-hmg0`).
+
 - VEN-C31 becomes Proven: on the installed Eon and a hardware Vulkan device,
   Yazi's RGB and RGBA image previews drew in a pane and in the Files popup
   and, in the pane, across resizing, deletion, the alternate screen, detach
