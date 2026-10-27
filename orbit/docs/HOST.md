@@ -27,8 +27,8 @@ signal's stop reaps the child, it gives a live observer the finish bound to
 take Exited with the child's code, writes a managed run's explicit tombstone
 and exits 0; the interactive client closes without
 Exited. A signal that leaves the child unreaped exits 128 plus the signal, a
-dead worker exits with the worker's status, and after a stalled worker is
-killed the host exits 1. After a natural exit it exits
+dead worker exits with the worker's status after naming it on stderr, and
+after a stalled worker is killed the host exits 1. After a natural exit it exits
 with the child's code, which Bend decides with `Finish` ([Command line](BEHAVIOR.md#command-line)).
 
 The host runs one event loop. Each wait watches the attached client, the PTY

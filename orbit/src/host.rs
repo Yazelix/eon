@@ -1545,6 +1545,22 @@ impl Host {
     }
 }
 
+/// Names a run in a diagnostic line: a managed run's Session and run IDs, or
+/// else its socket pathname, escaped so the line stays one line.
+fn run_name(serve: &Serve) -> String {
+    match &serve.management {
+        Some(launch) => format!(
+            "session {}, run {}",
+            launch.session_id.escape_debug(),
+            launch.run_id.escape_debug()
+        ),
+        None => format!(
+            "socket {}",
+            serve.socket.display().to_string().escape_debug()
+        ),
+    }
+}
+
 fn wait_worker(worker: &mut Child, deadline: Instant) -> io::Result<Option<ExitStatus>> {
     loop {
         if let Some(status) = worker.try_wait()? {
@@ -1564,6 +1580,7 @@ fn wait_worker(worker: &mut Child, deadline: Instant) -> io::Result<Option<ExitS
 pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
     let serve = cli::parse(arguments)
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))?;
+    let run = run_name(&serve);
     TERMINATION_SIGNAL.store(0, Ordering::Relaxed);
     install_termination_handlers()?;
     // Bend's policy is sequential, so one runtime thread serves it.
@@ -1631,7 +1648,15 @@ pub fn run(worker: &Path, arguments: &[OsString]) -> io::Result<u32> {
                 return Ok(if reaped { 0 } else { 128 + number as u32 });
             }
             match died {
-                Some(status) => Ok(status_code(status)),
+                // One line names how the worker ended; a failed write
+                // leaves the worker's status as the host's.
+                Some(status) => {
+                    let _ = writeln!(
+                        io::stderr(),
+                        "orbit: worker ended ({status}); the host saw: {error}; {run}"
+                    );
+                    Ok(status_code(status))
+                }
                 None => Err(error),
             }
         }

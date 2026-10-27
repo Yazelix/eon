@@ -187,7 +187,9 @@ fn silent_worker(then: &str) -> (Finished, Duration) {
 }
 
 pub fn run() {
-    // A fatal Bend exit: the child ignores SIGHUP, so cleanup must escalate.
+    // A fatal Bend exit in a managed run: the child ignores SIGHUP, so
+    // cleanup must escalate, and the host names the worker's status and the
+    // run on stderr.
     let directory = TempDir::new();
     let path = directory.join("orbit.sock");
     let bash = bash();
@@ -198,7 +200,7 @@ pub fn run() {
             OsStr::new("-c"),
             OsStr::new("trap '' HUP; while :; do sleep 1; done"),
         ],
-        &[],
+        &["--management-v2", "session-1", "run-1", "component-1"],
     );
     let fault = run_command(&line, &[("ORBIT_GUARDIAN_FAULT", Path::new("1"))], 8.0);
     let output = String::from_utf8_lossy(&fault.stdout);
@@ -209,12 +211,17 @@ pub fn run() {
         .expect("the fault fixture names the child");
     let _leftovers = Leftovers(vec![fault_pid]);
     assert_eq!(fault.code(), Some(1), "{:?}", fault.status);
+    let message = String::from_utf8_lossy(&fault.stderr);
+    let host_lines: Vec<_> = message
+        .lines()
+        .filter(|line| line.starts_with("orbit: "))
+        .collect();
     assert!(
-        String::from_utf8_lossy(&fault.stderr)
-            .lines()
-            .any(|line| line == "guardian fault fixture"),
-        "{:?}",
-        String::from_utf8_lossy(&fault.stderr)
+        message.lines().any(|line| line == "guardian fault fixture")
+            && matches!(host_lines[..], [line] if
+                line.starts_with("orbit: worker ended (exit status: 1); ")
+                    && line.ends_with("; session session-1, run run-1")),
+        "{message:?}"
     );
     assert!(!path.exists(), "the socket pathname remains");
     assert!(
@@ -228,14 +235,23 @@ pub fn run() {
 
     // A killed worker, with an interactive client and a metadata observer
     // attached: the host contains the child, each peer's connection ends
-    // with nothing more, and the host exits with the worker's status.
+    // with nothing more, and the host exits with the worker's status after
+    // one stderr line naming the signal and the run.
     let probe = Probe::start("IGNORE_HUP_SHELL", "ignore-hup-shell");
     let _leftovers = Leftovers(vec![probe.child]);
     let (mut client, mut observer) = peers(&probe.server.path);
     signal(probe.worker(), libc::SIGKILL);
     ended(&mut client, "the client");
     ended(&mut observer, "the observer");
-    probe.finish(137);
+    let socket = format!("; socket {}\n", probe.server.path.display());
+    let finished = probe.finish(137);
+    let message = String::from_utf8_lossy(&finished.stderr);
+    assert!(
+        message.starts_with("orbit: worker ended (signal: 9 (SIGKILL)); ")
+            && message.ends_with(&socket)
+            && message.lines().count() == 1,
+        "stderr {message:?}"
+    );
 
     // A killed host, with both peers attached, cleans up nothing itself:
     // the kernel ends each peer's connection and

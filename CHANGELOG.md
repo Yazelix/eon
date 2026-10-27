@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- When a terminal's Orbit worker dies, its Orbit log names how the worker
+  ended, such as `signal: 9 (SIGKILL)`, with the terminal's session and run,
+  instead of nothing.
+
 - With a screen reader running, Venus no longer exits when the active tab has
   no panes and shows nothing, such as a tab left with only a dismissed popup.
 

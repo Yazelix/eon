@@ -1143,9 +1143,13 @@ foreground group read again, and the direct child must be reaped within two
 seconds. It checks the socket's recorded identity before unlinking and leaves
 an observed replacement. A termination signal is an orderly stop, so the host
 then exits 0 once the child is reaped, or 128 plus the signal if it is not; a
-dead worker's status is the host's. The worker exits when its fact pipe
-closes, and on Linux it also dies with the host (`PR_SET_PDEATHSIG`), so it
-never outlives its pipes.
+dead worker's status is the host's. Before it exits with that status, the host
+writes one stderr line naming how the worker ended, the error the host saw,
+and the run: a managed run's Session and run IDs, otherwise the socket
+pathname, such as `orbit: worker ended (signal: 9 (SIGKILL)); the host saw:
+Broken pipe (os error 32); session S, run R`. The worker exits when its fact
+pipe closes, and on Linux it also dies with the host (`PR_SET_PDEATHSIG`), so
+it never outlives its pipes.
 
 A worker that stops answering, such as one stopped by SIGSTOP or wedged by a
 runtime defect, is treated as dead. The host waits at most two seconds for the
@@ -1169,7 +1173,11 @@ the worker with an interactive client and a metadata observer attached,
 SIGTERM of the host with a
 HUP-ignoring shell, and SIGTERM with a HUP-ignoring foreground job that the
 shell runs in its own process group. Each removes the direct child, the job and
-the socket within the check's deadline. The `IO.die` case sets
+the socket within the check's deadline. After the worker's SIGKILL the host's
+stderr is one line naming the signal and the socket; without that line the
+case fails on an empty stderr (sensitivity check). The `IO.die` case runs
+managed, and the host's one stderr line there names exit status 1 and the
+Session and run IDs. That case sets
 `ORBIT_GUARDIAN_FAULT=1`, an environment variable outside Orbit's
 command line, because no client message can make the proved policy fail. Two
 cases stop the worker with SIGSTOP and then send a peer's Hello: in one, the
