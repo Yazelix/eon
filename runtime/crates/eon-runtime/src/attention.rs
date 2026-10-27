@@ -7,7 +7,7 @@ use super::{
     sessions::{self, ProgramStatusRead, RunningSession},
     workspace::is_directory_picker_session,
 };
-use eon_workspace_protocol::v21::{
+use eon_workspace_protocol::v22::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
@@ -23,9 +23,10 @@ const POLL_DEADLINE: Duration = Duration::from_millis(250);
 const STALE_AFTER: Duration = Duration::from_secs(3);
 const AGENT_ENTRY: &str = "agent";
 
-/// A pane or popup terminal, in workspace order: panes column by column, then
-/// popups.
+/// A pane or popup terminal, in window order: workspace by workspace, tab by
+/// tab, panes column by column, then popups.
 pub(super) struct Target {
+    workspace: usize,
     tab: usize,
     position: usize,
     /// The pane id, or the popup instance.
@@ -34,43 +35,49 @@ pub(super) struct Target {
     agent: bool,
 }
 
-/// The pane and popup terminals, never a directory picker, and the session of
-/// the focused one: the shown popup, else the selected pane, of the active tab.
-pub(super) fn targets(snapshot: &Snapshot) -> (Vec<Target>, Option<String>) {
+/// The pane and popup terminals of every workspace, given in window order,
+/// never a directory picker, and the session of the focused one: the shown
+/// popup, else the selected pane, of the shown workspace's active tab
+/// (EON-C33).
+pub(super) fn targets(workspaces: &[Snapshot]) -> (Vec<Target>, Option<String>) {
     let mut targets = Vec::new();
     let mut focus = None;
-    for (index, tab) in snapshot.tabs.iter().enumerate() {
-        let active = tab.id == snapshot.active_tab;
-        let panes = tab.panes().map(|pane| {
-            let focused =
-                tab.selected_popup.is_none() && tab.selected_pane.as_ref() == Some(&pane.id);
-            (&pane.id, &pane.session, false, focused)
-        });
-        let popups = tab.popups.iter().map(|popup| {
-            let focused = tab.selected_popup.as_ref() == Some(&popup.id);
-            (
-                &popup.id,
-                &popup.session,
-                popup.entry == AGENT_ENTRY,
-                focused,
-            )
-        });
-        let mut position = 0;
-        for (id, session, agent, focused) in panes.chain(popups) {
-            if active && focused {
-                focus = Some(session.clone());
-            }
-            if is_directory_picker_session(session) {
-                continue;
-            }
-            targets.push(Target {
-                tab: index,
-                position,
-                id: id.clone(),
-                session: session.clone(),
-                agent,
+    for (workspace, snapshot) in workspaces.iter().enumerate() {
+        let shown = snapshot.workspace == snapshot.active_workspace;
+        for (index, tab) in snapshot.tabs.iter().enumerate() {
+            let active = shown && tab.id == snapshot.active_tab;
+            let panes = tab.panes().map(|pane| {
+                let focused =
+                    tab.selected_popup.is_none() && tab.selected_pane.as_ref() == Some(&pane.id);
+                (&pane.id, &pane.session, false, focused)
             });
-            position += 1;
+            let popups = tab.popups.iter().map(|popup| {
+                let focused = tab.selected_popup.as_ref() == Some(&popup.id);
+                (
+                    &popup.id,
+                    &popup.session,
+                    popup.entry == AGENT_ENTRY,
+                    focused,
+                )
+            });
+            let mut position = 0;
+            for (id, session, agent, focused) in panes.chain(popups) {
+                if active && focused {
+                    focus = Some(session.clone());
+                }
+                if is_directory_picker_session(session) {
+                    continue;
+                }
+                targets.push(Target {
+                    workspace,
+                    tab: index,
+                    position,
+                    id: id.clone(),
+                    session: session.clone(),
+                    agent,
+                });
+                position += 1;
+            }
         }
     }
     (targets, focus)
@@ -163,8 +170,9 @@ struct Shown<'a> {
     others: u16,
 }
 
-/// A queue entry's total order: class, fixed time, tab and terminal position.
-pub(super) type Key = (State, Instant, usize, usize);
+/// A queue entry's total order: class, fixed time, then workspace, tab and
+/// terminal position.
+pub(super) type Key = (State, Instant, usize, usize, usize);
 
 pub(super) struct Attention {
     terminals: Vec<Terminal>,
@@ -357,7 +365,7 @@ impl Attention {
         self.attached = attached;
     }
 
-    /// Follows an accepted attention action, given the snapshot it left:
+    /// Follows an accepted attention action, given the workspaces it left:
     /// `ToggleSidebar` flips visibility, and `FocusAttention` follows focus,
     /// moves the cursor to `jump` for a queue jump, and sees the target's
     /// raises when it has focus, also when it had focus already.
@@ -365,13 +373,13 @@ impl Attention {
         &mut self,
         action: &Action,
         jump: Option<Key>,
-        snapshot: &Snapshot,
+        workspaces: &[Snapshot],
         attached: bool,
     ) {
         match action {
             Action::ToggleSidebar => self.toggle_sidebar(),
             Action::FocusAttention { target, .. } => {
-                let (targets, focus) = targets(snapshot);
+                let (targets, focus) = targets(workspaces);
                 self.observe(focus.clone(), attached);
                 if jump.is_some() {
                     self.cursor = jump;
@@ -427,12 +435,19 @@ impl Attention {
         }
     }
 
-    /// A tab's highest-priority state; a stale terminal counts with its last
-    /// state.
-    fn rollup(&self, targets: &[Target], tab: usize, now: Instant) -> Option<State> {
+    /// The highest-priority state of a workspace, or of one of its tabs; a
+    /// stale terminal counts with its last state.
+    fn rollup(
+        &self,
+        targets: &[Target],
+        workspace: usize,
+        tab: Option<usize>,
+        now: Instant,
+    ) -> Option<State> {
         targets
             .iter()
-            .filter(|target| target.tab == tab)
+            .filter(|target| target.workspace == workspace)
+            .filter(|target| tab.is_none_or(|tab| target.tab == tab))
             .filter_map(|target| Some(self.shown(target, now)?.state))
             .min()
     }
@@ -445,7 +460,13 @@ impl Attention {
             .iter()
             .find(|terminal| terminal.session == session)?;
         let (_, state, at) = terminal.most_urgent()?;
-        (state <= State::Finished).then_some((state, at, target.tab, target.position))
+        (state <= State::Finished).then_some((
+            state,
+            at,
+            target.workspace,
+            target.tab,
+            target.position,
+        ))
     }
 
     /// `NextAttention` (`forward`) or `PreviousAttention`: the entry after or
@@ -473,28 +494,43 @@ impl Attention {
         .copied()
     }
 
-    /// The `FocusAttention` a queue jump performs, with the cursor it moves
-    /// to; none for an empty queue.
-    pub(super) fn jump(&self, snapshot: &Snapshot, forward: bool) -> Option<(Action, Key)> {
-        let (targets, _) = targets(snapshot);
+    /// The workspace and `FocusAttention` of a queue jump over `workspaces`,
+    /// with the cursor it moves to; none for an empty queue.
+    pub(super) fn jump(
+        &self,
+        workspaces: &[Snapshot],
+        forward: bool,
+    ) -> Option<(String, Action, Key)> {
+        let (targets, _) = targets(workspaces);
         let (key, target) = self.next(&targets, forward)?;
+        let workspace = &workspaces[target.workspace];
         let action = Action::FocusAttention {
-            tab: snapshot.tabs[target.tab].id.clone(),
+            tab: workspace.tabs[target.tab].id.clone(),
             target: target.id.clone(),
         };
-        Some((action, key))
+        Some((workspace.workspace.clone(), action, key))
     }
 
-    /// Sets each terminal's attention, each tab's rollup and the sidebar,
-    /// after following the focus `snapshot` has: a reply to a focus change
+    /// Sets each terminal's attention, each tab's and workspace's rollup and
+    /// the sidebar of `snapshot`, which projects one of `workspaces`, after
+    /// following the focus the shown one has: a reply to a focus change
     /// already shows the newly focused terminal's raises as seen.
-    pub(super) fn present(&mut self, snapshot: &mut Snapshot, attached: bool, now: Instant) {
-        let (targets, focus) = targets(snapshot);
-        if snapshot.workspace == snapshot.active_workspace {
-            self.observe(focus, attached);
-        }
+    pub(super) fn present(
+        &mut self,
+        snapshot: &mut Snapshot,
+        workspaces: &[Snapshot],
+        attached: bool,
+        now: Instant,
+    ) {
+        let (targets, focus) = targets(workspaces);
+        self.observe(focus, attached);
+        let projected = workspaces
+            .iter()
+            .position(|workspace| workspace.workspace == snapshot.workspace);
         let attention = |id: &str| {
-            let target = targets.iter().find(|target| target.id == id)?;
+            let target = targets
+                .iter()
+                .find(|target| Some(target.workspace) == projected && target.id == id)?;
             let shown = self.shown(target, now)?;
             Some(eonw::Attention {
                 state: shown.state,
@@ -522,7 +558,14 @@ impl Attention {
             for popup in &mut tab.popups {
                 popup.attention = attention(&popup.id);
             }
-            tab.attention_rollup = self.rollup(&targets, index, now);
+            tab.attention_rollup =
+                projected.and_then(|workspace| self.rollup(&targets, workspace, Some(index), now));
+        }
+        for info in &mut snapshot.workspaces {
+            info.attention = workspaces
+                .iter()
+                .position(|workspace| workspace.workspace == info.id)
+                .and_then(|index| self.rollup(&targets, index, None, now));
         }
         snapshot.sidebar = self.sidebar;
     }
@@ -550,8 +593,8 @@ impl Attention {
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v21::{Column, Pane, Popup, PopupGeometry, Tab};
-    use std::{fs, thread};
+    use eon_workspace_protocol::v22::{Column, Pane, Popup, PopupGeometry, Tab};
+    use std::{fs, slice, thread};
 
     /// A record created at its change `changed`.
     fn record(
@@ -629,10 +672,12 @@ mod tests {
         Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v22::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: tabs.len(),
+                attention: None,
+                recency: 0,
             }],
             active_tab: active.into(),
             geometry: PopupGeometry {
@@ -682,7 +727,7 @@ mod tests {
             ),
             tab("t2", &["s3"], &[("agent", "s4")], Some("s4")),
         ];
-        let (found, focus) = targets(&snapshot("t2", tabs.clone()));
+        let (found, focus) = targets(&[snapshot("t2", tabs.clone())]);
         let order: Vec<_> = found
             .iter()
             .map(|target| {
@@ -704,12 +749,12 @@ mod tests {
             ]
         );
         assert_eq!(focus.as_deref(), Some("s4"));
-        assert_eq!(targets(&snapshot("t1", tabs)).1.as_deref(), Some("s1"));
+        assert_eq!(targets(&[snapshot("t1", tabs)]).1.as_deref(), Some("s1"));
     }
 
     #[test]
     fn raises_follow_the_changes_eon_c31_names() {
-        let (targets, _) = targets(&snapshot("t", vec![tab("t", &["s"], &[], None)]));
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
         let mut attention = Attention::new(true);
         let base = Instant::now();
         let at = |attention: &mut Attention, update: u64, records: Vec<ProgramRecord>| {
@@ -785,7 +830,7 @@ mod tests {
 
     #[test]
     fn clears_drop_unseen_raises_and_a_restarted_provider_raises_anew() {
-        let (targets, _) = targets(&snapshot("t", vec![tab("t", &["s"], &[], None)]));
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
         let mut attention = Attention::new(true);
         let base = Instant::now();
         let apply = |attention: &mut Attention, update: u64, records| {
@@ -843,7 +888,7 @@ mod tests {
 
     #[test]
     fn identity_fixes_change_times_and_discards_older_replies_until_a_new_run() {
-        let (targets, _) = targets(&snapshot("t", vec![tab("t", &["s"], &[], None)]));
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s"], &[], None)])]);
         let mut attention = Attention::new(true);
         let base = Instant::now();
         let done = |age| ProgramRecord {
@@ -958,7 +1003,7 @@ mod tests {
     #[test]
     fn stale_results_keep_their_state_and_only_agent_popups_start_unavailable() {
         let shown_snapshot = snapshot("t", vec![tab("t", &["s"], &[("agent", "a")], None)]);
-        let (targets, _) = targets(&shown_snapshot);
+        let (targets, _) = targets(slice::from_ref(&shown_snapshot));
         let mut attention = Attention::new(true);
         let base = Instant::now();
         assert_eq!(state(&attention, &targets, "s", base), None);
@@ -984,7 +1029,8 @@ mod tests {
         // stale terminal keeps and the next reply replaces.
         let name = |attention: &mut Attention| {
             let mut presented = shown_snapshot.clone();
-            attention.present(&mut presented, false, late);
+            let window = [presented.clone()];
+            attention.present(&mut presented, &window, false, late);
             let pane = &presented.tabs[0].columns[0].panes[0];
             let record = pane.attention.as_ref().unwrap().record.as_ref().unwrap();
             (record.name.clone(), record.stale)
@@ -1016,7 +1062,7 @@ mod tests {
 
     #[test]
     fn seen_needs_an_attached_venus_and_the_exact_focused_terminal() {
-        let (targets, _) = targets(&snapshot("t", vec![tab("t", &["s1", "s2"], &[], None)]));
+        let (targets, _) = targets(&[snapshot("t", vec![tab("t", &["s1", "s2"], &[], None)])]);
         let mut attention = Attention::new(true);
         let now = Instant::now();
         let check = |attention: &Attention, session| state(attention, &targets, session, now);
@@ -1084,46 +1130,102 @@ mod tests {
         assert_eq!(check(&attention, "s1"), Some(State::Error));
     }
 
+    /// Workspace `id`'s own snapshot while `shown` is the shown one.
+    fn in_workspace(id: &str, shown: &str, active: &str, tabs: Vec<Tab>) -> Snapshot {
+        Snapshot {
+            workspace: id.into(),
+            active_workspace: shown.into(),
+            ..snapshot(active, tabs)
+        }
+    }
+
     #[test]
-    fn a_hidden_caller_reply_does_not_observe_its_terminal() {
-        let mut hidden = snapshot("t", vec![tab("t", &["hidden"], &[], None)]);
-        hidden.active_workspace = "w2".into();
-        let (targets, _) = targets(&hidden);
+    fn hidden_raises_stay_unseen_and_the_queue_crosses_into_their_workspace() {
+        let window = |shown: &str, focus: &str| {
+            let mut hidden = tab("t2", &["s2", "s3"], &[], None);
+            hidden.selected_pane = Some(format!("pane-{focus}"));
+            hidden.columns[0].expanded = format!("pane-{focus}");
+            [
+                in_workspace("w1", shown, "t1", vec![tab("t1", &["s1"], &[], None)]),
+                in_workspace("w2", shown, "t2", vec![hidden]),
+            ]
+        };
+        let before = window("w1", "s2");
+        let (targets, focus) = targets(&before);
+        assert_eq!(
+            focus.as_deref(),
+            Some("s1"),
+            "only the shown workspace focuses"
+        );
         let mut attention = Attention::new(true);
         let now = Instant::now();
-        attention.observe(Some("shown".into()), true);
-        attention.apply(
-            &targets,
-            "hidden",
-            "run",
-            status(1, vec![record("a", Done, None, 1)]),
-            now,
-        );
-        attention.present(&mut hidden, true, now);
+        attention.observe(focus, true);
+        for session in ["s2", "s3"] {
+            attention.apply(
+                &targets,
+                session,
+                "run",
+                status(1, vec![record("a", Done, None, 1)]),
+                now,
+            );
+        }
+
+        // A reply to a caller in the hidden workspace sees nothing there, and each workspace
+        // carries its own rollup.
+        let mut reply = before[1].clone();
+        reply.workspaces = ["w1", "w2"]
+            .map(|id| eon_workspace_protocol::v22::WorkspaceInfo {
+                id: id.into(),
+                ..reply.workspaces[0].clone()
+            })
+            .into();
+        attention.present(&mut reply, &before, true, now);
         assert_eq!(
-            hidden.tabs[0].columns[0].panes[0]
+            reply.tabs[0].columns[0].panes[0]
                 .attention
                 .as_ref()
                 .unwrap()
                 .state,
             State::Finished
         );
-        hidden.active_workspace = hidden.workspace.clone();
-        attention.present(&mut hidden, true, now);
+        assert_eq!(reply.tabs[0].attention_rollup, Some(State::Finished));
+        let rollups: Vec<_> = reply.workspaces.iter().map(|info| info.attention).collect();
+        assert_eq!(rollups, [None, Some(State::Finished)]);
+
+        // The queue reaches the hidden terminal; its jump shows w2 and sees
+        // only the exact terminal it focuses.
+        let (workspace, action, key) = attention.jump(&before, true).unwrap();
+        assert_eq!(workspace, "w2");
         assert_eq!(
-            hidden.tabs[0].columns[0].panes[0]
-                .attention
-                .as_ref()
-                .unwrap()
-                .state,
-            State::Idle
+            action,
+            Action::FocusAttention {
+                tab: "t2".into(),
+                target: "pane-s2".into(),
+            }
         );
+        attention.handled(&action, Some(key), &window("w2", "s2"), true);
+        assert_eq!(state(&attention, &targets, "s2", now), Some(State::Idle));
+        assert_eq!(
+            state(&attention, &targets, "s3", now),
+            Some(State::Finished)
+        );
+
+        // Showing w1 again and then w2 with s3 focused sees s3.
+        attention.observe(Some("s1".into()), true);
+        assert_eq!(
+            state(&attention, &targets, "s3", now),
+            Some(State::Finished)
+        );
+        let after = window("w2", "s3");
+        let mut shown = after[1].clone();
+        attention.present(&mut shown, &after, true, now);
+        assert_eq!(state(&attention, &targets, "s3", now), Some(State::Idle));
     }
 
     #[test]
     fn a_focus_reply_already_shows_the_focused_finish_as_seen() {
         let before = snapshot("t", vec![tab("t", &["s1", "s2"], &[], None)]);
-        let (targets, focus) = targets(&before);
+        let (targets, focus) = targets(slice::from_ref(&before));
         let mut attention = Attention::new(true);
         let now = Instant::now();
         attention.observe(focus, true);
@@ -1137,7 +1239,8 @@ mod tests {
         let mut after = before.clone();
         after.tabs[0].selected_pane = Some("pane-s2".into());
         after.tabs[0].columns[0].expanded = "pane-s2".into();
-        attention.present(&mut after, true, now);
+        let window = [after.clone()];
+        attention.present(&mut after, &window, true, now);
         let pane = &after.tabs[0].columns[0].panes[1];
         assert_eq!(pane.attention.as_ref().unwrap().state, State::Idle);
         assert_eq!(after.tabs[0].attention_rollup, Some(State::Idle));
@@ -1146,13 +1249,13 @@ mod tests {
 
     #[test]
     fn the_queue_walks_its_total_order_and_its_cursor_resets() {
-        let (targets, _) = targets(&snapshot(
+        let (targets, _) = targets(&[snapshot(
             "t1",
             vec![
                 tab("t1", &["s1", "s2"], &[], None),
                 tab("t2", &["s3"], &[("agent", "s4")], None),
             ],
-        ));
+        )]);
         let base = Instant::now();
         let mut attention = Attention::new(true);
         assert!(
@@ -1204,7 +1307,8 @@ mod tests {
                 tab("t2", &["s3"], &[("agent", "s4")], Some("s4")),
             ],
         );
-        let (action, key) = attention.jump(&jumped, true).unwrap();
+        let (workspace, action, key) = attention.jump(slice::from_ref(&jumped), true).unwrap();
+        assert_eq!(workspace, "w1");
         assert_eq!(
             action,
             Action::FocusAttention {
@@ -1212,7 +1316,7 @@ mod tests {
                 target: "popup-s4".into(),
             }
         );
-        attention.handled(&action, Some(key), &jumped, true);
+        attention.handled(&action, Some(key), slice::from_ref(&jumped), true);
         assert_eq!(state(&attention, &targets, "s4", base), Some(State::Idle));
         assert_eq!(walk(&mut attention, true), "s1");
 
@@ -1229,13 +1333,22 @@ mod tests {
         apply(&mut attention, "s1", 6, record("a", Blocked, Some(Done), 2));
         assert_eq!(walk(&mut attention, true), "s4");
 
-        assert_eq!(attention.rollup(&targets, 0, base), Some(State::NeedsInput));
-        assert_eq!(attention.rollup(&targets, 1, base), Some(State::NeedsInput));
+        assert_eq!(
+            attention.rollup(&targets, 0, Some(0), base),
+            Some(State::NeedsInput)
+        );
+        assert_eq!(
+            attention.rollup(&targets, 0, Some(1), base),
+            Some(State::NeedsInput)
+        );
         attention.apply(&targets, "s4", "run", status(3, Vec::new()), base);
-        assert_eq!(attention.rollup(&targets, 1, base), Some(State::Finished));
+        assert_eq!(
+            attention.rollup(&targets, 0, Some(1), base),
+            Some(State::Finished)
+        );
 
         assert_eq!(attention.sidebar, Sidebar::Open);
-        attention.handled(&Action::ToggleSidebar, None, &jumped, true);
+        attention.handled(&Action::ToggleSidebar, None, slice::from_ref(&jumped), true);
         assert_eq!(attention.sidebar, Sidebar::Closed);
         attention.toggle_sidebar();
         assert_eq!(attention.sidebar, Sidebar::Open);
@@ -1246,13 +1359,13 @@ mod tests {
 
     #[test]
     fn equal_times_order_by_tab_then_terminal_position() {
-        let (targets, _) = targets(&snapshot(
+        let (targets, _) = targets(&[snapshot(
             "t1",
             vec![
                 tab("t1", &["s1", "s2"], &[], None),
                 tab("t2", &["s3"], &[], None),
             ],
-        ));
+        )]);
         let now = Instant::now();
         let mut attention = Attention::new(true);
         for session in ["s3", "s2", "s1"] {
@@ -1314,10 +1427,10 @@ mod tests {
             })
             .collect();
         sessions[1].id = "session-2".into();
-        let (targets, _) = targets(&snapshot(
+        let (targets, _) = targets(&[snapshot(
             "t",
             vec![tab("t", &["session-1", "session-2"], &[], None)],
-        ));
+        )]);
         let mut attention = Attention::new(true);
         let current =
             |attention: &Attention, session| state(attention, &targets, session, Instant::now());

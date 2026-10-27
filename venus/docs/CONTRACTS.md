@@ -5,7 +5,7 @@ remaining limitations. Beads and Git retain execution history; `CHANGELOG.md`
 retains accepted user-visible chronology.
 
 `VEN-C16` owns platform scope. Venus consumes ORBF v3 / ORBS v14 through the
-in-tree `orbit-protocol` crate and canonical EONW v21 through the in-tree
+in-tree `orbit-protocol` crate and canonical EONW v22 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
 in-tree version. VEN-C31 is Planned and names the ORBF v3 in ORBS v14
@@ -1307,9 +1307,14 @@ re-proved when that platform or feature is next touched.
   the header controls' hover, pressed and focus states and is the first header
   control in Tab order. Without that entry it is inert text with no hover,
   focus, tooltip or action. Its AccessKit node is a button, or a label while
-  inert, named `Workspace NAME, N of M` with the scene's rectangle. Quota chips
-  yield before it, and it is dropped rather than shrink the tabs below their
-  one-pill minimum. With one unnamed workspace the bar is unchanged.
+  inert, named `Workspace NAME, N of M` with the scene's rectangle. While
+  another workspace's `attention` is needs input, the needs-input badge (◆)
+  sits at the label's corner as on a tab, also while the agent sidebar is
+  visible, without moving the label or the tabs, and the accessible name ends
+  with `, another workspace needs input`; a change only to another
+  workspace's attention repaints the bar and disturbs nothing else. Quota
+  chips yield before it, and it is dropped rather than shrink the tabs below
+  their one-pill minimum. With one unnamed workspace the bar is unchanged.
 - **Attention badges (EON-C31):** These rules apply while the agent sidebar is
   not visible (`Closed`, `Off`, or hidden for width):
   - every tab whose rollup is needs input, error, finished or working shows a
@@ -1343,8 +1348,8 @@ re-proved when that platform or feature is next touched.
   configuration, Nova compatibility, inactive-tab close, protocol change,
   dependency, native-decoration policy, or platform-support expansion. The
   exceptions are the EON-C31 tab attention marker and the EON-C33 workspace
-  label, read from the EONW v21 snapshot that Venus already polls, the label
-  from its `workspace` and `workspaces`.
+  label, read from the EONW v22 snapshot that Venus already polls, the label
+  and its badge from its `workspace` and `workspaces`.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
   - **Environment:** Automated and installed.
   - **Evidence:** `eon_bar_controls_reuse_existing_actions_and_local_viewer`,
@@ -1551,7 +1556,7 @@ re-proved when that platform or feature is next touched.
 - **Consumes:** Existing VEN-C19/C20/C21, canonical EONW, and ORBF v2 / ORBS v13.
 - **Boundary:** No new input mode, child-application key discovery, interactive
   hints, durable preference, generic widget registry, dependency, wire change
-  or platform expansion, except that the hints read `sidebar` from EONW v21.
+  or platform expansion, except that the hints read `sidebar` from EONW v22.
   Future Eon modes supply hints from their own actual bindings and replace
   contents at the same footer height.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`
@@ -1842,7 +1847,7 @@ re-proved when that platform or feature is next touched.
   Alt+Shift+G work under `Off` too.
 - **Trigger:**
   - Alt+Shift+H;
-  - a new EONW v21 snapshot;
+  - a new EONW v22 snapshot;
   - the pointer, keyboard or AccessKit acts on the sidebar;
   - the window is resized.
 - **Result:**
@@ -1954,7 +1959,7 @@ re-proved when that platform or feature is next touched.
   scroll, attachment or resize, as quota-only refreshes already do (VEN-C22);
   a change in the sidebar's visibility resizes the columns as Layout says.
   VEN-C8, VEN-C22 and EON-C8 carry this clause.
-- **Consumes:** EONW v21 and the VEN-C22 and VEN-C26 icons, under the
+- **Consumes:** EONW v22 and the VEN-C22 and VEN-C26 icons, under the
   exceptions those contracts record for sidebar rows.
 - **Boundary:**
   - no interpretation of provider events, terminal output or process data,

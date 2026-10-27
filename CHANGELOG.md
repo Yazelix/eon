@@ -5,6 +5,18 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Agent attention now spans every workspace of a window. Alt+G and Alt+Shift+G
+  walk agents in hidden workspaces too, and jumping to one shows its
+  workspace; a finish or error in a hidden workspace stays unseen until you
+  show that workspace with that terminal focused. The Workspaces picker
+  (Alt+Shift+S) lists workspaces most recently shown first, so Alt+Shift+S
+  then Enter returns to the previous one, and marks one that needs input
+  ` · needs input`. The Eon Bar's workspace label shows a needs-input badge
+  while another workspace needs input. `eon workspaces [--json]` adds each
+  workspace's `attention` and `recency`. EONW moves to v22 and Eon to 0.1.5,
+  so after a profile refresh the new `eon` cannot control a window started
+  from an older build until that window is restarted.
+
 - A small touchpad scroll of less than one row at live output no longer leaves
   an old history row drawn at the terminal's top edge while a program keeps
   printing; the edge follows the output, refreshed about every 50 ms.

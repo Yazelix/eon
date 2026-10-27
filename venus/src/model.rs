@@ -1,5 +1,5 @@
-use crate::scene::{DrawRow, Scene, ScenePreview, bar_workspace};
-use eon_workspace_protocol::v21::{
+use crate::scene::{DrawRow, Scene, ScenePreview, bar_workspace, hidden_needs_input};
+use eon_workspace_protocol::v22::{
     AttentionState, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
 };
 use orbit_protocol::FrameReducer;
@@ -296,9 +296,9 @@ fn without_attention(tabs: &[Tab]) -> Vec<Tab> {
         .collect()
 }
 
-/// Whether the view differs only in labels, pins or attention, ignoring workspace metadata the
-/// Eon Bar's workspace label does not show. The caller separately checks pure label changes and
-/// moving sidebar rows.
+/// Whether the view differs only in labels, pins or attention, the bar label's badge included,
+/// ignoring workspace metadata the Eon Bar's workspace label does not show. The caller
+/// separately checks pure label changes and moving sidebar rows.
 #[must_use]
 pub fn attention_only_change(current: &Snapshot, next: &Snapshot) -> bool {
     let plain = |snapshot: &Snapshot| Snapshot {
@@ -307,7 +307,7 @@ pub fn attention_only_change(current: &Snapshot, next: &Snapshot) -> bool {
         active_workspace: String::new(),
         ..snapshot.clone()
     };
-    current.tabs != next.tabs
+    (current.tabs != next.tabs || hidden_needs_input(current) != hidden_needs_input(next))
         && plain(current) == plain(next)
         && bar_workspace(current) == bar_workspace(next)
 }
@@ -389,8 +389,9 @@ impl WorkspaceModel {
                             && without_attention(&current.tabs)
                                 != without_attention(&snapshot.tabs))
                 });
-                // The workspace label's inputs repaint the bar; other workspaces' names and tab
-                // counts show nowhere. Neither disturbs the shown workspace (EON-C33).
+                // The workspace label's inputs, its badge included, repaint the bar; other
+                // workspaces' names, tab counts and other attention show nowhere. Neither
+                // disturbs the shown workspace (EON-C33).
                 let snapshot_changed = workspace_changed
                     || self.snapshot.as_ref().is_some_and(|current| {
                         current.tabs != snapshot.tabs
@@ -398,6 +399,7 @@ impl WorkspaceModel {
                             || current.claude_quota != snapshot.claude_quota
                             || current.sidebar != snapshot.sidebar
                             || bar_workspace(current) != bar_workspace(&snapshot)
+                            || hidden_needs_input(current) != hidden_needs_input(&snapshot)
                     });
                 let notice_cleared = (workspace_changed
                     || matches!(self.notice, Some(WorkspaceNotice::Unavailable(_)))
@@ -901,7 +903,7 @@ fn bounded(mut detail: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v21::{
+    use eon_workspace_protocol::v22::{
         self as workspace, CodexQuota, CodexQuotaState, Failure, Pane, PopupEntry, PopupKey,
         Shortcut, Tab,
     };
@@ -915,6 +917,8 @@ mod tests {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
+                attention: None,
+                recency: 0,
             }],
             active_tab: "t1".into(),
             tabs: vec![Tab {
@@ -1015,10 +1019,12 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v22::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 2,
+                attention: None,
+                recency: 0,
             }],
             active_tab: "t1".into(),
             tabs: vec![
@@ -1029,7 +1035,7 @@ mod tests {
                     id: "t1".into(),
                     directory: b"/tmp/eon".to_vec(),
                     selected_pane: Some("pane-1".into()),
-                    columns: vec![eon_workspace_protocol::v21::Column {
+                    columns: vec![eon_workspace_protocol::v22::Column {
                         panes: vec![Pane {
                             label: "pane-1".into(),
                             pinned_name: None,
@@ -1050,7 +1056,7 @@ mod tests {
                     id: "t2".into(),
                     directory: b"/tmp/nova".to_vec(),
                     selected_pane: Some("pane-2".into()),
-                    columns: vec![eon_workspace_protocol::v21::Column {
+                    columns: vec![eon_workspace_protocol::v22::Column {
                         panes: vec![Pane {
                             label: "pane-2".into(),
                             pinned_name: None,
@@ -1065,7 +1071,7 @@ mod tests {
                     attention_rollup: None,
                 },
             ],
-            geometry: eon_workspace_protocol::v21::PopupGeometry {
+            geometry: eon_workspace_protocol::v22::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -1144,6 +1150,8 @@ mod tests {
             id: "w2".into(),
             name: None,
             tab_count: 3,
+            attention: None,
+            recency: 0,
         });
         assert_eq!(
             model.apply(WorkspaceResponse::Snapshot(summaries.clone())),
@@ -1171,6 +1179,26 @@ mod tests {
         assert!(
             model.notice().is_some(),
             "hidden workspace edits retain the action failure"
+        );
+        // A hidden workspace's attention repaints only the bar, when the label's badge flips.
+        let mut working = hidden.clone();
+        working.workspaces[1].attention = Some(workspace::AttentionState::Working);
+        assert_eq!(
+            model.apply(WorkspaceResponse::Snapshot(working.clone())),
+            (false, false),
+            "attention short of needs input shows nowhere"
+        );
+        let mut waiting = working.clone();
+        waiting.workspaces[1].attention = Some(workspace::AttentionState::NeedsInput);
+        assert!(attention_only_change(&working, &waiting));
+        assert_eq!(
+            model.apply(WorkspaceResponse::Snapshot(waiting)),
+            (true, false),
+            "the badge repaints the bar"
+        );
+        assert!(
+            model.notice().is_some(),
+            "a hidden workspace's attention retains the action failure"
         );
         let mut attention = snapshot.clone();
         attention.tabs[1].columns[0].panes[0].attention = Some(workspace::Attention {
@@ -1333,10 +1361,12 @@ mod tests {
         let mut snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v22::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 2,
+                attention: None,
+                recency: 0,
             }],
             active_tab: "t2".into(),
             geometry: workspace::PopupGeometry {
@@ -1354,7 +1384,7 @@ mod tests {
             tabs: vec![pending(1), pending(2)],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v21::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v22::Sidebar::Open,
         };
         let wire =
             workspace::encode_response(&WorkspaceResponse::Snapshot(snapshot.clone())).unwrap();
@@ -1400,10 +1430,12 @@ mod tests {
         let mut snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v22::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
+                attention: None,
+                recency: 0,
             }],
             active_tab: "t1".into(),
             geometry: workspace::PopupGeometry {
@@ -1427,7 +1459,7 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v21::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v22::Sidebar::Open,
         };
         let mut model = WorkspaceModel::default();
         model.apply(WorkspaceResponse::Snapshot(snapshot.clone()));

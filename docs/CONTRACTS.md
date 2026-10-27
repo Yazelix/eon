@@ -567,7 +567,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime workspace topology, identity, focus, pruning and action
   enforcement; Eon supplies product defaults/policy. Orbit owns terminals and
   Venus owns native materialization.
-- **Consumes:** Current EONW v21 workspace/popup values, Orbit terminal
+- **Consumes:** Current EONW v22 workspace/popup values, Orbit terminal
   identities/endpoints and Venus `VEN-C8`.
 - **Boundary:** No arbitrary split tree, vertical splits, column resizing,
   arbitrary reorder target, cross-tab pane movement, picker relocation, durable layout
@@ -902,12 +902,15 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       (`eon-workspace-switching-shn4.5`), the Workspaces picker and the
       Commands entries (`eon-workspace-switching-shn4.6`).
     - **Listing.** `eon workspaces [--json]` lists this window's workspaces in
-      order, each with `id`, `name` (null when unnamed), `shown` and `tabs`
-      (the tab count), after the `generation`, `window` and caller's
+      order, each with `id`, `name` (null when unnamed), `shown`, `tabs`
+      (the tab count), `attention` (EON-C33's rollup, spelled as
+      `attention_rollup` is, null when none; the text form shows
+      `attention=none`) and `recency` (EON-C33's rank, 0 for the shown
+      workspace, which orders the picker), after the `generation`, `window` and caller's
       `workspace` that every result names. This window means the caller's
-      window inside Eon, and otherwise the window `eon workspace` targets.
-      EON-C33's per-workspace `attention` is planned
-      (`eon-workspace-switching-shn4.8`).
+      window inside Eon, and otherwise the window `eon workspace` targets
+      (`attention` and `recency` since `eon-workspace-switching-shn4.8`, on
+      EONW v22).
     - **New.** `eon workspace new [--name NAME] [--no-focus]` and Commands >
       New workspace add a workspace after the shown one. It opens with one
       pending tab and a fresh directory picker, as a new window does (EON-C23),
@@ -980,7 +983,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon Runtime supervisor workspace/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v21 and accepted Orbit management operations.
+- **Consumes:** Current EONW v22 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream, subscription policy, remote transport,
   plugin/MCP API, authorization framework, durable restoration, terminal
@@ -989,7 +992,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v21 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v22 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
 - **Runtime policy:** Project is required, defaults to Alt+Z, and uses Eon's
   existing transient chooser command. Git defaults to `eon-lazygit` on Alt+Shift+J;
@@ -1050,8 +1053,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Workspaces defaults to Alt+Shift+S and runs `eon-workspaces`, a transient
   fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
   Switch workspace runs the same list in the Commands popup. Each row shows
-  the workspace's name, or its `wN` when unnamed, and its tab count, and the
-  query matches only that name or `wN`. Enter on the highlighted row,
+  the workspace's name, or its `wN` when unnamed, its tab count, and
+  ` · needs input` when its EONW v22 `attention` is needs input. Rows run by
+  EONW v22 `recency`, most recently shown first, with the shown workspace last
+  and marked ` · shown`, and the query matches only that name or `wN`. Enter on the highlighted row,
   including on an empty query, runs `eon workspace switch wN` once the CLI
   has checked again that the `wN` is live; otherwise it changes nothing and
   exits 3, and the check and the switch are not atomic. Enter on a non-blank
@@ -1876,7 +1881,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   tutorial, telemetry, momentary mode, dependency, or platform expansion.
   Venus derives overrides from the popup catalog it already receives over
   EONW. Exceptions: the viewer reads `sidebar` and each popup entry's override
-  from EONW v21.
+  from EONW v22.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
   - **Evidence:** `popup_configuration_owns_defaults_overrides_and_collisions`;
@@ -1942,13 +1947,13 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Owner:** Eon owns the exact graph, product policy, profile delivery and
   installed acceptance; Eon Runtime owns workspace identity/actions. Venus
   owns header geometry, rendering, input, native drag, tooltips, and accessibility.
-- **Consumes:** Venus VEN-C21, EONW v7 (v21 for the EON-C31 tab attention
+- **Consumes:** Venus VEN-C21, EONW v7 (v22 for the EON-C31 tab attention
   marker) and Orbit terminals.
 - **Boundary:** EON-C27 separately owns the optional quota projection. The core
   header adds no Eon-rendered chrome, second row, widget framework, agent status,
   polling, configuration, protocol change, inactive-tab close, native window
   controls, macOS claim or distribution expansion. The one exception is the
-  EON-C31 tab attention marker, which Venus reads from the EONW v21 snapshot it
+  EON-C31 tab attention marker, which Venus reads from the EONW v22 snapshot it
   already polls.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2104,7 +2109,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Boundary:** No minor-mode framework, child-application key discovery,
   interactive hints, durable preference, configuration option, dependency,
   wire change or platform expansion, except that the hints read `sidebar` from
-  EONW v21. Future real modes replace contents from
+  EONW v22. Future real modes replace contents from
   their actual bindings at the same footer height.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Environment:** Automated tier; installed tier.
@@ -2396,7 +2401,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   Q1–Q8, every Q with its recommendation). `eon-agent-sidebar-yx8.6`
   implements the Runtime model; `eon-agent-sidebar-yx8.7` carries it over
   EONW; `eon-agent-sidebar-yx8.9` proves it on the installed product.
-- **Consumer:** One person supervising coding agents across the tabs of one full-Eon window.
+- **Consumer:** One person supervising coding agents across the tabs and workspaces (EON-C33)
+  of one full-Eon window.
   eonbase has no poller and no sidebar; its `sidebar` is `Off`.
 - **Trigger:**
   - the attention poller's timer fires;
@@ -2407,7 +2413,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
 - **Result:**
   - **Polling.** A Runtime attention poller runs off the request path, on its own timer, at no
     more than 2 Hz.
-    - It polls only pane and popup terminals, never directory-picker sessions.
+    - It polls only pane and popup terminals, of every workspace of the window, never
+      directory-picker sessions.
     - It polls peers concurrently, each with a 250 ms deadline.
     - Each lease has exactly one reader and at most one request in flight. The EOF probe and
       Stop first drain or await an in-flight `ProgramStatus` reply, so no reply is ever read as
@@ -2460,17 +2467,21 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     | unavailable | an Agent popup with no records |
 
   - **Seen.** Seen is keyed by (run, `id`, raise). A raise becomes seen when a Venus is attached
-    and its exact terminal is the focused target (the selected pane of the active tab, or the
-    shown popup) at one of these moments:
+    and its exact terminal is the focused target (the selected pane of the shown workspace's
+    active tab, or its shown popup) at one of these moments:
     - focus arrives on that terminal, including via `FocusAttention` to a terminal that
-      already has focus;
+      already has focus, or when its workspace is shown with that terminal focused;
     - a new raise arrives while that terminal is focused;
     - a Venus attaches while that terminal is focused.
 
     A focus action applies seen to the raise cached when the action was handled, and a poll in
-    flight cannot undo it. Needs input is never cleared by viewing.
-  - **Rollup.** A tab's rollup is the highest-priority state among its terminals. A stale
-    terminal counts with its last state, and its badge is dimmed.
+    flight cannot undo it. Needs input is never cleared by viewing. A terminal in a hidden
+    workspace is never the focused target, so its raises stay unseen until its workspace is
+    shown and that exact terminal has focus.
+  - **Rollup.** A tab's rollup is the highest-priority state among its terminals, and a
+    workspace's rollup the highest among all its terminals (EON-C33), which EONW v22 carries
+    as `attention` on each `WorkspaceInfo`. A stale terminal counts with its last state, and
+    its badge is dimmed.
   - **Sidebar visibility [Q3].** The Runtime keeps one value per window: `Open` (the default),
     `Closed`, or `Off` (when `[sidebar] enabled = false`).
     - The value lives in memory while the supervisor runs, so it survives detach and reattach.
@@ -2507,7 +2518,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
       - `sidebar` on the snapshot.
 
       It leaves out `kind`, `progress`, `title`, `msg`, `changed_at`, the stale flag and the
-      record count. v21 ships in 1.0, because `eon-agent-sidebar-yx8.9` gates
+      record count. v22 ships in 1.0, because `eon-agent-sidebar-yx8.9` gates
       eon-igae.7, .8 and .11, so EON-C28 freezes exactly these fields.
       - A program inside an Eon terminal can run `eon workspace`, so it can read every
         terminal's attention `state`, `app` and `name`. `title` and `msg` never appear through `eon
@@ -2521,13 +2532,18 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     - A stale target is rejected as an EONW action rejection, with no fallback, as EON-C10
       target safety requires. Venus shows it as a VEN-C8 notice.
   - **NextAttention and PreviousAttention.**
-    - **The queue** holds every terminal whose most urgent record is needs input, an unseen
-      error, or finished. Its total order is:
+    - **The queue** holds every terminal, of every workspace of the window, whose most urgent
+      record is needs input, an unseen error, or finished. Its total order is:
       1. class: needs input, then error, then finished;
       2. the fixed change time, oldest first (for needs input, the time it entered `blocked`;
          otherwise the raise's time);
-      3. tab position;
-      4. terminal position.
+      3. workspace position in the window;
+      4. tab position;
+      5. terminal position.
+    - **Across workspaces.** A jump to a terminal in a hidden workspace shows that workspace
+      (EON-C33), then focuses its target under the covered-target rule. `FocusAttention` from a
+      sidebar row stays in its caller's workspace: a tab of another workspace is a stale
+      target.
     - **The cursor.** The Runtime keeps one cursor per window: the order key of the last jump
       target.
       - `NextAttention` goes to the first entry whose key is greater than the cursor, wrapping
@@ -2600,7 +2616,7 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     sidebar visibility and `[sidebar]` configuration.
   - **Orbit** owns the records, their neutral facts and the terminal title.
   - **Venus** owns presentation and hiding for width (VEN-C30).
-- **Consumes:** ORB-C15, ORB-C13 generation 2, EON-C8 topology, and EON-C10 (EONW v21, still
+- **Consumes:** ORB-C15, ORB-C13 generation 2, EON-C8 topology, and EON-C10 (EONW v22, still
   request and response, with no event stream).
 - **Boundary:**
   - no hooks and no edits to agent configuration;
@@ -2715,8 +2731,10 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   the workspaces a window holds, EON-C28 the `eon workspaces --json` fields,
   EON-C31 focus, the queue and the rollup, VEN-C8 the shown workspace, and
   VEN-C21 the label. `eon-workspace-switching-shn4.7` implements the Eon Bar
-  label, except its badge, and the workspace-worded final-close prompt in
-  Venus and the CLI.
+  label and the workspace-worded final-close prompt in Venus and the CLI.
+  `eon-workspace-switching-shn4.8` implements attention across workspaces,
+  the picker's order and needs-input marker, and the label's badge on EONW
+  v22.
 - **Consumer:** One full-Eon user, or an agent working for them, who keeps
   several separate sets of work in one Eon window.
 - **Trigger:** Alt+Shift+S or Commands > Switch workspace; Commands > New
@@ -2745,7 +2763,9 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     unnamed workspace looks and behaves as before, without a label.
   - **Listing.** `eon workspaces [--json]` lists this window's workspaces in
     order. Each entry gives `id`, `name` (null when unnamed), `shown`, `tabs`
-    (the tab count) and `attention`. `attention` uses exactly the JSON spelling
+    (the tab count), `attention` and `recency` (0 for the shown workspace,
+    then 1, 2, ... from the most recently shown, the picker's order, so an
+    agent reads what a person sees there). `attention` uses exactly the JSON spelling
     of EON-C31 states that `eon workspace --json` gains with
     `eon-agent-sidebar-yx8.7` (kebab-case values such as `needs-input`, null
     when no terminal reports one) and carries no title or message. This window
@@ -2793,26 +2813,28 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     previous workspace; the Alt+G jump, not the picker, leads to agents that
     need input. Enter shows the highlighted workspace, including on an empty
     query. Enter on a non-empty query that matches no row creates a workspace
-    with that name and shows it. Esc or Ctrl+C runs nothing. Implemented on
-    EONW v20 (`eon-workspace-switching-shn4.6`, as EON-C10 describes) except
-    the order and the needs-input marker: v20 carries no recency or
-    per-workspace attention, so rows follow window order with the shown
-    workspace last and marked until `eon-workspace-switching-shn4.8` puts both
-    on the next EONW version.
+    with that name and shows it. Esc or Ctrl+C runs nothing. The marker reads
+    ` · needs input`. EONW v22 gives each workspace its `recency`: 0 for the
+    shown one, then 1, 2, ... from the most recently shown, which orders the
+    rows (`eon-workspace-switching-shn4.6` and
+    `eon-workspace-switching-shn4.8`, as EON-C10 describes).
   - **Eon Bar.** While the window holds two or more workspaces, or its one
     workspace has a name, the Eon Bar shows a leading label before the tabs:
     the shown workspace's name or `wN`, followed by `N/M` when there are
     several. Its accessible name reads "Workspace NAME, N of M", clicking it
     opens the picker, and it shows a badge while a hidden workspace needs
-    input. Implemented on EONW v20 (`eon-workspace-switching-shn4.7`) except
-    the badge: v20 carries no per-workspace attention, so the badge waits
-    for `eon-workspace-switching-shn4.8`.
+    input. The badge is the EON-C31 needs-input tab marker at the label's
+    corner; it moves neither the label nor the tabs, and the accessible name
+    then ends with ", another workspace needs input"
+    (`eon-workspace-switching-shn4.7` and `eon-workspace-switching-shn4.8`,
+    as VEN-C21 describes).
   - **Attention.** Each workspace carries the most urgent normalized EON-C31
     state of its terminals. The Alt+G queue (EON-C31) spans every workspace of
     the window, and a jump to a terminal in a hidden workspace shows that
     workspace first. A raise becomes seen only while its terminal's workspace
     is shown, under EON-C31's rules. The sidebar lists the shown workspace's
-    terminals only.
+    terminals only. Implemented on EONW v22, whose `WorkspaceInfo` carries
+    each workspace's rollup as `attention` (`eon-workspace-switching-shn4.8`).
   - **Detach, attach and recovery.** Closing the window, or Alt+Shift+D,
     detaches every workspace together, and attach shows the last shown
     workspace. `eon stop` and Commands > Quit this window stop every workspace

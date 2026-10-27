@@ -17,9 +17,9 @@ use super::{
         resolve_selector,
     },
 };
-use eon_workspace_protocol::v21::{
-    Action, Direction, Failure, PopupTarget, Response, Side, Snapshot, VERSION, WorkspaceAction,
-    WorkspaceInfo, valid_caller,
+use eon_workspace_protocol::v22::{
+    Action, AttentionState, Direction, Failure, PopupTarget, Response, Side, Snapshot, VERSION,
+    WorkspaceAction, WorkspaceInfo, valid_caller,
 };
 use std::{
     env,
@@ -316,22 +316,25 @@ fn pick_and_run_workspace(inputs: &Inputs) -> Result<i32, String> {
     ))
 }
 
-/// The workspace picker's rows: ID, label and tab count, in window order with the shown
-/// workspace last and marked, so Enter on an empty query shows another one.
+/// The workspace picker's rows: ID, label, tab count and a needs-input marker, most recently
+/// shown first with the shown workspace last and marked, so Enter on an empty query returns to
+/// the previous one (EON-C33).
 fn workspace_rows(workspaces: &[WorkspaceInfo], shown: &str) -> String {
-    let (current, others): (Vec<_>, Vec<_>) = workspaces
-        .iter()
-        .partition(|workspace| workspace.id == shown);
-    others
-        .into_iter()
-        .chain(current)
+    let mut rows: Vec<_> = workspaces.iter().collect();
+    rows.sort_by_key(|workspace| (workspace.id == shown, workspace.recency));
+    rows.into_iter()
         .map(|workspace| {
             format!(
-                "{}\t{}\t{} tab{}{}\n",
+                "{}\t{}\t{} tab{}{}{}\n",
                 workspace.id,
                 workspace.name.as_deref().unwrap_or(&workspace.id),
                 workspace.tab_count,
                 if workspace.tab_count == 1 { "" } else { "s" },
+                if workspace.attention == Some(AttentionState::NeedsInput) {
+                    " · needs input"
+                } else {
+                    ""
+                },
                 if workspace.id == shown {
                     " · shown"
                 } else {
@@ -1035,7 +1038,7 @@ fn control(
     // by Runtime's rule; a WS that resolves to none or several fails unasked.
     // After a yes it checks again that the wN is live before closing it, since
     // Runtime would read a departed wN as another workspace's name; the check
-    // and the close are not atomic. v21 lists only
+    // and the close are not atomic. v22 lists only
     // the caller's or shown workspace's terminals, so the prompt names none.
     if let Action::Workspace(WorkspaceAction::CloseWorkspace { workspace }) = &mut action
         && !json
@@ -1437,7 +1440,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         _ => return Err(Error::usage(EON_USAGE)),
     };
     if let Some(name) = name {
-        eon_workspace_protocol::v21::validate_pane_name(name)
+        eon_workspace_protocol::v22::validate_pane_name(name)
             .map_err(|error| Error::usage(error.to_string()))?;
     }
     Ok((
@@ -1767,22 +1770,27 @@ mod tests {
     }
 
     #[test]
-    fn workspace_picker_lists_the_shown_workspace_last_and_maps_its_result() {
-        let workspace = |id: &str, name: Option<&str>, tab_count| WorkspaceInfo {
-            id: id.into(),
-            name: name.map(Into::into),
-            tab_count,
-        };
+    fn workspace_picker_lists_by_recency_with_the_shown_last_and_maps_its_result() {
+        let workspace =
+            |id: &str, name: Option<&str>, tab_count, recency, attention| WorkspaceInfo {
+                id: id.into(),
+                name: name.map(Into::into),
+                tab_count,
+                attention,
+                recency,
+            };
+        // Shown w1, then w3, then w2: the previous one leads, needs input only marks.
         assert_eq!(
             workspace_rows(
                 &[
-                    workspace("w1", Some("work"), 2),
-                    workspace("w2", None, 1),
-                    workspace("w4", Some("notes"), 3),
+                    workspace("w1", Some("work"), 2, 2, Some(AttentionState::NeedsInput)),
+                    workspace("w2", None, 1, 0, Some(AttentionState::NeedsInput)),
+                    workspace("w3", Some("notes"), 3, 1, Some(AttentionState::Finished)),
                 ],
                 "w2",
             ),
-            "w1\twork\t2 tabs\nw4\tnotes\t3 tabs\nw2\tw2\t1 tab · shown\n"
+            "w3\tnotes\t3 tabs\nw1\twork\t2 tabs · needs input\n\
+             w2\tw2\t1 tab · needs input · shown\n"
         );
         assert_eq!(
             workspace_pick_arguments("wo\nw1\twork\t2 tabs\n"),

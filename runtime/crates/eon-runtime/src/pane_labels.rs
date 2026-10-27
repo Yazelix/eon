@@ -1,6 +1,6 @@
 //! Runtime's semantic pane labels and read-only Orbit metadata observations.
 
-use eon_workspace_protocol::v21::{MAX_PANE_NAME_CHARS, pane_label_character};
+use eon_workspace_protocol::v22::{MAX_PANE_NAME_CHARS, pane_label_character};
 use orbit_protocol::session::{self, ClientMessage, ServerMessage};
 use std::{
     collections::{HashMap, HashSet},
@@ -42,7 +42,7 @@ impl Labels {
 
     pub(super) fn present(
         &self,
-        snapshot: &mut eon_workspace_protocol::v21::Snapshot,
+        snapshot: &mut eon_workspace_protocol::v22::Snapshot,
         home: Option<&Path>,
     ) {
         for tab in &mut snapshot.tabs {

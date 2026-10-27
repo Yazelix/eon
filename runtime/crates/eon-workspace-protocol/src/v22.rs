@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v21 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v22 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -6,7 +6,7 @@
 
 use std::{collections::HashSet, fmt, str};
 
-pub const VERSION: u16 = 21;
+pub const VERSION: u16 = 22;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -446,6 +446,10 @@ pub struct WorkspaceInfo {
     pub id: String,
     pub name: Option<String>,
     pub tab_count: usize,
+    /// The most urgent attention among the workspace's terminals (EON-C33).
+    pub attention: Option<AttentionState>,
+    /// 0 for the shown workspace, then 1, 2, ... from the most recently shown.
+    pub recency: u8,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1216,6 +1220,8 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
             id: decoder.string("workspace id", MAX_ID_BYTES)?,
             name: decode_workspace_optional(&mut decoder)?,
             tab_count: decoder.count("workspace tabs", MAX_TABS)?,
+            attention: decode_state(&mut decoder, "workspace attention")?,
+            recency: decoder.byte()?,
         });
     }
     validate_workspace(&snapshot, &wire_tabs)?;
@@ -1277,6 +1283,8 @@ fn encode_workspace_set(encoder: &mut Encoder, snapshot: &Snapshot) {
         encoder.string(&workspace.id);
         encode_optional(encoder, &workspace.name);
         encoder.count(workspace.tab_count);
+        encode_state(encoder, workspace.attention);
+        encoder.byte(workspace.recency);
     }
 }
 
@@ -1630,11 +1638,29 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
             field: "active workspace",
         });
     }
+    // The ranks are 0 to M-1 once each, with 0 on the shown workspace.
+    let mut ranks: Vec<_> = snapshot.workspaces.iter().map(|w| w.recency).collect();
+    ranks.sort_unstable();
+    if ranks
+        .iter()
+        .enumerate()
+        .any(|(index, rank)| usize::from(*rank) != index)
+        || snapshot.workspaces.iter().any(|workspace| {
+            (workspace.recency == 0) != (workspace.id == snapshot.active_workspace)
+        })
+    {
+        return Err(Error::InvalidSnapshot {
+            field: "workspace recency",
+        });
+    }
     if snapshot
         .workspaces
         .iter()
         .find(|workspace| workspace.id == snapshot.workspace)
-        .is_none_or(|workspace| workspace.tab_count != tabs.len())
+        .is_none_or(|workspace| {
+            workspace.tab_count != tabs.len()
+                || workspace.attention != tabs.iter().filter_map(|tab| tab.attention_rollup).min()
+        })
     {
         return Err(Error::InvalidSnapshot {
             field: "workspace projection",
@@ -2471,10 +2497,13 @@ mod tests {
                 id: format!("w{index}"),
                 name: Some(name.clone()),
                 tab_count: 4,
+                attention: (index % 3 == 0).then_some(AttentionState::Working),
+                recency: (index - 1) as u8,
             })
             .collect();
         state.workspace = "w2".into();
         state.active_workspace = "w1".into();
+        state.workspaces[1].attention = Some(AttentionState::NeedsInput);
         let response = Response::Snapshot(state.clone());
         let bytes = encode_response(&response).unwrap();
         assert_eq!(decode_response(&bytes).unwrap(), response);
@@ -2493,6 +2522,13 @@ mod tests {
             |s| s.workspaces[1].tab_count = 3,
             |s| s.active_workspace = "w100".into(),
             |s| s.workspace = "w100".into(),
+            // A rank twice, a rank past M-1, and a shown workspace not ranked 0.
+            |s| s.workspaces[2].recency = 1,
+            |s| s.workspaces[31].recency = 32,
+            |s| s.active_workspace = "w3".into(),
+            // The projected workspace's rollup is its tabs' most urgent one.
+            |s| s.workspaces[1].attention = Some(AttentionState::Error),
+            |s| s.workspaces[1].attention = None,
         ] {
             let mut bad = state.clone();
             mutate(&mut bad);
@@ -2573,6 +2609,8 @@ mod tests {
                 id: "w1".into(),
                 name: None,
                 tab_count: 4,
+                attention: Some(AttentionState::NeedsInput),
+                recency: 0,
             }],
             active_tab: "t1".into(),
             geometry: PopupGeometry {
@@ -2788,14 +2826,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57150001000a00000002007231001202007431",
+                "454f4e57160001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57150001001000000002007231000c0200743104002f746d70",
+                "454f4e57160001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -2804,55 +2842,55 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e571500010015000000020072310013020074310300676974010200753101",
+                "454f4e571600010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::CommitDirectory {
                     target,
                     directory: b"/tmp".to_vec(),
                 },
-                "454f4e571500010014000000020072310015020074310200753104002f746d70",
+                "454f4e571600010014000000020072310015020074310200753104002f746d70",
             ),
-            (Action::CreateColumn, "454f4e571500010006000000020072310016"),
+            (Action::CreateColumn, "454f4e571600010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57150001000a00000002007231001702007032",
+                "454f4e57160001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e571500010006000000020072310019",
+                "454f4e571600010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57150001000e00000002007231001a06002f746d702f61",
+                "454f4e57160001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreateCommandPane {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57150001001000000002007231001b00020002006878010061",
+                "454f4e57160001001000000002007231001b00020002006878010061",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57150001000600000002007231001c",
+                "454f4e57160001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57150001000e00000002007231001d0200743102007032",
+                "454f4e57160001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57150001000600000002007231001e",
+                "454f4e57160001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57150001000600000002007231001f",
+                "454f4e57160001000600000002007231001f",
             ),
         ] {
             let request = Request {
@@ -2872,7 +2910,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57150001001600000002007231010d0073657373696f6e2d322e392d310201",
+            "454f4e57160001001600000002007231010d0073657373696f6e2d322e392d310201",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -2890,6 +2928,8 @@ mod tests {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
+                attention: Some(AttentionState::NeedsInput),
+                recency: 0,
             }],
             active_tab: "t1".into(),
             geometry: PopupGeometry {
@@ -2967,7 +3007,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5715008100fb0000000100020002000100010000000200743100000041",
+                    "454f4e5716008100fd0000000100020002000100010000000200743100000041",
                     "00008040010003006769740300476974000404004b6579470100020074310400",
                     "2f746d700001020070330102007531030002007031030073703103002f703101",
                     "02007031000002007032030073703203002f7032010200703200000200703303",
@@ -2975,15 +3015,17 @@ mod tests {
                     "6101007401006d01000000000000000002000100020075310300676974030073",
                     "753103002f753100010100640000000000000001002c0100002a01f401000000",
                     "00000001015a0000000000000001006027000007000102007731020077310100",
+                    // w1's tab count, then v22's needs-input rollup and shown rank 0.
                     "02007731000100",
+                    "0100",
                 ),
             ),
-            (failure, "454f4e57150082000a00000004006275737902006e6f"),
+            (failure, "454f4e57160082000a00000004006275737902006e6f"),
             (
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57150085000400000002006731",
+                "454f4e57160085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -3009,7 +3051,7 @@ mod tests {
                     },
                 }),
                 concat!(
-                    "454f4e571500830026000000020067310500302e392e30150002006f6b010002",
+                    "454f4e571600830026000000020067310500302e392e30160002006f6b010002",
                     "007331010500726561647900040062757379",
                 ),
             ),
@@ -3018,7 +3060,7 @@ mod tests {
                     generation: "g1".into(),
                     sessions: vec![],
                 }),
-                "454f4e571500840006000000020067310000",
+                "454f4e571600840006000000020067310000",
             ),
         ] {
             let bytes = encode_lifecycle_response(&response).unwrap();
@@ -3813,7 +3855,7 @@ mod tests {
             + 1
             + 2 * id
             + 2
-            + MAX_WORKSPACES * (id + 1 + 2 + MAX_WORKSPACE_NAME_BYTES + 2);
+            + MAX_WORKSPACES * (id + 1 + 2 + MAX_WORKSPACE_NAME_BYTES + 2 + 1 + 1);
         assert!(upper_bound <= MAX_MESSAGE_BYTES, "{upper_bound}");
 
         let name = |prefix: &str, n: usize, length: usize| {
@@ -3914,6 +3956,8 @@ mod tests {
                 id: format!("w{index}"),
                 name: Some("🦀".repeat(MAX_WORKSPACE_NAME_CHARS)),
                 tab_count: MAX_TABS,
+                attention: Some(AttentionState::NeedsInput),
+                recency: (index - 1) as u8,
             })
             .collect();
         let response = Response::Snapshot(state.clone());

@@ -16,7 +16,7 @@ use super::{
     },
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v21::{
+use eon_workspace_protocol::v22::{
     Action, Availability, Ended, Failure, LifecycleResponse, Request, Response, Runtime, Snapshot,
     Stopped, VERSION, WorkspaceAction,
 };
@@ -539,7 +539,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v21::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v22::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup workspace: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -835,7 +835,9 @@ fn supervise(
         };
         let snapshot = snapshot.map(|mut snapshot| {
             if let Some(attention) = &mut attention {
-                attention.present(&mut snapshot, false, Instant::now());
+                // A starting window holds one workspace.
+                let workspaces = [snapshot.clone()];
+                attention.present(&mut snapshot, &workspaces, false, Instant::now());
             }
             snapshot
         });
@@ -1073,7 +1075,12 @@ impl SupervisorState {
             quotas.apply(&mut snapshot);
         }
         if let Some(attention) = &mut self.attention {
-            attention.present(&mut snapshot, self.venus.is_some(), Instant::now());
+            attention.present(
+                &mut snapshot,
+                &workspaces.snapshots(),
+                self.venus.is_some(),
+                Instant::now(),
+            );
         }
         Ok(snapshot)
     }
@@ -1084,7 +1091,7 @@ impl SupervisorState {
         let (Some(attention), Some(workspace)) = (&mut self.attention, &self.workspaces) else {
             return;
         };
-        let (targets, focus) = attention::targets(&workspace.snapshot());
+        let (targets, focus) = attention::targets(&workspace.snapshots());
         attention.observe(focus, self.venus.is_some());
         attention.poll(&targets, &mut self.sessions, Instant::now());
         attention.retain(&targets, &self.sessions);
@@ -1953,12 +1960,13 @@ fn dispatch_control_request(
                 Ok(workspace) => workspace,
                 Err(error) => return (ControlResponse::Workspace(Response::Failure(error)), false),
             };
-            // A queue jump is the FocusAttention of its target; an empty queue
-            // is rejected and changes nothing (EON-C31).
+            // A queue jump is the FocusAttention of its target in the target's
+            // workspace, which it shows; an empty queue is rejected and changes
+            // nothing (EON-C31, EON-C33).
             let (action, jump) = match (request.action, &state.attention) {
                 (action @ (Action::NextAttention | Action::PreviousAttention), Some(attention)) => {
-                    let Some((action, key)) = attention.jump(
-                        &workspace.snapshot(),
+                    let Some((target_workspace, action, key)) = attention.jump(
+                        &workspace.snapshots(),
                         matches!(action, Action::NextAttention),
                     ) else {
                         return (
@@ -1969,7 +1977,7 @@ fn dispatch_control_request(
                             false,
                         );
                     };
-                    (action, Some(key))
+                    (action, Some((target_workspace, key)))
                 }
                 (action, _) => (action, None),
             };
@@ -1982,42 +1990,53 @@ fn dispatch_control_request(
             let sessions = &mut state.sessions;
             let initial_child = &mut state.initial_child;
             let log = &state.log;
-            let result = workspace.dispatch(
-                &request.id,
-                caller.as_deref(),
-                action,
-                |command, directory| {
-                    managed_environment::prepare_popup_command(
-                        command,
-                        inputs.managed.shell_bin.as_deref(),
-                        directory,
-                        &inputs.defaults,
+            let result = match (&jump, &accepted) {
+                (Some((target_workspace, _)), Some(Action::FocusAttention { tab, target })) => {
+                    workspace.jump(
+                        &request.id,
+                        caller.as_deref(),
+                        target_workspace,
+                        tab,
+                        target,
                     )
-                },
-                |operation| {
-                    apply_session_operation(
-                        inputs,
-                        config,
-                        log,
-                        component_generation,
-                        sessions,
-                        initial_child,
-                        operation,
-                        None,
-                    )
-                },
-            );
+                }
+                _ => workspace.dispatch(
+                    &request.id,
+                    caller.as_deref(),
+                    action,
+                    |command, directory| {
+                        managed_environment::prepare_popup_command(
+                            command,
+                            inputs.managed.shell_bin.as_deref(),
+                            directory,
+                            &inputs.defaults,
+                        )
+                    },
+                    |operation| {
+                        apply_session_operation(
+                            inputs,
+                            config,
+                            log,
+                            component_generation,
+                            sessions,
+                            initial_child,
+                            operation,
+                            None,
+                        )
+                    },
+                ),
+            };
+            // Only the shown workspace's focus sees, so a hidden caller's
+            // FocusAttention sees nothing.
             if result.is_ok()
                 && let (Some(action), Some(attention)) = (&accepted, &mut state.attention)
             {
-                let shown = workspace.snapshot();
-                if matches!(action, Action::ToggleSidebar)
-                    || reply_workspace
-                        .as_ref()
-                        .is_none_or(|id| *id == shown.workspace)
-                {
-                    attention.handled(action, jump, &shown, state.venus.is_some());
-                }
+                attention.handled(
+                    action,
+                    jump.map(|(_, key)| key),
+                    &workspace.snapshots(),
+                    state.venus.is_some(),
+                );
             }
             match result {
                 Ok(()) => (
@@ -2594,7 +2613,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v21::{
+        use eon_workspace_protocol::v22::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -2603,10 +2622,12 @@ mod tests {
         let snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v22::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 64,
+                attention: None,
+                recency: 0,
             }],
             active_tab: "t1".into(),
             geometry: PopupGeometry {
@@ -2639,7 +2660,7 @@ mod tests {
                 .collect(),
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v21::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v22::Sidebar::Open,
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();
         let received = root.join("snapshot");

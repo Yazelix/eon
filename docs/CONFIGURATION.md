@@ -331,9 +331,9 @@ example with `["eon-yazi"]`, which reads the `yazi` directory under Eon's
 configuration root.
 Anima opens a random animation and stops when dismissed or replaced.
 Commands searches and runs Eon commands.
-Workspaces lists this window's workspaces in window order: Enter shows the
-highlighted one, and Enter on a name that matches none creates a workspace with
-that name.
+Workspaces lists this window's workspaces most recently shown first, the shown
+one last, marking one that needs input: Enter shows the highlighted one, and
+Enter on a name that matches none creates a workspace with that name.
 Set `enabled = false` on Git, Agent, Files, Anima, Commands, Workspaces, or a
 custom popup to disable it.
 

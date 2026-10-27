@@ -1,4 +1,4 @@
-use eon_workspace_protocol::v21::{
+use eon_workspace_protocol::v22::{
     Action as ProtocolAction, Availability, Column, Direction, Failure as ProtocolFailure,
     HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Pane, Popup, PopupGeometry,
     PopupTarget, Request, Response, Runtime, Snapshot, Stopped, Tab, VERSION,
@@ -1282,10 +1282,12 @@ printf '/selected-\377\n' > "$4"
     let response = encode_response(&Response::Snapshot(Snapshot {
         workspace: "w1".into(),
         active_workspace: "w1".into(),
-        workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v22::WorkspaceInfo {
             id: "w1".into(),
             name: None,
             tab_count: 1,
+            attention: None,
+            recency: 0,
         }],
         active_tab: "t1".into(),
         geometry: PopupGeometry {
@@ -1316,7 +1318,7 @@ printf '/selected-\377\n' > "$4"
         }],
         codex_quota: None,
         claude_quota: None,
-        sidebar: eon_workspace_protocol::v21::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v22::Sidebar::Open,
     }))
     .unwrap();
     stream.write_all(&response).unwrap();
@@ -3310,6 +3312,13 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
             .iter()
             .find(|workspace| workspace["shown"] == true);
         assert_eq!(shown.unwrap()["id"], listed["workspace"]);
+        assert_eq!(shown.unwrap()["recency"], 0);
+        // Plain shells report no attention, which lists as null.
+        assert!(
+            workspaces
+                .iter()
+                .all(|workspace| { workspace.get("attention") == Some(&serde_json::Value::Null) })
+        );
         workspaces
             .iter()
             .map(|workspace| {
@@ -3446,7 +3455,8 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
     );
     let human = invoke(&binary, &runtime, &config, &["workspaces"]);
     assert!(stdout(&human).ends_with(
-        "workspace w1\nw1 shown=true tabs=1 name=\"main\"\nw3 shown=false tabs=1 name=none\n"
+        "workspace w1\nw1 shown=true tabs=1 attention=none recency=0 name=\"main\"\n\
+         w3 shown=false tabs=1 attention=none recency=1 name=none\n"
     ));
     assert!(supervisor.child.try_wait().unwrap().is_none());
 
@@ -3601,7 +3611,7 @@ esac
     };
     let rows = |run: u32| fs::read_to_string(format!("{}{run}", recorded.display())).unwrap();
 
-    // Every workspace in window order, the shown one last and marked; a row shows it.
+    // Every workspace, most recently shown first, the shown one last and marked; a row shows it.
     popup("eon-workspaces", &first, b"");
     assert_eq!(
         rows(1),

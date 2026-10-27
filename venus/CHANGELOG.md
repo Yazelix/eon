@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C21: consume EONW v22, whose workspace summaries carry each workspace's
+  attention rollup and recency. While another workspace needs input, the Eon
+  Bar's workspace label shows the needs-input badge at its corner and its
+  accessible name ends with ", another workspace needs input"
+  (`eon-workspace-switching-shn4.8`).
+
 - VEN-C20: consume EONW v21, whose popup entries may have no shortcut. Only
   entries with one dispatch, take a fixed key, or show in hints and header
   tooltips. Alt+/ lists an entry overridden by another under its default
@@ -188,7 +194,7 @@
   the previous agent needing attention", and the hints as "next agent" and
   "previous agent" (VEN-C20, VEN-C24, `eon-agent-sidebar-yx8.8`).
 
-- Venus consumes EONW v21, whose attention carries `name`, the terminal
+- Venus consumes EONW v22, whose attention carries `name`, the terminal
   title. A sidebar row's first line shows one label: for `app=claude-code`
   the name, which is the session's name, else the record title, else the
   app's name (`Claude`, `Codex`, or the `app` verbatim). Other apps'
@@ -197,7 +203,7 @@
   heading shows. The row's accessible name includes Claude Code's session
   name (VEN-C30, `eon-agent-sidebar-yx8.11`).
 
-- EONW v18 (now v21, above) adds EON-C31 agent attention to panes,
+- EONW v18 (now v22, above) adds EON-C31 agent attention to panes,
   popups and tabs, the window's sidebar visibility, and the `ToggleSidebar`,
   `FocusAttention`, `NextAttention` and `PreviousAttention` actions; the
   VEN-C21 and VEN-C30 entries above render and send them. VEN-C8 and VEN-C22: a

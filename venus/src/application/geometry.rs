@@ -2,7 +2,7 @@
 //! surface, and whether another workspace column fits.
 
 use crate::Result;
-use eon_workspace_protocol::v21::MAX_COLUMNS;
+use eon_workspace_protocol::v22::MAX_COLUMNS;
 use orbit_protocol::{MAX_CELLS, session::SurfaceSize};
 use winit::dpi::PhysicalSize;
 use yazelix_venus::{
@@ -29,7 +29,7 @@ pub(super) fn initial_window_size(
     rows: Option<u16>,
     metrics: CellMetrics,
     scale: f64,
-    snapshot: Option<&eon_workspace_protocol::v21::Snapshot>,
+    snapshot: Option<&eon_workspace_protocol::v22::Snapshot>,
 ) -> Result<PhysicalSize<u32>> {
     let (horizontal, vertical) = snapshot.map_or((0.0, 0.0), |snapshot| {
         WorkspaceScene::initial_overhead(snapshot, metrics)
@@ -155,20 +155,22 @@ mod tests {
     use super::super::tests::show_test_popup;
     use super::super::*;
     use super::*;
-    use eon_workspace_protocol::v21::{Pane, Snapshot, Tab};
+    use eon_workspace_protocol::v22::{Pane, Snapshot, Tab};
 
     #[test]
     fn initial_grid_includes_workspace_chrome_at_each_scale() {
         let mut snapshot = Snapshot {
             workspace: "w1".into(),
             active_workspace: "w1".into(),
-            workspaces: vec![eon_workspace_protocol::v21::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v22::WorkspaceInfo {
                 id: "w1".into(),
                 name: None,
                 tab_count: 1,
+                attention: None,
+                recency: 0,
             }],
             active_tab: "t1".into(),
-            geometry: eon_workspace_protocol::v21::PopupGeometry {
+            geometry: eon_workspace_protocol::v22::PopupGeometry {
                 side_margin: 8.0,
                 vertical_margin: 4.0,
             },
@@ -180,7 +182,7 @@ mod tests {
                 id: "t1".into(),
                 directory: b"/tmp".to_vec(),
                 selected_pane: Some("p1".into()),
-                columns: vec![eon_workspace_protocol::v21::Column {
+                columns: vec![eon_workspace_protocol::v22::Column {
                     panes: (1..=3)
                         .map(|i| Pane {
                             label: format!("p{i}"),
@@ -198,7 +200,7 @@ mod tests {
             }],
             codex_quota: None,
             claude_quota: None,
-            sidebar: eon_workspace_protocol::v21::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v22::Sidebar::Open,
         };
         for popup in [false, true] {
             if popup {
@@ -240,7 +242,7 @@ mod tests {
         // a popup over two columns.
         snapshot.tabs[0]
             .columns
-            .push(eon_workspace_protocol::v21::Column {
+            .push(eon_workspace_protocol::v22::Column {
                 panes: vec![Pane {
                     label: "p4".into(),
                     pinned_name: None,

@@ -548,7 +548,7 @@ primary-selection, search, and raw-display clipboard ownership.
 
 The current canonical package is the in-tree
 [`eon-workspace-protocol`](../../runtime/crates/eon-workspace-protocol) crate.
-Inspect its complete manifest and v21 source for bounded values, validation
+Inspect its complete manifest and v22 source for bounded values, validation
 and framing. [Crate decisions](CRATES.md#eon-workspace-protocol-consumer) record
 exact package identity and independent codec selection. The historical routes
 below retain their original semantic and native proofs.

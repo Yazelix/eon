@@ -159,9 +159,11 @@ such as `w2`, followed, when there are several, by its position and the
 count, as in `notes 2/3`.
 Clicking it, or Enter after Tab focuses it, opens the Workspaces picker as
 Alt+Shift+S does, and its tooltip names that key. With the Workspaces popup
-turned off the label is plain text. A long name is shortened while the position
-stays whole; quota chips hide before the label, and the label hides before the
-tabs would lose their room.
+turned off the label is plain text. While another workspace has an agent that
+needs input, a ◆ badge sits on the label's corner, also while the sidebar is
+shown, and its accessible name adds `, another workspace needs input`. A long
+name is shortened while the position stays whole; quota chips hide before the
+label, and the label hides before the tabs would lose their room.
 Pinned CodexBar CLI supplies read-only Codex and Claude quota from their local
 authentication. Codex also needs a compatible `codex` executable on `PATH`.
 Codex chips show its white mark and Claude chips its orange splat.
@@ -257,12 +259,14 @@ older generations and failures stay until you press Enter. Esc closes it
 without running anything.
 
 Workspaces (Alt+Shift+S, or Commands > Switch workspace) lists this window's
-workspaces in window order, each by name or ID with its tab count, the shown
-one moved last and marked. Type to filter by name. Enter shows the highlighted
-workspace, and Enter on a name that matches no workspace creates a workspace
-with that name and shows it. A name that is part of an existing one matches
-it, so create that workspace with Commands > New workspace and then rename
-it. Esc or Ctrl+C closes the picker without changing anything. Rename
+workspaces most recently shown first, each by name or ID with its tab count and
+` · needs input` when one of its agents needs input, the shown one last and
+marked, so Alt+Shift+S then Enter returns to the previous workspace. Type to
+filter by name. Enter shows the highlighted workspace, and Enter on a name that
+matches no workspace creates a workspace with that name and shows it. A name
+that is part of an existing one matches it, so create that workspace with
+Commands > New workspace and then rename it. Esc or Ctrl+C closes the picker
+without changing anything. Rename
 workspace names the popup's workspace (an empty name clears it), and Close this
 workspace asks before it stops every terminal in it.
 
@@ -300,11 +304,14 @@ remains, then to the tabs and panes. Up and Down move between rows, and Escape
 returns to the terminal. Rows that don't fit are cut off at the bottom, and
 keyboard focus scrolls them into view.
 
-Alt+G jumps to the next agent that needs attention, whether the sidebar is
-shown, hidden or turned off. Agents that need input come first, then errors,
-then finished agents, each oldest first; an error or a finish leaves the walk
-once you have looked at that agent. Each press moves one agent further,
-wrapping around; Alt+Shift+G steps back. The walk starts again from the front
+Alt+G jumps to the next agent that needs attention, in any workspace of the
+window, whether the sidebar is shown, hidden or turned off; jumping to an agent
+in another workspace shows that workspace. A finish or error in a workspace you
+are not showing stays new until you show it with that agent's terminal
+selected. Agents that need input come first, then errors, then finished agents,
+each oldest first; an error or a finish leaves the walk once you have looked at
+that agent. Each press moves one agent further, wrapping around; Alt+Shift+G
+steps back. The walk starts again from the front
 once you select another terminal some other way, such as with a click, a
 sidebar row or Alt+H, or when an agent needs something more urgent than the one
 you last jumped to, for example input while you were walking finished agents.
@@ -360,7 +367,7 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
 | `eon stop previous [--json]` | Attempt every other non-dead generation |
 | `eon stop all [--json]` | Attempt every non-dead generation, including current |
-| `eon workspaces [--json]` | List the window's workspaces in order, with each one's ID, name, whether it is shown, and its tab count |
+| `eon workspaces [--json]` | List the window's workspaces in order, with each one's ID, name, whether it is shown, its tab count, its most urgent agent attention state, and its recency (0 for the shown one, then 1 for the one shown before it, and so on, the Workspaces picker's order) |
 | `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name |
 | `eon workspace new [--name NAME] [--no-focus] [--json]` | Add a workspace after the shown one, with one tab and its directory picker, and show it; with `--no-focus` the shown workspace stays. The reply names the new workspace's ID in `created` (`created wN` in human output) |
 | `eon workspace switch WS [--json]` | Show workspace WS, with its tabs, panes and popups as it left them |

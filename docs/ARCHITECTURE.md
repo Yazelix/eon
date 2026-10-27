@@ -100,7 +100,7 @@ shims require an explicit user decision, a removal condition, and a bead.
 EONW is the one versioned workspace boundary for independently released Eon
 clients. Its dependency-free owner crate defines semantic actions, complete
 snapshots, supervisor lifecycle results, structured failures, and bounded
-framing. EONW v21 carries Eon-owned raw tab launch directories, each tab's
+framing. EONW v22 carries Eon-owned raw tab launch directories, each tab's
 zero to four pane columns, each pane's semantic label and optional pin, the popup catalog,
 tab-scoped popup terminals, explicit retarget and chooser-completion actions, and
 an optional pending tab's absent pane selection without interpreting Orbit
@@ -137,7 +137,9 @@ The pin is separate from terminal title and attention, follows the pane object,
 and is absent after supervisor recovery. Venus consumes the label without a
 second metadata observer or naming policy.
 
-EONW v21 is the current Eon source boundary. It gives each popup entry a
+EONW v22 is the current Eon source boundary. It gives each workspace summary
+its attention rollup and its recency rank, which the Workspaces picker orders
+by and the Eon Bar label's badge reads (EON-C33). v21 gives each popup entry a
 shortcut, or none because the configuration unbound it or because another
 entry holds its default shortcut (EON-C10). v20 adds the window's ordered
 workspace summaries, shown identity and caller projection, and requests to
@@ -172,7 +174,7 @@ out of EONW and Venus. v7 also permits distinct pending Project pickers in
 separate tabs. Eon provides no version negotiation layer. Existing live
 supervisors retain their generation until explicitly stopped; the updated
 executable starts a separate generation.
-Composed activation requires an exact v21 Venus consumer.
+Composed activation requires an exact v22 Venus consumer.
 
 The optional Claude observation adds only bounded presentation facts. Under
 EON-C27, pinned CodexBar collects it; Runtime owns bounded subprocesses,
@@ -334,7 +336,7 @@ them. Invalid graph or package inputs fail at their required boundary.
 |---|---|
 | Eon | Product contracts/version/default values, actual executable and exit/error mapping, canonical component graph and `eon-manifest`, assets, component selection, Nix translation and distribution |
 | `eon-runtime` | The `attention`, `cli`, `quota`, `control`, `generation`, `managed_environment`, `sessions`, `supervisor`, `windows` and `workspace` mechanisms, private state/invariants and one strict config parser |
-| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v21 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
+| `eon-workspace-protocol` in `runtime/crates/` | Canonical EONW package/API/codec v22 (package `0.1.0`, Rust `1.95`, Apache-2.0) |
 | Orbit and Venus | Their terminal and native-client authority |
 
 Eon calls one concrete library entry point. Runtime handles invocation selection,
@@ -432,7 +434,7 @@ the user activates an implementation bead and its prerequisite proofs exist. The
 active Eon slice launches one accepted Venus and Orbit pair, supplies the
 accepted managed environment, preserves Eon component and native shell
 configuration boundaries, reports component identity through one Nix-managed
-path, and exposes its live workspace through EONW v21. Venus consumes a new EONW
+path, and exposes its live workspace through EONW v22. Venus consumes a new EONW
 version only after Eon Runtime's producer proof; the graph's interface versions
 change only after Venus's consumer proof exists. Later slices earn their scope
 through dogfooding. Direct distribution has its own activation gate.
