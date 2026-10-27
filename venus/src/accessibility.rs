@@ -2234,7 +2234,6 @@ mod tests {
             title: "shell".into(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
             cursor: None,

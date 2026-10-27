@@ -43,9 +43,8 @@ ORBS v7 through v14 are explicitly breaking, exact-version boundaries with no
 compatibility window or adapter; each replaced its predecessor. Orbit's
 real-PTY checks and lifecycle tests, Venus and Eon consume the canonical crate
 in this repository. Each contract below states the current ORBF v3 in ORBS v14
-behavior, except ORB-C16, which is Planned: ORBF v3 and ORBS v14 carry its
-values, and Orbit sends no graphics state or resources until its switch is
-on. Its PTY pixel size rule needs no wire change.
+behavior; ORB-C16, whose values ORBF v3 and ORBS v14 carry, is partially
+proved. Its PTY pixel size rule needs no wire change.
 
 ## ORB-C1 — Session survival across client loss
 
@@ -291,10 +290,10 @@ on. Its PTY pixel size rule needs no wire change.
     - Canonical ORBF-in-ORBS codec checks in the workspace suite
 - **Open proof:** Static graphics joined this contract on 2026-10-27 under
   Lucca's standing approval of 2026-10-26, relayed by eon-overseer
-  (`orb-j2i.2`), and the proof above predates them. ORB-C16 is Planned.
-  Today frames state `kitty_graphics` false while libghostty stores Kitty
-  images and answers their queries, so a program such as Yazi prints
-  placeholder cells that Venus shows as missing glyphs (`orb-j2i.1`).
+  (`orb-j2i.2`), and the proof above predates them. ORB-C16 is partially proved.
+  From `orb-j2i.11`, frames state `kitty_graphics` true, carry placement
+  entries and blank placeholder cells, and Venus draws the images; no proof
+  above covers that yet.
 
 ## ORB-C7 — Bounded attachment pressure
 
@@ -1048,7 +1047,9 @@ on. Its PTY pixel size rule needs no wire change.
 
 ## ORB-C16 — Static graphics resource plane
 
-- **Status:** Planned
+- **Status:** Partially proved: the real-PTY checks below cover Orbit's side
+  with the shipped switch; the installed proof of Yazi previews is
+  `orb-j2i.12`.
 - **Consumer:**
   - a program in an Orbit terminal that shows static images through the Kitty
     graphics protocol, directly or with Unicode placeholders, such as Yazi
@@ -1070,10 +1071,10 @@ on. Its PTY pixel size rule needs no wire change.
     gates this contract. While it is on, every complete frame states
     `kitty_graphics` true and carries the graphics state below. While it is
     off, frames state false, carry no entries and keep placeholder cells as
-    they are, and Orbit sends no resources. Orbit's real-PTY checks turn it
-    on from `orb-j2i.6`; `orb-j2i.11` turns it on in the shipped build, in the
-    same change that makes Venus draw images. The PTY pixel size rule below
-    does not depend on it.
+    they are, and Orbit sends no resources. It is on in the shipped build
+    from `orb-j2i.11`, the change that makes Venus draw images; only Orbit's
+    unit tests build frames with it off. The PTY pixel size rule below does
+    not depend on it.
   - **Placements.** Each frame lists the placements that libghostty's render
     state resolves for the viewport, with no overscan rows: fixed, relative and
     Unicode-placeholder placements, the latter as one entry per run of
@@ -1238,7 +1239,8 @@ on. Its PTY pixel size rule needs no wire change.
   approval of 2026-10-26, relayed by eon-overseer (`orb-j2i.2`).
   `orb-j2i.4` sizes the PTY; `orb-j2i.5` adds the wire revisions;
   `orb-j2i.6` and `orb-j2i.7` extract placements and send resources;
-  `orb-j2i.8` proves the lifecycle. With the switch on, the real-PTY checks
+  `orb-j2i.8` proves the lifecycle. With the switch on, which it is in the
+  shipped build from `orb-j2i.11`, the real-PTY checks
   [`orbit-kitty-placements`](../tests/real_pty/kitty_placements.rs),
   [`orbit-kitty-replacement`](../tests/real_pty/kitty_replacement.rs),
   [`orbit-kitty-erase`](../tests/real_pty/kitty_erase.rs),
@@ -1250,8 +1252,10 @@ on. Its PTY pixel size rule needs no wire change.
   [`orbit-kitty-cap`](../tests/real_pty/kitty_cap.rs) cover transfer,
   replacement, deletion, clear, scroll, resize, both screens, reattachment,
   pressure, exit and the cap
-  ([BEHAVIOR.md](BEHAVIOR.md#kitty-graphics-placements)).
-  The contract stays Planned while the shipped build keeps the switch off.
+  ([BEHAVIOR.md](BEHAVIOR.md#kitty-graphics-placements)). They passed on
+  x86_64 Linux, built as Nix checks of the flake with every other check, at
+  the commit that records `orb-j2i.11`'s proof. Open: Yazi's previews on the
+  installed Eon (`orb-j2i.12`).
 
 ## Focused terminal conformance corpus
 

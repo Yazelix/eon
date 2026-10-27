@@ -154,6 +154,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   it. The shipped wire is unchanged: the switch is off, so Orbit still sends
   no resources (`orb-j2i.7`).
 
+- ORB-C16's internal switch is on in the shipped build, in the same change
+  that makes Venus draw images (VEN-C31): frames state Kitty graphics, carry
+  placement entries and blank placeholder cells, and Orbit sends the
+  referenced images' pixels. The temporary `ORBIT_KITTY_GRAPHICS`
+  environment variable is gone (`orb-j2i.11`).
+
 ## Before this repository
 
 Orbit was developed as Eon Sessions until 2026-10-14; that history is kept in a

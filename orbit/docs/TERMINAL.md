@@ -144,9 +144,8 @@ The authoritative extractor uses `RenderState::update` and its public row and ce
 iterators to encode a complete versioned frame containing geometry, styled
 graphemes, colors and palette, cursor state, active screen, title, working
 directory, hyperlinks and scroll position. Frames explicitly advertise hyperlink
-support. They declare Kitty graphics unsupported unless ORB-C16's internal
-switch is on. With it on, they carry libghostty's image placements from its
-image iterator
+support. They declare Kitty graphics supported and carry libghostty's image
+placements from its image iterator (ORB-C16)
 ([BEHAVIOR.md](BEHAVIOR.md#kitty-graphics-placements)).
 
 Publication stays bounded:

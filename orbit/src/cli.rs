@@ -167,13 +167,6 @@ pub(crate) fn guardian_fault() -> bool {
     env::var_os("ORBIT_GUARDIAN_FAULT").as_deref() == Some(OsStr::new("1"))
 }
 
-/// ORB-C16's internal switch, which Orbit's real-PTY checks turn on until
-/// `orb-j2i.11` turns it on in the shipped build. It is an environment
-/// variable, outside Orbit's command line, because it is not configuration.
-pub(crate) fn kitty_graphics() -> bool {
-    env::var_os("ORBIT_KITTY_GRAPHICS").as_deref() == Some(OsStr::new("1"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

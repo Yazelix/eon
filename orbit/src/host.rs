@@ -448,7 +448,7 @@ impl Host {
             .management
             .map(|launch| launch.prepare(&serve.socket))
             .transpose()?;
-        let orbit = Orbit::spawn(&serve.command, serve.palette, 80, 24, cli::kitty_graphics())?;
+        let orbit = Orbit::spawn(&serve.command, serve.palette, 80, 24)?;
         // Ready: the live record names both sockets and this process.
         let management = prepared
             .map(|prepared| prepared.publish(&serve.socket))

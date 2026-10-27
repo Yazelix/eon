@@ -1,26 +1,416 @@
-//! Terminal images (VEN-C31): textures, the textured-quad pipeline, and the band each terminal's
-//! images occupy between its cell backgrounds and its foreground.
+//! Terminal images (VEN-C31): the resource store and its budget, textures, the textured-quad
+//! pipeline, and the band each terminal's images and markers occupy between its cell backgrounds
+//! and its foreground.
 
 use super::{
     CellMetrics, RectangleBatch, RenderError, SceneRect, upload_vertices, valid_rect, vertex_count,
 };
-use crate::scene::SceneImage;
-use std::{collections::HashMap, ops::Range};
+use crate::{
+    model::{ImageKey, ImageResource},
+    scene::{Color as SceneColor, SceneGraphics, ScenePlacement},
+};
+use orbit_protocol::{PlacementState, session::PixelFormat};
+use std::{
+    collections::{HashMap, HashSet},
+    ops::Range,
+    time::{Duration, Instant},
+};
 use wgpu::{
     AddressMode, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, BlendState,
-    BufferDescriptor, BufferUsages, ColorTargetState, ColorWrites, ErrorFilter, Extent3d,
-    FilterMode, FragmentState, MultisampleState, Origin3d, PipelineCompilationOptions,
-    PipelineLayoutDescriptor, PrimitiveState, RenderPass, RenderPipeline, RenderPipelineDescriptor,
-    SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
-    TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureViewDescriptor,
-    TextureViewDimension, VertexAttribute, VertexBufferLayout, VertexFormat, VertexState,
-    VertexStepMode,
+    BufferDescriptor, BufferUsages, COPY_BYTES_PER_ROW_ALIGNMENT, ColorTargetState, ColorWrites,
+    CommandEncoderDescriptor, ErrorFilter, Extent3d, FilterMode, FragmentState, MultisampleState,
+    Origin3d, PipelineCompilationOptions, PipelineLayoutDescriptor, PollType, PrimitiveState,
+    RenderPass, RenderPipeline, RenderPipelineDescriptor, SamplerBindingType, SamplerDescriptor,
+    ShaderModuleDescriptor, ShaderSource, ShaderStages, TexelCopyBufferInfo, TexelCopyBufferLayout,
+    TexelCopyTextureInfo, TextureAspect, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureSampleType, TextureUsages, TextureViewDescriptor, TextureViewDimension, VertexAttribute,
+    VertexBufferLayout, VertexFormat, VertexState, VertexStepMode, WriteOnly,
 };
 
 /// Position and texture coordinate, two `f32` pairs.
 const IMAGE_VERTEX_SIZE: u64 = 16;
+
+/// Image textures across the whole window, counted at 4 bytes per pixel (VEN-C31).
+const IMAGE_BUDGET_BYTES: u64 = 256 * 1024 * 1024;
+
+/// How long a pending entry draws nothing, so a resource that promptly follows its frame never
+/// flashes the marker (VEN-C31).
+const MARKER_DELAY: Duration = Duration::from_millis(250);
+
+/// The marker's outline and fill opacity over its terminal's foreground color. The colors derive
+/// from each terminal's own foreground, so they follow its theme without a setting.
+const MARKER_OUTLINE_ALPHA: f32 = 0.5;
+const MARKER_FILL_ALPHA: f32 = 0.12;
+
+/// One image in a terminal's image band.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct SceneImage {
+    /// The held resource whose texture draws.
+    texture: ImageKey,
+    /// The drawn part of the texture, from 0 to 1 on each axis.
+    source: SceneRect,
+    /// Where the image lands, in cells from the grid's top-left corner, so the current cell size
+    /// places and scales it.
+    target: SceneRect,
+}
+
+/// One entry of a terminal's image band, in the frame's order (VEN-C31).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum BandItem {
+    Image(SceneImage),
+    /// The missing-image marker over an entry's target, in cells from the grid's top-left corner.
+    Marker(SceneRect),
+}
+
+/// What a terminal's current frame lacks that a reattach could recover (VEN-C31).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageResync {
+    /// The frame references a resource the budget freed.
+    Freed,
+    /// The frame references a resource whose allocation failed, or one the budget refused and
+    /// now has room for.
+    Refused,
+    /// The frame references a resource the budget refused and still has no room for, which a
+    /// reattach would not recover.
+    NoRoom,
+}
+
+/// What the store knows of one resource.
+enum Entry<T> {
+    Held {
+        texture: T,
+        width: u32,
+        height: u32,
+        retired: bool,
+    },
+    /// Freed for the budget while no frame referenced it.
+    Freed,
+    /// Refused for the budget, or because its allocation failed within it (`budget` false).
+    Refused { bytes: u64, budget: bool },
+}
+
+fn texture_bytes(width: u32, height: u32) -> u64 {
+    u64::from(width) * u64::from(height) * 4
+}
+
+/// The window's image resources and their budget (VEN-C31), generic over the texture so the
+/// accounting and the band derivation run without a GPU.
+pub(super) struct ImageStore<T> {
+    entries: HashMap<ImageKey, Entry<T>>,
+    /// Bytes of held textures.
+    resident: u64,
+    budget: u64,
+    /// Attachments whose frames draw their images; any other frame shows only markers.
+    live: HashSet<u64>,
+    /// Attachments whose pending entries show the marker at once.
+    at_once: HashSet<u64>,
+    /// When each entry pending in the last derived bands was first seen pending.
+    pending_since: HashMap<ImageKey, Instant>,
+    /// When the next pending entry's marker comes due.
+    next_marker: Option<Instant>,
+}
+
+impl<T> ImageStore<T> {
+    fn new(budget: u64) -> Self {
+        Self {
+            entries: HashMap::new(),
+            resident: 0,
+            budget,
+            live: HashSet::new(),
+            at_once: HashSet::new(),
+            pending_since: HashMap::new(),
+            next_marker: None,
+        }
+    }
+
+    pub(super) fn resident(&self) -> u64 {
+        self.resident
+    }
+
+    pub(super) fn next_marker(&self) -> Option<Instant> {
+        self.next_marker
+    }
+
+    fn texture(&self, key: ImageKey) -> Option<&T> {
+        match self.entries.get(&key) {
+            Some(Entry::Held { texture, .. }) => Some(texture),
+            _ => None,
+        }
+    }
+
+    /// Bytes of held textures that no current frame references, which the budget may free.
+    fn freeable(&self, referenced: &HashSet<ImageKey>) -> u64 {
+        self.entries
+            .iter()
+            .filter(|(key, _)| !referenced.contains(key))
+            .map(|(_, entry)| match entry {
+                Entry::Held { width, height, .. } => texture_bytes(*width, *height),
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// Whether `bytes` fit the budget once every unreferenced texture is freed.
+    fn fits(&self, bytes: u64, referenced: &HashSet<ImageKey>) -> bool {
+        self.resident - self.freeable(referenced) + bytes <= self.budget
+    }
+
+    /// Makes room for `bytes` under `key` by freeing unreferenced textures, smallest key first;
+    /// or, when even freeing all of them leaves no room, refuses `key`, frees nothing and returns
+    /// false.
+    fn admit(&mut self, key: ImageKey, bytes: u64, referenced: &HashSet<ImageKey>) -> bool {
+        self.remove(key);
+        if !self.fits(bytes, referenced) {
+            self.refuse(key, bytes, true);
+            return false;
+        }
+        let mut unreferenced = self
+            .entries
+            .iter()
+            .filter(|(key, entry)| matches!(entry, Entry::Held { .. }) && !referenced.contains(key))
+            .map(|(key, _)| *key)
+            .collect::<Vec<_>>();
+        unreferenced.sort_unstable();
+        for unreferenced in unreferenced {
+            if self.resident + bytes <= self.budget {
+                break;
+            }
+            // A retired texture is forgotten, since no frame can reference it again.
+            if !self.remove(unreferenced) {
+                self.entries.insert(unreferenced, Entry::Freed);
+            }
+        }
+        true
+    }
+
+    /// Forgets `key`, returning whether it was a retired texture.
+    fn remove(&mut self, key: ImageKey) -> bool {
+        match self.entries.remove(&key) {
+            Some(Entry::Held {
+                width,
+                height,
+                retired,
+                ..
+            }) => {
+                self.resident -= texture_bytes(width, height);
+                retired
+            }
+            _ => false,
+        }
+    }
+
+    fn hold(&mut self, key: ImageKey, texture: T, width: u32, height: u32) {
+        self.remove(key);
+        self.resident += texture_bytes(width, height);
+        self.entries.insert(
+            key,
+            Entry::Held {
+                texture,
+                width,
+                height,
+                retired: false,
+            },
+        );
+    }
+
+    fn refuse(&mut self, key: ImageKey, bytes: u64, budget: bool) {
+        self.remove(key);
+        self.entries.insert(key, Entry::Refused { bytes, budget });
+    }
+
+    /// Orbit retired `key`: a held texture goes once no current frame references it, and
+    /// anything else at once.
+    pub(super) fn retire(&mut self, key: ImageKey) {
+        match self.entries.get_mut(&key) {
+            Some(Entry::Held { retired, .. }) => *retired = true,
+            Some(_) => {
+                self.entries.remove(&key);
+            }
+            None => {}
+        }
+    }
+
+    /// Forgets every resource of an attachment that is not `live`, as on detach, `Exited` or a
+    /// reconnect, and every retired texture that no current frame references (VEN-C31).
+    /// Pending entries of `at_once` attachments show the marker without waiting.
+    pub(super) fn sweep(
+        &mut self,
+        live: HashSet<u64>,
+        at_once: HashSet<u64>,
+        referenced: &HashSet<ImageKey>,
+    ) {
+        let gone = self
+            .entries
+            .iter()
+            .filter(|(key, entry)| {
+                !live.contains(&key.attachment)
+                    || matches!(entry, Entry::Held { retired: true, .. })
+                        && !referenced.contains(key)
+            })
+            .map(|(key, _)| *key)
+            .collect::<Vec<_>>();
+        for key in gone {
+            self.remove(key);
+        }
+        self.live = live;
+        self.at_once = at_once;
+    }
+
+    /// What a live attachment's frame, with these placements, lacks: a freed resource first,
+    /// then a refused one that a reattach may now upload, then one the budget still refuses.
+    pub(super) fn resync(
+        &self,
+        attachment: u64,
+        placements: &[ScenePlacement],
+        referenced: &HashSet<ImageKey>,
+    ) -> Option<ImageResync> {
+        let mut lacking = None;
+        for placement in placements {
+            let key = ImageKey {
+                attachment,
+                resource: placement.resource,
+            };
+            match self.entries.get(&key) {
+                Some(Entry::Freed) => return Some(ImageResync::Freed),
+                Some(Entry::Refused { bytes, budget }) => {
+                    if !budget || self.fits(*bytes, referenced) {
+                        lacking = Some(ImageResync::Refused);
+                    } else {
+                        lacking.get_or_insert(ImageResync::NoRoom);
+                    }
+                }
+                _ => {}
+            }
+        }
+        lacking
+    }
+
+    /// Each scene's image band in frame order (VEN-C31). An entry whose resource is held draws,
+    /// whatever its state; any other shows the marker, except a pending entry seen pending for
+    /// less than [`MARKER_DELAY`], which draws nothing until its marker comes due. A frame of an
+    /// attachment that is not live shows the marker over every entry.
+    pub(super) fn derive(
+        &mut self,
+        scenes: &[Option<&SceneGraphics>],
+        now: Instant,
+    ) -> Vec<Vec<BandItem>> {
+        let mut pending_since = HashMap::new();
+        let mut next_marker = None::<Instant>;
+        let mut bands = Vec::with_capacity(scenes.len());
+        for graphics in scenes {
+            let mut band = Vec::new();
+            let (attachment, placements) = graphics.map_or((0, &[][..]), |graphics| {
+                (graphics.attachment, &graphics.placements)
+            });
+            let live = self.live.contains(&attachment);
+            for placement in placements {
+                let key = ImageKey {
+                    attachment,
+                    resource: placement.resource,
+                };
+                let marker = BandItem::Marker(placement.target);
+                if !live {
+                    band.push(marker);
+                    continue;
+                }
+                match self.entries.get(&key) {
+                    Some(Entry::Held { width, height, .. }) => {
+                        band.extend(
+                            held_image(key, placement, *width, *height).map(BandItem::Image),
+                        );
+                    }
+                    None if placement.state == PlacementState::Pending => {
+                        let since = *pending_since.entry(key).or_insert_with(|| {
+                            self.pending_since.get(&key).copied().unwrap_or(now)
+                        });
+                        let due = since + MARKER_DELAY;
+                        if now >= due || self.at_once.contains(&attachment) {
+                            band.push(marker);
+                        } else {
+                            next_marker = Some(next_marker.map_or(due, |next| next.min(due)));
+                        }
+                    }
+                    _ => band.push(marker),
+                }
+            }
+            bands.push(band);
+        }
+        self.pending_since = pending_since;
+        self.next_marker = next_marker;
+        bands
+    }
+}
+
+/// The part of a held resource an entry draws: its source clipped to the resource's bounds, and
+/// its target cut by the same proportion, so the visible part keeps its scale and position. The
+/// source starts at or past the resource's top-left corner, so only its right and bottom can be
+/// cut; one that lies wholly outside draws nothing.
+fn held_image(
+    key: ImageKey,
+    placement: &ScenePlacement,
+    width: u32,
+    height: u32,
+) -> Option<SceneImage> {
+    let source = placement.source;
+    let visible = |start: u32, length: u32, bound: u32| {
+        (u64::from(start) + u64::from(length))
+            .min(u64::from(bound))
+            .checked_sub(u64::from(start))
+            .filter(|visible| *visible > 0)
+            .map(|visible| visible as f32)
+    };
+    let columns = visible(source.x, source.width, width)?;
+    let rows = visible(source.y, source.height, height)?;
+    Some(SceneImage {
+        texture: key,
+        source: SceneRect {
+            left: source.x as f32 / width as f32,
+            top: source.y as f32 / height as f32,
+            width: columns / width as f32,
+            height: rows / height as f32,
+        },
+        target: SceneRect {
+            width: placement.target.width * columns / source.width as f32,
+            height: placement.target.height * rows / source.height as f32,
+            ..placement.target
+        },
+    })
+}
+
+fn channels(format: PixelFormat) -> usize {
+    match format {
+        PixelFormat::Rgb => 3,
+        PixelFormat::Rgba => 4,
+    }
+}
+
+/// Writes rows of `width` pixels in `format` into `destination` as RGBA rows `stride` bytes
+/// apart, giving RGB opaque alpha. The upload writes the assembly straight into the staging
+/// mapping this way, so the staging holds the only RGBA copy (VEN-C31).
+fn write_rgba_rows(
+    mut destination: WriteOnly<'_, [u8]>,
+    stride: usize,
+    pixels: &[u8],
+    format: PixelFormat,
+    width: u32,
+) {
+    let row = width as usize * 4;
+    for (index, source) in pixels
+        .chunks_exact(width as usize * channels(format))
+        .enumerate()
+    {
+        let target = destination.slice(index * stride..index * stride + row);
+        match format {
+            PixelFormat::Rgba => target.write_iter(source.iter().copied()),
+            PixelFormat::Rgb => target.write_iter(
+                source
+                    .chunks_exact(3)
+                    .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], u8::MAX]),
+            ),
+        }
+    }
+}
 
 const IMAGE_SHADER: &str = r#"
 struct VertexOutput {
@@ -48,7 +438,7 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
 /// One image quad set, drawn after the first `after` rectangle vertices.
 pub(super) struct ImageDraw {
     after: u32,
-    texture: u64,
+    texture: ImageKey,
     vertices: Range<u32>,
 }
 
@@ -94,50 +484,125 @@ pub(super) fn draw_steps(
 }
 
 impl RectangleBatch {
-    /// Adds a terminal's images at this point of the stream, under the batch's clips, with each
-    /// target measured in cells from the grid corner (`left`, `top`).
-    pub(super) fn push_images(
+    /// Adds a terminal's image band at this point of the stream, images and markers in order,
+    /// under the batch's clips, with each target measured in cells from the grid corner (`left`,
+    /// `top`). Markers take the terminal's `foreground` color.
+    pub(super) fn push_band(
         &mut self,
-        images: &[SceneImage],
+        band: &[BandItem],
         left: f32,
         top: f32,
         metrics: CellMetrics,
+        foreground: SceneColor,
     ) {
-        for image in images {
-            let target = SceneRect {
-                left: left + image.target.left * metrics.width,
-                top: top + image.target.top * metrics.height,
-                width: image.target.width * metrics.width,
-                height: image.target.height * metrics.height,
-            };
-            if !valid_rect(target) || !valid_rect(image.source) {
-                continue;
+        let to_pixels = |target: SceneRect| SceneRect {
+            left: left + target.left * metrics.width,
+            top: top + target.top * metrics.height,
+            width: target.width * metrics.width,
+            height: target.height * metrics.height,
+        };
+        for item in band {
+            match item {
+                BandItem::Image(image) => self.push_image(image, to_pixels(image.target)),
+                BandItem::Marker(target) => {
+                    self.push_marker(to_pixels(*target), metrics.scale, foreground);
+                }
             }
-            let Some(visible) = self
-                .clip
-                .map_or(Some(target), |clip| target.intersection(clip))
-            else {
-                continue;
-            };
-            let pieces = match self.card_clip {
-                Some(card) if visible.intersection(card.middle()) != Some(visible) => card
-                    .bands()
-                    .filter_map(|band| band.intersection(visible))
-                    .collect(),
-                _ => vec![visible],
-            };
-            let start = image_vertex_count(&self.image_bytes);
-            for piece in pieces {
-                self.write_image_piece(piece, target, image.source);
-            }
-            let end = image_vertex_count(&self.image_bytes);
-            if end > start {
-                self.images.push(ImageDraw {
-                    after: vertex_count(&self.bytes),
-                    texture: image.texture,
-                    vertices: start..end,
-                });
-            }
+        }
+    }
+
+    fn push_image(&mut self, image: &SceneImage, target: SceneRect) {
+        if !valid_rect(target) || !valid_rect(image.source) {
+            return;
+        }
+        let Some(visible) = self
+            .clip
+            .map_or(Some(target), |clip| target.intersection(clip))
+        else {
+            return;
+        };
+        let pieces = match self.card_clip {
+            Some(card) if visible.intersection(card.middle()) != Some(visible) => card
+                .bands()
+                .filter_map(|band| band.intersection(visible))
+                .collect(),
+            _ => vec![visible],
+        };
+        let start = image_vertex_count(&self.image_bytes);
+        for piece in pieces {
+            self.write_image_piece(piece, target, image.source);
+        }
+        let end = image_vertex_count(&self.image_bytes);
+        if end > start {
+            self.images.push(ImageDraw {
+                after: vertex_count(&self.bytes),
+                texture: image.texture,
+                vertices: start..end,
+            });
+        }
+    }
+
+    /// The missing-image marker: a faint fill inside a one-logical-pixel outline (VEN-C31).
+    fn push_marker(&mut self, target: SceneRect, scale: f32, color: SceneColor) {
+        if !valid_rect(target) {
+            return;
+        }
+        let stroke = scale.max(1.0);
+        let inner = SceneRect {
+            left: target.left + stroke,
+            top: target.top + stroke,
+            width: target.width - stroke * 2.0,
+            height: target.height - stroke * 2.0,
+        };
+        if !valid_rect(inner) {
+            let SceneRect {
+                left,
+                top,
+                width,
+                height,
+            } = target;
+            self.push(left, top, width, height, color, MARKER_OUTLINE_ALPHA);
+            return;
+        }
+        self.push(
+            inner.left,
+            inner.top,
+            inner.width,
+            inner.height,
+            color,
+            MARKER_FILL_ALPHA,
+        );
+        for edge in [
+            SceneRect {
+                height: stroke,
+                ..target
+            },
+            SceneRect {
+                top: inner.bottom(),
+                height: stroke,
+                ..target
+            },
+            SceneRect {
+                top: inner.top,
+                width: stroke,
+                height: inner.height,
+                ..target
+            },
+            SceneRect {
+                left: inner.right(),
+                top: inner.top,
+                width: stroke,
+                height: inner.height,
+            },
+        ] {
+            self.push(
+                edge.left,
+                edge.top,
+                edge.width,
+                edge.height,
+                color,
+                MARKER_OUTLINE_ALPHA,
+            );
         }
     }
 
@@ -169,13 +634,13 @@ fn image_vertex_count(bytes: &[u8]) -> u32 {
         .expect("bounded draw inputs fit the vertex count")
 }
 
-/// The image pipeline, the uploaded textures by key, and this frame's image quads.
+/// The image pipeline, the resource store with its textures, and this frame's image quads.
 pub(super) struct Images {
     pipeline: RenderPipeline,
     layout: BindGroupLayout,
     sampler: wgpu::Sampler,
     format: TextureFormat,
-    textures: HashMap<u64, BindGroup>,
+    pub(super) store: ImageStore<BindGroup>,
     vertices: wgpu::Buffer,
     vertex_capacity: u64,
     pub(super) draws: Vec<ImageDraw>,
@@ -277,53 +742,80 @@ impl Images {
             } else {
                 TextureFormat::Rgba8Unorm
             },
-            textures: HashMap::new(),
+            store: ImageStore::new(IMAGE_BUDGET_BYTES),
             vertices,
             vertex_capacity: IMAGE_VERTEX_SIZE,
             draws: Vec::new(),
         }
     }
 
-    /// Uploads `rgba` pixels as texture `key`, replacing any texture under that key. A side
-    /// outside the device's limit, a wrong pixel length, or an allocation error the device reports
-    /// refuses the image and leaves no texture under `key`.
+    /// Uploads a completely received resource, or refuses it so its entries show the marker
+    /// (VEN-C31). The budget refuses a resource that does not fit even after freeing every
+    /// texture outside `referenced`, and frees nothing then; a side past the device's limit or an
+    /// allocation error the device reports refuses it too. Returns once the GPU has finished the
+    /// copy and released its staging.
     pub(super) fn upload(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        key: u64,
-        width: u32,
-        height: u32,
-        rgba: &[u8],
+        resource: ImageResource,
+        referenced: &HashSet<ImageKey>,
     ) -> Result<(), RenderError> {
-        self.textures.remove(&key);
+        let key = ImageKey {
+            attachment: resource.attachment,
+            resource: resource.resource,
+        };
+        let (width, height) = (resource.width, resource.height);
+        let bytes = texture_bytes(width, height);
         let limit = device.limits().max_texture_dimension_2d;
         if !(1..=limit).contains(&width) || !(1..=limit).contains(&height) {
+            self.store.refuse(key, bytes, false);
             return Err(RenderError(format!(
                 "a {width} by {height} image does not fit the GPU's {limit}-pixel texture side"
             )));
         }
-        if u64::from(width) * u64::from(height) * 4 != rgba.len() as u64 {
+        let expected = u64::from(width) * u64::from(height) * channels(resource.format) as u64;
+        if resource.pixels.len() as u64 != expected {
+            self.store.refuse(key, bytes, false);
             return Err(RenderError(format!(
-                "a {width} by {height} RGBA image cannot have {} bytes",
-                rgba.len()
+                "a {width} by {height} image cannot have {} bytes",
+                resource.pixels.len()
             )));
         }
-        let texture = self.allocate(device, queue, width, height, rgba)?;
-        self.textures.insert(key, texture);
-        Ok(())
+        if !self.store.admit(key, bytes, referenced) {
+            return Err(RenderError(format!(
+                "a {width} by {height} image does not fit the {} MiB image budget",
+                IMAGE_BUDGET_BYTES >> 20
+            )));
+        }
+        // Textures freed here or by a sweep are dropped, but a frame in flight may still hold
+        // them; wait for the GPU to release them before allocating, so the budget is never
+        // exceeded.
+        let _ = device.poll(PollType::wait_indefinitely());
+        match self.allocate(device, queue, resource) {
+            Ok(texture) => {
+                self.store.hold(key, texture, width, height);
+                Ok(())
+            }
+            Err(error) => {
+                self.store.refuse(key, bytes, false);
+                Err(error)
+            }
+        }
     }
 
     /// Creates and fills a texture inside error scopes, so a failure is a refusal rather than an
-    /// uncaptured error.
+    /// uncaptured error, and waits until the GPU has finished the copy and released its staging.
+    /// The resource's assembly goes as soon as its rows are in the staging buffer, so at most
+    /// the assembly and one staging copy coexist (VEN-C31).
     fn allocate(
         &self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        width: u32,
-        height: u32,
-        rgba: &[u8],
+        resource: ImageResource,
     ) -> Result<BindGroup, RenderError> {
+        let (width, height) = (resource.width, resource.height);
+        let refused = |error| RenderError(format!("the GPU refused an image: {error}"));
         let memory = device.push_error_scope(ErrorFilter::OutOfMemory);
         let validation = device.push_error_scope(ErrorFilter::Validation);
         let size = Extent3d {
@@ -341,21 +833,65 @@ impl Images {
             usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        queue.write_texture(
+        let stride = width
+            .saturating_mul(4)
+            .next_multiple_of(COPY_BYTES_PER_ROW_ALIGNMENT);
+        // A mappable buffer maps itself at creation; without `MAP_WRITE`, wgpu would stage the
+        // mapping in a second allocation of the same size.
+        let staging = device.create_buffer(&BufferDescriptor {
+            label: Some("venus image staging"),
+            size: u64::from(stride) * u64::from(height),
+            usage: BufferUsages::MAP_WRITE | BufferUsages::COPY_SRC,
+            mapped_at_creation: true,
+        });
+        // A buffer or texture the device refused is never mapped or copied.
+        let validation = pollster::block_on(validation.pop());
+        let memory = pollster::block_on(memory.pop());
+        if let Some(error) = validation.or(memory) {
+            return Err(refused(error));
+        }
+        let mut mapping = staging
+            .slice(..)
+            .get_mapped_range_mut()
+            .map_err(|error| RenderError(format!("cannot stage an image: {error}")))?;
+        write_rgba_rows(
+            mapping.slice(..),
+            stride as usize,
+            &resource.pixels,
+            resource.format,
+            width,
+        );
+        drop(resource);
+        drop(mapping);
+        staging.unmap();
+        let memory = device.push_error_scope(ErrorFilter::OutOfMemory);
+        let validation = device.push_error_scope(ErrorFilter::Validation);
+        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
+            label: Some("venus image upload"),
+        });
+        encoder.copy_buffer_to_texture(
+            TexelCopyBufferInfo {
+                buffer: &staging,
+                layout: TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(stride),
+                    rows_per_image: Some(height),
+                },
+            },
             TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: 0,
                 origin: Origin3d::ZERO,
                 aspect: TextureAspect::All,
             },
-            rgba,
-            TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width.saturating_mul(4)),
-                rows_per_image: Some(height),
-            },
             size,
         );
+        let submission = queue.submit([encoder.finish()]);
+        drop(staging);
+        let copied = device.poll(PollType::Wait {
+            submission_index: Some(submission),
+            timeout: None,
+        });
         let view = texture.create_view(&TextureViewDescriptor::default());
         let bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: Some("venus image bind group"),
@@ -373,9 +909,12 @@ impl Images {
         });
         let validation = pollster::block_on(validation.pop());
         let memory = pollster::block_on(memory.pop());
-        match validation.or(memory) {
-            Some(error) => Err(RenderError(format!("the GPU refused an image: {error}"))),
-            None => Ok(bind_group),
+        match (validation.or(memory), copied) {
+            (Some(error), _) => Err(refused(error)),
+            (None, Err(error)) => Err(RenderError(format!(
+                "the GPU did not finish an image copy: {error}"
+            ))),
+            (None, Ok(_)) => Ok(bind_group),
         }
     }
 
@@ -400,7 +939,7 @@ impl Images {
     /// Draws one of this frame's images; a key with no texture draws nothing.
     pub(super) fn draw(&self, pass: &mut RenderPass<'_>, index: usize) {
         let draw = &self.draws[index];
-        let Some(texture) = self.textures.get(&draw.texture) else {
+        let Some(texture) = self.store.texture(draw.texture) else {
             return;
         };
         pass.set_pipeline(&self.pipeline);
@@ -414,11 +953,10 @@ impl Images {
 mod tests {
     use super::super::cells::{build_scene_rectangles, tests::plain_style};
     use super::*;
-    use crate::{
-        Color as SceneColor, DrawCell, DrawCursor, DrawRow, Scene, SceneGraphics, ScenePreview,
-        scene::CardFill,
+    use crate::{DrawCell, DrawCursor, DrawRow, Scene, ScenePreview, scene::CardFill};
+    use orbit_protocol::{
+        CellWidth, CursorShape, Screen, SourceRect, Underline, session::VerticalDirection,
     };
-    use orbit_protocol::{CellWidth, CursorShape, Screen, Underline, session::VerticalDirection};
 
     const RED: SceneColor = SceneColor { r: 200, g: 0, b: 0 };
 
@@ -446,7 +984,7 @@ mod tests {
         }
     }
 
-    fn scene(content: Vec<DrawRow>, images: Vec<SceneImage>) -> Scene {
+    fn scene(content: Vec<DrawRow>) -> Scene {
         Scene {
             revision: 1,
             columns: u16::try_from(content[0].cells.len()).unwrap(),
@@ -469,13 +1007,19 @@ mod tests {
             }),
             content,
             graphics: SceneGraphics::default(),
-            images,
         }
     }
 
-    fn whole(texture: u64, target: SceneRect) -> SceneImage {
+    fn key(resource: u64) -> ImageKey {
+        ImageKey {
+            attachment: 1,
+            resource,
+        }
+    }
+
+    fn whole(resource: u64, target: SceneRect) -> SceneImage {
         SceneImage {
-            texture,
+            texture: key(resource),
             source: SceneRect {
                 left: 0.0,
                 top: 0.0,
@@ -520,33 +1064,39 @@ mod tests {
             edge_reached: false,
             rows: vec![row("ab", Some(RED))],
         };
-        let scene = scene(
-            vec![row("ab", Some(RED)), row("cd", None)],
-            vec![
-                whole(
-                    1,
-                    SceneRect {
-                        left: 0.0,
-                        top: 0.0,
-                        width: 2.0,
-                        height: 3.0,
-                    },
-                ),
-                whole(
-                    2,
-                    SceneRect {
-                        left: 1.0,
-                        top: 1.0,
-                        width: 1.0,
-                        height: 1.0,
-                    },
-                ),
-            ],
-        );
+        let scene = scene(vec![row("ab", Some(RED)), row("cd", None)]);
+        let marker = SceneRect {
+            left: 0.0,
+            top: 1.0,
+            width: 1.0,
+            height: 1.0,
+        };
+        let band = [
+            BandItem::Image(whole(
+                1,
+                SceneRect {
+                    left: 0.0,
+                    top: 0.0,
+                    width: 2.0,
+                    height: 3.0,
+                },
+            )),
+            BandItem::Marker(marker),
+            BandItem::Image(whole(
+                2,
+                SceneRect {
+                    left: 1.0,
+                    top: 1.0,
+                    width: 1.0,
+                    height: 1.0,
+                },
+            )),
+        ];
         let mut batch = RectangleBatch::new(400, 300);
         let cursor = build_scene_rectangles(
             &mut batch,
             &scene,
+            &band,
             Some(&preview),
             true,
             metrics,
@@ -554,7 +1104,8 @@ mod tests {
             true,
         );
 
-        // The live and the preview row backgrounds come first, then both images in order.
+        // The live and the preview row backgrounds come first, then the band in frame order: an
+        // image, the marker's fill and outline in the terminal's foreground, and an image.
         let mut backgrounds = RectangleBatch::new(400, 300);
         for top in [0.0, 2.0] {
             backgrounds.push(
@@ -567,6 +1118,20 @@ mod tests {
             );
         }
         let after = vertex_count(&backgrounds.bytes);
+        let mut band_rectangles = RectangleBatch::new(400, 300);
+        band_rectangles.push_marker(
+            SceneRect {
+                left: metrics.padding,
+                top: metrics.padding + metrics.height,
+                width: metrics.width,
+                height: metrics.height,
+            },
+            metrics.scale,
+            scene.foreground,
+        );
+        let marked = after + vertex_count(&band_rectangles.bytes);
+        backgrounds.bytes.extend(band_rectangles.bytes);
+        assert_eq!(marked - after, 5 * 6, "a fill and four edges");
         assert_eq!(
             batch.bytes[..backgrounds.bytes.len()],
             backgrounds.bytes[..]
@@ -577,11 +1142,11 @@ mod tests {
                 .iter()
                 .map(|draw| (draw.after, draw.texture))
                 .collect::<Vec<_>>(),
-            [(after, 1), (after, 2)]
+            [(after, key(1)), (marked, key(2))]
         );
         // Underlines of both live rows and the cursor follow; preview foregrounds come last.
         let underline = 6;
-        assert_eq!(cursor, after + 4 * underline + 6);
+        assert_eq!(cursor, marked + 4 * underline + 6);
         assert_eq!(vertex_count(&batch.bytes), cursor + 2 * underline);
         // The first image reaches into the preview row but stops at the live rows.
         let live_bottom = metrics.padding + 2.0 * metrics.height;
@@ -592,19 +1157,12 @@ mod tests {
         );
 
         // A terminal clip that misses the grid, as when padding is wider than the terminal,
-        // leaves no image in that padding, even one placed to reach into it.
-        let reaching = Scene {
-            graphics: SceneGraphics::default(),
-            images: vec![whole(
-                1,
-                SceneRect {
-                    left: -1.0,
-                    top: 0.0,
-                    width: 2.0,
-                    height: 1.0,
-                },
-            )],
-            ..scene
+        // leaves no image or marker in that padding, even one placed to reach into it.
+        let reaching = SceneRect {
+            left: -1.0,
+            top: 0.0,
+            width: 2.0,
+            height: 1.0,
         };
         let mut batch = RectangleBatch::new(400, 300);
         batch.clip = Some(SceneRect {
@@ -613,8 +1171,24 @@ mod tests {
             width: 8.0,
             height: 300.0,
         });
-        build_scene_rectangles(&mut batch, &reaching, None, true, metrics, origin, true);
+        let mut no_band = RectangleBatch::new(400, 300);
+        no_band.clip = batch.clip;
+        build_scene_rectangles(&mut no_band, &scene, &[], None, true, metrics, origin, true);
+        build_scene_rectangles(
+            &mut batch,
+            &scene,
+            &[
+                BandItem::Image(whole(1, reaching)),
+                BandItem::Marker(reaching),
+            ],
+            None,
+            true,
+            metrics,
+            origin,
+            true,
+        );
         assert!(batch.images.is_empty() && batch.image_bytes.is_empty());
+        assert_eq!(batch.bytes, no_band.bytes);
     }
 
     #[test]
@@ -638,7 +1212,7 @@ mod tests {
         };
         // Starts a cell left of the grid and runs past its right and bottom edges.
         let image = SceneImage {
-            texture: 3,
+            texture: key(3),
             source,
             target: SceneRect {
                 left: -1.0,
@@ -657,7 +1231,7 @@ mod tests {
             let mut batch = RectangleBatch::new(200, 100);
             batch.clip = Some(grid);
             batch.card_clip = card_clip;
-            batch.push_images(&[image], grid.left, grid.top, metrics);
+            batch.push_band(&[BandItem::Image(image)], grid.left, grid.top, metrics, RED);
 
             let vertices = image_vertices(&batch);
             assert_eq!(batch.images.len(), 1);
@@ -738,16 +1312,280 @@ mod tests {
                 ..image
             },
         ] {
-            batch.push_images(&[image], grid.left, grid.top, metrics);
+            batch.push_band(&[BandItem::Image(image)], grid.left, grid.top, metrics, RED);
         }
         assert!(batch.images.is_empty() && batch.image_bytes.is_empty());
+    }
+
+    /// Each entry's kind, by resource of attachment 1.
+    fn entries(store: &ImageStore<()>, resources: Range<u64>) -> Vec<Option<&'static str>> {
+        resources
+            .map(|resource| {
+                store.entries.get(&key(resource)).map(|entry| match entry {
+                    Entry::Held { retired: false, .. } => "held",
+                    Entry::Held { retired: true, .. } => "retired",
+                    Entry::Freed => "freed",
+                    Entry::Refused { budget: true, .. } => "refused",
+                    Entry::Refused { budget: false, .. } => "failed",
+                })
+            })
+            .collect()
+    }
+
+    fn keys(resources: &[u64]) -> HashSet<ImageKey> {
+        resources.iter().map(|resource| key(*resource)).collect()
+    }
+
+    /// Admits and holds a `width` by `height` resource, as an upload whose allocation succeeds.
+    fn upload(
+        store: &mut ImageStore<()>,
+        resource: u64,
+        (width, height): (u32, u32),
+        referenced: &[u64],
+    ) -> bool {
+        let admitted = store.admit(
+            key(resource),
+            texture_bytes(width, height),
+            &keys(referenced),
+        );
+        if admitted {
+            store.hold(key(resource), (), width, height);
+        }
+        admitted
+    }
+
+    #[test]
+    fn the_budget_frees_only_unreferenced_textures_and_refuses_without_freeing_any() {
+        // 64 bytes hold four 2 by 2 textures.
+        let mut store = ImageStore::<()>::new(64);
+        assert!(upload(&mut store, 1, (2, 2), &[]));
+        assert!(upload(&mut store, 2, (2, 2), &[]));
+        assert!(upload(&mut store, 3, (2, 4), &[1]));
+        assert_eq!(store.resident(), 64);
+        // Room comes from unreferenced textures, smallest key first, and only as much as needed.
+        assert!(upload(&mut store, 4, (2, 2), &[3]));
+        assert_eq!(
+            entries(&store, 1..5),
+            [Some("freed"), Some("held"), Some("held"), Some("held")]
+        );
+        // When even freeing every unreferenced texture leaves no room, nothing is freed.
+        assert!(!upload(&mut store, 5, (2, 4), &[3, 4]));
+        assert_eq!(
+            entries(&store, 1..6),
+            [
+                Some("freed"),
+                Some("held"),
+                Some("held"),
+                Some("held"),
+                Some("refused")
+            ]
+        );
+        assert_eq!(store.resident(), 64);
+        // A retired texture freed for room is forgotten, since no frame can reference it again.
+        store.retire(key(2));
+        store.retire(key(5));
+        assert!(upload(&mut store, 6, (2, 2), &[3, 4]));
+        assert_eq!(
+            entries(&store, 1..7),
+            [
+                Some("freed"),
+                None,
+                Some("held"),
+                Some("held"),
+                None,
+                Some("held")
+            ]
+        );
+        // A retired texture stays while a current frame references it; a dead attachment's
+        // resources all go.
+        store.retire(key(4));
+        store.sweep(HashSet::from([1]), HashSet::new(), &keys(&[4]));
+        assert_eq!(
+            entries(&store, 3..7),
+            [Some("held"), Some("retired"), None, Some("held")]
+        );
+        store.sweep(HashSet::from([1]), HashSet::new(), &keys(&[]));
+        assert_eq!(
+            entries(&store, 3..7),
+            [Some("held"), None, None, Some("held")]
+        );
+        assert_eq!(store.resident(), 48);
+        store.sweep(HashSet::from([2]), HashSet::new(), &keys(&[]));
+        assert!(store.entries.is_empty());
+        assert_eq!(store.resident(), 0);
+        // An older texture with a smaller key that a frame references is skipped for a newer one
+        // that none does.
+        assert!(upload(&mut store, 7, (2, 4), &[]));
+        assert!(upload(&mut store, 8, (2, 4), &[]));
+        assert!(upload(&mut store, 9, (2, 2), &[7]));
+        assert_eq!(
+            entries(&store, 7..10),
+            [Some("held"), Some("freed"), Some("held")]
+        );
+    }
+
+    #[test]
+    fn frames_resync_for_freed_resources_and_refusals_a_reattach_may_recover() {
+        let mut store = ImageStore::<()>::new(64);
+        let placements = |resources: &[u64]| {
+            resources
+                .iter()
+                .map(|resource| ScenePlacement {
+                    resource: *resource,
+                    state: PlacementState::Ready,
+                    source: SourceRect {
+                        x: 0,
+                        y: 0,
+                        width: 1,
+                        height: 1,
+                    },
+                    target: SceneRect::default(),
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(upload(&mut store, 1, (2, 4), &[]));
+        assert!(upload(&mut store, 2, (4, 4), &[]));
+        assert!(!upload(&mut store, 3, (2, 2), &[2]));
+        store.refuse(key(4), 16, false);
+        assert_eq!(
+            entries(&store, 1..5),
+            [Some("freed"), Some("held"), Some("refused"), Some("failed")]
+        );
+        let resync = |resources: &[u64], referenced: &[u64]| {
+            store.resync(1, &placements(resources), &keys(referenced))
+        };
+        assert_eq!(resync(&[2], &[2]), None);
+        assert_eq!(resync(&[3, 1], &[1, 3]), Some(ImageResync::Freed));
+        // A budget refusal resyncs only once the budget has room for it.
+        assert_eq!(resync(&[3], &[2, 3]), Some(ImageResync::NoRoom));
+        assert_eq!(resync(&[3], &[3]), Some(ImageResync::Refused));
+        // A failed allocation may succeed on another attempt.
+        assert_eq!(resync(&[3, 4], &[2, 3, 4]), Some(ImageResync::Refused));
+    }
+
+    #[test]
+    fn bands_draw_held_images_clipped_and_mark_every_missing_one_in_frame_order() {
+        let mut store = ImageStore::<()>::new(IMAGE_BUDGET_BYTES);
+        store.hold(key(1), (), 10, 10);
+        store.refuse(key(3), 4, true);
+        store.entries.insert(key(4), Entry::Freed);
+        store.sweep(HashSet::from([1]), HashSet::new(), &keys(&[1]));
+        let target = SceneRect {
+            left: 1.0,
+            top: 2.0,
+            width: 4.0,
+            height: 2.0,
+        };
+        let placement = |resource, state, x| ScenePlacement {
+            resource,
+            state,
+            source: SourceRect {
+                x,
+                y: 0,
+                width: 10,
+                height: 10,
+            },
+            target,
+        };
+        use PlacementState::{Pending, Ready, Unavailable};
+        let graphics = SceneGraphics {
+            attachment: 1,
+            placements: vec![
+                // Held, whatever the entry's state, with a source running half past the right
+                // edge: the visible half draws at its scale, over the target's left half.
+                placement(1, Pending, 5),
+                placement(2, Unavailable, 0),
+                placement(3, Ready, 0),
+                placement(4, Ready, 0),
+                // Ready, yet never received.
+                placement(5, Ready, 0),
+                placement(6, Pending, 0),
+                // A source wholly outside the resource draws nothing.
+                placement(1, Ready, 10),
+            ],
+            placements_omitted: false,
+        };
+        // A scene of an attachment that is not live, as one kept through a reconnect.
+        let kept = SceneGraphics {
+            attachment: 2,
+            placements: vec![placement(1, Ready, 0)],
+            placements_omitted: false,
+        };
+        let image = BandItem::Image(SceneImage {
+            texture: key(1),
+            source: SceneRect {
+                left: 0.5,
+                top: 0.0,
+                width: 0.5,
+                height: 1.0,
+            },
+            target: SceneRect {
+                width: 2.0,
+                ..target
+            },
+        });
+        let marker = BandItem::Marker(target);
+        let start = Instant::now();
+        assert_eq!(
+            store.derive(&[Some(&graphics), None, Some(&kept)], start),
+            [
+                vec![image, marker, marker, marker, marker],
+                vec![],
+                vec![marker]
+            ]
+        );
+        assert_eq!(store.next_marker(), Some(start + MARKER_DELAY));
+        let early = start + MARKER_DELAY - Duration::from_millis(1);
+        assert_eq!(store.derive(&[Some(&graphics)], early)[0].len(), 5);
+        assert_eq!(
+            store.derive(&[Some(&graphics)], start + MARKER_DELAY),
+            [vec![image, marker, marker, marker, marker, marker]]
+        );
+        assert_eq!(store.next_marker(), None);
+
+        // After a resync, the new attachment's pending entries show the marker at once.
+        let fresh = SceneGraphics {
+            attachment: 1,
+            placements: vec![placement(7, Pending, 0)],
+            placements_omitted: false,
+        };
+        store.sweep(HashSet::from([1]), HashSet::from([1]), &keys(&[1]));
+        assert_eq!(store.derive(&[Some(&fresh)], start), [vec![marker]]);
+    }
+
+    #[test]
+    fn rows_reach_the_padded_staging_as_opaque_rgba() {
+        // Two rows of two pixels, each staged row padded to 12 bytes.
+        let staged = |format, pixels: &[u8]| {
+            let mut destination = vec![0; 24];
+            write_rgba_rows(
+                WriteOnly::from_mut(destination.as_mut_slice()),
+                12,
+                pixels,
+                format,
+                2,
+            );
+            destination
+        };
+        assert_eq!(
+            staged(PixelFormat::Rgb, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]),
+            [
+                1, 2, 3, 255, 4, 5, 6, 255, 0, 0, 0, 0, 7, 8, 9, 255, 10, 11, 12, 255, 0, 0, 0, 0
+            ]
+        );
+        assert_eq!(
+            staged(PixelFormat::Rgba, &(1..=16).collect::<Vec<_>>()),
+            [
+                1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 9, 10, 11, 12, 13, 14, 15, 16, 0, 0, 0, 0
+            ]
+        );
     }
 
     #[test]
     fn draw_steps_put_images_under_later_rectangles_and_the_trailing_cursor() {
         let image = |after| ImageDraw {
             after,
-            texture: 0,
+            texture: key(0),
             vertices: 0..6,
         };
         use DrawStep::{Cursor, Image, Rectangles};
@@ -912,19 +1750,39 @@ mod tests {
                     FontSetup::new(&FontSettings::default()).unwrap(),
                 ))
                 .unwrap();
+                let resource = |resource, width, height, pixels| ImageResource {
+                    attachment: 1,
+                    resource,
+                    format: PixelFormat::Rgba,
+                    width,
+                    height,
+                    pixels,
+                };
+                let none = HashSet::new();
                 let limit = renderer.device.limits().max_texture_dimension_2d;
-                assert!(renderer.upload_image(1, limit + 1, 1, &[]).is_err());
-                assert!(renderer.upload_image(1, 2, 2, &[0; 15]).is_err());
+                assert!(
+                    renderer
+                        .upload_image(resource(1, limit + 1, 1, Vec::new()), &none)
+                        .is_err()
+                );
+                assert!(
+                    renderer
+                        .upload_image(resource(2, 2, 2, vec![0; 15]), &none)
+                        .is_err()
+                );
                 // Past the limit check, the error scope turns the device's error into a refusal
                 // instead of the uncaptured-error panic.
-                let oversize = vec![0; (limit as usize + 1) * 4];
+                let oversize = resource(4, limit + 1, 1, vec![0; (limit as usize + 1) * 4]);
                 assert!(
                     renderer
                         .images
-                        .allocate(&renderer.device, &renderer.queue, limit + 1, 1, &oversize)
+                        .allocate(&renderer.device, &renderer.queue, oversize)
                         .is_err()
                 );
-                renderer.upload_image(1, 64, 64, &checkerboard()).unwrap();
+                renderer
+                    .upload_image(resource(3, 64, 64, checkerboard()), &none)
+                    .unwrap();
+                renderer.sweep_images(HashSet::from([1]), HashSet::new(), &none);
                 self.renderer = Some(renderer);
                 self.start = Some(Instant::now());
                 window.request_redraw();
@@ -973,18 +1831,43 @@ mod tests {
                         )
                     })
                     .collect();
-                let mut scene = scene(
-                    content,
-                    vec![whole(
-                        1,
-                        SceneRect {
-                            left: 4.0,
-                            top: 1.0,
-                            width: 200.0,
-                            height: 80.0,
-                        },
-                    )],
-                );
+                // The checkerboard, and the marker over a refused resource beside it.
+                let mut scene = scene(content);
+                let placement = |resource, target| ScenePlacement {
+                    resource,
+                    state: PlacementState::Ready,
+                    source: SourceRect {
+                        x: 0,
+                        y: 0,
+                        width: 64,
+                        height: 64,
+                    },
+                    target,
+                };
+                scene.graphics = SceneGraphics {
+                    attachment: 1,
+                    placements: vec![
+                        placement(
+                            3,
+                            SceneRect {
+                                left: 4.0,
+                                top: 1.0,
+                                width: 200.0,
+                                height: 80.0,
+                            },
+                        ),
+                        placement(
+                            2,
+                            SceneRect {
+                                left: 1.0,
+                                top: 8.0,
+                                width: 2.0,
+                                height: 2.0,
+                            },
+                        ),
+                    ],
+                    placements_omitted: false,
+                };
                 if let Some(cursor) = scene.cursor.as_mut() {
                     cursor.column = 10;
                     cursor.row = 3;

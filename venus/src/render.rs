@@ -1,6 +1,6 @@
 use crate::{
-    Color as SceneColor, DialogScene, DrawRow, DrawStyle, Scene, ScenePreview, SceneRect,
-    WorkspaceFocus, WorkspaceScene,
+    Color as SceneColor, DialogScene, DrawRow, DrawStyle, ImageKey, ImageResource, Scene,
+    ScenePlacement, ScenePreview, SceneRect, WorkspaceFocus, WorkspaceScene,
     scene::{CardFill, PaneOutline, chrome_title_metrics, rounded_radius},
 };
 use glyphon::{
@@ -13,6 +13,7 @@ use orbit_protocol::{
 };
 use std::{
     borrow::Cow,
+    collections::HashSet,
     error::Error,
     fmt,
     sync::{
@@ -47,9 +48,10 @@ use cells::{
 };
 use chrome::{HeaderInteraction, Spinners, fit_header_text, rasterize_quota_icon};
 use cursor_trail::{CursorAnimation, build_tail_cursor};
-use images::{DrawStep, ImageDraw, Images, draw_steps};
+use images::{BandItem, DrawStep, ImageDraw, Images, draw_steps};
 
 pub use fonts::{FontSettings, FontSetup};
+pub use images::ImageResync;
 
 const VERTEX_SIZE: u64 = 24;
 #[cfg(test)]
@@ -232,6 +234,10 @@ struct ContentKey {
     cpu: Option<String>,
     ram: Option<String>,
     clock: Option<String>,
+    /// Each drawn terminal's image band, the selected terminal's first, then the other columns'.
+    /// An upload, a freed texture, or a marker coming due changes it, so it stands in for a
+    /// version of the resident set (VEN-C31).
+    images: Vec<Vec<BandItem>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -1193,17 +1199,57 @@ impl Renderer {
         !self.terminal.cursor_handoff && self.terminal.cursor_animation.is_active()
     }
 
-    /// Uploads RGBA pixels as the texture that scene images name by `key`, replacing any texture
-    /// under that key. A refusal leaves no texture under `key` and the renderer working.
+    /// Uploads a completely received image resource, or refuses it so its entries show the
+    /// marker; either way the renderer keeps working (VEN-C31). `referenced` names every resource
+    /// that a current frame of an attached terminal references, which the budget never frees.
     pub fn upload_image(
         &mut self,
-        key: u64,
-        width: u32,
-        height: u32,
-        rgba: &[u8],
+        resource: ImageResource,
+        referenced: &HashSet<ImageKey>,
     ) -> Result<(), RenderError> {
         self.images
-            .upload(&self.device, &self.queue, key, width, height, rgba)
+            .upload(&self.device, &self.queue, resource, referenced)
+    }
+
+    /// Orbit retired a resource; its texture goes once no current frame references it.
+    pub fn retire_image(&mut self, key: ImageKey) {
+        self.images.store.retire(key);
+    }
+
+    /// Frees the resources of every attachment outside `live`, the attachments of attached
+    /// terminals, and retired textures outside `referenced`. Frames of other attachments show
+    /// the marker over every entry, and pending entries of `at_once` attachments show it without
+    /// waiting (VEN-C31).
+    pub fn sweep_images(
+        &mut self,
+        live: HashSet<u64>,
+        at_once: HashSet<u64>,
+        referenced: &HashSet<ImageKey>,
+    ) {
+        self.images.store.sweep(live, at_once, referenced);
+    }
+
+    /// Whether an attached terminal's current frame wants a reattach to recover its images.
+    #[must_use]
+    pub fn image_resync(
+        &self,
+        attachment: u64,
+        placements: &[ScenePlacement],
+        referenced: &HashSet<ImageKey>,
+    ) -> Option<ImageResync> {
+        self.images.store.resync(attachment, placements, referenced)
+    }
+
+    /// Bytes of image textures held, counted at 4 bytes per pixel.
+    #[must_use]
+    pub fn image_resident(&self) -> u64 {
+        self.images.store.resident()
+    }
+
+    /// When a pending image entry of the last drawn frame shows its marker, which needs a redraw.
+    #[must_use]
+    pub fn next_marker_deadline(&self) -> Option<Instant> {
+        self.images.store.next_marker()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1393,7 +1439,12 @@ impl Renderer {
         preedit: &str,
         generation: u64,
     ) -> bool {
+        let graphics = std::iter::once(scene)
+            .chain(columns.iter().copied())
+            .map(|scene| scene.map(|scene| &scene.graphics))
+            .collect::<Vec<_>>();
         let key = ContentKey {
+            images: self.images.store.derive(&graphics, Instant::now()),
             generation,
             column_revisions: columns
                 .iter()
@@ -1530,7 +1581,12 @@ impl Renderer {
                 &backgrounds,
                 &bands,
             );
-            for (column, scene) in workspace.other_columns.iter().zip(columns) {
+            for ((column, scene), band) in workspace
+                .other_columns
+                .iter()
+                .zip(columns)
+                .zip(&key.images[1..])
+            {
                 let Some(scene) = scene else {
                     continue;
                 };
@@ -1556,6 +1612,7 @@ impl Renderer {
                 build_scene_rectangles(
                     &mut rectangles,
                     scene,
+                    band,
                     None,
                     blink_visible,
                     self.metrics,
@@ -1587,6 +1644,7 @@ impl Renderer {
                 cursor_vertex_boundary = build_scene_rectangles(
                     &mut rectangles,
                     scene,
+                    &key.images[0],
                     scroll_preview,
                     blink_visible,
                     self.metrics,
@@ -1643,6 +1701,7 @@ impl Renderer {
             cursor_vertex_boundary = build_scene_rectangles(
                 &mut rectangles,
                 scene,
+                &key.images[0],
                 scroll_preview,
                 blink_visible,
                 self.metrics,
@@ -3009,7 +3068,6 @@ mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: palette::CARD_OUTLINE,
             cursor: None,
@@ -3742,6 +3800,7 @@ mod tests {
             cpu: None,
             ram: None,
             clock: None,
+            images: Vec::new(),
         };
 
         let dialog = |kind, scroll| {
@@ -3805,7 +3864,6 @@ mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
             cursor: None,
@@ -3870,7 +3928,6 @@ mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
             cursor: Some(DrawCursor {
@@ -4860,7 +4917,6 @@ mod tests {
                     title: String::new(),
                     working_directory: String::new(),
                     graphics: SceneGraphics::default(),
-                    images: Vec::new(),
                     background: palette::TERMINAL_FALLBACK,
                     foreground: palette::CARD_OUTLINE,
                     cursor: None,
@@ -4989,7 +5045,6 @@ mod tests {
                 title: String::new(),
                 working_directory: String::new(),
                 graphics: SceneGraphics::default(),
-                images: Vec::new(),
                 background: palette::TERMINAL_FALLBACK,
                 foreground: palette::CARD_OUTLINE,
                 cursor: None,
@@ -5474,7 +5529,6 @@ mod tests {
                                             title: String::new(),
                                             working_directory: String::new(),
                                             graphics: SceneGraphics::default(),
-                                            images: Vec::new(),
                                             background: palette::TERMINAL_FALLBACK,
                                             foreground: palette::CARD_OUTLINE,
                                             cursor: None,
@@ -5829,7 +5883,6 @@ mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: palette::CARD_OUTLINE,
             cursor: None,
@@ -6393,7 +6446,6 @@ mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: palette::CARD_OUTLINE,
             cursor: Some(DrawCursor {
@@ -6559,6 +6611,7 @@ mod tests {
                     build_scene_rectangles(
                         &mut cells,
                         &scene,
+                        &[],
                         None,
                         true,
                         metrics,
@@ -6597,7 +6650,6 @@ mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: palette::CARD_OUTLINE,
             cursor: None,
@@ -6761,6 +6813,7 @@ mod tests {
                                     build_scene_rectangles(
                                         &mut cells,
                                         &terminal_scene,
+                                        &[],
                                         None,
                                         true,
                                         metrics,

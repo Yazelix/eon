@@ -3294,8 +3294,6 @@ pub struct Scene {
     pub cursor: Option<DrawCursor>,
     pub content: Vec<DrawRow>,
     pub graphics: SceneGraphics,
-    /// Images drawn between the cell backgrounds and the text, in order (VEN-C31).
-    pub images: Vec<SceneImage>,
 }
 
 /// A frame's image placements and the attachment whose resources they reference (VEN-C31).
@@ -3318,18 +3316,6 @@ pub struct ScenePlacement {
     pub source: SourceRect,
     /// Where the entry lands, in cells from the grid's top-left corner, measured with the frame's
     /// cell size so the current cell size places and scales it.
-    pub target: SceneRect,
-}
-
-/// One image in a terminal's image band.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct SceneImage {
-    /// The renderer's key for the uploaded texture.
-    pub texture: u64,
-    /// The drawn part of the texture, from 0 to 1 on each axis.
-    pub source: SceneRect,
-    /// Where the image lands, in cells from the grid's top-left corner, so the current cell size
-    /// places and scales it.
     pub target: SceneRect,
 }
 
@@ -3522,7 +3508,6 @@ impl Scene {
             cursor,
             content,
             graphics,
-            images: Vec::new(),
         }
     }
 
@@ -5928,7 +5913,6 @@ mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
             cursor: None,
@@ -6028,7 +6012,6 @@ mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
             cursor: None,
@@ -6081,7 +6064,6 @@ mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
             cursor: Some(DrawCursor {
@@ -6195,7 +6177,6 @@ mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: Color::default(),
             foreground: Color::default(),
             cursor: None,

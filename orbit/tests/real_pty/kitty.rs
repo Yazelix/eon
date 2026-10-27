@@ -13,7 +13,6 @@ use orbit_protocol::{
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    path::Path,
 };
 
 // The child names its terminal, then plays one step file from $ORBIT_STEPS
@@ -188,7 +187,7 @@ pub fn size(cols: u16, rows: u16, width: u32, height: u32) -> ClientMessage {
     })
 }
 
-/// An Orbit with ORB-C16's switch on whose child plays `steps`.
+/// An Orbit whose child plays `steps`.
 pub struct Kitty {
     // Fields drop in order: the server stops before its directory goes.
     pub server: Server,
@@ -213,11 +212,7 @@ impl Kitty {
         let server = Server::start(
             &directory,
             &shell,
-            &[
-                ("ORBIT_KITTY_GRAPHICS", Path::new("1")),
-                ("ORBIT_GATE", gate.path()),
-                ("ORBIT_STEPS", &folder),
-            ],
+            &[("ORBIT_GATE", gate.path()), ("ORBIT_STEPS", &folder)],
         );
         Self {
             server,

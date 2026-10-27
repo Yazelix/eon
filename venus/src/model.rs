@@ -47,6 +47,16 @@ pub enum ModelEffect {
     /// A completely received resource, which the caller uploads or refuses before it handles the
     /// next message (VEN-C31).
     Resource(ImageResource),
+    /// Orbit retired a completely received resource (VEN-C31).
+    Retired(ImageKey),
+}
+
+/// One resource of one attachment, as frames of that attachment name it (VEN-C31).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ImageKey {
+    pub attachment: u64,
+    /// Orbit's identity for the resource in this attachment.
+    pub resource: u64,
 }
 
 /// One completely received image resource of one attachment.
@@ -122,7 +132,13 @@ pub enum LocalNoticeSource {
     Queue,
     Resize,
     Clipboard,
+    /// A frame left out placements past Orbit's caps (VEN-C31).
+    Images,
 }
+
+/// The bounded notice for a frame that left out placements (VEN-C31).
+const OMITTED_IMAGES: &str =
+    "Some images are not shown: the program placed more than a frame can carry";
 
 /// The sole persistent owner of accepted presentation state in one client process.
 #[derive(Debug)]
@@ -605,6 +621,13 @@ impl SessionModel {
         self.connection == ConnectionState::Attached
     }
 
+    /// The attachment whose resources this terminal holds: its current one while attached, and
+    /// none once it detaches, exits or starts reconnecting (VEN-C31).
+    #[must_use]
+    pub fn image_attachment(&self) -> Option<u64> {
+        self.is_attached().then_some(self.attachment)
+    }
+
     #[must_use]
     pub fn awaiting_current_frame(&self) -> bool {
         self.awaiting_current_frame
@@ -641,7 +664,8 @@ impl SessionModel {
                         && current.colors.palette == frame.colors.palette
                 });
                 let frame = self.reducer.push(*frame).map_err(ModelError::Frame)?;
-                self.scene = Some(Scene::from_frame(frame, self.attachment));
+                let scene = Scene::from_frame(frame, self.attachment);
+                self.accept_scene(scene);
                 if !preview_compatible {
                     self.scroll_preview = None;
                 }
@@ -649,7 +673,8 @@ impl SessionModel {
             }
             ServerMessage::WheelOutcome(WheelOutcome::Viewport { frame, .. }) if attached => {
                 let frame = self.reducer.push(*frame).map_err(ModelError::Frame)?;
-                self.scene = Some(Scene::from_frame(frame, self.attachment));
+                let scene = Scene::from_frame(frame, self.attachment);
+                self.accept_scene(scene);
                 self.scroll_preview = None;
                 self.awaiting_current_frame = false;
             }
@@ -686,7 +711,8 @@ impl SessionModel {
                 let preview =
                     scene_preview(frame.as_ref(), scroll_direction(requested_rows), next)?;
                 let frame = self.reducer.push(*frame).map_err(ModelError::Frame)?;
-                self.scene = Some(Scene::from_frame(frame, self.attachment));
+                let scene = Scene::from_frame(frame, self.attachment);
+                self.accept_scene(scene);
                 self.scroll_preview = Some(preview);
                 self.awaiting_current_frame = false;
             }
@@ -770,10 +796,31 @@ impl SessionModel {
                     })));
                 }
             }
-            ServerMessage::ResourceRetire { resource } => self.resources.retire(resource)?,
+            ServerMessage::ResourceRetire { resource } => {
+                self.resources.retire(resource)?;
+                return Ok(Some(ModelEffect::Retired(ImageKey {
+                    attachment: self.attachment,
+                    resource,
+                })));
+            }
             _ => return Err(ModelError::UnexpectedMessage),
         }
         Ok(None)
+    }
+
+    /// Show a frame's scene, with the notice for placements it left out while it leaves them out.
+    fn accept_scene(&mut self, scene: Scene) {
+        let omitted = scene.graphics.placements_omitted;
+        self.scene = Some(scene);
+        let shown = self
+            .notices
+            .iter()
+            .any(|notice| matches!(notice, Notice::Venus(LocalNoticeSource::Images, _)));
+        if omitted && !shown {
+            self.set_venus_notice(LocalNoticeSource::Images, OMITTED_IMAGES);
+        } else if !omitted {
+            self.clear_venus_notice(LocalNoticeSource::Images);
+        }
     }
 
     pub fn mark_incompatible(&mut self, version: u16) {

@@ -11,9 +11,9 @@ use orbit_protocol::{
 };
 use winit::dpi::PhysicalSize;
 use yazelix_venus::{
-    CellMetrics, ClipboardEffect, ConnectionState, EonBar, ImageResource, LocalNoticeSource,
-    ModelEffect, ModelError, ScenePlacement, ScenePreview, SceneRect, SessionModel, WorkspaceHit,
-    WorkspaceScene,
+    CellMetrics, ClipboardEffect, ConnectionState, EonBar, ImageKey, ImageResource,
+    LocalNoticeSource, ModelEffect, ModelError, ScenePlacement, ScenePreview, SceneRect,
+    SessionModel, WorkspaceHit, WorkspaceScene,
 };
 
 #[test]
@@ -1129,6 +1129,13 @@ fn resource_streams_assemble_complete_pixels_and_frames_carry_placements() {
         ]
     );
 
+    // A frame that leaves out placements raises a bounded notice until one that does not.
+    assert_eq!(
+        model.notice(),
+        Some("Some images are not shown: the program placed more than a frame can carry")
+    );
+    assert_eq!(model.image_attachment(), Some(attachment));
+
     // 300 by 300 RGBA is one full chunk and a short last one.
     assert_eq!(
         resource_wire(&mut model, announce(5, PixelFormat::Rgba, 300, 300)),
@@ -1166,14 +1173,24 @@ fn resource_streams_assemble_complete_pixels_and_frames_carry_placements() {
             pixels: vec![3, 4, 5],
         })))
     );
+    apply_wire(
+        &mut model,
+        ServerMessage::Frame(Box::new(frame(2, Screen::Primary))),
+    )
+    .unwrap();
+    assert_eq!(model.notice(), None);
     assert_eq!(
         resource_wire(&mut model, ServerMessage::ResourceRetire { resource: 5 }),
-        Ok(None)
+        Ok(Some(ModelEffect::Retired(ImageKey {
+            attachment,
+            resource: 5,
+        })))
     );
 
     // A new attachment starts identities over and forgets the old resources; the scene kept
-    // through the reconnect still names the old attachment.
+    // through the reconnect still names the old attachment, whose resources no longer draw.
     model.prepare_reconnect();
+    assert_eq!(model.image_attachment(), None);
     apply_wire(&mut model, ServerMessage::Attached).unwrap();
     assert_eq!(model.scene().unwrap().graphics.attachment, attachment);
     assert_eq!(
@@ -1199,6 +1216,12 @@ fn resource_streams_assemble_complete_pixels_and_frames_carry_placements() {
         resource_wire(&mut model, announce(1, PixelFormat::Rgb, 1, 1)),
         Ok(None)
     );
+    assert_eq!(
+        model.image_attachment(),
+        Some(model.scene().unwrap().graphics.attachment)
+    );
+    apply_wire(&mut model, ServerMessage::Exited { code: 0 }).unwrap();
+    assert_eq!(model.image_attachment(), None);
 }
 
 #[test]

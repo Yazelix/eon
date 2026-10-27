@@ -2,8 +2,8 @@
 //! rectangles drawn from a scene.
 
 use super::{
-    CellMetrics, RectangleBatch, SceneColor, preview_row_top, preview_rows, row_intersects_clip,
-    shaping, valid_rect, vertex_count,
+    CellMetrics, RectangleBatch, SceneColor, images::BandItem, preview_row_top, preview_rows,
+    row_intersects_clip, shaping, valid_rect, vertex_count,
 };
 use crate::{DrawCursor, DrawRow, DrawStyle, GlyphRun, Scene, ScenePreview, SceneRect};
 use glyphon::{Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, Style, Weight, Wrap};
@@ -199,11 +199,13 @@ pub(super) fn set_cell_layer(
 }
 
 /// Draws one terminal's cell rectangles in its layers: every background of the live and preview
-/// rows, then the terminal's images, then foreground rectangles and the cursor (VEN-C31). Returns
-/// the vertex count after the cursor, where a trailing cursor draws.
+/// rows, then the terminal's image band, then foreground rectangles and the cursor (VEN-C31).
+/// Returns the vertex count after the cursor, where a trailing cursor draws.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_scene_rectangles(
     rectangles: &mut RectangleBatch,
     scene: &Scene,
+    band: &[BandItem],
     preview: Option<&ScenePreview>,
     blink_visible: bool,
     metrics: CellMetrics,
@@ -244,7 +246,7 @@ pub(super) fn build_scene_rectangles(
         .map_or(Some(grid), |clip| clip.intersection(grid))
     {
         let clip = rectangles.clip.replace(image_clip);
-        rectangles.push_images(&scene.images, left, top, metrics);
+        rectangles.push_band(band, left, top, metrics, scene.foreground);
         rectangles.clip = clip;
     }
     for (row, top) in &live {
@@ -807,7 +809,6 @@ pub(super) mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
             cursor: None,
@@ -827,6 +828,7 @@ pub(super) mod tests {
         build_scene_rectangles(
             &mut rectangles,
             &scene,
+            &[],
             None,
             true,
             CellMetrics::for_scale(1.0),
@@ -865,7 +867,6 @@ pub(super) mod tests {
                 title: String::new(),
                 working_directory: String::new(),
                 graphics: SceneGraphics::default(),
-                images: Vec::new(),
                 background: palette::TERMINAL_FALLBACK,
                 foreground: SceneColor::default(),
                 cursor: None,
@@ -902,7 +903,16 @@ pub(super) mod tests {
                     height: 200.0,
                 };
                 let mut actual = RectangleBatch::new(300, 300);
-                build_scene_rectangles(&mut actual, &scene, None, true, metrics, viewport, true);
+                build_scene_rectangles(
+                    &mut actual,
+                    &scene,
+                    &[],
+                    None,
+                    true,
+                    metrics,
+                    viewport,
+                    true,
+                );
                 let mut expected = RectangleBatch::new(300, 300);
                 for (index, color) in colors.into_iter().enumerate() {
                     expected.push(
@@ -958,7 +968,6 @@ pub(super) mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground,
             cursor: None,
@@ -999,6 +1008,7 @@ pub(super) mod tests {
                     build_scene_rectangles(
                         &mut actual,
                         &scene,
+                        &[],
                         Some(&preview),
                         blink_visible,
                         metrics,
@@ -1066,7 +1076,6 @@ pub(super) mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
             cursor: None,
@@ -1102,6 +1111,7 @@ pub(super) mod tests {
             build_scene_rectangles(
                 &mut rectangles,
                 &scene,
+                &[],
                 None,
                 true,
                 metrics,
@@ -1236,7 +1246,6 @@ pub(super) mod tests {
             title: String::new(),
             working_directory: String::new(),
             graphics: SceneGraphics::default(),
-            images: Vec::new(),
             background: palette::TERMINAL_FALLBACK,
             foreground: SceneColor::default(),
             cursor: None,
@@ -1265,7 +1274,16 @@ pub(super) mod tests {
             height: 100.0,
         };
         let mut actual = RectangleBatch::new(100, 100);
-        build_scene_rectangles(&mut actual, &scene, None, true, metrics, viewport, true);
+        build_scene_rectangles(
+            &mut actual,
+            &scene,
+            &[],
+            None,
+            true,
+            metrics,
+            viewport,
+            true,
+        );
         let mut expected = RectangleBatch::new(100, 100);
         expected.push(
             metrics.padding + metrics.width,

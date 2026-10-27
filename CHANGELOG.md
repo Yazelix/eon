@@ -5,6 +5,15 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Terminal images: programs that show pictures through the Kitty graphics
+  protocol, such as Yazi's image previews, now draw them in Eon's panes and
+  popups, between the cell backgrounds and the text. Until an image arrives,
+  or when Eon cannot show it, its area shows a faint outlined marker in the
+  terminal's text colour instead of staying blank. Images in one window use at
+  most 256 MiB of GPU memory; past that, Eon frees images no terminal shows
+  and marks the rest. Images that a program sends from a file or shared
+  memory and PNG data are not shown, and animations do not play.
+
 - Several workspaces in one window (EON-C33) are proven on the installed
   product, x86_64 Linux Wayland. One window held three workspaces.
   Alt+Shift+S switched between them and created one by name; Commands and

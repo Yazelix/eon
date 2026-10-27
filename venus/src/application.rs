@@ -4,12 +4,15 @@ use eon_workspace_protocol::v22::{
     Action as WorkspaceAction, Direction as WorkspaceDirection, PopupEntry, Sidebar,
     WorkspaceAction as CommonAction,
 };
-use orbit_protocol::session::{
-    self, ClientMessage, ClipboardLocation, FailureCode, ScrollOutcome, SelectionAction,
-    ServerMessage, SurfaceSize, WheelOutcome,
+use orbit_protocol::{
+    PlacementState,
+    session::{
+        self, ClientMessage, ClipboardLocation, FailureCode, ScrollOutcome, SelectionAction,
+        ServerMessage, SurfaceSize, WheelOutcome,
+    },
 };
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     ffi::OsString,
     io::{self, Read, Write},
     os::unix::ffi::OsStringExt,
@@ -32,12 +35,12 @@ use winit::{
 use yazelix_venus::{
     Accessibility, AccessibilityTarget, BarItem, CellMetrics, ClipboardEffect, Color,
     ConnectionState, CpuTimes, CpuUse, DialogKind, DialogScene, EonBar, FontSettings, FontSetup,
-    HeaderText, Hyperlink, InputState, LocalClock, LocalNoticeSource, MAX_LINK_BYTES, ModelEffect,
-    ModelError, PaddingColor, PresentOutcome, RamUse, Renderer, Scene, SceneRect, SessionModel,
-    ShortcutHintsScene, SidebarView, Transport, TransportEvent, WorkspaceEvent, WorkspaceFocus,
-    WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel, WorkspaceScene, WorkspaceTransport,
-    active_popup, attention_only_change, focused_terminal, labels_only_change, shown_workspace,
-    validate_copy_uri, validate_open_uri,
+    HeaderText, Hyperlink, ImageKey, ImageResync, InputState, LocalClock, LocalNoticeSource,
+    MAX_LINK_BYTES, ModelEffect, ModelError, PaddingColor, PresentOutcome, RamUse, Renderer, Scene,
+    SceneRect, SessionModel, ShortcutHintsScene, SidebarView, Transport, TransportEvent,
+    WorkspaceEvent, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceHit, WorkspaceModel,
+    WorkspaceScene, WorkspaceTransport, active_popup, attention_only_change, focused_terminal,
+    labels_only_change, shown_workspace, validate_copy_uri, validate_open_uri,
 };
 
 mod geometry;
@@ -507,6 +510,57 @@ struct TerminalView {
     selection_scroll: SelectionAutoscroll,
     pending_viewport: Option<PendingViewportRequest>,
     pending_return_to_live: bool,
+    /// Set by an image resync: the next attachment's pending entries show the marker at once,
+    /// until its frame has none pending (VEN-C31).
+    images_resyncing: bool,
+    refusal_resync: RefusalResync,
+}
+
+/// VEN-C31's one resync for refused images, across attachments. A reattach spends it; it returns
+/// once the terminal's placements change or, after the next refusal, the budget gains room.
+#[derive(Default)]
+struct RefusalResync(Option<SpentResync>);
+
+struct SpentResync {
+    /// The placement target sizes when the resync was spent; identities change with each
+    /// attachment.
+    targets: Vec<SceneRect>,
+    /// Resident image bytes when the frame next lacked a refused resource.
+    resident: Option<u64>,
+}
+
+impl RefusalResync {
+    /// Whether the refusal a frame `lacks` reattaches now, given the frame's placement `targets`
+    /// and the window's `resident` image bytes.
+    fn admit(
+        &mut self,
+        lacks: Option<ImageResync>,
+        targets: Vec<SceneRect>,
+        resident: u64,
+    ) -> bool {
+        if self.0.as_ref().is_some_and(|spent| {
+            spent.targets != targets || spent.resident.is_some_and(|spent| resident < spent)
+        }) {
+            self.0 = None;
+        }
+        match (&mut self.0, lacks) {
+            (_, None) => false,
+            (Some(spent), Some(_)) => {
+                spent.resident.get_or_insert(resident);
+                false
+            }
+            (None, Some(lacks)) => {
+                let resync = lacks == ImageResync::Refused;
+                if resync {
+                    self.0 = Some(SpentResync {
+                        targets,
+                        resident: None,
+                    });
+                }
+                resync
+            }
+        }
+    }
 }
 
 impl TerminalView {
@@ -527,8 +581,68 @@ impl TerminalView {
             selection_scroll: SelectionAutoscroll::default(),
             pending_viewport: None,
             pending_return_to_live: false,
+            images_resyncing: false,
+            refusal_resync: RefusalResync::default(),
         }
     }
+
+    /// Whether this terminal reattaches now to recover its images (VEN-C31): whenever its
+    /// attached frame references a resource the budget freed, and for refusals as
+    /// [`RefusalResync`] allows.
+    fn wants_image_resync(
+        &mut self,
+        renderer: &Renderer,
+        referenced: &HashSet<ImageKey>,
+        resident: u64,
+    ) -> bool {
+        let Some(graphics) = self.model.scene().map(|scene| &scene.graphics) else {
+            return false;
+        };
+        let lacks = self
+            .model
+            .image_attachment()
+            .filter(|attachment| *attachment == graphics.attachment)
+            .and_then(|attachment| {
+                renderer.image_resync(attachment, &graphics.placements, referenced)
+            });
+        // Sizes only: rows that scroll move every target without changing what is shown.
+        let targets = graphics
+            .placements
+            .iter()
+            .map(|placement| SceneRect {
+                left: 0.0,
+                top: 0.0,
+                ..placement.target
+            })
+            .collect();
+        lacks == Some(ImageResync::Freed) || self.refusal_resync.admit(lacks, targets, resident)
+    }
+}
+
+/// Every resource that an attached terminal's current frame references, which the budget never
+/// frees (VEN-C31).
+fn image_references<'a>(views: impl IntoIterator<Item = &'a TerminalView>) -> HashSet<ImageKey> {
+    views
+        .into_iter()
+        .filter_map(|view| {
+            let attachment = view.model.image_attachment()?;
+            let scene = view
+                .model
+                .scene()
+                .filter(|scene| scene.graphics.attachment == attachment)?;
+            Some(
+                scene
+                    .graphics
+                    .placements
+                    .iter()
+                    .map(move |placement| ImageKey {
+                        attachment,
+                        resource: placement.resource,
+                    }),
+            )
+        })
+        .flatten()
+        .collect()
 }
 
 struct Application {
@@ -578,6 +692,9 @@ struct Application {
     next_blink: Option<Instant>,
     next_spinner: Option<Instant>,
     next_animation: Option<Instant>,
+    /// The image marker deadline a redraw was last requested for, so a redraw that never derives
+    /// the next one, as after a renderer failure, wakes Venus once rather than on every turn.
+    marker_wake: Option<Instant>,
     clock: Option<LocalClock>,
     next_clock: Option<Instant>,
     /// The previous `/proc/stat` reading and when it was taken.
@@ -677,6 +794,7 @@ impl Application {
             blink_visible: true,
             next_blink: None,
             next_spinner: None,
+            marker_wake: None,
             clock: None,
             next_clock: None,
             cpu_times: None,
@@ -1636,6 +1754,129 @@ impl Application {
         }
     }
 
+    /// Uploads or refuses a completed resource, or retires one, before the next message is
+    /// handled (VEN-C31). A refusal leaves the marker over its entries and the renderer working.
+    fn apply_image_effect(&mut self, effect: ModelEffect) {
+        match effect {
+            ModelEffect::Resource(resource) => {
+                let referenced = self.sweep_images();
+                if let Some(state) = &mut self.window
+                    && let Err(error) = state.renderer.upload_image(resource, &referenced)
+                {
+                    report(format!("image not shown: {error}"));
+                }
+            }
+            ModelEffect::Retired(key) => {
+                if let Some(state) = &mut self.window {
+                    state.renderer.retire_image(key);
+                }
+                // An unreferenced texture goes now, not at the next redraw.
+                self.sweep_images();
+            }
+            ModelEffect::Clipboard(_) => {}
+        }
+    }
+
+    /// Before each redraw, reattaches the terminals whose frames want their images back, then
+    /// frees the resources that no attachment or current frame keeps (VEN-C31).
+    fn sync_images(&mut self) {
+        let Some(state) = &self.window else {
+            return;
+        };
+        let referenced =
+            image_references(std::iter::once(&self.terminal).chain(&self.column_views));
+        let resident = state.renderer.image_resident();
+        let resyncs = std::iter::once(&mut self.terminal)
+            .chain(&mut self.column_views)
+            .enumerate()
+            .filter_map(|(index, view)| {
+                view.wants_image_resync(&state.renderer, &referenced, resident)
+                    .then_some(index)
+            })
+            .collect::<Vec<_>>();
+        for index in resyncs {
+            match index.checked_sub(1) {
+                None => self.resync_terminal_images(),
+                Some(column) => self.resync_column_images(column),
+            }
+        }
+        let views = std::iter::once(&mut self.terminal).chain(&mut self.column_views);
+        for view in views {
+            let attachment = view.model.image_attachment();
+            if view.model.scene().is_some_and(|scene| {
+                Some(scene.graphics.attachment) == attachment
+                    && !scene
+                        .graphics
+                        .placements
+                        .iter()
+                        .any(|placement| placement.state == PlacementState::Pending)
+            }) {
+                view.images_resyncing = false;
+            }
+        }
+        self.sweep_images();
+    }
+
+    /// Frees the resources that no attachment or current frame keeps, also while redraws are
+    /// withheld, and returns the resources current frames reference (VEN-C31).
+    fn sweep_images(&mut self) -> HashSet<ImageKey> {
+        let views = || std::iter::once(&self.terminal).chain(&self.column_views);
+        let referenced = image_references(views());
+        let live = views()
+            .filter_map(|view| view.model.image_attachment())
+            .collect();
+        let at_once = views()
+            .filter(|view| view.images_resyncing)
+            .filter_map(|view| view.model.image_attachment())
+            .collect();
+        if let Some(state) = &mut self.window {
+            state.renderer.sweep_images(live, at_once, &referenced);
+        }
+        referenced
+    }
+
+    /// Reattaches the selected terminal to recover its images (VEN-C31). Until the new
+    /// attachment's first frame it shows what a reconnect shows, with markers over its images.
+    fn resync_terminal_images(&mut self) {
+        let Some(socket) = self.terminal.orbit_socket.clone() else {
+            return;
+        };
+        if let Some(message) = self.input.retire_orbit_generation() {
+            self.send(message);
+        }
+        self.terminal.terminal_scroll.reset();
+        self.terminal.selection_scroll.reset();
+        self.terminal.pending_viewport = None;
+        self.terminal.pending_return_to_live = false;
+        self.terminal.deferred_selection.clear();
+        self.terminal.selection_gate = SelectionGate::Ready;
+        self.reset_cursor_animation();
+        self.terminal.transport = None;
+        self.terminal.orbit_retry.reset();
+        self.terminal.retry_suppressed = false;
+        self.terminal.model.prepare_reconnect();
+        self.terminal.images_resyncing = true;
+        self.terminal.last_resize = None;
+        self.presentation.invalidate();
+        self.start_orbit(socket);
+        self.refresh_client_view();
+    }
+
+    /// Reattaches another column's terminal to recover its images (VEN-C31).
+    fn resync_column_images(&mut self, index: usize) {
+        let view = &mut self.column_views[index];
+        let Some(socket) = view.orbit_socket.clone() else {
+            return;
+        };
+        view.transport = None;
+        view.model.prepare_reconnect();
+        view.images_resyncing = true;
+        view.retry_suppressed = false;
+        view.last_resize = None;
+        view.orbit_retry.reset();
+        view.transport = Some(orbit_transport(&self.proxy, socket));
+    }
+
     fn retry_allowed(&self) -> bool {
         retry_is_allowed(
             self.workspace_socket.is_some(),
@@ -1704,6 +1945,9 @@ impl Application {
         if changed {
             self.presentation.invalidate();
         }
+        // Every caller may switch the selected endpoint just before, so this frees the images of
+        // the terminals either change leaves, even while redraws are withheld (VEN-C31).
+        self.sweep_images();
     }
 
     fn handle_column_transport(&mut self, index: usize, event: TransportEvent) {
@@ -1711,7 +1955,9 @@ impl Application {
         let retryable_event = retryable_busy || matches!(&event, TransportEvent::RetryableLoss(_));
         let view = &mut self.column_views[index];
         let was_attached = view.model.is_attached();
+        let image_attachment = view.model.image_attachment();
         let mut schedule_retry = false;
+        let mut image_effect = None;
         match event {
             TransportEvent::Server(ServerMessage::Busy) if retryable_busy => {
                 schedule_retry = apply_retryable_loss(
@@ -1728,8 +1974,8 @@ impl Application {
                     Ok(Some(ModelEffect::Clipboard(effect))) => {
                         write_clipboard_effect(&mut view.model, effect);
                     }
-                    // Refused until orb-j2i.11 uploads resources; Orbit sends none before then.
-                    Ok(Some(ModelEffect::Resource(_)) | None) => {}
+                    Ok(Some(effect)) => image_effect = Some(effect),
+                    Ok(None) => {}
                     Err(error) => view.model.mark_lost(error.to_string()),
                 }
             }
@@ -1768,6 +2014,13 @@ impl Application {
         // terminal's presentation identity, which pairs its input, stays unchanged.
         if attached {
             self.send_resize();
+        }
+        if let Some(effect) = image_effect {
+            self.apply_image_effect(effect);
+        }
+        // Detach, `Exited`, loss and reconnect end the attachment's images (VEN-C31).
+        if self.column_views[index].model.image_attachment() != image_attachment {
+            self.sweep_images();
         }
         if let Some(state) = &self.window {
             state.window.request_redraw();
@@ -2358,6 +2611,7 @@ impl Application {
     fn handle_transport(&mut self, event: TransportEvent) {
         let retryable_busy = managed_busy_is_retryable(self.supervised, &event);
         let retryable_event = retryable_busy || matches!(&event, TransportEvent::RetryableLoss(_));
+        let image_attachment = self.terminal.model.image_attachment();
         let mut schedule_retry = false;
         match event {
             TransportEvent::Server(ServerMessage::Busy) if retryable_busy => {
@@ -2461,8 +2715,8 @@ impl Application {
                 let accepted = result.is_ok();
                 match result {
                     Ok(Some(ModelEffect::Clipboard(effect))) => self.write_clipboard(effect),
-                    // Refused until orb-j2i.11 uploads resources; Orbit sends none before then.
-                    Ok(Some(ModelEffect::Resource(_)) | None) => {}
+                    Ok(Some(effect)) => self.apply_image_effect(effect),
+                    Ok(None) => {}
                     Err(error) => self.terminal.model.mark_lost(error.to_string()),
                 }
                 if accepted {
@@ -2578,6 +2832,10 @@ impl Application {
         {
             self.terminal.pending_return_to_live = false;
             self.send(ClientMessage::ReturnToLive);
+        }
+        // Detach, `Exited`, loss and reconnect end the attachment's images (VEN-C31).
+        if self.terminal.model.image_attachment() != image_attachment {
+            self.sweep_images();
         }
         self.refresh_client_view();
     }
@@ -3239,6 +3497,7 @@ impl Application {
     }
 
     fn render(&mut self) {
+        self.sync_images();
         if self.window_focused && !self.window_occluded {
             self.terminal.terminal_scroll.advance(Instant::now());
             self.drive_terminal_scroll();
@@ -4246,6 +4505,17 @@ impl ApplicationHandler<UserEvent> for Application {
             state.renderer.turn_spinners();
             state.window.request_redraw();
         }
+        // A pending image entry's marker comes due without any other change (VEN-C31).
+        let next_marker = self
+            .window
+            .as_ref()
+            .and_then(|state| state.renderer.next_marker_deadline());
+        if next_marker.is_some_and(|due| now >= due && self.marker_wake != Some(due))
+            && let Some(state) = &self.window
+        {
+            self.marker_wake = next_marker;
+            state.window.request_redraw();
+        }
         let animation_active = self
             .window
             .as_ref()
@@ -4267,6 +4537,7 @@ impl ApplicationHandler<UserEvent> for Application {
                 self.next_clock,
                 self.next_age,
                 self.next_reading,
+                next_marker.filter(|due| *due > now),
                 self.terminal.selection_scroll.next,
                 self.terminal.terminal_scroll.preview_retry_at(),
                 self.terminal.orbit_retry.deadline,
@@ -6831,6 +7102,34 @@ mod tests {
         assert_eq!(retry.deadline, None);
         retry.schedule(now);
         assert_eq!(retry.deadline, Some(now + Duration::from_millis(250)));
+    }
+
+    #[test]
+    fn a_refused_image_resyncs_once_until_its_placements_change_or_the_budget_gains_room() {
+        let shown = vec![SceneRect {
+            left: 1.0,
+            top: 2.0,
+            width: 4.0,
+            height: 2.0,
+        }];
+        let mut allowance = RefusalResync::default();
+        assert!(!allowance.admit(None, shown.clone(), 100));
+        // The budget still has no room: a reattach would be refused again.
+        assert!(!allowance.admit(Some(ImageResync::NoRoom), shown.clone(), 100));
+        assert!(allowance.admit(Some(ImageResync::Refused), shown.clone(), 100));
+        // Reattaching frees the old attachment's textures before the next refusal, which is the
+        // budget the allowance waits to see improve.
+        assert!(!allowance.admit(None, shown.clone(), 40));
+        assert!(!allowance.admit(Some(ImageResync::NoRoom), shown.clone(), 60));
+        assert!(!allowance.admit(Some(ImageResync::Refused), shown.clone(), 60));
+        assert!(allowance.admit(Some(ImageResync::Refused), shown.clone(), 59));
+        // Spent again; a change of the terminal's placements renews it.
+        assert!(!allowance.admit(Some(ImageResync::Refused), shown.clone(), 59));
+        let resized = vec![SceneRect {
+            height: 3.0,
+            ..shown[0]
+        }];
+        assert!(allowance.admit(Some(ImageResync::Refused), resized, 59));
     }
 
     #[test]

@@ -16,12 +16,13 @@ mod transport;
 pub use accessibility::{Accessibility, AccessibilityTarget, Activation};
 pub use input::InputState;
 pub use model::{
-    ClipboardEffect, ConnectionState, ImageResource, LocalNoticeSource, ModelEffect, ModelError,
-    SessionModel, WorkspaceModel, active_popup, attention_only_change, focused_terminal,
-    labels_only_change,
+    ClipboardEffect, ConnectionState, ImageKey, ImageResource, LocalNoticeSource, ModelEffect,
+    ModelError, SessionModel, WorkspaceModel, active_popup, attention_only_change,
+    focused_terminal, labels_only_change,
 };
 pub use render::{
-    CellMetrics, FontSettings, FontSetup, PaddingColor, PresentOutcome, RenderError, Renderer,
+    CellMetrics, FontSettings, FontSetup, ImageResync, PaddingColor, PresentOutcome, RenderError,
+    Renderer,
 };
 pub use scene::{
     BarItem, Color, DialogKind, DialogScene, DrawCell, DrawCursor, DrawRow, DrawStyle, EonBar,

@@ -178,7 +178,6 @@ impl Orbit {
         palette: Option<[RgbColor; 16]>,
         cols: u16,
         rows: u16,
-        graphics: bool,
     ) -> io::Result<Self> {
         let mut terminal = Terminal::new(cols, rows).map_err(|_| errno(libc::EIO))?;
         terminal
@@ -242,7 +241,8 @@ impl Orbit {
         terminal
             .on_size(move |_| Some(reported.get()))
             .map_err(|_| errno(libc::EIO))?;
-        let extractor = FrameExtractor::new(graphics)?;
+        // ORB-C16's internal switch is on: frames carry Kitty placements.
+        let extractor = FrameExtractor::new(true)?;
         let hold = Timer::default();
         let (master, child) = spawn_pty_child(command, cols, rows)?;
         let pid = child.id();

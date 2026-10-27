@@ -401,11 +401,11 @@ settings match libghostty's defaults. Orbit sets them explicitly so that a
 change in those defaults cannot widen what a program may make Orbit read.
 The real-PTY kitty-placements check below covers the file medium. No check
 covers the other settings.
-`ORBIT_KITTY_GRAPHICS=1` in Orbit's environment turns on ORB-C16's internal
-switch. It is not configuration: only Orbit's checks set it, until
-`orb-j2i.11` turns it on in the shipped build. While the switch is off,
-frames state Kitty graphics unsupported and keep placeholder cells as they
-are.
+ORB-C16's internal switch is on: the host builds every terminal's frame
+extractor with Kitty graphics. It is not configuration, and nothing outside
+Orbit's source can turn it off. Only unit tests build an extractor with it
+off, whose frames state Kitty graphics unsupported and keep placeholder cells
+as they are.
 
 While the switch is on, every complete frame carries a graphics block:
 - the cell size libghostty's geometry uses: its pixel width and height,
@@ -506,7 +506,7 @@ The frame unit tests cover the records:
 - `a_failed_copy_takes_a_fresh_number`: a candidate that the active screen's
   storage does not hold starts nothing, and the next frame numbers it afresh.
 
-The real-PTY kitty-placements check runs Orbit with the switch on. After a
+The real-PTY kitty-placements check runs the shipped Orbit. After a
 client gives a 10x20-pixel cell, the child sends Yazi's stream for a 300x400
 RGB image in Kitty chunks, then, in one synchronized update, its 3x2
 placeholder cells and a file-medium image with its own placeholder cell.
@@ -518,7 +518,7 @@ of 262,144 and 97,856 bytes, holding its pixels. Without further output from
 the child, a frame at a later revision shows both entries ready.
 
 Eight more real-PTY checks prove the image lifecycle. Each runs Orbit with
-the switch on and a child that plays prepared Kitty steps, each ending in a
+the shipped switch and a child that plays prepared Kitty steps, each ending in a
 synchronized update that names the terminal, under a client of 10x20-pixel
 cells. A client holds a transfer of a 9,000,000-byte image by not reading,
 which needs the kernel's default socket send buffer

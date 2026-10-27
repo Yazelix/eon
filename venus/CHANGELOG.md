@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- VEN-C31: Venus uploads Orbit's image resources into one window-wide GPU
+  cache of at most 256 MiB and draws each frame's placement entries between
+  cell backgrounds and text, in panes, other columns and popups. An entry
+  whose image Venus does not hold shows a marker in the terminal's foreground
+  colour, at once or after 250 ms pending; a frame with omitted placements
+  raises a notice. Venus reattaches a terminal whose frame needs an image it
+  freed, or refused for the budget once there is room. The resource
+  retirement message now frees the texture once no frame references it.
+  Orbit turns ORB-C16 on in the same change (`orb-j2i.11`).
+
 - VEN-C21: consume EONW v22, whose workspace summaries carry each workspace's
   attention rollup and recency. While another workspace needs input, the Eon
   Bar's workspace label shows the needs-input badge at its corner and its
