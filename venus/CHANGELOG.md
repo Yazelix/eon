@@ -6,6 +6,13 @@
   workspaces shows no final-close prompt, since it only removes the shown
   workspace (EON-C33, `eon-workspace-switching-shn4.4`).
 
+- VEN-C8/VEN-C11: edge backgrounds extend through the expanded pane's header band
+  below its title rule, with the same top-padding exceptions and rounded
+  clipping. Title text, cutouts and outlines stay on top; background mode,
+  collapsed rows, popups, zoom and frameless mode retain their header paint.
+  The expanded label's pane ID dims only when it also keeps 4.5:1 against the
+  band's extended colours (`eon-q1u6`).
+
 - VEN-C28: the CPU tooltip and AccessKit label name the logical CPUs the
   percentage covers, as `CPU use 12% across 16 logical CPUs, over the last 2
   seconds`; a `/proc/stat` sample without per-CPU lines shows no label

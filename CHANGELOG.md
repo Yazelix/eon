@@ -5,6 +5,12 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Extended terminal backgrounds reach the pane's title line, filling the band
+  below it under the existing title text, cutout and outline. Primary-screen
+  exceptions still apply; background mode, popups, zoom and frameless mode keep
+  their header backgrounds. The pane ID there stays as bright as the name
+  whenever a dimmer ID would be hard to read on that band.
+
 - The CPU chip's tooltip names how many logical CPUs its percentage covers,
   as `CPU use 12% across 16 logical CPUs, over the last 2 seconds`.
 

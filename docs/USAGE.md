@@ -182,7 +182,8 @@ Pane labels come from Runtime: the pane ID, then a pinned name, otherwise its
 sanitized terminal title, otherwise its compact working directory. A differing
 terminal directory adds ` · DIRECTORY`, using a relative or shorter compact path.
 Labels keep explicit connecting, unavailable and offline states. The ID is dimmer
-when the resolved background and opacity permit readable contrast; narrow labels
+when the resolved background, including an extended header band, and opacity
+permit readable contrast; narrow labels
 keep the ID when it fits, while accessibility and close listings retain the full
 bounded label. Metadata and names are display text, never command input.
 
@@ -194,12 +195,13 @@ their interaction feedback. The hints sit bare in the margin below the cards. Hi
 With pane frames on, each column has one continuous terminal-background fill,
 from its first pane's rounded top edge down to the column's rounded bottom.
 Stacked title rows and the space between cards share the expanded terminal's
-background colour and opacity. Above that edge and outside the outer corners,
-the gaps and footer stay the opaque bar colour. The first title sits on that
-boundary. Popup and Agents fills follow their rounded outer edges in the same
-way, with their titles on the boundary. Header scrolling keeps the fill's top
-fixed. Frameless mode keeps terminal-background strips across the window below
-the bar, including the sidebar and footer.
+background colour and opacity, except that extended top padding fills an
+unzoomed expanded pane's band below its title (`padding_color`). Above that edge
+and outside the outer corners, the gaps and footer stay the opaque bar colour.
+The first title sits on that boundary. Popup and Agents fills follow their
+rounded outer edges in the same way, with their titles on the boundary. Header
+scrolling keeps the fill's top fixed. Frameless mode keeps terminal-background
+strips across the window below the bar, including the sidebar and footer.
 
 Steel-blue modifier badges use plain aliases, such as A-S, before mint keys and gray
 labels. The compact tab range is 1..9; Alt+0 still selects the tenth tab.

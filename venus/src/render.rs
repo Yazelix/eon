@@ -302,9 +302,10 @@ fn build_padding_rectangles(
     bounds: SceneRect,
     padding_color: PaddingColor,
     (preview, offset): (Option<&ScenePreview>, f32),
-) {
+) -> Vec<SceneColor> {
+    let mut top_colors = Vec::new();
     if padding_color == PaddingColor::Background || scene.columns == 0 || scene.rows == 0 {
-        return;
+        return top_colors;
     }
     let grid = scene_grid(scene, viewport, metrics);
     let columns = usize::from(scene.columns);
@@ -360,9 +361,9 @@ fn build_padding_rectangles(
             }
         }
     }
-    for (edge, top, bottom) in [
-        (grid.top, bounds.top, grid.top),
-        (grid.bottom(), grid.bottom(), bounds.bottom()),
+    for (is_top, edge, top, bottom) in [
+        (true, grid.top, bounds.top, grid.top),
+        (false, grid.bottom(), grid.bottom(), bounds.bottom()),
     ] {
         let Some((_, row)) = rows.clone().min_by(|(a, _), (b, _)| {
             (a + metrics.height / 2.0 - edge)
@@ -383,6 +384,15 @@ fn build_padding_rectangles(
             })
         {
             continue;
+        }
+        if is_top {
+            top_colors = row
+                .cells
+                .iter()
+                .take(columns)
+                .filter(|cell| !cell.style.background_is_default)
+                .map(|cell| cell.style.background)
+                .collect();
         }
         for (column, cell) in row.cells.iter().take(columns).enumerate() {
             let left = if column == 0 {
@@ -407,6 +417,7 @@ fn build_padding_rectangles(
             );
         }
     }
+    top_colors
 }
 
 fn scene_grid(scene: &Scene, viewport: SceneRect, metrics: CellMetrics) -> SceneRect {
@@ -571,9 +582,9 @@ fn build_workspace_padding(
     pane_frames: bool,
     stroke_width: f32,
     scroll: (Option<&ScenePreview>, f32),
-) {
+) -> Vec<Vec<SceneColor>> {
     if padding_color == PaddingColor::Background {
-        return;
+        return Vec::new();
     }
     let mut surfaces = std::iter::once((
         workspace.chrome,
@@ -595,12 +606,13 @@ fn build_workspace_padding(
                 )
             }),
     )
+    .enumerate()
     .collect::<Vec<_>>();
-    surfaces.sort_by(|a, b| a.1.left.total_cmp(&b.1.left));
+    surfaces.sort_by(|a, b| a.1.1.left.total_cmp(&b.1.1.left));
     let spans = background_spans(
         &surfaces
             .iter()
-            .map(|(_, terminal, _, _)| *terminal)
+            .map(|(_, (_, terminal, _, _))| *terminal)
             .collect::<Vec<_>>(),
         rectangles.width as f32,
     );
@@ -615,7 +627,12 @@ fn build_workspace_padding(
             ..workspace.pane_viewport
         }
     };
-    for ((allocated, terminal, scene, panes), (left, right)) in surfaces.into_iter().zip(spans) {
+    // The colours each column's top padding paints into its expanded pane's header band.
+    let mut header_bands = vec![Vec::new(); surfaces.len()];
+    let header_band = pane_frames && !popup && workspace.zoomed_pane().is_none();
+    for ((index, (allocated, terminal, scene, panes)), (left, right)) in
+        surfaces.into_iter().zip(spans)
+    {
         let Some(scene) = scene else { continue };
         let outer =
             (pane_frames || popup).then(|| workspace.card_fill(allocated, metrics, stroke_width));
@@ -639,7 +656,16 @@ fn build_workspace_padding(
                 ..terminal
             }
         } else if pane_frames {
-            terminal
+            let top = if header_band {
+                pane.map_or(terminal.top, |pane| pane.bounds.top)
+            } else {
+                terminal.top
+            };
+            SceneRect {
+                top,
+                height: (terminal.bottom() - top).max(0.0),
+                ..terminal
+            }
         } else {
             let left = left.max(viewport.left);
             SceneRect {
@@ -659,7 +685,7 @@ fn build_workspace_padding(
                 .intersection(viewport)
                 .and_then(|clip| clip.intersection(band));
             if rectangles.clip.is_some() {
-                build_padding_rectangles(
+                let top_colors = build_padding_rectangles(
                     rectangles,
                     scene,
                     metrics,
@@ -672,11 +698,15 @@ fn build_workspace_padding(
                         (None, 0.0)
                     },
                 );
+                if header_band {
+                    header_bands[index] = top_colors;
+                }
             }
         }
     }
     rectangles.clip = None;
     rectangles.card_clip = None;
+    header_bands
 }
 
 fn terminal_text_clip(
@@ -1454,7 +1484,7 @@ impl Renderer {
                     );
                 }
             }
-            build_workspace_padding(
+            let bands = build_workspace_padding(
                 &mut rectangles,
                 workspace,
                 scene,
@@ -1475,7 +1505,13 @@ impl Renderer {
             .into_iter()
             .map(|(_, color)| color)
             .collect::<Vec<_>>();
-            self.build_workspace(workspace, workspace_focus, &mut rectangles, &backgrounds);
+            self.build_workspace(
+                workspace,
+                workspace_focus,
+                &mut rectangles,
+                &backgrounds,
+                &bands,
+            );
             for (column, scene) in workspace.other_columns.iter().zip(columns) {
                 let Some(scene) = scene else {
                     continue;
@@ -3055,7 +3091,7 @@ mod tests {
                 rows: vec![row.clone()],
             };
             let mut batch = RectangleBatch::new(200, 200);
-            build_padding_rectangles(
+            let top_colors = build_padding_rectangles(
                 &mut batch,
                 &scene,
                 metrics,
@@ -3063,6 +3099,13 @@ mod tests {
                 viewport,
                 PaddingColor::Extend,
                 (Some(&preview), offset),
+            );
+            assert!(
+                top_colors.contains(
+                    &padding_pixel(&batch, grid.left + metrics.width + 1.0, viewport.top + 1.0)
+                        .unwrap()
+                ),
+                "the header band's contrast check sees the scrolled top padding"
             );
             let (side_y, padding_y) = match direction {
                 VerticalDirection::Up => (grid.top + 1.0, viewport.top + 1.0),
@@ -3249,6 +3292,28 @@ mod tests {
                         (None, 0.0),
                     );
                     let grid = scene_grid(&scene, workspace.terminal, metrics);
+                    let title_top = if popup {
+                        workspace
+                            .card_fill(workspace.chrome, metrics, stroke)
+                            .bounds
+                            .top
+                    } else {
+                        workspace
+                            .panes
+                            .iter()
+                            .find(|pane| pane.selected)
+                            .unwrap()
+                            .frame(workspace.terminal)
+                            .top
+                    };
+                    let band_y = (title_top + workspace.terminal.top) / 2.0;
+                    let band_x = grid.left + metrics.width + 1.0;
+                    assert!(band_y > title_top + stroke && band_y < workspace.terminal.top);
+                    assert_eq!(
+                        padding_pixel(&batch, band_x, band_y),
+                        (frames && !popup).then_some(scene.content[0].cells[1].style.background),
+                        "header band: popup={popup}, frames={frames}, scale={scale}"
+                    );
                     assert_eq!(
                         padding_pixel(&batch, grid.left - 1.0, grid.top + 1.0),
                         Some(scene.content[0].cells[0].style.background)
@@ -3325,6 +3390,150 @@ mod tests {
                         (None, 0.0),
                     );
                     assert!(disabled.bytes.is_empty());
+                    if frames && !popup {
+                        for pane in workspace.panes.iter().filter(|pane| !pane.selected) {
+                            assert_eq!(
+                                padding_pixel(
+                                    &batch,
+                                    band_x,
+                                    pane.rect.top + pane.rect.height * 0.75
+                                ),
+                                None,
+                                "collapsed headers have no terminal padding"
+                            );
+                        }
+                        for (screen, mode, reason, extends) in [
+                            (Screen::Primary, PaddingColor::Extend, "default", false),
+                            (Screen::Primary, PaddingColor::Extend, "\u{e0b0}", false),
+                            (Screen::Primary, PaddingColor::ExtendAlways, "default", true),
+                            (Screen::Alternate, PaddingColor::Extend, "default", true),
+                        ] {
+                            let mut edge = scene.clone();
+                            edge.screen = screen;
+                            if reason == "default" {
+                                edge.content[0].cells[0].style = plain_style();
+                            } else {
+                                edge.content[0].cells[0].text = reason.into();
+                            }
+                            let mut changed = RectangleBatch::new(400, 300);
+                            let bands = build_workspace_padding(
+                                &mut changed,
+                                &workspace,
+                                Some(&edge),
+                                &columns,
+                                metrics,
+                                mode,
+                                true,
+                                stroke,
+                                (None, 0.0),
+                            );
+                            let expected =
+                                extends.then_some(edge.content[0].cells[1].style.background);
+                            assert_eq!(
+                                padding_pixel(&changed, band_x, band_y),
+                                expected,
+                                "{screen:?}, {mode:?}, {reason}"
+                            );
+                            assert_eq!(
+                                padding_pixel(&changed, band_x, workspace.terminal.top + 1.0),
+                                expected
+                            );
+                            assert_eq!(
+                                bands[0].contains(&edge.content[0].cells[1].style.background),
+                                extends,
+                                "the label's contrast check sees the painted band"
+                            );
+                        }
+                        let fill = workspace.card_fill(workspace.chrome, metrics, stroke);
+                        let label_gap = SceneRect {
+                            left: grid.left,
+                            top: title_top,
+                            width: metrics.width * 3.0,
+                            height: stroke,
+                        };
+                        let rules = workspace
+                            .pane_outlines(
+                                &workspace.panes,
+                                workspace.terminal,
+                                fill,
+                                stroke,
+                                metrics,
+                                stroke,
+                            )
+                            .into_iter()
+                            .map(|outline| (outline, [label_gap, SceneRect::default()]))
+                            .collect::<Vec<_>>();
+                        let mut chrome = RectangleBatch::new(400, 300);
+                        chrome.push_pane_outlines(
+                            fill,
+                            workspace.pane_viewport,
+                            &rules,
+                            Some(palette::CARD_OUTLINE),
+                            stroke,
+                            stroke,
+                        );
+                        let padding_end = batch.bytes.len();
+                        batch.push_pane_outlines(
+                            fill,
+                            workspace.pane_viewport,
+                            &rules,
+                            Some(palette::CARD_OUTLINE),
+                            stroke,
+                            stroke,
+                        );
+                        assert_eq!(
+                            &batch.bytes[padding_end..],
+                            chrome.bytes.as_slice(),
+                            "padding preserves title cutouts and selected outlines"
+                        );
+                        assert_eq!(
+                            padding_pixel(&chrome, band_x, title_top + 0.5),
+                            None,
+                            "label cutout stays clear of the title stroke"
+                        );
+                        assert_eq!(
+                            padding_pixel(
+                                &chrome,
+                                workspace.terminal.right() - metrics.padding,
+                                title_top + 0.5
+                            ),
+                            Some(palette::CARD_OUTLINE)
+                        );
+                        let zoomed = WorkspaceScene::from_snapshot_with_zoom(
+                            &snapshot,
+                            crate::EonBar::default(),
+                            PhysicalSize::new(400, 300),
+                            metrics,
+                            0.0,
+                            0.0,
+                            |_, text| (text.into(), text.len() as f32 * metrics.width),
+                            None,
+                            true,
+                            crate::SidebarView::default(),
+                        );
+                        let mut zoomed_batch = RectangleBatch::new(400, 300);
+                        build_workspace_padding(
+                            &mut zoomed_batch,
+                            &zoomed,
+                            Some(&scene),
+                            &[],
+                            metrics,
+                            PaddingColor::Extend,
+                            true,
+                            stroke,
+                            (None, 0.0),
+                        );
+                        let zoom_title = zoomed.panes[0].frame(zoomed.terminal).top;
+                        assert_eq!(
+                            padding_pixel(
+                                &zoomed_batch,
+                                zoomed.terminal.left + metrics.padding + metrics.width + 1.0,
+                                (zoom_title + zoomed.terminal.top) / 2.0
+                            ),
+                            None,
+                            "zoom header paint stays unchanged"
+                        );
+                    }
                 }
             }
         }

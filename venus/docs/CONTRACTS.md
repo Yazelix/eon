@@ -613,7 +613,11 @@ re-proved when that platform or feature is next touched.
     edge and follows that pane's rounded top corners down to the column's rounded
     bottom; inside it, title rows and the space between stacked pane cards share the
     expanded terminal's background color/opacity under the surface-wide blur request,
-    so the stack has one background. Nothing above that top edge or outside those
+    so the stack has one background. In framed, unzoomed expanded panes, the band
+    below the title rule follows VEN-C11's top-padding color and opacity rules
+    instead of the shared title-row background; title text, cutouts and outlines
+    stay above it, while collapsed rows, popups, zoom and frameless headers retain
+    their existing backgrounds. Nothing above that top edge or outside those
     outer corners takes the terminal background: everything below the tab bar outside
     the column fills, including the gaps and footer band, takes the header's opaque
     color, so header, gaps and footer form one frame. The first pane's label sits on

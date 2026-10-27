@@ -192,12 +192,13 @@ setting for both products; no Venus or Orbit configuration is needed.
 With pane frames on, each column has one continuous terminal-background fill,
 from its first pane's rounded top edge down to the column's rounded bottom.
 Stacked title rows and the space between cards share the expanded terminal's
-background colour and opacity. Above that edge and outside the outer corners,
-the gaps and footer stay the opaque bar colour. The first title sits on that
-boundary. Popup and Agents fills follow their rounded outer edges in the same
-way, with their titles on the boundary. Header scrolling keeps the fill's top
-fixed. Frameless mode keeps terminal-background strips across the window below
-the bar, including the sidebar and footer.
+background colour and opacity, except that extended top padding fills an
+unzoomed expanded pane's band below its title (`padding_color`). Above that edge
+and outside the outer corners, the gaps and footer stay the opaque bar colour.
+The first title sits on that boundary. Popup and Agents fills follow their
+rounded outer edges in the same way, with their titles on the boundary. Header
+scrolling keeps the fill's top fixed. Frameless mode keeps terminal-background
+strips across the window below the bar, including the sidebar and footer.
 
 `padding_color` controls terminal padding in panes, popups and eonbase.
 `extend` uses the nearest edge cell's background on each side and
@@ -208,7 +209,11 @@ Alternate-screen TUIs always extend. `extend-always` skips those exceptions;
 `background` keeps the terminal default background throughout the padding.
 Default backgrounds retain the configured opacity; explicit backgrounds paint
 as they do in cells. Padding stays inside the rounded card and below outlines.
-The setting applies when a window opens or reopens.
+In an expanded pane with frames on and no zoom, the band below the title line
+follows the top padding's colour and opacity instead of the shared title-row
+background, under the title text and outline; collapsed title rows, popups,
+zoom and frameless mode keep their existing backgrounds. The setting applies
+when a window opens or reopens.
 
 Opacity accepts `0.0` through `1.0`. Blur and pane frames are booleans. Font size
 accepts 6–96 logical pixels, line height accepts 1–3, and a supplied columns and
