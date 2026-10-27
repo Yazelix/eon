@@ -729,16 +729,7 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
         {
             launch_current(inputs, LaunchMode::Workspace, child, false, false, "eon")
         }
-        [command, ..]
-            if command == "workspace"
-                || command == "workspaces"
-                || command == "tab"
-                || command == "pane"
-                || command == "edit"
-                || command == "focus"
-                || command == "--generation"
-                || command == "--window" =>
-        {
+        [command, ..] if control_command(command) => {
             let (arguments, target) = parse_workspace_target_arguments(&arguments)?;
             let (action, json) = parse_control_arguments(&arguments)?;
             let list = arguments.first().is_some_and(|value| value == "workspaces");
@@ -773,6 +764,22 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
     Ok(result?)
 }
 
+/// The first words `execute` hands to `parse_control_arguments`.
+fn control_command(command: &OsStr) -> bool {
+    [
+        "workspace",
+        "workspaces",
+        "tab",
+        "pane",
+        "edit",
+        "focus",
+        "--generation",
+        "--window",
+    ]
+    .iter()
+    .any(|word| command == *word)
+}
+
 fn print_config_defaults(inputs: &Inputs, json: bool) -> Result<i32, String> {
     let output = managed_environment::print_defaults(&inputs.defaults, json)?;
     std::io::stdout()
@@ -786,12 +793,17 @@ fn print_help(inputs: &Inputs) -> Result<i32, String> {
     let color = std::io::stdout().is_terminal()
         && env::var_os("TERM").as_deref() != Some(OsStr::new("dumb"))
         && env::var_os("NO_COLOR").is_none_or(|value| value.is_empty());
+    write_stdout(help_text(inputs.version, color))?;
+    Ok(0)
+}
+
+fn help_text(version: &str, color: bool) -> String {
     let (heading, command, reset) = if color {
         ("\x1b[1;35m", "\x1b[36m", "\x1b[0m")
     } else {
         ("", "", "")
     };
-    write_stdout(format!(
+    format!(
         "{heading}Eon{reset} {version}  ·  Terminal workspaces. Persistent terminals.
 
 {heading}Usage{reset}  {command}eon [COMMAND]{reset}
@@ -859,10 +871,8 @@ pane create keeps the selected pane and any popup.
 Where shown, {command}--json{reset} prints JSON and skips confirmation.
 Exit status: 0 success, 1 failed, 2 invalid command, 3 target not found,
 4 Eon unreachable, 130 interrupted.
-",
-        version = inputs.version
-    ))?;
-    Ok(0)
+"
+    )
 }
 
 fn execute_eonbase(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
@@ -1560,6 +1570,9 @@ fn parse_command_pane_arguments(arguments: &[OsString]) -> Result<Option<(Action
         json,
     )))
 }
+
+#[cfg(test)]
+mod parity;
 
 #[cfg(test)]
 mod tests {

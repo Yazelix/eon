@@ -213,10 +213,12 @@ Paths below are relative to the repository root.
 - **Does not own:** Supervisor lifecycle, generation policy, EONW transport, workspace
   state, child mechanisms, or rendering
 - **Agent parity:** The CLI is the agent's projection of every Runtime workspace action.
-  Each EONW `Action` a client can send has a CLI command or a named exception.
-  Venus-local view state is listed as an exception and has no EONW action. See
-  [Humans and Agents](../AGENTS.md#humans-and-agents). Open gaps:
-  `eon-agent-parity-a9g0`.
+  Each EONW `Action` a client can send has a CLI command or a named exception;
+  `runtime/crates/eon-runtime/src/cli/parity.rs` maps them, and its test checks
+  that each workspace command parses to its action and each lifecycle command is
+  in `eon --help`. Venus-local view state is listed as an exception and has no
+  EONW action. See [Humans and Agents](../AGENTS.md#humans-and-agents). Open
+  gaps: `eon-agent-parity-a9g0`.
 
 ### Runtime and supervisor lifecycle
 
