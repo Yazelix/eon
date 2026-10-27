@@ -40,7 +40,9 @@ partial frame. Existing 4 MiB/100,000-cell bounds remain.
 ORBS v7 through v13 are explicitly breaking, exact-version boundaries with no
 compatibility window or adapter; each replaced its predecessor. Orbit's
 real-PTY checks and lifecycle tests, Venus and Eon consume the canonical crate
-in this repository. Each contract below states the current ORBS v13 behavior.
+in this repository. Each contract below states the current ORBS v13 behavior,
+except ORB-C16, which is Planned and states the ORBF v3 in ORBS v14 behavior it
+enters with; its PTY pixel size rule needs no wire change.
 
 ## ORB-C1 — Session survival across client loss
 
@@ -231,7 +233,7 @@ in this repository. Each contract below states the current ORBS v13 behavior.
 
 ## ORB-C6 — Rich presentation without silent degradation
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** Every canonical presentation client.
 - **Trigger:** Orbit extracts or encodes terminal presentation state.
 - **Result:** The boundary carries rich terminal state or explicitly declares an
@@ -249,7 +251,11 @@ in this repository. Each contract below states the current ORBS v13 behavior.
   canonical `orbit-protocol` values and codecs.
 - **Consumes:** Canonical ORBF v2 in ORBS v13; Venus and Eon consume it in this
   repository.
-- **Boundary:** Kitty graphics remain explicitly unsupported.
+- **Boundary:** A frame states `kitty_graphics` true exactly when it carries
+  ORB-C16's graphics state; one that does not, such as every ORBF v2 frame,
+  declares Kitty graphics unsupported. Kitty features outside ORB-C16 are its
+  recorded gaps, and ORB-C16's Boundary names each, including those nothing
+  marks.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.2` commit
   for direct rows, width roles, protection and reflow, the
   `eon-osc8-invalid-utf8-ymts` commit for invalid hyperlink URIs, and the
@@ -280,6 +286,12 @@ in this repository. Each contract below states the current ORBS v13 behavior.
       exceeds: full text in reading order while it fits, the first codepoint
       in the rest, and links only after the text.
     - Canonical ORBF-in-ORBS codec checks in the workspace suite
+- **Open proof:** Static graphics joined this contract on 2026-10-27 under
+  Lucca's standing approval of 2026-10-26, relayed by eon-overseer
+  (`orb-j2i.2`), and the proof above predates them. ORB-C16 is Planned.
+  Today frames state `kitty_graphics` false while libghostty stores Kitty
+  images and answers their queries, so a program such as Yazi prints
+  placeholder cells that Venus shows as missing glyphs (`orb-j2i.1`).
 
 ## ORB-C7 — Bounded attachment pressure
 
@@ -1030,6 +1042,199 @@ in this repository. Each contract below states the current ORBS v13 behavior.
         record.
       - A terminal host held under SIGSTOP answered nothing, and after
         SIGCONT it served its records unchanged, with its child still running.
+
+## ORB-C16 — Static graphics resource plane
+
+- **Status:** Planned
+- **Consumer:**
+  - a program in an Orbit terminal that shows static images through the Kitty
+    graphics protocol, directly or with Unicode placeholders, such as Yazi
+    image previews;
+  - the one attached client, Venus, which draws them under VEN-C31.
+- **Trigger:**
+  - PTY output transmits, places, replaces or deletes a Kitty image, prints or
+    erases Unicode placeholder cells, scrolls, clears, resets or switches
+    between the primary and alternate screens;
+  - the client attaches, resizes, scrolls the viewport, reads slowly, detaches
+    or reattaches;
+  - the child exits.
+- **Result:**
+  - **Storage.** libghostty alone parses Kitty graphics and stores images.
+    Orbit sets its storage limit to 10,000,000 decoded bytes for each screen,
+    accepts only the direct transmission medium, and installs no PNG decoder.
+    A stored image is therefore 8-bit RGB or RGBA.
+  - **Capability.** An internal Orbit switch, which is not user configuration,
+    gates this contract. While it is on, every complete frame states
+    `kitty_graphics` true and carries the graphics state below. While it is
+    off, frames state false, carry no entries and keep placeholder cells as
+    they are, and Orbit sends no resources. Orbit's real-PTY checks turn it
+    on from `orb-j2i.6`; `orb-j2i.11` turns it on in the shipped build, in the
+    same change that makes Venus draw images. The PTY pixel size rule below
+    does not depend on it.
+  - **Placements.** Each frame lists the placements that libghostty's render
+    state resolves for the viewport, with no overscan rows: fixed, relative and
+    Unicode-placeholder placements, the latter as one entry per run of
+    neighbouring placeholder cells in a row. Each entry gives:
+    - the resource identity and libghostty's layer and z-index;
+    - the viewport cell of its top-left corner, which for fixed and relative
+      placements can lie above or left of the viewport;
+    - its grid size in cells;
+    - its pixel offset from that cell's top-left corner, which can exceed one
+      cell when libghostty centres an image in its placeholder cells;
+    - its drawn pixel size and its source rectangle in image pixels.
+    The frame states the cell width and height in pixels that this geometry
+    uses. Entries are listed in drawing order: by layer, then z-index, then
+    Kitty image id, lower first (the specification's order for equal
+    z-indexes), then libghostty's order.
+  - **Entry states.** Each entry also carries a state:
+    - **ready**, when its resource's last chunk has been written to the
+      socket in this attachment;
+    - **pending**, while that has not happened;
+    - **unavailable**, when the image breaks the resource limits below and is
+      never sent.
+    When a pending resource's last chunk is written, Orbit publishes a new
+    complete frame at the next revision (ORB-C4), after any synchronized
+    output hold ends, so its entries become ready without further PTY output.
+  - **Placeholder cells.** Rows no longer carry the ORBF v2
+    `kitty_virtual_placeholder` flag. Frames and previews carry Unicode
+    placeholder cells (U+10EEEE and their diacritics) as blank cells that keep
+    only their background, so a client never draws or interprets placeholder
+    codepoints or their decorations.
+  - **Resources.** A resource is one image's decoded pixels at one libghostty
+    image generation. Orbit assigns a resource its 64-bit identity number when
+    it first queues a frame that references it. Numbers strictly increase
+    within an attachment and are never reused, and Orbit starts resources in
+    identity order, so announcements carry increasing identities. A resource
+    that is skipped and later referenced again gets a fresh number. Replacing
+    an image's pixels, even under the same Kitty image id, makes a new resource
+    with a new identity.
+    - **Sending.** Orbit sends a resource as one announcement, giving identity,
+      libghostty generation, format (RGB or RGBA), width, height, byte length
+      and chunk count, followed by its chunks in order. Each chunk names its
+      resource's identity and its index, counting from 0. Every chunk except
+      the last carries exactly 262,144 bytes, and the last carries the rest.
+      Orbit sends one resource at a time: all of one resource's chunks precede
+      the next announcement. Frames and other messages may arrive between
+      chunks.
+    - **Order and copies.** Orbit sends each resource at most once per
+      attachment, and none before the attachment's first complete frame. After
+      that it starts a resource before the first frame that references it when
+      the resource queue below has room. It copies the pixels out of libghostty
+      storage once, when it starts the announcement, and finishes the transfer
+      from that copy even if storage later replaces or drops the image.
+    - **Pending.** While the resource queue is full, Orbit sends frames with
+      the entry pending. Once room returns it starts the resource from
+      libghostty storage if a current frame still references it, and starts
+      nothing if storage has dropped that generation or no frame references it.
+    - **Retirement.** When a sent resource leaves the storage of the screen
+      that holds it, including when a new generation replaces it, Orbit retires
+      it with one message. If that happens during its own transfer, Orbit
+      finishes the transfer first. A retirement travels in the resource queue,
+      in order with announcements and chunks. Orbit writes it only after it has
+      written a complete frame that no longer references the resource, and
+      writes no later frame that does. Orbit sees a screen's storage only while
+      that screen is active, so a resource of the inactive screen stays
+      unretired until the screen is active again or the attachment ends.
+  - **Screens.** A frame references only the active screen's images. Each
+    screen keeps its own storage, which survives switching away, so returning
+    to a screen can reference images again that were sent earlier in the same
+    attachment.
+  - **PTY pixel size.** The PTY's pixel fields hold the text area, columns
+    times cell width by rows times cell height, and Orbit answers CSI 14t,
+    16t and 18t from the same measurements. A program that derives its cell
+    size from them, such as Yazi, then sizes its placeholder grid to
+    libghostty's cells.
+  - **Limits.**
+    - A resource is 1 to 4,096 pixels on each side and at most 10,000,000
+      decoded bytes.
+    - A frame carries at most 4,096 placement entries referencing at most 256
+      resources. Entries do not count toward ORB-C6's frame budget for cells
+      and links; ORBF v3 bounds them separately.
+    - Per attachment, Orbit holds at most one resource copy outside
+      libghostty storage, the one transfer in progress, whose queued chunks
+      count toward the resource queue below.
+    - Resource messages (announcements, chunks and retirements) wait in their
+      own resource queue, apart from every other message. They never take
+      ORB-C7's frame and scroll-outcome room. A frame waits at most for the
+      rest of the one resource message already being written. At most 1,048,576
+      bytes of chunk payload are queued per attachment, besides announcements
+      and retirements, which the count below bounds. This bound is internal to
+      Orbit; Venus does not check it.
+    - At most 1,024 resources are announced and not retired per attachment. A
+      resource that would pass that count is not started until one retires, so
+      its entries stay pending.
+- **Important failures:**
+  - An image outside the limits stays in libghostty storage and is never
+    sent. Its entries are unavailable, so the client marks them instead of
+    dropping them silently.
+  - Placements beyond 4,096 entries or 256 resources: the list stops at the
+    first entry, in drawing order, that would pass either cap, and the frame
+    states that placements were omitted.
+  - A full resource queue makes entries pending. Resource messages never cause
+    ORB-C7's disconnect, block PTY processing or grow the queue; every other
+    message keeps ORB-C7's behavior unchanged.
+  - Failed extraction publishes no partial frame; the frame fails as ORB-C6
+    already requires. A failed copy starts no resource, so its entries stay
+    pending; when Orbit tries again, the resource takes a fresh identity.
+  - Detach discards every per-attachment identity and copy. The next
+    attachment starts with no resources sent: its first complete frame lists
+    every visible placement as pending or unavailable, and the resources
+    follow as above.
+  - On child exit, Orbit drops the resource messages it has not started
+    writing, finishes the one it is writing, and then sends `Exited`. Exit ends
+    the run and its images; nothing persists across an Orbit or machine
+    restart.
+- **Owner:** Orbit.
+  - Its Bend session policy decides when resources start, which keeps entries
+    pending until then, and decides retirement and pressure, within budgets
+    that a law bounds.
+  - Its Rust host reads libghostty's render-state image list and storage. It
+    assigns identities, applies the fixed resource limits that make entries
+    unavailable, copies pixels out of storage when the policy starts a resource
+    (which needs no PTY output), and writes resources. Pixel bytes never cross
+    the worker pipe.
+  - Canonical `orbit-protocol` values and codecs own the wire.
+- **Consumes:**
+  - libghostty-vt's render-state image iterator and Kitty graphics storage
+    at the upstream `Uzaaft/libghostty-rs` commit that CRATES.md records;
+    `orb-j2i.1` proved the interface at
+    `9ede35b8ea94a55ed3608408d67e102883129f1e`;
+  - the Kitty graphics protocol as specified at `kovidgoyal/kitty`
+    `b2cb871254fbdac19a085188813c8dfb258b95cd`,
+    `docs/graphics-protocol.rst`.
+  - The wire is ORBF v3 in ORBS v14, a breaking, exact-version revision with
+    no adapter or compatibility window. Venus, Eon Runtime and Eon consume it
+    in this repository. Orbit lands first, then Venus, in one Eon build.
+- **Boundary:**
+  - Static images only. Orbit does not drive libghostty's animation tick, so
+    an animated image shows whichever frame libghostty holds as current;
+    animation playback and frame composition are not presented.
+  - Clients draw every layer in one band, between cell backgrounds and text
+    (VEN-C31). Kitty's other layers are a recorded gap: an image placed above
+    text draws below it, and one placed below cell backgrounds draws above
+    them.
+  - Scrollback previews (ORB-C8) carry no placements and blank their
+    placeholder cells. A viewport scrolled into history is a live frame and
+    carries its placements.
+  - A displayed image that libghostty's storage limit evicts disappears with
+    its placements, and nothing marks it. This is a recorded gap.
+  - Placeholder cells whose image libghostty cannot resolve, for example
+    after the image is deleted, are blanked like any other placeholder cell
+    and carry no entry, so nothing marks them. This is a recorded gap.
+  - ORB-C9 copies text from libghostty, which keeps placeholder codepoints,
+    so copying across placeholder cells yields U+10EEEE and its diacritics.
+    This is a recorded gap.
+  - At the cap of 1,024 unretired resources, entries of further resources
+    stay pending until one retires. This is a recorded gap for programs that
+    keep many images stored.
+  - File, temporary-file and shared-memory transmission, PNG, Sixel, iTerm2
+    images, a client request for a missing resource, content addressing and
+    restart persistence are excluded.
+- **Proof:** Not proved. Adopted on 2026-10-27 under Lucca's standing
+  approval of 2026-10-26, relayed by eon-overseer (`orb-j2i.2`).
+  `orb-j2i.4` sizes the PTY; `orb-j2i.5` adds the wire revisions;
+  `orb-j2i.6` and `orb-j2i.7` extract placements and send resources;
+  `orb-j2i.8` proves the lifecycle.
 
 ## Focused terminal conformance corpus
 

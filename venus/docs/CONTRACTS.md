@@ -8,7 +8,8 @@ retains accepted user-visible chronology.
 in-tree `orbit-protocol` crate and canonical EONW v20 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
-in-tree version.
+in-tree version. VEN-C31 is Planned and names the ORBF v3 in ORBS v14
+revision it will enter with.
 
 ## Proof environments
 
@@ -2113,3 +2114,132 @@ re-proved when that platform or feature is next touched.
     (`eon-sidebar-you-are-here-3743`): in the isolated captures neither a
     `swaymsg` pointer warp nor a relative move gave a Venus row hover, so
     only review of `venus/src/render/chrome.rs` checks that order.
+
+## VEN-C31 — Static terminal images
+
+- **Status:** Planned
+- **Consumer:** A person viewing an Orbit terminal in an Eon window, in a pane
+  or a popup, whose program shows static images (ORB-C16), such as Yazi's
+  image previews.
+- **Trigger:**
+  - Orbit sends a resource announcement, chunk or retirement, or a frame whose
+    placement entries change;
+  - the terminal resizes, scrolls, detaches or reattaches, or Venus's cell
+    geometry changes;
+  - the window's image budget is reached, or the renderer recovers from GPU
+    device loss.
+- **Result:**
+  - **Validation before allocation.** Venus checks each announcement and
+    reserves nothing until it passes:
+    - the identity is greater than every identity announced before in this
+      attachment;
+    - no other resource of this terminal is still incomplete;
+    - the format is RGB or RGBA;
+    - each side is 1 to 4,096 pixels;
+    - the byte length equals width times height times bytes per pixel and is
+      at most 10,000,000;
+    - the chunk count is the byte length divided by 262,144, rounded up;
+    - fewer than 1,024 resources of this terminal are announced and not
+      retired, counting resources Venus freed.
+    Chunks must arrive in order for the one incomplete resource: every chunk
+    but the last carries exactly 262,144 bytes, and the last fills it exactly.
+    A retirement must name a completely received resource that is not yet
+    retired, and no resource message may precede the attachment's first frame.
+    Anything else is a malformed ORBS value and fails the attachment as any
+    other does (VEN-C1, VEN-C3). Venus assembles and uploads one resource per
+    terminal at a time: a completed resource is uploaded, meaning the GPU has
+    finished the copy and released its staging, or refused, before the next
+    announcement is accepted. It therefore holds at most one resource per
+    terminal outside textures: 10,000,000 bytes of assembly plus that
+    resource's staging, at most 13,333,334 bytes when RGB is expanded to RGBA.
+  - **Drawing.** Venus draws every entry whose resource it holds complete and
+    uploaded, whatever state the entry carries, clipping the entry's source
+    rectangle to the resource's bounds. It draws the source rectangle, scaled
+    with linear filtering
+    to the entry's pixel size, at the entry's cell plus pixel offset. When the
+    frame's stated cell size differs from Venus's current cell size, as during
+    a font or scale change, Venus scales the entry's position and size by the
+    ratio of the two, so entries stay on their cells until a frame in the new
+    geometry arrives. All entries draw in one band, above every cell background
+    and below text, text decorations and the cursor, in the frame's order.
+    Images move with their rows under VEN-C7's precision translation. VEN-C11's
+    background opacity does not apply to them; their own alpha blends over what
+    lies beneath, including a selection highlight, which an image can therefore
+    cover. Images are clipped to the terminal's grid area and drawn under
+    anything Venus stacks above that terminal: overlays, notices, hints and
+    popup cards.
+  - **Missing-image marker.** For an entry whose resource Venus does not hold,
+    Venus draws a marker over the entry's rectangle and never leaves the area
+    silently blank for long. This covers unavailable and refused resources at
+    once, and a pending entry that has stayed pending for 250 ms, so a
+    resource that promptly follows its frame never flashes the marker. A
+    frame that states omitted placements also raises a bounded notice for
+    that terminal.
+  - **Retention.** Resources and their identities belong to one terminal's
+    attachment. Venus never frees a resource that terminal's current frame
+    references while the attachment lasts. It frees a resource:
+    - once Orbit has retired it and the current frame does not reference it;
+    - when the current frame does not reference it and the budget needs room;
+    - on detach or `Exited`, which discard all of that terminal's resources and
+      its incomplete assembly. A scene that Venus keeps showing after detach,
+      as VEN-C3 does during a reconnect, draws the marker over every image
+      until the next attachment's frames and resources arrive.
+  - **Budget.** Image textures across the whole window are limited to 256 MiB,
+    counted at 4 bytes per pixel. Venus checks the budget before allocating. A
+    resource that would exceed it, after freeing unreferenced ones, is not
+    uploaded, and its entries show the marker. A texture allocation that fails
+    within the budget is treated the same way: Venus captures the error instead
+    of failing the renderer, and the entries show the marker.
+  - **Resync.** Venus reattaches the terminal to recover:
+    - after device loss, once the renderer works again, since every image
+      texture is lost. Today non-destroyed device loss keeps VEN-C4's
+      terminal renderer failure, so this applies only to recoveries VEN-C4
+      allows;
+    - when a frame references a resource Venus freed, or one it refused for
+      budget once the budget has room again.
+    Busy keeps VEN-C3's rule: under Eon supervision the reattach retries it,
+    and in standalone mode Busy stays terminal. A standalone resync can
+    therefore lose the race in which Orbit has not yet released the attachment
+    Venus just left, and end that terminal. This is a recorded gap; Eon windows
+    are supervised. Until the new attachment's first frame, the terminal shows
+    what VEN-C3 shows during a transient reconnect, with markers over its
+    images. Venus reattaches at most once for each such event. A refusal, for
+    budget or because a texture allocation failed, allows one resync in total,
+    across attachments: if the resync is refused again, the marker stays
+    without further reattaching until the terminal's referenced placements
+    change, the budget gains room, or the renderer recovers. While the renderer
+    cannot draw, VEN-C4's failure handling applies unchanged.
+  - Venus never parses Kitty graphics commands, reads placeholder cells or
+    reconstructs image state. Orbit's frames and resources are its only image
+    input.
+- **Important failures:**
+  - Malformed metadata, oversized dimensions or length, a second incomplete
+    resource, a resource message before the first frame, a bad retirement,
+    and out-of-order, wrong-size, duplicate, unannounced or excess chunks
+    fail the attachment. A failed announcement reserves nothing, a failed
+    chunk frees its assembly, and no partial image is ever drawn.
+  - A budget refusal shows markers, never a stale or half-uploaded image, and
+    resyncs as above.
+  - An image cannot draw outside its terminal's grid area or over the window
+    chrome or another terminal.
+- **Owner:** Venus: protocol validation, the resource store, GPU textures, the
+  budget and drawing. Orbit (ORB-C16) owns which images exist and where they
+  are.
+- **Consumes:** ORB-C16 through ORBF v3 in ORBS v14 from the in-tree
+  `orbit-protocol` crate.
+- **Boundary:**
+  - One drawing band. Kitty's above-text and below-background layers are
+    drawn in it (ORB-C16's recorded gap).
+  - Besides textures, Venus holds at most one resource's assembly and upload
+    staging per attached terminal, outside the GPU budget.
+  - Venus keeps no CPU copy of an uploaded image, so device-loss recovery
+    reattaches instead of re-uploading.
+  - No image request message, animation, scrollback-preview images, image
+    selection or copy, accessibility description of images, or persistence.
+    The marker's and notice's appearance is chosen in `orb-j2i.11` under the
+    repository's configurability rule.
+- **Proof:** Not proved. Adopted on 2026-10-27 under Lucca's standing
+  approval of 2026-10-26, relayed by eon-overseer (`orb-j2i.2`).
+  `orb-j2i.9` adds the drawing band; `orb-j2i.10` validates and assembles
+  resources; `orb-j2i.11` uploads and draws them; `orb-j2i.12` proves Yazi
+  previews on the installed Eon.

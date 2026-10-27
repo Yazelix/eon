@@ -109,6 +109,13 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   for Venus, Eon Runtime and Eon: Eon Runtime's Stop still waits five seconds
   for the result, so a child reaped after that still fails its Stop there,
   and the tombstone comes later (`eon-orbit-stop-not-reaped-7vb4`).
+- ORB-C16 enters the index as Planned: static Kitty images and Unicode
+  placeholder placements will reach the client as decoded RGB or RGBA resources
+  and per-frame placement entries on ORBF v3 in ORBS v14, a breaking revision
+  for Venus, Eon Runtime and Eon. ORB-C6 becomes Partially proved: a frame that
+  carries ORB-C16's state states Kitty graphics supported, and one that does
+  not still declares them unsupported. Behavior and wire are unchanged until
+  `orb-j2i.4` to `orb-j2i.7` land (`orb-j2i.2`).
 
 ## Before this repository
 
