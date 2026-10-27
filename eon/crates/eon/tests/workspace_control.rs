@@ -3463,6 +3463,237 @@ fn workspace_cli_lists_creates_switches_renames_and_closes() {
 }
 
 #[test]
+fn workspace_picker_switches_creates_and_cancels() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = eon_command(&binary)
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess { child, stop };
+    let generation = generation_runtime(&runtime);
+    wait_for(&generation.join("eon.sock"));
+    let read = |arguments: &[&str]| {
+        let output = invoke(&binary, &runtime, &config, arguments);
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    // Each step's whole list: (id, name, shown).
+    let list = || {
+        read(&["workspaces", "--json"])["workspaces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|workspace| {
+                (
+                    workspace["id"].as_str().unwrap().to_owned(),
+                    workspace["name"].as_str().map(str::to_owned),
+                    workspace["shown"].as_bool().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let entry =
+        |id: &str, name: Option<&str>, shown: bool| (id.to_owned(), name.map(str::to_owned), shown);
+    // Each workspace's first terminal: w1 is the initial one, then one per `workspace new`.
+    let caller = |endpoint: &str| {
+        let environment = fs::read(format!(
+            "/proc/{}/environ",
+            live_identity(&generation.join(endpoint)).process_id
+        ))
+        .unwrap();
+        environment
+            .split(|byte| *byte == 0)
+            .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+            .map(|token| String::from_utf8(token.to_vec()).unwrap())
+            .unwrap()
+    };
+    read(&["workspace", "new", "--name", "alpha", "--json"]);
+    read(&["workspace", "new", "--no-focus", "--json"]);
+    read(&["workspace", "switch", "w1", "--json"]);
+    let three = [
+        entry("w1", None, true),
+        entry("w2", Some("alpha"), false),
+        entry("w3", None, false),
+    ];
+    assert_eq!(list(), three);
+    let (first, second, third) = (
+        caller("orbit.sock"),
+        caller("session-2.sock"),
+        caller("session-3.sock"),
+    );
+
+    // A scripted fzf records the rows it is given and answers in turn: a row, a query that
+    // matches none, then Escape.
+    let tools = root.join("tools");
+    fs::create_dir(&tools).unwrap();
+    let count = root.join("fzf-count");
+    fs::write(&count, "0").unwrap();
+    let recorded = root.join("rows");
+    executable(
+        &tools.join("fzf"),
+        format!(
+            r#"#!/bin/sh
+n=$(($(cat '{count}') + 1)); echo "$n" > '{count}'
+cat > '{rows}'$n
+case $n in
+  1) printf 'w3\nw3\tw3\t1 tab\n';;
+  2) printf 'fresh\n';;
+  *) exit 130;;
+esac
+"#,
+            count = count.display(),
+            rows = recorded.display(),
+        ),
+    );
+    let popup_status = |name: &str, caller: &str, input: &[u8]| {
+        let program = root.join(name);
+        if !program.exists() {
+            symlink(&binary, &program).unwrap();
+        }
+        let mut command = eon_command(&program);
+        let original = command
+            .get_envs()
+            .find_map(|(key, value)| (key == "PATH").then_some(value).flatten())
+            .unwrap()
+            .to_owned();
+        let path = std::iter::once(tools.clone()).chain(std::env::split_paths(&original));
+        let mut child = command
+            .env("PATH", std::env::join_paths(path).unwrap())
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_TAB", "t1")
+            .env("EON_TERMINAL", caller)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(input).unwrap();
+        child.wait_with_output().unwrap()
+    };
+    let popup = |name: &str, caller: &str, input: &[u8]| {
+        let output = popup_status(name, caller, input);
+        assert!(
+            output.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    let rows = |run: u32| fs::read_to_string(format!("{}{run}", recorded.display())).unwrap();
+
+    // Every workspace in window order, the shown one last and marked; a row shows it.
+    popup("eon-workspaces", &first, b"");
+    assert_eq!(
+        rows(1),
+        "w2\talpha\t1 tab\nw3\tw3\t1 tab\nw1\tw1\t1 tab · shown\n"
+    );
+    assert_eq!(
+        list(),
+        [
+            entry("w1", None, false),
+            entry("w2", Some("alpha"), false),
+            entry("w3", None, true),
+        ]
+    );
+    // A query that matches no row creates a workspace of that name and shows it.
+    popup("eon-workspaces", &third, b"");
+    assert_eq!(
+        rows(2),
+        "w1\tw1\t1 tab\nw2\talpha\t1 tab\nw3\tw3\t1 tab · shown\n"
+    );
+    let four = [
+        entry("w1", None, false),
+        entry("w2", Some("alpha"), false),
+        entry("w3", None, false),
+        entry("w4", Some("fresh"), true),
+    ];
+    assert_eq!(list(), four);
+    // Escape changes nothing.
+    popup("eon-workspaces", &third, b"");
+    assert_eq!(list(), four);
+
+    // Commands renames the caller's workspace, even a hidden one, closes the popup's own
+    // workspace after a yes, and runs the same picker for Switch workspace.
+    for (menu, terminal, input) in [
+        ("Rename workspace", &first, &b""[..]),
+        ("Close this workspace", &second, &b"yes\n"[..]),
+        ("Switch workspace", &third, &b""[..]),
+    ] {
+        executable(
+            &tools.join("fzf"),
+            format!(
+                r#"#!/bin/sh
+case "$*" in
+  *--print-query*) cat > /dev/null; printf '\nw1\tRenamed\t1 tab\n';;
+  *--bind=enter:print-query*) printf 'Renamed\0';;
+  *) while IFS="$(printf '\t')" read -r index rest; do
+       case "$rest" in '{menu}'*) printf '%s\tchosen\n' "$index";; esac
+     done;;
+esac
+"#
+            ),
+        );
+        popup("eon-commands", terminal, input);
+    }
+    assert_eq!(
+        list(),
+        [
+            entry("w1", Some("Renamed"), true),
+            entry("w3", None, false),
+            entry("w4", Some("fresh"), false),
+        ]
+    );
+
+    // A row whose workspace closes while the picker is open switches nothing, even when another
+    // workspace now carries that wN as its name.
+    executable(
+        &tools.join("fzf"),
+        format!(
+            r#"#!/bin/sh
+cat > /dev/null
+'{eon}' workspace close w3 --json > /dev/null
+'{eon}' workspace rename w4 w3 --json > /dev/null
+printf '\nw3\tw3\t1 tab\n'
+"#,
+            eon = binary.display(),
+        ),
+    );
+    let output = popup_status("eon-workspaces", &first, b"\n");
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(
+        list(),
+        [
+            entry("w1", Some("Renamed"), true),
+            entry("w4", Some("w3"), false),
+        ]
+    );
+    read(&["workspace", "close", "w4", "--json"]);
+    assert!(read(&["workspace", "close", "w1", "--json"])["ended"].is_object());
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn workspace_target_failures_are_explicit_and_bounded() {
     let root = temporary_directory();
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));

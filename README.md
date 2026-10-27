@@ -58,6 +58,7 @@ Enter for a Zoxide match or Tab to browse with Yazi. A terminal opens there.
 | Alt+Shift+J | Git popup |
 | Alt+Shift+Y | Files popup (Yazi) |
 | Alt+Shift+M | Commands popup: search and run Eon commands |
+| Alt+Shift+S | Workspaces: switch or create a workspace in this window |
 
 Close the window whenever you like. To come back or end work:
 

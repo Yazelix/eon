@@ -19,7 +19,7 @@ use super::{
 };
 use eon_workspace_protocol::v20::{
     Action, Direction, Failure, PopupTarget, Response, Side, Snapshot, VERSION, WorkspaceAction,
-    valid_caller,
+    WorkspaceInfo, valid_caller,
 };
 use std::{
     env,
@@ -84,6 +84,7 @@ pub fn run(inputs: Inputs) -> (&'static str, Result<i32, Error>) {
     match Path::new(&invocation).file_name().and_then(OsStr::to_str) {
         Some("eonbase") => ("eonbase", execute_eonbase(&inputs, arguments)),
         Some("eon-commands") => ("eon-commands", Ok(command_runner(&inputs))),
+        Some("eon-workspaces") => ("eon-workspaces", Ok(workspace_picker(&inputs))),
         // Other names stay Eon: Nix's wrapped executable relaunches itself under its own file
         // name for independent windows.
         _ => match managed_environment::tool(&invocation) {
@@ -106,8 +107,11 @@ enum RunnerOutput {
 
 /// The Commands popup's curated list. Each entry runs an existing `eon` command as the popup's
 /// caller, so the CLI keeps owning validation, targets and confirmations. `TAB` stands for the
-/// popup's own tab and `GENERATION` for its window's generation. Pane moves are absent because Eon
-/// refuses them while a popup is open.
+/// popup's own tab, `GENERATION` for its window's generation, `PANE` for its tab's selected pane
+/// and `WORKSPACE` for its own workspace. `NAME` is typed in a name box, where an empty name
+/// clears. `WS` is chosen in the Workspaces popup's picker, run inside Commands: a query that
+/// matches no workspace runs `workspace new --name QUERY` instead, and a cancel runs nothing.
+/// Pane moves are absent because Eon refuses them while a popup is open.
 const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
     use RunnerOutput::{Close, Keep};
     &[
@@ -124,6 +128,14 @@ const RUNNER_COMMANDS: &[(&str, &[&str], RunnerOutput)] = {
         ("Quit this window", &["stop", "GENERATION"], Close),
         ("Move tab left", &["tab", "move", "left"], Close),
         ("Move tab right", &["tab", "move", "right"], Close),
+        ("Switch workspace", &["workspace", "switch", "WS"], Close),
+        ("New workspace", &["workspace", "new"], Close),
+        ("Rename workspace", &["workspace", "rename", "NAME"], Close),
+        (
+            "Close this workspace",
+            &["workspace", "close", "WORKSPACE"],
+            Close,
+        ),
         ("Show workspace", &["workspace"], Keep),
         ("List windows", &["windows"], Keep),
         ("List generations", &["generations"], Keep),
@@ -164,44 +176,42 @@ fn command_runner(inputs: &Inputs) -> i32 {
         (1, RunnerOutput::Keep)
     });
     if kept == RunnerOutput::Keep || status != 0 {
-        print!("\nPress Enter to close");
-        let _ = std::io::stdout().flush();
-        let _ = std::io::stdin().read_line(&mut String::new());
+        wait_for_enter();
     }
     status
+}
+
+/// Runs the Workspaces popup and keeps any failure on screen until Enter.
+fn workspace_picker(inputs: &Inputs) -> i32 {
+    let status = pick_and_run_workspace(inputs).unwrap_or_else(|error| {
+        eprintln!("eon-workspaces: {error}");
+        1
+    });
+    if status != 0 {
+        wait_for_enter();
+    }
+    status
+}
+
+fn wait_for_enter() {
+    print!("\nPress Enter to close");
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stdin().read_line(&mut String::new());
 }
 
 fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> {
     let tab = env::var(TAB_VARIABLE).map_err(|_| "runs only in an Eon popup".to_string())?;
     let generation = current_generation(inputs)?;
-    let list = runner_list(&tab, &generation);
-    let mut picker = packaged_fzf("Command > ", "Enter Run · Esc/Ctrl+C Cancel")
-        .args(["--delimiter=\t", "--with-nth=2.."])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .map_err(|error| format!("cannot launch packaged command picker: {error}"))?;
-    picker
-        .stdin
-        .take()
-        .expect("command picker stdin is piped")
-        .write_all(list.as_bytes())
-        .map_err(|error| format!("cannot list commands: {error}"))?;
-    let output = picker
-        .wait_with_output()
-        .map_err(|error| format!("cannot read the command picker: {error}"))?;
-    match output.status.code() {
-        Some(0) => {}
-        // No match, Escape and Ctrl+C all cancel.
-        Some(1 | 130) => return Ok((0, RunnerOutput::Close)),
-        _ => {
-            return Err(format!(
-                "packaged command picker exited with status {}",
-                output.status
-            ));
-        }
-    }
-    let (_, arguments, kept) = String::from_utf8_lossy(&output.stdout)
+    let Some(output) = run_picker(
+        packaged_fzf("Command > ", "Enter Run · Esc/Ctrl+C Cancel")
+            .args(["--delimiter=\t", "--with-nth=2.."]),
+        &runner_list(&tab, &generation),
+        "command",
+    )?
+    else {
+        return Ok((0, RunnerOutput::Close));
+    };
+    let (_, arguments, kept) = String::from_utf8_lossy(&output)
         .split('\t')
         .next()
         .and_then(|index| index.trim().parse::<usize>().ok())
@@ -211,68 +221,192 @@ fn pick_and_run_command(inputs: &Inputs) -> Result<(i32, RunnerOutput), String> 
         .into_iter()
         .map(OsString::from)
         .collect();
-    if arguments.iter().any(|argument| argument == "PANE") {
-        let caller = calling_terminal().map_err(|error| error.detail)?;
-        let resolved = resolve_workspace(inputs, WorkspaceTarget::default(), caller.as_deref())
-            .map_err(|error| error.detail)?;
-        let response = send_action_from(
-            Ok(&resolved.socket),
-            caller,
-            Action::Workspace(WorkspaceAction::Inspect),
-        )
-        .map_err(|error| error.detail)?;
-        let ControlResponse::Workspace(Response::Snapshot(snapshot)) = response else {
-            return Err("cannot inspect the Commands pane".into());
-        };
+    if arguments.iter().any(|argument| argument == "WS") {
+        return Ok((pick_and_run_workspace(inputs)?, *kept));
+    }
+    if arguments
+        .iter()
+        .any(|argument| argument == "PANE" || argument == "WORKSPACE")
+    {
+        let snapshot = caller_snapshot(inputs)?;
         let pane = snapshot
             .tabs
             .iter()
             .find(|candidate| candidate.id == tab)
-            .and_then(|tab| tab.selected_pane.as_deref())
-            .ok_or("this tab has no pane to name")?;
+            .and_then(|tab| tab.selected_pane.as_deref());
         for argument in &mut arguments {
             if argument == "PANE" {
-                *argument = pane.into();
+                *argument = pane.ok_or("this tab has no pane to name")?.into();
+            } else if argument == "WORKSPACE" {
+                *argument = snapshot.workspace.as_str().into();
             }
-        }
-        if arguments.last().is_some_and(|argument| argument == "NAME") {
-            let output = packaged_fzf(
-                "Pane name > ",
-                "Enter Set · Empty Clear · Esc/Ctrl+C Cancel",
-            )
-            .args(["--bind=enter:print-query", "--print0"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .output()
-            .map_err(|error| format!("cannot read pane name: {error}"))?;
-            if matches!(output.status.code(), Some(1 | 130)) {
-                return Ok((0, RunnerOutput::Close));
-            }
-            if !output.status.success() {
-                return Err("pane-name picker failed".into());
-            }
-            let name = parse_pane_name_output(&output.stdout)?;
-            arguments.pop();
-            arguments.push("--".into());
-            arguments.push(name.into());
         }
     }
-    let status = match execute(inputs, arguments) {
+    if arguments.last().is_some_and(|argument| argument == "NAME") {
+        let subject = if arguments[0] == "pane" {
+            "Pane"
+        } else {
+            "Workspace"
+        };
+        let output = packaged_fzf(
+            &format!("{subject} name > "),
+            "Enter Set · Empty Clear · Esc/Ctrl+C Cancel",
+        )
+        .args(["--bind=enter:print-query", "--print0"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .output()
+        .map_err(|error| format!("cannot read the name: {error}"))?;
+        if matches!(output.status.code(), Some(1 | 130)) {
+            return Ok((0, RunnerOutput::Close));
+        }
+        if !output.status.success() {
+            return Err("name box failed".into());
+        }
+        let name = parse_name_output(&output.stdout)?;
+        arguments.pop();
+        arguments.push("--".into());
+        arguments.push(name.into());
+    }
+    Ok((run_as_caller(inputs, arguments), *kept))
+}
+
+/// Runs the workspace picker as the popup's caller: Enter on a row, including on an empty query,
+/// shows that workspace, Enter on a non-blank query that matches no row creates a workspace of
+/// that name, and Escape or Ctrl+C does nothing.
+fn pick_and_run_workspace(inputs: &Inputs) -> Result<i32, String> {
+    let snapshot = caller_snapshot(inputs)?;
+    let Some(output) = run_picker(
+        packaged_fzf(
+            "Workspace > ",
+            "Enter Switch · No match: Enter Create · Esc/Ctrl+C Cancel",
+        )
+        .args([
+            "--exact",
+            "--delimiter=\t",
+            "--with-nth=2..",
+            "--nth=1",
+            "--print-query",
+            "--bind=enter:accept-or-print-query",
+        ]),
+        &workspace_rows(&snapshot.workspaces, &snapshot.active_workspace),
+        "workspace",
+    )?
+    else {
+        return Ok(0);
+    };
+    let output = String::from_utf8_lossy(&output);
+    let Some(arguments) = workspace_pick_arguments(&output) else {
+        return Ok(0);
+    };
+    // Runtime would read a departed row's wN as another workspace's name, so a row switches only
+    // while its wN is still live; the check and the switch are not atomic.
+    if arguments[1] == "switch"
+        && !caller_snapshot(inputs)?
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == arguments[2])
+    {
+        let detail = format!("workspace {} is not live", arguments[2]);
+        return report_failure(&failure("unknown-workspace", detail), false);
+    }
+    Ok(run_as_caller(
+        inputs,
+        arguments.into_iter().map(OsString::from).collect(),
+    ))
+}
+
+/// The workspace picker's rows: ID, label and tab count, in window order with the shown
+/// workspace last and marked, so Enter on an empty query shows another one.
+fn workspace_rows(workspaces: &[WorkspaceInfo], shown: &str) -> String {
+    let (current, others): (Vec<_>, Vec<_>) = workspaces
+        .iter()
+        .partition(|workspace| workspace.id == shown);
+    others
+        .into_iter()
+        .chain(current)
+        .map(|workspace| {
+            format!(
+                "{}\t{}\t{} tab{}{}\n",
+                workspace.id,
+                workspace.name.as_deref().unwrap_or(&workspace.id),
+                workspace.tab_count,
+                if workspace.tab_count == 1 { "" } else { "s" },
+                if workspace.id == shown {
+                    " · shown"
+                } else {
+                    ""
+                },
+            )
+        })
+        .collect()
+}
+
+/// The `eon` arguments for the workspace picker's output: its query line, then the chosen row
+/// when one matched. A query that matched no row names a new workspace; a blank one runs nothing.
+fn workspace_pick_arguments(output: &str) -> Option<Vec<&str>> {
+    let mut lines = output.lines();
+    let query = lines.next().unwrap_or_default();
+    match lines.next() {
+        Some(row) => Some(vec!["workspace", "switch", row.split('\t').next()?]),
+        None if !query.trim().is_empty() => Some(vec!["workspace", "new", "--name", query]),
+        None => None,
+    }
+}
+
+/// The popup caller's own workspace, as `eon workspace` reports it.
+fn caller_snapshot(inputs: &Inputs) -> Result<Snapshot, String> {
+    let caller = calling_terminal().map_err(|error| error.detail)?;
+    let resolved = resolve_workspace(inputs, WorkspaceTarget::default(), caller.as_deref())
+        .map_err(|error| error.detail)?;
+    inspect(&resolved.socket, caller.as_deref(), &resolved.generation).map_err(|error| error.detail)
+}
+
+/// Runs an `eon` command in-process as the popup's caller and returns its exit status.
+fn run_as_caller(inputs: &Inputs, arguments: Vec<OsString>) -> i32 {
+    match execute(inputs, arguments) {
         Ok(status) => status,
         Err(error) => {
             eprintln!("eon: {}", error.message);
             i32::from(error.status)
         }
-    };
-    Ok((status, *kept))
+    }
 }
 
-fn parse_pane_name_output(output: &[u8]) -> Result<&str, String> {
+/// Runs a packaged picker over `list` and returns what it printed, or None when it was
+/// cancelled.
+fn run_picker(picker: &mut Command, list: &str, noun: &str) -> Result<Option<Vec<u8>>, String> {
+    let mut picker = picker
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("cannot launch packaged {noun} picker: {error}"))?;
+    picker
+        .stdin
+        .take()
+        .expect("picker stdin is piped")
+        .write_all(list.as_bytes())
+        .map_err(|error| format!("cannot list {noun}s: {error}"))?;
+    let output = picker
+        .wait_with_output()
+        .map_err(|error| format!("cannot read the {noun} picker: {error}"))?;
+    match output.status.code() {
+        Some(0) => Ok(Some(output.stdout)),
+        // No match, Escape and Ctrl+C all cancel.
+        Some(1 | 130) => Ok(None),
+        _ => Err(format!(
+            "packaged {noun} picker exited with status {}",
+            output.status
+        )),
+    }
+}
+
+fn parse_name_output(output: &[u8]) -> Result<&str, String> {
     let text = output
         .strip_suffix(&[0])
         .filter(|text| !text.contains(&0))
-        .ok_or("pane-name picker returned malformed text")?;
-    std::str::from_utf8(text).map_err(|_| "pane name is not UTF-8".into())
+        .ok_or("name box returned malformed text")?;
+    std::str::from_utf8(text).map_err(|_| "name is not UTF-8".into())
 }
 
 fn startup_anima(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, String> {
@@ -1526,10 +1660,10 @@ mod tests {
                 .status,
             2
         );
-        assert_eq!(parse_pane_name_output(b"--clear\0").unwrap(), "--clear");
-        assert_eq!(parse_pane_name_output(b"\0").unwrap(), "");
-        assert!(parse_pane_name_output(b"name\0extra\0").is_err());
-        assert!(parse_pane_name_output(b"name\n").is_err());
+        assert_eq!(parse_name_output(b"--clear\0").unwrap(), "--clear");
+        assert_eq!(parse_name_output(b"\0").unwrap(), "");
+        assert!(parse_name_output(b"name\0extra\0").is_err());
+        assert!(parse_name_output(b"name\n").is_err());
     }
 
     #[test]
@@ -1547,11 +1681,55 @@ mod tests {
                 !arguments.contains(&"TAB") && !arguments.contains(&"GENERATION"),
                 "{label}"
             );
-            if ["workspace", "tab", "pane"].contains(&arguments[0]) {
-                let arguments: Vec<OsString> = arguments.into_iter().map(OsString::from).collect();
+            // The rest stand for what the popup inspects, picks or reads, as the runner fills them.
+            let arguments: Vec<OsString> = arguments
+                .into_iter()
+                .flat_map(|argument| match argument {
+                    "PANE" => vec!["p1"],
+                    "WORKSPACE" | "WS" => vec!["w2"],
+                    "NAME" => vec!["--", "--json"],
+                    _ => vec![argument],
+                })
+                .map(OsString::from)
+                .collect();
+            if ["workspace", "tab", "pane"].contains(&arguments[0].to_str().unwrap()) {
                 assert!(parse_control_arguments(&arguments).is_ok(), "{label}");
             }
         }
+    }
+
+    #[test]
+    fn workspace_picker_lists_the_shown_workspace_last_and_maps_its_result() {
+        let workspace = |id: &str, name: Option<&str>, tab_count| WorkspaceInfo {
+            id: id.into(),
+            name: name.map(Into::into),
+            tab_count,
+        };
+        assert_eq!(
+            workspace_rows(
+                &[
+                    workspace("w1", Some("work"), 2),
+                    workspace("w2", None, 1),
+                    workspace("w4", Some("notes"), 3),
+                ],
+                "w2",
+            ),
+            "w1\twork\t2 tabs\nw4\tnotes\t3 tabs\nw2\tw2\t1 tab · shown\n"
+        );
+        assert_eq!(
+            workspace_pick_arguments("wo\nw1\twork\t2 tabs\n"),
+            Some(vec!["workspace", "switch", "w1"])
+        );
+        assert_eq!(
+            workspace_pick_arguments("\nw2\tw2\t1 tab · shown\n"),
+            Some(vec!["workspace", "switch", "w2"])
+        );
+        assert_eq!(
+            workspace_pick_arguments(" --fresh \n"),
+            Some(vec!["workspace", "new", "--name", " --fresh "])
+        );
+        assert_eq!(workspace_pick_arguments("  \n"), None);
+        assert_eq!(workspace_pick_arguments(""), None);
     }
 
     #[test]

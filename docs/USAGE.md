@@ -141,6 +141,7 @@ one, and clicking another column's terminal selects it.
 | Alt+Shift+Y | Open or hide the tab's Files popup |
 | Alt+Shift+A | Open or dismiss the tab's Anima popup |
 | Alt+Shift+M | Open or dismiss the tab's Commands popup |
+| Alt+Shift+S | Open or dismiss the Workspaces picker: Enter shows the highlighted workspace, Enter on an unmatched name creates one |
 
 ### Eon Bar and tabs
 
@@ -234,14 +235,25 @@ other files keep Yazi's default openers. Anima is transient:
 closing its popup stops playback and returns to the tab.
 
 Commands lists Eon commands you can search and run: new tab, pane or
-window, close or move the tab, quit this window, show the workspace, windows,
-generations, versions or config path, stop older generations, and command
-help. Each line shows the `eon` command it runs. Enter runs it from the popup
+window, close or move the tab, quit this window, switch, create, rename or
+close a workspace, show the workspace, windows, generations, versions or config
+path, stop older generations, and command help. Each line shows the `eon`
+command it runs. Enter runs it from the popup
 for that tab, with the command's own checks and confirmations. New pane
 closes the popup first, as Alt+M does, and the pane joins the tab's selected
 column. Other actions close the popup when they succeed; listings, stopping
 older generations and failures stay until you press Enter. Esc closes it
 without running anything.
+
+Workspaces (Alt+Shift+S, or Commands > Switch workspace) lists this window's
+workspaces in window order, each by name or ID with its tab count, the shown
+one moved last and marked. Type to filter by name. Enter shows the highlighted
+workspace, and Enter on a name that matches no workspace creates a workspace
+with that name and shows it. A name that is part of an existing one matches
+it, so create that workspace with Commands > New workspace and then rename
+it. Esc or Ctrl+C closes the picker without changing anything. Rename
+workspace names the popup's workspace (an empty name clears it), and Close this
+workspace asks before it stops every terminal in it.
 
 ### Agent sidebar
 

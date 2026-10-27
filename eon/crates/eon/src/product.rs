@@ -108,6 +108,14 @@ pub(crate) fn inputs() -> Inputs {
                         PopupCommand::Argv(vec!["eon-commands".into()]),
                         false,
                     ),
+                    (
+                        "workspaces",
+                        "Workspaces",
+                        "KeyS",
+                        ALT | SHIFT,
+                        PopupCommand::Argv(vec!["eon-workspaces".into()]),
+                        false,
+                    ),
                 ]
                 .into_iter()
                 .map(

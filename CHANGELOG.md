@@ -20,7 +20,14 @@ installation, and proven contract changes.
   and `eon workspace close WS` add, show, name and close one, where WS is a
   workspace ID such as `w2` or its exact name. Closing a workspace's last tab
   while others remain closes only that workspace. The window has no workspace
-  picker or label yet.
+  label yet.
+
+- Alt+Shift+S opens the Workspaces picker, which lists this window's
+  workspaces in window order with their tab counts and the shown one last.
+  Enter shows the highlighted workspace, Enter on a name that matches none
+  creates it, and Esc changes nothing. `[popups.workspaces]` sets its key,
+  label and enablement. Commands gains Switch workspace, New workspace, Rename
+  workspace and Close this workspace.
 
 - The CPU chip's tooltip names how many logical CPUs its percentage covers,
   as `CPU use 12% across 16 logical CPUs, over the last 2 seconds`.

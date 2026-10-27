@@ -134,6 +134,13 @@ label = "Git" # Popup display name.
 # Project is the required chooser.
 keybinding = "Alt+Z" # Popup shortcut using physical keys.
 label = "Project" # Popup display name.
+
+[popups.workspaces]
+command = ["eon-workspaces"] # Direct argv, or auto for Agent's command selection.
+enabled = true # Enable this feature or popup.
+keep_alive = false # Keep this popup running when hidden.
+keybinding = "Alt+Shift+S" # Popup shortcut using physical keys.
+label = "Workspaces" # Popup display name.
 ```
 <!-- defaults:end -->
 
@@ -318,9 +325,13 @@ or replaced. Set `[popups.anima].enabled = false` to hide that shortcut; its
 command and transient lifetime are fixed.
 Commands searches and runs Eon commands; a custom
 popup on the same key collides with it until one of them moves.
-Set `enabled = false` on Git, Agent, Files, Commands, or a custom popup to disable
-it. Project is the required chooser. A popup shortcut on the key of a built-in
-Eon shortcut takes that key, and Alt+/ lists the built-in one as overridden.
+Workspaces lists this window's workspaces in window order: Enter shows the
+highlighted one, and Enter on a name that matches none creates a workspace with
+that name.
+Set `enabled = false` on Git, Agent, Files, Commands, Workspaces, or a custom
+popup to disable it. Project is the required chooser. A popup shortcut on the
+key of a built-in Eon shortcut takes that key, and Alt+/ lists the built-in one
+as overridden.
 Alt+/ and Alt+0 through Alt+9 are reserved and cannot be bound.
 
 Set `EON_CONFIG_HOME` to select another configuration root and `EON_RUNTIME_DIR`

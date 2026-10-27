@@ -715,6 +715,7 @@
             ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-directory-picker"
             ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-files"
             ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-commands"
+            ln -s "../../../bin/eon" "$out/libexec/eon/bin/eon-workspaces"
             ln -s ${atuinPackage}/bin/atuin "$out/libexec/eon/bin/atuin"
             ln -s ${carapacePackage}/bin/carapace "$out/libexec/eon/bin/carapace"
             cp -r ${shellEnvironment} "$out/libexec/eon/shell"

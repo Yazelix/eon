@@ -126,7 +126,9 @@ and `active_workspace` names the one shown in the window. A request carrying a
 validated caller projects that terminal's workspace; a request without a caller
 projects the shown workspace. The four workspace requests operate on Runtime's
 workspace set. The `eon workspaces` and `eon workspace new|switch|rename|close`
-CLI is their front end; the Commands entries remain planned under EON-C33.
+CLI is their front end, and the Workspaces picker (`eon-workspaces`,
+Alt+Shift+S) and the Commands workspace entries run that CLI as the popup's
+caller.
 `RenamePane` targets an explicit pane in that addressed workspace.
 Runtime's independent read-only ORBS observers cover every pane, including
 background tabs and hidden workspaces. They supply title/directory display data;

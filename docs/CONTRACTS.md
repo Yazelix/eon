@@ -893,7 +893,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   - **Several workspaces in one window** (EON-C33):
     - **Status:** The workspace requests and targeting below are implemented
       on EONW v20, with their CLI front end
-      (`eon-workspace-switching-shn4.5`); the Commands entries remain planned.
+      (`eon-workspace-switching-shn4.5`), the Workspaces picker and the
+      Commands entries (`eon-workspace-switching-shn4.6`).
     - **Listing.** `eon workspaces [--json]` lists this window's workspaces in
       order, each with `id`, `name` (null when unnamed), `shown` and `tabs`
       (the tab count), after the `generation`, `window` and caller's
@@ -1023,7 +1024,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   terminal, restores the prior tab focus, and leaves no hidden animation running.
   Commands defaults to Alt+Shift+M and runs a transient fzf list of existing
   `eon` commands: tab, pane and window creation, closing or moving the popup's
-  own tab, quitting this window, the workspace, window and generation
+  own tab, quitting this window, switching, creating, renaming or closing a
+  workspace (EON-C33), the workspace, window and generation
   listings, `stop previous`, `versions`, `config-path` and `--help`. Each line
   names the command it runs. Enter runs it in the popup's terminal, with that
   terminal's `EON_TERMINAL` and `EON_TAB`: pane creation and tab moves act for
@@ -1040,6 +1042,22 @@ socket names, JSON fields and protocol identifiers retain their spellings.
   shown. Esc, Ctrl+C or no match runs nothing. The Commands popup follows the
   existing popup catalog rules, so a configured popup on the same key is a
   collision.
+  Workspaces defaults to Alt+Shift+S and runs `eon-workspaces`, a transient
+  fzf list of the popup's window's workspaces (EON-C33's picker); Commands >
+  Switch workspace runs the same list in the Commands popup. Each row shows
+  the workspace's name, or its `wN` when unnamed, and its tab count, and the
+  query matches only that name or `wN`. Enter on the highlighted row,
+  including on an empty query, runs `eon workspace switch wN` once the CLI
+  has checked again that the `wN` is live; otherwise it changes nothing and
+  exits 3, and the check and the switch are not atomic. Enter on a non-blank
+  query that matches no row runs `eon workspace new --name QUERY`. Both run in
+  the popup's terminal as for Commands, so the CLI keeps its validation,
+  targets and failures; a failure waits for Enter. Esc or Ctrl+C runs
+  nothing.
+  Commands > New workspace runs `eon workspace new`, Rename workspace reads a
+  name and runs `eon workspace rename` for the popup's workspace (an empty
+  name clears it), and Close this workspace runs `eon workspace close` for the
+  popup's own `wN`, keeping its confirmation. None adds an EONW action.
 - **Configuration:** Eon fixes popup margins at 8 side and 4 vertical logical
   pixels; a `[popup]` table is an unknown key and warns as described in EON-C9.
   `[popups.<id>]` owns direct argv, physical shortcut,
@@ -2754,7 +2772,12 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     previous workspace; the Alt+G jump, not the picker, leads to agents that
     need input. Enter shows the highlighted workspace, including on an empty
     query. Enter on a non-empty query that matches no row creates a workspace
-    with that name and shows it. Esc or Ctrl+C runs nothing.
+    with that name and shows it. Esc or Ctrl+C runs nothing. Implemented on
+    EONW v20 (`eon-workspace-switching-shn4.6`, as EON-C10 describes) except
+    the order and the needs-input marker: v20 carries no recency or
+    per-workspace attention, so rows follow window order with the shown
+    workspace last and marked until `eon-workspace-switching-shn4.8` puts both
+    on the next EONW version.
   - **Eon Bar.** While the window holds two or more workspaces, or its one
     workspace has a name, the Eon Bar shows a leading label before the tabs:
     the shown workspace's name or `wN`, followed by `N/M` when there are
