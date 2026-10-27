@@ -61,8 +61,8 @@ the empty region between tabs and controls drags an undecorated window.
 | Alt+M | Create a pane in the selected column |
 | Ctrl+Alt+M | Create a column right of the selected one |
 | Alt+Shift+Z | Show the selected pane alone across the tab, or restore the columns |
-| Alt+W | Close the selected pane; the final tab's last pane quits the window |
-| Alt+Shift+W | Close the active tab; closing the final tab quits the window |
+| Alt+W | Close the selected pane; the final tab's last pane quits the window, or closes the workspace while others remain |
+| Alt+Shift+W | Close the active tab; closing the final tab quits the window, or closes the workspace while others remain |
 | Alt+Shift+N | Open an independent Eon window when supervised by Eon |
 | Alt+Shift+D | Detach: close the window, keep terminals running |
 | Alt+Z | Open Project; Eon supplies other popup shortcuts |

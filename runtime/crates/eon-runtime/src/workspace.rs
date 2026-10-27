@@ -335,37 +335,12 @@ impl WorkspaceSet {
     fn resolve_workspace(&self, target: &str) -> Result<usize, Failure> {
         eon_workspace_protocol::v20::validate_workspace_name(target)
             .map_err(|error| action_error("malformed-action", error.to_string()))?;
-        if let Some(index) = self
-            .workspaces
-            .iter()
-            .position(|workspace| workspace.id == target)
-        {
-            return Ok(index);
-        }
-        let matches = self
-            .workspaces
-            .iter()
-            .enumerate()
-            .filter(|(_, workspace)| workspace.name.as_deref() == Some(target))
-            .collect::<Vec<_>>();
-        match matches.as_slice() {
-            [(index, _)] => Ok(*index),
-            [] => Err(action_error(
-                "unknown-workspace",
-                format!("workspace {target} is not live"),
-            )),
-            _ => Err(action_error(
-                "ambiguous-workspace",
-                format!(
-                    "workspace {target} matches {}",
-                    matches
-                        .iter()
-                        .map(|(_, workspace)| workspace.id.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-            )),
-        }
+        resolve_selector(
+            self.workspaces
+                .iter()
+                .map(|workspace| (workspace.id.as_str(), workspace.name.as_deref())),
+            target,
+        )
     }
 
     fn show(&mut self, index: usize) {
@@ -2325,6 +2300,48 @@ fn json_attention(output: &mut String, attention: Option<&Attention>) {
     output.push('}');
 }
 
+/// The window's workspaces in order, one line each (`eon workspaces`).
+pub(crate) fn list_human(snapshot: &Snapshot) -> String {
+    snapshot
+        .workspaces
+        .iter()
+        .map(|workspace| {
+            format!(
+                "{} shown={} tabs={} name={}\n",
+                workspace.id,
+                workspace.id == snapshot.active_workspace,
+                workspace.tab_count,
+                workspace
+                    .name
+                    .as_ref()
+                    .map_or_else(|| "none".into(), |name| format!("{name:?}")),
+            )
+        })
+        .collect()
+}
+
+/// `{"workspaces":[{"id":...,"name":...,"shown":...,"tabs":...}]}` (`eon workspaces --json`).
+pub(crate) fn list_json(snapshot: &Snapshot) -> String {
+    let mut output = String::from("{\"workspaces\":[");
+    for (index, workspace) in snapshot.workspaces.iter().enumerate() {
+        if index != 0 {
+            output.push(',');
+        }
+        output.push_str(&format!(
+            "{{\"id\":\"{}\",\"name\":",
+            json_escape(&workspace.id)
+        ));
+        json_option(&mut output, workspace.name.as_deref());
+        output.push_str(&format!(
+            ",\"shown\":{},\"tabs\":{}}}",
+            workspace.id == snapshot.active_workspace,
+            workspace.tab_count
+        ));
+    }
+    output.push_str("]}\n");
+    output
+}
+
 pub(crate) fn failure_human(failure: &Failure) -> String {
     format!(
         "error {}: {}\n",
@@ -2395,6 +2412,42 @@ fn index_after_removal(selected: usize, removed: usize, remaining: usize) -> usi
         selected - 1
     } else {
         selected.min(remaining.saturating_sub(1))
+    }
+}
+
+/// Resolve a workspace selector over `(wN, name)` pairs in order (EON-C33):
+/// an exact `wN`, else the one workspace with that exact name. The CLI's
+/// close prompt applies it to a snapshot's summaries.
+pub(crate) fn resolve_selector<'a>(
+    workspaces: impl Iterator<Item = (&'a str, Option<&'a str>)>,
+    target: &str,
+) -> Result<usize, Failure> {
+    let workspaces = workspaces.collect::<Vec<_>>();
+    if let Some(index) = workspaces.iter().position(|(id, _)| *id == target) {
+        return Ok(index);
+    }
+    let matches = workspaces
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, name))| *name == Some(target))
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [(index, _)] => Ok(*index),
+        [] => Err(action_error(
+            "unknown-workspace",
+            format!("workspace {target} is not live"),
+        )),
+        _ => Err(action_error(
+            "ambiguous-workspace",
+            format!(
+                "workspace {target} matches {}",
+                matches
+                    .iter()
+                    .map(|(_, (id, _))| *id)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )),
     }
 }
 

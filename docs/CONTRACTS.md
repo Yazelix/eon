@@ -892,22 +892,43 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     output.
   - **Several workspaces in one window** (EON-C33):
     - **Status:** The workspace requests and targeting below are implemented
-      on EONW v20; CLI and Commands front ends remain planned.
+      on EONW v20, with their CLI front end
+      (`eon-workspace-switching-shn4.5`); the Commands entries remain planned.
+    - **Listing.** `eon workspaces [--json]` lists this window's workspaces in
+      order, each with `id`, `name` (null when unnamed), `shown` and `tabs`
+      (the tab count), after the `generation`, `window` and caller's
+      `workspace` that every result names. This window means the caller's
+      window inside Eon, and otherwise the window `eon workspace` targets.
+      EON-C33's per-workspace `attention` is planned
+      (`eon-workspace-switching-shn4.8`).
     - **New.** `eon workspace new [--name NAME] [--no-focus]` and Commands >
       New workspace add a workspace after the shown one. It opens with one
       pending tab and a fresh directory picker, as a new window does (EON-C23),
       and becomes the shown workspace unless `--no-focus` is given, as for
-      `pane create`. The reply names its `wN`.
+      `pane create`. The reply names the new `wN` in `created`, whether or
+      not it is shown, alongside the caller's projected `workspace`.
     - **Switch.** `eon workspace switch WS` shows WS. Switching to the shown
       workspace returns the unchanged snapshot (EON-C10). Each workspace keeps
       its active tab, selected pane and popups across switches; zoom ends, as on
       any tab change (EON-C8).
     - **Rename.** `eon workspace rename [WS] NAME` and Commands > Rename
       workspace set the name; an empty NAME clears it. Without WS it renames the
-      caller's workspace.
-    - **Close.** Closing then stops every terminal of that
-      workspace, as closing each of its tabs does (EON-C8), and removes it.
-      Closing the last workspace is the window's final close (EON-C8).
+      caller's workspace. The CLI trims surrounding whitespace from NAME and
+      from `--name`, as for pane names, so a blank NAME clears the name and a
+      blank `--name` is malformed (exit 2).
+    - **Close.** `eon workspace close WS` first asks for confirmation, as
+      `eon stop` does. The prompt names the `wN` and name that WS resolves
+      to, says that closing stops every terminal in it, and that it quits the
+      window when it is the last workspace. A WS that resolves to no workspace
+      or several fails before asking, with the failures below. Any answer but
+      yes changes nothing. After a yes, the CLI checks again that the `wN` is
+      live and otherwise changes nothing and exits 3; the check and the close
+      are not atomic, so a workspace closed by another client in between
+      leaves Runtime to resolve that `wN` as any WS, which may match another
+      workspace named that `wN`. `--json` asks nothing. Closing
+      then stops every terminal of that workspace, as closing each of its
+      tabs does (EON-C8), and removes it. Closing the last workspace is the
+      window's final close (EON-C8).
       After a successful close removes the caller's workspace, the reply
       describes the shown remaining workspace; closing the last workspace
       returns Ended.
@@ -2698,7 +2719,8 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     New workspace add a workspace after the shown one. It opens with one
     pending tab and a fresh directory picker, as a new window does (EON-C23),
     and becomes the shown workspace unless `--no-focus` is given, as for
-    `pane create`. The reply names its `wN`.
+    `pane create`. The reply names the new `wN` in `created`, whether or not
+    it is shown.
   - **Switch.** `eon workspace switch WS` shows WS. Switching to the shown
     workspace returns the unchanged snapshot (EON-C10). Each workspace keeps
     its active tab, selected pane and popups across switches; zoom ends, as on
@@ -2707,9 +2729,11 @@ socket names, JSON fields and protocol identifiers retain their spellings.
     workspace set the name; an empty NAME clears it. Without WS it renames the
     caller's workspace.
   - **Close.** `eon workspace close WS` and Commands > Close this workspace
-    list the workspace's terminals and ask for confirmation, as `eon stop`
-    does; `--json` asks nothing. Closing then stops every terminal of that
-    workspace, as closing each of its tabs does (EON-C8), and removes it.
+    ask for confirmation, as `eon stop` does, naming the workspace and saying
+    that closing stops every terminal in it, and that it quits the window
+    when it is the last one; `--json` asks nothing. Closing then stops every
+    terminal of that workspace, as closing each of its tabs does (EON-C8),
+    and removes it.
     Closing the last workspace is the window's final close (EON-C8).
   - **Emptying.** When a workspace's final tab closes or its last terminal ends
     while other workspaces remain, it is removed. If it was shown, the most

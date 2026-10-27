@@ -3267,6 +3267,202 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
 }
 
 #[test]
+fn workspace_cli_lists_creates_switches_renames_and_closes() {
+    let root = temporary_directory();
+    let runtime = root.join("runtime");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    let venus = root.join("venus");
+    managed_orbit_executable(&orbit);
+    executable(&venus, "#!/bin/sh\nexit 0\n");
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let child = eon_command(&binary)
+        .arg("run")
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_ORBIT", &orbit)
+        .env("EON_VENUS", &venus)
+        .env("EON_TEST_STOP", &stop)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut supervisor = TestProcess { child, stop };
+    let generation = generation_runtime(&runtime);
+    wait_for(&generation.join("eon.sock"));
+    let read = |arguments: &[&str]| {
+        let output = invoke(&binary, &runtime, &config, arguments);
+        assert!(
+            output.status.success(),
+            "{arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    // Each step's whole list: (id, name, shown, tabs).
+    let list = || {
+        let listed = read(&["workspaces", "--json"]);
+        let workspaces = listed["workspaces"].as_array().unwrap();
+        // Outside Eon, the caller's workspace is the shown one.
+        let shown = workspaces
+            .iter()
+            .find(|workspace| workspace["shown"] == true);
+        assert_eq!(shown.unwrap()["id"], listed["workspace"]);
+        workspaces
+            .iter()
+            .map(|workspace| {
+                (
+                    workspace["id"].as_str().unwrap().to_owned(),
+                    workspace["name"].as_str().map(str::to_owned),
+                    workspace["shown"].as_bool().unwrap(),
+                    workspace["tabs"].as_u64().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    let entry = |id: &str, name: Option<&str>, shown: bool| {
+        (id.to_owned(), name.map(str::to_owned), shown, 1)
+    };
+    assert_eq!(list(), [entry("w1", None, true)]);
+
+    // A creation names its wN in `created`, whether or not it is shown.
+    let created = read(&["workspace", "new", "--name", " alpha ", "--json"]);
+    assert_eq!(created["created"], "w2");
+    assert_eq!(
+        list(),
+        [entry("w1", None, false), entry("w2", Some("alpha"), true)]
+    );
+    let background = read(&["workspace", "new", "--no-focus", "--json"]);
+    assert_eq!(
+        (&background["workspace"], &background["created"]),
+        (&"w2".into(), &"w3".into())
+    );
+    let three = [
+        entry("w1", None, false),
+        entry("w2", Some("alpha"), true),
+        entry("w3", None, false),
+    ];
+    assert_eq!(list(), three);
+
+    // A name that matches two workspaces changes nothing.
+    read(&["workspace", "rename", "w3", "alpha", "--json"]);
+    let ambiguous = invoke(
+        &binary,
+        &runtime,
+        &config,
+        &["workspace", "switch", "alpha", "--json"],
+    );
+    assert_eq!(ambiguous.status.code(), Some(1));
+    let error: serde_json::Value = serde_json::from_slice(&ambiguous.stdout).unwrap();
+    assert_eq!(error["error"]["code"], "ambiguous-workspace");
+    assert!(
+        error["error"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("w2, w3")
+    );
+    let unasked = invoke(&binary, &runtime, &config, &["workspace", "close", "alpha"]);
+    assert_eq!(unasked.status.code(), Some(1));
+    assert!(!String::from_utf8_lossy(&unasked.stderr).contains("Close workspace"));
+    let renamed = [
+        entry("w1", None, false),
+        entry("w2", Some("alpha"), true),
+        entry("w3", Some("alpha"), false),
+    ];
+    assert_eq!(list(), renamed);
+
+    // Switch by ID, then by name; the caller's own workspace is renamed through EON_TERMINAL.
+    assert_eq!(
+        read(&["workspace", "switch", "w3", "--json"])["workspace"],
+        "w3"
+    );
+    let environment = fs::read(format!(
+        "/proc/{}/environ",
+        live_identity(&generation.join("orbit.sock")).process_id
+    ))
+    .unwrap();
+    let first = environment
+        .split(|byte| *byte == 0)
+        .find_map(|entry| entry.strip_prefix(b"EON_TERMINAL="))
+        .map(|token| String::from_utf8(token.to_vec()).unwrap())
+        .unwrap();
+    let inside = eon_command(&binary)
+        .args(["workspace", "rename", "main", "--json"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .env("EON_TERMINAL", &first)
+        .output()
+        .unwrap();
+    assert!(
+        inside.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inside.stderr)
+    );
+    assert_eq!(
+        list(),
+        [
+            entry("w1", Some("main"), false),
+            entry("w2", Some("alpha"), false),
+            entry("w3", Some("alpha"), true),
+        ]
+    );
+    read(&["workspace", "switch", "main", "--json"]);
+    read(&["workspace", "rename", "w3", "", "--json"]);
+    let shown_main = [
+        entry("w1", Some("main"), true),
+        entry("w2", Some("alpha"), false),
+        entry("w3", None, false),
+    ];
+    assert_eq!(list(), shown_main);
+
+    // Without --json, close asks about the one workspace WS names; anything but yes keeps it.
+    let cancelled = invoke(&binary, &runtime, &config, &["workspace", "close", "alpha"]);
+    assert!(cancelled.status.success());
+    assert!(
+        String::from_utf8_lossy(&cancelled.stderr)
+            .contains("Close workspace w2 (alpha)? This stops every terminal in it.")
+    );
+    assert_eq!(stdout(&cancelled), "cancelled; workspace w2 stays open\n");
+    let unknown = invoke(&binary, &runtime, &config, &["workspace", "close", "w9"]);
+    assert_eq!(unknown.status.code(), Some(3));
+    assert!(!String::from_utf8_lossy(&unknown.stderr).contains("Close workspace"));
+    assert_eq!(list(), shown_main);
+    let mut confirmed = eon_command(&binary)
+        .args(["workspace", "close", "alpha"])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    confirmed.stdin.take().unwrap().write_all(b"yes\n").unwrap();
+    assert!(confirmed.wait_with_output().unwrap().status.success());
+    assert_eq!(
+        list(),
+        [entry("w1", Some("main"), true), entry("w3", None, false)]
+    );
+    let human = invoke(&binary, &runtime, &config, &["workspaces"]);
+    assert!(stdout(&human).ends_with(
+        "workspace w1\nw1 shown=true tabs=1 name=\"main\"\nw3 shown=false tabs=1 name=none\n"
+    ));
+    assert!(supervisor.child.try_wait().unwrap().is_none());
+
+    // The last workspace's close quits the window.
+    read(&["workspace", "close", "w3", "--json"]);
+    let last = invoke(&binary, &runtime, &config, &["workspace", "close", "w1"]);
+    assert!(String::from_utf8_lossy(&last.stderr).contains(
+        "Close workspace w1 (main)? This quits the window and stops every terminal in it."
+    ));
+    assert_eq!(list(), [entry("w1", Some("main"), true)]);
+    assert!(read(&["workspace", "close", "main", "--json"])["ended"].is_object());
+    wait_for_successful_exit(&mut supervisor.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn workspace_target_failures_are_explicit_and_bounded() {
     let root = temporary_directory();
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));

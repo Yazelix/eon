@@ -236,7 +236,8 @@ keys to dismiss it immediately. `enabled = false` skips startup playback;
 animation continues to the picker. Attachment, recovery, later tabs, and
 eonbase do not play the startup animation.
 
-Closing the last tab quits its window and stops its terminals.
+Closing the last tab quits its window and stops its terminals. While the
+window holds other workspaces, it closes only that workspace, asking nothing.
 `warning_close_last_tab = true` makes `eon tab close` and
 `eon pane close` ask first when run from a terminal, listing the terminals that
 will stop; `--json` never asks. In the window, Alt+Shift+W, the bar's `×` and

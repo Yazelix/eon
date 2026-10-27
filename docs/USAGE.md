@@ -49,7 +49,8 @@ a terminal there, keeping the tab. Close the tab with Alt+Shift+W if you no
 longer want it. The initial workspace uses the directory where Eon was launched.
 
 A terminal starts after choosing a directory or dismissing the picker. Closing the last
-tab quits the window and stops its terminals. Closing the Eon window instead detaches
+tab quits the window and stops its terminals; in a window with several
+workspaces, it closes only that workspace. Closing the Eon window instead detaches
 the desktop without stopping its terminals or PTY commands. Alt+Shift+D does the
 same from the keyboard. The first time, Eon shows a desktop notification saying
 it is still running in the background. Reconnect with:
@@ -130,8 +131,8 @@ one, and clicking another column's terminal selects it.
 | Alt+M | Create a pane in the selected column |
 | Ctrl+Alt+M | Create a column right of the selected one, up to four per tab |
 | Alt+Shift+Z | Show the selected pane alone across the tab, or restore the columns; changing the selected pane, tab or layout also restores them |
-| Alt+W | Close the selected pane, stopping its terminal; the final tab's last pane quits the window |
-| Alt+Shift+W | Close the active tab; closing the final tab quits the window |
+| Alt+W | Close the selected pane, stopping its terminal; the final tab's last pane quits the window, or closes the workspace while others remain |
+| Alt+Shift+W | Close the active tab; closing the final tab quits the window, or closes the workspace while others remain |
 | Alt+Shift+N | Open an independent Eon window (also the desktop launcher's **New Eon Window** action) |
 | Alt+Shift+D | Detach: close the window, keep terminals running |
 | Alt+Z | Open the tab's Project directory picker |
@@ -336,21 +337,32 @@ on terminals; redirected output is plain text. A nonempty `NO_COLOR` or
 | `eon stop GENERATION [--json]` | Stop one generation through its supervisor |
 | `eon stop previous [--json]` | Attempt every other non-dead generation |
 | `eon stop all [--json]` | Attempt every non-dead generation, including current |
+| `eon workspaces [--json]` | List the window's workspaces in order, with each one's ID, name, whether it is shown, and its tab count |
 | `eon workspace [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name |
+| `eon workspace new [--name NAME] [--no-focus] [--json]` | Add a workspace after the shown one, with one tab and its directory picker, and show it; with `--no-focus` the shown workspace stays. The reply names the new workspace's ID in `created` (`created wN` in human output) |
+| `eon workspace switch WS [--json]` | Show workspace WS, with its tabs, panes and popups as it left them |
+| `eon workspace rename [WS] NAME [--json]` | Name workspace WS, or the caller's workspace; an empty NAME clears the name |
+| `eon workspace close WS [--json]` | Stop every terminal of WS and remove it, asking first without `--json`; closing the last workspace quits the window |
 | `eon tab create [--json]` | Create a distinct pending tab with its directory picker, even while another picker is open |
-| `eon tab close TAB [--json]` | Close the expected active tab; the final tab quits the window, asking first from a terminal |
+| `eon tab close TAB [--json]` | Close the expected active tab; the final tab quits the window, asking first from a terminal, or closes the workspace while others remain |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals |
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
 | `eon pane create [--json] [--no-focus]` | Create a pane in the active tab's selected column, or in the calling pane's column; with `--no-focus`, the tab's selected pane and any shown popup stay as they are |
 | `eon pane create [--json] [--no-focus] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, at the tab's directory, with `--no-focus` as above; refused with exit 1 outside an Eon terminal |
 | `eon edit [--json] -- FILE` | Open FILE in Helix in a new pane, placed as `pane create` places it, at the tab's directory |
-| `eon pane close PANE [--json]` | Close a pane of the active tab, or of the calling terminal's tab, stopping its terminal; the final tab's last pane quits the window, asking first from a terminal |
+| `eon pane close PANE [--json]` | Close a pane of the active tab, or of the calling terminal's tab, stopping its terminal; the final tab's last pane quits the window, asking first from a terminal, or closes the workspace while others remain |
 | `eon pane move up\|down [--json]` | Move the selected pane, or the calling pane, one position within its column |
 | `eon pane move left\|right [--json]` | Move the selected pane, or the calling pane, into the neighbouring column, as Ctrl+Alt+H/L does |
 | `eon focus ID\|left\|right\|up\|down [--json]` | Focus a stable identity or traverse the workspace |
 | `eon versions` | Print Eon, protocol, and component identities |
 | `eon config-path` | Create and print the configuration root |
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
+
+A window holds one or more workspaces and shows one at a time; hidden
+workspaces keep their terminals running. WS is a workspace ID (`w1`, `w2`, ...),
+never reused by the window's supervisor, or a workspace's exact name. Names are
+labels and need not be unique: a name that matches several workspaces changes
+nothing and exits 1 (`ambiguous-workspace`), naming their IDs.
 
 Workspace commands inside Eon target the supervisor and workspace that own the
 exact `EON_TERMINAL` caller, even when the invoked CLI is from another compatible

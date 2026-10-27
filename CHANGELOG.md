@@ -14,6 +14,14 @@ installation, and proven contract changes.
   their header backgrounds. The pane ID there stays as bright as the name
   whenever a dimmer ID would be hard to read on that band.
 
+- One window can hold several workspaces, managed from the CLI:
+  `eon workspaces [--json]` lists them, and `eon workspace new [--name NAME]
+  [--no-focus]`, `eon workspace switch WS`, `eon workspace rename [WS] NAME`
+  and `eon workspace close WS` add, show, name and close one, where WS is a
+  workspace ID such as `w2` or its exact name. Closing a workspace's last tab
+  while others remain closes only that workspace. The window has no workspace
+  picker or label yet.
+
 - The CPU chip's tooltip names how many logical CPUs its percentage covers,
   as `CPU use 12% across 16 logical CPUs, over the last 2 seconds`.
 
