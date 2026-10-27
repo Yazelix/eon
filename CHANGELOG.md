@@ -5,6 +5,14 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The Eon Bar's quota windows are colored by how sustainable their pace is:
+  green while usage is comfortably under pace, a light green right on pace,
+  then yellow, orange and red the earlier the window would run out before it
+  resets at the current rate. Hovering a chip says the same in words, such as
+  "At this pace it runs out about 1d18h before reset". Stale readings, windows
+  without a reset time and windows in their first tenth, unless already used
+  up, keep the plain color.
+
 - Agent attention: an agent that is working again shows as working in the
   sidebar, even when an older finish on the same terminal was never looked at.
   Before, that finish's green check covered the spinner until you focused the

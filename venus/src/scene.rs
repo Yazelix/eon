@@ -532,8 +532,18 @@ pub(crate) struct WorkspaceQuota {
     pub(crate) rect: SceneRect,
     pub(crate) logo: SceneRect,
     pub(crate) label: String,
+    /// The label's judged windows, each a byte range with its pace shortfall.
+    pub(crate) pace: Vec<QuotaPace>,
     pub(crate) accessible_label: String,
     pub(crate) description: String,
+}
+
+/// One fresh window's text within a quota label and how early its linear pace runs out
+/// before the reset, as a share of the window; negative means it lasts with that share spare.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct QuotaPace {
+    pub(crate) range: Range<usize>,
+    pub(crate) shortfall: f32,
 }
 
 /// One read-only informational label in the workspace header.
@@ -1754,32 +1764,60 @@ fn quota_duration(minutes: u32) -> String {
     }
 }
 
-fn quota_window_position(window: &QuotaWindow, observed_at: u64) -> Option<String> {
+/// Formats `minutes` at the precision of a `window_minutes` window: days and hours for
+/// day-long windows, hours and minutes for hour-long ones.
+fn quota_minutes(minutes: u64, window_minutes: u32) -> String {
+    if window_minutes >= 24 * 60 {
+        let days = minutes / (24 * 60);
+        let hours = minutes % (24 * 60) / 60;
+        match (days, hours) {
+            (0, hours) => format!("{hours}h"),
+            (days, 0) => format!("{days}d"),
+            (days, hours) => format!("{days}d{hours}h"),
+        }
+    } else if window_minutes >= 60 {
+        let hours = minutes / 60;
+        let minutes = minutes % 60;
+        match (hours, minutes) {
+            (0, minutes) => format!("{minutes}m"),
+            (hours, 0) => format!("{hours}h"),
+            (hours, minutes) => format!("{hours}h{minutes}m"),
+        }
+    } else {
+        format!("{minutes}m")
+    }
+}
+
+/// Seconds elapsed into the window at the observation, when the window has a reset.
+fn quota_elapsed_seconds(window: &QuotaWindow, observed_at: u64) -> Option<u64> {
     let total_seconds = u64::from(window.duration_minutes) * 60;
     let remaining_seconds = window
         .resets_at?
         .saturating_sub(observed_at)
         .min(total_seconds);
-    let elapsed_minutes = (total_seconds - remaining_seconds) / 60;
-    if window.duration_minutes >= 24 * 60 {
-        let days = elapsed_minutes / (24 * 60);
-        let hours = elapsed_minutes % (24 * 60) / 60;
-        Some(match (days, hours) {
-            (0, 0) => "0h".into(),
-            (0, hours) => format!("{hours}h"),
-            (days, 0) => format!("{days}d"),
-            (days, hours) => format!("{days}d{hours}h"),
-        })
-    } else if window.duration_minutes >= 60 {
-        let hours = elapsed_minutes / 60;
-        let minutes = elapsed_minutes % 60;
-        Some(match (hours, minutes) {
-            (0, minutes) => format!("{minutes}m"),
-            (hours, 0) => format!("{hours}h"),
-            (hours, minutes) => format!("{hours}h{minutes}m"),
-        })
+    Some(total_seconds - remaining_seconds)
+}
+
+fn quota_window_position(window: &QuotaWindow, observed_at: u64) -> Option<String> {
+    quota_elapsed_seconds(window, observed_at)
+        .map(|elapsed| quota_minutes(elapsed / 60, window.duration_minutes))
+}
+
+/// How early, as a share of the window, the pace so far runs out before the reset if it
+/// continues linearly; negative is the share left spare, down to -1. `None` has no basis:
+/// no reset, or under a tenth of the window elapsed with quota left.
+fn quota_shortfall(window: &QuotaWindow, observed_at: u64) -> Option<f32> {
+    // EONW rejects zero-length windows.
+    let elapsed = quota_elapsed_seconds(window, observed_at)? as f32
+        / (u64::from(window.duration_minutes) * 60) as f32;
+    let used = f32::from(100 - window.remaining_percent) / 100.0;
+    if used >= 1.0 {
+        Some(1.0 - elapsed)
+    } else if elapsed < 0.1 {
+        None
     } else {
-        Some(format!("{elapsed_minutes}m"))
+        // Nothing used divides to infinity, which clamps to -1.
+        Some((1.0 - elapsed / used).max(-1.0))
     }
 }
 
@@ -1792,39 +1830,67 @@ fn quota_window_text(window: &QuotaWindow, observed_at: u64) -> String {
     format!("{label} {}%", window.remaining_percent)
 }
 
+/// One provider chip's wide and compact labels with their pace, and its description.
+struct QuotaText {
+    wide: String,
+    wide_pace: Vec<QuotaPace>,
+    compact: String,
+    compact_pace: Vec<QuotaPace>,
+    description: String,
+}
+
 fn quota_text(
     provider: QuotaProvider,
     state: CodexQuotaState,
     observed_at: u64,
     windows: &[QuotaWindow],
-) -> (String, String, String) {
+) -> QuotaText {
     let suffix = if state == CodexQuotaState::Stale {
         " old"
     } else {
         ""
     };
-    let wide = match state {
-        CodexQuotaState::Fresh | CodexQuotaState::Stale => format!(
-            "{}{suffix}",
-            windows
-                .iter()
-                .map(|window| quota_window_text(window, observed_at))
-                .collect::<Vec<_>>()
-                .join(" · ")
-        ),
-        CodexQuotaState::Blocked => "blocked".into(),
-        CodexQuotaState::Unknown => "unknown".into(),
+    // Only fresh facts are judged; stale, blocked and unknown keep the neutral color.
+    let shortfall = |window: &QuotaWindow| {
+        (state == CodexQuotaState::Fresh)
+            .then(|| quota_shortfall(window, observed_at))
+            .flatten()
     };
-    let compact = match state {
+    let label = |windows: &[QuotaWindow]| {
+        let mut text = String::new();
+        let mut pace = Vec::new();
+        for (index, window) in windows.iter().enumerate() {
+            if index > 0 {
+                text.push_str(" · ");
+            }
+            let start = text.len();
+            text.push_str(&quota_window_text(window, observed_at));
+            if let Some(shortfall) = shortfall(window) {
+                pace.push(QuotaPace {
+                    range: start..text.len(),
+                    shortfall,
+                });
+            }
+        }
+        text.push_str(suffix);
+        (text, pace)
+    };
+    let ((wide, wide_pace), (compact, compact_pace)) = match state {
         CodexQuotaState::Fresh | CodexQuotaState::Stale => {
-            let window = windows
+            let lowest = windows
                 .iter()
                 .min_by_key(|window| (window.remaining_percent, window.duration_minutes))
                 .expect("EONW requires quota windows for fresh and stale states");
-            format!("{}{suffix}", quota_window_text(window, observed_at))
+            (label(windows), label(std::slice::from_ref(lowest)))
         }
-        CodexQuotaState::Blocked => "blocked".into(),
-        CodexQuotaState::Unknown => "unknown".into(),
+        CodexQuotaState::Blocked => (
+            ("blocked".into(), Vec::new()),
+            ("blocked".into(), Vec::new()),
+        ),
+        CodexQuotaState::Unknown => (
+            ("unknown".into(), Vec::new()),
+            ("unknown".into(), Vec::new()),
+        ),
     };
     let name = provider.name();
     let mut description = format!(
@@ -1848,8 +1914,38 @@ fn quota_text(
         } else {
             description.push_str("reset time unavailable.");
         }
+        let Some(shortfall) = shortfall(window) else {
+            continue;
+        };
+        if window.remaining_percent == 0 {
+            description.push_str(" Used up until reset.");
+        } else if shortfall <= 0.0 {
+            description.push_str(" At this pace it lasts until reset.");
+        } else {
+            // State the shortfall to the nearest unit the window counts in (hours for
+            // day-long windows), and at least one.
+            let unit = if window.duration_minutes >= 24 * 60 {
+                60
+            } else {
+                1
+            };
+            let early = ((shortfall * window.duration_minutes as f32 / unit as f32).round() as u64)
+                .max(1)
+                * unit;
+            let _ = write!(
+                description,
+                " At this pace it runs out about {} before reset.",
+                quota_minutes(early, window.duration_minutes)
+            );
+        }
     }
-    (wide, compact, description)
+    QuotaText {
+        wide,
+        wide_pace,
+        compact,
+        compact_pace,
+        description,
+    }
 }
 
 fn stack_inset(metrics: CellMetrics) -> f32 {
@@ -2110,9 +2206,13 @@ impl WorkspaceScene {
         let mut measure_quotas = |compact| {
             quota_texts
                 .iter()
-                .map(|(provider, window, (wide, short, description))| {
-                    let (label, width) =
-                        header_text(HeaderText::Fact, if compact { short } else { wide });
+                .map(|(provider, window, text)| {
+                    let (shown, pace) = if compact {
+                        (&text.compact, &text.compact_pace)
+                    } else {
+                        (&text.wide, &text.wide_pace)
+                    };
+                    let (label, width) = header_text(HeaderText::Fact, shown);
                     WorkspaceQuota {
                         provider: *provider,
                         window: *window,
@@ -2123,7 +2223,8 @@ impl WorkspaceScene {
                         logo: SceneRect::default(),
                         accessible_label: format!("{} {label}", provider.name()),
                         label,
-                        description: description.clone(),
+                        pace: pace.clone(),
+                        description: text.description.clone(),
                     }
                 })
                 .collect::<Vec<_>>()
@@ -4098,21 +4199,184 @@ mod tests {
                 remaining_percent: 100,
                 resets_at: None,
             };
-            let (wide, compact, description) =
-                quota_text(QuotaProvider::Claude, state, 100, &[window]);
+            let text = quota_text(QuotaProvider::Claude, state, 100, &[window]);
             let suffix = if state == CodexQuotaState::Stale {
                 " old"
             } else {
                 ""
             };
-            assert_eq!(wide, format!("5h 100%{suffix}"));
-            assert_eq!(compact, format!("5h 100%{suffix}"));
-            assert!(description.contains("reset time unavailable"));
-            assert!(description.contains(if state == CodexQuotaState::Stale {
-                "stale"
-            } else {
-                "fresh"
-            }));
+            assert_eq!(text.wide, format!("5h 100%{suffix}"));
+            assert_eq!(text.compact, format!("5h 100%{suffix}"));
+            assert!(text.wide_pace.is_empty() && text.compact_pace.is_empty());
+            assert!(text.description.contains("reset time unavailable"));
+            assert!(!text.description.contains("pace"));
+            assert!(
+                text.description
+                    .contains(if state == CodexQuotaState::Stale {
+                        "stale"
+                    } else {
+                        "fresh"
+                    })
+            );
+        }
+    }
+
+    #[test]
+    fn quota_shortfall_projects_linear_pace_with_a_basis_only() {
+        // A five-hour window observed at `elapsed` share with `remaining` percent left.
+        let window = |elapsed: f32, remaining: u8| QuotaWindow {
+            duration_minutes: 300,
+            remaining_percent: remaining,
+            resets_at: Some(1000 + ((1.0 - elapsed) * 18_000.0).round() as u64),
+        };
+        let shortfall = |elapsed, remaining| quota_shortfall(&window(elapsed, remaining), 1000);
+        for (elapsed, remaining, expected) in [
+            (0.5, 60, -0.25),  // comfortably under pace: full green
+            (0.5, 50, 0.0),    // exactly on pace
+            (0.45, 50, 0.1),   // yellow
+            (0.375, 50, 0.25), // orange
+            (0.25, 50, 0.5),   // full red
+            (0.1, 50, 0.8),    // the first judged instant
+            (0.5, 100, -1.0),  // nothing used never runs out
+            (0.05, 0, 0.95),   // used up, even in a young window
+            (0.95, 0, 0.05),
+        ] {
+            let actual = shortfall(elapsed, remaining).expect("judged window");
+            assert!(
+                (actual - expected).abs() < 1e-3,
+                "{elapsed} elapsed, {remaining}% left: {actual} != {expected}"
+            );
+        }
+        assert_eq!(shortfall(0.09, 50), None, "a young window has no basis");
+        let reset_less = QuotaWindow {
+            resets_at: None,
+            ..window(0.5, 0)
+        };
+        assert_eq!(quota_shortfall(&reset_less, 1000), None);
+        // More used is never better; more elapsed for the same use is never worse.
+        for elapsed in (10..=100).map(|step| step as f32 / 100.0) {
+            let mut previous = f32::NEG_INFINITY;
+            for remaining in (0..=100).rev() {
+                let current = shortfall(elapsed, remaining).expect("judged window");
+                assert!(current >= previous, "{elapsed} elapsed, {remaining}% left");
+                previous = current;
+            }
+        }
+        for remaining in 0..=100 {
+            let mut previous = f32::INFINITY;
+            for elapsed in (10..=100).map(|step| step as f32 / 100.0) {
+                let current = shortfall(elapsed, remaining).expect("judged window");
+                assert!(current <= previous, "{elapsed} elapsed, {remaining}% left");
+                previous = current;
+            }
+        }
+    }
+
+    #[test]
+    fn quota_pace_colors_fresh_windows_and_says_so_in_words() {
+        let observed_at = 1_000_000;
+        // Five hours: 2h30m in, 50% left, on pace. Seven days: 2d15h in, 50% left,
+        // running out 1d18h early.
+        let windows = [
+            QuotaWindow {
+                duration_minutes: 300,
+                remaining_percent: 50,
+                resets_at: Some(observed_at + 9_000),
+            },
+            QuotaWindow {
+                duration_minutes: 10_080,
+                remaining_percent: 50,
+                resets_at: Some(observed_at + 378_000),
+            },
+        ];
+        let text = quota_text(
+            QuotaProvider::Codex,
+            CodexQuotaState::Fresh,
+            observed_at,
+            &windows,
+        );
+        assert_eq!(text.wide, "2h30m/5h 50% · 2d15h/7d 50%");
+        let segments = text
+            .wide_pace
+            .iter()
+            .map(|pace| &text.wide[pace.range.clone()])
+            .collect::<Vec<_>>();
+        assert_eq!(segments, ["2h30m/5h 50%", "2d15h/7d 50%"]);
+        assert!(text.wide_pace[0].shortfall.abs() < 1e-3);
+        assert!((text.wide_pace[1].shortfall - 0.25).abs() < 1e-3);
+        assert_eq!(text.compact, "2h30m/5h 50%");
+        assert_eq!(text.compact_pace.len(), 1);
+        assert_eq!(text.compact_pace[0].range, 0..text.compact.len());
+        assert!(
+            text.description.contains(
+                "5h window: 50% remaining; observed 2h30m into 5h. At this pace it lasts until reset."
+            ),
+            "{}",
+            text.description
+        );
+        assert!(text.description.contains(
+            "7d window: 50% remaining; observed 2d15h into 7d. At this pace it runs out about 1d18h before reset."
+        ));
+
+        let used_up = QuotaWindow {
+            duration_minutes: 300,
+            remaining_percent: 0,
+            resets_at: Some(observed_at + 17_000),
+        };
+        let text = quota_text(
+            QuotaProvider::Claude,
+            CodexQuotaState::Fresh,
+            observed_at,
+            &[used_up],
+        );
+        assert_eq!(text.wide_pace.len(), 1);
+        assert!(
+            text.description
+                .ends_with("observed 16m into 5h. Used up until reset.")
+        );
+
+        // A day-long window under an hour early states one hour.
+        let barely = QuotaWindow {
+            duration_minutes: 10_080,
+            remaining_percent: 50,
+            resets_at: Some(observed_at + 302_400 + 1_000),
+        };
+        let text = quota_text(
+            QuotaProvider::Claude,
+            CodexQuotaState::Fresh,
+            observed_at,
+            std::slice::from_ref(&barely),
+        );
+        assert!(
+            text.description
+                .ends_with("At this pace it runs out about 1h before reset.")
+        );
+        // And rounds to the nearest hour: 1h50m early states 2h.
+        let text = quota_text(
+            QuotaProvider::Claude,
+            CodexQuotaState::Fresh,
+            observed_at,
+            &[QuotaWindow {
+                resets_at: Some(observed_at + 305_700),
+                ..barely
+            }],
+        );
+        assert!(
+            text.description
+                .ends_with("At this pace it runs out about 2h before reset."),
+            "{}",
+            text.description
+        );
+
+        // Stale, blocked and unknown facts are never judged.
+        for state in [
+            CodexQuotaState::Stale,
+            CodexQuotaState::Blocked,
+            CodexQuotaState::Unknown,
+        ] {
+            let text = quota_text(QuotaProvider::Codex, state, observed_at, &windows);
+            assert!(text.wide_pace.is_empty() && text.compact_pace.is_empty());
+            assert!(!text.description.contains("pace") && !text.description.contains("Used up"));
         }
     }
 

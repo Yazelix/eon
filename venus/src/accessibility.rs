@@ -1838,7 +1838,7 @@ mod tests {
                 quota(CodexQuotaState::Fresh, windows()),
                 Some("3h/5h 74% · 6d4h/7d 42%"),
                 Some("Codex 3h/5h 74% · 6d4h/7d 42%"),
-                "5h window: 74% remaining; observed 3h into 5h. 7d window: 42% remaining; observed 6d4h into 7d",
+                "5h window: 74% remaining; observed 3h into 5h. At this pace it lasts until reset. 7d window: 42% remaining; observed 6d4h into 7d. At this pace it lasts until reset.",
             ),
             (
                 "fresh compact",
@@ -2030,9 +2030,10 @@ mod tests {
         // EONW may carry Claude's windows in either order, or only one of them.
         let claude_windows = [vec![seven_day.clone(), five_hour], vec![seven_day]];
         for state in [ClaudeQuotaState::Fresh, ClaudeQuotaState::Stale] {
-            let (suffix, freshness) = match state {
-                ClaudeQuotaState::Fresh => ("", "fresh"),
-                ClaudeQuotaState::Stale => (" old", "stale"),
+            // Only fresh windows are judged for pace.
+            let (suffix, freshness, pace) = match state {
+                ClaudeQuotaState::Fresh => ("", "fresh", " At this pace it lasts until reset."),
+                ClaudeQuotaState::Stale => (" old", "stale", ""),
             };
             for windows in &claude_windows {
                 for providers in 0..4 {
@@ -2184,7 +2185,7 @@ mod tests {
                                 );
                                 assert_eq!(
                                     quota.description,
-                                    format!("Claude quota state: {freshness}. {detail}")
+                                    format!("Claude quota state: {freshness}. {detail}{pace}")
                                 );
                                 assert!(!quota.description.contains(other));
                             }

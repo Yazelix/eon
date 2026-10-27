@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- VEN-C22/VEN-C26: each fresh quota window with a reset, past its first tenth,
+  colors its text on a green, yellow, orange, red gradient by how early its
+  linear pace runs out before the reset; a used-up window is always colored.
+  Hover and the accessible description say at this pace it lasts until reset,
+  runs out about a stated time before reset, or is used up. Stale, blocked,
+  unknown and reset-less windows keep the neutral color (`eon-l8lt`).
+
 - VEN-C21: the working badge draws braille dots stepping through
   ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ at no more than 10 Hz instead of an open arc turning at 5 Hz.
   The new `--animate-working-badge true|false` launch argument, true by

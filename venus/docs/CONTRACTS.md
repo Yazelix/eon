@@ -1500,8 +1500,9 @@ re-proved when that platform or feature is next touched.
 - **Boundary:** One fixed monochrome service mark adds no generic icon or image
   system, decoder, provider parsing, process, filesystem or network access,
   timer, cache, quota mutation, account identity, click action, focus target,
-  alert, threshold color, chart, configuration, widget framework, second row,
-  other provider, Orbit change, or platform expansion. One exception: the mark
+  alert, threshold color other than the pace gradient (VEN-C22/VEN-C26 — Pace
+  color), chart, configuration, widget framework, second row, other provider,
+  Orbit change, or platform expansion. One exception: the mark
   may also sit in the clickable, focusable rows of the agent sidebar
   (VEN-C30). Workspace transport loss
   expires the optional quota while retaining the last useful workspace.
@@ -1730,6 +1731,43 @@ re-proved when that platform or feature is next touched.
     in the workspace suite.
 - **Open proof:** Pending re-proof in this repository: installed chips without
   a reset.
+
+### VEN-C22/VEN-C26 — Pace color
+
+- **Status:** Proven on x86_64 Linux Wayland by the automated tier and an
+  isolated installed observation with fixture quota data; AT-SPI labels are
+  pending native observation.
+- **Contract:** Each fresh quota window with a reset, past its first tenth, colors
+  its text (one segment of Codex's chip, the label of a Claude chip) on a
+  continuous green, yellow, orange, red gradient by how early its current pace
+  runs out before the reset, projected linearly from the snapshot's used and
+  elapsed shares at the observation time. Full green is comfortably under pace;
+  exactly on pace is a light green turning toward yellow; full red runs out at
+  least half a window early. A used-up window is always colored. Stale, blocked,
+  unknown, reset-less and younger windows keep the neutral text color. Hover and
+  the static accessible label say, for each colored window, that at this pace it
+  lasts until reset, runs out about a stated time before reset, or is used up, so
+  color is never the only signal. Separators, `old`, the marks, text, compact
+  choice, widths and hiding order are unchanged; every gradient color keeps at
+  least 4.5:1 contrast on the Eon Bar.
+- **Owner:** Venus Scene projects the color and wording from snapshot facts;
+  the existing glyphon renderer, hover and AccessKit owners present them. No
+  EONW, Runtime, provider, configuration, timer, dependency or module change.
+- **Proof:** `eon-l8lt`; that bead's commit is its revision.
+  - **Environment:** Automated tier; isolated installed tier (private headless
+    Sway 1.12, pixman, 1600x900, x86_64 Linux) with only CodexBar replaced by a
+    fixture.
+  - **Evidence:** `quota_shortfall_projects_linear_pace_with_a_basis_only`,
+    `quota_pace_colors_fresh_windows_and_says_so_in_words` and
+    `quota_pace_gradient_is_ordered_readable_and_colors_only_judged_windows` in
+    the workspace suite. Installed: the Codex chip's comfortably-under-pace
+    five-hour window drew in full green and its far-over-pace seven-day window
+    in full red with a neutral separator, Claude's on-pace five-hour chip in
+    the on-pace green and its seven-day chip between yellow and orange, each
+    glyph color sampled equal to the gradient value; hover said "At this pace
+    it lasts until reset" and "runs out about 5d8h before reset".
+- **Open proof:** AT-SPI labels and the stale, blocked and used-up states on
+  the installed product.
 
 ### VEN-C26 — Claude splat icon
 

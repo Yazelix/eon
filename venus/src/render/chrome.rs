@@ -7,7 +7,9 @@ use super::{
 };
 use crate::{
     DialogKind, DialogScene, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
-    scene::{QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics},
+    scene::{
+        QuotaPace, QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, TabBadge, chrome_title_metrics,
+    },
 };
 use eon_workspace_protocol::v22::AttentionState;
 use glyphon::{
@@ -93,6 +95,54 @@ fn color_pane_identity(buffer: &mut Buffer, fonts: &mut FontSystem, id: &str, co
     );
     buffer.shape_until_scroll(fonts, false);
 }
+
+fn quota_pace_color(shortfall: f32) -> SceneColor {
+    let gradient = palette::QUOTA_PACE;
+    if shortfall <= gradient[0].0 {
+        return gradient[0].1;
+    }
+    gradient
+        .windows(2)
+        .find(|pair| shortfall <= pair[1].0)
+        .map_or(gradient[gradient.len() - 1].1, |pair| {
+            let ((from, start), (to, end)) = (pair[0], pair[1]);
+            let share = (shortfall - from) / (to - from);
+            let mix = |start: u8, end: u8| {
+                (f32::from(start) + (f32::from(end) - f32::from(start)) * share).round() as u8
+            };
+            SceneColor {
+                r: mix(start.r, end.r),
+                g: mix(start.g, end.g),
+                b: mix(start.b, end.b),
+            }
+        })
+}
+
+/// Recolors each judged window's text in the buffer already shaped from `label`.
+fn color_quota_pace(buffer: &mut Buffer, fonts: &mut FontSystem, label: &str, pace: &[QuotaPace]) {
+    let attrs = Attrs::new().family(Family::SansSerif);
+    let mut spans = Vec::new();
+    let mut end = 0;
+    for window in pace {
+        let (Some(before), Some(text)) = (
+            label.get(end..window.range.start),
+            label.get(window.range.clone()),
+        ) else {
+            return;
+        };
+        let color = quota_pace_color(window.shortfall);
+        spans.push((before, attrs.clone()));
+        spans.push((
+            text,
+            attrs.clone().color(Color::rgb(color.r, color.g, color.b)),
+        ));
+        end = window.range.end;
+    }
+    spans.push((&label[end..], attrs.clone()));
+    buffer.set_rich_text(spans, &attrs, shaping(label), None);
+    buffer.shape_until_scroll(fonts, false);
+}
+
 const OPENAI_BLOSSOM_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
     include_bytes!("../../assets/openai-blossom-104.alpha");
 const CLAUDE_SPLAT_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
@@ -1155,6 +1205,7 @@ impl Renderer {
             self.push_quota_icon(quota.provider, quota.logo, None);
             let label_left = quota.logo.right() + self.metrics.padding / 2.0;
             let label_width = (quota.rect.right() - self.metrics.padding - label_left).max(0.0);
+            let first_text = self.text.len();
             self.push_text_clipped(
                 &quota.label,
                 label_left,
@@ -1166,6 +1217,16 @@ impl Renderer {
                 DrawStyleKind::Status(Wrap::None),
                 quota.rect,
             );
+            if !quota.pace.is_empty()
+                && let Some(text) = self.text.get_mut(first_text)
+            {
+                color_quota_pace(
+                    &mut text.buffer,
+                    &mut self.fonts.font_system,
+                    &quota.label,
+                    &quota.pace,
+                );
+            }
         }
         for (label, color, pill) in [
             (&workspace.cpu, palette::SECONDARY_TEXT, true),
@@ -1494,6 +1555,47 @@ mod tests {
     use super::*;
     use crate::EonBar;
     use glyphon::cosmic_text::SubpixelBin;
+
+    #[test]
+    fn quota_pace_gradient_is_ordered_readable_and_colors_only_judged_windows() {
+        for (shortfall, color) in palette::QUOTA_PACE {
+            assert_eq!(quota_pace_color(shortfall), color);
+        }
+        assert_eq!(quota_pace_color(-1.0), palette::QUOTA_PACE[0].1);
+        assert_eq!(quota_pace_color(1.0), palette::QUOTA_PACE[4].1);
+        // More shortfall is never greener, and every shade stays readable on the bar.
+        let mut previous = quota_pace_color(-1.0);
+        for step in -100..=100 {
+            let color = quota_pace_color(step as f32 / 100.0);
+            assert!(color.r >= previous.r && color.g <= previous.g, "{step}");
+            assert!(contrast(color, palette::BAR_BACKGROUND) >= 4.5, "{step}");
+            previous = color;
+        }
+
+        let label = "2h30m/5h 50% · 2d15h/7d 50%";
+        let pace = [QuotaPace {
+            range: label.find('2').unwrap()..label.find(" ·").unwrap(),
+            shortfall: 0.5,
+        }];
+        let mut fonts = FontSystem::new();
+        let mut buffer = Buffer::new(&mut fonts, Metrics::new(16.0, 18.0));
+        buffer.set_size(Some(600.0), Some(40.0));
+        let attrs = Attrs::new().family(Family::SansSerif);
+        buffer.set_text(label, &attrs, shaping(label), None);
+        buffer.shape_until_scroll(&mut fonts, false);
+        let before = buffer.layout_runs().next().unwrap().line_w;
+        color_quota_pace(&mut buffer, &mut fonts, label, &pace);
+        let run = buffer.layout_runs().next().unwrap();
+        assert_eq!(run.line_w, before);
+        let red = palette::QUOTA_PACE[4].1;
+        for glyph in run.glyphs {
+            let expected = pace[0]
+                .range
+                .contains(&glyph.start)
+                .then(|| Color::rgb(red.r, red.g, red.b));
+            assert_eq!(glyph.color_opt, expected, "glyph at {}", glyph.start);
+        }
+    }
 
     #[test]
     fn pane_identity_dimming_preserves_contrast_and_shaped_geometry() {
