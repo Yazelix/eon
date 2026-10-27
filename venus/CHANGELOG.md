@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- VEN-C31 becomes Proven: on the installed Eon and a hardware Vulkan device,
+  Yazi's RGB and RGBA image previews drew in a pane and in the Files popup
+  and, in the pane, across resizing, deletion, the alternate screen, detach
+  and reattach; a directly placed image scrolled with its rows and back from
+  history.
+  Behavior is unchanged (`orb-j2i.12`).
+
 - VEN-C31: Venus uploads Orbit's image resources into one window-wide GPU
   cache of at most 256 MiB and draws each frame's placement entries between
   cell backgrounds and text, in panes, other columns and popups. An entry

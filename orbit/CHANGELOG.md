@@ -160,6 +160,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   referenced images' pixels. The temporary `ORBIT_KITTY_GRAPHICS`
   environment variable is gone (`orb-j2i.11`).
 
+- ORB-C16 and ORB-C6 become Proved: on the installed Eon, Yazi's RGB and
+  RGBA image previews drew in a pane and in the Files popup and, in the pane,
+  across resizing, deletion, the alternate screen, detach and reattach; a
+  directly placed image scrolled with its rows and back from history. Wire and behavior are
+  unchanged (`orb-j2i.12`).
+
 ## Before this repository
 
 Orbit was developed as Eon Sessions until 2026-10-14; that history is kept in a

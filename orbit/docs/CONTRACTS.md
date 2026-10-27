@@ -43,8 +43,8 @@ ORBS v7 through v14 are explicitly breaking, exact-version boundaries with no
 compatibility window or adapter; each replaced its predecessor. Orbit's
 real-PTY checks and lifecycle tests, Venus and Eon consume the canonical crate
 in this repository. Each contract below states the current ORBF v3 in ORBS v14
-behavior; ORB-C16, whose values ORBF v3 and ORBS v14 carry, is partially
-proved. Its PTY pixel size rule needs no wire change.
+behavior, including ORB-C16, whose values ORBF v3 and ORBS v14 carry. Its
+PTY pixel size rule needs no wire change.
 
 ## ORB-C1 — Session survival across client loss
 
@@ -235,7 +235,7 @@ proved. Its PTY pixel size rule needs no wire change.
 
 ## ORB-C6 — Rich presentation without silent degradation
 
-- **Status:** Partially proved
+- **Status:** Proved
 - **Consumer:** Every canonical presentation client.
 - **Trigger:** Orbit extracts or encodes terminal presentation state.
 - **Result:** The boundary carries rich terminal state or explicitly declares an
@@ -288,12 +288,13 @@ proved. Its PTY pixel size rule needs no wire change.
       exceeds: full text in reading order while it fits, the first codepoint
       in the rest, and links only after the text.
     - Canonical ORBF-in-ORBS codec checks in the workspace suite
-- **Open proof:** Static graphics joined this contract on 2026-10-27 under
+- **Graphics proof:** Static graphics joined this contract on 2026-10-27 under
   Lucca's standing approval of 2026-10-26, relayed by eon-overseer
-  (`orb-j2i.2`), and the proof above predates them. ORB-C16 is partially proved.
-  From `orb-j2i.11`, frames state `kitty_graphics` true, carry placement
-  entries and blank placeholder cells, and Venus draws the images; no proof
-  above covers that yet.
+  (`orb-j2i.2`), and the proof above predates them. From `orb-j2i.11`, frames
+  state `kitty_graphics` true, carry placement entries and blank placeholder
+  cells, and Venus draws the images. ORB-C16's proof covers that: its real-PTY
+  checks on Orbit's side, and `orb-j2i.12`'s installed proof of Yazi's
+  previews.
 
 ## ORB-C7 — Bounded attachment pressure
 
@@ -1047,9 +1048,7 @@ proved. Its PTY pixel size rule needs no wire change.
 
 ## ORB-C16 — Static graphics resource plane
 
-- **Status:** Partially proved: the real-PTY checks below cover Orbit's side
-  with the shipped switch; the installed proof of Yazi previews is
-  `orb-j2i.12`.
+- **Status:** Proved
 - **Consumer:**
   - a program in an Orbit terminal that shows static images through the Kitty
     graphics protocol, directly or with Unicode placeholders, such as Yazi
@@ -1235,7 +1234,7 @@ proved. Its PTY pixel size rule needs no wire change.
   - File, temporary-file and shared-memory transmission, PNG, Sixel, iTerm2
     images, a client request for a missing resource, content addressing and
     restart persistence are excluded.
-- **Proof:** Not proved. Adopted on 2026-10-27 under Lucca's standing
+- **Proof:** Adopted on 2026-10-27 under Lucca's standing
   approval of 2026-10-26, relayed by eon-overseer (`orb-j2i.2`).
   `orb-j2i.4` sizes the PTY; `orb-j2i.5` adds the wire revisions;
   `orb-j2i.6` and `orb-j2i.7` extract placements and send resources;
@@ -1254,8 +1253,24 @@ proved. Its PTY pixel size rule needs no wire change.
   pressure, exit and the cap
   ([BEHAVIOR.md](BEHAVIOR.md#kitty-graphics-placements)). They passed on
   x86_64 Linux, built as Nix checks of the flake with every other check, at
-  the commit that records `orb-j2i.11`'s proof. Open: Yazi's previews on the
-  installed Eon (`orb-j2i.12`).
+  the commit that records `orb-j2i.11`'s proof. `orb-j2i.12` proved Yazi's
+  previews on the installed Eon
+  `/nix/store/77w9f35fj1p8a9hz89j5wdcbii2b8bhc-eon-0.1.5`, built from
+  `7dc3509` with Orbit
+  `/nix/store/bf4if4kd62xdrsvx6kb78bzf1kqdcdp7-yazelix-orbit-0.1.0` and Yazi
+  26.5.6 (`aa526434f00bb44e2e902d9a4ac5f810da1018b9`), on x86_64 Linux in an
+  isolated headless Sway 1.12 on its Vulkan renderer. In a pane and in the
+  Files popup, Yazi's previews of RGB and RGBA files reached Venus as RGB and
+  RGBA resources, drew at Yazi's place and size, and went away on a text file,
+  and in the pane when Yazi quit. A direct RGBA placement on the primary screen scrolled off with
+  its rows, came back clipped when the viewport scrolled into history, stayed
+  hidden while Yazi held the alternate screen, and came back when Yazi quit.
+  Resizes, a tab switch and back, and window detach and reattach redrew
+  Yazi's preview; hiding and showing the Files popup redrew the pane's image
+  and then the popup's preview. A trace of Orbit's socket showed one
+  announcement and its chunks for each resource, with byte and chunk counts
+  that follow from its format and size, and one retirement for each replaced
+  image; the bead records the measurements.
 
 ## Focused terminal conformance corpus
 

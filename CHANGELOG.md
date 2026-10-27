@@ -19,7 +19,9 @@ installation, and proven contract changes.
   terminal's text colour instead of staying blank. Images in one window use at
   most 256 MiB of GPU memory; past that, Eon frees images no terminal shows
   and marks the rest. Images that a program sends from a file or shared
-  memory and PNG data are not shown, and animations do not play.
+  memory and PNG data are not shown, and animations do not play. Yazi's
+  previews are proven on the installed product, x86_64 Linux Wayland, in a
+  pane and in the Files popup (ORB-C16, VEN-C31).
 
 - Several workspaces in one window (EON-C33) are proven on the installed
   product, x86_64 Linux Wayland. One window held three workspaces.

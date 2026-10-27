@@ -8,8 +8,7 @@ retains accepted user-visible chronology.
 in-tree `orbit-protocol` crate and canonical EONW v22 through the in-tree
 `eon-workspace-protocol` crate. A protocol version named in a contract below
 records when that behavior entered the wire; the current consumer is the
-in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14 and is a
-Candidate.
+in-tree version. VEN-C31 entered with ORBF v3 in ORBS v14.
 
 ## Proof environments
 
@@ -2182,10 +2181,9 @@ re-proved when that platform or feature is next touched.
 
 ## VEN-C31 — Static terminal images
 
-- **Status:** Candidate: implemented in `orb-j2i.11`, whose automated
-  checks cover the budget, the draw and marker list and the resync
-  allowance; the proof-bearing installed check of Yazi previews is
-  `orb-j2i.12`.
+- **Status:** Proven on x86_64 Linux. A budget refusal and its resync have
+  not been observed in a running Eon; resync after device loss is unreachable
+  while VEN-C4 keeps that loss terminal.
 - **Consumer:** A person viewing an Orbit terminal in an Eon window, in a pane
   or a popup, whose program shows static images (ORB-C16), such as Yazi's
   image previews.
@@ -2322,5 +2320,24 @@ re-proved when that platform or feature is next touched.
   2026-10-26, relayed by eon-overseer (`orb-j2i.2`), and refined in
   `orb-j2i.11` under the same approval.
   `orb-j2i.9` adds the drawing band; `orb-j2i.10` validates and assembles
-  resources; `orb-j2i.11` uploads and draws them; `orb-j2i.12` proves Yazi
-  previews on the installed Eon.
+  resources; `orb-j2i.11` uploads and draws them. At `7dc3509`, the commit
+  that records `orb-j2i.11`'s proof, its CPU tests of the budget plan, the
+  draw and marker list and the resync allowance passed in the sandboxed `nix
+  develop -c eon-test` on x86_64 Linux. Venus's ignored live image regression,
+  which covers the image band in a pane and a popup, a refused image's marker
+  and the renderer staying up after refusals, passed on an isolated Sway
+  display on lavapipe. `orb-j2i.12` proved Yazi previews on the installed Eon
+  `/nix/store/77w9f35fj1p8a9hz89j5wdcbii2b8bhc-eon-0.1.5`, built from
+  `7dc3509` with Venus
+  `/nix/store/7mc55nr62m96dca6jkxlqs3xq9riibln-yazelix-venus-0.1.0` and Yazi
+  26.5.6 (`aa526434f00bb44e2e902d9a4ac5f810da1018b9`), on x86_64 Linux in an
+  isolated headless Sway 1.12 on its Vulkan renderer. Venus ran on the Intel
+  UHD Graphics GPU (i915, Mesa 26.1.2), not on lavapipe. In a pane and in the
+  Files popup, RGB and RGBA previews drew at the entries' pixel size (320 by
+  200 for a 320 by 200 file) and place, with alpha blended over the terminal
+  background. Images moved with their rows, were clipped at the grid's top
+  edge when history scrolled them partly out, and redrew after a second column
+  narrowed the pane and after the output shrank. They went away on a text
+  file, and in the pane when Yazi quit. Tab switch, popup hide and window
+  detach reattached the terminal, and its images drew again, after window
+  detach at a larger configured font size. No capture showed a marker.
