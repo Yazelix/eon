@@ -12,9 +12,11 @@ mod kitty;
 mod support;
 
 macro_rules! checks {
-    ($($check:ident),* $(,)?) => {$(
+    ($($(#[$gate:meta])* $check:ident),* $(,)?) => {$(
+        $(#[$gate])*
         mod $check;
 
+        $(#[$gate])*
         #[test]
         #[ignore = "drives the Orbit at ORBIT_BIN through a real PTY"]
         fn $check() {
@@ -72,6 +74,8 @@ checks!(
     terminal_identity,
     terminal_replies,
     three_attach,
+    // Holds the child unreaped with Linux's PTRACE_SEIZE.
+    #[cfg(target_os = "linux")]
     unreaped_stop,
     unsupported,
 );

@@ -1553,7 +1553,6 @@ impl Renderer {
 mod tests {
     use super::super::*;
     use super::*;
-    use crate::EonBar;
     use glyphon::cosmic_text::SubpixelBin;
 
     #[test]
@@ -2176,6 +2175,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
     fn long_workspace_labels_stay_on_the_visible_line() {
+        use crate::EonBar;
         use eon_workspace_protocol::v22::{Pane, Snapshot, Tab};
         use winit::{
             application::ApplicationHandler, event::WindowEvent, event_loop::EventLoop,

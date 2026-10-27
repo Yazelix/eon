@@ -177,6 +177,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
   generation 3 in the same change; Venus does not use management. A new Eon
   cannot stop or recover a run started by a generation-2 Orbit. ORB-C15
   gains the count.
+- ORB-C14's native macOS re-proof runs every real-PTY check except
+  `orbit-unreaped-stop`, which holds the child unreaped with Linux's
+  `PTRACE_SEIZE`, so a Stop whose child cannot be reaped is checked on Linux
+  only. Orbit's tests compile for `aarch64-apple-darwin`
+  (`eon-mac-launch-kz4p.18`).
 
 ## Before this repository
 

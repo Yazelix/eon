@@ -7286,10 +7286,17 @@ mod tests {
                 .contains("timed out")
         );
         drop(opener);
-        assert!(
-            !PathBuf::from(format!("/proc/{pid}")).exists(),
-            "dispatcher must be reaped"
-        );
+        // A zombie still has a /proc entry and is still listed by ps.
+        #[cfg(target_os = "linux")]
+        let reaped = !PathBuf::from(format!("/proc/{pid}")).exists();
+        #[cfg(not(target_os = "linux"))]
+        let reaped = !Command::new("/bin/ps")
+            .args(["-p", &pid.to_string()])
+            .stdout(Stdio::null())
+            .status()
+            .unwrap()
+            .success();
+        assert!(reaped, "dispatcher must be reaped");
     }
 
     #[test]

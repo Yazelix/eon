@@ -164,8 +164,9 @@ another `Reap`, so the host waits again, two seconds at a time and serving
 nothing else, until the child is reaped and the Stop completes as above. A
 SIGKILL that fails ends the run as a host failure instead, and a termination
 signal during the wait takes the fatal-exit path. The real-PTY
-check [`orbit-unreaped-stop`](../tests/real_pty/unreaped_stop.rs) traces the
-child, so its zombie stays hidden from Orbit past the escalation, then
+check [`orbit-unreaped-stop`](../tests/real_pty/unreaped_stop.rs), which runs
+on Linux only, traces the child with `PTRACE_SEIZE`, so its zombie stays
+hidden from Orbit past the escalation, then
 releases it and sees the Stop complete with SIGKILL; in a second run, SIGTERM
 during the wait ends Orbit with 143 and no record. Files and process
 metadata never authorize anything.
@@ -930,8 +931,8 @@ The real-PTY program-status check reads the records through a
   on.
 - A Bash with job control starts a job of its own, then a foreground job.
   The foreground job starts a process in its group, then, with job control,
-  one in its own group that stops itself and one in its own group that
-  renames itself to bytes that are not UTF-8. After that one has run for
+  one in its own group that stops itself and one in its own group that, on
+  Linux, renames itself to bytes that are not UTF-8. After that one has run for
   1.1 s and the stopped one is stopped, a reply before any report counts 0.
   The job then starts a second process in its own group and reports `done`:
   the reply counts 1 while the second is under 1 s old (checked only when

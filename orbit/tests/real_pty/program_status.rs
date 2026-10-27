@@ -61,10 +61,9 @@ fn until_reported(lease: &mut Manager, id: &str) -> ProgramStatus {
     }
 }
 
-/// Whether the terminal's foreground group is the child's own, from /proc.
+/// Whether the terminal's foreground group is the child's own.
 fn child_leads(child: i32) -> bool {
-    let tpgid: i32 = stat_fields(child)[5].parse().expect("a number");
-    tpgid == child
+    foreground_group(child) == child
 }
 
 fn until_leads(child: i32, leads: bool) {
@@ -167,6 +166,7 @@ fn foreground_returns_drop_once() {
 }
 
 /// A process's `/proc` stat fields after its name, which may hold any bytes.
+#[cfg(target_os = "linux")]
 fn stat_fields(pid: i32) -> Vec<String> {
     let stat = fs::read(format!("/proc/{pid}/stat")).expect("stat");
     let name_end = stat.iter().rposition(|&byte| byte == b')').expect("a name");
@@ -174,7 +174,19 @@ fn stat_fields(pid: i32) -> Vec<String> {
     fields.split_whitespace().map(str::to_owned).collect()
 }
 
+/// The foreground group of a process's controlling terminal.
+#[cfg(target_os = "linux")]
+fn foreground_group(pid: i32) -> i32 {
+    stat_fields(pid)[5].parse().expect("a number")
+}
+
+#[cfg(target_os = "linux")]
+fn is_stopped(pid: i32) -> bool {
+    stat_fields(pid)[0] == "T"
+}
+
 /// How long ago a process started, on the boot clock `/proc` counts in.
+#[cfg(target_os = "linux")]
 fn age(pid: i32) -> Duration {
     let started: f64 = stat_fields(pid)[19].parse().expect("a start time");
     // SAFETY: sysconf has no preconditions.
@@ -187,6 +199,39 @@ fn age(pid: i32) -> Duration {
     assert_eq!(unsafe { libc::clock_gettime(libc::CLOCK_BOOTTIME, &mut now) }, 0);
     let now = now.tv_sec as f64 + now.tv_nsec as f64 / 1e9;
     Duration::from_secs_f64((now - started / ticks).max(0.0))
+}
+
+/// A process's libproc BSD record.
+#[cfg(target_os = "macos")]
+fn bsd_info(pid: i32) -> libc::proc_bsdinfo {
+    // SAFETY: proc_pidinfo fills the zeroed record for `pid`.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of_val(&info) as libc::c_int;
+    let read =
+        unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
+    assert_eq!(read, size, "proc_pidinfo {pid}: {}", std::io::Error::last_os_error());
+    info
+}
+
+#[cfg(target_os = "macos")]
+fn foreground_group(pid: i32) -> i32 {
+    bsd_info(pid).e_tpgid as i32
+}
+
+#[cfg(target_os = "macos")]
+fn is_stopped(pid: i32) -> bool {
+    bsd_info(pid).pbi_status == libc::SSTOP
+}
+
+/// How long ago a process started, on the wall clock libproc counts in.
+#[cfg(target_os = "macos")]
+fn age(pid: i32) -> Duration {
+    let info = bsd_info(pid);
+    let started = std::time::UNIX_EPOCH
+        + Duration::new(info.pbi_start_tvsec, info.pbi_start_tvusec as u32 * 1000);
+    std::time::SystemTime::now()
+        .duration_since(started)
+        .unwrap_or_default()
 }
 
 /// Waits for a grandchild's PID file.
@@ -232,10 +277,16 @@ impl Drop for Leftovers {
 /// terminal holds a record. The shell's own job beside the foreground job, a
 /// process in the job's group and a stopped one never count, a process name
 /// that is not UTF-8 does not hide one, and one that exits stops counting.
+/// Only the Linux run renames a process to a name that is not UTF-8.
 fn background_processes_count() {
     let directory = TempDir::new();
     let gate = Gate::new(&directory, "gate");
     let apart = Gate::new(&directory, "apart");
+    let rename = if cfg!(target_os = "linux") {
+        "printf \"bg\\347\\267\" > /proc/$$/comm\n"
+    } else {
+        ""
+    };
     let agent = executable(
         &directory,
         "agent.sh",
@@ -245,8 +296,7 @@ fn background_processes_count() {
              \"$BASH\" -c 'echo $$ > \"$ORBIT_DIR/in\"; exec sleep 60' &\n\
              set -m\n\
              \"$BASH\" -c 'echo $$ > \"$ORBIT_DIR/stopped\"; kill -STOP $$; exec sleep 60' &\n\
-             \"$BASH\" -c 'printf \"bg\\347\\267\" > /proc/$$/comm\n\
-               echo $$ > \"$ORBIT_DIR/first\"; read -r _ < \"$ORBIT_APART\"' &\n\
+             \"$BASH\" -c '{rename}echo $$ > \"$ORBIT_DIR/first\"; read -r _ < \"$ORBIT_APART\"' &\n\
              read -r _ < \"$ORBIT_GATE\"\n\
              \"$BASH\" -c 'echo $$ > \"$ORBIT_DIR/second\"; read -r _ < \"$ORBIT_APART\"' &\n\
              printf '\\033]7501;state=done\\007'\n\
@@ -275,9 +325,11 @@ fn background_processes_count() {
     let [_, _, stopped, first] = leftovers.0[..] else {
         unreachable!()
     };
-    assert_eq!(fs::read(format!("/proc/{first}/comm")).expect("comm"), b"bg\xe7\xb7\n");
+    if cfg!(target_os = "linux") {
+        assert_eq!(fs::read(format!("/proc/{first}/comm")).expect("comm"), b"bg\xe7\xb7\n");
+    }
     let deadline = Instant::now() + Duration::from_secs(10);
-    while stat_fields(stopped)[0] != "T" || age(first) < Duration::from_millis(1100) {
+    while !is_stopped(stopped) || age(first) < Duration::from_millis(1100) {
         assert!(Instant::now() < deadline, "the processes never settled");
         sleep(0.02);
     }

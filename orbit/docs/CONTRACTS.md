@@ -835,7 +835,12 @@ PTY pixel size rule needs no wire change.
   boundary schema digest, worker lookup and `orbit-protocol` path dependency
   (`eon-awmq.3`), so the bend-orbit run is evidence about the design, not a
   proof of this revision. Native re-proof runs `orbit-laws`, the unit tests,
-  every real-PTY check and `tests/lifecycle.rs` on Apple Silicon. Eon records
+  every real-PTY check except
+  [`orbit-unreaped-stop`](../tests/real_pty/unreaped_stop.rs), and
+  `tests/lifecycle.rs` on Apple Silicon. That check holds the child unreaped
+  with Linux's `PTRACE_SEIZE`, which macOS lacks, so a Stop whose child cannot
+  be reaped is checked on Linux only. Tests and assertions that read Linux-only
+  process state do not run on macOS. Eon records
   the same macOS gap under `EON-C7` in
   [`docs/CONTRACTS.md`](../../docs/CONTRACTS.md).
 
