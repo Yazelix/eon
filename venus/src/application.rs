@@ -7143,24 +7143,39 @@ mod tests {
             .any(|row| row.shortcut == "Alt+Shift+N" && row.action == "Open new Eon window")
         );
 
-        let script = std::env::temp_dir().join(format!(
-            "venus-new-window-{}-{}",
-            std::process::id(),
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::write(
-            &script,
+        // A child shell writes each script to a fresh path. Had this process
+        // opened it for writing, a child forked meanwhile by a parallel test
+        // would inherit that descriptor, and exec would fail with ETXTBSY.
+        let script = |name: &str, body: &str| {
+            let path = std::env::temp_dir().join(format!(
+                "venus-new-window-{}-{}-{name}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            let status = Command::new("/bin/sh")
+                .args(["-c", "printf '%s' \"$1\" > \"$0\""])
+                .arg(&path)
+                .arg(body)
+                .stdin(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "{status}");
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+            path
+        };
+        let failing = script(
+            "failing",
             "#!/bin/sh\nprintf '%s|%s' \"$1\" \"$2\" >&2\nexit 7\n",
-        )
-        .unwrap();
-        fs::set_permissions(&script, fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(run_new_window(&script).unwrap_err().contains("window|new"));
-        fs::write(&script, "#!/bin/sh\nexit 0\n").unwrap();
-        assert!(run_new_window(&script).is_ok());
-        fs::remove_file(script).unwrap();
+        );
+        let error = run_new_window(&failing).unwrap_err();
+        assert!(error.contains("window|new"), "{error}");
+        let succeeding = script("succeeding", "#!/bin/sh\nexit 0\n");
+        assert_eq!(run_new_window(&succeeding), Ok(()));
+        fs::remove_file(failing).unwrap();
+        fs::remove_file(succeeding).unwrap();
     }
 
     #[test]
