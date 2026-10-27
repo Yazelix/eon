@@ -991,6 +991,51 @@ fn continuous_frames_keep_only_compatible_scroll_previews() {
 }
 
 #[test]
+fn kept_previews_go_stale_at_live_and_at_the_oldest_retained_row() {
+    let at = |revision, rows_from_live, history_rows| {
+        let mut frame = frame(revision, Screen::Primary);
+        frame.scroll_position = orbit_protocol::ScrollPosition {
+            rows_from_live,
+            history_rows,
+        };
+        frame
+    };
+    let kept_over = |answered: Frame, next: Frame| {
+        let mut model = attached_model();
+        let revision = answered.revision;
+        model
+            .apply(ServerMessage::Frame(Box::new(answered)))
+            .unwrap();
+        model
+            .apply(ServerMessage::VerticalPreview(VerticalPreview {
+                frame_revision: revision,
+                direction: VerticalDirection::Up,
+                outcome: PreviewOutcome::Viewport {
+                    cols: 4,
+                    edge_reached: false,
+                    rows: frame(1, Screen::Primary).rows,
+                },
+            }))
+            .unwrap();
+        apply_wire(&mut model, ServerMessage::Frame(Box::new(next))).unwrap();
+        assert!(matches!(
+            model.scroll_preview(),
+            Some(ScenePreview::Viewport { frame_revision, .. }) if *frame_revision == revision
+        ));
+        model.preview_may_be_stale()
+    };
+
+    // Output below a pinned viewport, or pruning above it, leaves its rows in place.
+    assert!(!kept_over(at(1, 10, 100), at(2, 12, 102)));
+    assert!(!kept_over(at(1, 10, 100), at(2, 12, 60)));
+    // Pruning the rows it shows moves it to the oldest retained row, where later pruning
+    // replaces them; at live, output moves the history above it.
+    assert!(kept_over(at(1, 10, 100), at(2, 60, 60)));
+    assert!(kept_over(at(1, 60, 60), at(2, 62, 62)));
+    assert!(kept_over(at(1, 0, 100), at(2, 0, 102)));
+}
+
+#[test]
 fn invalid_session_and_frame_bytes_never_reach_draw_state() {
     let mut encoded =
         session::encode_server_message(&ServerMessage::Frame(Box::new(frame(1, Screen::Primary))))

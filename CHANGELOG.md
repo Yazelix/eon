@@ -9,6 +9,11 @@ installation, and proven contract changes.
   an old history row drawn at the terminal's top edge while a program keeps
   printing; the edge follows the output, refreshed about every 50 ms.
 
+- A terminal scrolled into history with less than one row of scroll left over
+  no longer keeps drawing a stale row at its edge when a long burst of output
+  drops the oldest history and moves the view; the edge is refreshed about
+  every 50 ms.
+
 - A popup you configure on a built-in popup's default key now takes that key
   instead of failing to load; the built-in popup stays in Alt+/ under its
   default key as "overridden by" yours. `keybinding = ""` leaves any popup,

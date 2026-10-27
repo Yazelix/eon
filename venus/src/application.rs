@@ -853,7 +853,10 @@ impl Application {
                     frame_revision,
                     preview,
                     f64::from(metrics.height),
-                    self.terminal.model.at_live().then(Instant::now),
+                    self.terminal
+                        .model
+                        .preview_may_be_stale()
+                        .then(Instant::now),
                 ),
             )
         };

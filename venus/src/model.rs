@@ -567,13 +567,16 @@ impl SessionModel {
         self.scroll_preview.as_ref()
     }
 
-    /// Whether the accepted viewport is at live output, where later output moves the
-    /// history above it; away from live, Orbit keeps the viewport pinned.
+    /// Whether output may change the rows beside the accepted viewport. At live, output
+    /// moves the history above it. Away from live, Orbit keeps the viewport pinned until
+    /// its scrollback budget prunes the rows it shows, which moves it to the oldest
+    /// retained row; there, each later prune replaces the rows it shows.
     #[must_use]
-    pub fn at_live(&self) -> bool {
-        self.reducer
-            .current()
-            .is_some_and(|frame| frame.scroll_position.rows_from_live == 0)
+    pub fn preview_may_be_stale(&self) -> bool {
+        self.reducer.current().is_some_and(|frame| {
+            let position = frame.scroll_position;
+            position.rows_from_live == 0 || position.rows_from_live == position.history_rows
+        })
     }
 
     /// Release preview rows while keeping routing evidence until the next frame.

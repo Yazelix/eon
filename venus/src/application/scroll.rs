@@ -15,7 +15,7 @@ const MIN_FLING_VELOCITY: f64 = 40.0;
 const MAX_FLING_VELOCITY: f64 = 8_000.0;
 // Orbit's output queue lets a newer frame replace a preview answer it has not started
 // writing, so a frame that follows a preview request starts this wait for the answer.
-// It also spaces the previews that replace one retained under output at live.
+// It also spaces the previews that replace a retained one while output moves its rows.
 const PREVIEW_ANSWER_GRACE: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -248,7 +248,7 @@ impl TerminalScroll {
         frame_revision: u64,
         preview: Option<&ScenePreview>,
         cell_height: f64,
-        live: Option<Instant>,
+        stale: Option<Instant>,
     ) -> Option<ClientMessage> {
         if pending.is_some()
             || self.preview_pending.is_some()
@@ -272,10 +272,11 @@ impl TerminalScroll {
             .min(i64::from(MAX_SCROLL_ROWS));
         let crossed = (self.pixels / cell_height).trunc();
         if available == 0 || crossed == 0.0 {
-            // At live, output moves the history a retained preview shows, so it asks for
-            // current rows, at most once per grace, instead of drawing old ones over newer
-            // frames. `live` is the current time while the accepted viewport is at live.
-            let now = live
+            // Output can move the rows a retained preview shows, at live or when pruning
+            // moves a viewport in history, so it asks for current rows, at most once per
+            // grace, instead of drawing old ones over newer frames. `stale` is the current
+            // time while the model reports that the retained preview may be stale.
+            let now = stale
                 .filter(|_| preview_revision != frame_revision && self.replace_after.is_none())?;
             self.replace_after = Some(now + PREVIEW_ANSWER_GRACE);
             return Some(self.request_preview(frame_revision, direction));
@@ -883,14 +884,14 @@ mod tests {
             scroll.next_request(None, 7, Some(&preview(7)), 20.0, Some(start)),
             None
         );
-        // Away from live, Orbit keeps the viewport and the rows above it pinned.
+        // In history with no prune, Orbit keeps the viewport and the rows above it pinned.
         assert_eq!(
             scroll.next_request(None, 8, Some(&preview(7)), 20.0, None),
             None
         );
 
-        // At live, output moved the history above, so the retained rows ask for current
-        // ones through the one-outstanding hold.
+        // Once output moves the rows above, the retained rows ask for current ones through
+        // the one-outstanding hold.
         assert_eq!(
             scroll.next_request(None, 8, Some(&preview(7)), 20.0, Some(start)),
             request(8)
