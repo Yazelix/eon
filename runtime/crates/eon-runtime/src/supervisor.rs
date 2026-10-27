@@ -2112,7 +2112,24 @@ mod tests {
         fs,
         os::unix::fs::{MetadataExt, PermissionsExt},
         path::{Path, PathBuf},
+        process::{Command, Stdio},
     };
+
+    /// Writes an executable shell script to a fresh path. A child shell writes
+    /// it: had this process opened it for writing, a child forked meanwhile by
+    /// a parallel test would inherit that descriptor, and exec would fail with
+    /// ETXTBSY.
+    fn script(path: &Path, body: &str) {
+        let status = Command::new("/bin/sh")
+            .args(["-c", "printf '%s' \"$1\" > \"$0\""])
+            .arg(path)
+            .arg(body)
+            .stdin(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "{status}");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
 
     /// Kills a test-owned Orbit's worker, which sends Orbit down its failure
     /// path: it removes its Live record and exits without a result.
@@ -2347,12 +2364,10 @@ mod tests {
     fn orbit_stderr_is_logged_and_owner_loss_names_the_file() {
         let root = temporary_directory();
         let launcher = root.join("orbit-with-stderr");
-        fs::write(
+        script(
             &launcher,
             "#!/bin/sh\nprintf '%s\\n' 'orbit test diagnostic' >&2\nexec \"$ORBIT_BIN\" \"$@\"\n",
-        )
-        .unwrap();
-        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+        );
         let session = sessions::tests::leased_orbit_with_program(&root, "exec sleep 30", &launcher);
         let orbit = orbit_pid(&session);
         let orbit_logs = root.join("launch-logs/orbit");
@@ -2598,10 +2613,7 @@ mod tests {
         use eon_workspace_protocol::v20::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
-        use std::{
-            process::Command,
-            time::{Duration, Instant},
-        };
+        use std::time::{Duration, Instant};
 
         let root = temporary_directory();
         let snapshot = Snapshot {
@@ -2699,7 +2711,6 @@ mod tests {
     #[test]
     fn diagnostic_log_keeps_presentation_stderr_and_exit_signal() {
         use std::{
-            process::Command,
             thread,
             time::{Duration, Instant},
         };
